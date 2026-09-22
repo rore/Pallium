@@ -21,6 +21,7 @@ from app.config import AppConfig
 from app.mcp.client import PalliumMcpClient
 from app.mcp.context import PalliumContext
 from app.mcp.server import create_server
+from redaction import redact_sensitive
 from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
 
 
@@ -842,3 +843,306 @@ async def test_relay_mcp_client_to_http_full_named_session_round_trip(
         assert (
             await client.relay_status(sent["message_id"])
         )["deliveries"][0]["state"] == "delivered"
+
+@pytest.mark.asyncio
+async def test_mcp_history_source_continuation_real_http_lifecycle(
+    pallium_asgi_app,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    container = "git:example/history-continuation"
+    source_thread = "history:source"
+    active_thread = "history:reader"
+    actor = "Operator Ω"
+    raw_source_content = (
+        "continuation anchor marker\n"
+        "Bearer AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n"
+        + '界😀 "quoted" \\ path\n' * 120
+    )
+    source_content = redact_sensitive(raw_source_content)
+    transport = httpx.ASGITransport(app=pallium_asgi_app)
+    real_async_client = httpx.AsyncClient
+    async with real_async_client(
+        transport=transport, base_url="http://testserver", timeout=30.0,
+    ) as http:
+        response = await http.post("/items", json=[{
+            "source_type": "chat_message",
+            "source_id": "oversized-anchor",
+            "content_type": "text/plain",
+            "content": raw_source_content,
+            "artifact_kind": "message",
+            "role": "user",
+            "actor_ref": actor,
+            "container_ref": container,
+            "thread_ref": source_thread,
+            "visibility": "private",
+        }])
+        assert response.status_code == 200, response.text
+        source_item_id = response.json()[0]["source_item_id"]
+    pallium_asgi_app.state.pallium_service.drain_processing_queue(
+        worker_id="history-continuation-e2e",
+    )
+    from core.models import MemoryObject, Relation
+
+    storage = pallium_asgi_app.state.pallium_service._storage
+    historical = MemoryObject(
+        id="continuation-history-old",
+        type="decision",
+        schema_id="test",
+        schema_version="v1",
+        payload={"decision": "Use the historical continuation."},
+        container_ref=container,
+        visibility="private",
+    )
+    current = dataclasses.replace(
+        historical,
+        id="continuation-history-current",
+        payload={"decision": "Use the current continuation."},
+    )
+    for memory in (historical, current):
+        storage.create_memory_object(memory)
+    storage.create_relation(Relation(
+        from_kind="memory_object",
+        from_id=historical.id,
+        relation_type="supported_by",
+        to_kind="source_item",
+        to_id=source_item_id,
+    ))
+    storage.link_supersession(
+        historical.id,
+        current.id,
+        correction_reason="continuation changed",
+    )
+    baseline = [
+        dataclasses.asdict(memory)
+        for memory in sorted(storage.list_memory_objects(), key=lambda memory: memory.id)
+    ]
+    assert len(baseline) == 2
+
+    def asgi_client(*args, **kwargs):
+        kwargs["transport"] = transport
+        kwargs["base_url"] = "http://testserver"
+        return real_async_client(*args, **kwargs)
+
+    monkeypatch.setattr("app.mcp.client.httpx.AsyncClient", asgi_client)
+    monkeypatch.setenv("PALLIUM_BASE_URL", "http://testserver")
+    server = create_server()
+    search_content, _ = await server.call_tool("pallium_search_history", {
+        "query": "continuation anchor marker",
+        "container_ref": container,
+        "actor_ref": actor,
+        "thread_ref": active_thread,
+        "visibility": "private",
+    })
+    search = json.loads(search_content[0].text)
+    assert search["results"][0]["source_item_id"] == source_item_id
+    lookup_event_id = search["lookup_event_id"]
+    base_arguments = {
+        "source_item_id": source_item_id,
+        "before": 0,
+        "after": 0,
+        "parent_lookup_id": lookup_event_id,
+        "container_ref": container,
+        "actor_ref": actor,
+        "thread_ref": active_thread,
+        "visibility": "private",
+    }
+    for requested, effective in ((256, None), (4000, 4000), (50000, 4000)):
+        bounded_content, _ = await server.call_tool("pallium_expand_source", {
+            **base_arguments,
+            "max_chars": requested,
+        })
+        bounded = json.loads(bounded_content[0].text)
+        if effective is None:
+            assert bounded["min_max_chars"] == 256
+        else:
+            assert bounded["effective_max_chars"] == effective
+            assert len(bounded_content[0].text) <= effective
+    successful_deliveries = 2
+
+    negative_content, _ = await server.call_tool("pallium_expand_source", {
+        **base_arguments,
+        "content_offset": -1,
+    })
+    assert json.loads(negative_content[0].text)["error_kind"] == "invalid_content_offset"
+    missing_revision_content, _ = await server.call_tool(
+        "pallium_expand_source",
+        {**base_arguments, "content_offset": 1},
+    )
+    assert (
+        json.loads(missing_revision_content[0].text)["error_kind"]
+        == "content_revision_required"
+    )
+
+    offset = 0
+    revision = None
+    pages = []
+    retry_arguments = None
+    retry_payload = None
+    while True:
+        arguments = {
+            "source_item_id": source_item_id,
+            "before": 0,
+            "after": 0,
+            "max_chars": 1000,
+            "content_offset": offset,
+            "parent_lookup_id": lookup_event_id,
+            "container_ref": container,
+            "actor_ref": actor,
+            "thread_ref": active_thread,
+            "visibility": "private",
+        }
+        if revision is not None:
+            arguments["content_revision"] = revision
+        page_content, _ = await server.call_tool("pallium_expand_source", arguments)
+        page = json.loads(page_content[0].text)
+        successful_deliveries += 1
+        assert len(page_content[0].text) <= page["effective_max_chars"] == 1000
+        assert page["parent_lookup_id"] == lookup_event_id
+        assert page["content_offset"] == offset
+        assert page["content_revision"] == (revision or page["content_revision"])
+        anchor = next(item for item in page["items"] if item["is_anchor"])
+        assert anchor["historical_updates"][0]["status"] == "outdated"
+        assert anchor["historical_updates"][0]["replacement_status"] == "current"
+        pages.append(anchor["content"])
+        revision = page["content_revision"]
+        if retry_arguments is None and page["has_more"]:
+            retry_arguments = dict(arguments, content_revision=revision)
+            retry_payload = page
+        if not page["has_more"]:
+            assert page["next_offset"] is None
+            break
+        assert page["next_offset"] > offset
+        offset = page["next_offset"]
+        assert len(pages) < 20
+
+    assert len(pages) >= 3
+    assert "".join(pages) == source_content
+    assert retry_arguments is not None
+    assert retry_payload is not None
+    retried_content, _ = await server.call_tool(
+        "pallium_expand_source", retry_arguments,
+    )
+    retried = json.loads(retried_content[0].text)
+    successful_deliveries += 1
+    assert retried["items"] == retry_payload["items"]
+    assert retried["next_offset"] == retry_payload["next_offset"]
+
+    terminal_arguments = dict(
+        retry_arguments,
+        content_offset=len(source_content),
+        content_revision=revision,
+    )
+    terminal_content, _ = await server.call_tool(
+        "pallium_expand_source", terminal_arguments,
+    )
+    terminal_retry_content, _ = await server.call_tool(
+        "pallium_expand_source", terminal_arguments,
+    )
+    terminal = json.loads(terminal_content[0].text)
+    successful_deliveries += 2
+    assert terminal == json.loads(terminal_retry_content[0].text)
+    assert terminal["content_offset"] == terminal["content_total_chars"]
+    assert terminal["items"][0]["content"] == ""
+    assert terminal["has_more"] is False
+    assert terminal["next_offset"] is None
+    over_end_content, _ = await server.call_tool("pallium_expand_source", {
+        **terminal_arguments,
+        "content_offset": len(source_content) + 99,
+    })
+    over_end = json.loads(over_end_content[0].text)
+    successful_deliveries += 1
+    assert over_end["content_offset"] == over_end["content_total_chars"]
+    assert over_end["items"][0]["content"] == ""
+    assert over_end["next_offset"] is None
+
+    continuation_arguments = dict(
+        retry_arguments,
+        content_offset=retry_payload["next_offset"],
+        content_revision=revision,
+    )
+    storage = pallium_asgi_app.state.pallium_service._storage
+    for rewritten in ("X" + source_content[1:], "short"):
+        with storage._engine.begin() as connection:
+            connection.execute(text(
+                "UPDATE source_items SET content = :content WHERE id = :source_item_id"
+            ), {"content": rewritten, "source_item_id": source_item_id})
+        stale_content, _ = await server.call_tool(
+            "pallium_expand_source", continuation_arguments,
+        )
+        stale = json.loads(stale_content[0].text)
+        assert stale["error_kind"] == "stale_content_revision"
+        assert "items" not in stale
+    with storage._engine.begin() as connection:
+        connection.execute(text(
+            "UPDATE source_items SET content = :content WHERE id = :source_item_id"
+        ), {"content": "", "source_item_id": source_item_id})
+    empty_content, _ = await server.call_tool(
+        "pallium_expand_source", base_arguments,
+    )
+    empty = json.loads(empty_content[0].text)
+    successful_deliveries += 1
+    assert empty["content_total_chars"] == 0
+    assert empty["items"][0]["content"] == ""
+    assert empty["has_more"] is False
+    with storage._engine.begin() as connection:
+        connection.execute(text(
+            "UPDATE source_items SET content = :content WHERE id = :source_item_id"
+        ), {"content": source_content, "source_item_id": source_item_id})
+
+    missing_content, _ = await server.call_tool("pallium_expand_source", {
+        **continuation_arguments,
+        "source_item_id": "missing-source",
+    })
+    missing = json.loads(missing_content[0].text)
+    assert "error" in missing
+    assert "items" not in missing
+    for scope in (
+        {"container_ref": "git:example/not-authorized"},
+        {"actor_ref": "Another Operator"},
+        {"visibility": "invalid"},
+    ):
+        denied_content, _ = await server.call_tool("pallium_expand_source", {
+            **continuation_arguments,
+            **scope,
+        })
+        denied = json.loads(denied_content[0].text)
+        assert "error" in denied
+        assert "items" not in denied
+
+    with storage._engine.connect() as connection:
+        expansion_rows = connection.execute(text(
+            "SELECT parent_lookup_id, exposed_json "
+            "FROM historical_lookup_reuse_event WHERE event_type = 'expansion'"
+        )).mappings().all()
+    continued_rows = [
+        row for row in expansion_rows if row["parent_lookup_id"] == lookup_event_id
+    ]
+    assert len(continued_rows) == successful_deliveries
+    assert all(
+        json.loads(row["exposed_json"]) == [{
+            "source_item_id": source_item_id,
+            "role": "anchor",
+        }]
+        for row in continued_rows
+    )
+    after = [
+        dataclasses.asdict(memory)
+        for memory in sorted(storage.list_memory_objects(), key=lambda memory: memory.id)
+    ]
+    assert after == baseline
+
+    async with real_async_client(
+        transport=transport, base_url="http://testserver", timeout=30.0,
+    ) as http:
+        forgotten = await http.post("/source/forget", json={
+            "source_item_id": source_item_id,
+            "reason": "continuation lifecycle test",
+            "actor_ref": actor,
+        })
+        assert forgotten.status_code == 200, forgotten.text
+    forgotten_content, _ = await server.call_tool(
+        "pallium_expand_source", continuation_arguments,
+    )
+    forgotten_page = json.loads(forgotten_content[0].text)
+    assert "error" in forgotten_page
+    assert "items" not in forgotten_page

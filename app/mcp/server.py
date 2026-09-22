@@ -7,12 +7,13 @@ streamable-http (production, remote access) transports.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 from functools import wraps
 from typing import Annotated, Literal
 
-from pydantic import BeforeValidator
+from pydantic import BeforeValidator, StrictInt
 
 from app.mcp.client import PalliumMcpClient
 from app.mcp.context import resolve_codex_thread_ref, resolve_context, resolve_relay_context
@@ -668,12 +669,35 @@ def _compact_history(
     return payload
 
 
-def _bounded_expansion(result: dict, max_chars: int = _MCP_EXPANSION_MAX_CHARS) -> dict:
+def _bounded_expansion(
+    result: dict,
+    max_chars: int = _MCP_EXPANSION_MAX_CHARS,
+    *,
+    content_offset: int = 0,
+    content_revision: str | None = None,
+) -> dict:
     max_chars = min(_MCP_EXPANSION_MAX_CHARS, max_chars)
     if max_chars < _MCP_EXPANSION_MIN_CHARS:
-        return {"error": "max_chars is too small for the expansion anchor", "min_max_chars": _MCP_EXPANSION_MIN_CHARS}
+        return {
+            "error": "max_chars is too small for the expansion anchor",
+            "min_max_chars": _MCP_EXPANSION_MIN_CHARS,
+        }
+    if type(content_offset) is not int or content_offset < 0:
+        return _bounded_error({
+            "error": "content_offset must be a non-negative integer",
+            "error_kind": "invalid_content_offset",
+            "retryable": False,
+        }, max_chars)
+    if content_offset and not content_revision:
+        return _bounded_error({
+            "error": "content_revision is required for a nonzero content_offset",
+            "error_kind": "content_revision_required",
+            "retryable": True,
+            "action": "restart at content_offset 0 to obtain the current content_revision",
+        }, max_chars)
     if "error" in result:
         return _bounded_error(result, max_chars)
+
     projected = []
     for item in result.get("items") or []:
         projected.append({
@@ -684,73 +708,182 @@ def _bounded_expansion(result: dict, max_chars: int = _MCP_EXPANSION_MAX_CHARS) 
             **_history_fields(item),
             "content": item.get("content") or "",
         })
-    anchor = next((item for item in projected if item.get("is_anchor")), projected[0] if projected else None)
+    anchor = next(
+        (item for item in projected if item.get("is_anchor")),
+        projected[0] if projected else None,
+    )
     if anchor is None:
-        out = {"items": [], "supported_memories": result.get("supported_memories"), "parent_lookup_id": result.get("parent_lookup_id")}
+        out = {
+            "items": [],
+            "supported_memories": result.get("supported_memories"),
+            "parent_lookup_id": result.get("parent_lookup_id"),
+            "effective_max_chars": max_chars,
+        }
         if len(_json_text(out)) > max_chars:
             out["supported_memories"] = None
         if len(_json_text(out)) > max_chars:
-            return {"error": "expansion exceeds the response budget", "min_max_chars": _MCP_EXPANSION_MIN_CHARS}
+            return {
+                "error": "expansion exceeds the response budget",
+                "min_max_chars": _MCP_EXPANSION_MIN_CHARS,
+            }
         return out
+
     full_content = {id(item): item["content"] for item in projected}
+    anchor_content = full_content[id(anchor)]
+    current_revision = "sha256:" + hashlib.sha256(
+        anchor_content.encode("utf-8")
+    ).hexdigest()
+    if content_offset and content_revision != current_revision:
+        return _bounded_error({
+            "error": "source content changed during continuation",
+            "error_kind": "stale_content_revision",
+            "retryable": True,
+            "action": "restart at content_offset 0 to obtain the current content_revision",
+        }, max_chars)
+
+    content_total_chars = len(anchor_content)
+    effective_offset = min(content_offset, content_total_chars)
+    omitted = 0
+    if content_offset:
+        omitted = len(projected) - 1
+        projected[:] = [anchor]
+
     for item in projected:
         item["content"] = ""
         if full_content[id(item)]:
             item["content_truncated"] = True
-    out = {"items": projected, "supported_memories": result.get("supported_memories"), "parent_lookup_id": result.get("parent_lookup_id")}
-    omitted = 0
-    _trim_update_details(out, projected, max_chars)
-    if len(_json_text(out)) > max_chars:
-        out["supported_memories"] = None
-    while len(_json_text(out)) > max_chars and len(projected) > 1:
-        anchor_index = projected.index(anchor)
-        farthest = max(
-            (item for item in projected if not item.get("is_anchor")),
-            key=lambda item: (abs(projected.index(item) - anchor_index), projected.index(item)),
-            default=None,
-        )
-        if farthest is None:
-            break
-        projected.remove(farthest)
-        omitted += 1
-        out["items_omitted"] = omitted
-    if len(_json_text(out)) > max_chars:
-        return {"error": "max_chars is too small for the expansion anchor", "min_max_chars": _MCP_EXPANSION_MIN_CHARS}
 
-    anchor_index = projected.index(anchor)
-    order = [anchor_index]
-    order.extend(sorted((i for i in range(len(projected)) if i != anchor_index), key=lambda i: (abs(i - anchor_index), i)))
-    for index in order:
-        original = projected[index]
-        content = full_content[id(original)]
-        if not content:
-            continue
-        candidate = dict(original)
-        candidate["content"] = content
-        candidate.pop("content_truncated", None)
-        projected[index] = candidate
-        if len(_json_text(out)) <= max_chars:
-            continue
-        projected[index] = original
-        low, high = 0, len(content)
+    out = {
+        "items": projected,
+        "supported_memories": result.get("supported_memories"),
+        "parent_lookup_id": result.get("parent_lookup_id"),
+        "effective_max_chars": max_chars,
+        "content_offset": effective_offset,
+        "content_total_chars": content_total_chars,
+        "content_revision": current_revision,
+        "has_more": effective_offset < content_total_chars,
+        "next_offset": effective_offset if effective_offset < content_total_chars else None,
+    }
+    if omitted:
+        out["items_omitted"] = omitted
+
+    anchor_base = anchor
+    remaining = anchor_content[effective_offset:]
+
+    def set_anchor_page(chars: int) -> None:
+        anchor_index = next(
+            i for i, item in enumerate(projected) if item.get("is_anchor")
+        )
+        end = effective_offset + chars
+        has_more = end < content_total_chars
+        page = dict(anchor_base)
+        page["content"] = remaining[:chars]
+        if effective_offset or has_more:
+            page["content_truncated"] = True
+        else:
+            page.pop("content_truncated", None)
+        projected[anchor_index] = page
+        out["has_more"] = has_more
+        out["next_offset"] = end if has_more else None
+
+    # A complete page can serialize smaller than a truncated page because it
+    # drops content_truncated and uses a null next_offset. Test it first.
+    set_anchor_page(len(remaining))
+    if len(_json_text(out)) > max_chars:
+        set_anchor_page(0)
+        _trim_update_details(out, projected, max_chars)
+        anchor_base = next(item for item in projected if item.get("is_anchor"))
+        if len(_json_text(out)) > max_chars:
+            out["supported_memories"] = None
+        while len(_json_text(out)) > max_chars and len(projected) > 1:
+            anchor_index = next(
+                i for i, item in enumerate(projected) if item.get("is_anchor")
+            )
+            farthest = max(
+                (item for item in projected if not item.get("is_anchor")),
+                key=lambda item: (
+                    abs(projected.index(item) - anchor_index),
+                    projected.index(item),
+                ),
+                default=None,
+            )
+            if farthest is None:
+                break
+            projected.remove(farthest)
+            omitted += 1
+            out["items_omitted"] = omitted
+        set_anchor_page(len(remaining))
+
+    if len(_json_text(out)) > max_chars:
+        set_anchor_page(0)
+        if len(_json_text(out)) > max_chars:
+            return {
+                "error": "max_chars is too small for the expansion anchor",
+                "min_max_chars": _MCP_EXPANSION_MIN_CHARS,
+            }
+        low, high = 0, len(remaining) - 1
         while low < high:
-            mid = (low + high + 1) // 2
+            middle = (low + high + 1) // 2
+            set_anchor_page(middle)
+            if len(_json_text(out)) <= max_chars:
+                low = middle
+            else:
+                high = middle - 1
+        set_anchor_page(low)
+    else:
+        low = len(remaining)
+    if remaining and low == 0:
+        return _bounded_error({
+            "error": "max_chars leaves no room for source content",
+            "error_kind": "insufficient_content_budget",
+            "retryable": False,
+            "action": "increase max_chars",
+        }, max_chars)
+
+    if not out["has_more"] and not content_offset:
+        anchor_index = next(
+            i for i, item in enumerate(projected) if item.get("is_anchor")
+        )
+        order = sorted(
+            (i for i in range(len(projected)) if i != anchor_index),
+            key=lambda i: (abs(i - anchor_index), i),
+        )
+        for index in order:
+            original = projected[index]
+            content = full_content[id(original)]
+            if not content:
+                continue
             candidate = dict(original)
-            candidate["content"] = content[:mid]
-            candidate["content_truncated"] = True
+            candidate["content"] = content
+            candidate.pop("content_truncated", None)
             projected[index] = candidate
             if len(_json_text(out)) <= max_chars:
-                low = mid
-            else:
-                high = mid - 1
+                continue
             projected[index] = original
-        candidate = dict(original)
-        candidate["content"] = content[:low]
-        candidate["content_truncated"] = True
-        projected[index] = candidate
+            low, high = 0, len(content)
+            while low < high:
+                middle = (low + high + 1) // 2
+                candidate = dict(original)
+                candidate["content"] = content[:middle]
+                candidate["content_truncated"] = True
+                projected[index] = candidate
+                if len(_json_text(out)) <= max_chars:
+                    low = middle
+                else:
+                    high = middle - 1
+                projected[index] = original
+            candidate = dict(original)
+            candidate["content"] = content[:low]
+            candidate["content_truncated"] = low < len(content)
+            projected[index] = candidate
+
     if len(_json_text(out)) > max_chars:
-        return {"error": "expansion exceeds the response budget", "min_max_chars": _MCP_EXPANSION_MIN_CHARS}
+        return {
+            "error": "expansion exceeds the response budget",
+            "min_max_chars": _MCP_EXPANSION_MIN_CHARS,
+        }
     return out
+
 NOT_CONFIGURED_MSG = (
     "Pallium memory system is not configured. "
     "No memory tools available. "
@@ -1055,6 +1188,8 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         before: int = 1,
         after: int = 1,
         max_chars: int = 4000,
+        content_offset: StrictInt = 0,
+        content_revision: str | None = None,
         include_supported_memories: bool = False,
         parent_lookup_id: str | None = None,
         container_ref: str | None = None,
@@ -1062,7 +1197,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         visibility: str | None = None,
         thread_ref: str | None = None,
     ) -> str:
-        """Expand a raw hit around its anchor. Omitted `actor_ref` spans eligible actors; supplied is an exact metadata filter. Treat outdated `historical_updates` as historical; pass `parent_lookup_id` from search."""
+        """Expand a raw hit around its anchor. Follow `next_offset` with the returned `content_revision` to continue oversized anchor content. Omitted `actor_ref` spans eligible actors; supplied is an exact metadata filter. Treat outdated `historical_updates` as historical; pass `parent_lookup_id` from search."""
         ctx = resolve_context(
             container_ref=container_ref,
             actor_ref=actor_ref,
@@ -1074,6 +1209,16 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         if max_chars < _MCP_EXPANSION_MIN_CHARS:
             return _json_text(_bounded_expansion({}, max_chars))
         max_chars = min(_MCP_EXPANSION_MAX_CHARS, max_chars)
+        if (
+            type(content_offset) is not int
+            or content_offset < 0
+            or (content_offset and not content_revision)
+        ):
+            return _json_text(_bounded_expansion(
+                {}, max_chars,
+                content_offset=content_offset,
+                content_revision=content_revision,
+            ))
         client = PalliumMcpClient(ctx)
         result = await client.get_source_context(
             source_item_id,
@@ -1085,7 +1230,12 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
             actor_ref=actor_ref,
             defer_delivery=True,
         )
-        bounded = _bounded_expansion(result, max_chars)
+        bounded = _bounded_expansion(
+            result,
+            max_chars,
+            content_offset=content_offset,
+            content_revision=content_revision,
+        )
         attempt_id = result.get("delivery_attempt_id")
         if "error" not in bounded and attempt_id:
             receipt = await client.finalize_historical_delivery(
