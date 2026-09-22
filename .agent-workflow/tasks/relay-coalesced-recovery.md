@@ -29,9 +29,7 @@
 
 **Exceptions:** —
 
-**Implementation evidence:** Added the internal opt-in enumeration flag and recovery call, updated recovery doubles, storage/service ordering coverage, an authentic pre-existing-pending restart recovery regression, and roadmap wording. The scheduler/reservation path is unchanged.
-
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 Authoritative request source: `ff5d1534-0191-47f6-b586-95dd3c980476`.
@@ -39,5 +37,10 @@ Authoritative request source: `ff5d1534-0191-47f6-b586-95dd3c980476`.
 ## Evidence
 
 - `apply_patch` failed once with Windows `CreateProcessWithLogonW failed: 1327`; the permitted deterministic narrow fallback was used.
+- Added the internal opt-in enumeration flag and recovery call, updated recovery doubles, storage/service ordering coverage, an authentic pre-existing-pending restart recovery regression, and roadmap wording. The scheduler/reservation path is unchanged.
 - Focused storage, restart, recovery-double, and concurrency nodes: `C:\Dev\rore\Pallium\.venv\Scripts\python.exe -m pytest ... -q -n 0` -> `6 passed in 2.02s`.
 - Six-sweep busy-recipient deduplication regression -> `1 passed in 1.38s`.
+- Post-rebase focused regressions -> `6 passed in 2.51s`; six-sweep busy-recipient deduplication -> `1 passed in 1.39s`.
+- Affected subsystem files -> `112 passed in 28.73s` and `235 passed in 62.53s`.
+- Independent read-only review `/root/final_coalesced_review` found no correctness issue. It noted unbounded recovery dispatch as a performance advisory; existing candidate reads already scan the backlog, and pagination is deferred until backlog measurements justify a separate semantic change.
+- First parallel full-suite run had one non-reproducible suppressed-reservation lifecycle failure; the exact test passed immediately in isolation. Clean full rerun -> `5091 passed, 34 skipped, 2 xfailed in 228.29s`.
