@@ -55,6 +55,14 @@ transport-size promise for an empty turn envelope. MCP receive removes session
 metadata after that conservative check and separately guarantees its final tool
 response budget.
 
+## Get this session's address
+
+Call `pallium_relay_address` when a user asks for the current agent's Relay
+address. It resolves the integration-provided session identity itself and returns
+the canonical `exact_selector` plus `alias_selector` when the session has a
+name. The caller does not supply or guess a runtime or session ID. Missing,
+ambiguous, or malformed identity fails closed.
+
 ## Select a recipient
 
 `pallium_relay_recipients` returns a bounded envelope of recent sessions. Each item includes a canonical `exact_selector` and, when named, `alias_selector` (the internal wire-field name for its `@name`); when `has_more` is true, call it again with `next_offset`. When the session reference is known, pass both runtime and session_ref to return zero or one matching session without paging; pass include_inactive=true when a dormant or closed match is needed. The HTTP session-list response remains container-local and exposes each endpoint ID.
@@ -234,6 +242,7 @@ The generic secret redactor runs before persistence. `actor_ref` remains memory/
 
 Normal use:
 
+- `pallium_relay_address`
 - `pallium_relay_recipients`
 - `pallium_relay_name`
 - `pallium_relay_send`

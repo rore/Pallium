@@ -16,7 +16,7 @@ from pydantic import BeforeValidator
 
 from app.mcp.client import PalliumMcpClient
 from app.mcp.context import resolve_codex_thread_ref, resolve_context, resolve_relay_context
-from core.relay import RELAY_TRACE_MAX_SEQUENCE
+from core.relay import RELAY_TRACE_MAX_SEQUENCE, parse_selector
 from core.work_ref import readable_work_ref
 from redaction import redact_sensitive
 from retrieval.common import build_excerpt
@@ -809,7 +809,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         session_ref = ctx.thread_ref
         if not runtime:
             return None, None, (
-                "Error: PALLIUM_AGENT_REF is not set. Relay work-reference tools "
+                "Error: PALLIUM_AGENT_REF is not set. Current-session Relay tools "
                 "require integration-injected runtime identity."
             )
         if runtime == "codex":
@@ -823,11 +823,11 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
             if metadata_error:
                 return None, None, (
                     f"Error: {metadata_error}; upgrade or reload Codex, then retry. "
-                    "Relay work-reference tools remain fail-closed."
+                    "Current-session Relay tools remain fail-closed."
                 )
         if not session_ref:
             return None, None, (
-                "Error: PALLIUM_THREAD_REF is not set. Relay work-reference tools "
+                "Error: PALLIUM_THREAD_REF is not set. Current-session Relay tools "
                 "require integration-injected session identity."
             )
         return runtime, session_ref, None
@@ -1161,6 +1161,65 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         client = PalliumMcpClient(ctx)
         result = await client.get_status()
         return json.dumps(result, indent=2, default=str)
+
+    async def pallium_relay_address(
+        container_ref: str | None = None,
+        request_ctx: object | None = None,
+    ) -> str:
+        """Return this session's canonical Relay address. Identity comes from the integration, not model arguments. The result contains exact_selector (relay-session-...) and optional alias_selector (@name)."""
+        ctx, scope_error = resolve_relay_context(container_ref=container_ref)
+        if scope_error:
+            return scope_error
+        if not ctx.is_configured:
+            return NOT_CONFIGURED_MSG
+        runtime, session_ref, identity_error = current_relay_identity(ctx, request_ctx)
+        if identity_error:
+            return identity_error
+        result = await PalliumMcpClient(ctx).relay_recipients(
+            runtime=runtime,
+            session_ref=session_ref,
+            include_inactive=True,
+        )
+        if isinstance(result, dict) and "error" in result:
+            return _relay_error_text(result)
+        if not isinstance(result, list) or len(result) != 1 or not isinstance(result[0], dict):
+            error = (
+                "current Relay endpoint is not registered"
+                if isinstance(result, list) and not result
+                else "current Relay identity did not resolve to one endpoint"
+            )
+            return _relay_error_text({"error": error})
+        row = result[0]
+        endpoint_id = row.get("endpoint_id")
+        alias = row.get("alias")
+        try:
+            _, endpoint_kind, canonical_endpoint = parse_selector(endpoint_id)
+            alias_selector = None
+            if alias is not None:
+                _, alias_kind, canonical_alias = parse_selector(f"@{alias}")
+                if alias_kind != "alias" or canonical_alias != alias:
+                    raise ValueError("invalid alias")
+                alias_selector = f"@{alias}"
+        except (TypeError, ValueError):
+            return _relay_error_text({"error": "invalid current Relay endpoint response"})
+        if (
+            endpoint_kind != "endpoint"
+            or canonical_endpoint != endpoint_id
+            or row.get("runtime") != runtime
+            or row.get("session_ref") != session_ref
+        ):
+            return _relay_error_text({"error": "invalid current Relay endpoint response"})
+        response = {
+            "runtime": runtime,
+            "session_ref": session_ref,
+            "exact_selector": endpoint_id,
+        }
+        if alias_selector is not None:
+            response["alias_selector"] = alias_selector
+        return _json_text(response)
+
+    pallium_relay_address.__annotations__["request_ctx"] = Context | None
+    server.tool()(relay_tool(pallium_relay_address))
 
     @server.tool()
     @relay_tool

@@ -799,7 +799,109 @@ class TestRelayWorkRefTools:
         assert "PALLIUM_THREAD_REF" in text
         request.assert_not_awaited()
 
+@pytest.mark.asyncio
+async def test_relay_address_lifecycle_uses_trusted_current_session(
+    monkeypatch: pytest.MonkeyPatch, asgi_post, asgi_get,
+):
+    bind_asgi_work_refs(monkeypatch, asgi_post, asgi_get)
+    session = (await asgi_post("/relay/turn", {
+        "runtime": _RUNTIME, "session_ref": _SESSION, **_SCOPE,
+    }))["session"]
+    server = create_server()
+
+    async def address():
+        content, _ = await server.call_tool("pallium_relay_address", {})
+        return json.loads(content[0].text)
+
+    expected = {
+        "runtime": _RUNTIME,
+        "session_ref": _SESSION,
+        "exact_selector": session["endpoint_id"],
+    }
+    assert await address() == expected
+
+    await asgi_post("/relay/sessions/name", {
+        "runtime": _RUNTIME,
+        "session_ref": _SESSION,
+        "alias": "relay-dev",
+        **_SCOPE,
+    })
+    expected["alias_selector"] = "@relay-dev"
+    assert await address() == expected
+
+    await asgi_post("/relay/sessions/close", {
+        "runtime": _RUNTIME,
+        "session_ref": _SESSION,
+        **_SCOPE,
+    })
+    expected.pop("alias_selector")
+    assert await address() == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("result", "expected"),
+    [
+        ([], "not registered"),
+        ({}, "did not resolve to one endpoint"),
+        ([{}, {}], "did not resolve to one endpoint"),
+        ([{
+            "endpoint_id": "relay-session-" + ("a" * 32),
+            "runtime": "codex",
+            "session_ref": _SESSION,
+        }], "invalid current Relay endpoint response"),
+        ([{
+            "endpoint_id": "relay-session-" + ("a" * 32),
+            "runtime": _RUNTIME,
+            "session_ref": "different-session",
+        }], "invalid current Relay endpoint response"),
+        ([{
+            "endpoint_id": "not-an-endpoint",
+            "runtime": _RUNTIME,
+            "session_ref": _SESSION,
+        }], "invalid current Relay endpoint response"),
+        ([{
+            "endpoint_id": "relay-session-" + ("a" * 32),
+            "runtime": _RUNTIME,
+            "session_ref": _SESSION,
+            "alias": "Invalid",
+        }], "invalid current Relay endpoint response"),
+    ],
+)
+async def test_relay_address_rejects_missing_ambiguous_or_malformed_endpoint(
+    result, expected,
+):
+    request = AsyncMock(return_value=result)
+    with patch.object(PalliumMcpClient, "relay_recipients", new=request):
+        text = await assert_tool_error(
+            create_server(), "pallium_relay_address", {},
+        )
+    assert expected in text
+    request.assert_awaited_once_with(
+        runtime=_RUNTIME,
+        session_ref=_SESSION,
+        include_inactive=True,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("missing", ["PALLIUM_AGENT_REF", "PALLIUM_THREAD_REF"])
+async def test_relay_address_fails_closed_without_integration_identity(
+    monkeypatch, missing,
+):
+    monkeypatch.delenv(missing, raising=False)
+    with patch.object(
+        PalliumMcpClient, "relay_recipients", new_callable=AsyncMock,
+    ) as request:
+        text = await assert_tool_error(
+            create_server(), "pallium_relay_address", {},
+        )
+    assert missing in text
+    request.assert_not_awaited()
+
+
 _RELAY_SCOPE_TOOL_METHODS = {
+    "pallium_relay_address": ("relay_recipients", {}),
     "pallium_relay_recipients": ("relay_recipients", {}),
     "pallium_relay_work_refs": ("relay_work_refs", {}),
     "pallium_relay_attach_work_ref": ("relay_attach_work_ref", {"scope_ref": "scope", "local_ref": "local"}),
@@ -831,7 +933,7 @@ async def test_configured_relay_scope_accepts_matching_pair(monkeypatch, tool):
     client_method, arguments = _RELAY_SCOPE_TOOL_METHODS[tool]
     http_call = AsyncMock(return_value={})
     with patch.object(PalliumMcpClient, client_method, new=http_call):
-        if tool in {"pallium_relay_recipients", "pallium_relay_status", "pallium_relay_receive"}:
+        if tool in {"pallium_relay_address", "pallium_relay_recipients", "pallium_relay_status", "pallium_relay_receive"}:
             text = await assert_tool_error(create_server(), tool, {**arguments, **_SCOPE})
             assert "Relay scope" not in text
         else:
