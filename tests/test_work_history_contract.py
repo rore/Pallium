@@ -494,6 +494,55 @@ async def test_history_page_finalizes_only_subset_and_terminal_page_is_empty(
     ]
     assert finalize.await_args_list[1].kwargs["items"] == []
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("changed_scope", "initial_scope"),
+    [
+        ("thread_ref", "active-session-a"),
+        ("source_thread_ref", "historical-session-a"),
+    ],
+)
+async def test_history_scope_change_stales_unchanged_page_without_finalizing(
+    monkeypatch: pytest.MonkeyPatch, changed_scope: str, initial_scope: str,
+) -> None:
+    monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:8000")
+    search = AsyncMock(return_value={
+        "results": [
+            {"source_item_id": f"item-{index}", "excerpt": "evidence " * 80}
+            for index in range(50)
+        ],
+        "delivery_attempt_id": "attempt",
+    })
+    finalize = AsyncMock(return_value={"lookup_event_id": "lookup-first"})
+    with (
+        patch.object(PalliumMcpClient, "search_history", new=search),
+        patch.object(PalliumMcpClient, "finalize_historical_delivery", new=finalize),
+    ):
+        server = _create_server()
+        first_args = {
+            "query": "evidence",
+            "limit": 50,
+            "container_ref": "c",
+            "visibility": "private",
+            changed_scope: initial_scope,
+        }
+        first_content, _ = await server.call_tool("pallium_search_history", first_args)
+        first = json.loads(first_content[0].text)
+
+        continuation = {
+            **first_args,
+            "result_offset": first["next_offset"],
+            "result_revision": first["result_revision"],
+            changed_scope: f"{initial_scope}-changed",
+        }
+        stale_content, _ = await server.call_tool(
+            "pallium_search_history", continuation,
+        )
+
+    assert json.loads(stale_content[0].text)["error"] == (
+        "history_result_revision_stale"
+    )
+    assert finalize.await_count == 1
 
 @pytest.mark.asyncio
 async def test_history_retry_mints_fresh_lookup_id_without_changing_page(

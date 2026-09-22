@@ -141,8 +141,13 @@ def test_source_only_does_not_change_default_query(monkeypatch, test_db_url: str
         assert all(r.get("raw_rank") is None for r in default["results"])
 
 
+@pytest.mark.parametrize("runtime_context", [
+    {"turn_kind": "same_thread_continuation", "session_has_sufficient_local_context": True},
+    {"turn_kind": "resumed_session", "session_has_sufficient_local_context": False},
+    {"turn_kind": "new_thread", "session_has_sufficient_local_context": False},
+])
 def test_source_only_explicit_thread_filter_ignores_runtime_relaxation(
-    monkeypatch, test_db_url: str,
+    monkeypatch, test_db_url: str, runtime_context: dict,
 ) -> None:
     with _build_client(monkeypatch, test_db_url) as client:
         thread_a = "chat:hist:thread-a"
@@ -158,10 +163,7 @@ def test_source_only_explicit_thread_filter_ignores_runtime_relaxation(
             "visibility": "private",
             "limit": 5,
             "source_only": True,
-            "runtime_context": {
-                "turn_kind": "same_thread_continuation",
-                "session_has_sufficient_local_context": True,
-            },
+            "runtime_context": runtime_context,
         })
 
         assert response.status_code == 200, response.text

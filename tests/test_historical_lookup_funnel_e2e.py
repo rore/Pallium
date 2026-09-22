@@ -239,6 +239,7 @@ def test_invalid_request_links_fail_uniformly_before_retrieval(
             {**base, "request_source_item_id": forgotten_id},
             {**base, "request_source_item_id": user_id, "container_ref": "chat:other"},
             {**base, "request_source_item_id": user_id, "active_session_ref": "thread:other"},
+            {**base, "request_source_item_id": user_id, "active_session_ref": None},
             {**base, "request_source_item_id": user_id, "visibility": "container"},
             {**base, "request_source_item_id": user_id, "source_only": False},
         ]
@@ -539,22 +540,45 @@ def test_source_filter_is_exact_and_audit_uses_active_requester(monkeypatch, tes
             artifact_kind="message", thread_ref=_SESSION_B,
         )
         source_id = _ingest(
-            client, source_id="source-a", content=_USER, role="user",
+            client, source_id="source-a", content=_USER + " source A", role="user",
             artifact_kind="message", thread_ref=_SESSION_A,
             metadata={"pallium_work_refs": ["feature-session-scope"]},
         )
-        _ingest(
-            client, source_id="source-b", content=_USER, role="user",
+        source_b_id = _ingest(
+            client, source_id="source-b", content=_USER + " source B", role="user",
             artifact_kind="message", thread_ref=_SESSION_B,
+            metadata={"pallium_work_refs": ["feature-session-scope"]},
+        )
+        other_a_id = _ingest(
+            client, source_id="other-a", content=_USER + " other A", role="user",
+            artifact_kind="message", thread_ref=_SESSION_A,
             metadata={"pallium_work_refs": ["other-work"]},
         )
 
         broad = _search_history(
-            client, thread_ref=None,
+            client, thread_ref=None, active_session_ref=_SESSION_B,
+            request_source_item_id=request_id,
         )
-        broad_ids = {row["source_item_id"] for row in broad["results"]}
-        assert source_id in broad_ids
-        assert len(broad_ids) >= 2
+        assert {row["source_item_id"] for row in broad["results"]} == {
+            source_id, source_b_id, other_a_id,
+        }
+
+        work_only = _search_history(
+            client, thread_ref=None, active_session_ref=_SESSION_B,
+            request_source_item_id=request_id,
+            work_refs=["feature-session-scope"],
+        )
+        assert {row["source_item_id"] for row in work_only["results"]} == {
+            source_id, source_b_id,
+        }
+
+        thread_only = _search_history(
+            client, thread_ref=_SESSION_A, active_session_ref=_SESSION_B,
+            request_source_item_id=request_id,
+        )
+        assert {row["source_item_id"] for row in thread_only["results"]} == {
+            source_id, other_a_id,
+        }
 
         exact = _search_history(
             client, thread_ref=_SESSION_A, active_session_ref=_SESSION_B,

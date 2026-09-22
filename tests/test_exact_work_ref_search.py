@@ -529,12 +529,14 @@ def test_exact_http_records_origin_and_expands_with_parent_lookup(
             "trigger_origin": "agent_pull_work",
             "work_refs": ["proj-1"],
             "container_ref": "room",
-            "thread_ref": "active-session",
+            "active_session_ref": "active-session",
             "visibility": "private",
         },
     )
     assert search.status_code == 200, search.text
-    lookup_id = search.json()["lookup_event_id"]
+    search_payload = search.json()
+    assert source_id in {item["source_item_id"] for item in search_payload["results"]}
+    lookup_id = search_payload["lookup_event_id"]
     assert lookup_id
 
     expansion = client.get(

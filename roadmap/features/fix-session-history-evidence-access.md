@@ -106,8 +106,9 @@ consumes runtime-context relaxation; proactive queries are unchanged. Lookup
 lineage and `session_id` use `active_session_ref`, while response grouping
 remains `current`/`other-N`/`unknown` without raw session IDs. Focused
 payload, schema, broad/exact/empty, exact-work, lineage, audit, visibility,
-forgetting, and MCP-to-HTTP lifecycle tests cover the split. Slices 1–4 are
-complete; slices 5–6 remain planned.
+forgetting, and MCP-to-HTTP lifecycle tests cover the split. Delivery slices
+2–4 are implemented; slice 1's regression matrix remains active through the planned
+diagnostics and guidance/replay slices 5–6.
 
 ### 5. Expose bounded History diagnostics
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import httpx
 import pytest
+from sqlalchemy import text
 
 from app.config import AppConfig, ObservabilityConfig
 from app.main import create_app
@@ -152,6 +153,109 @@ async def test_search_history_returns_source_hits_with_stable_ids(asgi_app, clie
     assert top["source_item_id"]  # stable handle for expansion / forget
     assert top["raw_rank"] == 1
 
+
+
+@pytest.mark.asyncio
+async def test_history_methods_use_active_session_for_real_deferred_lifecycle(
+    asgi_app, client: PalliumMcpClient,
+) -> None:
+    """Both MCP history methods keep requester C separate from source A/B."""
+    clients = {}
+    for session in ("session-a", "session-b", "session-c"):
+        scoped = PalliumMcpClient(PalliumContext(
+            base_url="http://testserver", container_ref="test-container",
+            thread_ref=session, visibility="public",
+        ))
+        scoped._post = client._post
+        clients[session] = scoped
+
+    request = await clients["session-c"].ingest(
+        "Please resume the reservation ordering decision.",
+        source_type="chat_message", source_id="request-c",
+        artifact_kind="message", role="user",
+    )
+    request_id = request["source_item_id"]
+    for session, source_id in (("session-a", "source-a"), ("session-b", "source-b")):
+        await clients[session]._post("/items", [{
+            "source_type": "chat_message", "source_id": source_id,
+            "content_type": "text/plain",
+            "content": "reservation ordering shared decision",
+            "artifact_kind": "message", "role": "user",
+            "container_ref": "test-container", "thread_ref": session,
+            "visibility": "public",
+            "metadata": {"pallium_work_refs": ["work-shared"]},
+        }])
+    asgi_app.state.pallium_service.drain_processing_queue(worker_id="real-history-lifecycle")
+
+    active = clients["session-c"]
+    broad = await active.search_history(
+        "reservation ordering shared decision", limit=10,
+        request_source_item_id=request_id,
+    )
+    assert {item["source_id"] for item in broad["results"]} >= {"source-a", "source-b"}
+
+    exact = await active.search_history(
+        "reservation ordering shared decision", limit=10,
+        source_thread_ref="session-a", request_source_item_id=request_id,
+    )
+    assert {item["source_id"] for item in exact["results"]} == {"source-a"}
+    for source_scope in ("", "does-not-exist"):
+        empty = await active.search_history(
+            "reservation ordering shared decision", limit=10,
+            source_thread_ref=source_scope, request_source_item_id=request_id,
+        )
+        assert empty["results"] == []
+
+    deferred = await active.search_history(
+        "reservation ordering shared decision", limit=10,
+        request_source_item_id=request_id, defer_delivery=True,
+    )
+    assert deferred["delivery_attempt_id"]
+    assert deferred["lookup_event_id"] is None
+    delivered = await active.finalize_historical_delivery(
+        deferred["delivery_attempt_id"],
+        items=[{"source_item_id": item["source_item_id"], "role": "search_match"}
+               for item in deferred["results"]],
+    )
+    assert delivered["lookup_event_id"]
+
+    work_broad = await active.search_history_by_work_ref(
+        "work-shared", "reservation ordering shared decision", limit=10,
+        request_source_item_id=request_id,
+    )
+    assert {item["source_id"] for item in work_broad["results"]} == {"source-a", "source-b"}
+    work_exact = await active.search_history_by_work_ref(
+        "work-shared", "reservation ordering shared decision", limit=10,
+        source_thread_ref="session-b", request_source_item_id=request_id,
+    )
+    assert {item["source_id"] for item in work_exact["results"]} == {"source-b"}
+    for source_scope in ("", "does-not-exist"):
+        work_empty = await active.search_history_by_work_ref(
+            "work-shared", "reservation ordering shared decision", limit=10,
+            source_thread_ref=source_scope, request_source_item_id=request_id,
+        )
+        assert work_empty["results"] == []
+
+    work_deferred = await active.search_history_by_work_ref(
+        "work-shared", "reservation ordering shared decision", limit=10,
+        request_source_item_id=request_id, defer_delivery=True,
+    )
+    finalized = await active.finalize_historical_delivery(
+        work_deferred["delivery_attempt_id"],
+        items=[{"source_item_id": item["source_item_id"], "role": "search_match"}
+               for item in work_deferred["results"]],
+    )
+    assert finalized["lookup_event_id"]
+
+    storage = asgi_app.state.pallium_service._storage
+    with storage._engine.connect() as connection:
+        for lookup_id in (delivered["lookup_event_id"], finalized["lookup_event_id"]):
+            row = connection.execute(text(
+                "SELECT session_id, request_source_item_id "
+                "FROM historical_lookup_reuse_event WHERE id = :id"
+            ), {"id": lookup_id}).mappings().one()
+            assert row["session_id"] == "session-c"
+            assert row["request_source_item_id"] == request_id
 
 @pytest.mark.asyncio
 async def test_search_history_omits_unset_optional_filters(client: PalliumMcpClient) -> None:
