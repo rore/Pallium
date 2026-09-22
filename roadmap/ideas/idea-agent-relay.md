@@ -78,8 +78,9 @@ integration or external system; Pallium must not infer one semantically.
 
 The dated R0/R1 results below preserve historical decisions. Their runtime-wide
 addressing references are superseded by the current contract above. Current next
-work is activation capabilities, delivery traces, and parallel dependency-workflow
-validation. Associations and agent guidance shipped in PRs #157/#158.
+work is wake-first reliability and protected behavioral requirements. The workflow
+example catalog is paused until public documentation is prioritized. Associations
+and agent guidance shipped in PRs #157/#158.
 
 ### R0 — Contract
 
