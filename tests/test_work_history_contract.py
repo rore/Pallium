@@ -651,3 +651,54 @@ async def test_equal_length_visible_change_stales_without_finalizing(
 
     assert json.loads(stale_content[0].text)["error_kind"] == "stale_result_revision"
     assert finalize.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_exact_client_separates_requester_and_source_scope() -> None:
+    client = PalliumMcpClient(
+        PalliumContext(
+            base_url="http://testserver",
+            container_ref="git:example/repo",
+            thread_ref="active-session",
+            visibility="private",
+        )
+    )
+    captured: dict = {}
+
+    async def capture(path, payload):
+        captured["payload"] = payload
+        return {"results": []}
+
+    client._post = capture
+    await client.search_history_by_work_ref(
+        "proj-42", "evidence", source_thread_ref="historical-session",
+    )
+    assert captured["payload"]["active_session_ref"] == "active-session"
+    assert captured["payload"]["thread_ref"] == "historical-session"
+    assert captured["payload"]["work_refs"] == ["proj-42"]
+
+
+@pytest.mark.asyncio
+async def test_history_tool_schema_and_forwarding_expose_source_thread_filter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:8000")
+    server = _create_server()
+    tools = await server.list_tools()
+    for name in ("pallium_search_history", "pallium_search_history_by_work_ref"):
+        assert "source_thread_ref" in next(t for t in tools if t.name == name).inputSchema["properties"]
+
+    with patch(
+        "app.mcp.client.PalliumMcpClient.search_history",
+        new=AsyncMock(return_value={"results": [], "delivery_attempt_id": "attempt"}),
+    ) as search:
+        await server.call_tool(
+            "pallium_search_history",
+            {
+                "query": "evidence",
+                "source_thread_ref": "historical-session",
+                "container_ref": "c",
+                "visibility": "private",
+            },
+        )
+    assert search.await_args.kwargs["source_thread_ref"] == "historical-session"

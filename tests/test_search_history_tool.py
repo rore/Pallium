@@ -72,6 +72,42 @@ async def test_search_history_sends_source_only_and_agent_pull(client: PalliumMc
 
 
 @pytest.mark.asyncio
+async def test_search_history_separates_active_requester_from_source_scope(
+    client: PalliumMcpClient,
+) -> None:
+    captured: dict = {}
+
+    async def capture(path, payload):
+        captured["payload"] = payload
+        return {"results": []}
+
+    client._post = capture
+    await client.search_history("reservation ordering")
+    assert captured["payload"]["active_session_ref"] == client._ctx.thread_ref
+    assert "thread_ref" not in captured["payload"]
+
+    await client.search_history("reservation ordering", source_thread_ref="source-thread")
+    assert captured["payload"]["active_session_ref"] == client._ctx.thread_ref
+    assert captured["payload"]["thread_ref"] == "source-thread"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source_thread_ref", ["", "does-not-exist"])
+async def test_search_history_preserves_explicit_empty_or_unknown_source_scope(
+    client: PalliumMcpClient, source_thread_ref: str,
+) -> None:
+    captured: dict = {}
+
+    async def capture(path, payload):
+        captured["payload"] = payload
+        return {"results": []}
+
+    client._post = capture
+    await client.search_history("reservation ordering", source_thread_ref=source_thread_ref)
+    assert captured["payload"]["active_session_ref"] == client._ctx.thread_ref
+    assert captured["payload"]["thread_ref"] == source_thread_ref
+
+@pytest.mark.asyncio
 async def test_search_history_sends_exact_request_source_id(
     client: PalliumMcpClient,
 ) -> None:
