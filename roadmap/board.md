@@ -3,6 +3,7 @@
 - add-protected-behavioral-requirements-regression-suite
 
 # Parallel · Session History
+- fix-session-history-evidence-access
 - improve-session-history-search-quality
 - investigate-history-navigation-and-on-demand-compression
 
