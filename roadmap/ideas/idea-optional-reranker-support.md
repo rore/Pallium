@@ -1,11 +1,19 @@
 ---
 id: idea-optional-reranker-support
 title: Optional reranker support
-status: queued
+status: superseded
 priority: low
 commitment: uncommitted
 milestone: Idea
+resolved_by: improve-session-history-search-quality
 ---
+
+> **Superseded 2026-09-22 -> `improve-session-history-search-quality`.**
+> The local cross-encoder/late-interaction exploration makes reranking concrete
+> enough for a candidate-preserving experiment, but does not justify a separate
+> implementation item. The committed search-quality investigation now owns the
+> preflight, fixed-candidate comparison, downstream gate, and any later promotion
+> of the smallest optional reranking seam.
 
 ## Summary
 

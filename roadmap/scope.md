@@ -100,11 +100,14 @@ followed by the broader access/representation investigation:
    tools in the generated Codex Relay profile. PR #166 shipped the independently
    accepted paired runner. PR #173 closed a candidate-study preflight without a
    comparison; the current narrow follow-up is prospective review of equivalent
-   result groups while preserving provenance, dates, and expansion paths. Ranking
-   and downstream benefit remain unvalidated; do not restart completed studies.
-   Exact-work search stays exact.
+   result groups while preserving provenance, dates, and expansion paths. After
+   that review, a zero-model candidate-availability preflight may earn a fixed-
+   candidate comparison of current RRF against one local cross-encoder and one
+   late-interaction scorer. No model, dependency, index, or search-engine migration
+   is committed. Ranking and downstream benefit remain unvalidated; do not restart
+   completed studies. Exact-work search stays exact.
 5. `investigate-history-navigation-and-on-demand-compression` — broader access
-   and representation investigation, queued behind that narrow evidence question.
+   and representation investigation, queued behind that ordered search-quality work.
    Start from the shipped #169 presentation, not the old ungrouped baseline.
 
 Primary KPI: fraction of

@@ -42,7 +42,6 @@
 - fix-work-resumption-benchmark-scenario-count-drift
 - fix-slow-suite-contract-drift
 - idea-operational-scale-hardening
-- idea-optional-reranker-support
 - idea-document-schema-evolution-strategy
 - idea-multi-vector-long-text-embedding
 
@@ -167,6 +166,7 @@
 - build-structured-retrieval-foundation
 
 # Superseded
+- idea-optional-reranker-support
 - idea-raw-duplicate-ingestion-and-result-diversity
 - add-interest-memory-kind
 - idea-measure-pull-filtering-accuracy-and-cost

@@ -217,6 +217,57 @@ retrieval/guidance findings. Reuse the shipped #169 presentation and #166 runner
 Do not restart the failed frozen-cohort studies or treat a 4,000-character budget
 as validated. This reconciliation does not authorize another paid study.
 
+### Next bounded hypothesis: candidate-preserving local reranking
+
+A 2026-09-22 local, embedded, accuracy-first technology exploration makes the
+existing optional-reranker idea concrete enough to test, but does not justify a
+production model, dependency, index, or search-engine migration. After the
+prospective equivalent-result review above, ask one narrower question: when the
+necessary evidence is already present in a fixed current candidate set but RRF
+ranks it poorly, can a local second-stage scorer materially improve the agent-visible
+top results?
+
+Keep the experiment ordered and failure-class specific:
+
+1. Run a zero-model-call candidate-availability preflight over diverse,
+   task-independent cases. Freeze one lexical/vector candidate set and report
+   necessary-evidence presence by depth. The caller limit changes provider candidate
+   generation today, so a production top-10 response and a separately generated
+   top-50 response are not a ranking-only comparison.
+2. Only if enough failures are rank-only, compare the current RRF order with exactly
+   one local cross-encoder and one late-interaction/MaxSim scorer over identical
+   query-document pairs. Sentence Transformers 6 is a plausible no-index experiment
+   harness; keep it out of production dependencies during evaluation.
+3. Only if the fixed-candidate comparison improves top-K evidence quality without
+   harming no-answer, scope, currentness, or qualifier behavior, use the qualified
+   paired runner to measure downstream task effect and local CPU latency, cold start,
+   memory, and model size under a preregistered budget.
+4. Promote the smallest optional reranking seam only after those gates pass. Consider
+   PyLate/FastPLAID later only if indexed late interaction is then warranted. Treat
+   LanceDB as a separate physical-architecture simplification question and Tantivy
+   as relevant only to demonstrated lexical candidate-recovery failures. Do not
+   prioritize generic vector-store replacement for ranking quality.
+
+Route results by failure class: missing evidence in the frozen window is candidate
+recovery or query repair, insufficient visible text is presentation/navigation, and
+present sufficient evidence ranked too low is the reranking case. Exact-work and
+visibility filters stay ahead of reranking; reranking never broadens scope. This is
+also distinct from `idea-multi-vector-long-text-embedding`, which addresses tail
+truncation by chunking long texts rather than token-level late interaction.
+
+The exploration cited LateOn's 57.22 versus DenseOn's 56.20 mean NDCG@10 on
+BEIR as directional evidence for late interaction, not evidence about Pallium.
+Any indexed follow-up must also measure the larger token-level index and indexing-
+time memory cost rather than treating retrieval accuracy as the only constraint.
+
+Current external starting points, not selected dependencies:
+Sentence Transformers [retrieve-and-rerank](https://www.sbert.net/examples/sentence_transformer/applications/retrieve_rerank/README.html)
+and [MultiVectorEncoder](https://www.sbert.net/docs/package_reference/multi_vector_encoder/model.html),
+[LateOn evidence](https://huggingface.co/blog/lightonai/denseon-lateon),
+[PyLate/FastPLAID](https://github.com/lightonai/pylate),
+[LanceDB](https://github.com/lancedb/lancedb), and
+[Tantivy](https://github.com/quickwit-oss/tantivy).
+
 ## Exact-work scope contract
 
 Exact-work search must remain exact. Never silently broaden, mix outside-work hits,
