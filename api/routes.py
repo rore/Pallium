@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import json
 import logging
 import time
@@ -9,6 +10,7 @@ from typing import Any, Callable
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import Response
+from pydantic import ValidationError
 
 from api.schemas import (
     RelayAckRequest,
@@ -37,6 +39,9 @@ from api.schemas import (
     ForgetSourceRequest,
     ForgetSourceResponse,
     HistoricalGuidanceUpdateResponse,
+    HistoryDiagnosticCreateRequest,
+    HistoryDiagnosticReadRequest,
+    HistoryDiagnosticResponse,
     HistoricalDeliveryRequest,
     SourceContextItemResponse,
     SourceContextResponse,
@@ -71,9 +76,11 @@ from api.schemas import (
     SupersedeMemoryResponse,
 )
 from core.claude_wake import ClaudeWakeRegistry
-from core.errors import ImmediateTransactionBusyError, LookupRequestLinkError, SupersessionConflictError
+from core.container_ref import canonicalize_container_ref, validate_explicit_container_ref
+from core.history_presentation import compact_history
+from core.errors import HistoryDiagnosticConflictError, HistoryDiagnosticCorruptError, ImmediateTransactionBusyError, LookupRequestLinkError, SupersessionConflictError
 from core.relay import RELAY_MESSAGE_MAX_CHARS, RelayConflictError, RelayNotFoundError, RelayService, RelayUnavailableError
-from core.models import FusionStageTrace, FusionTraceHit, InjectableBlock, QueryResultItem, QueryRuntimeContext, QueryTrace, RetrievalStageTrace, RetrievalTraceHit
+from core.models import FusionStageTrace, FusionTraceHit, InjectableBlock, QueryResultItem, QueryRuntimeContext, QueryTrace, RetrievalStageTrace, RetrievalTraceHit, new_id, utc_now
 from core.service import PalliumService, _sanitize_work_ref_metadata
 from core.visibility import QueryVisibilityTrace, Visibility, VisibilityExclusion
 
@@ -293,6 +300,274 @@ def _serialize_trace(trace: QueryTrace) -> dict[str, object]:
     }
 
 
+def _validate_history_diagnostic_payload(model, payload: object):
+    try:
+        return model.model_validate(payload)
+    except ValidationError:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "invalid_request"},
+        ) from None
+
+
+def _history_diagnostic_filters(
+    request: HistoryDiagnosticCreateRequest,
+) -> dict[str, object]:
+    filters = request.source_filters
+    for value in (
+        filters.source_type,
+        filters.role,
+        filters.actor_ref,
+        filters.source_thread_ref,
+        filters.request_source_item_id,
+    ):
+        if value is not None and value != value.strip():
+            raise ValueError("diagnostic filters must not have outer whitespace")
+    normalized_work_refs = _normalize_query_work_refs(filters.work_refs)
+    if len(normalized_work_refs) != len(filters.work_refs):
+        raise ValueError("invalid diagnostic work reference")
+    return {
+        "source_type": filters.source_type,
+        "role": filters.role,
+        "artifact_kind": filters.artifact_kind,
+        "actor_ref": filters.actor_ref,
+        "thread_ref": filters.source_thread_ref,
+        "work_refs": list(dict.fromkeys(normalized_work_refs)),
+        "request_source_item_id": filters.request_source_item_id,
+        "container_ref": validate_explicit_container_ref(
+            request.requester.container_ref
+        ),
+    }
+
+
+def _history_diagnostic_fingerprint(
+    request: HistoryDiagnosticCreateRequest,
+    saved_filters: dict[str, object],
+) -> str:
+    canonical = {
+        "text": request.text,
+        "limit": request.limit,
+        "filters": saved_filters,
+    }
+    encoded = json.dumps(
+        canonical,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _filter_presence(filters) -> dict[str, bool]:
+    if filters is None:
+        return {}
+    return {
+        "source_type": filters.source_type is not None,
+        "role": filters.role is not None,
+        "artifact_kind": filters.artifact_kind is not None,
+        "container_ref": filters.container_ref is not None,
+        "thread_ref": filters.thread_ref is not None,
+        "actor_ref": filters.actor_ref is not None,
+        "work_refs": bool(filters.work_refs),
+    }
+
+
+def _source_item_id_from_result_id(result_id: str) -> str | None:
+    prefix = "source_item:"
+    return result_id[len(prefix):] if result_id.startswith(prefix) else None
+
+
+def _diagnostic_candidate(
+    source_item_id: str,
+    rank: int,
+    score: float | int | None,
+    match_channel: str | None,
+) -> dict[str, object]:
+    candidate: dict[str, object] = {
+        "source_item_id": source_item_id[:512],
+        "rank": rank,
+    }
+    if score is not None:
+        candidate["score"] = score
+    if match_channel is not None:
+        candidate["match_channel"] = match_channel[:32]
+    return candidate
+
+
+def _build_history_diagnostic_snapshot(
+    request: HistoryDiagnosticCreateRequest,
+    result,
+    packaging: dict[str, object],
+) -> dict[str, object]:
+    trace = result.trace
+    if trace is None:
+        raise HistoryDiagnosticCorruptError("diagnostic query did not produce a trace")
+
+    stages: list[dict[str, object]] = []
+    for stage in trace.stages:
+        raw_candidates = [
+            hit for hit in stage.candidate_hits
+            if hit.target_kind == "source_item"
+        ]
+        candidates = [
+            _diagnostic_candidate(
+                hit.target_id,
+                rank,
+                hit.score,
+                "vector" if "vector" in stage.stage_name else "lexical",
+            )
+            for rank, hit in enumerate(raw_candidates[:200], start=1)
+        ]
+        stages.append({
+            "name": stage.stage_name[:64],
+            "available": not stage.stage_name.endswith("_unavailable"),
+            "candidate_count": stage.candidate_hits_considered,
+            "selected_count": len(stage.selected_hits),
+            "candidates": candidates,
+            "omitted_count": max(0, len(raw_candidates) - len(candidates)),
+        })
+
+    fusion_candidates: list[dict[str, object]] = []
+    if trace.fusion_trace is not None:
+        for hit in trace.fusion_trace.hits[:200]:
+            source_item_id = _source_item_id_from_result_id(hit.result_id)
+            if source_item_id is None:
+                continue
+            fusion_candidates.append(_diagnostic_candidate(
+                source_item_id,
+                hit.rrf_rank,
+                hit.rrf_score,
+                hit.retrieval_source,
+            ))
+
+    ranked_results = [
+        _diagnostic_candidate(
+            item.source_item_id,
+            item.raw_rank or rank,
+            item.score,
+            item.retrieval_source,
+        )
+        for rank, item in enumerate(result.results[:50], start=1)
+        if item.source_item_id is not None
+    ]
+    visibility_exclusions = []
+    if trace.visibility is not None:
+        visibility_exclusions = [
+            {"reason": item.reason[:64], "count": item.count}
+            for item in trace.visibility.excluded_candidates
+        ]
+    routing = getattr(result, "_source_only_diagnostics", {})
+    requested_limit = request.limit
+    returned = len(ranked_results)
+    scope = {
+        "requested": _filter_presence(trace.requested_filters),
+        "effective": _filter_presence(trace.filters),
+    }
+    stage_names = {stage["name"] for stage in stages}
+    return {
+        "outcome": "valid_empty" if not ranked_results else "ok",
+        "trace": {
+            "scope": scope,
+            "capture_index": {
+                "bounded": True,
+                "status": "not_observed",
+                "authorized_source_count": None,
+                "lexical_available": any(
+                    "lexical" in name and not name.endswith("_unavailable")
+                    for name in stage_names
+                ),
+                "vector_available": any(
+                    "vector" in name and not name.endswith("_unavailable")
+                    for name in stage_names
+                ),
+            },
+            "stages": stages,
+            "fusion": {
+                "candidate_count": (
+                    trace.fusion_trace.fused_candidate_count
+                    if trace.fusion_trace is not None
+                    else 0
+                ),
+                "selected_count": (
+                    trace.fusion_trace.selected_count
+                    if trace.fusion_trace is not None
+                    else 0
+                ),
+                "candidates": fusion_candidates,
+                "omitted_count": max(
+                    0,
+                    (
+                        trace.fusion_trace.fused_candidate_count
+                        if trace.fusion_trace is not None
+                        else 0
+                    ) - len(fusion_candidates),
+                ),
+            },
+            "exclusions": [
+                *visibility_exclusions,
+                {
+                    "reason": "request_identity",
+                    "count": int(routing.get("request_identity_excluded_count", 0)),
+                },
+                {
+                    "reason": "duplicate",
+                    "count": int(routing.get("duplicate_count", 0)),
+                },
+            ],
+            "ranking": {
+                "results": ranked_results,
+                "omitted_count": int(routing.get("final_limit_omitted", 0)),
+            },
+            "packaging": {
+                "observed_at": "creation",
+                "budget": int(packaging.get("budget", 0)),
+                "retained_final_ranks": list(
+                    packaging.get("retained_final_ranks", [])
+                ),
+                "omitted_count": int(packaging.get("omitted_count", 0)),
+                "fit_status": packaging.get("fit_status", "fit"),
+            },
+            "query_limit": {
+                "requested": requested_limit,
+                "returned": returned,
+                "omitted_count": int(routing.get(
+                    "final_limit_omitted",
+                    max(0, len(result.results) - returned),
+                )),
+            },
+        },
+    }
+
+def _encode_history_diagnostic_snapshot(snapshot: dict[str, object]) -> str:
+    """Fit the versioned snapshot to its persisted UTF-8 byte ceiling."""
+    def encode() -> str:
+        return json.dumps(
+            snapshot,
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+
+    encoded = encode()
+    trace = snapshot.get("trace")
+    if not isinstance(trace, dict):
+        raise HistoryDiagnosticCorruptError("invalid diagnostic trace")
+    sections = [
+        stage for stage in trace.get("stages", [])
+        if isinstance(stage, dict) and isinstance(stage.get("candidates"), list)
+    ]
+    fusion = trace.get("fusion")
+    if isinstance(fusion, dict) and isinstance(fusion.get("candidates"), list):
+        sections.append(fusion)
+    while len(encoded.encode("utf-8")) > 65_536:
+        section = max(sections, key=lambda item: len(item["candidates"]), default=None)
+        if section is None or not section["candidates"]:
+            raise HistoryDiagnosticCorruptError("diagnostic snapshot exceeds byte limit")
+        section["candidates"].pop()
+        section["omitted_count"] = int(section.get("omitted_count", 0)) + 1
+        encoded = encode()
+    return encoded
 logger = logging.getLogger(__name__)
 _CLAUDE_WAKE_BODY_MAX_BYTES = 16_384
 
@@ -939,6 +1214,221 @@ def create_router(
             delivery_attempt_id=delivery_attempt_id,
         )
 
+    @router.post(
+        "/history/diagnostics",
+        response_model=HistoryDiagnosticResponse,
+        status_code=201,
+    )
+    def create_history_diagnostic(
+        payload: dict[str, Any],
+        response: Response,
+    ) -> HistoryDiagnosticResponse:
+        request = _validate_history_diagnostic_payload(
+            HistoryDiagnosticCreateRequest, payload
+        )
+        requester = request.requester
+        try:
+            if requester.active_session_ref != requester.active_session_ref.strip():
+                raise ValueError("invalid active session")
+            saved_filters = _history_diagnostic_filters(request)
+        except ValueError:
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "invalid_request"},
+            ) from None
+        container_ref = saved_filters["container_ref"]
+        fingerprint = _history_diagnostic_fingerprint(request, saved_filters)
+        filters = request.source_filters
+        work_refs = tuple(saved_filters["work_refs"])
+        try:
+            existing = service.read_history_diagnostic_by_request(
+                container_ref=container_ref,
+                active_session_ref=requester.active_session_ref,
+                visibility=requester.visibility,
+                idempotency_key=request.idempotency_key,
+                request_fingerprint=fingerprint,
+            )
+        except HistoryDiagnosticConflictError:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "idempotency_conflict"},
+            ) from None
+        except HistoryDiagnosticCorruptError:
+            raise HTTPException(
+                status_code=500,
+                detail={"code": "diagnostic_corrupt"},
+            ) from None
+        except Exception:
+            logger.exception("history diagnostic preflight failed")
+            raise HTTPException(
+                status_code=503,
+                detail={"code": "diagnostic_persistence_failed"},
+            ) from None
+        if existing is not None:
+            response.status_code = 200
+            return HistoryDiagnosticResponse.model_validate(existing)
+
+        try:
+            query_result = service.query(
+                request.text,
+                request.limit,
+                source_type=filters.source_type,
+                role=filters.role,
+                artifact_kind=filters.artifact_kind,
+                container_ref=container_ref,
+                thread_ref=filters.source_thread_ref,
+                active_session_ref=requester.active_session_ref,
+                actor_ref=filters.actor_ref,
+                request_source_item_id=filters.request_source_item_id,
+                work_refs=work_refs,
+                visibility=requester.visibility,
+                include_trace=True,
+                trigger_origin="agent_pull",
+                source_only=True,
+                record_history_lookup=False,
+            )
+            packed = compact_history(
+                {
+                    "results": [
+                        _serialize_result(item) for item in query_result.results
+                    ],
+                    "decision_reason": query_result.decision_reason,
+                    "lookup_event_id": "0" * 36,
+                },
+                request.text,
+                request.limit,
+                container_ref,
+                requester.active_session_ref,
+                include_packaging_observation=True,
+            )
+            packaging = packed.get("packaging_observation")
+            if not isinstance(packaging, dict):
+                raise HistoryDiagnosticCorruptError(
+                    "diagnostic packaging observation unavailable"
+                )
+            snapshot = _build_history_diagnostic_snapshot(
+                request, query_result, packaging
+            )
+            snapshot_json = _encode_history_diagnostic_snapshot(snapshot)
+            saved_filters_json = json.dumps(
+                saved_filters,
+                ensure_ascii=False,
+                allow_nan=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+        except LookupRequestLinkError:
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "invalid_request"},
+            ) from None
+        except HistoryDiagnosticCorruptError:
+            raise HTTPException(
+                status_code=500,
+                detail={"code": "diagnostic_failed"},
+            ) from None
+        except Exception:
+            logger.exception("history diagnostic capture failed")
+            raise HTTPException(
+                status_code=500,
+                detail={"code": "diagnostic_failed"},
+            ) from None
+
+        diagnostic_id = new_id()
+        try:
+            stored = service.save_history_diagnostic({
+                "id": diagnostic_id,
+                "created_at": utc_now(),
+                "container_ref": container_ref,
+                "active_session_ref": requester.active_session_ref,
+                "visibility": requester.visibility,
+                "idempotency_key": request.idempotency_key,
+                "request_fingerprint": fingerprint,
+                "saved_filters_json": saved_filters_json,
+                "schema_version": 1,
+                "snapshot_json": snapshot_json,
+            })
+        except HistoryDiagnosticConflictError:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "idempotency_conflict"},
+            ) from None
+        except HistoryDiagnosticCorruptError:
+            raise HTTPException(
+                status_code=500,
+                detail={"code": "diagnostic_failed"},
+            ) from None
+        except Exception:
+            logger.exception("history diagnostic persistence failed")
+            raise HTTPException(
+                status_code=503,
+                detail={"code": "diagnostic_persistence_failed"},
+            ) from None
+
+        response.status_code = 201 if stored["id"] == diagnostic_id else 200
+        try:
+            safe = service.read_history_diagnostic(
+                stored["id"],
+                container_ref=container_ref,
+                active_session_ref=requester.active_session_ref,
+                visibility=requester.visibility,
+            )
+        except HistoryDiagnosticCorruptError:
+            raise HTTPException(
+                status_code=500,
+                detail={"code": "diagnostic_corrupt"},
+            ) from None
+        if safe is None:
+            raise HTTPException(
+                status_code=500,
+                detail={"code": "diagnostic_failed"},
+            )
+        return HistoryDiagnosticResponse.model_validate(safe)
+
+    @router.post(
+        "/history/diagnostics/{diagnostic_id}/read",
+        response_model=HistoryDiagnosticResponse,
+    )
+    def read_history_diagnostic(
+        diagnostic_id: str,
+        payload: dict[str, Any],
+    ) -> HistoryDiagnosticResponse:
+        request = _validate_history_diagnostic_payload(
+            HistoryDiagnosticReadRequest, payload
+        )
+        requester = request.requester
+        try:
+            container_ref = validate_explicit_container_ref(requester.container_ref)
+            if requester.active_session_ref != requester.active_session_ref.strip():
+                raise ValueError("invalid active session")
+        except ValueError:
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "invalid_request"},
+            ) from None
+        if not diagnostic_id or len(diagnostic_id) > 512:
+            raise HTTPException(
+                status_code=404,
+                detail={"code": "diagnostic_unavailable"},
+            )
+        try:
+            safe = service.read_history_diagnostic(
+                diagnostic_id,
+                container_ref=container_ref,
+                active_session_ref=requester.active_session_ref,
+                visibility=requester.visibility,
+            )
+        except HistoryDiagnosticCorruptError:
+            raise HTTPException(
+                status_code=500,
+                detail={"code": "diagnostic_corrupt"},
+            ) from None
+        if safe is None:
+            raise HTTPException(
+                status_code=404,
+                detail={"code": "diagnostic_unavailable"},
+            )
+        return HistoryDiagnosticResponse.model_validate(safe)
     @router.post("/query/debug", response_model=QueryDebugResponse)
     def query_items_debug(request: QueryRequest) -> QueryDebugResponse:
         work_refs = _validated_query_work_refs(request)

@@ -746,6 +746,23 @@ class StorageProvider(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    @abstractmethod
+    def create_history_diagnostic(self, row: dict[str, Any]) -> dict[str, Any]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_history_diagnostic(
+        self, diagnostic_id: str, *, container_ref: str,
+        active_session_ref: str, visibility: str,
+    ) -> dict[str, Any] | None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_history_diagnostic_by_request(
+        self, *, container_ref: str, active_session_ref: str,
+        visibility: str, idempotency_key: str,
+    ) -> dict[str, Any] | None:
+        raise NotImplementedError
     def write_historical_lookup_label_row(self, row: dict[str, Any]) -> None:
         """Append one per-rater rung label for a reuse event (append-only)."""
         raise NotImplementedError

@@ -15,7 +15,7 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session, aliased, sessionmaker
 from sqlalchemy.exc import IntegrityError
 
-from core.errors import SupersessionConflictError, is_transient_error
+from core.errors import HistoryDiagnosticConflictError, HistoryDiagnosticCorruptError, SupersessionConflictError, is_transient_error
 from core.contracts import ProcessResult
 from core.models import EvidenceReference, IndexEntry, MemoryFeedback, MemoryFlag, MemoryObject, Relation, SourceItem, utc_now
 from core.turn_inference import ThreadStats
@@ -31,6 +31,7 @@ from storage.sqlite_schema import (
     IndexEntryRecord,
     HistoricalLookupReuseEventRecord,
     HistoricalLookupReuseLabelRecord,
+    HistoryDiagnosticRecord,
     MaintenanceStateRecord,
     MemoryFeedbackRecord,
     MemoryFlagRecord,
@@ -1732,6 +1733,81 @@ class SQLiteStorageProvider(
                 "exposed_json": record.exposed_json,
             }
 
+    @staticmethod
+    def _validate_history_diagnostic(row: dict[str, Any]) -> None:
+        if row.get("schema_version") != 1:
+            raise HistoryDiagnosticCorruptError("unsupported diagnostic schema version")
+        try:
+            snapshot = json.loads(row["snapshot_json"])
+            filters = json.loads(row["saved_filters_json"])
+        except (KeyError, TypeError, json.JSONDecodeError) as exc:
+            raise HistoryDiagnosticCorruptError("invalid diagnostic JSON") from exc
+        if not isinstance(snapshot, dict) or not isinstance(filters, dict):
+            raise HistoryDiagnosticCorruptError("diagnostic JSON must contain objects")
+        if len(row["snapshot_json"].encode("utf-8")) > 65536:
+            raise HistoryDiagnosticCorruptError("diagnostic snapshot exceeds 65536 bytes")
+
+    @staticmethod
+    def _history_diagnostic_dict(record: HistoryDiagnosticRecord) -> dict[str, Any]:
+        return {name: getattr(record, name) for name in (
+            "id", "created_at", "container_ref", "active_session_ref", "visibility",
+            "idempotency_key", "request_fingerprint", "saved_filters_json",
+            "schema_version", "snapshot_json",
+        )}
+
+    def create_history_diagnostic(self, row: dict[str, Any]) -> dict[str, Any]:
+        self._validate_history_diagnostic(row)
+
+        def commit(session: Session) -> dict[str, Any]:
+            scope = {key: row[key] for key in (
+                "container_ref", "active_session_ref", "visibility", "idempotency_key",
+            )}
+            existing = session.scalar(select(HistoryDiagnosticRecord).filter_by(**scope))
+            if existing is not None:
+                if existing.request_fingerprint != row["request_fingerprint"]:
+                    raise HistoryDiagnosticConflictError("diagnostic idempotency conflict")
+                return self._history_diagnostic_dict(existing)
+            record = HistoryDiagnosticRecord(**row)
+            session.add(record)
+            session.flush()
+            return self._history_diagnostic_dict(record)
+
+        try:
+            return self._with_retry(commit)
+        except IntegrityError:
+            return self._with_retry(commit)
+
+    def get_history_diagnostic(
+        self, diagnostic_id: str, *, container_ref: str,
+        active_session_ref: str, visibility: str,
+    ) -> dict[str, Any] | None:
+        with self._session_factory() as session:
+            record = session.scalar(select(HistoryDiagnosticRecord).filter_by(
+                id=diagnostic_id, container_ref=container_ref,
+                active_session_ref=active_session_ref, visibility=visibility,
+            ))
+            if record is None:
+                return None
+            row = self._history_diagnostic_dict(record)
+        self._validate_history_diagnostic(row)
+        return row
+
+    def get_history_diagnostic_by_request(
+        self, *, container_ref: str, active_session_ref: str,
+        visibility: str, idempotency_key: str,
+    ) -> dict[str, Any] | None:
+        with self._session_factory() as session:
+            record = session.scalar(select(HistoryDiagnosticRecord).filter_by(
+                container_ref=container_ref,
+                active_session_ref=active_session_ref,
+                visibility=visibility,
+                idempotency_key=idempotency_key,
+            ))
+            if record is None:
+                return None
+            row = self._history_diagnostic_dict(record)
+        self._validate_history_diagnostic(row)
+        return row
     def finalize_historical_lookup_delivery(self, attempt_id: str, payload: dict[str, Any]) -> str:
         final_id = str(uuid.uuid5(uuid.NAMESPACE_URL, "pallium:historical-delivery:" + attempt_id))
 

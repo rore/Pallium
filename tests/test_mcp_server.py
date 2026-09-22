@@ -1449,3 +1449,48 @@ async def test_history_diagnostic_tools_are_narrow_and_use_trusted_requester() -
     assert "pallium_create_history_diagnostic" in tools
     assert "pallium_read_history_diagnostic" in tools
     assert "raw_query" not in tools["pallium_create_history_diagnostic"].description
+
+
+@pytest.mark.asyncio
+async def test_history_diagnostic_tool_keeps_default_multi_candidate_trace_useful(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:8000")
+    candidates = [
+        {"source_item_id": f"source-{index}", "rank": index + 1, "score": 0.5, "match_channel": "lexical"}
+        for index in range(5)
+    ]
+    diagnostic = {
+        "diagnostic_id": "diag-1",
+        "outcome": "ok",
+        "trace": {
+            "scope": {"requested": {}, "effective": {}},
+            "capture_index": {"bounded": True},
+            "stages": [{"name": "lexical", "candidates": candidates, "omitted_count": 0}],
+            "fusion": {"candidates": candidates, "omitted_count": 0},
+            "exclusions": [],
+            "ranking": {"results": candidates, "omitted_count": 0},
+            "packaging": {"retained_final_ranks": [1, 2, 3, 4, 5]},
+            "query_limit": {"requested": 5, "returned": 5, "omitted_count": 0},
+            "padding": "界😀" * 400,
+        },
+    }
+    with patch(
+        "app.mcp.client.PalliumMcpClient.create_history_diagnostic",
+        new=AsyncMock(return_value=diagnostic),
+    ):
+        content, _ = await create_server().call_tool(
+            "pallium_create_history_diagnostic",
+            {
+                "query": "history",
+                "idempotency_key": "multi",
+                "container_ref": "git:example/repo",
+                "thread_ref": "active-session",
+                "visibility": "private",
+            },
+        )
+    payload = json.loads(content[0].text)
+    assert payload["diagnostic_id"] == "diag-1"
+    assert payload["trace"]["ranking"]["results"]
+    assert payload.get("error_kind") != "diagnostic_response_exceeds_budget"
+    assert len(content[0].text) <= 12_000

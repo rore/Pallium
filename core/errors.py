@@ -37,6 +37,14 @@ class LookupRequestLinkError(ValueError):
     """A supplied lookup-to-request telemetry link is invalid."""
 
 
+class HistoryDiagnosticConflictError(Exception):
+    """A diagnostic idempotency key was reused with different input."""
+
+
+class HistoryDiagnosticCorruptError(ValueError):
+    """A persisted History diagnostic snapshot is invalid or unsupported."""
+
+
 class SupersessionConflictError(Exception):
     """Raised by W3 storage methods when a supersession or correction is
     attempted on a memory that is not currently active.

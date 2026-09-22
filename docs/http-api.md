@@ -402,6 +402,16 @@ Use this endpoint when you need to understand:
 - which candidates were excluded by visibility rules
 - what lexical matches were considered
 
+## POST /history/diagnostics
+
+Creates a bounded, persisted diagnostic for a source-only History query. The requester must include `container_ref`, non-empty `active_session_ref`, and explicit `visibility`; optional `source_filters` are separate exact historical-source filters. Creation is explicit and does not mutate lookup/accessibility, forgetting, ranking, or delivery state, or add lookup/expansion telemetry.
+
+The snapshot records bounded capture/index, lexical/vector, fusion/ranking, query-limit, exclusion, and MCP-packaging observations, using `unknown` or `not_observed` where unsupported. Idempotency keys make retries deterministic; conflicting reuse is rejected.
+
+## POST /history/diagnostics/{id}/read
+
+Reads with the same requester tuple and reapplies live authorization and forgetting sanitization to saved source filters. Forgotten or unauthorized details are omitted, and unavailable IDs are non-oracular. Invalid requests, valid-empty diagnostics, corrupt snapshots, persistence/service failures, timeouts, and transport failures have distinct outcomes.
+
 ## POST /item-and-query
 
 Combines item ingest and memory query in a single call. This is the

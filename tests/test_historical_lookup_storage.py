@@ -593,3 +593,22 @@ class TestHistoryDiagnosticStore:
                     outcomes.append(("conflict", None))
         assert [kind for kind, _ in outcomes].count("ok") == 1
         assert [kind for kind, _ in outcomes].count("conflict") == 1
+
+
+def test_history_diagnostic_lookup_by_request_is_exact_and_validated(tmp_path):
+    storage, _ = _storage(tmp_path)
+    row = _diagnostic_row(key="preflight")
+    storage.create_history_diagnostic(row)
+    found = storage.get_history_diagnostic_by_request(
+        container_ref=row["container_ref"],
+        active_session_ref=row["active_session_ref"],
+        visibility=row["visibility"],
+        idempotency_key="preflight",
+    )
+    assert found["id"] == row["id"]
+    assert storage.get_history_diagnostic_by_request(
+        container_ref=row["container_ref"],
+        active_session_ref="wrong",
+        visibility=row["visibility"],
+        idempotency_key="preflight",
+    ) is None

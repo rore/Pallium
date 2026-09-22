@@ -3,6 +3,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import logging
+import math
 import threading
 import uuid
 from collections.abc import Callable
@@ -15,8 +16,9 @@ from capabilities.consolidation import ConsolidationRunResult
 from capabilities.workstreams import WorkstreamCapability
 from core.consolidation_runner import ConsolidationRunner
 from core.container_ref import canonicalize_container_ref, validate_explicit_container_ref
+from core.filters import source_item_matches_filters
 from core.contracts import IngestResult, ItemProcessingResult, MemoryRetentionPolicy, ProcessResult, QueryResult, build_source_item
-from core.errors import LookupRequestLinkError
+from core.errors import HistoryDiagnosticConflictError, HistoryDiagnosticCorruptError, LookupRequestLinkError
 from core.indexing import SOURCE_ITEM_CONTENT_TEXT_VIEW, build_index_entry
 from core.processing import (
     DEFAULT_PROCESSING_LEASE_SECONDS,
@@ -31,7 +33,7 @@ from core.turn_inference import resolve_runtime_context
 from core.type_registry import TypeRegistry
 from core.vector_embed import VectorEmbedder
 from core.vector_index_holder import VectorIndexHolder
-from core.models import HISTORICAL_GUIDANCE_MEMORY_TYPES, FlagResult, HistoricalGuidanceUpdate, InjectableBlock, MemoryFlag, MemoryObject, QueryRuntimeContext, Relation, SourceItem, new_id, utc_now
+from core.models import HISTORICAL_GUIDANCE_MEMORY_TYPES, FlagResult, HistoricalGuidanceUpdate, InjectableBlock, MemoryFlag, MemoryObject, QueryFilters, QueryRuntimeContext, Relation, SourceItem, new_id, utc_now
 from core.observability import IntegrationDebugLogger, QueryStats
 from core.visibility import is_visible
 from providers.embedding.base import EmbeddingProvider
@@ -1016,6 +1018,7 @@ class PalliumService:
         include_trace: bool = False,
         trigger_origin: str | None = None,
         source_only: bool = False,
+        record_history_lookup: bool = True,
         defer_delivery: bool = False,
         exclude_item_id: str | None = None,
     ) -> QueryResult:
@@ -1104,12 +1107,14 @@ class PalliumService:
                 ],
             )
         # Historical-lookup reuse funnel: persist a "lookup" event for every
-        # source_only search, UNCONDITIONALLY (not gated on query_audit_log).
+        # ordinary source_only search, UNCONDITIONALLY (not gated on query_audit_log).
+        # The explicit History diagnostic path disables this write because a
+        # diagnostic is not delivered evidence and must not alter funnel metrics.
         # Reads the POST-redaction results so forbidden/forgotten/out-of-scope
         # ids never reach the exposed set, and mints a lookup_event_id that the
         # response surfaces for this path. Best-effort — a telemetry write
         # failure must never fail the query.
-        if source_only:
+        if source_only and record_history_lookup:
             lookup_event_id: str | None = new_id()
             try:
                 # Stable internal source_item_id (joins to source_items.id and
@@ -1157,6 +1162,404 @@ class PalliumService:
             result = dataclasses.replace(result, lookup_event_id=lookup_event_id)
         return result
 
+    def save_history_diagnostic(self, row: dict[str, object]) -> dict[str, object]:
+        """Persist one bounded diagnostic outside the lookup-delivery funnel."""
+        return self._storage.create_history_diagnostic(row)
+
+    def read_history_diagnostic_by_request(
+        self,
+        *,
+        container_ref: str,
+        active_session_ref: str,
+        visibility: str,
+        idempotency_key: str,
+        request_fingerprint: str,
+    ) -> dict[str, object] | None:
+        """Resolve an idempotent retry before rerunning retrieval."""
+        canonical_container = canonicalize_container_ref(container_ref)
+        if canonical_container is None:
+            return None
+        row = self._storage.get_history_diagnostic_by_request(
+            container_ref=canonical_container,
+            active_session_ref=active_session_ref,
+            visibility=visibility,
+            idempotency_key=idempotency_key,
+        )
+        if row is None:
+            return None
+        if row["request_fingerprint"] != request_fingerprint:
+            raise HistoryDiagnosticConflictError("diagnostic idempotency conflict")
+        return self.read_history_diagnostic(
+            row["id"],
+            container_ref=canonical_container,
+            active_session_ref=active_session_ref,
+            visibility=visibility,
+        )
+    def read_history_diagnostic(
+        self,
+        diagnostic_id: str,
+        *,
+        container_ref: str,
+        active_session_ref: str,
+        visibility: str,
+    ) -> dict[str, object] | None:
+        """Read and live-sanitize one requester-scoped diagnostic."""
+        canonical_container = canonicalize_container_ref(container_ref)
+        if canonical_container is None:
+            return None
+        row = self._storage.get_history_diagnostic(
+            diagnostic_id,
+            container_ref=canonical_container,
+            active_session_ref=active_session_ref,
+            visibility=visibility,
+        )
+        if row is None:
+            return None
+        try:
+            snapshot = json.loads(row["snapshot_json"])
+            saved = json.loads(row["saved_filters_json"])
+        except (KeyError, TypeError, json.JSONDecodeError) as exc:
+            raise HistoryDiagnosticCorruptError("invalid diagnostic snapshot") from exc
+        if (
+            not isinstance(snapshot, dict)
+            or set(snapshot) - {"outcome", "trace"}
+            or snapshot.get("outcome") not in {"ok", "valid_empty"}
+            or not isinstance(snapshot.get("trace"), dict)
+            or not isinstance(saved, dict)
+        ):
+            raise HistoryDiagnosticCorruptError("invalid diagnostic snapshot shape")
+        allowed_saved = {
+            "source_type", "role", "artifact_kind", "actor_ref", "thread_ref",
+            "work_refs", "request_source_item_id", "container_ref",
+        }
+        if set(saved) != allowed_saved:
+            raise HistoryDiagnosticCorruptError("invalid saved diagnostic filters")
+        artifact_kinds = {
+            "message", "assistant_output", "tool_use_summary",
+            "todo_snapshot", "notification", "note",
+        }
+        for key in (
+            "source_type", "role", "actor_ref", "thread_ref",
+            "request_source_item_id", "container_ref",
+        ):
+            value = saved.get(key)
+            if value is not None and (
+                not isinstance(value, str) or not value or len(value) > 512
+            ):
+                raise HistoryDiagnosticCorruptError("invalid saved diagnostic filter")
+        if saved.get("artifact_kind") not in artifact_kinds | {None}:
+            raise HistoryDiagnosticCorruptError("invalid saved diagnostic artifact kind")
+        if canonicalize_container_ref(saved.get("container_ref")) != canonical_container:
+            raise HistoryDiagnosticCorruptError("invalid saved diagnostic container")
+        work_refs = saved.get("work_refs")
+        if (
+            not isinstance(work_refs, list)
+            or len(work_refs) > 50
+            or any(
+                not isinstance(ref, str) or not ref or len(ref) > 128
+                for ref in work_refs
+            )
+        ):
+            raise HistoryDiagnosticCorruptError("invalid saved diagnostic work refs")
+        filters = QueryFilters(
+            source_type=saved.get("source_type"),
+            role=saved.get("role"),
+            artifact_kind=saved.get("artifact_kind"),
+            container_ref=canonicalize_container_ref(saved.get("container_ref"))
+            or canonical_container,
+            thread_ref=saved.get("thread_ref"),
+            actor_ref=saved.get("actor_ref"),
+            work_refs=tuple(work_refs),
+        )
+        request_source_item_id = saved.get("request_source_item_id")
+
+        trace = snapshot["trace"]
+        allowed_trace = {
+            "scope", "capture_index", "stages", "fusion", "exclusions",
+            "ranking", "packaging", "query_limit",
+        }
+
+        def exact_fields(value: object, fields: set[str], label: str) -> dict[str, object]:
+            if not isinstance(value, dict) or set(value) != fields:
+                raise HistoryDiagnosticCorruptError(f"invalid diagnostic {label}")
+            return value
+
+        exact_fields(trace, allowed_trace, "trace")
+
+        candidate_sections: list[list[dict[str, object]]] = []
+        stages = trace.get("stages") or []
+        if not isinstance(stages, list):
+            raise HistoryDiagnosticCorruptError("invalid diagnostic stages")
+        stage_fields = {
+            "name", "available", "candidate_count", "selected_count",
+            "candidates", "omitted_count",
+        }
+        for stage in stages:
+            exact_fields(stage, stage_fields, "stage")
+            if not isinstance(stage["candidates"], list):
+                raise HistoryDiagnosticCorruptError("invalid diagnostic stage")
+            candidate_sections.append(stage["candidates"])
+        fusion = exact_fields(
+            trace.get("fusion"),
+            {"candidate_count", "selected_count", "candidates", "omitted_count"},
+            "fusion",
+        )
+        ranking = exact_fields(
+            trace.get("ranking"), {"results", "omitted_count"}, "ranking"
+        )
+        if not isinstance(fusion["candidates"], list) or not isinstance(ranking["results"], list):
+            raise HistoryDiagnosticCorruptError("invalid diagnostic candidates")
+        candidate_sections.extend((fusion.get("candidates", []), ranking.get("results", [])))
+
+        source_ids: set[str] = set()
+        for section in candidate_sections:
+            for candidate in section:
+                if not isinstance(candidate, dict):
+                    raise HistoryDiagnosticCorruptError("invalid diagnostic candidate")
+                source_id = candidate.get("source_item_id")
+                if not isinstance(source_id, str) or not source_id or len(source_id) > 512:
+                    raise HistoryDiagnosticCorruptError("invalid diagnostic source identity")
+                source_ids.add(source_id)
+        source_items = self._storage.get_source_items(source_ids)
+        visible_ids: set[str] = set()
+        for source_id, item in source_items.items():
+            if (
+                source_id == request_source_item_id
+                or item.forgotten
+                or not source_item_matches_filters(item, filters)
+                or not is_visible(
+                    item.visibility,
+                    canonicalize_container_ref(item.container_ref),
+                    canonical_container,
+                    item.actor_ref,
+                    query_visibility=visibility,
+                    query_actor_ref=filters.actor_ref,
+                )
+            ):
+                continue
+            visible_ids.add(source_id)
+
+        def bounded_int(value: object, *, maximum: int = 1_000_000) -> int:
+            if type(value) is not int or not 0 <= value <= maximum:
+                raise HistoryDiagnosticCorruptError("invalid diagnostic count")
+            return value
+
+        def safe_candidate(candidate: dict[str, object]) -> dict[str, object] | None:
+            if (
+                not isinstance(candidate, dict)
+                or not {"source_item_id", "rank"}.issubset(candidate)
+                or set(candidate) - {"source_item_id", "rank", "score", "match_channel"}
+            ):
+                raise HistoryDiagnosticCorruptError("invalid diagnostic candidate")
+            source_id = candidate["source_item_id"]
+            if source_id not in visible_ids:
+                return None
+            rank = candidate.get("rank")
+            if type(rank) is not int or not 1 <= rank <= 200:
+                raise HistoryDiagnosticCorruptError("invalid diagnostic rank")
+            safe: dict[str, object] = {"source_item_id": source_id, "rank": rank}
+            score = candidate.get("score")
+            if score is not None:
+                if isinstance(score, bool) or not isinstance(score, (int, float)) or not math.isfinite(score):
+                    raise HistoryDiagnosticCorruptError("invalid diagnostic score")
+                safe["score"] = score
+            channel = candidate.get("match_channel")
+            if channel is not None:
+                if channel not in {"lexical", "vector", "both"}:
+                    raise HistoryDiagnosticCorruptError("invalid diagnostic channel")
+                safe["match_channel"] = channel
+            return safe
+
+        safe_stages: list[dict[str, object]] = []
+        for stage in stages:
+            name = stage.get("name")
+            if name not in {"lexical", "vector", "vector_unavailable"}:
+                raise HistoryDiagnosticCorruptError("invalid diagnostic stage name")
+            if type(stage["available"]) is not bool:
+                raise HistoryDiagnosticCorruptError("invalid diagnostic stage availability")
+            raw_candidates = stage["candidates"]
+            candidates = [
+                sanitized for candidate in raw_candidates
+                if (sanitized := safe_candidate(candidate)) is not None
+            ]
+            candidate_count = bounded_int(stage["candidate_count"])
+            selected_count = bounded_int(stage["selected_count"])
+            omitted_count = bounded_int(stage["omitted_count"])
+            if (
+                len(raw_candidates) > 200
+                or selected_count > candidate_count
+                or len(raw_candidates) + omitted_count > candidate_count
+            ):
+                raise HistoryDiagnosticCorruptError("impossible diagnostic stage counts")
+            safe_stages.append({
+                "name": name,
+                "available": stage["available"],
+                "candidate_count": candidate_count,
+                "selected_count": selected_count,
+                "candidates": candidates,
+                "omitted_count": omitted_count,
+                "read_excluded_count": len(raw_candidates) - len(candidates),
+            })
+
+        fusion_candidates = [
+            sanitized for candidate in fusion.get("candidates", [])
+            if (sanitized := safe_candidate(candidate)) is not None
+        ]
+        raw_ranked_results = ranking["results"]
+        if len(fusion["candidates"]) > 200 or len(raw_ranked_results) > 50:
+            raise HistoryDiagnosticCorruptError("diagnostic candidate bound exceeded")
+        fusion_count = bounded_int(fusion["candidate_count"])
+        fusion_selected = bounded_int(fusion["selected_count"])
+        fusion_omitted = bounded_int(fusion["omitted_count"])
+        if (
+            fusion_selected > fusion_count
+            or len(fusion["candidates"]) + fusion_omitted > fusion_count
+        ):
+            raise HistoryDiagnosticCorruptError("impossible diagnostic fusion counts")
+        ranked_results = [
+            sanitized for candidate in raw_ranked_results
+            if (sanitized := safe_candidate(candidate)) is not None
+        ]
+        visible_ranks = {item["rank"] for item in ranked_results}
+
+        packaging = exact_fields(
+            trace.get("packaging"),
+            {"observed_at", "budget", "retained_final_ranks", "omitted_count", "fit_status"},
+            "packaging",
+        )
+        if packaging["observed_at"] != "creation":
+            raise HistoryDiagnosticCorruptError("invalid diagnostic packaging observation")
+        retained_ranks = packaging.get("retained_final_ranks") or []
+        if not isinstance(retained_ranks, list) or any(
+            type(rank) is not int or not 1 <= rank <= 50 for rank in retained_ranks
+        ):
+            raise HistoryDiagnosticCorruptError("invalid diagnostic packaging ranks")
+        fit_status = packaging["fit_status"]
+        if fit_status not in {"fit", "truncated", "empty", "unrepresentable"}:
+            raise HistoryDiagnosticCorruptError("invalid diagnostic packaging status")
+        raw_ranks = {candidate["rank"] for candidate in raw_ranked_results}
+        if any(rank not in raw_ranks for rank in retained_ranks):
+            raise HistoryDiagnosticCorruptError("invalid diagnostic packaging rank")
+
+        scope = exact_fields(
+            trace.get("scope"), {"requested", "effective"}, "scope"
+        )
+        capture_index = exact_fields(
+            trace.get("capture_index"),
+            {"bounded", "status", "authorized_source_count", "lexical_available", "vector_available"},
+            "capture index",
+        )
+        exclusions = trace.get("exclusions")
+        query_limit = exact_fields(
+            trace.get("query_limit"),
+            {"requested", "returned", "omitted_count"},
+            "query limit",
+        )
+        if not isinstance(exclusions, list):
+            raise HistoryDiagnosticCorruptError("invalid diagnostic exclusions")
+        if (
+            capture_index["bounded"] is not True
+            or capture_index["status"] not in {"observed", "not_observed", "unknown"}
+            or type(capture_index["lexical_available"]) is not bool
+            or type(capture_index["vector_available"]) is not bool
+        ):
+            raise HistoryDiagnosticCorruptError("invalid diagnostic capture index")
+        safe_exclusions: list[dict[str, object]] = []
+        for exclusion in exclusions:
+            if (
+                not isinstance(exclusion, dict)
+                or set(exclusion) != {"reason", "count"}
+                or exclusion.get("reason") not in {
+                    "candidate_visibility_missing",
+                    "query_visibility_excludes_candidate",
+                    "request_identity",
+                    "duplicate",
+                }
+            ):
+                raise HistoryDiagnosticCorruptError("invalid diagnostic exclusion")
+            safe_exclusions.append({
+                "reason": exclusion["reason"],
+                "count": bounded_int(exclusion.get("count", 0)),
+            })
+
+        def presence_map(value: object) -> dict[str, bool]:
+            fields = {
+                "source_type", "role", "artifact_kind", "container_ref",
+                "thread_ref", "actor_ref", "work_refs",
+            }
+            if (
+                not isinstance(value, dict)
+                or set(value) != fields
+                or any(type(present) is not bool for present in value.values())
+            ):
+                raise HistoryDiagnosticCorruptError("invalid diagnostic scope")
+            return dict(sorted(value.items()))
+
+        requested_limit = bounded_int(query_limit["requested"], maximum=50)
+        returned_count = bounded_int(query_limit["returned"], maximum=50)
+        limit_omitted = bounded_int(query_limit["omitted_count"], maximum=200)
+        if (
+            requested_limit < 1
+            or returned_count > requested_limit
+            or len(raw_ranked_results) != returned_count
+        ):
+            raise HistoryDiagnosticCorruptError("impossible diagnostic query-limit counts")
+        safe_trace = {
+            "scope": {
+                "requested": presence_map(scope.get("requested", {})),
+                "effective": presence_map(scope.get("effective", {})),
+            },
+            "capture_index": {
+                "bounded": capture_index["bounded"],
+                "status": (
+                    capture_index.get("status")
+                    if capture_index.get("status") in {"observed", "not_observed", "unknown"}
+                    else "unknown"
+                ),
+                "authorized_source_count": capture_index.get("authorized_source_count"),
+                "lexical_available": capture_index["lexical_available"],
+                "vector_available": capture_index["vector_available"],
+            },
+            "stages": safe_stages,
+            "fusion": {
+                "candidate_count": fusion_count,
+                "selected_count": fusion_selected,
+                "candidates": fusion_candidates,
+                "omitted_count": fusion_omitted,
+                "read_excluded_count": len(fusion.get("candidates", [])) - len(fusion_candidates),
+            },
+            "exclusions": safe_exclusions,
+            "ranking": {
+                "results": ranked_results,
+                "omitted_count": bounded_int(ranking.get("omitted_count", 0)),
+                "read_excluded_count": len(ranking.get("results", [])) - len(ranked_results),
+            },
+            "packaging": {
+                "observed_at": "creation",
+                "budget": bounded_int(packaging.get("budget", 0), maximum=65_536),
+                "retained_final_ranks": [
+                    rank for rank in retained_ranks if rank in visible_ranks
+                ],
+                "omitted_count": bounded_int(packaging.get("omitted_count", 0)),
+                "fit_status": fit_status,
+                "read_excluded_count": len(retained_ranks)
+                - len([rank for rank in retained_ranks if rank in visible_ranks]),
+            },
+            "query_limit": {
+                "requested": requested_limit,
+                "returned": returned_count,
+                "omitted_count": limit_omitted,
+            },
+        }
+        if safe_trace["capture_index"]["authorized_source_count"] is not None:
+            safe_trace["capture_index"]["authorized_source_count"] = bounded_int(
+                safe_trace["capture_index"]["authorized_source_count"]
+            )
+        return {
+            "diagnostic_id": row["id"],
+            "outcome": snapshot["outcome"],
+            "trace": safe_trace,
+        }
     def run_consolidation_pass(
         self,
         *,

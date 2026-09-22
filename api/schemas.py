@@ -146,6 +146,53 @@ class QueryRequest(BaseModel):
         return self.visibility
 
 
+class HistoryDiagnosticRequester(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    container_ref: str = Field(min_length=1, max_length=512)
+    active_session_ref: str = Field(min_length=1, max_length=512)
+    visibility: Visibility
+
+
+class HistoryDiagnosticSourceFilters(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source_type: str | None = Field(default=None, min_length=1, max_length=128)
+    role: str | None = Field(default=None, min_length=1, max_length=64)
+    artifact_kind: ArtifactKind | None = None
+    actor_ref: str | None = Field(default=None, min_length=1, max_length=512)
+    source_thread_ref: str | None = Field(default=None, min_length=1, max_length=512)
+    work_refs: list[str] = Field(default_factory=list, max_length=50)
+    request_source_item_id: str | None = Field(default=None, min_length=1, max_length=512)
+
+
+class HistoryDiagnosticCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    idempotency_key: str = Field(
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9._:-]+$",
+    )
+    text: str = Field(min_length=1, max_length=16_384)
+    limit: int = Field(default=5, ge=1, le=50)
+    requester: HistoryDiagnosticRequester
+    source_filters: HistoryDiagnosticSourceFilters = Field(
+        default_factory=HistoryDiagnosticSourceFilters
+    )
+
+
+class HistoryDiagnosticReadRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    requester: HistoryDiagnosticRequester
+
+
+class HistoryDiagnosticResponse(BaseModel):
+    diagnostic_id: str
+    outcome: Literal["ok", "valid_empty"]
+    trace: dict[str, Any]
+
 class EvidenceResponse(BaseModel):
     source_item_id: str
     source_type: str

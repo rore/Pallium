@@ -587,3 +587,26 @@ class TestHistoryDiagnostics:
         assert result["error_kind"] == kind
         assert "secret" not in json.dumps(result)
         assert "http://localhost" not in json.dumps(result)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status", "code", "expected", "retryable"),
+    [
+        (500, "diagnostic_corrupt", "diagnostic_corrupt", False),
+        (504, "transport_timeout", "transport_timeout", True),
+    ],
+)
+async def test_history_diagnostic_preserves_allowlisted_error_distinctions(
+    ctx: PalliumContext, status: int, code: str, expected: str, retryable: bool,
+) -> None:
+    response = _mock_response(status, {"detail": {"code": code, "secret": "do-not-echo"}})
+    with patch("httpx.AsyncClient") as client_type:
+        client_type.return_value.__aenter__.return_value.post.return_value = response
+        result = await PalliumMcpClient(ctx).read_history_diagnostic("diag/id")
+    assert result == {
+        "error_kind": expected,
+        "status_code": status,
+        "retryable": retryable,
+    }
+    assert client_type.call_args.kwargs["timeout"] == 10.0

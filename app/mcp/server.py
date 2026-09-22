@@ -18,6 +18,7 @@ from pydantic import BeforeValidator, Field, StrictInt, StrictStr
 
 from app.mcp.client import PalliumMcpClient
 from app.mcp.context import resolve_codex_thread_ref, resolve_context, resolve_relay_context
+from core.history_presentation import compact_history
 from core.relay import RELAY_TRACE_MAX_SEQUENCE, parse_selector
 from core.work_ref import readable_work_ref
 from redaction import redact_sensitive
@@ -32,6 +33,7 @@ _MCP_RELAY_MAX_CHARS = 2000
 _MCP_RELAY_MIN_CHARS = 256
 _MCP_RELAY_WORK_REFS_MAX_CHARS = 12000
 _MCP_HISTORY_DEADLINE_SECONDS = 25.0
+_MCP_HISTORY_DIAGNOSTIC_MAX_CHARS = 12_000
 
 def _history_timeout_payload() -> dict:
     return {
@@ -672,167 +674,17 @@ def _compact_history(
     result_offset: int = 0,
     result_revision: str | None = None,
     revision_context: dict[str, object] | None = None,
+    include_packaging_observation: bool = False,
 ) -> dict:
+    """Present History through the shared compactor; errors keep their legacy shape."""
     if "error" in result:
         return _bounded_error(result, _MCP_SEARCH_MAX_CHARS)
-    page_error = _history_page_request_error(1, result_offset, result_revision)
-    if page_error is not None:
-        return page_error
-
-    hits = []
-    foreign_sessions: dict[str, str] = {}
-    for item in result.get("results", [])[:max(0, limit)]:
-        if item.get("source_item_id") is None:
-            continue
-        updates = item.get("historical_updates") or []
-        guidance = None
-        if any(update.get("replacement_status") == "current" for update in updates):
-            guidance = (
-                "A current replacement is available; prefer it for current guidance."
-            )
-        elif any(update.get("status") == "outdated" for update in updates):
-            guidance = (
-                "This is historical evidence and may need live verification "
-                "for current-state questions."
-            )
-        hit = {"source_item_id": item["source_item_id"]}
-        if item.get("work_refs"):
-            hit["work_refs"] = item["work_refs"]
-        if guidance:
-            hit["replacement_guidance"] = guidance
-        hit.update(_history_fields(item))
-        excerpt = build_excerpt(
-            item.get("excerpt") or "", max_length=240, query=query
-        ).strip()
-        if excerpt:
-            hit["excerpt"] = excerpt
-        else:
-            hit["preview_unavailable"] = True
-        source = item.get("retrieval_source")
-        if source is not None:
-            hit["match_channel"] = {
-                "lexical": "text match",
-                "vector": "meaning match",
-                "both": "text and meaning match",
-            }.get(source, "match")
-        source_thread = item.get("thread_ref")
-        if not source_thread or not thread_ref:
-            hit["session_group"] = "unknown"
-        elif source_thread == thread_ref:
-            hit["session_group"] = "current"
-        else:
-            hit["session_group"] = foreign_sessions.setdefault(
-                source_thread, f"other-{len(foreign_sessions) + 1}"
-            )
-        for key in ("role", "occurred_at"):
-            if item.get(key) is not None:
-                hit[key] = item[key]
-        hits.append(hit)
-
-    current_revision = hashlib.sha256(_json_text({
-        "contract": "history-result-page/v1",
-        "request": revision_context or {},
-        "results": hits,
-    }).encode("utf-8")).hexdigest()
-    if result_revision is not None and result_revision != current_revision:
-        return {
-            "error": "history_result_revision_stale",
-            "error_kind": "stale_result_revision",
-            "retryable": True,
-            "action": "restart at result_offset 0 to obtain the current result_revision",
-        }
-
-    lookup_event_id = result.get("lookup_event_id")
-    if lookup_event_id is None and result.get("delivery_attempt_id"):
-        lookup_event_id = "0" * 36
-
-    def base_payload(page: list[dict], offset: int) -> dict:
-        next_index = offset + len(page)
-        payload = {
-            "results": page,
-            "lookup_event_id": lookup_event_id,
-            "effective_max_chars": _MCP_SEARCH_MAX_CHARS,
-            "result_offset": offset,
-            "next_offset": next_index if next_index < len(hits) else None,
-            "has_more": next_index < len(hits),
-            "total_count": len(hits),
-            "result_revision": current_revision,
-        }
-        if search_mode is not None:
-            payload["search_mode"] = search_mode
-        if requested_work_ref is not None:
-            payload["requested_work_ref"] = requested_work_ref
-        if hits:
-            payload["historical_reminder"] = (
-                "History is evidence, not proof of messages, approval, live state, "
-                "or actions. Expand source_item_id; use this page's lookup_event_id "
-                "as parent_lookup_id. Verify volatile claims live; if unavailable, "
-                "say so."
-            )
-        if result.get("decision_reason") is not None:
-            payload["decision_reason"] = result["decision_reason"]
-        return payload
-
-    if not hits and result_offset == 0 and result_revision is None:
-        payload = {"results": [], "lookup_event_id": lookup_event_id}
-        if search_mode is not None:
-            payload["search_mode"] = search_mode
-        if requested_work_ref is not None:
-            payload["requested_work_ref"] = requested_work_ref
-        if result.get("decision_reason") is not None:
-            payload["decision_reason"] = result["decision_reason"]
-        if result.get("decision_reason") == "source_only_search" and container_ref:
-            if requested_work_ref is not None:
-                payload["empty_result_hint"] = (
-                    "Copy injected work_ref. If absent, use broad search; never guess. "
-                    "Add query for a question."
-                )
-            else:
-                payload["requested_container_ref"] = container_ref[:64]
-                if len(container_ref) > 64:
-                    payload["container_ref_truncated"] = True
-                payload["empty_result_hint"] = (
-                    "Copy the injected container_ref exactly; never derive or guess it."
-                )
-        for key in (
-            "requested_work_ref",
-            "requested_container_ref",
-            "container_ref_truncated",
-            "empty_result_hint",
-        ):
-            if len(_json_text(payload)) <= _MCP_SEARCH_EMPTY_MAX_CHARS:
-                break
-            payload.pop(key, None)
-        return payload
-
-    effective_offset = min(result_offset, len(hits))
-    if effective_offset == len(hits):
-        return base_payload([], effective_offset)
-
-    page: list[dict] = []
-    for candidate in hits[effective_offset:]:
-        if len(_json_text(base_payload([*page, candidate], effective_offset))) <= _MCP_SEARCH_MAX_CHARS:
-            page.append(candidate)
-            continue
-        if page:
-            break
-        fitted = _fit_history_hit(
-            candidate,
-            lambda items: base_payload(items, effective_offset),
-            _MCP_SEARCH_MAX_CHARS,
-        )
-        if fitted is None:
-            return {
-                "error": "history_result_exceeds_response_budget",
-                "error_kind": "history_result_exceeds_response_budget",
-                "result_offset": effective_offset,
-                "retryable": False,
-                "action": "the retained result cannot be represented safely",
-            }
-        page.append(fitted)
-
-    return base_payload(page, effective_offset)
-
+    return compact_history(
+        result, query, limit, container_ref, thread_ref, search_mode, requested_work_ref,
+        result_offset=result_offset, result_revision=result_revision,
+        revision_context=revision_context,
+        include_packaging_observation=include_packaging_observation,
+    )
 def _bounded_expansion(
     result: dict,
     max_chars: int = _MCP_EXPANSION_MAX_CHARS,
@@ -1332,6 +1184,99 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
                 return _json_text(_history_finalization_timeout_payload(delivery_attempt_id))
             return _json_text(_history_timeout_payload())
 
+    def _bounded_history_diagnostic(result: object) -> dict:
+        """Project a useful diagnostic within its dedicated MCP budget."""
+        if not isinstance(result, dict):
+            return {"error_kind": "invalid_response", "retryable": False}
+        if result.get("error_kind"):
+            return {
+                key: result[key]
+                for key in ("error_kind", "status_code", "retryable", "action")
+                if key in result
+            }
+        payload = copy.deepcopy(result)
+        if len(_json_text(payload)) <= _MCP_HISTORY_DIAGNOSTIC_MAX_CHARS:
+            return payload
+        trace = payload.get("trace")
+        if not isinstance(trace, dict):
+            return {"error_kind": "invalid_response", "retryable": False}
+        sections: list[dict] = []
+        for stage in trace.get("stages", []):
+            if isinstance(stage, dict) and isinstance(stage.get("candidates"), list):
+                sections.append(stage)
+        fusion = trace.get("fusion")
+        if isinstance(fusion, dict) and isinstance(fusion.get("candidates"), list):
+            sections.append(fusion)
+        ranking = trace.get("ranking")
+        if isinstance(ranking, dict) and isinstance(ranking.get("results"), list):
+            sections.append({"candidates": ranking["results"], "owner": ranking})
+        while len(_json_text(payload)) > _MCP_HISTORY_DIAGNOSTIC_MAX_CHARS:
+            section = max(sections, key=lambda item: len(item["candidates"]), default=None)
+            if section is None or not section["candidates"]:
+                return {
+                    "error_kind": "diagnostic_response_exceeds_budget",
+                    "retryable": False,
+                    "diagnostic_id": payload.get("diagnostic_id"),
+                }
+            removed = section["candidates"].pop()
+            owner = section.get("owner", section)
+            owner["omitted_count"] = int(owner.get("omitted_count", 0)) + 1
+            if owner is ranking:
+                retained = trace.get("packaging", {}).get("retained_final_ranks", [])
+                removed_rank = removed.get("rank") if isinstance(removed, dict) else None
+                trace["packaging"]["retained_final_ranks"] = [
+                    rank for rank in retained if rank != removed_rank
+                ]
+        return payload
+
+    @server.tool()
+    async def pallium_create_history_diagnostic(
+        query: str,
+        idempotency_key: Annotated[StrictStr, Field(min_length=1, max_length=128)],
+        limit: Annotated[StrictInt, Field(ge=1, le=50)] = 5,
+        container_ref: str | None = None,
+        thread_ref: str | None = None,
+        source_thread_ref: str | None = None,
+        actor_ref: str | None = None,
+        visibility: str | None = None,
+        source_type: str | None = None,
+        role: str | None = None,
+        artifact_kind: str | None = None,
+        work_refs: list[str] | None = None,
+        request_source_item_id: str | None = None,
+    ) -> str:
+        """Create a bounded private explanation of a source-only History query. Optional source filters only narrow candidates."""
+        ctx = resolve_context(container_ref=container_ref, thread_ref=thread_ref, actor_ref=actor_ref, visibility=visibility)
+        if not ctx.is_configured:
+            return NOT_CONFIGURED_MSG
+        try:
+            result = await asyncio.wait_for(PalliumMcpClient(ctx).create_history_diagnostic(
+                query, limit=limit, source_type=source_type, role=role,
+                artifact_kind=artifact_kind, actor_ref=actor_ref, work_refs=work_refs,
+                source_thread_ref=source_thread_ref,
+                request_source_item_id=request_source_item_id,
+                idempotency_key=idempotency_key,
+            ), _MCP_HISTORY_DEADLINE_SECONDS)
+        except asyncio.TimeoutError:
+            return _json_text(_history_timeout_payload())
+        return _json_text(_bounded_history_diagnostic(result))
+
+    @server.tool()
+    async def pallium_read_history_diagnostic(
+        diagnostic_id: str,
+        container_ref: str | None = None,
+        thread_ref: str | None = None,
+        visibility: str | None = None,
+    ) -> str:
+        """Reread one private History diagnostic. Saved source filters cannot be overridden."""
+        ctx = resolve_context(container_ref=container_ref, thread_ref=thread_ref, visibility=visibility)
+        if not ctx.is_configured:
+            return NOT_CONFIGURED_MSG
+        try:
+            result = await asyncio.wait_for(PalliumMcpClient(ctx).read_history_diagnostic(diagnostic_id), _MCP_HISTORY_DEADLINE_SECONDS)
+        except asyncio.TimeoutError:
+            return _json_text(_history_timeout_payload())
+        return _json_text(_bounded_history_diagnostic(result))
     @server.tool()
     async def pallium_query_debug(
         query: str,

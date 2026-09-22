@@ -99,7 +99,7 @@ Approved by user 2026-09-22: "yes, i told you i approve all the work on this fea
 **Exceptions:**
 —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Checkpoint: architecture-review
@@ -152,11 +152,11 @@ Verification plan: wrong/missing requester tuple, container canonicalization, ac
 
 ## Implementation
 
-Established task context, completed trace/persistence discovery and pre-edit Redline, and received a rejected clean-context plan review. Revised the plan to separate diagnostics from lookup telemetry, enumerate observable signals and bounds, define requester/filter/error/idempotency contracts, and name exact implementation/test files. No test or production code has been edited. The revised plan is approved and the task is ready for the red-test phase.
+Implemented the dedicated `history_diagnostic` store, exact requester-scoped idempotent preflight/create/read flow, version-1 bounded snapshot builder and strict live sanitizer, explicit degraded-vector trace, diagnostic-only source-search counters, shared normal History compactor, additive HTTP/MCP surfaces, privacy-safe error mapping, and deterministic MCP projection. Normal `/query`, `/query/debug`, and History shapes remain unchanged; diagnostics suppress lookup-event writes and source-only query statistics. Added focused storage, HTTP lifecycle, presentation, client/tool, and real MCP regressions, including reviewer-found failures for post-commit retry, normalized filters, nested corruption, byte pressure, requester non-oracles, post-forget replay, public/global actor scope, state non-mutation, Unicode, and useful multi-candidate MCP output. Aligned Session History docs and marked roadmap slice 5 implemented while leaving slice 6 planned. Local edits used narrow deterministic replacements after the machine rejected `apply_patch` with Windows error 1327.
 
 ## Evidence
 
-Pre-edit classification: RED with architecture/API/persistence checkpoints and security-sensitive behavior; no intended boundary violation. Clean-context plan review approval at `b17a8a15` followed two recorded correction rounds; all findings are incorporated.
+Focused affected-subsystem gate: 398 passed. Additional diagnostic HTTP E2E: 25 passed after final hardening. History presentation/client focused gate: 24 passed. Cached regression gate: 5,225 passed, 34 skipped, 215 deselected, 2 xfailed. Canonical full gate `python -m pytest tests/ -x -q`: first run hit an unrelated Windows rename race in `test_claude_setup_deploys_and_removes_skill`; the exact node then passed serially, and a clean canonical rerun passed with 5,225 passed, 34 skipped, 2 xfailed. Import Linter: 8 contracts kept, 0 broken. Redline: `SCHEMA_CHANGE`, no boundary violations; architecture/API/persistence checkpoints required for PR labels. Independent clean-context implementation review found seven issues; all were reproduced or covered and fixed before the full gate.
 
 ## Result review
 
