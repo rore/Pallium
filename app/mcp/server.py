@@ -13,7 +13,7 @@ import os
 from functools import wraps
 from typing import Annotated, Literal
 
-from pydantic import BeforeValidator
+from pydantic import BeforeValidator, StrictInt
 
 from app.mcp.client import PalliumMcpClient
 from app.mcp.context import resolve_codex_thread_ref, resolve_context, resolve_relay_context
@@ -766,35 +766,14 @@ def _bounded_expansion(
     }
     if omitted:
         out["items_omitted"] = omitted
-    _trim_update_details(out, projected, max_chars)
-    if len(_json_text(out)) > max_chars:
-        out["supported_memories"] = None
-    while len(_json_text(out)) > max_chars and len(projected) > 1:
-        anchor_index = projected.index(anchor)
-        farthest = max(
-            (item for item in projected if not item.get("is_anchor")),
-            key=lambda item: (
-                abs(projected.index(item) - anchor_index),
-                projected.index(item),
-            ),
-            default=None,
-        )
-        if farthest is None:
-            break
-        projected.remove(farthest)
-        omitted += 1
-        out["items_omitted"] = omitted
-    if len(_json_text(out)) > max_chars:
-        return {
-            "error": "max_chars is too small for the expansion anchor",
-            "min_max_chars": _MCP_EXPANSION_MIN_CHARS,
-        }
 
-    anchor_index = projected.index(anchor)
     anchor_base = anchor
     remaining = anchor_content[effective_offset:]
 
     def set_anchor_page(chars: int) -> None:
+        anchor_index = next(
+            i for i, item in enumerate(projected) if item.get("is_anchor")
+        )
         end = effective_offset + chars
         has_more = end < content_total_chars
         page = dict(anchor_base)
@@ -807,15 +786,52 @@ def _bounded_expansion(
         out["has_more"] = has_more
         out["next_offset"] = end if has_more else None
 
-    low, high = 0, len(remaining)
-    while low < high:
-        middle = (low + high + 1) // 2
-        set_anchor_page(middle)
-        if len(_json_text(out)) <= max_chars:
-            low = middle
-        else:
-            high = middle - 1
-    set_anchor_page(low)
+    # A complete page can serialize smaller than a truncated page because it
+    # drops content_truncated and uses a null next_offset. Test it first.
+    set_anchor_page(len(remaining))
+    if len(_json_text(out)) > max_chars:
+        set_anchor_page(0)
+        _trim_update_details(out, projected, max_chars)
+        anchor_base = next(item for item in projected if item.get("is_anchor"))
+        if len(_json_text(out)) > max_chars:
+            out["supported_memories"] = None
+        while len(_json_text(out)) > max_chars and len(projected) > 1:
+            anchor_index = next(
+                i for i, item in enumerate(projected) if item.get("is_anchor")
+            )
+            farthest = max(
+                (item for item in projected if not item.get("is_anchor")),
+                key=lambda item: (
+                    abs(projected.index(item) - anchor_index),
+                    projected.index(item),
+                ),
+                default=None,
+            )
+            if farthest is None:
+                break
+            projected.remove(farthest)
+            omitted += 1
+            out["items_omitted"] = omitted
+        set_anchor_page(len(remaining))
+
+    if len(_json_text(out)) > max_chars:
+        set_anchor_page(0)
+        if len(_json_text(out)) > max_chars:
+            return {
+                "error": "max_chars is too small for the expansion anchor",
+                "min_max_chars": _MCP_EXPANSION_MIN_CHARS,
+            }
+        low, high = 0, len(remaining) - 1
+        while low < high:
+            middle = (low + high + 1) // 2
+            set_anchor_page(middle)
+            if len(_json_text(out)) <= max_chars:
+                low = middle
+            else:
+                high = middle - 1
+        set_anchor_page(low)
+    else:
+        low = len(remaining)
     if remaining and low == 0:
         return _bounded_error({
             "error": "max_chars leaves no room for source content",
@@ -825,6 +841,9 @@ def _bounded_expansion(
         }, max_chars)
 
     if not out["has_more"] and not content_offset:
+        anchor_index = next(
+            i for i, item in enumerate(projected) if item.get("is_anchor")
+        )
         order = sorted(
             (i for i in range(len(projected)) if i != anchor_index),
             key=lambda i: (abs(i - anchor_index), i),
@@ -1169,7 +1188,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         before: int = 1,
         after: int = 1,
         max_chars: int = 4000,
-        content_offset: int = 0,
+        content_offset: StrictInt = 0,
         content_revision: str | None = None,
         include_supported_memories: bool = False,
         parent_lookup_id: str | None = None,

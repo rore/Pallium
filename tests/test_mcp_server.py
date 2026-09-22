@@ -700,10 +700,10 @@ def test_bounded_expansion_drops_farthest_preserves_order_and_omits_supports_fir
         ],
         "supported_memories": [{"memory_object_id": "m" * 1000}],
         "parent_lookup_id": "parent",
-    }, 256)
-    assert len(_json_text(result)) <= 256
-    assert result == {"error": "max_chars is too small for the expansion anchor", "min_max_chars": 256}
-
+    }, 600)
+    assert [item["source_item_id"] for item in result["items"]] == ["n0", "anchor", "n2"]
+    assert result["items"][1]["is_anchor"] is True
+    assert result["supported_memories"] is None
 
 def test_bounded_expansion_overmax_clamps_to_four_thousand_and_errors_are_bounded() -> None:
     result = _bounded_expansion({"items": [{"source_item_id": "a", "is_anchor": True, "content": "x" * 10000}]}, 50000)
@@ -727,6 +727,20 @@ def test_bounded_expansion_reports_explicit_continuation_budget_and_progress() -
     assert result["has_more"] is True
     assert result["next_offset"] > result["content_offset"]
 
+
+@pytest.mark.parametrize(("content", "budget"), [("x", 342), ("x" * 100, 443)])
+def test_bounded_expansion_terminal_envelope_fits_at_tight_budget(
+    content: str,
+    budget: int,
+) -> None:
+    result = _bounded_expansion({
+        "items": [{"source_item_id": "s", "is_anchor": True, "content": content}],
+    }, budget)
+
+    assert len(_json_text(result)) <= budget
+    assert result["items"][0]["content"] == content
+    assert result["has_more"] is False
+    assert result["next_offset"] is None
 
 def test_bounded_expansion_normalizes_over_end_to_terminal_page() -> None:
     raw = {
@@ -835,10 +849,10 @@ def test_bounded_expansion_counts_dropped_neighbors_inside_budget() -> None:
         ],
         "supported_memories": None,
         "parent_lookup_id": "parent",
-    }, 256)
-    assert len(_json_text(result)) <= 256
-    assert result == {"error": "max_chars is too small for the expansion anchor", "min_max_chars": 256}
-
+    }, 400)
+    assert result["items"][0]["source_item_id"] == "anchor"
+    assert result["items"][0]["is_anchor"] is True
+    assert result["items_omitted"] == 2
 
 def test_compact_history_preserves_unicode_casefold_match_offset() -> None:
     result = _compact_history({
@@ -1293,7 +1307,7 @@ def test_relay_activation_projection_elides_whole_fields_utf8_safely_under_budge
         "contract", "runtime", "behavior", "availability", "qualification", "fallback",
     })
 
-@pytest.mark.parametrize("offset", [-1, 1.5, "1"])
+@pytest.mark.parametrize("offset", [-1, 1.5, "1", True])
 def test_bounded_expansion_rejects_malformed_offsets(offset) -> None:
     result = _bounded_expansion(
         {
@@ -1309,6 +1323,28 @@ def test_bounded_expansion_rejects_malformed_offsets(offset) -> None:
 
     assert result["error_kind"] == "invalid_content_offset"
     assert "content" not in result
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("offset", ["1", 1.0, True])
+async def test_expand_source_rejects_coercible_offsets_before_http(
+    offset,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:8000")
+    get_source_context = AsyncMock()
+
+    with patch(
+        "app.mcp.client.PalliumMcpClient.get_source_context",
+        new=get_source_context,
+    ):
+        with pytest.raises(ToolError, match="valid integer"):
+            await create_server().call_tool("pallium_expand_source", {
+                "source_item_id": "a",
+                "content_offset": offset,
+            })
+
+    get_source_context.assert_not_awaited()
 
 
 def test_bounded_expansion_requires_revision_and_rejects_equal_length_rewrite() -> None:
