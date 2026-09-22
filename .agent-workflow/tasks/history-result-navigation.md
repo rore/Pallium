@@ -55,7 +55,7 @@ Redline classifies `app/mcp/server.py` as gray/watch with no boundary risk, whic
 - Before review, all required checks shall pass → focused nodes, affected History subsystem files, pytest --lf --lfnf=none -q -n 0, one full pytest tests/ -x -q, agent-workflow checker, redline report, and git diff --check.
 
 **Plan review:**
-Clean-context reviewer /root/result_navigation_plan_review rejected the initial hits-only revision and underspecified fit/lineage plan. The request-bound revision, deterministic singleton/navigation fallback, explicit cursor/empty/terminal semantics, fresh-per-page lookup lineage, and 50/51 caller-surface matrix above resolve its five blocking findings; final focused follow-up approval pending.
+Clean-context reviewer /root/result_navigation_plan_review rejected the initial plan, then approved the corrected plan at commit 45d1327d after request binding, singleton safety fallback, explicit cursor/terminal behavior, fresh lookup lineage, 50/51 coverage, stale-before-empty handling, and replacement-status preservation were made explicit.
 
 **Approvals:**
 Approved by user 2026-09-22: "yes, i told you i approve all the work on this feature. i'm not here all the time so don't wait for me. continue with all the issues we need to fix"
@@ -63,7 +63,7 @@ Approved by user 2026-09-22: "yes, i told you i approve all the work on this fea
 **Exceptions:**
 —
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Checkpoint: api-review
@@ -80,11 +80,11 @@ Verification plan: tests-first focused compaction boundaries, strict FastMCP val
 
 ## Plan review
 
-Clean-context reviewer /root/result_navigation_plan_review rejected the initial plan. It required the revision to bind the canonical request and every projected candidate; a deterministic fit policy for unbounded optional fields and genuinely empty previews; exact offset/revision/empty/terminal behavior; honest fresh lookup-event semantics on retries and terminal pages; and caller-surface coverage at the supported 50-candidate maximum plus rejected 51. The revised marker-block plan incorporates each requirement and keeps the implementation MCP-local.
+Clean-context reviewer /root/result_navigation_plan_review rejected the initial plan. It required the revision to bind the canonical request and every projected candidate; a deterministic fit policy for unbounded optional fields and genuinely empty previews; exact offset/revision/empty/terminal behavior; honest fresh lookup-event semantics on retries and terminal pages; and caller-surface coverage at the supported 50-candidate maximum plus rejected 51. The revised marker-block plan incorporates each requirement and keeps the implementation MCP-local. Follow-up review approved commit 45d1327d with no remaining blockers.
 
 ## Implementation
 
-Discovery, classification, and initial clean-context review complete. The first plan was rejected and returned to planning; all five blockers are now incorporated for follow-up review. No production or test files changed. The sandboxed patch helper later failed with the documented Windows CreateProcessWithLogonW 1327 condition, so this exact-file deterministic replacement was used.
+Discovery, classification, and clean-context plan review complete. The first plan was rejected, corrected twice, and approved at commit 45d1327d. State transitioned to Ready to implement; no production or test files changed. The sandboxed patch helper later failed with the documented Windows CreateProcessWithLogonW 1327 condition, so this exact-file deterministic replacement was used.
 
 ## Evidence
 
