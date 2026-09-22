@@ -219,6 +219,15 @@ as validated. This reconciliation does not authorize another paid study.
 
 ### Next bounded hypothesis: candidate-preserving local reranking
 
+Execution ordering changed after a 2026-09-22 extended real recap. The new
+[`fix-session-history-evidence-access`](fix-session-history-evidence-access.md)
+feature is the next Session History delivery item: it test-drives same-source
+continuation, actionable high-count results, explicit source-thread semantics,
+History diagnostics, and bounded retry guidance. Finish that caller-contract work
+before running the reranking preflight below. The recap recovered every major
+historical fact on a first page of some targeted query and therefore adds packaging
+and navigation evidence, not a rank-only failure.
+
 A 2026-09-22 local, embedded, accuracy-first technology exploration makes the
 existing optional-reranker idea concrete enough to test, but does not justify a
 production model, dependency, index, or search-engine migration. After the

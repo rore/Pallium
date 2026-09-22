@@ -24,6 +24,11 @@ audit suggests reviewing content-equivalent groups prospectively while retaining
 distinct provenance, dates, and source-opening paths. That narrow follow-up belongs
 first to `improve-session-history-search-quality`; coordinate cases rather than
 launching this broader representation study in parallel with the same question.
+The tested caller-contract work in
+[`fix-session-history-evidence-access`](fix-session-history-evidence-access.md) also
+runs first. This investigation must use its source-continuation, result-navigation,
+scope, and diagnostic baselines rather than reopening those defects as representation
+alternatives.
 The access structures below are still unvalidated alternatives, not selected work.
 
 Compare access structures:
