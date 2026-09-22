@@ -45,16 +45,16 @@ Authoritative request source: `ff5d1534-0191-47f6-b586-95dd3c980476`.
 
 ## Evidence
 
-- Strict helper and HTTP restart nodes: `uv run --all-extras python -m pytest tests/test_codex_wake.py::test_restart_trace_association_rejects_ambiguous_evidence tests/test_codex_wake.py::test_restart_trace_association_is_http_visible_without_second_native_submission -q -n 0` → `22 passed`.
+- Strict helper and HTTP restart nodes: `uv run --all-extras python -m pytest tests/test_codex_wake.py::test_restart_trace_association_rejects_ambiguous_evidence tests/test_codex_wake.py::test_restart_trace_association_is_http_visible_without_second_native_submission -q -n 0` → `25 passed in 2.29s`.
 - Full Codex wake file: `uv run --all-extras python -m pytest tests/test_codex_wake.py -q -n 0` → `109 passed in 27.97s`.
-- Affected Relay wake/trace/MCP files: `.\.venv\Scripts\python.exe -m pytest tests/test_codex_wake.py tests/test_relay_delivery_trace.py tests/test_relay_mcp_tools.py -q -n 0` → `253 passed in 38.34s`.
+- Affected Relay wake/trace/MCP files: `.\.venv\Scripts\python.exe -m pytest tests/test_codex_wake.py tests/test_relay_delivery_trace.py tests/test_relay_mcp_tools.py -q -n 0` → initial `253 passed in 38.34s`; after PR review fix, `254 passed in 54.08s`.
 - Repository gate: `.\.venv\Scripts\python.exe -m pytest tests/ -x -q` → `5090 passed, 34 skipped, 2 xfailed in 243.49s`.
 - `apply_patch` failed with Windows `CreateProcessWithLogonW failed: 1327`; the permitted deterministic narrow fallback was used. Repository formatter `ruff` was unavailable; `git diff --check` is clean.
 - Skill-feedback triage: the Windows 1327 launcher failure is environment-owned and already documented locally, so no public skill feedback was filed.
 
 ## Result review
 
-Independent reviewer `/root/result_review_trace_link` approved after the generation-0 remediation. It verified that unchanged scope links complete uncertain evidence, A→B→A returns generation 2 and emits no association, the retained fence remains held, and no retry, reservation mutation, or second native submission occurs. No actionable findings remain.
+Independent reviewer `/root/result_review_trace_link` approved the generation-0 remediation and verified unchanged-scope linkage, A→B→A rejection, retained-fence preservation, and no retry or second native submission. PR review then found that a newer incomplete attempt could be hidden by selecting an older completion; the matcher now requires the highest-sequence direct event itself to be the completed uncertain attempt, with exactly one earlier matching prepared event. Focused regression coverage passes; no actionable findings remain.
 ## Plan review
 
 Clean-context reviewer `/root/plan_review_trace_link` blocked generic latest-attempt lookup because shared trace rows and absent scope generation could misassociate an older or cross-scope attempt. The revised plan limits fallback linkage to never-moved (generation 0), exact-scope retained `uncertain` reservations with complete direct prepared/completed evidence and `native_retry_safe=false`. All movement or ambiguity fails closed: no association, no retry, and no fence mutation. No blocking finding remains after incorporating those constraints.

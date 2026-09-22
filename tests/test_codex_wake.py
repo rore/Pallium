@@ -3285,6 +3285,7 @@ def test_pending_and_expired_codex_work_rewakes_after_real_app_restart(
         "missing_prepared",
         "bad_attempt",
         "newer_accepted",
+        "newer_prepared",
         "duplicate_sequence",
     ],
 )
@@ -3393,6 +3394,14 @@ def test_restart_trace_association_rejects_ambiguous_evidence(
                 "native_retry_safe": False,
             },
         ])
+    elif rejection == "newer_prepared":
+        trace["events"].append({
+            "sequence": 3,
+            "attempt_id": "relay-activation-" + "c" * 32,
+            "delivery_id": retained.delivery_id,
+            "shared": False,
+            "stage": "prepared",
+        })
     else:
         trace["events"].append({
             "sequence": 2,

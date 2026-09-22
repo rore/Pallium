@@ -300,22 +300,22 @@ def _restart_trace_attempt_id(
         or len(sequences) != len(set(sequences))
     ):
         return None
-    completed = [event for event in direct if event.get("stage") == "completed"]
-    if not completed:
-        return None
-    latest = max(completed, key=lambda event: event["sequence"])
+    latest = max(direct, key=lambda event: event["sequence"])
     attempt_id = latest.get("attempt_id")
+    prepared = [
+        event
+        for event in direct
+        if event.get("stage") == "prepared"
+        and event.get("attempt_id") == attempt_id
+    ]
     if (
-        not isinstance(attempt_id, str)
+        latest.get("stage") != "completed"
+        or not isinstance(attempt_id, str)
         or re.fullmatch(r"relay-activation-[0-9a-f]{32}", attempt_id) is None
         or latest.get("outcome") != "uncertain"
         or latest.get("native_retry_safe") is not False
-        or sum(
-            event.get("stage") == "prepared"
-            and event.get("attempt_id") == attempt_id
-            for event in direct
-        )
-        != 1
+        or len(prepared) != 1
+        or prepared[0]["sequence"] >= latest["sequence"]
         or sum(
             event.get("stage") == "completed"
             and event.get("attempt_id") == attempt_id
