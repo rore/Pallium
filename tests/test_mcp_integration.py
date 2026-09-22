@@ -1146,3 +1146,210 @@ async def test_mcp_history_source_continuation_real_http_lifecycle(
     forgotten_page = json.loads(forgotten_content[0].text)
     assert "error" in forgotten_page
     assert "items" not in forgotten_page
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("exact_work", [False, True], ids=["broad", "exact-work"])
+async def test_mcp_history_result_pages_cover_fifty_hits_with_fresh_audit_lineage(
+    pallium_asgi_app,
+    monkeypatch: pytest.MonkeyPatch,
+    exact_work: bool,
+) -> None:
+    container = "git:example/history-result-pages"
+    source_thread = "history:result-pages:source"
+    active_thread = "history:result-pages:reader"
+    actor = "Paging Operator"
+    query = "bounded history paging marker"
+    transport = httpx.ASGITransport(app=pallium_asgi_app)
+    real_async_client = httpx.AsyncClient
+    async with real_async_client(
+        transport=transport, base_url="http://testserver", timeout=30.0,
+    ) as http:
+        response = await http.post("/items", json=[
+            {
+                "source_type": "chat_message",
+                "source_id": f"history-result-page-{index:02d}",
+                "content_type": "text/plain",
+                "content": f"{query} candidate {index:02d}",
+                "artifact_kind": "message",
+                "role": "user",
+                "actor_ref": actor,
+                "container_ref": container,
+                "thread_ref": source_thread,
+                "visibility": "private",
+                "metadata": {"pallium_work_refs": ["feature-history-pages"]},
+            }
+            for index in range(50)
+        ])
+        assert response.status_code == 200, response.text
+        source_ids = [item["source_item_id"] for item in response.json()]
+
+    pallium_asgi_app.state.pallium_service.drain_processing_queue(
+        worker_id="history-result-pages-e2e",
+    )
+    storage = pallium_asgi_app.state.pallium_service._storage
+    memory_baseline = [
+        dataclasses.asdict(memory)
+        for memory in sorted(storage.list_memory_objects(), key=lambda memory: memory.id)
+    ]
+
+    def asgi_client(*args, **kwargs):
+        kwargs["transport"] = transport
+        kwargs["base_url"] = "http://testserver"
+        return real_async_client(*args, **kwargs)
+
+    monkeypatch.setattr("app.mcp.client.httpx.AsyncClient", asgi_client)
+    monkeypatch.setenv("PALLIUM_BASE_URL", "http://testserver")
+    server = create_server()
+    arguments = {
+        "container_ref": container,
+        "thread_ref": active_thread,
+        "actor_ref": actor,
+        "visibility": "private",
+        "limit": 50,
+    }
+    tool_name = "pallium_search_history"
+    if exact_work:
+        tool_name = "pallium_search_history_by_work_ref"
+        arguments.update({"work_ref": "feature-history-pages", "query": query})
+    else:
+        arguments["query"] = query
+
+    offset = 0
+    revision = None
+    visible_ids: list[str] = []
+    page_audits: list[tuple[str, list[str]]] = []
+    expanded = False
+    while True:
+        page_arguments = {**arguments, "result_offset": offset}
+        if revision is not None:
+            page_arguments["result_revision"] = revision
+        content, _ = await server.call_tool(tool_name, page_arguments)
+        page = json.loads(content[0].text)
+        assert len(content[0].text) <= 2000
+        assert page["total_count"] == 50
+        assert page["result_offset"] == offset
+        assert page["result_revision"] == (revision or page["result_revision"])
+        assert page["lookup_event_id"] not in {item[0] for item in page_audits}
+        page_ids = [item["source_item_id"] for item in page["results"]]
+        assert page_ids
+        page_audits.append((page["lookup_event_id"], page_ids))
+        visible_ids.extend(page_ids)
+        revision = page["result_revision"]
+
+        if offset and not expanded:
+            expand_content, _ = await server.call_tool("pallium_expand_source", {
+                "source_item_id": page_ids[0],
+                "before": 0,
+                "after": 0,
+                "parent_lookup_id": page["lookup_event_id"],
+                "container_ref": container,
+                "thread_ref": active_thread,
+                "actor_ref": actor,
+                "visibility": "private",
+            })
+            expanded_page = json.loads(expand_content[0].text)
+            assert expanded_page["parent_lookup_id"] == page["lookup_event_id"]
+            assert [item["source_item_id"] for item in expanded_page["items"]] == [page_ids[0]]
+            expanded = True
+
+        if not page["has_more"]:
+            assert page["next_offset"] is None
+            break
+        assert page["next_offset"] > offset
+        offset = page["next_offset"]
+
+    assert expanded
+    assert len(visible_ids) == len(set(visible_ids)) == 50
+    assert set(visible_ids) == set(source_ids)
+
+    terminal_arguments = {
+        **arguments,
+        "result_offset": 50,
+        "result_revision": revision,
+    }
+    for _ in range(2):
+        content, _ = await server.call_tool(tool_name, terminal_arguments)
+        terminal = json.loads(content[0].text)
+        assert terminal["results"] == []
+        assert terminal["result_offset"] == terminal["total_count"] == 50
+        assert terminal["next_offset"] is None
+        assert terminal["lookup_event_id"] not in {item[0] for item in page_audits}
+        page_audits.append((terminal["lookup_event_id"], []))
+
+    with storage._engine.connect() as connection:
+        rows = connection.execute(text(
+            "SELECT id, event_type, parent_lookup_id, exposed_json "
+            "FROM historical_lookup_reuse_event WHERE session_id = :session_id"
+        ), {"session_id": active_thread}).mappings().all()
+    lookup_rows = {row["id"]: row for row in rows if row["event_type"] == "lookup"}
+    assert set(lookup_rows) == {lookup_id for lookup_id, _ in page_audits}
+    for lookup_id, page_ids in page_audits:
+        assert json.loads(lookup_rows[lookup_id]["exposed_json"]) == [
+            {"source_item_id": source_item_id, "role": "search_match"}
+            for source_item_id in page_ids
+        ]
+    expansion_rows = [
+        row for row in rows
+        if row["event_type"] == "expansion" and row["parent_lookup_id"] in lookup_rows
+    ]
+    assert len(expansion_rows) == 1
+    assert expansion_rows[0]["parent_lookup_id"] == page_audits[1][0]
+
+    with storage._engine.connect() as connection:
+        lookups_before_stale = connection.execute(text(
+            "SELECT COUNT(*) FROM historical_lookup_reuse_event "
+            "WHERE session_id = :session_id AND event_type = 'lookup'"
+        ), {"session_id": active_thread}).scalar_one()
+    changed_request = {
+        **arguments,
+        "result_offset": 0,
+        "result_revision": revision,
+    }
+    if exact_work:
+        changed_request["query"] = query.upper()
+    else:
+        changed_request["role"] = "user"
+    changed_content, _ = await server.call_tool(tool_name, changed_request)
+    assert json.loads(changed_content[0].text)["error_kind"] == "stale_result_revision"
+
+    changed_scope_content, _ = await server.call_tool(tool_name, {
+        **arguments,
+        "container_ref": f"{container}-other",
+        "result_offset": 0,
+        "result_revision": revision,
+    })
+    assert json.loads(changed_scope_content[0].text)["error_kind"] == "stale_result_revision"
+    with storage._engine.connect() as connection:
+        assert connection.execute(text(
+            "SELECT COUNT(*) FROM historical_lookup_reuse_event "
+            "WHERE session_id = :session_id AND event_type = 'lookup'"
+        ), {"session_id": active_thread}).scalar_one() == lookups_before_stale
+
+    async with real_async_client(
+        transport=transport, base_url="http://testserver", timeout=30.0,
+    ) as http:
+        for source_item_id in source_ids:
+            response = await http.post("/source/forget", json={
+                "source_item_id": source_item_id,
+                "reason": "result-page stale lifecycle",
+                "actor_ref": actor,
+            })
+            assert response.status_code == 200, response.text
+    stale_content, _ = await server.call_tool(tool_name, {
+        **arguments,
+        "result_offset": 1,
+        "result_revision": revision,
+    })
+    stale = json.loads(stale_content[0].text)
+    assert stale["error_kind"] == "stale_result_revision"
+    assert "results" not in stale
+    with storage._engine.connect() as connection:
+        assert connection.execute(text(
+            "SELECT COUNT(*) FROM historical_lookup_reuse_event "
+            "WHERE session_id = :session_id AND event_type = 'lookup'"
+        ), {"session_id": active_thread}).scalar_one() == lookups_before_stale
+    assert [
+        dataclasses.asdict(memory)
+        for memory in sorted(storage.list_memory_objects(), key=lambda memory: memory.id)
+    ] == memory_baseline

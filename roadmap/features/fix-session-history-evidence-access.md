@@ -89,6 +89,7 @@ Hold candidate membership and ordering fixed when evaluating presentation. Repor
 as agent-visible evidence sufficiency and navigation cost, not candidate recovery or
 downstream task effect.
 
+Implementation evidence (2026-09-22): delivery slice 3 is implemented in both Session History MCP search tools. `limit` is bounded to 1–50; stateless `result_offset`/`result_revision` continuation binds the complete ordered candidate window and requires restart on stale revisions. Pages report the effective budget, offsets, `has_more`, total count, and per-page lookup lineage. Hits retain recognizable previews or `preview_unavailable` with a stable expansion path; singleton fit errors do not finalize or skip candidates. Exact-end and over-end offsets return empty terminal pages. Retrieval, ranking, accessibility, scope, redaction, forgetting, and historical-state semantics remain unchanged. Focused and caller-surface tests cover boundaries, multi-page traversal, stale restart, Unicode/escaped text, replacement metadata, terminal behavior, and page audit lineage. Only slice 3 is complete; slices 4–6 remain planned.
 ### 4. Separate active-session attribution from source scope
 
 Define distinct names and semantics for the requesting session used by telemetry and the
