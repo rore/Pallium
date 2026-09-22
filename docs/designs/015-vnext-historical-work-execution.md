@@ -205,7 +205,12 @@ investigation:
    lexical search, optional raw-vector search, expansion, and governance with zero
    derived-memory model calls. Package `enabled` is the only generation control
    and packages default off.
-4. `investigate-history-navigation-and-on-demand-compression` — compare flat raw
+4. `improve-session-history-search-quality` — prospectively review equivalent-
+   result groups while retaining distinct provenance, dates, and expansion paths.
+   Then run a zero-model candidate-availability preflight before any fixed-candidate
+   comparison of current RRF against local cross-encoder and late-interaction
+   scoring. Commit to neither a model nor an index migration before evidence.
+5. `investigate-history-navigation-and-on-demand-compression` — compare flat raw
    search with work-grouped/landmark and index-first navigation, then compare raw
    evidence with temporary request-specific compression and persistent derived
    memory at equal or reported budgets. Commit only to the investigation, not an
@@ -382,7 +387,8 @@ must justify itself on live precision.
 | Raw-history governance | P0 | add-raw-history-governance |
 | Bet 1: historical lookup (shipped foundation) | P1 | add-raw-historical-search-mode, add-agent-historical-lookup-tool, add-source-context-expansion |
 | Session History core (ordered) | Done | add-structural-session-work-references; add-distinct-work-and-broad-history-search-tools; decouple-session-history-from-derived-packages |
-| Navigation + representation evidence | Next investigation | investigate-history-navigation-and-on-demand-compression |
+| Search quality + agent search behavior | Next investigation | improve-session-history-search-quality |
+| Navigation + representation evidence | Following investigation | investigate-history-navigation-and-on-demand-compression |
 | Derived-memory as evaluated layer / Exp 3 | Continuous | idea-raw-derived-hybrid-shadow-eval, idea-derivation-fidelity-eval |
 | Bet 2: continuity / Exp 2 | P2 | idea-cross-context-work-continuity |
 | Bet 3: shared knowledge / Exp 4 | P3 | idea-visibility-vocab-reconciliation (first), idea-cross-user-raw-history-value, add-bounded-memory-lifecycle-hardening, add-explicit-shared-memory-derivation (uncommitted), add-cross-container-bounded-memory (uncommitted) |

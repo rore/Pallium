@@ -240,13 +240,16 @@ materially benefits another.
    backed by the same raw retrieval and expansion paths.
 3. **Shipped:** decouple raw Session History from derived packages and disable
    those packages by default.
-4. **Next:** run a time-boxed comparison of flat, grouped, and index-first
-   navigation and of raw, on-demand-compressed, and persistent-derived
-   representations.
-5. Accumulate diverse post-change activity, then run the real-corpus value gate.
-6. Support explicit work/session continuation only after that evidence warrants it.
-7. Improve derivation only in response to measured failure modes.
-8. Validate shared knowledge in an actual multi-user deployment.
+4. **Next:** improve search and agent search behavior from current usage evidence.
+   First review equivalent-result groups prospectively; then use a zero-model
+   candidate-availability preflight to decide whether a fixed-candidate local
+   reranking comparison is warranted. Do not preselect or migrate a search engine.
+5. Run a time-boxed comparison of flat, grouped, and index-first navigation and of
+   raw, on-demand-compressed, and persistent-derived representations.
+6. Accumulate diverse post-change activity, then run the real-corpus value gate.
+7. Support explicit work/session continuation only after that evidence warrants it.
+8. Improve derivation only in response to measured failure modes.
+9. Validate shared knowledge in an actual multi-user deployment.
 
 ---
 
