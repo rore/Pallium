@@ -417,6 +417,34 @@ def test_vector_source_only_http_expands_then_forgets_unicode_source(
         ]
     )
 
+    diagnostic = client.post("/history/diagnostics", json={
+        "idempotency_key": "vector-fusion-observation",
+        "text": "מהי טכנולוגיית הנתונים שסוכמה?",
+        "limit": 1,
+        "requester": {
+            "container_ref": CONTAINER,
+            "active_session_ref": THREAD,
+            "visibility": "private",
+        },
+        "source_filters": {},
+    })
+    assert diagnostic.status_code == 201, diagnostic.text
+    diagnostic_trace = diagnostic.json()["trace"]
+    vector_stage = next(
+        stage for stage in diagnostic_trace["stages"] if stage["name"] == "vector"
+    )
+    assert diagnostic_trace["capture_index"]["vector_available"] is True
+    assert vector_stage["available"] is True
+    assert any(
+        candidate["source_item_id"] == target_source_id
+        for candidate in vector_stage["candidates"]
+    )
+    assert any(
+        candidate["source_item_id"] == target_source_id
+        for candidate in diagnostic_trace["fusion"]["candidates"]
+    )
+
+
     query_payload = {
         "text": "מהי טכנולוגיית הנתונים שסוכמה?",
         "container_ref": CONTAINER,

@@ -163,6 +163,8 @@ class QueryResult:
     # source_only query, attached after the reuse-event row is persisted.
     # None on the proactive/injection path. See PalliumService.query.
     lookup_event_id: str | None = None
+    # Internal source-only observations; never serialized by normal query surfaces.
+    _source_only_diagnostics: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

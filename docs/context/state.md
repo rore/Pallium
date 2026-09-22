@@ -43,6 +43,9 @@ open. There is no scheduled Relay feature.
 - per-neighbor visibility enforcement
 - raw-turn forgetting and shared-raw revocation
 - safeguards for superseded historical guidance
+- bounded persisted History diagnostics via `pallium_create_history_diagnostic` and `pallium_read_history_diagnostic`;
+  diagnostics are caller-scoped, idempotent, live-sanitized on read, and do not
+  mutate lookup/accessibility or ranking state
 
 Supported integrations attach structural work references, and exact work-reference
 search is shipped. Raw Session History works with semantic packages disabled by

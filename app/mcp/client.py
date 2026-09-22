@@ -143,6 +143,83 @@ class PalliumMcpClient:
         if request_source_item_id is not None:
             payload["request_source_item_id"] = request_source_item_id
         return await self._post("/query", payload)
+    @staticmethod
+    def _history_diagnostic_error(response: httpx.Response) -> dict[str, Any]:
+        allowed = {
+            "diagnostic_unavailable", "idempotency_conflict", "invalid_request",
+            "diagnostic_failed", "diagnostic_corrupt",
+            "diagnostic_persistence_failed", "transport_timeout",
+        }
+        code = None
+        try:
+            detail = response.json().get("detail")
+            if isinstance(detail, dict) and detail.get("code") in allowed:
+                code = detail["code"]
+        except Exception:
+            pass
+        kind = code or {
+            404: "diagnostic_unavailable",
+            409: "idempotency_conflict",
+            422: "invalid_request",
+            500: "diagnostic_failed",
+            503: "diagnostic_persistence_failed",
+            504: "transport_timeout",
+        }.get(response.status_code, "http_error")
+        return {
+            "error_kind": kind,
+            "status_code": response.status_code,
+            "retryable": kind in {
+                "diagnostic_failed", "diagnostic_persistence_failed", "transport_timeout"
+            },
+        }
+
+    async def _history_diagnostic_post(self, path: str, payload: dict[str, Any], *, retry_read_timeout: bool = True) -> dict[str, Any]:
+        try:
+            async with httpx.AsyncClient(base_url=self._base_url, timeout=10.0) as http:
+                for attempt in range(2 if retry_read_timeout else 1):
+                    try:
+                        response = await http.post(path, json=payload)
+                    except httpx.ReadTimeout:
+                        if attempt == 0 and retry_read_timeout:
+                            continue
+                        return {"error_kind": "transport_timeout", "retryable": True, "action": "check delivery status before retrying"}
+                    except (httpx.ConnectError, httpx.ConnectTimeout):
+                        return {"error_kind": "transport_unavailable", "retryable": True, "action": "check service health and retry once"}
+                    if response.status_code >= 400:
+                        return self._history_diagnostic_error(response)
+                    try:
+                        return response.json()
+                    except Exception:
+                        return {"error_kind": "invalid_response"}
+        except httpx.ReadTimeout:
+            return {"error_kind": "transport_timeout", "retryable": True, "action": "check delivery status before retrying"}
+        except (httpx.ConnectError, httpx.ConnectTimeout):
+            return {"error_kind": "transport_unavailable", "retryable": True, "action": "check service health and retry once"}
+        except httpx.TransportError:
+            return {"error_kind": "transport_unavailable", "retryable": False}
+
+    async def create_history_diagnostic(self, text: str, *, limit: int = 5, source_type: str | None = None, role: str | None = None, artifact_kind: str | None = None, actor_ref: str | None = None, work_refs: list[str] | None = None, source_thread_ref: str | None = None, request_source_item_id: str | None = None, idempotency_key: str | None = None) -> dict[str, Any]:
+        requester = self._history_scope_params(None)
+        requester.pop("thread_ref", None)
+        requester.pop("actor_ref", None)
+        source_filters: dict[str, Any] = {}
+        for key, value in (("source_type", source_type), ("role", role), ("artifact_kind", artifact_kind), ("actor_ref", actor_ref), ("source_thread_ref", source_thread_ref)):
+            if value is not None:
+                source_filters[key] = value
+        if work_refs is not None:
+            source_filters["work_refs"] = work_refs
+        if request_source_item_id is not None:
+            source_filters["request_source_item_id"] = request_source_item_id
+        payload: dict[str, Any] = {"text": text, "limit": limit, "requester": requester, "source_filters": source_filters}
+        payload["idempotency_key"] = idempotency_key or f"diag-{uuid.uuid4().hex}"
+        return await self._history_diagnostic_post("/history/diagnostics", payload)
+
+    async def read_history_diagnostic(self, diagnostic_id: str) -> dict[str, Any]:
+        requester = self._history_scope_params(None)
+        requester.pop("thread_ref", None)
+        requester.pop("actor_ref", None)
+        payload: dict[str, Any] = {"requester": requester}
+        return await self._history_diagnostic_post(f"/history/diagnostics/{quote(diagnostic_id, safe='')}/read", payload)
     async def query_debug(self, text: str) -> dict[str, Any]:
         # Intentionally omits limit — uses API default (5).
         payload: dict[str, Any] = {"text": text}

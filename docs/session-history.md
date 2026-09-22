@@ -63,6 +63,13 @@ Every page refetches the source so forgetting and caller scope are enforced agai
 Both search tools accept `limit` from 1 through 50. Responses report `total_count`, zero-based `result_offset`, `next_offset`, `has_more`, `effective_max_chars`, and a `result_revision`. Continue with `next_offset` and the unchanged revision; nonzero offsets require it, and limits outside 1–50 are rejected. The revision binds the request and complete ordered candidate window. If that window or its visible representation changes, restart at offset zero. Paging does not change candidate membership, ordering, ranking, accessibility, visibility, redaction, or forgetting.
 
 Each page has its own `lookup_event_id`; use the ID from the page containing a hit as `parent_lookup_id` for `pallium_expand_source`. Successful pages finalize only delivered IDs. Exact-end and over-end offsets return an empty terminal page with `next_offset: null`. A hit has a recognizable preview or `preview_unavailable: true` with a stable expansion path. Mandatory navigation or safety fields that cannot fit produce an error without finalizing or skipping the candidate.
+
+### History diagnostics
+
+Use `pallium_create_history_diagnostic` (HTTP: `POST /history/diagnostics`) for a bounded explanation of a source-only search. Read it with `pallium_read_history_diagnostic` (HTTP: `POST /history/diagnostics/{id}/read`). The requester tuple is `container_ref`, non-empty `active_session_ref`, and explicit `visibility`; saved `source_filters` are separate exact historical-source filters and never broaden scope.
+
+Snapshots are bounded and versioned, covering capture/index, lexical/vector candidates, fusion/ranking, query limits, exclusions, and MCP packaging. Unsupported causes are `unknown` or `not_observed`. Creation is explicit, idempotent by request key, and does not mutate lookup/accessibility, forgetting, ranking, or delivery state. Creation and reread reapply live authorization and forgetting sanitization; unavailable IDs are non-oracular. Invalid requests, valid-empty results, corrupt snapshots, persistence/service failures, timeouts, and transport failures remain distinct.
+
 ## Historical evidence is not live state
 
 Session History reports what an earlier session said or did. It cannot prove

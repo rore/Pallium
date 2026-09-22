@@ -107,8 +107,8 @@ lineage and `session_id` use `active_session_ref`, while response grouping
 remains `current`/`other-N`/`unknown` without raw session IDs. Focused
 payload, schema, broad/exact/empty, exact-work, lineage, audit, visibility,
 forgetting, and MCP-to-HTTP lifecycle tests cover the split. Delivery slices
-2–4 are implemented; slice 1's regression matrix remains active through the planned
-diagnostics and guidance/replay slices 5–6.
+2–5 are implemented; slice 1's regression matrix remains active through the planned
+guidance/replay slice 6.
 
 ### 5. Expose bounded History diagnostics
 
@@ -117,6 +117,7 @@ stack. Keep verbose scores and exclusion details off the normal search response.
 diagnostic surface is for investigation and replay, remains caller-scoped, and
 revalidates forgetting on read. Normal callers receive only compact match cues that
 survive response compaction when useful.
+Implementation evidence (2026-09-23): slice 5 is implemented through `POST /history/diagnostics` and `POST /history/diagnostics/{id}/read`, plus `pallium_create_history_diagnostic` and `pallium_read_history_diagnostic`. Creation and reread require the requester tuple (`container_ref`, non-empty `active_session_ref`, and `visibility`); saved source filters are separate and do not identify the requester. Snapshots are bounded, versioned, persisted outside lookup/expansion telemetry, and idempotent by request key. Both operations apply the same live authorization/forgetting sanitization, so forgotten or unauthorized source details are removed without revealing ID existence. Invalid requests, valid-empty results, corrupt snapshots, persistence failures, timeouts, and transport failures remain distinct. Diagnostics are observational only: they do not mutate lookup/accessibility, forgetting, ranking, or delivery state.
 
 ### 6. Tighten retry guidance and run the end-to-end replay
 

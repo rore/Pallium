@@ -395,6 +395,21 @@ class HistoricalLookupReuseLabelRecord(Base):
     created_at = Column(DateTime(timezone=True), nullable=False)
 
 
+class HistoryDiagnosticRecord(Base):
+    __tablename__ = "history_diagnostic"
+    __table_args__ = (UniqueConstraint("container_ref", "active_session_ref", "visibility", "idempotency_key", name="uq_history_diagnostic_request"),)
+
+    id = Column(String, primary_key=True)
+    created_at = Column(DateTime(timezone=True), nullable=False)
+    container_ref = Column(String, nullable=False)
+    active_session_ref = Column(String, nullable=False)
+    visibility = Column(String, nullable=False)
+    idempotency_key = Column(String, nullable=False)
+    request_fingerprint = Column(String, nullable=False)
+    saved_filters_json = Column(Text, nullable=False)
+    schema_version = Column(Integer, nullable=False)
+    snapshot_json = Column(Text, nullable=False)
+
 class MemoryFlagRecord(Base):
     __tablename__ = "memory_flags"
 
@@ -1018,6 +1033,10 @@ class SQLiteSchemaMixin:
         "idx_historical_lookup_event_container_session": (
             "CREATE INDEX IF NOT EXISTS idx_historical_lookup_event_container_session "
             "ON historical_lookup_reuse_event (container_ref, session_id, created_at)"
+        ),
+        "idx_history_diagnostic_idempotency": (
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_history_diagnostic_idempotency "
+            "ON history_diagnostic (container_ref, active_session_ref, visibility, idempotency_key)"
         ),
         "idx_historical_lookup_label_event": (
             "CREATE INDEX IF NOT EXISTS idx_historical_lookup_label_event "

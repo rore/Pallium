@@ -122,7 +122,23 @@ class VectorRetrievalProvider(RetrievalProvider):
         # Capture index reference once to avoid TOCTOU across search/remove
         index = self._vector_index
         if index is None:
-            return RetrievalQueryResult(results=[], trace=None)
+            trace = None
+            if include_trace:
+                trace = QueryTrace(
+                    query_text=text,
+                    query_tokens=(),
+                    limit=limit,
+                    filters=filters,
+                    stages=(
+                        RetrievalStageTrace(
+                            stage_name=f"{VECTOR_STAGE_NAME}_unavailable",
+                            candidate_hits_considered=0,
+                            candidate_hits=(),
+                            selected_hits=(),
+                        ),
+                    ),
+                )
+            return RetrievalQueryResult(results=[], trace=trace)
 
         # 1. Embed query text
         query_vectors = self._embedding_provider.embed([text], mode="query")
