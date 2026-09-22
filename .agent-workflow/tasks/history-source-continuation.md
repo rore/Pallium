@@ -111,6 +111,7 @@ Commit under test: 2c9abcfb (Harden history source continuation), following the 
 - Full non-slow repository suite on the corrected production code: 5110 passed, 34 skipped, 2 xfailed. The later assertion-only strengthening was then verified by its exact lifecycle test and the complete 95-test MCP rerun.
 - pytest --lf --lfnf=none -q -n 0 found no stored failures (5361 deselected; pytest exit 1 because no tests were selected).
 - Import-linter boundary report: no violations. Static redline report: GRAY for the watched app/mcp/server.py path, with no boundary violation; manual Python-extension classification remains High / api-review because the MCP signature is caller-facing.
+- Current-main agent-workflow checker after exact Requirement baseline migration: clean.
 - git diff --check is clean.
 
 ## Result review
