@@ -86,6 +86,9 @@ Verification plan: focused budget/offset/revision tests, real MCP-to-HTTP contin
 
 Planning only. No production or test files have been edited. Discovery disproved source immutability: the plan now requires a visible-content revision, positive page progress, explicit terminal semantics, and real-client MCP-to-HTTP edge coverage. User approval is recorded verbatim above. Implementation may begin on the recorded files only.
 
+
+Tests-first baseline added in `tests/test_mcp_server.py`: formatter metadata/progress, terminal normalization, and continuation tool inputs. The repository venv confirmed all three tests red before production edits: missing `effective_max_chars` / `content_revision` metadata and unsupported continuation inputs. Focused command: `C:\Dev\rore\Pallium\.venv\Scripts\python.exe -m pytest tests/test_mcp_server.py::test_bounded_expansion_reports_explicit_continuation_budget_and_progress tests/test_mcp_server.py::test_bounded_expansion_normalizes_over_end_to_terminal_page tests/test_mcp_server.py::test_expand_source_accepts_continuation_inputs_and_preserves_lineage -q -n 0` → `3 failed`.
+
 ## Plan review
 
 Clean-context reviewer `/root/continuation_plan_review` rejected the initial bare-offset plan after finding supported in-place source-content rewrites in `app/tools/secrets_purge.py`. The reviewer approved MCP-local paging as the smallest correct layer once four blockers were addressed: require a caller-carried digest of freshly authorized redacted anchor content; guarantee positive progress within the complete serialized envelope; define terminal, retry, truncation, and delivery semantics; and exercise boundary/lifecycle/security behavior through the real MCP-to-HTTP path instead of the existing incomplete adapter. The plan and verification matrix above incorporate those findings. No HTTP/core/schema/storage expansion is needed.

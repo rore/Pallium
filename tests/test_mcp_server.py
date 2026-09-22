@@ -711,6 +711,64 @@ def test_bounded_expansion_overmax_clamps_to_four_thousand_and_errors_are_bounde
     assert len(_json_text(_compact_history({"error": "e" * 5000, "detail": "d" * 5000}, "q"))) <= 2000
     assert len(_json_text(_bounded_expansion({"error": "e" * 5000, "detail": "d" * 5000}, 4000))) <= 4000
 
+def test_bounded_expansion_reports_explicit_continuation_budget_and_progress() -> None:
+    result = _bounded_expansion({
+        "items": [{
+            "source_item_id": "anchor",
+            "is_anchor": True,
+            "content": "界😀 \\\"quoted\\\" \\\\ slash\\n" * 500,
+        }],
+        "parent_lookup_id": "lookup-1",
+    }, 4000)
+
+    assert result["effective_max_chars"] == 4000
+    assert result["content_offset"] == 0
+    assert result["content_total_chars"] > len(result["items"][0]["content"])
+    assert result["has_more"] is True
+    assert result["next_offset"] > result["content_offset"]
+
+
+def test_bounded_expansion_normalizes_over_end_to_terminal_page() -> None:
+    raw = {
+        "items": [{"source_item_id": "anchor", "is_anchor": True, "content": "界😀"}],
+    }
+    revision = _bounded_expansion(raw, 4000)["content_revision"]
+    result = _bounded_expansion(
+        raw, 4000, content_offset=99, content_revision=revision,
+    )
+
+    assert result["content_offset"] == result["content_total_chars"] == 2
+    assert result["next_offset"] is None
+    assert result["has_more"] is False
+    assert result["items"][0]["content"] == ""
+
+
+@pytest.mark.asyncio
+async def test_expand_source_accepts_continuation_inputs_and_preserves_lineage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:8000")
+    expansion = {
+        "items": [{"source_item_id": "a", "is_anchor": True, "content": "headtail"}],
+        "parent_lookup_id": "lookup-1",
+    }
+    revision = _bounded_expansion(expansion)["content_revision"]
+    with patch(
+        "app.mcp.client.PalliumMcpClient.get_source_context",
+        new=AsyncMock(return_value=expansion),
+    ):
+        content, _ = await create_server().call_tool("pallium_expand_source", {
+            "source_item_id": "a",
+            "content_offset": 4,
+            "content_revision": revision,
+            "parent_lookup_id": "lookup-1",
+        })
+
+    payload = json.loads(content[0].text)
+    assert payload["parent_lookup_id"] == "lookup-1"
+    assert payload["content_offset"] == 4
+    assert payload["items"][0]["content"] == "tail"
+
 @pytest.mark.asyncio
 async def test_expand_source_bounds_structured_validation_detail(
     monkeypatch: pytest.MonkeyPatch,
