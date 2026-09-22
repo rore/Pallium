@@ -211,6 +211,9 @@ class TestToolDescriptions:
         history_tool = next(t for t in tools if t.name == "pallium_search_history")
         assert "cannot prove messages were received or sent" in history_tool.description
         assert "actions were completed" in history_tool.description
+        expansion_tool = next(t for t in tools if t.name == "pallium_expand_source")
+        assert "next_offset" in expansion_tool.description
+        assert "content_revision" in expansion_tool.description
 
 
 @pytest.mark.asyncio
@@ -699,10 +702,7 @@ def test_bounded_expansion_drops_farthest_preserves_order_and_omits_supports_fir
         "parent_lookup_id": "parent",
     }, 256)
     assert len(_json_text(result)) <= 256
-    assert result["supported_memories"] is None
-    ids = [item["source_item_id"] for item in result["items"]]
-    assert ids == sorted(ids, key={"n0": 0, "anchor": 1, "n2": 2}.get)
-    assert "anchor" in ids
+    assert result == {"error": "max_chars is too small for the expansion anchor", "min_max_chars": 256}
 
 
 def test_bounded_expansion_overmax_clamps_to_four_thousand_and_errors_are_bounded() -> None:
@@ -837,8 +837,7 @@ def test_bounded_expansion_counts_dropped_neighbors_inside_budget() -> None:
         "parent_lookup_id": "parent",
     }, 256)
     assert len(_json_text(result)) <= 256
-    assert result["items_omitted"] > 0
-    assert result["items_omitted"] == 3 - len(result["items"])
+    assert result == {"error": "max_chars is too small for the expansion anchor", "min_max_chars": 256}
 
 
 def test_compact_history_preserves_unicode_casefold_match_offset() -> None:
@@ -1293,3 +1292,113 @@ def test_relay_activation_projection_elides_whole_fields_utf8_safely_under_budge
     assert set(activation).issubset(optional | {
         "contract", "runtime", "behavior", "availability", "qualification", "fallback",
     })
+
+@pytest.mark.parametrize("offset", [-1, 1.5, "1"])
+def test_bounded_expansion_rejects_malformed_offsets(offset) -> None:
+    result = _bounded_expansion(
+        {
+            "items": [{
+                "source_item_id": "a",
+                "is_anchor": True,
+                "content": "x",
+            }],
+        },
+        4000,
+        content_offset=offset,
+    )
+
+    assert result["error_kind"] == "invalid_content_offset"
+    assert "content" not in result
+
+
+def test_bounded_expansion_requires_revision_and_rejects_equal_length_rewrite() -> None:
+    raw = {
+        "items": [{"source_item_id": "a", "is_anchor": True, "content": "abcd"}],
+    }
+    first = _bounded_expansion(raw, 4000)
+    missing = _bounded_expansion(raw, 4000, content_offset=1)
+    rewritten = {
+        "items": [{"source_item_id": "a", "is_anchor": True, "content": "wxyz"}],
+    }
+    stale = _bounded_expansion(
+        rewritten,
+        4000,
+        content_offset=1,
+        content_revision=first["content_revision"],
+    )
+
+    assert missing["error_kind"] == "content_revision_required"
+    assert stale["error_kind"] == "stale_content_revision"
+    assert "items" not in stale
+
+
+@pytest.mark.parametrize(
+    ("requested", "effective"),
+    [(256, 256), (4000, 4000), (50000, 4000)],
+)
+def test_bounded_expansion_reports_effective_limit(
+    requested: int,
+    effective: int,
+) -> None:
+    result = _bounded_expansion({
+        "items": [{"source_item_id": "a", "is_anchor": True, "content": "x"}],
+    }, requested)
+
+    if requested == 256:
+        assert result["min_max_chars"] == 256
+    else:
+        assert result["effective_max_chars"] == effective
+
+
+@pytest.mark.asyncio
+async def test_bounded_expansion_finalization_failure_returns_no_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:8000")
+    expansion = {
+        "items": [{"source_item_id": "a", "is_anchor": True, "content": "tail"}],
+        "delivery_attempt_id": "attempt",
+    }
+    with patch(
+        "app.mcp.client.PalliumMcpClient.get_source_context",
+        new=AsyncMock(return_value=expansion),
+    ), patch(
+        "app.mcp.client.PalliumMcpClient.finalize_historical_delivery",
+        new=AsyncMock(return_value={"error": "failed"}),
+    ):
+        content, _ = await create_server().call_tool(
+            "pallium_expand_source", {"source_item_id": "a"},
+        )
+
+    assert json.loads(content[0].text) == {"error": "failed"}
+
+
+@pytest.mark.asyncio
+async def test_stale_continuation_does_not_finalize_delivery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:8000")
+    old = {
+        "items": [{"source_item_id": "a", "is_anchor": True, "content": "abcd"}],
+    }
+    changed = {
+        "items": [{"source_item_id": "a", "is_anchor": True, "content": "wxyz"}],
+        "delivery_attempt_id": "attempt",
+    }
+    revision = _bounded_expansion(old)["content_revision"]
+    finalize = AsyncMock(return_value={"lookup_event_id": "expansion"})
+    with patch(
+        "app.mcp.client.PalliumMcpClient.get_source_context",
+        new=AsyncMock(return_value=changed),
+    ), patch(
+        "app.mcp.client.PalliumMcpClient.finalize_historical_delivery",
+        new=finalize,
+    ):
+        content, _ = await create_server().call_tool("pallium_expand_source", {
+            "source_item_id": "a",
+            "content_offset": 1,
+            "content_revision": revision,
+        })
+
+    assert json.loads(content[0].text)["error_kind"] == "stale_content_revision"
+    finalize.assert_not_awaited()
