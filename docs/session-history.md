@@ -44,6 +44,16 @@ Search answers “where did we discuss this?” Expansion answers “what was th
 surrounding reasoning?” The bounds keep one match from turning into an entire
 transcript replay.
 
+When the anchor itself is larger than the expansion response budget, the response
+reports `effective_max_chars`, `content_offset`, `content_total_chars`,
+`content_revision`, `has_more`, and `next_offset`. Continue by passing the returned
+`next_offset` as `content_offset` together with the same `content_revision` and
+`parent_lookup_id`. A nonzero offset without the revision is rejected. If the visible,
+redacted source changes between calls, the revision becomes stale and the caller must
+restart at offset zero. Offsets count Unicode code points; `next_offset: null` marks the
+terminal page. Requests above the MCP maximum report the effective 4,000-character cap.
+Every page refetches the source so forgetting and caller scope are enforced again.
+
 ## Historical evidence is not live state
 
 Session History reports what an earlier session said or did. It cannot prove
@@ -71,7 +81,7 @@ cross-user sharing or authorization system.
 
 - broad topic search across accessible earlier sessions with `pallium_search_history`
 - exact-reference search with `pallium_search_history_by_work_ref`
-- bounded surrounding-turn expansion with `pallium_expand_source`
+- bounded surrounding-turn expansion and same-source continuation with `pallium_expand_source`
 - linked lookup and expansion telemetry
 - redaction, visibility checks, and forgetting
 - safeguards that distinguish outdated guidance from current replacements

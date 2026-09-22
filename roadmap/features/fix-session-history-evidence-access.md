@@ -67,6 +67,16 @@ summaries to solve a transport paging problem. The continuation contract must be
 under Unicode and JSON escaping and must not let a later page bypass a newly forgotten or
 unauthorized source.
 
+Implementation evidence (2026-09-22): the first continuation PR adds MCP-local
+Unicode-code-point paging for one oversized anchor, an explicit effective response cap,
+and a caller-carried revision over the freshly authorized redacted content. Real
+MCP-to-HTTP coverage reconstructs a multi-page Unicode/escaped source without gaps,
+proves retry and terminal behavior, rejects equal-length stale rewrites, and rechecks
+wrong-container and forgotten sources. The HTTP/core/storage contracts remain unchanged.
+This completes only delivery slice 2; the feature stays queued for result navigation,
+scope separation, diagnostics, and guidance/replay. Integration-skill guidance remains
+owned by slice 6.
+
 ### 3. Make search results actionable under the existing budget
 
 Stop tuning the rejected density window and minimum-preview allocation. Choose the
