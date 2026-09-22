@@ -58,7 +58,7 @@ Agent Redline classifies the integration guidance paths as gray and the docs, ev
 - Significant risk: inspect the final diff for production code, public signature, new dependency, visibility/forgetting, and retrieval-state changes. Any such change invalidates this plan and requires reclassification.
 
 **Plan review:**
-Clean-context review at `ad34f75f` did not approve: it required the actual MCP surface, explicit before/after policies and acceptance conditions, revision-aware ledger semantics and concrete retry bounds, a concrete path/check inventory, slow-replay execution, unchanged-state evidence, and correction of the existing `docs/session-history.md` safeguards. The revision at `780e3f0c` addressed those findings but re-review still required completed-source revision revalidation, bounded stale restarts, and exact replay/test/doc paths. The revision at `1e9ffc33` addressed those findings except the offset-zero empty-source revision case. This revision compares successful probe revisions and consumes a changed first page; re-review pending.
+Clean-context review at `ad34f75f` did not approve: it required the actual MCP surface, explicit before/after policies and acceptance conditions, revision-aware ledger semantics and concrete retry bounds, a concrete path/check inventory, slow-replay execution, unchanged-state evidence, and correction of the existing `docs/session-history.md` safeguards. The revision at `780e3f0c` addressed those findings but re-review still required completed-source revision revalidation, bounded stale restarts, and exact replay/test/doc paths. The revision at `1e9ffc33` addressed those findings except the offset-zero empty-source revision case. Commit `37069aa5` compares successful probe revisions and consumes a changed first page. Clean-context re-review approved the plan at `37069aa5` with no remaining actionable findings.
 
 **Approvals:**
 Not required at this risk level.
@@ -66,7 +66,7 @@ Not required at this risk level.
 **Exceptions:**
 —
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
