@@ -1007,6 +1007,7 @@ class PalliumService:
         artifact_kind: str | None = None,
         container_ref: str | None = None,
         thread_ref: str | None = None,
+        active_session_ref: str | None = None,
         actor_ref: str | None = None,
         request_source_item_id: str | None = None,
         work_refs: tuple[str, ...] = (),
@@ -1026,7 +1027,7 @@ class PalliumService:
                 source_only
                 and all(
                     isinstance(value, str) and bool(value)
-                    for value in (container_ref, thread_ref, visibility)
+                    for value in (container_ref, active_session_ref, visibility)
                 )
             ):
                 try:
@@ -1038,14 +1039,14 @@ class PalliumService:
                 or linked_source.forgotten
                 or linked_source.role != "user"
                 or canonicalize_container_ref(linked_source.container_ref) != container_ref
-                or linked_source.thread_ref != thread_ref
+                or linked_source.thread_ref != active_session_ref
                 or linked_source.visibility != visibility
             ):
                 raise LookupRequestLinkError(
                     "request_source_item_id must reference a live user request in the same scope"
                 )
             exclude_source_identity = (linked_source.source_type, linked_source.source_id)
-        if source_only or self._query_executor.default_semantic_plugin_available():
+        if not source_only and self._query_executor.default_semantic_plugin_available():
             runtime_context = resolve_runtime_context(
                 self._storage,
                 thread_ref,
@@ -1129,7 +1130,7 @@ class PalliumService:
                     "id": lookup_event_id,
                     "created_at": utc_now(),
                     "event_type": "lookup_attempt" if defer_delivery else "lookup",
-                    "session_id": thread_ref,
+                    "session_id": active_session_ref,
                     "container_ref": container_ref,
                     "actor_ref": actor_ref,
                     "trigger_origin": trigger_origin,

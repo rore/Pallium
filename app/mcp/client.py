@@ -58,6 +58,16 @@ class PalliumMcpClient:
                 params[key] = value
         return params
 
+    def _history_scope_params(self, source_thread_ref: str | None) -> dict[str, str]:
+        """Build History scope with requester attribution separate from filtering."""
+        params = self._scope_params()
+        active_session_ref = params.pop("thread_ref", None)
+        if active_session_ref is not None:
+            params["active_session_ref"] = active_session_ref
+        if source_thread_ref is not None:
+            params["thread_ref"] = source_thread_ref
+        return params
+
     def _relay_scope_params(self) -> dict[str, str]:
         """Return the exact Relay scope carried by the active context."""
         params: dict[str, str] = {}
@@ -82,6 +92,7 @@ class PalliumMcpClient:
         artifact_kind: str | None = None,
         actor_ref: str | None = None,
         work_refs: list[str] | None = None,
+        source_thread_ref: str | None = None,
         request_source_item_id: str | None = None,
         defer_delivery: bool = False,
     ) -> dict[str, Any]:
@@ -98,7 +109,7 @@ class PalliumMcpClient:
             "trigger_origin": "agent_pull",
             "defer_delivery": defer_delivery,
         }
-        payload.update(self._scope_params())
+        payload.update(self._history_scope_params(source_thread_ref))
         payload.pop("actor_ref", None)
         if actor_ref is not None:
             payload["actor_ref"] = actor_ref
@@ -117,6 +128,7 @@ class PalliumMcpClient:
     async def search_history_by_work_ref(
         self, work_ref: str, query: str | None = None, *, limit: int = 3,
         actor_ref: str | None = None,
+        source_thread_ref: str | None = None,
         request_source_item_id: str | None = None, defer_delivery: bool = False,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -124,7 +136,7 @@ class PalliumMcpClient:
             "trigger_origin": "agent_pull_work", "defer_delivery": defer_delivery,
             "work_refs": [work_ref],
         }
-        payload.update(self._scope_params())
+        payload.update(self._history_scope_params(source_thread_ref))
         payload.pop("actor_ref", None)
         if actor_ref is not None:
             payload["actor_ref"] = actor_ref

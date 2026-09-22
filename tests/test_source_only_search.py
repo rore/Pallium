@@ -141,6 +141,37 @@ def test_source_only_does_not_change_default_query(monkeypatch, test_db_url: str
         assert all(r.get("raw_rank") is None for r in default["results"])
 
 
+def test_source_only_explicit_thread_filter_ignores_runtime_relaxation(
+    monkeypatch, test_db_url: str,
+) -> None:
+    with _build_client(monkeypatch, test_db_url) as client:
+        thread_a = "chat:hist:thread-a"
+        thread_b = "chat:hist:thread-b"
+        _ingest(client, source_id="scope-a", content=_PLAIN, thread_ref=thread_a)
+        _ingest(client, source_id="scope-b", content=_PLAIN, thread_ref=thread_b)
+
+        response = client.post("/query/debug", json={
+            "text": "reservation ordering duplicate holds",
+            "container_ref": CONTAINER,
+            "thread_ref": thread_a,
+            "active_session_ref": thread_b,
+            "visibility": "private",
+            "limit": 5,
+            "source_only": True,
+            "runtime_context": {
+                "turn_kind": "same_thread_continuation",
+                "session_has_sufficient_local_context": True,
+            },
+        })
+
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert {item["source_id"] for item in payload["results"]} == {"scope-a"}
+        assert payload["trace"]["requested_filters"]["thread_ref"] == thread_a
+        assert payload["trace"]["filters"]["thread_ref"] == thread_a
+        assert payload["trace"]["filter_scope_relaxed"] is False
+
+
 # ---------------------------------------------------------------------------
 # B. Visibility fail-closed (Done-When #4)
 # ---------------------------------------------------------------------------

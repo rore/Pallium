@@ -84,7 +84,7 @@ async def test_exact_client_uses_existing_source_only_query_funnel() -> None:
             "defer_delivery": True,
             "work_refs": ["proj-42"],
             "container_ref": "git:example/repo",
-            "thread_ref": "session-1",
+            "active_session_ref": "session-1",
             "visibility": "private",
             "request_source_item_id": "request-1",
         },

@@ -396,6 +396,8 @@ def _build_pull_context(
 
             # Pointer+pull step 1: source-only history search (the shipped P1 primitive).
             query_request = _with_private_default({**current_query, "source_only": True})
+            if "thread_ref" in query_request:
+                query_request["active_session_ref"] = query_request.pop("thread_ref")
             query_request.setdefault("limit", 6)
             search_resp = client.post("/query", json=query_request)
             search_resp.raise_for_status()

@@ -82,7 +82,7 @@ def _ingest(client: TestClient, *, source_id: str, content: str, role: str,
 
 def _search_history(client: TestClient, *, container_ref: str = CONTAINER,
                     thread_ref: str | None = THREAD,
-                    active_session_ref: str | None = None,
+                    active_session_ref: str | None = THREAD,
                     visibility: str = "private",
                     actor_ref: str | None = None,
                     request_source_item_id: str | None = None,
@@ -226,6 +226,7 @@ def test_invalid_request_links_fail_uniformly_before_retrieval(
             "text": "prior implementation",
             "container_ref": CONTAINER,
             "thread_ref": THREAD,
+            "active_session_ref": THREAD,
             "actor_ref": "actor:test",
             "visibility": "private",
             "limit": 3,
@@ -237,7 +238,7 @@ def test_invalid_request_links_fail_uniformly_before_retrieval(
             {**base, "request_source_item_id": assistant_id},
             {**base, "request_source_item_id": forgotten_id},
             {**base, "request_source_item_id": user_id, "container_ref": "chat:other"},
-            {**base, "request_source_item_id": user_id, "thread_ref": "thread:other"},
+            {**base, "request_source_item_id": user_id, "active_session_ref": "thread:other"},
             {**base, "request_source_item_id": user_id, "visibility": "container"},
             {**base, "request_source_item_id": user_id, "source_only": False},
         ]
@@ -518,7 +519,7 @@ def _events_attr(client: TestClient, event_type: str) -> list[dict]:
         rows = conn.execute(
             text(
                 "SELECT id, session_id, source_session_ref, actor_ref, "
-                "parent_lookup_id FROM historical_lookup_reuse_event "
+                "parent_lookup_id, request_source_item_id FROM historical_lookup_reuse_event "
                 "WHERE event_type = :et"
             ),
             {"et": event_type},
@@ -562,7 +563,10 @@ def test_source_filter_is_exact_and_audit_uses_active_requester(monkeypatch, tes
         )
         assert {row["source_item_id"] for row in exact["results"]} == {source_id}
 
-        lookup = _events_attr(client, "lookup")[-1]
+        lookup = next(
+            event for event in _events_attr(client, "lookup")
+            if event["request_source_item_id"] == request_id
+        )
         assert lookup["session_id"] == _SESSION_B
         assert lookup["request_source_item_id"] == request_id
 
@@ -584,7 +588,7 @@ def test_expansion_attributed_to_requesting_session_not_anchor(monkeypatch, test
                 artifact_kind="assistant_output", thread_ref=_SESSION_A)
 
         # Search from session B (same container, different session).
-        result = _search_history(client, thread_ref=_SESSION_B)
+        result = _search_history(client, thread_ref=None, active_session_ref=_SESSION_B)
         lookup_id = result["lookup_event_id"]
         assert lookup_id is not None
         source_hits = [r for r in result["results"] if r["result_kind"] == "source_hit"]

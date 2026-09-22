@@ -97,6 +97,18 @@ optional historical source thread used as a filter. Keep container, actor, visib
 exact-work, and forgetting enforcement unchanged. Broad search remains broad when no
 source-thread filter is requested; exact-work search never broadens.
 
+Implementation evidence (2026-09-22): delivery slice 4 separates the active
+requesting session from optional historical source scope across MCP, HTTP, query
+orchestration, audit attribution, and result-page revisions. Broad History omits
+the source-thread filter, `source_thread_ref` is exact when supplied, and
+exact-work search intersects it. Source-only filter resolution no longer
+consumes runtime-context relaxation; proactive queries are unchanged. Lookup
+lineage and `session_id` use `active_session_ref`, while response grouping
+remains `current`/`other-N`/`unknown` without raw session IDs. Focused
+payload, schema, broad/exact/empty, exact-work, lineage, audit, visibility,
+forgetting, and MCP-to-HTTP lifecycle tests cover the split. Slices 1–4 are
+complete; slices 5–6 remain planned.
+
 ### 5. Expose bounded History diagnostics
 
 Reuse the existing query trace and debug machinery instead of creating a second ranking

@@ -40,6 +40,10 @@ turns around it, passing that match's `source_item_id` and the search response's
 Codex Relay profile after upgrading to make these read-only History tools
 available in Relay-woken tasks.
 
+Both search tools accept an optional `source_thread_ref` for exact historical
+thread filtering. Omit it for broad cross-session History; the active requesting
+session is tracked independently for telemetry and response grouping.
+
 Search answers “where did we discuss this?” Expansion answers “what was the
 surrounding reasoning?” The bounds keep one match from turning into an entire
 transcript replay.
@@ -72,8 +76,11 @@ superseded guidance.
 ## Scope and governance
 
 History search and expansion enforce the requesting session's container and
-visibility scope before returning content. `actor_ref` is stored attribution metadata:
-omit it to search every otherwise-eligible actor, or supply it as an exact
+visibility scope before returning content. The active session is attribution,
+not a candidate filter. An explicitly supplied `source_thread_ref` narrows
+candidates exactly and never broadens; exact-work search intersects it.
+`actor_ref` is stored attribution metadata: omit it to search every
+otherwise-eligible actor, or supply it as an exact
 metadata filter. Expansion applies the same checks to every surrounding turn.
 
 Pallium records lookup and expansion telemetry, supports raw-turn forgetting,
