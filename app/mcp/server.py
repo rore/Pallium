@@ -1249,7 +1249,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         result_offset: Annotated[StrictInt, Field(ge=0)] = 0,
         result_revision: StrictStr | None = None,
     ) -> str:
-        """Search eligible raw history by topic. `work_refs` is compatibility-only; prefer exact work-ref search. History cannot prove messages were received or sent; verify live. Use `current_text` over `historical_updates`. Copy injected `container_ref`. `source_thread_ref` is an exact source filter; omit it for all sessions. `actor_ref` is an exact metadata filter; omit it for all actors. Requires `container_ref` and visibility. Continue with `next_offset` and unchanged `result_revision`; restart at 0 when stale."""
+        """Search eligible raw history by topic. `work_refs` is compatibility-only; prefer exact work-ref search. History cannot prove messages were received or sent, live state was checked, approval was received, or actions were completed; verify live. Use `current_text` over `historical_updates`. Copy injected `container_ref`. `source_thread_ref` is an exact source filter; omit it for all sessions. `actor_ref` is an exact metadata filter; omit it for all actors. Requires `container_ref` and visibility. Continue with `next_offset` and unchanged `result_revision`; restart at 0 when stale."""
         page_error = _history_page_request_error(limit, result_offset, result_revision)
         if page_error is not None:
             return _json_text(page_error)
