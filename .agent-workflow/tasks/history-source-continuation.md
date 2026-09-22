@@ -62,12 +62,12 @@ Target files: `app/mcp/server.py`, `tests/test_mcp_server.py`, `tests/test_mcp_i
 Clean-context review recorded under `## Plan review`; initial plan rejected, blocking findings incorporated, MCP-local layer approved subject to High-risk user approval.
 
 **Approvals:**
-Pending user approval after clean-context review.
+Approved by user 2026-09-22T17:26:21+03:00: "&#x20;i approve all the work that i assigned to you here, including doing PRs and merge according to guidelines"
 
 **Exceptions:**
 —
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Checkpoint: api-review
@@ -84,7 +84,7 @@ Verification plan: focused budget/offset/revision tests, real MCP-to-HTTP contin
 
 ## Implementation
 
-Planning only. No production or test files have been edited. Discovery disproved source immutability: the plan now requires a visible-content revision, positive page progress, explicit terminal semantics, and real-client MCP-to-HTTP edge coverage. The task remains blocked pending the required High-risk user approval.
+Planning only. No production or test files have been edited. Discovery disproved source immutability: the plan now requires a visible-content revision, positive page progress, explicit terminal semantics, and real-client MCP-to-HTTP edge coverage. User approval is recorded verbatim above. Implementation may begin on the recorded files only.
 
 ## Plan review
 
