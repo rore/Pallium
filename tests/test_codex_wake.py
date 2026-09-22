@@ -21,7 +21,7 @@ from app import claude_wake, codex_readiness, codex_wake
 from app.config import AppConfig
 from app.main import create_app
 from core.claude_wake import ClaudeWakeRegistry
-from core.codex_wake import CodexWakeRegistry
+from core.codex_wake import CodexWakeRegistry, CodexWakeReservation
 from core.relay import RelayService
 from integrations.codex.hooks import user_prompt_submit as hook_module
 from storage.vector_index import VectorIndexConfig
@@ -3260,6 +3260,323 @@ def test_pending_and_expired_codex_work_rewakes_after_real_app_restart(
 
     reconciler = app_b.state._claude_wake_reconciler
     assert reconciler._thread is not None and not reconciler._thread.is_alive()
+
+@pytest.mark.parametrize(
+    "rejection",
+    [
+        "delivery_endpoint",
+        "delivery_session",
+        "delivery_container",
+        "snapshot_runtime",
+        "snapshot_endpoint",
+        "snapshot_session",
+        "snapshot_container",
+        "legacy",
+        "absent",
+        "gap",
+        "truncated",
+        "pruned",
+        "has_more",
+        "missing_flag",
+        "scope_generation",
+        "accepted",
+        "reserved",
+        "retry_safe",
+        "missing_prepared",
+        "bad_attempt",
+        "newer_accepted",
+        "newer_prepared",
+        "duplicate_sequence",
+    ],
+)
+def test_restart_trace_association_rejects_ambiguous_evidence(
+    rejection: str,
+) -> None:
+    retained = CodexWakeReservation(
+        "relay-session-" + "a" * 32,
+        "relay-delivery-" + "1" * 32,
+        "target",
+        SCOPE["container_ref"],
+        1,
+        "uncertain",
+    )
+    attempt_id = "relay-activation-" + "b" * 32
+    trace = {
+        "contract": "relay-delivery-trace/v1",
+        "legacy": False,
+        "absent": False,
+        "gap": False,
+        "truncated": False,
+        "pruned": False,
+        "has_more": False,
+        "delivery_snapshots": [{
+            "delivery_id": retained.delivery_id,
+            "state": "pending",
+            "recipient_runtime": "codex",
+            "recipient_endpoint_id": retained.recipient_endpoint_id,
+            "recipient_session_ref": retained.session_ref,
+            "recipient_container_ref": retained.container_ref,
+        }],
+        "events": [
+            {
+                "sequence": 1,
+                "attempt_id": attempt_id,
+                "delivery_id": retained.delivery_id,
+                "shared": False,
+                "stage": "prepared",
+            },
+            {
+                "sequence": 2,
+                "attempt_id": attempt_id,
+                "delivery_id": retained.delivery_id,
+                "shared": False,
+                "stage": "completed",
+                "outcome": "uncertain",
+                "native_retry_safe": False,
+            },
+        ],
+    }
+    delivery = {
+        "delivery_id": "relay-delivery-" + "2" * 32,
+        "recipient_runtime": "codex",
+        "recipient_endpoint_id": retained.recipient_endpoint_id,
+        "recipient_session_ref": retained.session_ref,
+        "recipient_container_ref": retained.container_ref,
+    }
+
+    if rejection.startswith("delivery_"):
+        field = "recipient_" + rejection.removeprefix("delivery_") + "_ref"
+        if rejection == "delivery_endpoint":
+            field = "recipient_endpoint_id"
+        delivery[field] = "wrong"
+    elif rejection.startswith("snapshot_"):
+        field = "recipient_" + rejection.removeprefix("snapshot_") + "_ref"
+        if rejection == "snapshot_runtime":
+            field = "recipient_runtime"
+        elif rejection == "snapshot_endpoint":
+            field = "recipient_endpoint_id"
+        trace["delivery_snapshots"][0][field] = "wrong"
+    elif rejection in {"legacy", "absent", "gap", "truncated", "pruned", "has_more"}:
+        trace[rejection] = True
+    elif rejection == "missing_flag":
+        trace.pop("gap")
+    elif rejection in {"accepted", "reserved"}:
+        retained = CodexWakeReservation(
+            retained.recipient_endpoint_id,
+            retained.delivery_id,
+            retained.session_ref,
+            retained.container_ref,
+            retained.generation,
+            rejection,
+        )
+    elif rejection == "retry_safe":
+        trace["events"][1]["native_retry_safe"] = True
+    elif rejection == "missing_prepared":
+        trace["events"] = [trace["events"][1]]
+    elif rejection == "bad_attempt":
+        trace["events"][1]["attempt_id"] = "invalid"
+    elif rejection == "newer_accepted":
+        trace["events"].extend([
+            {
+                "sequence": 3,
+                "attempt_id": "relay-activation-" + "c" * 32,
+                "delivery_id": retained.delivery_id,
+                "shared": False,
+                "stage": "prepared",
+            },
+            {
+                "sequence": 4,
+                "attempt_id": "relay-activation-" + "c" * 32,
+                "delivery_id": retained.delivery_id,
+                "shared": False,
+                "stage": "completed",
+                "outcome": "accepted",
+                "native_retry_safe": False,
+            },
+        ])
+    elif rejection == "newer_prepared":
+        trace["events"].append({
+            "sequence": 3,
+            "attempt_id": "relay-activation-" + "c" * 32,
+            "delivery_id": retained.delivery_id,
+            "shared": False,
+            "stage": "prepared",
+        })
+    else:
+        trace["events"].append({
+            "sequence": 2,
+            "attempt_id": "relay-activation-" + "c" * 32,
+            "delivery_id": retained.delivery_id,
+            "shared": False,
+            "stage": "completed",
+            "outcome": "uncertain",
+            "native_retry_safe": False,
+        })
+
+    class Relay:
+        def list_sessions(self, **kwargs):
+            assert kwargs == {
+                "container_ref": retained.container_ref,
+                "runtime": "codex",
+                "session_ref": retained.session_ref,
+                "include_inactive": True,
+            }
+            return [{
+                "endpoint_id": retained.recipient_endpoint_id,
+                "runtime": "codex",
+                "session_ref": retained.session_ref,
+                "container_ref": retained.container_ref,
+                "scope_generation": 1 if rejection == "scope_generation" else 0,
+            }]
+
+        def trace_message(self, **kwargs):
+            assert kwargs == {"message_id": retained.delivery_id, "limit": 100}
+            return trace
+
+    assert codex_wake._restart_trace_attempt_id(
+        Relay(), retained, delivery
+    ) is None
+
+
+@pytest.mark.parametrize("round_trip_scope", (False, True))
+def test_restart_trace_association_is_http_visible_without_second_native_submission(
+    client,
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    round_trip_scope: bool,
+) -> None:
+    service = client.app.state.pallium_service
+    storage = service._storage
+    registry_root = tmp_path / "restart-trace-registry"
+    registry_a = CodexWakeRegistry(registry_root)
+    workers = []
+    native_calls: list[tuple[str, str]] = []
+
+    monkeypatch.setattr(
+        service,
+        "enqueue_relay_trace_event",
+        lambda writer, event: bool(writer(event)),
+    )
+    monkeypatch.setattr(codex_wake, "_DEBOUNCE_SECONDS", 0)
+    monkeypatch.setattr(
+        codex_wake,
+        "_start_launch",
+        lambda session, prompt: (
+            native_calls.append((session, prompt))
+            or (None, ("failed", "nonzero_exit", 1))
+        ),
+    )
+
+    def schedule(result, scope, **kwargs):
+        worker = codex_wake.schedule_codex_relay_wake(result, scope, **kwargs)
+        workers.append(worker)
+        return worker
+
+    monkeypatch.setattr(
+        "app.dependencies.schedule_codex_relay_wake", schedule
+    )
+    app_a = FastAPI()
+    app_a.include_router(build_router(
+        service,
+        relay_storage=storage,
+        codex_wake_registry=registry_a,
+    ))
+    route_a = TestClient(app_a)
+    scope = {"container_ref": "git:example.test/restart-link"}
+    for runtime, session in (("claude-code", "sender"), ("codex", "target")):
+        assert route_a.post(
+            "/relay/turn",
+            json={"runtime": runtime, "session_ref": session, **scope},
+        ).status_code == 200
+
+    first = route_a.post("/relay/messages", json={
+        "sender_runtime": "claude-code",
+        "sender_session_ref": "sender",
+        "recipient": "codex:target",
+        "payload": "retained uncertain request",
+        **scope,
+    })
+    assert first.status_code == 200
+    assert len(workers) == 1 and workers[0] is not None
+    workers[0].join(timeout=2)
+    assert not workers[0].is_alive()
+    first_delivery = first.json()["deliveries"][0]
+    retained = registry_a.snapshot(first_delivery["recipient_endpoint_id"])
+    assert retained is not None and retained.outcome == "uncertain"
+
+    with codex_wake._scheduled_lock:
+        codex_wake._scheduled_delivery_ids.clear()
+        codex_wake._scheduled_session_generations.clear()
+        codex_wake._scheduled_session_delivery_ids.clear()
+        codex_wake._scheduled_session_attempt_ids.clear()
+    registry_b = CodexWakeRegistry(registry_root)
+    app_b = FastAPI()
+    app_b.include_router(build_router(
+        service,
+        relay_storage=storage,
+        codex_wake_registry=registry_b,
+    ))
+    route_b = TestClient(app_b)
+    if round_trip_scope:
+        moved_scope = {"container_ref": "git:example.test/restart-link-moved"}
+        moved = route_b.post("/relay/turn", json={
+            "runtime": "codex",
+            "session_ref": "target",
+            "max_chars": 1,
+            "max_messages": 1,
+            "previous_container_ref": scope["container_ref"],
+            "previous_endpoint_id": retained.recipient_endpoint_id,
+            "previous_scope_generation": 0,
+            **moved_scope,
+        })
+        assert moved.status_code == 200 and moved.json()["deliveries"] == []
+        returned = route_b.post("/relay/turn", json={
+            "runtime": "codex",
+            "session_ref": "target",
+            "max_chars": 1,
+            "max_messages": 1,
+            "previous_container_ref": moved_scope["container_ref"],
+            "previous_endpoint_id": retained.recipient_endpoint_id,
+            "previous_scope_generation": 1,
+            **scope,
+        })
+        assert returned.status_code == 200 and returned.json()["deliveries"] == []
+
+    second = route_b.post("/relay/messages", json={
+        "sender_runtime": "claude-code",
+        "sender_session_ref": "sender",
+        "recipient": "codex:target",
+        "payload": "later request behind retained fence",
+        **scope,
+    })
+    assert second.status_code == 200
+    assert len(workers) == 2 and workers[1] is None
+    assert len(native_calls) == 1
+    second_message = second.json()
+    second_delivery = second_message["deliveries"][0]
+    status = route_b.get(
+        f"/relay/messages/{second_message['message_id']}", params=scope
+    ).json()["deliveries"][0]
+    trace = route_b.get(
+        f"/relay/messages/{second_message['message_id']}/trace", params=scope
+    ).json()
+
+    assert status["attempts"] == 0 and status["state"] == "pending"
+    if round_trip_scope:
+        assert trace["explanation"].startswith("Queued:")
+        assert trace["events"] == []
+    else:
+        assert trace["explanation"].startswith("Needs intervention:")
+        assert [event["stage"] for event in trace["events"]] == [
+            "prepared",
+            "completed",
+            "associated",
+        ]
+        assert len({event["attempt_id"] for event in trace["events"]}) == 1
+        associated = trace["events"][-1]
+        assert associated["delivery_id"] == second_delivery["delivery_id"]
+        assert associated["shared"] is False
+
 
 def test_relay_profile_parses_to_exact_read_only_tools(monkeypatch, tmp_path) -> None:
     from app.cli import setup_codex
