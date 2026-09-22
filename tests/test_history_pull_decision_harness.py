@@ -10,8 +10,10 @@ the existing rollup + judge as libraries.
 """
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -279,3 +281,78 @@ def test_output_db_collision_rejected(tmp_path) -> None:
             ["--dry-run", "--seeds", "0", "--eligibility-n", "1",
              "--db", str(db_path), "--output", str(db_path)]
         )
+
+
+@pytest.mark.asyncio
+async def test_navigation_replay_retries_identical_page_and_reports_honest_metrics() -> None:
+    from evals.history_pull_decision.replay import run_navigation_replay
+
+    calls: list[tuple[str, dict]] = []
+    failed = False
+
+    async def call_tool(name: str, arguments: dict):
+        nonlocal failed
+        calls.append((name, dict(arguments)))
+        if name == "pallium_search_history":
+            payload = {
+                "results": [{"source_item_id": "source-1"}],
+                "lookup_event_id": "lookup-page-1",
+                "result_revision": "search-r1",
+                "result_offset": 0,
+                "total_count": 1,
+                "has_more": False,
+                "next_offset": None,
+            }
+        elif arguments.get("content_offset", 0) == 0:
+            payload = {
+                "items": [{"is_anchor": True, "content": '界😀 "quoted" \\ path'}],
+                "parent_lookup_id": arguments["parent_lookup_id"],
+                "content_revision": "content-r1",
+                "content_offset": 0,
+                "content_total_chars": 23,
+                "has_more": True,
+                "next_offset": 18,
+            }
+        elif not failed:
+            failed = True
+            raise ConnectionError("injected delivery failure")
+        else:
+            payload = {
+                "items": [{"is_anchor": True, "content": " tail"}],
+                "parent_lookup_id": arguments["parent_lookup_id"],
+                "content_revision": "content-r1",
+                "content_offset": 18,
+                "content_total_chars": 23,
+                "has_more": False,
+                "next_offset": None,
+            }
+        return [SimpleNamespace(text=json.dumps(payload, ensure_ascii=False))], {}
+
+    expected = '界😀 "quoted" \\ path tail'
+    report = await run_navigation_replay(
+        call_tool,
+        queries=["first repaired query"],
+        search_arguments={"container_ref": "c", "visibility": "private", "limit": 5},
+        required_evidence=[expected],
+        policy="ledger",
+        max_chars=256,
+    )
+
+    expansion_calls = [args for name, args in calls if name == "pallium_expand_source"]
+    assert expansion_calls[-2] == expansion_calls[-1]
+    assert all(call["parent_lookup_id"] == "lookup-page-1" for call in expansion_calls)
+    assert report["searches"] == 1
+    assert report["search_result_pages"] == 1
+    assert report["candidate_occurrences"] == report["unique_candidates"] == 1
+    assert report["exact_repeat_candidates"] == 0
+    assert report["expansion_attempts"] == 3
+    assert report["successfully_delivered_expansion_pages"] == 2
+    assert report["repeated_delivered_expansion_pages"] == 0
+    assert report["returned_characters"] == len(expected)
+    assert report["required_evidence_recovered"] is True
+    assert report["measurement_layer"] == "navigation/presentation"
+    assert report["elapsed_latency_seconds"] >= 0
+    assert all(
+        forbidden not in report
+        for forbidden in ("candidate_recovery", "injection_precision", "downstream_task_effect")
+    )
