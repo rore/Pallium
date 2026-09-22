@@ -3291,6 +3291,10 @@ def test_pending_and_expired_codex_work_rewakes_after_real_app_restart(
         "newer_accepted",
         "newer_prepared",
         "duplicate_sequence",
+        "trailing_wrong_attempt_association",
+        "duplicate_association",
+        "other_trailing_stage",
+        "pre_completion_association",
     ],
 )
 def test_restart_trace_association_rejects_ambiguous_evidence(
@@ -3406,6 +3410,48 @@ def test_restart_trace_association_rejects_ambiguous_evidence(
             "shared": False,
             "stage": "prepared",
         })
+    elif rejection == "trailing_wrong_attempt_association":
+        trace["events"].append({
+            "sequence": 3,
+            "attempt_id": "relay-activation-" + "c" * 32,
+            "delivery_id": retained.delivery_id,
+            "shared": False,
+            "stage": "associated",
+        })
+    elif rejection == "duplicate_association":
+        trace["events"].extend([
+            {
+                "sequence": 3,
+                "attempt_id": attempt_id,
+                "delivery_id": retained.delivery_id,
+                "shared": False,
+                "stage": "associated",
+            },
+            {
+                "sequence": 4,
+                "attempt_id": attempt_id,
+                "delivery_id": retained.delivery_id,
+                "shared": False,
+                "stage": "associated",
+            },
+        ])
+    elif rejection == "other_trailing_stage":
+        trace["events"].append({
+            "sequence": 3,
+            "attempt_id": attempt_id,
+            "delivery_id": retained.delivery_id,
+            "shared": False,
+            "stage": "hook_started",
+        })
+    elif rejection == "pre_completion_association":
+        trace["events"].insert(1, {
+            "sequence": 2,
+            "attempt_id": attempt_id,
+            "delivery_id": retained.delivery_id,
+            "shared": False,
+            "stage": "associated",
+        })
+        trace["events"][2]["sequence"] = 3
     else:
         trace["events"].append({
             "sequence": 2,
@@ -3440,6 +3486,94 @@ def test_restart_trace_association_rejects_ambiguous_evidence(
     assert codex_wake._restart_trace_attempt_id(
         Relay(), retained, delivery
     ) is None
+
+
+def test_restart_trace_association_accepts_same_attempt_trailing_fact() -> None:
+    retained = CodexWakeReservation(
+        "relay-session-" + "a" * 32,
+        "relay-delivery-" + "1" * 32,
+        "target",
+        SCOPE["container_ref"],
+        1,
+        "uncertain",
+    )
+    attempt_id = "relay-activation-" + "b" * 32
+    trace = {
+        "contract": "relay-delivery-trace/v1",
+        "legacy": False,
+        "absent": False,
+        "gap": False,
+        "truncated": False,
+        "pruned": False,
+        "has_more": False,
+        "delivery_snapshots": [{
+            "delivery_id": retained.delivery_id,
+            "state": "pending",
+            "recipient_runtime": "codex",
+            "recipient_endpoint_id": retained.recipient_endpoint_id,
+            "recipient_session_ref": retained.session_ref,
+            "recipient_container_ref": retained.container_ref,
+        }],
+        "events": [
+            {
+                "sequence": 1,
+                "attempt_id": attempt_id,
+                "delivery_id": retained.delivery_id,
+                "shared": False,
+                "stage": "prepared",
+            },
+            {
+                "sequence": 2,
+                "attempt_id": attempt_id,
+                "delivery_id": retained.delivery_id,
+                "shared": False,
+                "stage": "completed",
+                "outcome": "uncertain",
+                "native_retry_safe": False,
+            },
+            {
+                "sequence": 3,
+                "attempt_id": attempt_id,
+                "delivery_id": retained.delivery_id,
+                "shared": False,
+                "stage": "associated",
+            },
+        ],
+    }
+
+    class Relay:
+        def list_sessions(self, **kwargs):
+            assert kwargs == {
+                "container_ref": retained.container_ref,
+                "runtime": "codex",
+                "session_ref": retained.session_ref,
+                "include_inactive": True,
+            }
+            return [{
+                "endpoint_id": retained.recipient_endpoint_id,
+                "runtime": "codex",
+                "session_ref": retained.session_ref,
+                "container_ref": retained.container_ref,
+                "scope_generation": 0,
+            }]
+
+        def trace_message(self, **kwargs):
+            assert kwargs == {
+                "message_id": retained.delivery_id,
+                "limit": 100,
+            }
+            return trace
+
+    delivery = {
+        "delivery_id": "relay-delivery-" + "2" * 32,
+        "recipient_runtime": "codex",
+        "recipient_endpoint_id": retained.recipient_endpoint_id,
+        "recipient_session_ref": retained.session_ref,
+        "recipient_container_ref": retained.container_ref,
+    }
+    assert codex_wake._restart_trace_attempt_id(
+        Relay(), retained, delivery
+    ) == attempt_id
 
 
 @pytest.mark.parametrize("round_trip_scope", (False, True))
@@ -3507,6 +3641,24 @@ def test_restart_trace_association_is_http_visible_without_second_native_submiss
     first_delivery = first.json()["deliveries"][0]
     retained = registry_a.snapshot(first_delivery["recipient_endpoint_id"])
     assert retained is not None and retained.outcome == "uncertain"
+    relay = RelayService(storage)
+    assert codex_wake.schedule_codex_relay_wake(
+        first.json(),
+        scope,
+        relay_service=relay,
+        registry=registry_a,
+        trace_callback=lambda event: service.enqueue_relay_trace_event(
+            relay.record_trace_event, event
+        ),
+    ) is None
+    first_trace = route_a.get(
+        f"/relay/messages/{first.json()['message_id']}/trace", params=scope
+    ).json()
+    assert [event["stage"] for event in first_trace["events"]] == [
+        "prepared",
+        "completed",
+        "associated",
+    ]
     with patch("app.dependencies.schedule_codex_relay_wake", return_value=None):
         second = route_a.post("/relay/messages", json={
             "sender_runtime": "claude-code",
@@ -3560,7 +3712,6 @@ def test_restart_trace_association_is_http_visible_without_second_native_submiss
     from app.dependencies import recover_expired_relay_wakes
     from core.claude_wake import ClaudeWakeRegistry
 
-    relay = RelayService(storage)
     recover_expired_relay_wakes(
         relay,
         ClaudeWakeRegistry(),
