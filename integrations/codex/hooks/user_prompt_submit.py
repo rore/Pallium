@@ -44,6 +44,7 @@ injected_work_ref = _common.injected_work_ref
 work_ref_warning = _common.work_ref_warning
 start_hook_deadline = _common.start_hook_deadline
 record_codex_hook_execution = _common.record_codex_hook_execution
+record_codex_wake_event = _common.record_codex_wake_event
 
 _IDE_TAG_RE = re.compile(
     r"<ide_(?:opened_file|selection)>.*?</ide_(?:opened_file|selection)>",
@@ -66,6 +67,8 @@ def _strip_ide_context(text: str) -> str:
     return _IDE_TAG_RE.sub("", text).strip()
 
 def main() -> None:
+    wake_delivery_id = None
+    wake_failure_recorded = False
     try:
         start_hook_deadline(8, host_reserve=1)
         record_codex_hook_execution(script=__file__)
@@ -83,7 +86,16 @@ def main() -> None:
         if not content:
             return
         wake_match = _RELAY_WAKE_RE.fullmatch(prompt)
+        wake_delivery_id = (
+            wake_match.group("delivery_id") if wake_match is not None else None
+        )
         internal_wake = prompt == RELAY_WAKE_PROMPT or wake_match is not None
+        if wake_delivery_id is not None:
+            record_codex_wake_event(
+                script=__file__,
+                delivery_id=wake_delivery_id,
+                stage="hook_started",
+            )
 
         discovery = discover_work_refs(cwd)
         current_work_ref = injected_work_ref(discovery)
@@ -146,16 +158,87 @@ def main() -> None:
                 relay_response = None
                 confirmed_refs = []
                 work_refs_status = "unavailable"
-                relay_outcome = "malformed"
+                relay_outcome = "unavailable"
         if rendered_deliveries:
-            emit_context("\n\n".join((relay_output, relay_scope)), "UserPromptSubmit")
-            acknowledge_relay(
-                rendered_deliveries,
-                container_ref=container_ref,
+            exact_rendered = (
+                wake_delivery_id is None
+                or any(
+                    delivery.get("delivery_id") == wake_delivery_id
+                    for delivery in rendered_deliveries
+                    if isinstance(delivery, dict)
+                )
             )
+            try:
+                emit_context(
+                    "\n\n".join((relay_output, relay_scope)),
+                    "UserPromptSubmit",
+                )
+            except Exception:
+                if wake_delivery_id is not None:
+                    record_codex_wake_event(
+                        script=__file__,
+                        delivery_id=wake_delivery_id,
+                        stage="hook_failed",
+                        reason="emit_failed",
+                    )
+                    wake_failure_recorded = True
+                raise
+            if wake_delivery_id is not None and exact_rendered:
+                record_codex_wake_event(
+                    script=__file__,
+                    delivery_id=wake_delivery_id,
+                    stage="payload_emitted",
+                )
+            try:
+                acknowledged = acknowledge_relay(
+                    rendered_deliveries,
+                    container_ref=container_ref,
+                )
+            except Exception:
+                acknowledged = []
+            if wake_delivery_id is not None:
+                exact_acknowledged = exact_rendered and isinstance(
+                    acknowledged, list
+                ) and any(
+                    delivery.get("delivery_id") == wake_delivery_id
+                    for delivery in acknowledged
+                    if isinstance(delivery, dict)
+                )
+                record_codex_wake_event(
+                    script=__file__,
+                    delivery_id=wake_delivery_id,
+                    stage=(
+                        "delivery_acked"
+                        if exact_acknowledged
+                        else "hook_failed"
+                    ),
+                    reason=(
+                        None
+                        if exact_acknowledged
+                        else (
+                            "ack_failed"
+                            if exact_rendered
+                            else "malformed_response"
+                        )
+                    ),
+                )
+                wake_failure_recorded = not exact_acknowledged
             sys.exit(0)
 
         if internal_wake:
+            if wake_delivery_id is not None:
+                record_codex_wake_event(
+                    script=__file__,
+                    delivery_id=wake_delivery_id,
+                    stage="hook_failed",
+                    reason={
+                        "invalid_scope": "invalid_scope",
+                        "unavailable": "relay_unavailable",
+                        "malformed": "malformed_response",
+                        "empty": "empty",
+                    }[relay_outcome],
+                )
+                wake_failure_recorded = True
             if relay_outcome != "empty":
                 print(f"pallium relay wake: outcome={relay_outcome}", file=sys.stderr)
             emit_utf8(json.dumps({
@@ -233,6 +316,13 @@ def main() -> None:
                     rendered_deliveries, container_ref=container_ref
                 )
     except Exception as exc:
+        if wake_delivery_id is not None and not wake_failure_recorded:
+            record_codex_wake_event(
+                script=__file__,
+                delivery_id=wake_delivery_id,
+                stage="hook_failed",
+                reason="unexpected_error",
+            )
         print(f"pallium user_prompt_submit hook error: {exc}", file=sys.stderr)
 
     sys.exit(0)

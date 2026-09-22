@@ -117,16 +117,52 @@ RELAY_NOTICE_RESERVE = len("[Relay: 999+ more; Pallium continues.]") + 2
 RELAY_TURN_BUDGET = RELAY_OUTPUT_BUDGET - RELAY_NOTICE_RESERVE
 
 
+def _load_codex_readiness():
+    path = Path(__file__).resolve().parents[3] / "app" / "codex_readiness.py"
+    spec = importlib.util.spec_from_file_location("pallium_codex_readiness", path)
+    if spec is None or spec.loader is None:
+        return None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def record_codex_hook_execution(*, script: str) -> bool:
     """Best-effort execution evidence; marker failures never affect delivery."""
     def observe() -> bool:
-        path = Path(__file__).resolve().parents[3] / "app" / "codex_readiness.py"
-        spec = importlib.util.spec_from_file_location("pallium_codex_readiness", path)
-        if spec is None or spec.loader is None:
-            return False
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        return bool(module.observe_execution(python=sys.executable, script=script))
+        module = _load_codex_readiness()
+        return bool(
+            module
+            and module.observe_execution(python=sys.executable, script=script)
+        )
+
+    try:
+        deadline = HookDeadline(time.monotonic() + 0.25)
+        return bool(_run_before_deadline(observe, deadline))
+    except Exception:
+        return False
+
+
+def record_codex_wake_event(
+    *,
+    script: str,
+    delivery_id: str,
+    stage: str,
+    reason: str | None = None,
+) -> bool:
+    """Best-effort exact-delivery evidence; never affects Relay behavior."""
+    def observe() -> bool:
+        module = _load_codex_readiness()
+        return bool(
+            module
+            and module.record_wake_event(
+                python=sys.executable,
+                script=script,
+                delivery_id=delivery_id,
+                stage=stage,
+                reason=reason,
+            )
+        )
 
     try:
         deadline = HookDeadline(time.monotonic() + 0.25)
@@ -1437,22 +1473,37 @@ def format_relay(deliveries: list[dict], budget_chars: int = 0, remaining_count:
     return output, rendered
 
 
-def acknowledge_relay(deliveries: list[dict], *, container_ref: str) -> None:
+def acknowledge_relay(
+    deliveries: list[dict], *, container_ref: str
+) -> list[dict]:
+    """Return only acknowledgments confirmed for the exact delivery."""
+    acknowledged: list[dict] = []
     for delivery in deliveries:
         delivery_id = delivery.get("delivery_id")
         claim_token = delivery.get("claim_token")
         if not isinstance(delivery_id, str) or not isinstance(claim_token, str):
             continue
-        relay_request(
-            "POST",
-            "/relay/deliveries/ack",
-            {
-                "delivery_id": delivery_id,
-                "claim_token": claim_token,
-                "container_ref": container_ref,
-            },
-            timeout=0.5,
-        )
+        try:
+            response = relay_request(
+                "POST",
+                "/relay/deliveries/ack",
+                {
+                    "delivery_id": delivery_id,
+                    "claim_token": claim_token,
+                    "container_ref": container_ref,
+                },
+                timeout=0.5,
+            )
+        except Exception:
+            continue
+        if (
+            isinstance(response, dict)
+            and response.get("delivery_id") == delivery_id
+            and response.get("state") == "delivered"
+            and type(response.get("already_delivered")) is bool
+        ):
+            acknowledged.append(delivery)
+    return acknowledged
 
 
 def _safe_scope_value(value: str) -> str | None:

@@ -17,7 +17,7 @@ from sqlalchemy import text
 
 from api.routes import create_router
 from app.dependencies import build_router
-from app import claude_wake, codex_wake
+from app import claude_wake, codex_readiness, codex_wake
 from app.config import AppConfig
 from app.main import create_app
 from core.claude_wake import ClaudeWakeRegistry
@@ -87,6 +87,103 @@ def test_delivery_specific_wake_prompt_is_truthful_and_narrow() -> None:
     assert hook._RELAY_WAKE_RE.fullmatch(prompt)
     assert not hook._RELAY_WAKE_RE.fullmatch(prompt + " changed")
     assert codex_wake._wake_prompt("delivery-legacy") == hook.RELAY_WAKE_PROMPT
+
+
+def test_codex_wake_evidence_is_bounded_and_definition_matched(
+    tmp_path, monkeypatch,
+) -> None:
+    python = str(tmp_path / "пython.exe")
+    script = str(tmp_path / "hooks" / "user_prompt_submit.py")
+    codex_readiness.setup(
+        python=python,
+        script=script,
+        changed=True,
+        home=tmp_path,
+    )
+    monkeypatch.setattr(codex_readiness, "_MAX_WAKE_EVENTS", 3)
+    assert not codex_readiness.record_wake_event(
+        python=python,
+        script=str(tmp_path / "hooks" / "stale.py"),
+        delivery_id="relay-delivery-" + "0" * 32,
+        stage="hook_started",
+        home=tmp_path,
+    )
+    events = [
+        ("hook_started", None),
+        ("payload_emitted", None),
+        ("hook_failed", "ack_failed"),
+        ("delivery_acked", None),
+    ]
+    for index, (stage, reason) in enumerate(events):
+        assert codex_readiness.record_wake_event(
+            python=python,
+            script=script,
+            delivery_id=f"relay-delivery-{index:032x}",
+            stage=stage,
+            reason=reason,
+            home=tmp_path,
+        )
+    assert codex_readiness.observe_execution(
+        python=python,
+        script=script,
+        home=tmp_path,
+    )
+
+    public = codex_readiness.read(tmp_path)
+    evidence = public["relay_wake_evidence"]
+    assert len(evidence) == 3
+    assert [item["stage"] for item in evidence] == [
+        "payload_emitted",
+        "hook_failed",
+        "delivery_acked",
+    ]
+    assert all(
+        set(item) == {"delivery_id", "stage", "reason", "recorded_at"}
+        for item in evidence
+    )
+    marker = json.loads(
+        codex_readiness.marker_path(tmp_path).read_text(encoding="utf-8")
+    )
+    marker["relay_wake_evidence"].append({
+        "delivery_id": "relay-delivery-" + "e" * 32,
+        "stage": "hook_failed",
+        "reason": ["malformed"],
+        "recorded_at": "2030-01-01T00:00:00+00:00",
+    })
+    codex_readiness.marker_path(tmp_path).write_text(
+        json.dumps(marker),
+        encoding="utf-8",
+    )
+    assert len(
+        codex_readiness.read(tmp_path)["relay_wake_evidence"]
+    ) == 3
+    serialized = json.dumps(public, ensure_ascii=False)
+    assert "git:" not in serialized
+    assert "Unicode payload 😀" not in serialized
+    assert "attempt_id" not in serialized
+    assert not codex_readiness.record_wake_event(
+        python=python,
+        script=script,
+        delivery_id="relay-delivery-" + "f" * 32,
+        stage="hook_failed",
+        reason="unbounded_detail",
+        home=tmp_path,
+    )
+
+    monkeypatch.setattr(
+        codex_readiness,
+        "_write",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            OSError("marker unavailable")
+        ),
+    )
+    assert not codex_readiness.record_wake_event(
+        python=python,
+        script=script,
+        delivery_id="relay-delivery-" + "f" * 32,
+        stage="hook_started",
+        home=tmp_path,
+    )
 
 
 def test_reconciliation_releases_only_exact_terminal_or_missing(tmp_path) -> None:
