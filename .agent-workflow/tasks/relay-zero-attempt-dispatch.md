@@ -19,17 +19,17 @@
 
 **Material assumptions:** Bounded trace is diagnostic and may be missing; durable association is emitted only when the retained reservation and new delivery have the exact same endpoint, session, and container and a direct prior attempt event is available. Missing, conflicting, or legacy evidence preserves the current unknown state. Any need to change API, schema/codec, core service/routing, security, or governance returns this task to planning and reclassification.
 
-**Plan:** Add one bounded helper in `app/codex_wake.py` that reads the retained delivery's existing trace and returns only its latest exact attempt consistent with the durable reservation. On same-scope reservation conflict after restart, reuse that attempt ID to emit `associated`; preserve the in-memory fast path and never release, replace, or retry the reservation. Add an HTTP caller-surface regression in `tests/test_codex_wake.py` proving restart-loaded uncertain fencing yields actionable trace for the later pending delivery with one native submission total, plus a missing-evidence regression. Update the Relay roadmap claim. Stop and re-plan if exact trace identity cannot be established without schema or API changes.
+**Plan:** Add one bounded helper in `app/codex_wake.py` for the restart-only fallback. It may return an attempt ID only when the retained reservation outcome is `uncertain`; the old and new endpoint/session/container match exactly; the retained delivery snapshot matches the reservation; trace is current, complete, unpaginated, unpruned, untruncated, and non-legacy; and the latest direct completed attempt has a matching direct prepared event, outcome `uncertain`, and `native_retry_safe=false`. Reuse that ID only to emit `associated`; preserve the in-memory fast path and never release, replace, or retry the reservation. Add an HTTP caller-surface restart regression plus bounded negative cases for scope mismatch, missing/legacy/gapped/paginated/conflicting evidence, accepted/reserved outcomes, and retry-safe evidence. Update the Relay roadmap claim. Stop and re-plan if exact linkage requires schema or API changes.
 
-**Verification plan:** When a retained uncertain fence survives restart, a later exact-scope delivery shall remain pending with attempts=0, perform no second native submission, and expose the shared uncertain outcome through HTTP trace → focused end-to-end regression. When retained trace evidence is missing or mismatched, no unsupported association shall be emitted → focused unit regression. Existing busy-sweep and trace projection regressions shall remain green → affected test files. Final diff shall pass workflow/redline/import checks and `tests/ -x -q` before review.
+**Verification plan:** When a retained uncertain fence survives restart, a later exact-scope delivery shall remain pending with attempts=0, perform no second native submission, and expose the shared uncertain outcome through HTTP trace → focused end-to-end regression. Scope mismatch; missing, legacy, gapped, paginated, pruned, truncated, or conflicting evidence; accepted/reserved outcomes; and retry-safe completion shall emit no association and no native submission → parameterized unit regression. Existing busy-sweep and trace projection regressions shall remain green → affected test files. Final diff shall pass workflow/redline/import checks and `tests/ -x -q` before review.
 
-**Plan review:** Pending clean-context review after discovery.
+**Plan review:** Clean-context review `/root/plan_review_trace_link`; initial plan blocked, strict uncertain-only identity/evidence rules incorporated below.
 
 **Approvals:** Not required at this risk level.
 
 **Exceptions:** —
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 Authoritative request source: `ff5d1534-0191-47f6-b586-95dd3c980476`.
@@ -47,3 +47,7 @@ Authoritative request source: `ff5d1534-0191-47f6-b586-95dd3c980476`.
 ## Result review
 
 - Pending.
+
+## Plan review
+
+Clean-context reviewer `/root/plan_review_trace_link` blocked generic latest-attempt lookup because shared trace rows and absent scope generation could misassociate an older or cross-scope attempt. The revised plan limits fallback linkage to exact-scope retained `uncertain` reservations with complete direct prepared/completed evidence and `native_retry_safe=false`. All ambiguity fails closed: no association, no retry, and no fence mutation. No blocking finding remains after incorporating those constraints.
