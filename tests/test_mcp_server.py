@@ -1441,3 +1441,11 @@ async def test_stale_continuation_does_not_finalize_delivery(
 
     assert json.loads(content[0].text)["error_kind"] == "stale_content_revision"
     finalize.assert_not_awaited()
+
+@pytest.mark.asyncio
+async def test_history_diagnostic_tools_are_narrow_and_use_trusted_requester() -> None:
+    server = create_server()
+    tools = {tool.name: tool for tool in await server.list_tools()}
+    assert "pallium_create_history_diagnostic" in tools
+    assert "pallium_read_history_diagnostic" in tools
+    assert "raw_query" not in tools["pallium_create_history_diagnostic"].description

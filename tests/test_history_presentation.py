@@ -483,3 +483,26 @@ def test_impossible_singleton_fails_without_skipping_candidate() -> None:
     assert page["error"] == "history_result_exceeds_response_budget"
     assert page["result_offset"] == 0
     assert page["retryable"] is False
+
+def test_compactor_exposes_creation_observation_without_changing_normal_shape() -> None:
+    payload = {
+        "results": [
+            {
+                "source_item_id": str(i),
+                "excerpt": "長い 😀 " * 80,
+                "retrieval_source": "both",
+                "historical_updates": [{"replacement_status": "current"}],
+            }
+            for i in range(8)
+        ]
+    }
+    normal = _compact_history(payload, "unicode query", limit=8)
+    observed = _compact_history(payload, "unicode query", limit=8, include_packaging_observation=True)
+    assert "packaging_observation" not in normal
+    assert set(normal).issubset(observed)
+    observation = observed["packaging_observation"]
+    assert set(observation) <= {"observed_at", "budget", "retained_final_ranks", "omitted_count", "fit_status"}
+    assert observation["observed_at"] == "creation"
+    assert observation["retained_final_ranks"] == list(range(1, len(normal["results"]) + 1))
+    assert observation["omitted_count"] == max(0, len(payload["results"]) - len(normal["results"]))
+    assert observation["fit_status"] in {"fit", "truncated"}

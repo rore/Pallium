@@ -9,9 +9,13 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
+import pytest
 
 from sqlalchemy import text
 
+from core.errors import HistoryDiagnosticConflictError, HistoryDiagnosticCorruptError
 from core.models import new_id, utc_now
 from evals.historical_lookup_measurement import (
     compute_reuse_rollup,
@@ -402,7 +406,6 @@ def test_source_session_ref_migration_on_pre_column_db(tmp_path) -> None:
     by schema init — proving the orchestrator actually calls the column-ensure
     (create_all alone never alters an existing table)."""
     import sqlite3
-
     db_file = tmp_path / "old.db"
     conn = sqlite3.connect(str(db_file))
     conn.execute(
@@ -444,3 +447,149 @@ def test_unattributed_lookups_counted_and_excluded_from_kpi(tmp_path) -> None:
         eligible, events, eligibility_n=0, window={}, unattributed_lookups=1
     )
     assert rollup["data_quality"]["unattributed_lookup_events"] == 1
+
+# ---------------------------------------------------------------------------
+# Session-history diagnostic store (red contract)
+# ---------------------------------------------------------------------------
+
+
+def _diagnostic_row(*, diagnostic_id="diag-1", key="retry-1", fingerprint="fp-1", snapshot=None):
+    return {
+        "id": diagnostic_id,
+        "created_at": datetime(2026, 9, 22, 10, tzinfo=timezone.utc),
+        "container_ref": "container:canonical",
+        "active_session_ref": "session:active",
+        "visibility": "private",
+        "idempotency_key": key,
+        "request_fingerprint": fingerprint,
+        "saved_filters_json": json.dumps({"actor_ref": "actor:1", "thread_ref": "thread:1"}, sort_keys=True),
+        "schema_version": 1,
+        "snapshot_json": json.dumps(snapshot if snapshot is not None else {"status": "ok", "results": []}, sort_keys=True),
+    }
+
+
+class TestHistoryDiagnosticStore:
+    def test_dedicated_table_and_scoped_unique_key_are_created(self, tmp_path) -> None:
+        storage, _ = _storage(tmp_path)
+        with storage._engine.connect() as conn:
+            assert conn.execute(
+                text("SELECT name FROM sqlite_master WHERE type='table' AND name='history_diagnostic'")
+            ).scalar_one() == "history_diagnostic"
+            columns = {row[1] for row in conn.execute(text("PRAGMA table_info(history_diagnostic)"))}
+            assert {
+                "id", "created_at", "container_ref", "active_session_ref", "visibility",
+                "idempotency_key", "request_fingerprint", "saved_filters_json",
+                "schema_version", "snapshot_json",
+            } <= columns
+            indexes = {row[1] for row in conn.execute(text("PRAGMA index_list(history_diagnostic)"))}
+            assert any("idempot" in index for index in indexes)
+
+    def test_legacy_initialization_is_idempotent_and_preserves_existing_rows(self, tmp_path) -> None:
+        db_file = tmp_path / "legacy-diagnostic.db"
+        with sqlite3.connect(db_file) as conn:
+            conn.execute("CREATE TABLE marker (id TEXT PRIMARY KEY, value TEXT NOT NULL)")
+            conn.execute("INSERT INTO marker VALUES ('m1', 'keep')")
+        first = SQLiteStorageProvider(f"sqlite:///{db_file}")
+        second = SQLiteStorageProvider(f"sqlite:///{db_file}")
+        with second._engine.connect() as conn:
+            assert conn.execute(text("SELECT value FROM marker WHERE id='m1'")).scalar_one() == "keep"
+            assert conn.execute(text("SELECT COUNT(*) FROM history_diagnostic")).scalar_one() == 0
+
+    def test_create_round_trip_keeps_requester_filters_version_and_private_snapshot(self, tmp_path) -> None:
+        storage, _ = _storage(tmp_path)
+        row = _diagnostic_row(snapshot={"stages": [{"channel": "lexical", "rank": 1}]})
+        stored = storage.create_history_diagnostic(row)
+        assert stored["id"] == row["id"]
+        loaded = storage.get_history_diagnostic(
+            row["id"], container_ref=row["container_ref"],
+            active_session_ref=row["active_session_ref"], visibility=row["visibility"],
+        )
+        assert loaded["idempotency_key"] == "retry-1"
+        assert loaded["request_fingerprint"] == "fp-1"
+        assert json.loads(loaded["saved_filters_json"])["actor_ref"] == "actor:1"
+        assert loaded["schema_version"] == 1
+        assert json.loads(loaded["snapshot_json"])["stages"][0]["channel"] == "lexical"
+
+    def test_identical_retry_returns_same_row_but_changed_fingerprint_conflicts(self, tmp_path) -> None:
+        storage, _ = _storage(tmp_path)
+        row = _diagnostic_row()
+        assert storage.create_history_diagnostic(row)["id"] == "diag-1"
+        assert storage.create_history_diagnostic(row)["id"] == "diag-1"
+        with pytest.raises(HistoryDiagnosticConflictError):
+            storage.create_history_diagnostic({**row, "id": "diag-2", "request_fingerprint": "fp-other"})
+
+    def test_idempotency_is_scoped_to_requester_tuple(self, tmp_path) -> None:
+        storage, _ = _storage(tmp_path)
+        row = _diagnostic_row()
+        storage.create_history_diagnostic(row)
+        other = {**row, "id": "diag-2", "container_ref": "container:other"}
+        assert storage.create_history_diagnostic(other)["id"] == "diag-2"
+
+    def test_retrieval_requires_exact_requester_tuple(self, tmp_path) -> None:
+        storage, _ = _storage(tmp_path)
+        row = _diagnostic_row()
+        storage.create_history_diagnostic(row)
+        assert storage.get_history_diagnostic(
+            row["id"], container_ref="container:other",
+            active_session_ref=row["active_session_ref"], visibility=row["visibility"],
+        ) is None
+
+    @pytest.mark.parametrize(
+        "mutation",
+        [
+            lambda conn, row: conn.execute(
+                text("UPDATE history_diagnostic SET snapshot_json=:snapshot WHERE id=:id"),
+                {"id": row["id"], "snapshot": "{"},
+            ),
+            lambda conn, row: conn.execute(
+                text("UPDATE history_diagnostic SET snapshot_json=:snapshot WHERE id=:id"),
+                {"id": row["id"], "snapshot": json.dumps({"payload": "x" * 70000})},
+            ),
+            lambda conn, row: conn.execute(
+                text("UPDATE history_diagnostic SET schema_version=99 WHERE id=:id"),
+                {"id": row["id"]},
+            ),
+        ],
+        ids=["malformed-json", "oversized-json", "unknown-version"],
+    )
+    def test_retrieval_rejects_corrupt_snapshots(self, tmp_path, mutation) -> None:
+        storage, _ = _storage(tmp_path)
+        row = _diagnostic_row()
+        storage.create_history_diagnostic(row)
+        with storage._engine.begin() as conn:
+            mutation(conn, row)
+        with pytest.raises(HistoryDiagnosticCorruptError):
+            storage.get_history_diagnostic(
+                row["id"], container_ref=row["container_ref"],
+                active_session_ref=row["active_session_ref"], visibility=row["visibility"],
+            )
+
+    def test_failed_or_oversized_create_does_not_leave_a_row(self, tmp_path) -> None:
+        storage, _ = _storage(tmp_path)
+        row = _diagnostic_row(snapshot={"payload": "x" * 70000})
+        with pytest.raises(HistoryDiagnosticCorruptError):
+            storage.create_history_diagnostic(row)
+        with storage._engine.connect() as conn:
+            assert conn.execute(text("SELECT COUNT(*) FROM history_diagnostic")).scalar_one() == 0
+
+    def test_concurrent_identical_creates_converge(self, tmp_path) -> None:
+        storage, _ = _storage(tmp_path)
+        row = _diagnostic_row()
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(storage.create_history_diagnostic, (row, row)))
+        assert [result["id"] for result in results] == ["diag-1", "diag-1"]
+
+    def test_concurrent_conflicting_creates_have_one_success(self, tmp_path) -> None:
+        storage, _ = _storage(tmp_path)
+        row = _diagnostic_row()
+        conflicting = {**row, "id": "diag-2", "request_fingerprint": "fp-other"}
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [pool.submit(storage.create_history_diagnostic, candidate) for candidate in (row, conflicting)]
+            outcomes = []
+            for future in futures:
+                try:
+                    outcomes.append(("ok", future.result()))
+                except HistoryDiagnosticConflictError:
+                    outcomes.append(("conflict", None))
+        assert [kind for kind, _ in outcomes].count("ok") == 1
+        assert [kind for kind, _ in outcomes].count("conflict") == 1

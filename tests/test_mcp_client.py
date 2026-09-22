@@ -555,3 +555,35 @@ async def test_post_non_connection_failures_remain_non_retryable(ctx: PalliumCon
         result = await PalliumMcpClient(ctx).ingest("mutation")
     assert post.call_count == 1
     assert result == {"error": str(error)}
+
+class TestHistoryDiagnostics:
+    @pytest.mark.asyncio
+    async def test_diagnostic_derives_trusted_requester_and_separate_source_filters(self, ctx: PalliumContext) -> None:
+        response = _mock_response(json_data={"diagnostic_id": "diag-1"})
+        with patch("httpx.AsyncClient.post", return_value=response) as request:
+            result = await PalliumMcpClient(ctx).create_history_diagnostic(
+                "query", idempotency_key="idem-1", actor_ref="source-actor", source_thread_ref="source-thread",
+            )
+        payload = request.call_args.kwargs["json"]
+        assert result["diagnostic_id"] == "diag-1"
+        assert payload["requester"] == {"container_ref": "test-container", "active_session_ref": "test-thread", "visibility": "container"}
+        assert payload["source_filters"] == {"actor_ref": "source-actor", "source_thread_ref": "source-thread"}
+        assert payload["idempotency_key"] == "idem-1"
+
+    @pytest.mark.asyncio
+    async def test_diagnostic_retry_preserves_idempotency_and_maps_conflict(self, ctx: PalliumContext) -> None:
+        conflict = _mock_response(409, {"error": "idempotency_conflict"})
+        with patch("httpx.AsyncClient.post", side_effect=[httpx.ReadTimeout("late"), conflict]) as request:
+            result = await PalliumMcpClient(ctx).create_history_diagnostic("q", idempotency_key="same")
+        assert result["error_kind"] == "idempotency_conflict"
+        assert request.call_args_list[0].kwargs["json"]["idempotency_key"] == "same"
+        assert request.call_args_list[1].kwargs["json"]["idempotency_key"] == "same"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("error,kind", [(httpx.ReadTimeout("late"), "transport_timeout"), (httpx.ConnectError("secret"), "transport_unavailable")])
+    async def test_diagnostic_errors_are_privacy_safe(self, ctx: PalliumContext, error: Exception, kind: str) -> None:
+        with patch("httpx.AsyncClient.post", side_effect=error):
+            result = await PalliumMcpClient(ctx).create_history_diagnostic("q", idempotency_key="idem")
+        assert result["error_kind"] == kind
+        assert "secret" not in json.dumps(result)
+        assert "http://localhost" not in json.dumps(result)
