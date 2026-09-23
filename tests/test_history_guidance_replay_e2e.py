@@ -219,6 +219,46 @@ async def test_incomplete_or_unvalidated_source_does_not_recover_evidence(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("chunks", "required", "terminal_offset"),
+    [
+        (["evidence"], ["evidence"], len("evidence")),
+        ([""], [], 0),
+    ],
+    ids=["nonempty", "empty"],
+)
+async def test_terminal_revalidation_after_retry_exhaustion_restores_without_delivery(
+    chunks: list[str], required: list[str], terminal_offset: int,
+) -> None:
+    from evals.history_pull_decision.replay import run_navigation_replay
+
+    queries = ["q1", "q2", "q3"]
+    tool = _ReplayMcp(
+        {query: [[{"source_item_id": "s"}]] for query in queries},
+        {"s": chunks},
+    )
+    search_count = 0
+
+    async def fail_second_query_terminal(name: str, arguments: dict):
+        nonlocal search_count
+        if name == "pallium_search_history":
+            search_count += 1
+            if search_count == 2:
+                tool.failures[("expand", "s", terminal_offset)] = 3
+        return await tool(name, arguments)
+
+    report = await run_navigation_replay(
+        fail_second_query_terminal, queries=queries, search_arguments=_args(),
+        required_evidence=required, policy="ledger", max_chars=256,
+    )
+
+    assert report["required_evidence_recovered"] is True
+    assert report["successfully_delivered_expansion_pages"] == 1
+    assert report["repeated_delivered_expansion_pages"] == 0
+    assert report["expansion_attempts"] == 5
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("failure", ["transport", "stale-search", "stale-content"])
 async def test_retry_and_stale_budgets_stop_after_initial_plus_two(failure: str) -> None:
     from evals.history_pull_decision.replay import run_navigation_replay

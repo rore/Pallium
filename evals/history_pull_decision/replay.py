@@ -83,7 +83,10 @@ async def run_navigation_replay(
         if stale_sources[source] > 2:
             return
         if policy == "restart" or source not in sources:
-            sources[source] = {"offset": 0, "revision": None, "text": "", "complete": False}
+            sources[source] = {
+                "offset": 0, "revision": None, "text": "",
+                "complete": False, "needs_revalidation": False,
+            }
         state = sources[source]
         while True:
             offset, revision = state["offset"], state["revision"]
@@ -96,6 +99,7 @@ async def run_navigation_replay(
                 arguments["content_revision"] = revision
             result = await request("pallium_expand_source", arguments)
             if result is None:
+                state["needs_revalidation"] |= state["complete"]
                 state["complete"] = False
                 return
             changed = (
@@ -105,7 +109,7 @@ async def run_navigation_replay(
             )
             if result.get("error_kind") == "stale_content_revision" or changed:
                 stale_sources[source] += 1
-                state.update(offset=0, revision=None, text="", complete=False)
+                state.update(offset=0, revision=None, text="", complete=False, needs_revalidation=False)
                 if stale_sources[source] > 2:
                     return
                 # Offset zero can successfully return a new revision (including
@@ -114,10 +118,10 @@ async def run_navigation_replay(
                     continue
             if "error" in result or "error_kind" in result:
                 # An unavailable source must not keep contributing old evidence.
-                state.update(offset=0, revision=None, text="", complete=False)
+                state.update(offset=0, revision=None, text="", complete=False, needs_revalidation=False)
                 return
             if "content_revision" not in result:
-                state.update(offset=0, revision=None, text="", complete=False)
+                state.update(offset=0, revision=None, text="", complete=False, needs_revalidation=False)
                 return
             revision = result["content_revision"]
             page_offset = result.get("content_offset", 0)
@@ -125,8 +129,20 @@ async def run_navigation_replay(
             anchor = next((item for item in items if item.get("is_anchor")), None)
             content = (anchor or {}).get("content") or ""
             counts["returned_characters"] += sum(len(item.get("content") or "") for item in items)
+            revalidated = (
+                state["needs_revalidation"]
+                and not content
+                and not result.get("has_more")
+                and revision == state["revision"]
+                and page_offset == state["offset"]
+                and result.get("content_total_chars") == page_offset
+            )
+            if revalidated:
+                state.update(complete=True, needs_revalidation=False)
+                return
             if state["complete"] and not content and revision == state["revision"]:
                 return
+            state["needs_revalidation"] = False
             key = (source, revision, page_offset)
             counts["successfully_delivered_expansion_pages"] += 1
             counts["repeated_delivered_expansion_pages"] += int(key in delivered)
