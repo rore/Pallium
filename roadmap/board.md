@@ -3,7 +3,6 @@
 - add-protected-behavioral-requirements-regression-suite
 
 # Parallel · Session History
-- fix-session-history-evidence-access
 - improve-session-history-search-quality
 - investigate-history-navigation-and-on-demand-compression
 
@@ -47,6 +46,7 @@
 - idea-multi-vector-long-text-embedding
 
 # Done
+- fix-session-history-evidence-access
 - optimize-always-loaded-guidance
 - add-relay-delivery-trace
 - add-relay-activation-capability-contract

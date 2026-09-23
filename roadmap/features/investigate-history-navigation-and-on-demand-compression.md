@@ -14,6 +14,15 @@ After the raw Session History core and its two search operations are reliable, w
 is the smallest access and representation model that helps agents recover the right
 work with less noise, time, and token cost?
 
+## Roadmap relationship
+
+This is a separate queued representation study, not unfinished evidence-access work.
+The [evidence-access reliability feature](fix-session-history-evidence-access.md) is
+done. First complete the narrow prospective equivalent-result review in
+[`improve-session-history-search-quality`](improve-session-history-search-quality.md)
+and decide whether its candidate-availability preflight is warranted. Start this
+broader comparison afterward, reusing those cases and the shipped caller baseline.
+
 ## Time-boxed comparisons
 
 Current baseline (2026-09-12): PR #169 already ships compact response-local session
@@ -25,8 +34,8 @@ distinct provenance, dates, and source-opening paths. That narrow follow-up belo
 first to `improve-session-history-search-quality`; coordinate cases rather than
 launching this broader representation study in parallel with the same question.
 The tested caller-contract work in
-[`fix-session-history-evidence-access`](fix-session-history-evidence-access.md) also
-runs first. This investigation must use its source-continuation, result-navigation,
+[`fix-session-history-evidence-access`](fix-session-history-evidence-access.md) is
+complete. This investigation must use its source-continuation, result-navigation,
 scope, and diagnostic baselines rather than reopening those defects as representation
 alternatives.
 The access structures below are still unvalidated alternatives, not selected work.
@@ -84,6 +93,8 @@ cache-bounded, and is never persisted globally without later evidence.
 
 ## Dependencies
 
-Runs after `decouple-session-history-from-derived-packages`. It reuses rather than
-duplicates `idea-raw-derived-hybrid-shadow-eval`,
+Runs after `decouple-session-history-from-derived-packages`, the completed
+`fix-session-history-evidence-access`, and the narrow ordered work named above in
+`improve-session-history-search-quality`. It reuses rather than duplicates
+`idea-raw-derived-hybrid-shadow-eval`,
 `idea-derivation-fidelity-eval`, and `investigate-lexical-retrieval-scaling`.
