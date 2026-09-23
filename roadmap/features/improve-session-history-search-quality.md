@@ -15,6 +15,22 @@ evidence. Investigate existing data more widely than the initial ten-case diagno
 then implement the smallest supported fixes. The question is how to improve history
 search and its use, not whether history can help in principle.
 
+## Current status and boundaries
+
+This is the open search-quality umbrella. It is not the completed caller-reliability
+feature and it does not commit Pallium to a reranker, generated compression, or a new
+index.
+
+| Work | State | Boundary |
+|---|---|---|
+| [Evidence access and retry reliability](fix-session-history-evidence-access.md) | **Done** | Shipped source/result continuation, explicit source scope, diagnostics, and bounded replay-safe guidance. It measured navigation/presentation, not ranking or downstream task effect. |
+| Prospective equivalent-result review | **Next** | Review content-equivalent results while retaining provenance, dates, and source-opening paths. Decide whether there is a presentation problem worth changing. |
+| Candidate-availability and local reranking gate | **Conditional** | First run the zero-model-call fixed-candidate preflight below. Compare local scorers only if enough failures are genuinely rank-only. |
+| [Navigation and on-demand compression](investigate-history-navigation-and-on-demand-compression.md) | **Separate queued follow-up** | Reuse the shipped reliability baseline. Do not run this broader representation study in parallel with the narrow review above. |
+
+The next action for this feature is the prospective equivalent-result review. The
+candidate preflight follows only if that review leaves a distinct ranking question.
+
 ### Shipped: response-local navigation and Relay-wake availability
 
 Merged in PR #169 (0b37a03f).
@@ -217,16 +233,17 @@ retrieval/guidance findings. Reuse the shipped #169 presentation and #166 runner
 Do not restart the failed frozen-cohort studies or treat a 4,000-character budget
 as validated. This reconciliation does not authorize another paid study.
 
-### Next bounded hypothesis: candidate-preserving local reranking
+### Next bounded work: equivalent-result review, then a candidate-preserving reranking gate
 
-Execution ordering changed after a 2026-09-22 extended real recap. The new
+Execution ordering changed after a 2026-09-22 extended real recap. The resulting
 [`fix-session-history-evidence-access`](fix-session-history-evidence-access.md)
-feature is the next Session History delivery item: it test-drives same-source
-continuation, actionable high-count results, explicit source-thread semantics,
-History diagnostics, and bounded retry guidance. Finish that caller-contract work
-before running the reranking preflight below. The recap recovered every major
-historical fact on a first page of some targeted query and therefore adds packaging
-and navigation evidence, not a rank-only failure.
+feature is complete: it shipped same-source continuation, actionable high-count
+results, explicit source-thread semantics, History diagnostics, and bounded retry
+guidance. Those caller-contract failures are closed. Resume this umbrella with the
+prospective equivalent-result review described above; only then decide whether the
+fixed-candidate reranking preflight below is still warranted. The recap recovered
+every major historical fact on a first page of some targeted query and therefore
+adds packaging and navigation evidence, not a rank-only failure.
 
 A 2026-09-22 local, embedded, accuracy-first technology exploration makes the
 existing optional-reranker idea concrete enough to test, but does not justify a

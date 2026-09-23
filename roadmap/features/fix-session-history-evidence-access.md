@@ -17,7 +17,17 @@ evidence with current state. The feature closes the concrete caller-contract fai
 seen in real recap work before Pallium spends more effort on reranking or generated
 compression.
 
-## Why this is next
+## Roadmap relationship
+
+This completed reliability sub-feature belongs to the open
+[`improve-session-history-search-quality`](improve-session-history-search-quality.md)
+umbrella. No delivery slice remains here. Its results are the caller baseline for
+future search-quality work, but they do not close the umbrella or validate ranking,
+generated compression, or downstream task improvement. The broader
+[`investigate-history-navigation-and-on-demand-compression`](investigate-history-navigation-and-on-demand-compression.md)
+study remains separately queued.
+
+## Why this was prioritized
 
 One extended recap used four progressively narrower searches and 18 expansions. Sixteen
 expansions were driven primarily by empty excerpts, one by an insufficient excerpt, and
@@ -73,7 +83,7 @@ and a caller-carried revision over the freshly authorized redacted content. Real
 MCP-to-HTTP coverage reconstructs a multi-page Unicode/escaped source without gaps,
 proves retry and terminal behavior, rejects equal-length stale rewrites, and rechecks
 wrong-container and forgotten sources. The HTTP/core/storage contracts remain unchanged.
-This completes only delivery slice 2; the feature stays queued for result navigation,
+At that checkpoint, only delivery slice 2 was complete; the feature remained queued for result navigation,
 scope separation, diagnostics, and guidance/replay. Integration-skill guidance remains
 owned by slice 6.
 
@@ -89,7 +99,7 @@ Hold candidate membership and ordering fixed when evaluating presentation. Repor
 as agent-visible evidence sufficiency and navigation cost, not candidate recovery or
 downstream task effect.
 
-Implementation evidence (2026-09-22): delivery slice 3 is implemented in both Session History MCP search tools. `limit` is bounded to 1–50; stateless `result_offset`/`result_revision` continuation binds the complete ordered candidate window and requires restart on stale revisions. Pages report the effective budget, offsets, `has_more`, total count, and per-page lookup lineage. Hits retain recognizable previews or `preview_unavailable` with a stable expansion path; singleton fit errors do not finalize or skip candidates. Exact-end and over-end offsets return empty terminal pages. Retrieval, ranking, accessibility, scope, redaction, forgetting, and historical-state semantics remain unchanged. Focused and caller-surface tests cover boundaries, multi-page traversal, stale restart, Unicode/escaped text, replacement metadata, terminal behavior, and page audit lineage. Only slice 3 is complete; slices 4–6 remain planned.
+Implementation evidence (2026-09-22): delivery slice 3 is implemented in both Session History MCP search tools. `limit` is bounded to 1–50; stateless `result_offset`/`result_revision` continuation binds the complete ordered candidate window and requires restart on stale revisions. Pages report the effective budget, offsets, `has_more`, total count, and per-page lookup lineage. Hits retain recognizable previews or `preview_unavailable` with a stable expansion path; singleton fit errors do not finalize or skip candidates. Exact-end and over-end offsets return empty terminal pages. Retrieval, ranking, accessibility, scope, redaction, forgetting, and historical-state semantics remain unchanged. Focused and caller-surface tests cover boundaries, multi-page traversal, stale restart, Unicode/escaped text, replacement metadata, terminal behavior, and page audit lineage. At that checkpoint, only slice 3 was complete; slices 4–6 were still planned.
 ### 4. Separate active-session attribution from source scope
 
 Define distinct names and semantics for the requesting session used by telemetry and the
@@ -107,7 +117,7 @@ lineage and `session_id` use `active_session_ref`, while response grouping
 remains `current`/`other-N`/`unknown` without raw session IDs. Focused
 payload, schema, broad/exact/empty, exact-work, lineage, audit, visibility,
 forgetting, and MCP-to-HTTP lifecycle tests cover the split. Delivery slices
-2–5 are implemented; slice 1's regression matrix remains active through the planned
+2–5 were implemented; slice 1's regression matrix remained active through the then-planned
 guidance/replay slice 6.
 
 ### 5. Expose bounded History diagnostics
@@ -201,12 +211,13 @@ Latency is observational and has no pass/fail threshold. This replay does not me
 
 ## Dependencies and ordering
 
-This is the next Session History delivery item. It converts the actionable findings from
-`improve-session-history-search-quality` into tested caller contracts and runs before
-`investigate-history-navigation-and-on-demand-compression`. It reuses PR #169's
+This completed Session History delivery item converted the actionable caller-contract
+findings from `improve-session-history-search-quality` into tested behavior. It now
+provides the reliability baseline for
+`investigate-history-navigation-and-on-demand-compression`. It reused PR #169's
 response-local labels and expansion handoff, PR #166's qualified paired runner when a
-paired agent journey is justified, and current raw History search/expansion telemetry.
+paired agent journey was justified, and current raw History search/expansion telemetry.
 
-After this feature closes, resume the remaining search-quality umbrella. Run the local
+With this feature closed, resume the remaining search-quality umbrella. Run the local
 reranking preflight only if real cases still show necessary evidence present in the fixed
 candidate window but ranked too low.
