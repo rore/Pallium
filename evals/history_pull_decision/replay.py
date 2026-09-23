@@ -96,6 +96,7 @@ async def run_navigation_replay(
                 arguments["content_revision"] = revision
             result = await request("pallium_expand_source", arguments)
             if result is None:
+                state["complete"] = False
                 return
             changed = (
                 revision is not None
@@ -179,7 +180,10 @@ async def run_navigation_replay(
 
     recovered = [
         evidence for evidence in required_evidence
-        if any(evidence in state["text"] for state in sources.values())
+        if any(
+            state["complete"] and evidence in state["text"]
+            for state in sources.values()
+        )
     ]
     return {
         "policy": policy,

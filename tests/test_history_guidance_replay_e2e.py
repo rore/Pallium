@@ -191,6 +191,34 @@ async def test_completed_source_terminal_revalidation(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("chunks", "queries"),
+    [
+        (["evidence", "tail"], ["q1"]),
+        (["evidence"], ["q1", "q2"]),
+    ],
+    ids=["later-page-failure", "terminal-revalidation-failure"],
+)
+async def test_incomplete_or_unvalidated_source_does_not_recover_evidence(
+    chunks: list[str], queries: list[str],
+) -> None:
+    from evals.history_pull_decision.replay import run_navigation_replay
+
+    tool = _ReplayMcp(
+        {query: [[{"source_item_id": "s"}]] for query in queries},
+        {"s": chunks},
+    )
+    tool.failures[("expand", "s", len("evidence"))] = 3
+    report = await run_navigation_replay(
+        tool, queries=queries, search_arguments=_args(),
+        required_evidence=["evidence"], policy="ledger", max_chars=256,
+    )
+
+    assert report["required_evidence_recovered"] is False
+    assert report["recovered_required_evidence"] == []
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("failure", ["transport", "stale-search", "stale-content"])
 async def test_retry_and_stale_budgets_stop_after_initial_plus_two(failure: str) -> None:
     from evals.history_pull_decision.replay import run_navigation_replay
