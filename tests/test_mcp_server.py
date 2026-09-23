@@ -994,7 +994,14 @@ async def test_relay_tools_are_registered(monkeypatch: pytest.MonkeyPatch) -> No
     assert "replace_existing=true" in tools["pallium_relay_name"].description
     assert "@review" in tools["pallium_relay_send"].description
     assert "broadcast is not supported" in tools["pallium_relay_send"].description
-    assert "16,000 Unicode code points" in tools["pallium_relay_send"].description
+    send_description = tools["pallium_relay_send"].description
+    assert "16,000 Unicode code points" in send_description
+    assert "saved, not that the recipient started" in send_description
+    assert "`busy_queue` is a capability, not observed recipient busyness" in send_description
+    assert "a pending delivery is unconfirmed" in send_description
+    assert "let any current work finish" in send_description
+    assert "start an ordinary turn if needed" in send_description
+    assert "Do not resend" in send_description
     assert "16,000 Unicode code points" in tools["pallium_relay_reply"].description
     assert "next_offset" in tools["pallium_relay_status"].description
     assert "one idempotent reply" in tools["pallium_relay_reply"].description
