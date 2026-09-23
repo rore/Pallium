@@ -48,7 +48,7 @@ Not required at this risk level.
 —
 
 <!-- Ready to implement | Blocked | Ready for review -->
-**State:** Blocked
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -74,8 +74,9 @@ Verified on `feat/sync-workflow-only-behavior-contracts` against Agent Workflow 
 - initial `uv run python -m pytest tests/ -x -q`: stopped at one unrelated Windows checkout issue in `tests/test_guidance_budget.py`; the tracked skill blob is exactly 2,800 bytes while CRLF checkout expansion is 2,836 bytes, and the task does not modify that file
 - two later xdist runs encountered different wake concurrency timing failures; both exact nodes passed immediately with `-n 0`
 - complete serial remainder, `uv run python -m pytest tests/ -x -q -n 0 --ignore=tests/test_guidance_budget.py`: 5249 passed, 34 skipped, 216 deselected, 2 xfailed in 847.58s
+- complete no-exclusion serial run from a temporary `git archive HEAD` snapshot, with only the three CRLF-smudged skill mirrors normalized back to their exact 2,800-byte Git blob representation before execution: 5259 passed, 34 skipped, 216 deselected, 2 xfailed in 982.77s
 - `git diff --check`: passed before final Work Record evidence update; rerun before commit/review
 
 ## Result review
 
-Independent reviewer `/root/workflow_only_plan_review` verified scope, 67/67 source parity, four explicit mirrors, roadmap accuracy, and `git diff --check`. Signoff is blocked until the accidental BEL is removed and one complete suite passes without excluding `test_guidance_budget.py`; both are being addressed before re-review.
+Independent reviewer `/root/workflow_only_plan_review` verified scope, 67/67 source parity, four explicit mirrors, roadmap accuracy, and `git diff --check`. Signoff is blocked until the accidental BEL is removed and one complete suite passes without excluding `test_guidance_budget.py`; both are being addressed before re-review. The BEL is removed and the canonical-blob no-exclusion suite is green; re-review requested.
