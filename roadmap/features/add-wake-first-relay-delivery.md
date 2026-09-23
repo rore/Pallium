@@ -8,7 +8,7 @@ milestone: pallium-relay
 lane: capability
 ---
 
-## Current execution status (reconciled 2026-09-22)
+## Current execution status (reconciled 2026-09-23)
 
 The Windows/Linux Claude wake foundation, loaded-task Codex wake, Codex first-run
 setup, MCP recovery integration, and live no-manual-turn reply/remediation journey
@@ -17,15 +17,15 @@ retain Pallium's pending next-turn delivery instead. PR #209 added exact-deliver
 hook-start, payload-emission, ACK, and bounded-failure evidence. An installed
 busy-to-idle witness then delivered and ACKed once after one native submission;
 that proves the normal safe-turn path, not recovery from uncertain native failure.
-This umbrella remains queued for residual qualification. RW-031 keeps safe automatic
-recovery open; session-to-work associations are complete, and the remaining
-readiness work is tracked below.
+RW-031 is closed as Pallium work: Codex currently exposes neither owner-routed cold
+activation for an unloaded Desktop task nor caller-idempotent admission/readback for
+an uncertain public-CLI submission. Capturing and replaying an execution descriptor
+would start another runtime, not wake the Desktop-owned task. This external limit
+does not block the shipped loaded-task path. Session-to-work associations are
+complete. The umbrella remains queued only for the other runtime and platform
+qualification tracked below.
 
 Remaining work:
-- Establish a supported idempotent Codex admission/readback mechanism, or record the
-  precise upstream limitation. Until then, an uncertain native submission retains its
-  reservation and requires an ordinary recipient turn; do not resend or call this
-  automatic recovery.
 - Qualify still-unproven interrupted/restart combinations with a bounded matrix
   of runtime, platform, interruption, existing evidence, and missing witness.
   Reuse passed recovery tests and live witnesses; do not repeat them without cause.
@@ -47,7 +47,7 @@ new implementation tasks.
 | `RW-028` Codex MCP exposure | host recovery follow-up | Same-host/project tasks expose different tool catalogs, including zero Pallium tools after successful hook delivery. Treat this as a Codex host registry/rehydration blocker; do not infer MCP health from hook/service health or add a speculative Pallium workaround. |
 | `RW-029` stranded split identity | guarded Relay operations | Use the offline repair manifest for reviewed per-delivery dispositions. Version 2 can explicitly suppress a finite expired claim; it still refuses adoption, active or ambiguous claims, and automatic cleanup. |
 | `RW-030` Claude install drift | installed integration lifecycle | Repoint the user-scoped Claude MCP and hooks from the development checkout to the stable installed checkout in the coordinated post-merge install window. Existing hosts retain old subprocesses until their normal restart. |
-| `RW-031` Codex native activation reliability | wake-first Relay reliability | Actionable trace guidance is shipped in this slice. Next, establish supported idempotent admission/correlation/readback or record the upstream limitation precisely; do not blindly resubmit a held native wake. |
+| `RW-031` Codex native activation reliability | closed as Pallium work; upstream Codex dependency | Actionable trace guidance is shipped. Keep unloaded or uncertain deliveries pending for an ordinary supported recipient turn; do not resubmit or launch a second runtime. Revisit only if Codex exposes owner-routed cold activation plus idempotent exact-submission admission/readback. |
 
 The dashboard diagnostic is shipped as read-only evidence, not repair. Do not bulk-repair stranded deliveries. The real installed witness gate remains required for send -> next-turn hook claim/injection/ACK -> reply and work-reference attach/detach qualification.
 ## Summary
@@ -315,7 +315,7 @@ where the runtime exists locally, an installed witness close it.
 | `RW-024` | Codex wake launched `codex exec resume` without an explicit cwd, so the child inherited the Pallium service checkout. A resumed task then adopted that workspace, derived the wrong Relay container scope, and sender lookup correctly failed closed with 404. | **Fixed in this slice.** The adapter no longer cold-resumes or reads private Codex workspace state. It writes one exact-thread native queue item from a validated neutral Codex home; loaded tasks wake through their owner, while unloaded-task correctness relies only on Pallium's pending delivery and a later hook turn. Caller-surface regressions pin explicit cwd, fail-closed unsafe paths, pending-before-hook, exact delivery, and single-flight behavior. |
 | `RW-025` | A substantive hook-delivered assignment outlived its claim lease during investigation, so receiptless atomic reply returned the expected 409 even though the work completed. | **Tracked operational fallback.** The Relay error was surfaced and completion was sent as a new direct Relay message. Existing expired-claim recovery protects the original delivery; no automatic completion-message fallback is added unless this recurs as a product failure. |
 | `RW-026` | Near-simultaneous Codex sends produced anonymous `failed` and `queued` wake logs. Durable state and task JSONL proved one hook delivery and one pending delivery followed by a direct app-message fallback, but the wake outcomes could not be assigned to a delivery or safely explained. | **Fixed as a diagnosis gap only.** Every attempted Codex wake now logs the canonical delivery ID, bounded SHA-256 fingerprints for session and container scope, a fixed safe reason category, and an optional numeric exit code; recovery candidates use the same correlation values. Hostile-reference and full launch-outcome regressions prove prompts, stderr, exception text, environment values, secrets, and local paths are not logged. Delivery routing, queueing, retry, claim, ACK, and app-message hook behavior are unchanged; this does not claim the observed failed wake was repaired. |
-| `RW-031` | A Codex native queue call can persist a fresh queue row before its response is lost, while the public CLI returns nonzero and creates a new client message ID on every retry. Retaining an uncertain reservation prevents duplicate native turns but can leave a pending delivery without actionable recovery guidance. | **Diagnostics and actionable reporting shipped; safe automatic recovery remains open.** PR #209 records exact-delivery hook start, payload emission, ACK, and bounded failure evidence. An installed busy-to-idle witness proved one accepted submission, one later safe turn, one injection, and one ACK; it did not exercise uncertain failure. Trace explanations distinguish queued, delivered, expired-before-claim, needs-intervention, mixed, and incomplete evidence. A later delivery in the same never-moved exact scope (generation 0) blocked by a retained uncertain fence after service restart now reuses only complete durable prepared/completed evidence to expose the same needs-intervention guidance; it never releases the fence or submits another native turn, and moved or ambiguous scope evidence fails closed. Startup and periodic recovery enumerate already-pending coalesced deliveries oldest-first so later items receive that association without weakening the single native-submission fence; default candidate reads and exact-ID rechecks remain unchanged. Repeating the current public CLI command is not safe automatic recovery because it has neither a caller idempotency key nor authoritative queue readback. |
+| `RW-031` | A Codex native queue call can persist a fresh queue row before its response is lost, while the public CLI returns nonzero and creates a new client message ID on every retry. Retaining an uncertain reservation prevents duplicate native turns but can leave a pending delivery without actionable recovery guidance. | **Pallium work closed; the remaining automatic-recovery gap is upstream.** PR #209 records exact-delivery hook start, payload emission, ACK, and bounded failure evidence. An installed busy-to-idle witness proved one accepted submission, one later safe turn, one injection, and one ACK; it did not exercise uncertain failure. Trace explanations distinguish queued, delivered, expired-before-claim, needs-intervention, mixed, and incomplete evidence. A later delivery in the same never-moved exact scope (generation 0) blocked by a retained uncertain fence after service restart now reuses only complete durable prepared/completed evidence to expose the same needs-intervention guidance; it never releases the fence or submits another native turn, and moved or ambiguous scope evidence fails closed. Startup and periodic recovery enumerate already-pending coalesced deliveries oldest-first so later items receive that association without weakening the single native-submission fence; default candidate reads and exact-ID rechecks remain unchanged. Source review of Codex `0.155.0-alpha.9.2`, `0.156.1`, and `0.157.0-alpha.11` found no supported composition that wakes an unloaded task in its Desktop-owned app-server and atomically admits one exact queued submission. `codex exec resume` starts a second runtime, `thread/queue/start` is loaded-only, and the public queue path has no caller idempotency key. Therefore Pallium deliberately keeps the delivery pending for an ordinary supported recipient turn. This is not a Pallium release gate; revisit only when Codex provides owner-routed cold activation with server-side idempotency and authoritative admission results. |
 
 The Windows Claude regression floor remains: idle text and zero-tool turns, empty
 Stop rearm, busy delivery, ordered bursts, Unicode, recursive-Stop loop prevention,
@@ -459,6 +459,8 @@ Primary runtime sources:
 - [Codex queue integration tests](https://github.com/openai/codex/blob/main/codex-rs/app-server/tests/suite/v2/thread_queue.rs)
 - [Codex Windows active-writer/no-attach limitation](https://github.com/openai/codex/issues/37450)
 - [Codex atomic idle-only admission request](https://github.com/openai/codex/issues/38289)
+- [Codex unloaded queue activation limitation](https://github.com/openai/codex/issues/44491)
+- [Codex supported Desktop-thread control API discussion](https://github.com/openai/codex/discussions/46797)
 - [OpenCode server API](https://opencode.ai/docs/server/)
 - [OpenCode plugin API](https://opencode.ai/docs/plugins/)
 - [OpenCode prompt acceptance without wake issue](https://github.com/anomalyco/opencode/issues/21524)
