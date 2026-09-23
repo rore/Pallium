@@ -11,10 +11,10 @@ lane: test-infrastructure
 ## Summary
 
 Protect Pallium's accepted, externally observable requirements with a dedicated
-`tests/behavior_contracts/**` suite and Agent Workflow's repository behavior
-contracts. Agents may refactor ordinary implementation tests, but changes to the
-protected suite must be classified, reviewed by its Code Owner, and exercised by
-required CI.
+`tests/behavior_contracts/**` suite and Agent Workflow's workflow-protected behavior
+contracts. Agents may refactor ordinary implementation tests, but edits to the
+protected suite must be classified and linked to PR verification; exact task-owner
+approval is required only for a `requirement-change`. GitHub does not block merges.
 
 ## Why
 
@@ -31,16 +31,19 @@ Keep the authoritative surface small:
   test, public surface, and observable outcome.
 - `tests/behavior_contracts/test_*.py` contains dedicated black-box regressions and
   contract-local fixtures. Do not protect today's broad mixed-purpose test files.
-- the required `behavior-contracts` CI check runs this directory exactly.
-- one `behaviorContracts` block in `agent-redline-policy.yaml` protects the directory,
-  names that check, and routes edits through a CODEOWNER-only `behavior-review`
-  checkpoint.
+- existing PR job `test` runs all of `tests/`, including this directory, and is the
+  named verification. It is intentionally not a branch-required status.
+- the combined Redline/Agent Workflow harness runs on every PR and checks protected
+  path classification, approval evidence when applicable, and verification linkage.
+- one later `behaviorContracts` block in `agent-redline-policy.yaml` protects the
+  directory with `protection: workflow`, `verification: test`, and no checkpoint.
 
-No custom manifest schema, parser, semantic-equivalence heuristic, or second gate is
-needed. Required CI proves the tests ran. Redline protects path mutations and requires
-classification/linkage. Base-branch CODEOWNERS plus required Code Owner review
-establish repository authority. Humans decide whether an `equivalent` or
-`coverage-only` claim is honest.
+No custom manifest schema, parser, semantic-equivalence heuristic, separate CI job,
+or second gate is needed. The existing test job proves the regressions run. Redline
+makes protected-path edits red. Agent Workflow requires per-path classification and
+verification linkage. Humans decide whether an `equivalent` or `coverage-only` claim
+is honest. Workflow protection records task-owner approval but does not authenticate
+repository authority or prevent a manual merge.
 
 ## Which Tests Qualify
 
@@ -53,8 +56,9 @@ Promote a behavior only when every condition holds:
    output through the corresponding public read path.
 4. The test has a regression witness: it fails on the original bad revision or on the
    smallest controlled reintroduction/fault that reproduces that failure class.
-5. It is deterministic and bounded enough to run on every required CI execution.
-6. It shares the protected set's required check and last-match CODEOWNERS authority.
+5. It is deterministic and bounded enough to run on every PR.
+6. It runs under the named PR verification `test`; if that job stops covering the
+   protected path, fix verification before changing the policy.
 
 Reject or defer unit/helper tests, broad files containing unrelated cases, manual or
 flaky live checks, tests with no traceable requirement/failure, and tests that can pass
@@ -63,7 +67,7 @@ through fixture or prompt relabelling without the required end behavior.
 Selection is requirements-first: identify an accepted behavior and original failure,
 find the strongest existing evidence, write or extract one dedicated public-surface
 regression under the protected directory, prove the regression witness, then ask the
-human owner to select or reject it. Existing tests are evidence sources; they are not
+task owner to select or reject it. Existing tests are evidence sources; they are not
 protected automatically.
 
 ## Initial Protected Requirements
@@ -84,25 +88,31 @@ qualification rule independently.
 
 ## Activation Sequence
 
-1. In an explicitly authorized governance/CI PR, add path-covering CODEOWNERS, the
-   dedicated `behavior-contracts` job, base-revision CODEOWNERS evidence plumbing in
-   Agent Workflow CI, and the contract tests/catalog. Preserve Pallium's import-linter
-   customization.
-2. After merge, enable and live-verify branch protection/rulesets requiring both the
-   `behavior-contracts` status and Code Owner review. Pallium currently has no
-   CODEOWNERS, branch protection, or rulesets, so activation is blocked until this is
-   true on the base branch.
-3. In a later reviewed policy PR, add the `behaviorContracts` block and dedicated
-   `behavior-review` checkpoint. Stop if candidates do not share one required check
-   and identical last-match owner tokens; split or defer them instead.
+1. In a dedicated contract-test PR, select the smallest valuable candidate, add its
+   catalog entry and public-surface regression, and prove the original-failure witness.
+2. Confirm existing CI job `test` still runs the protected directory on PRs and the
+   combined Redline/Agent Workflow harness runs on PRs. These checks may fail visibly,
+   but no branch-required status or GitHub merge block is claimed.
+3. In a separate reviewed policy PR, activate the accepted directory:
+
+   ```yaml
+   behaviorContracts:
+     protection: workflow
+     paths:
+       - "tests/behavior_contracts/**"
+     verification: test
+   ```
+
+   Do not add a behavior checkpoint, CODEOWNERS, or branch protection.
 4. Thereafter, every protected-path edit records `equivalent`, `coverage-only`, or
-   `requirement-change` in the Work Record. Requirement changes need exact repository
-   authority approval; passing tests do not substitute for that decision.
+   `requirement-change` in the Work Record. Only a requirement change needs exact
+   task-owner/user approval bound to its before and after values.
 
 ## Out of Scope
 
-- enabling `behaviorContracts`, editing CI/CODEOWNERS, or adding contract tests in the
-  current Agent Workflow consumer-sync task
+- enabling `behaviorContracts` or adding contract tests in the current Agent Workflow
+  consumer-sync task
+- adding CODEOWNERS, branch protection, a required status, or a dedicated CI job
 - protecting every test, fixture wording, internal call sequence, or current bug
 - protecting broad existing files merely because they contain one valuable regression
 - automated judgment of semantic equivalence or test adequacy
@@ -113,13 +123,14 @@ qualification rule independently.
 
 1. The dedicated directory contains the catalog and selected public-surface regressions,
    each with a verified original-failure witness.
-2. The `behavior-contracts` check and required Code Owner review are enforced on the
-   base branch, and Agent Workflow CI uses base-revision CODEOWNERS evidence.
-3. A separate reviewed policy change activates `tests/behavior_contracts/**` with the
-   matching verification id and checkpoint.
-4. CI fails when protected regressions fail; deletion or mutation is classified and
-   routed to the canonical owner; human review decides whether replacement coverage
-   preserves the contract or changes the requirement.
+2. Existing CI job `test` and the combined Redline/Agent Workflow harness execute on
+   PRs, and affected Work Records link the `test` verification identifier. Neither job
+   is claimed as branch-required or merge-enforced.
+3. A separate reviewed policy change activates `tests/behavior_contracts/**` with
+   `protection: workflow` and `verification: test`, without a behavior checkpoint.
+4. Regression failures are visible in CI; deletion or mutation is red and requires
+   semantic classification; requirement changes require exact task-owner approval;
+   humans judge whether replacement coverage preserves the contract.
 
 ## Notes
 

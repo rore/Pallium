@@ -205,6 +205,19 @@ jobs:
               files = zones.get(k) or []
               if files:
                   print(f"- **{k}** ({len(files)}): " + ", ".join(f"`{f}`" for f in files))
+          behavior = v.get("behaviorContractChanges") or {}
+          if behavior.get("detected"):
+              raw_paths = behavior.get("paths") or []
+              paths = [p if isinstance(p, str) else p.get("path") for p in raw_paths]
+              print("\n**Behavior contracts:** " + ", ".join(f"`{p}`" for p in paths))
+              if behavior.get("protection") == "workflow":
+                  print("**Workflow-only protection:** checked in PR CI, but GitHub does not require it for merge.")
+                  print(f"Verification: `{behavior.get('verification')}`.")
+              else:
+                  print(
+                      f"Verification: `{behavior.get('verification')}`; "
+                      f"checkpoint: `{behavior.get('checkpoint')}`."
+                  )
           bvs = v.get("boundaryViolations") or []
           if bvs:
               print("\n**Boundary violations:**")

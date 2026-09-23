@@ -872,7 +872,12 @@ def _required_checkpoints(
             "architecture-review",
             "Architecture-test files modified",
         )
-    if behavior_contract_paths:
+    if (
+        behavior_contract_paths
+        and (policy.get("behaviorContracts") or {}).get(
+            "protection", "repository"
+        ) != "workflow"
+    ):
         cp = policy["behaviorContracts"]["checkpoint"]
         required.setdefault(
             cp,
@@ -1350,7 +1355,10 @@ def classify(
     checkpoints_defs = policy.get("checkpoints", {}) or {}
     behavior_checkpoint = (
         behavior_config["checkpoint"]
-        if behavior_contract_paths
+        if (
+            behavior_contract_paths
+            and behavior_config.get("protection", "repository") != "workflow"
+        )
         else None
     )
     checkpoint_statuses: list[CheckpointStatus] = []
@@ -1377,21 +1385,30 @@ def classify(
 
     behavior_contract_changes = None
     if behavior_config:
-        behavior_contract_changes = {
-            "version": 1,
-            "detected": bool(behavior_contract_paths),
-            "paths": [
-                {
-                    "path": path,
-                    "owners": sorted(
-                        owners_for_paths(codeowners_rules or [], [path])
-                    ),
-                }
-                for path in behavior_contract_paths
-            ],
-            "verification": behavior_config["verification"],
-            "checkpoint": behavior_config["checkpoint"],
-        }
+        if behavior_config.get("protection", "repository") == "workflow":
+            behavior_contract_changes = {
+                "version": 2,
+                "protection": "workflow",
+                "detected": bool(behavior_contract_paths),
+                "paths": behavior_contract_paths,
+                "verification": behavior_config["verification"],
+            }
+        else:
+            behavior_contract_changes = {
+                "version": 1,
+                "detected": bool(behavior_contract_paths),
+                "paths": [
+                    {
+                        "path": path,
+                        "owners": sorted(
+                            owners_for_paths(codeowners_rules or [], [path])
+                        ),
+                    }
+                    for path in behavior_contract_paths
+                ],
+                "verification": behavior_config["verification"],
+                "checkpoint": behavior_config["checkpoint"],
+            }
 
     pr_size = _pr_size_status(diff, policy)
 
@@ -1590,15 +1607,27 @@ def render_markdown(verdict: Verdict, flow_mode: str = "pr") -> str:
 
     behavior = verdict.behavior_contract_changes
     if behavior and behavior.get("detected"):
-        paths = [entry["path"] for entry in behavior["paths"]]
+        workflow_protection = behavior.get("protection") == "workflow"
+        if workflow_protection:
+            lines.append(
+                "**Workflow-only protection:** Redline remains red, but GitHub does not block merge."
+            )
+            lines.append("")
+        paths = [
+            entry if isinstance(entry, str) else entry["path"]
+            for entry in behavior["paths"]
+        ]
         shown = ", ".join(f"`{path}`" for path in paths[:5])
         if len(paths) > 5:
             shown += f" (+{len(paths) - 5} more)"
         lines.append(f"**Behavior contracts:** {shown}")
-        lines.append(
-            f"Verification: `{behavior['verification']}`; "
-            f"checkpoint: `{behavior['checkpoint']}`."
-        )
+        if workflow_protection:
+            lines.append(f"Verification: `{behavior['verification']}`.")
+        else:
+            lines.append(
+                f"Verification: `{behavior['verification']}`; "
+                f"checkpoint: `{behavior['checkpoint']}`."
+            )
         lines.append("")
 
     # Checkpoints
@@ -1726,7 +1755,19 @@ def _validate_behavior_contract_policy(
     behavior = data.get("behaviorContracts")
     if not behavior:
         return
-    checkpoint = behavior["checkpoint"]
+    protection = behavior.get("protection", "repository")
+    if protection == "workflow":
+        if "checkpoint" in behavior:
+            raise SystemExit(
+                f"error: policy at {path} behaviorContracts.checkpoint "
+                "is forbidden for workflow protection"
+            )
+        return
+    checkpoint = behavior.get("checkpoint")
+    if not checkpoint:
+        raise SystemExit(
+            f"error: policy at {path} behaviorContracts.checkpoint is required"
+        )
     definition = (data.get("checkpoints") or {}).get(checkpoint)
     if not isinstance(definition, dict):
         raise SystemExit(

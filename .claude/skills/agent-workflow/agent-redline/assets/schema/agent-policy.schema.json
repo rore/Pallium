@@ -218,8 +218,8 @@
     },
     "behaviorContracts": {
       "type": "object",
-      "description": "Optional authoritative behavior-contract paths. Redline owns path classification, CODEOWNERS authority, verification identity, and review routing.",
-      "required": ["paths", "verification", "checkpoint"],
+      "description": "Optional authoritative behavior-contract paths. Redline owns path classification and verification identity; repository protection also owns CODEOWNERS authority and review routing.",
+      "required": ["paths", "verification"],
       "additionalProperties": false,
       "properties": {
         "paths": {
@@ -232,18 +232,37 @@
             "pattern": "^(?!.*[\\u0000-\\u001F\\u007F])(?!/)(?![A-Za-z]:)(?!.*\\\\)(?!.*(?:^|/)\\.{1,2}(?:/|$))[^/*?\\[\\]{}]+(?:/[^/*?\\[\\]{}]+)*(?:/\\*\\*)?$"
           }
         },
+        "protection": {
+          "enum": ["repository", "workflow"],
+          "description": "Repository protection is the compatible default; workflow protection omits hosting-platform merge enforcement."
+        },
         "verification": {
           "type": "string",
           "minLength": 1,
           "pattern": ".*\\S.*",
-          "description": "Identifier of an existing required CI check that runs the configured contracts."
+          "description": "Identifier of an existing CI check that runs the configured contracts on pull requests; repository protection additionally requires it as a branch-required check."
         },
         "checkpoint": {
           "type": "string",
           "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
-          "description": "CODEOWNER-only checkpoint required when a configured contract path changes."
+          "description": "CODEOWNER-only checkpoint required for repository protection when a configured contract path changes."
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {"protection": {"const": "workflow"}},
+            "required": ["protection"]
+          },
+          "then": {
+            "required": ["protection", "paths", "verification"],
+            "not": {"required": ["checkpoint"]}
+          },
+          "else": {
+            "required": ["paths", "verification", "checkpoint"]
+          }
+        }
+      ]
     },
     "prRules": {
       "type": "object",

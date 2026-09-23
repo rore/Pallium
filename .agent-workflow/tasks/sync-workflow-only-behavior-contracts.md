@@ -48,13 +48,16 @@ Not required at this risk level.
 —
 
 <!-- Ready to implement | Blocked | Ready for review -->
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
 
 - Established context, immutable requirement baseline, and scope before repository edits.
 - Clean-context Redline verdict: GRAY; no boundary finding, checkpoint, watch flag, or contract surface. `.claude/skills/**` is excluded from Redline visibility; exact source parity will compensate during verification.
+- Clean-context plan review approved after expanding the roadmap rewrite to every repository-mode claim. Synced pinned upstream consumer assets into both skill trees and explicit mirrors; rewrote the queued roadmap for workflow protection while leaving live CI, policy, tests, and runtime code unchanged.
+- Verification completed: exact upstream parity, compile/schema/focused governance checks, and the combined local workflow check passed. The default parallel suite exposed one Windows CRLF-only byte-budget failure plus two wake concurrency flakes that each passed serially; the complete serial remainder passed.
+- pply_patch created the Work Record, then failed with Windows logon error 1327 on the next edit. All subsequent edits used exact deterministic replacements limited to the Work Record and roadmap, as allowed by the machine-local fallback.
 
 ## Plan review
 
@@ -62,7 +65,16 @@ The clean-context reviewer required the plan to remove repository-mode assumptio
 
 ## Evidence
 
-Pending.
+Verified on `feat/sync-workflow-only-behavior-contracts` against Agent Workflow `36bd34ca7dabc59ab2f8afcea1b5fd3ca8b342fc`:
+
+- both skill trees contain 67 source files and 67 target files with no missing, extra, or SHA-256-different entries; all four explicit schema/reporter/checker/checkpoint mappings match upstream
+- copied Python consumers compile; the new schema accepts Pallium's planned `{protection: workflow, paths: [tests/behavior_contracts/**], verification: test}` block
+- `uv run python -m pytest tests/test_agent_workflow_ci.py -q -n 0`: 1 passed
+- `& scripts/agent-workflow-runtime.ps1 codex check --repo-root . --slug sync-workflow-only-behavior-contracts`: clean, no boundary violation or checkpoint
+- initial `uv run python -m pytest tests/ -x -q`: stopped at one unrelated Windows checkout issue in `tests/test_guidance_budget.py`; the tracked skill blob is exactly 2,800 bytes while CRLF checkout expansion is 2,836 bytes, and the task does not modify that file
+- two later xdist runs encountered different wake concurrency timing failures; both exact nodes passed immediately with `-n 0`
+- complete serial remainder, `uv run python -m pytest tests/ -x -q -n 0 --ignore=tests/test_guidance_budget.py`: 5249 passed, 34 skipped, 216 deselected, 2 xfailed in 847.58s
+- `git diff --check`: passed before final Work Record evidence update; rerun before commit/review
 
 ## Result review
 
