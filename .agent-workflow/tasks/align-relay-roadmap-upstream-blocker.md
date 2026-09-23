@@ -31,6 +31,8 @@ Pre-edit classification is Routine/Simple. Target files are this Work Record and
 
 Reconciled RW-031 as closed Pallium work and an upstream Codex dependency, removed it from remaining Pallium work, preserved the natural-turn fallback and other runtime/platform qualification, and added the primary upstream issue/discussion references. `apply_patch` hit the documented Windows process-logon failure, so the roadmap edit used a narrowly scoped assertion-checked deterministic replacement.
 
+Clean-context result review raised one P2 evidence-honesty finding: the upstream conclusion was stronger than the displayed references. The roadmap now scopes the conclusion to reviewed public CLI/app-server surfaces and checked versions, and links exact Codex source files instead of treating a user-authored discussion as confirmation. Follow-up review found a low-severity version traceability gap; verified exact-tag queued-turn source links for 0.156.1 and 0.157.0-alpha.11 now cover every version named in the claim.
+
 ## Evidence
 
 - `git diff --check` passed.
