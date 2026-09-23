@@ -268,6 +268,8 @@ to collect the pending message.
 This uses `pallium_search_history` followed by `pallium_expand_source`. It does
 not depend on automatic derived-memory injection.
 
+History retry: keep a delivered-page ledger across query repair; retry the same failed page at most twice, continue unread pages, and keep page-specific lookup lineage. Revalidate completed sources by content revision; use bounded retries. A historical recap is not live state; verify current state live. See [procedure](../integrations/codex/skills/pallium-memory/references/history-replay.md).
+
 ### Optional: verify derived memory
 
 If derived memory is configured, use `pallium_query` for the earlier decision or
