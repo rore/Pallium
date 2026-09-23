@@ -29,13 +29,13 @@ A requirement-change entry also includes:
     "authority":{"scope":"task|repository","name":"..."},
     "approval":{"by":"...","reference":"...","verbatim":"..."}
 
-Before approval, keep State Blocked and do not update current Task Context or the contract. Task changes require the task owner (scope task, name task-owner, by user). Contract changes require scope repository; authority.name and approval.by must equal one canonical CODEOWNERS token Redline reports for that path. Task approval, agent review, plan approval, and the review checkpoint do not substitute. Approval binds only that entry's exact before/after values.
+Before approval, keep State Blocked and do not update current Task Context or the contract. Task changes require the task owner (scope task, name task-owner, by user). For repository-protected contracts, use scope repository; authority.name and approval.by must equal one canonical CODEOWNERS token Redline reports for that path. For workflow-protected contracts, use scope task, name task-owner, and by user. That workflow evidence is not authenticated repository authority and does not guarantee merge prevention. Agent review, plan approval, and checkpoint routing do not substitute. Approval binds only that entry's exact before/after values.
 
 ## Configured contracts
 
-`agent-redline-policy.yaml` owns behaviorContracts paths, required-CI verification, and the CODEOWNER-only checkpoint. Inspect only paths in Redline's versioned behaviorContractChanges detail. Work Record Verification or Verification plan must name its reported verification identifier.
+`agent-redline-policy.yaml` owns behaviorContracts paths, protection mode, and PR verification. Repository protection also owns the CODEOWNER-only checkpoint and canonical owner evidence. Workflow protection has neither. Inspect only paths in Redline's versioned behaviorContractChanges detail. Work Record Verification or Verification plan must name its reported verification identifier.
 
-Path protection is mutation integrity, not regression enforcement. Bootstrap admits only an explicitly selected compatible path set with live required-CI, last-match CODEOWNERS, and required Code Owner review evidence. The checker validates current Redline policy/detail/path agreement, owner-token equality, checkpoint presence, and verification linkage; it cannot judge semantics, authenticate a person or team, prove a test ran, or prove the baseline was never rewritten.
+Path protection is mutation integrity, not regression enforcement. Bootstrap requires explicit selection and live PR execution of both the named verification and combined harness. Repository protection additionally requires branch-required status, compatible last-match CODEOWNERS, and required Code Owner review. Workflow protection omits those controls and must be reported as not merge-enforced. The checker validates policy/detail/path agreement, mode-appropriate approval evidence, applicable checkpoint/owner facts, and verification linkage; it cannot judge semantics, authenticate a person or team, prove a test ran, prevent merge, or prove the baseline was never rewritten.
 
 ## Checkpoint actions
 
