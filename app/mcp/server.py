@@ -1754,7 +1754,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         expires_in_seconds: int | None = None,
         container_ref: str | None = None,
     ) -> str:
-        """Send new text of at most 16,000 Unicode code points to one canonical endpoint ID (relay-session-...) or service-global name (@review). For a role recipient, use its current @name; before reusing an exact endpoint, rediscover and verify its session/container. Returned delivery identity is the admission snapshot. Bare runtimes are rejected and broadcast is not supported. Copy sender_runtime from injected agent_ref and sender_session_ref from injected thread_ref. Use pallium_relay_reply for one reply to a received delivery."""
+        """Send new text of at most 16,000 Unicode code points to one canonical endpoint ID (relay-session-...) or service-global name (@review). For a role recipient, use its current @name; before reusing an exact endpoint, rediscover and verify its session/container. Returned delivery identity is the admission snapshot. A successful send means the message was saved, not that the recipient started. `busy_queue` is a capability, not observed recipient busyness; a pending delivery is unconfirmed. If you need a response now, open the recipient task; let any current work finish, and start an ordinary turn if needed. Do not resend. Bare runtimes are rejected and broadcast is not supported. Copy sender_runtime from injected agent_ref and sender_session_ref from injected thread_ref. Use pallium_relay_reply for one reply to a received delivery."""
         ctx, scope_error = resolve_relay_context(container_ref=container_ref)
         if scope_error:
             return scope_error

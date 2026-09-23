@@ -123,6 +123,16 @@ def test_relay_guidance_covers_stale_delivery_and_recipient_identity() -> None:
     movement = "Aliases/endpoints move; neither proves scope"
     stale_trigger = "On `already_delivered=true` or conflict"
     assert all(all(item in skill.read_text(encoding="utf-8") for item in (routing, snapshot, movement, stale_trigger)) for skill in skills)
+    sender_rules = (
+        "Send=saved, not started",
+        "`busy_queue`=capability, not observed busyness",
+        "pending unconfirmed",
+        "let work finish",
+        "ordinary turn if needed",
+        "use it when continuity helps",
+        "do not resend",
+    )
+    assert all(all(rule in skill.read_text(encoding="utf-8") for rule in sender_rules) for skill in skills)
     lease_rule = "MCP: reply/ACK before source TTL or 60s lease ends; ACK permits later reply."
     assert all(lease_rule in skill.read_text(encoding="utf-8") for skill in skills)
 
@@ -278,6 +288,7 @@ def test_history_guidance_preserves_replay_ledger_and_live_verification_contract
     )
     for rendered in surfaces:
         assert all(term.lower() in rendered.lower() for term in required)
+    assert all("Revalidate completed sources by content revision" in rendered for rendered in surfaces[4:7])
 
 def test_history_replay_procedure_is_linked_and_complete() -> None:
     skill_paths = tuple(
