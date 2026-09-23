@@ -48,7 +48,7 @@ Not required at this risk level.
 —
 
 <!-- Ready to implement | Blocked | Ready for review -->
-**State:** Ready for review
+**State:** Blocked
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -57,7 +57,7 @@ Not required at this risk level.
 - Clean-context Redline verdict: GRAY; no boundary finding, checkpoint, watch flag, or contract surface. `.claude/skills/**` is excluded from Redline visibility; exact source parity will compensate during verification.
 - Clean-context plan review approved after expanding the roadmap rewrite to every repository-mode claim. Synced pinned upstream consumer assets into both skill trees and explicit mirrors; rewrote the queued roadmap for workflow protection while leaving live CI, policy, tests, and runtime code unchanged.
 - Verification completed: exact upstream parity, compile/schema/focused governance checks, and the combined local workflow check passed. The default parallel suite exposed one Windows CRLF-only byte-budget failure plus two wake concurrency flakes that each passed serially; the complete serial remainder passed.
-- pply_patch created the Work Record, then failed with Windows logon error 1327 on the next edit. All subsequent edits used exact deterministic replacements limited to the Work Record and roadmap, as allowed by the machine-local fallback.
+- apply_patch created the Work Record, then failed with Windows logon error 1327 on the next edit. All subsequent edits used exact deterministic replacements limited to the Work Record and roadmap, as allowed by the machine-local fallback.
 
 ## Plan review
 
@@ -78,4 +78,4 @@ Verified on `feat/sync-workflow-only-behavior-contracts` against Agent Workflow 
 
 ## Result review
 
-Pending.
+Independent reviewer `/root/workflow_only_plan_review` verified scope, 67/67 source parity, four explicit mirrors, roadmap accuracy, and `git diff --check`. Signoff is blocked until the accidental BEL is removed and one complete suite passes without excluding `test_guidance_budget.py`; both are being addressed before re-review.
