@@ -16,7 +16,7 @@ description: Use Pallium Relay, Session History, or optional derived memory.
 ## Session History
 
 - `pallium_search_history_by_work_ref`
-  Current-work search. Copy injected `work_ref`; if absent, broaden—never guess.
+  Current-work search. Copy injected `work_ref`; if absent, broaden; never guess.
 - `pallium_search_history`
   Broad topic search; `work_refs` is compatibility-only. Omit `actor_ref` normally.
 - `pallium_expand_source`

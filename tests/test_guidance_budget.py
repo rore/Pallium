@@ -11,9 +11,9 @@ def test_rendered_guidance_and_tool_descriptions_stay_under_measured_ceilings() 
     assert len(module.get_claude_md_block("strong")) <= 3274
     assert len(Path("integrations/codex/AGENTS.md").read_text(encoding="utf-8")) <= 2819
     assert len(Path("integrations/opencode/AGENTS.md").read_text(encoding="utf-8")) <= 2819
-    assert len(Path("integrations/claude-code/skills/pallium-memory/SKILL.md").read_text(encoding="utf-8")) <= 2800
-    assert len(Path("integrations/codex/skills/pallium-memory/SKILL.md").read_text(encoding="utf-8")) <= 2800
-    assert len(Path("integrations/opencode/skills/pallium-memory/SKILL.md").read_text(encoding="utf-8")) <= 2800
+    assert len(Path("integrations/claude-code/skills/pallium-memory/SKILL.md").read_bytes()) <= 2800
+    assert len(Path("integrations/codex/skills/pallium-memory/SKILL.md").read_bytes()) <= 2800
+    assert len(Path("integrations/opencode/skills/pallium-memory/SKILL.md").read_bytes()) <= 2800
     tree = ast.parse(Path("app/mcp/server.py").read_text(encoding="utf-8"))
     names = {node.name for node in ast.walk(tree)
              if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
@@ -306,15 +306,17 @@ def test_history_replay_procedure_is_linked_and_complete() -> None:
     assert all("[procedure](references/history-replay.md)" in path.read_text(encoding="utf-8")
                for path in skill_paths)
 
+    installed_procedure = "Load the installed `pallium-memory` skill's History replay procedure."
     spec = importlib.util.spec_from_file_location("claude_block_procedure", "integrations/claude-code/claude_md_block.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    assert "[procedure](skills/pallium-memory/references/history-replay.md)" in module.get_claude_md_block("base")
-    for path in (Path("integrations/codex/AGENTS.md"), Path("integrations/opencode/AGENTS.md")):
-        assert "[procedure](skills/pallium-memory/references/history-replay.md)" in path.read_text(encoding="utf-8")
-    assert "[procedure](../../skills/pallium-memory/references/history-replay.md)" in Path(
-        "integrations/opencode/.opencode/command/pallium-memory.md"
-    ).read_text(encoding="utf-8")
+    assert installed_procedure in module.get_claude_md_block("base")
+    for path in (
+        Path("integrations/codex/AGENTS.md"),
+        Path("integrations/opencode/AGENTS.md"),
+        Path("integrations/opencode/.opencode/command/pallium-memory.md"),
+    ):
+        assert installed_procedure in path.read_text(encoding="utf-8")
     assert "[procedure](../integrations/claude-code/skills/pallium-memory/references/history-replay.md)" in Path(
         "docs/claude-code-integration.md"
     ).read_text(encoding="utf-8")
