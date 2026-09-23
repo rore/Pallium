@@ -33,13 +33,13 @@ Upstream Agent Workflow PR #37 is merged at `36bd34ca`; its distributable delta 
 Agent Workflow `36bd34ca7dabc59ab2f8afcea1b5fd3ca8b342fc` is the intended source; any source mismatch or failed consumer verification stops the sync. Existing CI job `test` remains the named PR verification because it runs all of `tests/`; if a future contract is excluded or split out, activation must update the identifier or CI before policy configuration. A first contract candidate must be explicitly accepted with a public-surface regression witness; until then the policy block stays absent.
 
 **Plan:**
-1. Overlay pinned `C:\Dev\rore\agent-workflow\dist\agent-workflow/**` onto both `.agents/skills/agent-workflow/**` and `.claude/skills/agent-workflow/**`. Copy the changed explicit consumer mirrors only: Redline policy schema to `.agent-redline/agent-policy.schema.json`, reporter/checker to `scripts/`, and behavioral-integrity checkpoint to `docs/agent-workflow/checkpoints/`. Preserve the live `.github/workflows/agent-workflow.yml`, repository policy/config, settings/hooks, AGENTS marker, and runtime code. Stop on missing manifest entries, target extras, or unexplained non-owned diffs. 2. Rewrite the queued roadmap's enforcement and activation sections for `behaviorContracts.protection: workflow`: keep the dedicated `tests/behavior_contracts/**` catalog/test layout and evidence-first candidate rules; name existing PR job `test` as verification; state that protected paths become red, every edit needs semantic classification and verification linkage, and only `requirement-change` needs exact task-owner/user approval. Remove CODEOWNERS, branch-required checks, behavior checkpoint, and merge-enforcement claims. Keep contract-test selection and policy activation as a later explicit PR. 3. Verify both skill trees and explicit mappings against pinned upstream, compile copied Python, validate policy schema compatibility, run focused Agent Workflow CI tests, fresh Redline and Agent Workflow checks, then the full Pallium suite once before review.
+1. Overlay pinned `C:\Dev\rore\agent-workflow\dist\agent-workflow/**` onto both `.agents/skills/agent-workflow/**` and `.claude/skills/agent-workflow/**`. Copy the changed explicit consumer mirrors only: Redline policy schema to `.agent-redline/agent-policy.schema.json`, reporter/checker to `scripts/`, and behavioral-integrity checkpoint to `docs/agent-workflow/checkpoints/`. Preserve the live `.github/workflows/agent-workflow.yml`, repository policy/config, settings/hooks, AGENTS marker, and runtime code. Stop on missing manifest entries, target extras, or unexplained non-owned diffs. 2. Rewrite every repository-protection claim across the queued roadmap, including Summary, Contract Layout, Which Tests Qualify item 6, Activation Sequence, Out of Scope, Done When, and Notes, for `behaviorContracts.protection: workflow`. Keep the dedicated `tests/behavior_contracts/**` catalog/test layout and evidence-first candidate rules; name existing CI job `test` as the non-required PR verification and the combined Redline/Agent Workflow harness as the PR integrity check; state that protected paths become red, every edit needs semantic classification and verification linkage, and only `requirement-change` needs exact task-owner/user approval. Explicitly remove CODEOWNERS, branch-required status, behavior checkpoint, authenticated repository-authority, and merge-block claims. Keep contract-test selection and policy activation as a later explicit PR. 3. Verify both skill trees and explicit mappings against pinned upstream, compile copied Python, validate policy schema compatibility, run focused Agent Workflow CI tests, fresh Redline and Agent Workflow checks, then the full Pallium suite once before review.
 
 **Verification plan:**
 When the sync completes, both skill trees and each explicit mirror shall match pinned upstream with no unrelated diff → manifest/hash comparison and `git diff --check`. When the roadmap is updated, it shall truthfully describe workflow protection and preserve evidence-first candidate selection → exact diff review against upstream behavioral-integrity documentation. Existing governance integration shall remain valid → Python compile, schema validation, `python -m pytest tests/test_agent_workflow_ci.py -q -n 0`, fresh Redline plus Agent Workflow checker. Existing Pallium behavior shall remain green → `python -m pytest tests/ -x -q` once before review.
 
 **Plan review:**
-Pending clean-context review.
+Clean-context reviewer `/root/workflow_only_plan_review`: APPROVE after the roadmap-scope revision. See `## Plan review`.
 
 **Approvals:**
 Not required at this risk level.
@@ -48,7 +48,7 @@ Not required at this risk level.
 —
 
 <!-- Ready to implement | Blocked | Ready for review -->
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -58,7 +58,7 @@ Not required at this risk level.
 
 ## Plan review
 
-Pending.
+The clean-context reviewer required the plan to remove repository-mode assumptions from the entire roadmap, specifically candidate rule 6 and Done When item 2, and to name `test` as non-required PR verification without CODEOWNERS or merge-block claims. Plan step 2 now makes those locations and limits explicit. Re-review verdict: APPROVE.
 
 ## Evidence
 
