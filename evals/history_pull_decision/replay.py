@@ -65,8 +65,9 @@ async def run_navigation_replay(
                 if attempt == 2:
                     return None
                 continue
+            untyped_delivery_error = set(result) == {"error"}
             if (
-                result.get("retryable")
+                (result.get("retryable") or untyped_delivery_error)
                 and ("error" in result or "error_kind" in result)
                 and result.get("error_kind") not in {
                     "stale_result_revision", "stale_content_revision",

@@ -242,11 +242,17 @@ async def test_navigation_replay_compares_restart_and_ledger_over_real_mcp(
 
     container = "git:example/navigation-replay"
     query = "anonymized evidence marker"
-    evidence = 'required Ω界😀 "quoted" \\ evidence'
-    raw = query + "\n" + (evidence + "\n") * 80
-    transport = httpx.ASGITransport(app=pallium_asgi_app)
+    tail_evidence = 'required Ω界😀 "quoted" \\ tail evidence'
+    body = "".join(
+        f"segment-{index:03d}: distinct continuation text 界😀 \\\"\n"
+        for index in range(120)
+    )
+    raw = f"{query}\n{body}{tail_evidence}"
+    seed_transport = httpx.ASGITransport(app=pallium_asgi_app)
     real_async_client = httpx.AsyncClient
-    async with real_async_client(transport=transport, base_url="http://testserver") as http:
+    async with real_async_client(
+        transport=seed_transport, base_url="http://testserver",
+    ) as http:
         response = await http.post("/items", json=[{
             "source_type": "chat_message", "source_id": "navigation-replay-source",
             "content_type": "text/plain", "content": raw, "artifact_kind": "message",
@@ -255,6 +261,19 @@ async def test_navigation_replay_compares_restart_and_ledger_over_real_mcp(
         }])
         assert response.status_code == 200, response.text
     pallium_asgi_app.state.pallium_service.drain_processing_queue(worker_id="navigation-replay")
+
+    class FailingAsgiTransport(httpx.AsyncBaseTransport):
+        def __init__(self) -> None:
+            self.inner = httpx.ASGITransport(app=pallium_asgi_app)
+            self.failures_remaining = 0
+
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            if request.url.path.startswith("/source/") and self.failures_remaining:
+                self.failures_remaining -= 1
+                raise httpx.ConnectError("injected MCP transport failure", request=request)
+            return await self.inner.handle_async_request(request)
+
+    transport = FailingAsgiTransport()
 
     def asgi_client(*args, **kwargs):
         kwargs.update(transport=transport, base_url="http://testserver")
@@ -277,7 +296,9 @@ async def test_navigation_replay_compares_restart_and_ledger_over_real_mcp(
             and arm not in failed_arms
         ):
             failed_arms.add(arm)
-            raise ConnectionError("injected delivery failure")
+            # Exhaust initial + two identical retries inside the real MCP client
+            # envelope. Query repair must then resume the ledger's unread page.
+            transport.failures_remaining = 3
         return await server.call_tool(name, arguments)
 
     reports = await compare_navigation_policies(
@@ -286,11 +307,15 @@ async def test_navigation_replay_compares_restart_and_ledger_over_real_mcp(
             "container_ref": container, "thread_ref": "history:reader",
             "actor_ref": "Replay Operator", "visibility": "private", "limit": 5,
         },
-        required_evidence=[evidence], max_chars=600,
+        required_evidence=[raw], max_chars=600,
     )
     baseline, ledger = reports["restart"], reports["ledger"]
     assert baseline["required_evidence_recovered"] is ledger["required_evidence_recovered"] is True
+    assert baseline["recovered_required_evidence"] == ledger["recovered_required_evidence"] == [raw]
     assert baseline["measurement_layer"] == ledger["measurement_layer"] == "navigation/presentation"
+    assert ledger["returned_characters"] == len(raw)
     assert ledger["repeated_delivered_expansion_pages"] == 0
-    assert ledger["returned_characters"] <= baseline["returned_characters"]
+    assert baseline["repeated_delivered_expansion_pages"] > 0
+    assert ledger["returned_characters"] < baseline["returned_characters"]
+    assert ledger["expansion_attempts"] < baseline["expansion_attempts"]
     assert ledger["exact_repeat_candidates"] == baseline["exact_repeat_candidates"] >= 1

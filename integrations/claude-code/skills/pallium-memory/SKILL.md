@@ -21,13 +21,13 @@ description: Use Pallium Relay, Session History, or optional derived memory.
   Broad topic search; `work_refs` is compatibility-only. Omit `actor_ref` normally.
 - `pallium_expand_source`
   After a promising search hit, call `pallium_expand_source` with its `source_item_id` and pass the search result's `lookup_event_id` as `parent_lookup_id`.
-- History retry: keep a delivered-page ledger across query repair; retry the same failed page at most twice, continue unread pages, and keep page-specific lookup lineage. Revalidate completed sources by content revision; use bounded retries. A historical recap is not live state; verify current state live.
+- History retry: keep a delivered-page ledger across query repair; retry the same failed page at most twice, continue unread pages, and keep page-specific lookup lineage. Revalidate completed sources by content revision; use bounded retries. A historical recap is not live state; verify current state live. See [procedure](references/history-replay.md).
 - Use injected `container_ref` and active `thread_ref`; never derive, guess, or normalize scope. Pass `request_source_item_id` only to either history search.
 
 ## Derived memory
 
-- Query/debug/expand with `pallium_query`/`pallium_query_debug`/`pallium_expand`.
-- Store notes with `pallium_ingest`, `visibility: "private"`; `visibility: "global"` with `actor_ref` needs user intent.
+- Use `pallium_query`/`pallium_query_debug`/`pallium_expand`.
+- Store via `pallium_ingest`, `visibility: "private"`; `visibility: "global"` with `actor_ref` needs user intent.
 - Flag bad cards with `pallium_flag_memory`. Do not ingest routine turns or use forget as vote suppression.
 - Writes: `pallium_remember`, `pallium_correct`, `pallium_supersede`, `pallium_forget`, `pallium_record_outcome`. Retrieval alone never updates accessibility/ranking.
 - Writes copy exact provenance. Never use cwd. Default private; correction/forget retain provenance.

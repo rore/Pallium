@@ -278,3 +278,46 @@ def test_history_guidance_preserves_replay_ledger_and_live_verification_contract
     )
     for rendered in surfaces:
         assert all(term.lower() in rendered.lower() for term in required)
+
+def test_history_replay_procedure_is_linked_and_complete() -> None:
+    skill_paths = tuple(
+        Path(f"integrations/{runtime}/skills/pallium-memory/SKILL.md")
+        for runtime in ("claude-code", "codex", "opencode")
+    )
+    reference_paths = tuple(path.parent / "references" / "history-replay.md" for path in skill_paths)
+    references = tuple(path.read_bytes() for path in reference_paths)
+    assert references[1:] == references[:-1]
+    procedure = references[0].decode("utf-8")
+    required = (
+        "delivered-page ledger",
+        "successful caller delivery",
+        "identical arguments: initial call plus at most two retries",
+        "exact unread result/content offset and revision",
+        "page-specific `lookup_event_id`",
+        "terminal-probe its recorded total length with its recorded content revision",
+        "unchanged probe stays complete",
+        "stale response resets and restarts",
+        "offset-zero response with a changed revision is consumed",
+        "at most two query repairs",
+        "two stale restarts per query window and per source",
+        "historical recap is evidence about the past, not live state",
+    )
+    assert all(term in procedure for term in required)
+    assert all("[procedure](references/history-replay.md)" in path.read_text(encoding="utf-8")
+               for path in skill_paths)
+
+    spec = importlib.util.spec_from_file_location("claude_block_procedure", "integrations/claude-code/claude_md_block.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert "[procedure](skills/pallium-memory/references/history-replay.md)" in module.get_claude_md_block("base")
+    for path in (Path("integrations/codex/AGENTS.md"), Path("integrations/opencode/AGENTS.md")):
+        assert "[procedure](skills/pallium-memory/references/history-replay.md)" in path.read_text(encoding="utf-8")
+    assert "[procedure](../../skills/pallium-memory/references/history-replay.md)" in Path(
+        "integrations/opencode/.opencode/command/pallium-memory.md"
+    ).read_text(encoding="utf-8")
+    assert "[procedure](../integrations/claude-code/skills/pallium-memory/references/history-replay.md)" in Path(
+        "docs/claude-code-integration.md"
+    ).read_text(encoding="utf-8")
+    assert "[procedure](../integrations/codex/skills/pallium-memory/references/history-replay.md)" in Path(
+        "docs/codex-integration.md"
+    ).read_text(encoding="utf-8")

@@ -130,7 +130,7 @@ required evidence. This is a downstream
 caller-efficiency check only if an agent actually performs the task; otherwise label it
 navigation or presentation evidence.
 
-Implementation evidence (2026-09-23): slice 6 is implemented without production API, storage, retrieval, ranking, or dependency changes. Every supported skill copy, generated/global guidance block, the OpenCode command, and the Claude/Codex integration docs now require a delivered-page ledger across query repair, identical bounded retry of failed pages, unread-page continuation, page-specific lookup lineage, content-revision revalidation, and separate live verification. The deterministic replay compares restart-from-zero and revision-aware ledger policies through the real MCP search/expansion tools over the in-process HTTP app. Focused tests cover partial and completed recurrence, more than two pages, Unicode/escaped content, transport and stale-revision exhaustion, equal-length replacement, empty-to-empty, empty-to-nonempty, lineage, no gap/duplicate, and the two-query-repair bound.
+Implementation evidence (2026-09-23): slice 6 is implemented without production API, storage, retrieval, ranking, or dependency changes. Every supported skill copy, generated/global guidance block, the OpenCode command, and the Claude/Codex integration docs now require a delivered-page ledger across query repair, identical bounded retry of failed pages, unread-page continuation, page-specific lookup lineage, content-revision revalidation, and separate live verification; each compact surface links to the full byte-identical procedure. The deterministic replay compares restart-from-zero and revision-aware ledger policies through the real MCP search/expansion tools over the in-process HTTP app. Focused tests cover partial and completed recurrence, more than two pages, Unicode/escaped content, typed and untyped transport errors, stale-revision exhaustion, equal-length replacement, empty-to-empty, empty-to-nonempty, lineage, no gap/duplicate, and the two-query-repair bound. The slow real-MCP oracle requires the complete unique ordered source after the first query exhausts all delivery retries, so a prefix, gap, reordering, or truncated repair cannot pass.
 
 One anonymized single-run comparison measured navigation/presentation only:
 
@@ -138,10 +138,10 @@ One anonymized single-run comparison measured navigation/presentation only:
 |---|---:|---:|
 | Searches / search-result pages | 2 / 2 | 2 / 2 |
 | Candidate occurrences / unique / exact repeats | 2 / 1 / 1 | 2 / 1 / 1 |
-| Expansion attempts / delivered pages | 85 / 84 | 44 / 42 |
-| Repeated delivered expansion pages | 42 | 0 |
-| Returned characters | 5,334 | 2,667 |
-| Observed latency | 0.877 s | 0.457 s |
+| Expansion attempts / delivered pages | 87 / 84 | 86 / 83 |
+| Repeated delivered expansion pages | 1 | 0 |
+| Returned characters | 5,657 | 5,584 |
+| Observed latency | 0.949 s | 0.950 s |
 | Required evidence recovered | yes | yes |
 
 Latency is observational and has no pass/fail threshold. This replay does not measure candidate recovery, injection precision, or downstream-task effect. A separate live check confirmed the installed service was healthy, vector and embedding providers were ready, no items were pending, and no recent queue failures existed; no restart was needed because this slice changes no runtime service code.
