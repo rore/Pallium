@@ -27,7 +27,7 @@
 
 **Verification plan:** Exact claim commit followed by callback loss recovers after lease expiry with one replacement, not during a live lease → actual hook/API controlled-clock test. A generation change during the request fails the callback CAS and old DB evidence cannot unlock the new fence → race and stale-generation tests. Ordinary, missing, partial, wrong-endpoint, and uncertain-without-claim evidence causes no retry → route/reconcile negatives. Busy accepted wake stays single-flight → existing regression. A validated endpoint move still rehomes recovery, while ACK gives one delivered state and releases the fence → existing and new lifecycle tests. Schema upgrade/restart preserves new evidence and leaves old rows conservative → file-backed migration/restart test. Then affected subsystem, one repository suite, workflow/Redline check, PR/CI review, and exact-main installed health checks.
 
-**Plan review:** First clean-context review blocked the prompt-generation draft on callback generation binding and moved-scope semantics; revised server-only plan pending fresh clean-context review.
+**Plan review:** Fresh clean-context review approved the revised server-only plan with callback CAS and explicit SQLite migration caveats; see ## Plan review.
 
 **Approvals:** Pending explicit human High-risk plan approval.
 
@@ -42,4 +42,4 @@ The existing actual-hook/loopback delayed-claim test passed (1 test, 3.44s): aft
 
 ## Plan review
 
-Pending clean-context review. Historical accepted/null-correlation reservations predate the proposed generation marker and cannot be auto-repaired with missing evidence. Do not blanket-clear them.
+The first clean-context review blocked the prompt-generation draft: the file callback could attach to a newer generation, and a strict old-scope comparison would break validated moved-endpoint recovery. The revised server-only snapshot plan fixes the in-flight generation race and preserves moved-scope behavior. A fresh clean-context reviewer approved it with two implementation checks: use the same captured snapshot for callback CAS, and migrate the nullable SQLite column explicitly while old rows remain conservative. An old copied prompt arriving after replacement remains an existing host-origin limitation, not solved here. Historical accepted/null-correlation reservations cannot be auto-repaired from missing evidence; do not blanket-clear them.
