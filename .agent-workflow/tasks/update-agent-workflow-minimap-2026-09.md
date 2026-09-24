@@ -47,7 +47,7 @@ Not required at this risk level.
 **Exceptions:**
 —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -56,6 +56,8 @@ Not required at this risk level.
 - Exported and manifest-validated the two pinned upstream trees, then copied their complete tracked skill contents and the two mapped Agent Workflow mirrors. Source parity is 67/67 for each Agent Workflow tree and 38/38 for Minimap; two ignored Python bytecode caches were excluded from package inventory. No config, policy, CI, hook, AGENTS, application, or roadmap path changed. `apply_patch` hit the documented Windows 1385 failure during the plan revision; exact-file deterministic replacement was used only for this Work Record.
 
 - Verification complete on committed consumer revision `777a4c06`; focused upstream, browser E2E, Pallium full suite, fresh Redline, and PR-mode checker passed.
+
+Corrective-pin resync committed as 122ea66e: copied only the eight changed consumer files byte-for-byte from Agent Workflow a940b84682ee270d8bec27732b3b90e6cacc6524 and Minimap 74a5f4fd29bbc22df35e7932f4449aa9b22ee836. The first sync's Work Record baseline and its approval remain intact; the corrective plan was separately reviewed and committed before this copy. No application, policy, configuration, CI, hook, AGENTS, roadmap, or installed service file changed.
 
 ## Plan review
 
@@ -69,6 +71,11 @@ Clean-context reviewer `/root/sync_plan_review` returned REVISE because a local 
 - Pallium `tests/test_agent_workflow_ci.py`: 1 passed; full `uv run python -m pytest tests/ -x -q`: 5,295 passed, 34 skipped, 2 xfailed in 211.77 seconds.
 - Fresh Redline on `origin/main...777a4c06`: GRAY, no boundary or checkpoint. Agent Workflow PR-mode checker: clean with `--base-ref origin/main --head-ref HEAD`; `requirements.baseline_unchanged` matched first committed baseline `f6238d59`, and detected/declared risk were both Elevated.
 - Exact committed diff contains 23 consumer files and this Work Record, with no config, policy, CI, hook, AGENTS, application, or roadmap change. `git diff origin/main...HEAD --check` passed. No canonical Pallium roadmap item applies.
+
+- Corrective-pin source parity: Agent Workflow .agents and .claude trees each 67/67 tracked Git blobs matched; Minimap roadmap skill 38/38; mapped root checker exact. The new upstream delta is eight consumer files only.
+- At the exact upstream commits, Agent Workflow baseline-history E2E: 24 passed; Minimap restart-race plus prior participant/roadmap/UI focused tests: 163 passed, 2 Windows skips; Minimap browser participant E2E: 1 passed. Pallium tests/test_agent_workflow_ci.py: 1 passed.
+- First parallel Pallium full run had one intermittent, unrelated Relay hook failure at 27%; its exact parametrized node passed 2/2 serially and the recorded last-failure set passed 195 with 2 skips. The second full tests/ run passed: 5,295 passed, 34 skipped, 2 xfailed in 254.49 seconds.
+- Fresh Redline: GRAY, no boundary, watch, contract, or checkpoint. PR-mode Agent Workflow checker clean with real origin/main and HEAD; requirements.baseline_unchanged matched first commit f6238d59. Committed diff check passed.
 
 ## Result review
 
