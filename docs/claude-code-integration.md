@@ -253,13 +253,20 @@ See [Configuration — Injection Policy](configuration.md#injection-policy-abste
 
 | Setting | Default | Override |
 |---------|---------|----------|
-| Service port | 19836 | `--port` on setup/install commands, or `PALLIUM_PORT` env var |
+| Service port | 19836 | `--port` on setup/install commands; re-run setup to retarget hooks (`PALLIUM_PORT` must match the pinned port) |
 | HTTP timeout | 6s | Hardcoded (Claude Code allows 8s) |
 | Session dedup window | 5 minutes | Hardcoded |
 | Injection budget (SessionStart) | 1200 chars (~300 tokens) | Hardcoded |
 | Injection budget (other hooks) | 2400 chars (~600 tokens) | Hardcoded |
 | Prompt min length | 20 chars | Hardcoded |
 | Content-length gate (Stop) | 20K chars | Hardcoded |
+
+Claude setup pins the hook port and Relay wake directory to one service instance.
+Re-run `pallium setup claude-code --port <port>` after upgrading existing hooks or changing
+the target instance. If the service is offline, default-port setup can pin the
+installed database; custom offline setup needs an explicit `PALLIUM_RELAY_SQLITE_URL`.
+A missing or mismatched binding stops wake intent writes instead of risking replay
+by a different instance. An outage after setup keeps the pinned write-ahead path.
 
 ## Concurrent Sessions
 

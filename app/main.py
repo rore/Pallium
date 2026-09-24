@@ -21,6 +21,7 @@ from app.config import AppConfig
 from app import codex_wake
 from app.dashboard import mount_dashboard
 from app.claude_wake import start_claude_wake_reconciler
+from app.claude_wake_binding import binding_fingerprint, binding_for_relay_database, service_marker_path, write_json_atomic
 from app.dependencies import (
     build_claude_wake_registry,
     build_router,
@@ -166,6 +167,7 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
         logger.warning("MCP endpoint not available: mcp[cli] not installed. Run: pip install 'mcp[cli]'")
 
     resolved_config = config or AppConfig.from_env()
+    claude_binding = binding_for_relay_database(resolved_config.resolved_relay_sqlite_url)
 
     # Create MetricsStore from storage before building the service so we can
     # wire it into QueryStats at construction time.
@@ -290,7 +292,28 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
             app_instance.state._rebuild_coordinator = rebuild_coordinator
 
         claude_wake_reconciler = None
+
+        def cleanup() -> None:
+            claude_wake_registry.set_reconcile_signal(None)
+            if claude_wake_reconciler is not None:
+                claude_wake_reconciler.stop()
+            if rebuild_coordinator is not None:
+                rebuild_coordinator.stop()
+            if stop is not None:
+                stop.set()
+            _remove_launch_token(token_path)
+            wait_for_operations()
+            service.close()
+            for storage_provider in (service._storage, early_storage):
+                if isinstance(storage_provider, SQLiteStorageProvider):
+                    storage_provider.close()
+
         try:
+            binding = claude_binding
+            service_port = os.environ.get("PALLIUM_SERVICE_PORT")
+            if binding is not None and service_port is not None:
+                port = int(service_port)
+                write_json_atomic(service_marker_path(port), {"port": port, **binding})
             claude_wake_registry.recover_intents()
             relay_service = RelayService(build_result.storage)
 
@@ -316,6 +339,9 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
             app_instance.state._claude_wake_reconciler = claude_wake_reconciler
         except RelayUnavailableError:
             app_instance.state._claude_wake_reconciler = None
+        except BaseException:
+            cleanup()
+            raise
 
         app_instance.state._lifespan_complete = True
         try:
@@ -325,19 +351,7 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
             else:
                 yield
         finally:
-            claude_wake_registry.set_reconcile_signal(None)
-            if claude_wake_reconciler is not None:
-                claude_wake_reconciler.stop()
-            if rebuild_coordinator is not None:
-                rebuild_coordinator.stop()
-            if stop is not None:
-                stop.set()
-            _remove_launch_token(token_path)
-            wait_for_operations()
-            service.close()
-            for storage_provider in (service._storage, early_storage):
-                if isinstance(storage_provider, SQLiteStorageProvider):
-                    storage_provider.close()
+            cleanup()
 
     app = FastAPI(title="Pallium", version="0.1.0", lifespan=app_lifespan)
     app.state.pallium_service = service
@@ -380,6 +394,9 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
                 "embedding_provider_ok": False,
                 "degraded_reasons": ["vector_embedding_provider_unavailable"],
             }
+            if claude_binding:
+                body["claude_wake_relay_id"] = claude_binding["relay_id"]
+                body["claude_wake_binding_id"] = binding_fingerprint(claude_binding)
             return JSONResponse(content=body, status_code=200)
 
         body = {
@@ -387,6 +404,9 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
             "vector_index_ready": vector_index_ready,
             "embedding_provider_ok": True,
         }
+        if claude_binding:
+            body["claude_wake_relay_id"] = claude_binding["relay_id"]
+            body["claude_wake_binding_id"] = binding_fingerprint(claude_binding)
         status_code = 200 if ready else 503
         return JSONResponse(content=body, status_code=status_code)
 
@@ -614,7 +634,7 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
         relay_service=dashboard_relay_service,
         codex_wake_registry=codex_wake_registry,
     )
-    claude_wake_registry = build_claude_wake_registry()
+    claude_wake_registry = build_claude_wake_registry(resolved_config.resolved_relay_sqlite_url)
     app.state.claude_wake_registry = claude_wake_registry
     app.include_router(build_router(
         service,

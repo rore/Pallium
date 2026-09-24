@@ -39,8 +39,11 @@ def drain_queue():
     return _drain
 
 @pytest.fixture(autouse=True)
-def isolated_claude_wake_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def isolated_claude_wake_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest) -> None:
     """Keep trusted-local capability tests out of the developer profile."""
-    monkeypatch.setenv("PALLIUM_CLAUDE_WAKE_DIR", str(tmp_path / "claude-wake"))
+    if request.node.path.name.startswith("test_claude_"):
+        monkeypatch.setenv("PALLIUM_CLAUDE_WAKE_DIR", str(tmp_path / "claude-wake"))
+    else:
+        monkeypatch.delenv("PALLIUM_CLAUDE_WAKE_DIR", raising=False)
     monkeypatch.setenv("PALLIUM_CODEX_WAKE_DIR", str(tmp_path / "codex-wake"))
     monkeypatch.delenv("PALLIUM_HOOK_ACTOR_REF", raising=False)
