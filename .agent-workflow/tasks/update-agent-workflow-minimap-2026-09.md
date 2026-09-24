@@ -53,6 +53,7 @@ Not required at this risk level.
 ## Implementation
 
 - Established task context, immutable requirement baseline, and pre-edit GRAY classification on `feat/update-agent-workflow-minimap-2026-09`. Clean-context plan review approved before file sync.
+- Exported and manifest-validated the two pinned upstream trees, then copied their complete tracked skill contents and the two mapped Agent Workflow mirrors. Source parity is 67/67 for each Agent Workflow tree and 38/38 for Minimap; two ignored Python bytecode caches were excluded from package inventory. No config, policy, CI, hook, AGENTS, application, or roadmap path changed. pply_patch hit the documented Windows 1385 failure during the plan revision; exact-file deterministic replacement was used only for this Work Record.
 
 ## Plan review
 

@@ -102,11 +102,12 @@ function canBindPort(port) {
 // a defensive sweep — the registry only tracks ONE server, but earlier
 // sessions can leave others alive on adjacent ports if a prior restart
 // fell forward into TIME_WAIT.
-async function shutdownIfMinimap(port) {
+async function shutdownIfMinimap(port, expectedPid = null) {
   const found = await probePort(port);
   if (!found) return false;
   try {
-    const resp = await fetch(`http://127.0.0.1:${port}/api/shutdown`, { method: "POST" });
+    const headers = expectedPid === null ? undefined : { "X-Minimap-Instance-Pid": String(expectedPid) };
+    const resp = await fetch(`http://127.0.0.1:${port}/api/shutdown`, { method: "POST", headers });
     return resp.ok;
   } catch {
     return false;
@@ -210,17 +211,18 @@ if (!alive) {
 }
 if (alive.participantConfigId !== expectedConfigId) {
   process.stderr.write("Restarted server did not report the requested Participants configuration.\n");
-  process.exit(1);
-}
-if (endpointExplicit || dashboardExplicit) {
-  if (palliumConfig.endpoint) {
-    await writePalliumPreference({
-      palliumEndpoint: palliumConfig.endpoint,
-      palliumDashboardEndpoint: palliumConfig.dashboardEndpoint,
-    });
-  } else await clearPalliumPreference();
-}
+  if (alive.pid === child.pid) await shutdownIfMinimap(alive.port, child.pid);
+  process.exitCode = 1;
+} else {
+  if (endpointExplicit || dashboardExplicit) {
+    if (palliumConfig.endpoint) {
+      await writePalliumPreference({
+        palliumEndpoint: palliumConfig.endpoint,
+        palliumDashboardEndpoint: palliumConfig.dashboardEndpoint,
+      });
+    } else await clearPalliumPreference();
+  }
 
-const portNote = alive.port === requestedPort ? "" : ` (requested ${requestedPort})`;
-process.stdout.write(`Minimap restarted on http://localhost:${alive.port}${portNote} (pid ${alive.pid ?? "?"}).\n`);
-process.exit(0);
+  const portNote = alive.port === requestedPort ? "" : ` (requested ${requestedPort})`;
+  process.stdout.write(`Minimap restarted on http://localhost:${alive.port}${portNote} (pid ${alive.pid ?? "?"}).\n`);
+}
