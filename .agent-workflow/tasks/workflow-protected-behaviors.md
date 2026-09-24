@@ -32,5 +32,9 @@
 
 **Exceptions:** —
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
+## Activation prerequisites
+
+- Task owner accepted RW-022 with exact reply "Approve" (2026-09-24T19:05:33Z); policy activation was approved in the same reply.
+- Test-only PR #242 merged as 814d8418 after hosted 	est (3.12), 	est (3.13), windows-smoke, Redline, and Agent Workflow passed. Both local checkouts fast-forwarded cleanly; installed wrapper restart and /health, /status, /debug/queue/health passed with mbedding_provider_ok: true.
