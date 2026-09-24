@@ -46,6 +46,10 @@
 
 Clean-context agent verdict: APPROVE. The documented RW-022 failure and existing HTTP → scheduler/recovery → real hook regression support this narrow contract. Keep registry/setup isolation in the new file; do not broaden the promise to unloaded wake or all busy-runtime semantics. Prove the historical 6-to-1 failure or a controlled equivalent, and leave the roadmap queued until the separate policy activation.
 
+## Task-owner selection
+
+- Approved by user 2026-09-24T19:05:33Z: "Approve". In response to the pending RW-022 selection and workflow-only activation decisions; treated as accepting RW-022 as the first contract.
+
 ## Evidence
 
 - Focused contract directory: 1 passed on current code. A disposable-checkout controlled fault that releases the accepted native reservation produced 6 queue submissions and failed the one-call assertion; the witness checkout was removed.
