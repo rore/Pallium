@@ -51,7 +51,7 @@ Not required at this risk level.
 **Exceptions:**
 —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Plan review
@@ -64,9 +64,14 @@ Initial context and immutable Requirement baseline committed first as 129781df. 
 
 Implemented the approved guidance in the four named files. The skill variants are byte-identical; the public doc explains full pagination, independent target-container confirmation, nonclosed unique selection, sender-scope preservation, admission inspection, and fail-closed fallback. No product code or live integration was changed. The patch helper failed with the documented Windows 1385 error; deterministic replacements were limited to these named files.
 
+After the budget failure, the approved revised plan moved the detailed procedure to three byte-identical bundled references and replaced the new long SKILL.md paragraph with an explicit conditional load pointer. Existing safety text was preserved. The measured skill limit rose only from 2,800 to 3,072 bytes, and a focused test checks the link, mirror parity, and critical discovery safeguards.
+
 ## Evidence
 
-Pending.
+- Final skill text is 3,064 bytes normalized, under the narrowly revised 3,072-byte measured ceiling. The three SKILL.md copies have identical SHA-256 1687970899166EF9810DF70FA8EC44F5F3BAC00A292F94A589B6B9D80A492759; the three new references have identical SHA-256 F969B35B42FF78EE72C0F4E3C40FF666C8899FB1AABB30ADEDCAFFFEBF771151.
+- Skill quick validation passed for Claude Code, Codex, and OpenCode. Focused guidance, Codex and Claude integration, and dashboard route tests: 80 passed. OpenCode npm test: 54 passed, 7 skipped. Full Pallium tests/: 5,296 passed, 34 skipped, 2 xfailed in 281.21 seconds.
+- Exact committed source revision 11fb8ebc adds the mirrored reference and coverage-only guidance test, with no Relay API, runtime, config, CI, or roadmap change. The first full-suite attempt failed only the pre-existing 2,800-byte ceiling; a compression attempt violated exact existing safety assertions and was fully reversed. The final focused and full runs pass.
+- Expanded pre-edit Redline is GRAY (integration skill/reference paths gray; doc/test/Work Record blue), with no watch, boundary, contract surface, or checkpoint flag.
 
 ## Result review
 
