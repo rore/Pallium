@@ -26,7 +26,7 @@
 
 **Verification plan:** Protected suite edit is red with behavior-contract classification and `test` linkage → synthetic changed-file Redline report plus checker; assert `behavior_contracts.changed_paths_classified`, `behavior_contracts.requirement_changes_authorized`, and `behavior_contracts.verification_linked` pass. Normal policy PR is red with architecture-review and valid Work Record → local/hosted harness plus `architecture-reviewed` label. Existing protected test runs on PR → hosted `test (3.12)` and `test (3.13)`. Roadmap state reflects activation → feature and board inspection after policy checks.
 
-**Plan review:** Clean-context review requested changes: exercise the protected-path checker predicates, hold State until approval, make candidate acceptance and merge stop gates, and satisfy the policy checkpoint. Plan revised; re-review pending.
+**Plan review:** Clean-context review requested changes: exercise the protected-path checker predicates, hold State until approval, make candidate acceptance and merge stop gates, and satisfy the policy checkpoint. Revised plan independently re-reviewed: APPROVE (2026-09-24); the synthetic reporter/checker path and sequencing are sufficient. Optional completeness predicates will be checked if exposed by the harness.
 
 **Approvals:** Pending explicit task-owner approval for High-risk policy activation; do not reuse earlier approval for sync or skill edits.
 
