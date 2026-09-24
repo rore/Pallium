@@ -36,6 +36,7 @@ def test_cross_project_relay_discovery_is_bundled_and_safe() -> None:
     for required in (
         "GET /dashboard/api/relay/sessions",
         "maximum 200",
+        "All history",
         "no `session_ref` filter",
         "exact runtime, session_ref, and container_ref from independent trusted context",
         "exactly one matching nonclosed session",

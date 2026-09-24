@@ -69,7 +69,7 @@ ambiguous, or malformed identity fails closed.
 
 Cross-project discovery is separate from `pallium_relay_recipients`. On the same
 trusted local Pallium service, the read-only `GET /dashboard/api/relay/sessions`
-endpoint (or Dashboard Relay Sessions view) lists service-global sessions when
+endpoint (or Dashboard Relay Sessions view with Sessions set to `All history`) lists service-global sessions when
 `container_ref` is omitted. It has no `session_ref` filter: page with `limit`
 (at most 200) and `offset` until the listing is complete. Match the exact
 `runtime` and `session_ref` of the known task against an independently known

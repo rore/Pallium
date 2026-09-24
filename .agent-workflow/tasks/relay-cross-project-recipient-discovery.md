@@ -68,11 +68,11 @@ After the budget failure, the approved revised plan moved the detailed procedure
 
 ## Evidence
 
-- Final skill text is 3,064 bytes normalized, under the narrowly revised 3,072-byte measured ceiling. The three SKILL.md copies have identical SHA-256 1687970899166EF9810DF70FA8EC44F5F3BAC00A292F94A589B6B9D80A492759; the three new references have identical SHA-256 F969B35B42FF78EE72C0F4E3C40FF666C8899FB1AABB30ADEDCAFFFEBF771151.
+- Final skill text is 3,064 bytes normalized, under the narrowly revised 3,072-byte measured ceiling. The three SKILL.md copies have identical SHA-256 1687970899166EF9810DF70FA8EC44F5F3BAC00A292F94A589B6B9D80A492759; the three new references have identical SHA-256 4C9C7A52D80D14E425FA1B02578CABCA8A9168D8C86F1D28E2FE87F0447D0BA9.
 - Skill quick validation passed for Claude Code, Codex, and OpenCode. Focused guidance, Codex and Claude integration, and dashboard route tests: 80 passed. OpenCode npm test: 54 passed, 7 skipped. Full Pallium tests/: 5,296 passed, 34 skipped, 2 xfailed in 281.21 seconds.
 - Exact committed source revision 11fb8ebc adds the mirrored reference and coverage-only guidance test, with no Relay API, runtime, config, CI, or roadmap change. The first full-suite attempt failed only the pre-existing 2,800-byte ceiling; a compression attempt violated exact existing safety assertions and was fully reversed. The final focused and full runs pass.
 - Expanded pre-edit Redline is GRAY (integration skill/reference paths gray; doc/test/Work Record blue), with no watch, boundary, contract surface, or checkpoint flag.
 
 ## Result review
 
-Pending.
+Initial independent result review returned REVISE: the Dashboard Sessions view defaults to Recent in 24h and could hide dormant recipients. The guide and all three references now require Sessions = All history; focused coverage asserts it. Re-review pending.
