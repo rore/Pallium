@@ -32,13 +32,14 @@
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
 
 - Discover: the initial roadmap candidate promising unloaded Codex wake conflicts with current shipped behavior, so the first contract is narrowed to RW-022's loaded/busy path. The existing broad regression and CI job are reusable evidence; policy activation stays in a separate PR.
 - Assess risk: the planned files are blue by Redline, but defining a durable product obligation raises this test-only slice to Elevated.
+- Implement: added a standalone copy of the existing RW-022 HTTP → scheduler → hook regression with contract-local registry isolation, plus a narrow catalog entry. The broad source test remains unchanged.
 
 ## Plan review
 
@@ -46,7 +47,7 @@ Clean-context agent verdict: APPROVE. The documented RW-022 failure and existing
 
 ## Evidence
 
-- Pending.
+- Focused contract directory: 1 passed on current code. A disposable-checkout controlled fault that releases the accepted native reservation produced 6 queue submissions and failed the one-call assertion; the witness checkout was removed.
 
 ## Result review
 
