@@ -7,6 +7,12 @@
 
 version: 1
 
+behaviorContracts:
+  protection: workflow
+  paths:
+    - "tests/behavior_contracts/**"
+  verification: test
+
 project:
   name: pallium
   extension: python

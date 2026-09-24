@@ -1,7 +1,7 @@
 ---
 id: add-protected-behavioral-requirements-regression-suite
 title: Protected behavioral requirements regression suite
-status: queued
+status: done
 priority: high
 commitment: committed
 milestone: engineering-health
@@ -72,8 +72,9 @@ protected automatically.
 
 ## Initial Protected Requirements
 
-1. Relay wakes loaded-idle and unloaded eligible recipients automatically, without
-   a manual user prompt; queue-only next-turn fallback cannot replace unloaded wake.
+1. Relay wakes supported loaded-idle recipients automatically; unloaded Codex tasks
+   retain pending deliveries for a later ordinary turn and are not a current
+   protected automatic-wake requirement.
 2. Busy recipients are never preempted or steered; Relay work runs as a distinct
    following turn.
 3. With the service cwd in a different repository, wake preserves the target cwd,
@@ -84,7 +85,10 @@ protected automatically.
 5. Failures remain loss-safe and diagnosable with durable, sanitized evidence.
 
 These are candidates, not automatically accepted contract files. Each must pass the
-qualification rule independently.
+qualification rule independently. The first accepted protected contract is the narrower
+RW-022 busy Codex single-flight behavior, added with its catalog and verified fault
+witness in PR #242. The task owner selected it on 2026-09-24; other candidates
+remain unprotected until they independently qualify.
 
 ## Activation Sequence
 

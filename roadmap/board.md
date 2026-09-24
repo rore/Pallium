@@ -1,6 +1,5 @@
 # First · Relay Reliability
 - add-wake-first-relay-delivery
-- add-protected-behavioral-requirements-regression-suite
 
 # Parallel · Session History
 - improve-session-history-search-quality
@@ -46,6 +45,7 @@
 - idea-multi-vector-long-text-embedding
 
 # Done
+- add-protected-behavioral-requirements-regression-suite
 - add-relay-batch-participant-counts
 - fix-session-history-evidence-access
 - optimize-always-loaded-guidance
