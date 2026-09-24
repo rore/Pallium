@@ -13,7 +13,7 @@ def test_rendered_guidance_and_tool_descriptions_stay_under_measured_ceilings() 
     assert len(Path("integrations/opencode/AGENTS.md").read_text(encoding="utf-8")) <= 2819
     for runtime in ("claude-code", "codex", "opencode"):
         skill = Path(f"integrations/{runtime}/skills/pallium-memory/SKILL.md")
-        assert len(skill.read_bytes().replace(b"\r\n", b"\n")) <= 2800
+        assert len(skill.read_bytes().replace(b"\r\n", b"\n")) <= 3072
     tree = ast.parse(Path("app/mcp/server.py").read_text(encoding="utf-8"))
     names = {node.name for node in ast.walk(tree)
              if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
@@ -22,6 +22,34 @@ def test_rendered_guidance_and_tool_descriptions_stay_under_measured_ceilings() 
     combined = sum(len(ast.get_docstring(node) or "") for node in ast.walk(tree)
                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in names)
     assert combined <= 1300
+
+def test_cross_project_relay_discovery_is_bundled_and_safe() -> None:
+    references = []
+    for runtime in ("claude-code", "codex", "opencode"):
+        skill = Path(f"integrations/{runtime}/skills/pallium-memory/SKILL.md")
+        assert "load [global discovery](references/global-relay-discovery.md)" in skill.read_text(encoding="utf-8")
+        reference = skill.parent / "references/global-relay-discovery.md"
+        assert reference.is_file()
+        references.append(reference.read_bytes())
+    assert references[1:] == references[:-1]
+    guidance = references[0].decode("utf-8")
+    for required in (
+        "GET /dashboard/api/relay/sessions",
+        "maximum 200",
+        "no `session_ref` filter",
+        "exact runtime, session_ref, and container_ref from independent trusted context",
+        "exactly one matching nonclosed session",
+        "incomplete or unstable listing",
+        "destination health",
+        "canonical `relay-session-...` selector",
+        "current `@name`",
+        "sender's injected `container_ref`",
+        "inspect returned admission destination",
+        "pallium_relay_address",
+        "saved or uncertain send",
+    ):
+        assert required in guidance
+
 
 def test_all_guidance_surfaces_present_pallium_capabilities() -> None:
     spec = importlib.util.spec_from_file_location(
