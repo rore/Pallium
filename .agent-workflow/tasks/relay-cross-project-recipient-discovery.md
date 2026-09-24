@@ -6,7 +6,7 @@ Agents can find a known Relay recipient in another Pallium project without mista
 Pallium Relay integration guidance.
 
 **Scope:**
-Update docs/agent-relay.md and the Codex, Claude Code, and OpenCode pallium-memory SKILL.md sources.
+Update docs/agent-relay.md, the Codex, Claude Code, and OpenCode pallium-memory SKILL.md sources and mirrored cross-project discovery references, plus focused guidance-budget coverage.
 
 **Constraints:**
 Keep ordinary MCP discovery container-local; use only read-only global session lookup for cross-project discovery; verify the exact target before sending; do not change Relay behavior, APIs, or CI; install only from the stable checkout after merge.
@@ -16,6 +16,9 @@ When the destination is in another project, each skill explains the global read-
 
 **Requirement baseline:**
 {"source":"2d8fc659-fce7-4c9a-ab7d-f090a2f2f823","outcome":"Agents can find a known Relay recipient in another Pallium project without mistaking container-local discovery for absence.","scope":"Update docs/agent-relay.md and the Codex, Claude Code, and OpenCode pallium-memory SKILL.md sources.","constraints":"Keep ordinary MCP discovery container-local; use only read-only global session lookup for cross-project discovery; verify the exact target before sending; do not change Relay behavior, APIs, or CI; install only from the stable checkout after merge.","completion_criteria":"When the destination is in another project, each skill explains the global read-only lookup, exact task-session match, current endpoint or alias, and safe fallback; Relay docs agree; the three skill sources stay identical."}
+
+**Behavior changes:**
+[{"target":"task-context.scope","classification":"equivalent","before":"Update docs/agent-relay.md and the Codex, Claude Code, and OpenCode pallium-memory SKILL.md sources.","after":"Update docs/agent-relay.md, the Codex, Claude Code, and OpenCode pallium-memory SKILL.md sources and mirrored cross-project discovery references, plus focused guidance-budget coverage.","reason":"The original three skill entries were already at the measured 2,800-byte ceiling. Bundled references carry the same requested guidance without stripping existing safety rules; the focused test adjusts only the measured ceiling and checks this same obligation."}]
 
 **Risk:**
 Elevated
@@ -33,14 +36,14 @@ The three integration skill sources are byte-identical. pallium_relay_recipients
 The destination task exact session ID and target container are independently known from trusted context. If either is unknown, the dashboard is unavailable, or a complete lookup cannot be verified, request the target own address or use an app-message fallback instead of guessing.
 
 **Plan:**
-Add one concise cross-project lookup rule to the three mirrored SKILL.md sources. Clarify docs/agent-relay.md: dashboard global listing has no exact session filter, so page to completion; match exact runtime, session_ref, and independently known target container; reject incomplete, absent, or ambiguous matches; inspect lifecycle and destination health; send only to the verified canonical id or current alias. If required independent identity is missing, request the target address or use app-message fallback. Keep sender injected scope, existing routing, APIs, and installation paths unchanged. Stop if the final diff needs code, schema, or runtime configuration.
+Keep the three SKILL.md entries short and link a mirrored `references/global-relay-discovery.md` that carries the complete procedure. Clarify docs/agent-relay.md: dashboard global listing has no exact session filter, so page to completion; match exact runtime, session_ref, and independently known target container; reject incomplete, absent, or ambiguous matches; inspect lifecycle and destination health; send only to the verified canonical id or current alias. If required independent identity is missing, request the target address or use app-message fallback. The existing skill was exactly at its 2,800-byte measured ceiling before this change; raise only that test ceiling to fit the new pointer after measuring the final text. Preserve all pre-existing safety wording and exact guidance assertions. Keep sender injected scope, existing routing, APIs, and installation paths unchanged. Stop if the final diff needs product code, schema, or runtime configuration.
 
 **Verification plan:**
 When a known destination is in another project, the guidance requires complete pagination, exact runtime/session/container match, ambiguity rejection, and safe fallback → inspect final diff against dashboard route and live response.
-When the guidance is mirrored, all three skill sources remain identical → compare file hashes, run skill quick validation, and run focused integration packaging checks.
+When the guidance is mirrored, all three skill trees remain identical and the measured skill-size check passes → compare SKILL.md and reference hashes, run skill quick validation, guidance-budget test, and focused integration packaging checks.
 
 **Plan review:**
-Clean-context agent /root/relay_guidance_plan_review APPROVE after revision; see Plan review prose.
+Initial and budget-revised plans APPROVE by clean-context reviewer /root/relay_guidance_plan_review.
 
 **Approvals:**
 Not required at this risk level.
@@ -53,7 +56,7 @@ Not required at this risk level.
 
 ## Plan review
 
-Initial clean-context finding: the dashboard has no session_ref filter, pages at at most 200 rows, and runtime/session_ref can collide across containers. Revised plan requires complete pagination, an independently known target container, and fail-closed fallback. Same reviewer re-reviewed and returned APPROVE with no remaining blocker.
+Initial clean-context finding: the dashboard has no session_ref filter, pages at at most 200 rows, and runtime/session_ref can collide across containers. Revised plan requires complete pagination, an independently known target container, and fail-closed fallback. Same reviewer re-reviewed and returned APPROVE with no remaining blocker. The first full suite then exposed a 2,800-byte skill ceiling already exhausted by the pre-change text. A compression attempt failed exact safeguard assertions and was fully reversed. The revised plan preserves those assertions, moves the detailed procedure into mirrored skill references, and adjusts only the measured ceiling for a concise loading pointer. The reviewer requested and this record now includes an equivalent Scope change chain; final re-review returned APPROVE. The skill pointer must explicitly say to load the reference for a cross-project target.
 
 ## Implementation
 
