@@ -20,17 +20,17 @@
 
 **Discovery:** The canonical roadmap specifies a dedicated test PR followed by a separate reviewed policy PR. The existing CI `test` job runs `tests/` on PRs, and the combined harness runs on PRs. Current Redline policy lists `tests/**` as blue and marks policy edits red with architecture-review; `behaviorContracts` overrides the protected directory. The initial selected RW-022 contract is in PR #242, with local tests and witness complete but hosted checks/review pending. No `.github/CODEOWNERS` file exists.
 
-**Material assumptions:** PR #242 will merge unchanged with a catalog and standalone accepted RW-022 regression. The task owner will select this first contract and approve policy activation; a rejected candidate returns this task to planning. Existing `test` job coverage and schema semantics will remain unchanged through merge. Roadmap completion will be recorded only after activation is verified.
+**Material assumptions:** PR #242 will merge with a catalog and standalone RW-022 regression. Actual PR merge and explicit task-owner selection of RW-022 are stop gates before activation; a rejected candidate returns this task to planning. The task owner will separately approve this High-risk policy change. Existing `test` job coverage and schema semantics will remain unchanged through merge. Roadmap completion will be recorded only after activation is verified.
 
-**Plan:** 1. Invoke the `/agent-workflow` skill to create the Work Record and classify risk, before any code edit. 2. Get clean-context plan review and explicit task-owner approval for this High-risk policy activation. 3. Merge/verify PR #242, synchronize this branch with its merged main commit, then add the minimal `behaviorContracts` policy block. 4. Verify schema, protected-path red classification and verification linkage with a synthetic changed-file check; run the local combined workflow checker. 5. Reconcile the feature/board state only after verification, get clean-context result review, run hosted PR checks, and merge this separate reviewed policy PR.
+**Plan:** 1. Invoke the `/agent-workflow` skill to create the Work Record and classify risk, before any code edit. 2. Get clean-context plan review and explicit task-owner approval for this High-risk policy activation. 3. Confirm task-owner selection and merge/verify PR #242, synchronize this branch with its merged main commit, then add the minimal `behaviorContracts` policy block. 4. Verify schema and run a synthetic protected-path change through both Redline reporting and the Agent Workflow checker, asserting red classification, semantic classification, authorization, and `test` verification linkage; run the local combined checker for the real policy PR. 5. Reconcile the feature/board state only after verification, get clean-context result review, satisfy architecture-review with the `architecture-reviewed` label, run hosted PR checks, and merge this separate reviewed policy PR.
 
-**Verification plan:** Protected suite edit is red with behavior-contract classification and `test` linkage → synthetic changed-file Redline report. Normal policy PR is red with architecture-review and valid Work Record → combined local/hosted harness. Existing protected test runs on PR → hosted `test (3.12)` and `test (3.13)`. Roadmap state reflects activation → feature and board inspection after policy checks.
+**Verification plan:** Protected suite edit is red with behavior-contract classification and `test` linkage → synthetic changed-file Redline report plus checker; assert `behavior_contracts.changed_paths_classified`, `behavior_contracts.requirement_changes_authorized`, and `behavior_contracts.verification_linked` pass. Normal policy PR is red with architecture-review and valid Work Record → local/hosted harness plus `architecture-reviewed` label. Existing protected test runs on PR → hosted `test (3.12)` and `test (3.13)`. Roadmap state reflects activation → feature and board inspection after policy checks.
 
-**Plan review:** Pending clean-context review.
+**Plan review:** Clean-context review requested changes: exercise the protected-path checker predicates, hold State until approval, make candidate acceptance and merge stop gates, and satisfy the policy checkpoint. Plan revised; re-review pending.
 
 **Approvals:** Pending explicit task-owner approval for High-risk policy activation; do not reuse earlier approval for sync or skill edits.
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Blocked
 <!-- agent-workflow:end -->
