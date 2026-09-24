@@ -27,19 +27,19 @@ Moderate
 Clean-context Redline classified the mixed consumer scope GRAY because `.agents/skills/agent-workflow/**` is unclassified; no boundary, checkpoint, watch, or contract-surface flag applies. Several mirrored consumers require coordinated parity checks.
 
 **Discovery:**
-Pallium began clean on `main` at `f39b30d7`. Agent Workflow upstream `origin/main` is pinned at `cef51bc9519ccb55dbd2a57fd8f3467b7b9e060c`; compared with Pallium's prior `36bd34ca` sync, only four packaged files changed: manifest, operating mode, checker, and behavioral-integrity reference. The checker now compares new Work Record baselines with their first committed version when PR refs are supplied. Minimap upstream `main` is pinned at `45d1b7ad7fd83d566e072f88374226a3fe7e5f46`; its bundled roadmap skill advances from 0.3.5 to 0.3.6 across 13 files. Prior consumer records define the tracked mapping. No canonical Pallium roadmap item owns this maintenance sync.
+Pallium began clean on main at f39b30d7. The first consumer sync used Agent Workflow cef51bc9519ccb55dbd2a57fd8f3467b7b9e060c and Minimap 45d1b7ad7fd83d566e072f88374226a3fe7e5f46. After review, upstream corrective PRs merged: Agent Workflow a940b84682ee270d8bec27732b3b90e6cacc6524 changes only the packaged manifest and checker; Minimap 74a5f4fd29bbc22df35e7932f4449aa9b22ee836 changes only its packaged server reference, runtime server, and restart script. These commits are now authoritative pins. No canonical Pallium roadmap item owns this maintenance sync.
 
 **Material assumptions:**
 The two pinned committed distributions are authoritative; disprove with a missing/inconsistent manifest or package tree, then stop and repair the source rather than hand-editing vendored code. Existing Pallium configuration and live CI remain compatible; disprove with focused integration checks or an unexpected consumer diff, then return to planning.
 
 **Plan:**
-Use the existing consumer mapping: export Agent Workflow `dist/agent-workflow/**` at pinned `cef51bc` to both `.agents/skills/agent-workflow/**` and `.claude/skills/agent-workflow/**`, and Minimap `package/minimap/skills/minimap-roadmap/**` at pinned `45d1b7a` to `.claude/skills/minimap-roadmap/**`. Copy the changed Agent Workflow checker to `scripts/agent-workflow-check.py` and the changed behavioral-integrity reference to `docs/agent-workflow/checkpoints/behavioral-integrity.md`. Compare file inventories and hashes, inspect the exact changed paths, and stop on any required config, policy, CI, hook, AGENTS, application, or roadmap edit. Run upstream Agent Workflow `tests/checker/test_baseline_history_e2e.py` and Minimap `test/pallium-participants.test.js`, `test/roadmap.test.js`, and `test/ui-api.test.js`; check Pallium integration, then the repository suite and fresh workflow/redline checks. After committing the final change, run the new checker with real `origin/main` and branch `HEAD` refs so its baseline-history predicate does not skip; confirm PR CI repeats this mode. Keep protected behavior activation and candidate selection for the subsequent discussion/task.
+Advance the existing consumer mapping to Agent Workflow a940b84682ee270d8bec27732b3b90e6cacc6524 and Minimap 74a5f4fd29bbc22df35e7932f4449aa9b22ee836. Export Agent Workflow dist/agent-workflow/** to both mirrored skill trees; mirror its checker into scripts/agent-workflow-check.py. Export Minimap package/minimap/skills/minimap-roadmap/** to the tracked roadmap skill. Compare complete inventories and hashes; inspect exact changed paths and stop on any required config, policy, CI, hook, AGENTS, application, or roadmap edit. Re-run Agent Workflow tests/checker/test_baseline_history_e2e.py, Minimap test/restart-race.test.js plus the earlier participant/roadmap/UI tests and browser E2E, Pallium focused integration and full suite, fresh Redline, and PR-mode workflow checker with real origin/main and HEAD refs. Preserve protected behavior activation for the later task. The new pins supersede the first-sync pins.
 
 **Verification plan:**
-When the sync is complete, the three installed skill trees shall have no missing, extra, or mismatched files against their pinned source trees, and the two mapped Agent Workflow files shall match by hash → full inventory/hash comparison. When Pallium executes the new checker and Minimap runtime, baseline history and participant-count/restart behavior shall pass their focused upstream regressions, while the existing Pallium workflow integration remains valid → Agent Workflow `python -m pytest tests/checker/test_baseline_history_e2e.py -q`, Minimap `node --test test/pallium-participants.test.js test/roadmap.test.js test/ui-api.test.js`, and Pallium `python -m pytest tests/test_agent_workflow_ci.py -q -n 0`. When the final change is reviewed, no unrelated paths or broken Pallium behavior shall appear → exact diff review, `git diff --check`, fresh Redline and `scripts/agent-workflow-check.py --base-ref origin/main --head-ref HEAD`, PR CI with actual base/head refs, and one full Pallium `tests/` run.
+When the resync is complete, both Agent Workflow skill trees and the Minimap skill shall match the two new pinned source trees exactly, with the mapped checker equal by hash → full inventory/hash comparison. When the reported upstream defects are fixed, the baseline-history merge-branch cases and restart-race regression shall pass alongside prior focused Minimap and Pallium integration tests → Agent Workflow tests/checker/test_baseline_history_e2e.py, Minimap test/restart-race.test.js and earlier focused/browser tests, and Pallium tests/test_agent_workflow_ci.py. When the final change is reviewed, no unrelated paths or broken Pallium behavior shall appear → exact committed diff, git diff origin/main...HEAD --check, fresh Redline, scripts/agent-workflow-check.py --base-ref origin/main --head-ref HEAD, PR CI, and one full Pallium tests/ run after this resync.
 
 **Plan review:**
-Clean-context reviewer `/root/sync_plan_review`: APPROVE after PR-ref verification revision; see `## Plan review`.
+First sync and corrective-pin resync APPROVE; see Plan review prose.
 
 **Approvals:**
 Not required at this risk level.
@@ -47,7 +47,7 @@ Not required at this risk level.
 **Exceptions:**
 —
 
-**State:** Ready for review
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -59,7 +59,7 @@ Not required at this risk level.
 
 ## Plan review
 
-Clean-context reviewer `/root/sync_plan_review` returned REVISE because a local checker run without PR refs would skip the new baseline-history gate. The revised plan names its upstream E2E test, exact Minimap focused tests, and a final Pallium checker/CI run with real base/head refs. Final re-review verdict: APPROVE. Reviewer also requested `git diff origin/main...HEAD --check` after the final commit.
+Clean-context reviewer `/root/sync_plan_review` returned REVISE because a local checker run without PR refs would skip the new baseline-history gate. The revised plan names its upstream E2E test, exact Minimap focused tests, and a final Pallium checker/CI run with real base/head refs. Final re-review verdict for the first sync: APPROVE. Reviewer also requested `git diff origin/main...HEAD --check` after the final commit. Clean-context reviewer `/root/sync_pin_plan_review` approved the corrective-pin resync before file changes: mapping, immutable baseline, protected-behavior deferral, and new upstream regression checks are sound.
 
 ## Evidence
 
@@ -71,5 +71,7 @@ Clean-context reviewer `/root/sync_plan_review` returned REVISE because a local 
 - Exact committed diff contains 23 consumer files and this Work Record, with no config, policy, CI, hook, AGENTS, application, or roadmap change. `git diff origin/main...HEAD --check` passed. No canonical Pallium roadmap item applies.
 
 ## Result review
+
+The first-sync approval below is superseded by the corrective-pin resync; a new result review is required.
 
 Independent non-implementer `/root/sync_result_review`: APPROVE. Verified both Agent Workflow mirrors at 67/67, Minimap at 38/38, mapped files by hash, the exact 23-file consumer diff, full and focused evidence, immutable baseline, GRAY/Elevated classification, and no applicable Pallium roadmap state change. No BEL or formatting blocker. The local default `build/redline-verdict.json` was stale BLUE for an unrelated diff; the task verification used a freshly generated GRAY verdict and fed it explicitly to the PR-mode checker.
