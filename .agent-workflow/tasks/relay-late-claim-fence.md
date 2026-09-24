@@ -46,3 +46,7 @@ The existing actual-hook/loopback delayed-claim test passed (1 test, 3.44s): aft
 ## Plan review
 
 The first clean-context review blocked the prompt-generation draft: the file callback could attach to a newer generation, and a strict old-scope comparison would break validated moved-endpoint recovery. The revised server-only snapshot plan fixes the in-flight generation race and preserves moved-scope behavior. A fresh clean-context reviewer approved it with two implementation checks: use the same captured snapshot for callback CAS, and migrate the nullable SQLite column explicitly while old rows remain conservative. An old copied prompt arriving after replacement remains an existing host-origin limitation, not solved here. Historical accepted/null-correlation reservations cannot be auto-repaired from missing evidence; do not blanket-clear them.
+
+## Handoff
+
+Branch feat/relay-late-claim-fence; last committed revision before this note ebfc8612. One uncommitted test-only positive control remains in tests/test_codex_wake.py; it passed its focused run but does not reproduce the historical missing correlation. No production files have changed, no live reservation was cleared, and no native wake was resent. Next: obtain explicit human High-risk approval for the reviewed server-only plan, then implement and verify the exact DB claim/generation fence. Generate a fresh Redline verdict for the eventual PR; the current local checker passes Task Context traceability but blocks on absent verdict and pending human approval.
