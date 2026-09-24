@@ -1,6 +1,3 @@
-# First · Relay Work Presence
-- add-relay-batch-participant-counts
-
 # First · Relay Reliability
 - add-wake-first-relay-delivery
 - add-protected-behavioral-requirements-regression-suite
@@ -49,6 +46,7 @@
 - idea-multi-vector-long-text-embedding
 
 # Done
+- add-relay-batch-participant-counts
 - fix-session-history-evidence-access
 - optimize-always-loaded-guidance
 - add-relay-delivery-trace

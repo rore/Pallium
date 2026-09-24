@@ -1,7 +1,7 @@
 ---
 id: add-relay-batch-participant-counts
 title: Count Relay participants for a bounded set of exact work references
-status: in-progress
+status: done
 priority: high
 commitment: committed
 milestone: pallium-relay
@@ -50,3 +50,6 @@ association and access boundaries. The Minimap consumer excludes completed items
 from automatic board batches, handles an empty selection without a request, and
 shows errors/unrequested items as unknown; those client changes are not in this
 Pallium feature.
+
+Completed through PR #233 after HTTP E2E, indexed-query, local-loopback, and CI
+verification.
