@@ -40,6 +40,7 @@
 - Discover: the initial roadmap candidate promising unloaded Codex wake conflicts with current shipped behavior, so the first contract is narrowed to RW-022's loaded/busy path. The existing broad regression and CI job are reusable evidence; policy activation stays in a separate PR.
 - Assess risk: the planned files are blue by Redline, but defining a durable product obligation raises this test-only slice to Elevated.
 - Implement: added a standalone copy of the existing RW-022 HTTP → scheduler → hook regression with contract-local registry isolation, plus a narrow catalog entry. The broad source test remains unchanged.
+- Verify: affected wake subsystem and contract passed (140 tests); full default suite passed (5,302 passed, 34 skipped, 2 xfailed). The controlled fault failed as intended.
 
 ## Plan review
 
@@ -48,6 +49,7 @@ Clean-context agent verdict: APPROVE. The documented RW-022 failure and existing
 ## Evidence
 
 - Focused contract directory: 1 passed on current code. A disposable-checkout controlled fault that releases the accepted native reservation produced 6 queue submissions and failed the one-call assertion; the witness checkout was removed.
+- Affected subsystem: 140 passed. Full default suite: 5,302 passed, 34 skipped, 2 xfailed on the test content committed as 2ee44e4d. CI job test runs tests/ on PRs for Python 3.12 and 3.13. Local Redline verdict BLUE with no boundary/checkpoint findings; Agent Workflow checker clean.
 
 ## Result review
 
