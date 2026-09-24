@@ -27,20 +27,20 @@ Simple
 Redline classifies three integration skill files gray and the Relay doc blue; no checkpoint or boundary applies. One coherent guidance change.
 
 **Discovery:**
-Pending final source and installer verification. The MCP recipient list is container-local, while the read-only dashboard Relay session list is service-global.
+The three integration skill sources are byte-identical. pallium_relay_recipients and GET /relay/sessions require the caller container; exact session filtering does not cross containers. The read-only GET /dashboard/api/relay/sessions has optional container/runtime filters, so omitting container enumerates service-global sessions in bounded pages. Its rows expose id, runtime, session_ref, container_ref, alias, and destination health; code and a live lookup confirmed this. Source docs distinguish service-global routing from container-local ordinary discovery. No canonical roadmap item tracks this guidance correction.
 
 **Material assumptions:**
-The installed dashboard exposes a service-global session list with exact session ID, runtime, container, endpoint ID, and alias; if that fails verification, return to planning.
+The destination task exact session ID and target container are independently known from trusted context. If either is unknown, the dashboard is unavailable, or a complete lookup cannot be verified, request the target own address or use an app-message fallback instead of guessing.
 
 **Plan:**
-Pending clean-context review. Add one short cross-project discovery rule to all three mirrored skills and a concise explanation to docs/agent-relay.md. Keep routing and scope rules unchanged.
+Add one concise cross-project lookup rule to the three mirrored SKILL.md sources. Clarify docs/agent-relay.md: dashboard global listing has no exact session filter, so page to completion; match exact runtime, session_ref, and independently known target container; reject incomplete, absent, or ambiguous matches; inspect lifecycle and destination health; send only to the verified canonical id or current alias. If required independent identity is missing, request the target address or use app-message fallback. Keep sender injected scope, existing routing, APIs, and installation paths unchanged. Stop if the final diff needs code, schema, or runtime configuration.
 
 **Verification plan:**
-When a known destination is in another project, the guidance names the global read-only lookup and exact-match verification → inspect the final diff and compare against the live endpoint contract.
-When the guidance is mirrored, all three skill sources remain identical → compare file hashes and run focused integration packaging checks.
+When a known destination is in another project, the guidance requires complete pagination, exact runtime/session/container match, ambiguity rejection, and safe fallback → inspect final diff against dashboard route and live response.
+When the guidance is mirrored, all three skill sources remain identical → compare file hashes, run skill quick validation, and run focused integration packaging checks.
 
 **Plan review:**
-Pending clean-context review.
+Clean-context agent /root/relay_guidance_plan_review APPROVE after revision; see Plan review prose.
 
 **Approvals:**
 Not required at this risk level.
@@ -48,12 +48,16 @@ Not required at this risk level.
 **Exceptions:**
 —
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
+
+## Plan review
+
+Initial clean-context finding: the dashboard has no session_ref filter, pages at at most 200 rows, and runtime/session_ref can collide across containers. Revised plan requires complete pagination, an independently known target container, and fail-closed fallback. Same reviewer re-reviewed and returned APPROVE with no remaining blocker.
 
 ## Implementation
 
-Initial context and immutable Requirement baseline recorded before source edits. Branch: feat/relay-cross-project-recipient-discovery.
+Initial context and immutable Requirement baseline committed first as 129781df. User confirmed shared Pallium skill scope: "yes, i want this to be updated so other agents will know how to use this" (source item 2f79cf9e-bd0e-4969-9b77-778b1775b531). Pre-edit Redline: GRAY (three skill files gray, Relay doc blue), no watch, boundary, contract flag, or checkpoint. Target files: the three integration pallium-memory/SKILL.md sources and docs/agent-relay.md. No code or installed skill is to be edited before merge. Initial plan review found a pagination and identity-check gap; the approved plan now fails closed on incomplete or ambiguous global lookup. Implementation starts only after this plan commit.
 
 ## Evidence
 
