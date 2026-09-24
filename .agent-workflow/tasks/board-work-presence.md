@@ -26,7 +26,7 @@
 
 **Verification plan:** When 1..200 exact pairs are requested, HTTP returns one ordered count per pair (including zero), no unrelated refs or session details -> HTTP E2E. When origins overlap, sessions share refs, containers differ, or scopes reuse a local ref, counts remain distinct and exact -> HTTP E2E. When a session closes/reopens or an origin detaches, counts reflect current nonclosed associations -> HTTP E2E. Invalid, duplicate, empty, over-cap, secret/control, and Unicode identities obey validation -> HTTP E2E. Storage failure remains an error and reads do not mutate association state -> HTTP E2E. Existing item-detail contract remains unchanged -> existing association E2E. Query uses existing index -> EXPLAIN. Run focused subsystem, workflow check, and full pytest before PR.
 
-**Plan review:** Prior clean-context scope-wide review is superseded by Minimap's exact-pair batch clarification. A new clean-context review is pending; see section below.
+**Plan review:** Clean-context exact-batch review by `/root/exact_batch_plan_review` on 2026-09-24 approved the technical plan with no blocking findings; see section below. Consumer/architect confirmation and human approval remain pending.
 
 **Approvals:** Pending task-specific human approval after reviewed plan.
 
@@ -37,7 +37,7 @@
 
 ## Implementation
 
-Isolated branch `feat/board-work-presence` in a Codex-managed worktree at base `8155891eb877c1d3e9d31ff95ded8b1748eb7a97`. No product code edited. Waiting on Minimap/architect contract confirmation and human approval.
+Isolated branch `feat/board-work-presence` in a Codex-managed worktree at base `8155891eb877c1d3e9d31ff95ded8b1748eb7a97`. No product code edited. Exact-batch technical review passed. Waiting on Minimap/architect contract confirmation and human approval.
 
 ## Evidence
 
@@ -50,3 +50,7 @@ Independent reviewer confirmed counts-only matches Minimap's board requirement b
 ## Requirement revision
 
 Minimap's Relay message relay-msg-26f926171512481880b75e090dbb569a clarified that the board needs a batch over only exact visible item references, not a scope-wide association inventory. This narrows disclosure and reuses the existing work-ref index. The previous scope-wide plan and its review are superseded; owner confirmation and new review are pending.
+
+## Exact-batch plan review
+
+The independent Astra reviewer approved the bounded read-only POST over exact pairs. It confirmed canonical NFC duplicate rejection, service-global distinct nonclosed endpoint counts, zero-fill only after one successful query, and reuse of the existing work-ref index. Verification must include EXPLAIN for one and 200 requested keys amid unrelated associations, 200/201 boundary, NFC-equivalent duplicates, case-sensitive identities, dormant/unreachable sessions, dual-origin detach, close/reopen, unsupported storage, and database errors. No migration or additional boundary is needed. The review does not replace Minimap/architect confirmation or human approval.
