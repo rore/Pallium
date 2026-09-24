@@ -44,3 +44,7 @@
 - Added only tests/behavior_contracts/** with protection: workflow and verification: test; no behavior checkpoint, CODEOWNERS, branch rule, or new CI job. Corrected the unsupported unloaded-Codex-wake claim and recorded RW-022 as the sole initial contract. Roadmap status stays queued until hosted policy checks pass and activation merges.
 - Focused protected directory: 1 passed. Synthetic protected-path Redline report: RED, version 2 workflow, verification test. Without a classification the checker was blocking; with a reversible equivalent classification, changed_paths_complete, changed_paths_classified, requirement_changes_authorized, and verification_linked all passed. The temporary Work Record bytes were restored.
 - Real policy PR changed-file set: Redline RED, architecture-review satisfied by the intended architecture-reviewed label, Agent Workflow checker clean. Hosted PR checks remain pending.
+
+## Result review
+
+- Independent clean-context review initially requested that the roadmap stay queued until hosted policy checks and merge, and that malformed evidence text be repaired. Commit 81e9a0c3 addressed both. Re-review: APPROVE for opening the separate policy PR; complete hosted checks, apply architecture-reviewed label, and move the roadmap to Done in the final PR update before merge.
