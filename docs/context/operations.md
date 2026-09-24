@@ -78,7 +78,12 @@ and send-time reconciliation remove only missing deliveries or exact
 endpoint-matching terminal reservations; pending, active claims, endpoint
 mismatches, and uncertain reads keep their fences. Service restart reloads those
 durable reservations before reconstructing pending work, preventing blind
-resubmission of accepted or uncertain prompts. An exact
+resubmission of accepted or uncertain prompts. Codex wake fences follow the
+resolved Relay SQLite database: a conventional `data/pallium-relay.db` uses its
+parent home's `codex-wake` directory, while any other file uses a sibling
+`<full-database-filename>-codex-wake` directory. In-memory apps keep app-local
+nonpersistent fences. `PALLIUM_CODEX_WAKE_DIR` overrides this selection; never
+copy reservations between instances. An exact
 internal Codex wake is excluded from deduplication and memory ingestion. The native
 prompt can remain model-visible when no delivery block accompanies it, so it carries
 the exact delivery ID for nonmutating trace inspection. Ordinary user prompts remain
