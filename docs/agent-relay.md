@@ -66,6 +66,25 @@ ambiguous, or malformed identity fails closed.
 ## Select a recipient
 
 `pallium_relay_recipients` returns a bounded envelope of recent sessions. Each item includes a canonical `exact_selector` and, when named, `alias_selector` (the internal wire-field name for its `@name`); when `has_more` is true, call it again with `next_offset`. When the session reference is known, pass both runtime and session_ref to return zero or one matching session without paging; pass include_inactive=true when a dormant or closed match is needed. The HTTP session-list response remains container-local and exposes each endpoint ID.
+
+Cross-project discovery is separate from `pallium_relay_recipients`. On the same
+trusted local Pallium service, the read-only `GET /dashboard/api/relay/sessions`
+endpoint (or Dashboard Relay Sessions view with Sessions set to `All history`) lists service-global sessions when
+`container_ref` is omitted. It has no `session_ref` filter: page with `limit`
+(at most 200) and `offset` until the listing is complete. Match the exact
+`runtime` and `session_ref` of the known task against an independently known
+target `container_ref`, not one inferred from a cwd, title, or the dashboard
+row itself. Reject an incomplete or unstable listing, an unknown target
+container, or multiple plausible endpoints; a missing row is not proof that
+the recipient does not exist.
+
+Inspect the unique nonclosed row's destination health and use its `id` as the
+canonical exact selector. For a role recipient, verify the current `@name`
+instead. Send with the sender's injected `container_ref`, never the target's,
+and inspect the returned admission destination. If verification cannot finish,
+ask the recipient for `pallium_relay_address` or use an app task-message
+fallback. Do not resend after a saved or uncertain send.
+
 Legacy selectors have three forms:
 
 - `codex` — legacy runtime-wide compatibility selector; regular sends reject it
