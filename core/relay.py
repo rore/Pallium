@@ -357,6 +357,37 @@ class RelayService:
             history_guidance=self._work_ref_guidance(value["work_ref"]),
         )
         return result
+
+    def work_ref_participant_counts(
+        self, *, references: list[dict[str, str]]
+    ) -> dict[str, Any]:
+        if not 1 <= len(references) <= 200:
+            raise ValueError("references must contain between 1 and 200 work references")
+        normalized = [
+            self._work_ref_input(item["scope_ref"], item["local_ref"])
+            for item in references
+        ]
+        keys = [item["work_ref"] for item in normalized]
+        if len(set(keys)) != len(keys):
+            raise ValueError("references must be unique after canonical normalization")
+        operation = getattr(self._store, "relay_work_ref_participant_counts", None)
+        if not callable(operation):
+            raise RelayUnavailableError(
+                "relay work associations are not supported by configured storage"
+            )
+        counts = operation(work_refs=keys)
+        return {
+            "contract": "relay-work-ref-counts/v1",
+            "counts": [
+                {
+                    "scope_ref": item["scope_ref"],
+                    "local_ref": item["local_ref"],
+                    "participant_count": counts.get(item["work_ref"], 0),
+                }
+                for item in normalized
+            ],
+        }
+
     def work_ref_participants(
         self,
         *,

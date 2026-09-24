@@ -1002,6 +1002,28 @@ class RelayWorkRefParticipantResponse(RelaySessionResponse):
     association: RelayParticipantAssociationResponse
 
 
+class RelayWorkRefCountReference(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    scope_ref: str
+    local_ref: str
+
+
+class RelayWorkRefCountsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    references: list[RelayWorkRefCountReference] = Field(min_length=1, max_length=200)
+
+
+class RelayWorkRefCountResponse(RelayWorkRefCountReference):
+    participant_count: int = Field(ge=0)
+
+
+class RelayWorkRefCountsResponse(BaseModel):
+    contract: Literal["relay-work-ref-counts/v1"]
+    counts: list[RelayWorkRefCountResponse]
+
+
 class RelayWorkRefParticipantsResponse(BaseModel):
     contract: Literal["relay-session-work-associations/v1"]
     work_ref: str

@@ -1,6 +1,8 @@
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from sqlalchemy import event, text
 
 from core.relay import RelayService
@@ -517,3 +519,220 @@ def test_cross_container_association_discovery_select_send_and_reply(client):
     ).json()["deliveries"]
     assert received[0]["message_id"] == reply.json()["message_id"]
     assert received[0]["sender_endpoint_id"] == sessions["target"]["endpoint_id"]
+
+
+def _counts(client, references):
+    return client.post(
+        "/relay/work-refs/participant-counts", json={"references": references}
+    )
+
+
+def test_batch_counts_order_bounds_and_validation(client):
+    _turn(client, structural_work_refs=[FEATURE])
+    refs = [
+        {"scope_ref": FEATURE["scope_ref"], "local_ref": f"item:{index}"}
+        for index in range(199)
+    ] + [FEATURE]
+    response = _counts(client, refs)
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "contract": "relay-work-ref-counts/v1",
+        "counts": [
+            {**ref, "participant_count": int(ref == FEATURE)} for ref in refs
+        ],
+    }
+    assert _counts(client, [FEATURE]).json()["counts"] == [
+        {**FEATURE, "participant_count": 1}
+    ]
+    for body in (
+        {},
+        {"references": []},
+        {"references": refs + [BRANCH]},
+        {"references": [FEATURE, FEATURE]},
+        {"references": [FEATURE, {**FEATURE, "local_ref": FEATURE["local_ref"] + "\x00"}]},
+        {"references": [{"scope_ref": "", "local_ref": "item"}]},
+        {"references": [{"scope_ref": "scope", "local_ref": " password=sk-ant-api03-" + "x" * 40}]},
+        {"references": [{**FEATURE, "work_ref": "unrequested"}]},
+    ):
+        response = client.post("/relay/work-refs/participant-counts", json=body)
+        assert response.status_code == 422, (body, response.text)
+
+
+def test_batch_counts_canonical_scope_case_and_lifecycle(client):
+    composed = {"scope_ref": "scope:é", "local_ref": "item:é"}
+    decomposed = {"scope_ref": "scope:e\u0301", "local_ref": "item:e\u0301"}
+    case_variant = {"scope_ref": "scope:É", "local_ref": "item:é"}
+    other_scope = {"scope_ref": "scope:other", "local_ref": "item:é"}
+    assert _counts(client, [composed, decomposed]).status_code == 422
+    first = _turn(client, session="first", structural_work_refs=[composed])
+    assert _attach(client, composed, session="first").status_code == 200
+    other_container = "git:example.test/team/other"
+    admitted = client.post(
+        "/relay/turn",
+        json={
+            "runtime": "claude-code",
+            "session_ref": "second",
+            "container_ref": other_container,
+            "structural_work_refs": [composed, other_scope],
+        },
+    )
+    assert admitted.status_code == 200, admitted.text
+    assert _attach(client, case_variant, session="first").status_code == 200
+    refs = [other_scope, case_variant, composed, BRANCH]
+    expected = [1, 1, 2, 0]
+
+    def assert_counts():
+        result = _counts(client, refs)
+        assert result.status_code == 200, result.text
+        assert result.json()["counts"] == [
+            {**ref, "participant_count": count}
+            for ref, count in zip(refs, expected)
+        ]
+
+    store = client.app.state.pallium_service._storage
+    with store._relay_engine.connect() as connection:
+        before = connection.execute(
+            text("SELECT count(*) FROM relay_session_work_refs")
+        ).scalar_one()
+    assert_counts()
+    with store._relay_engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE relay_sessions SET state='unreachable', "
+                "last_seen_at=:old WHERE id=:endpoint_id"
+            ),
+            {
+                "old": datetime.now(timezone.utc) - timedelta(days=2),
+                "endpoint_id": first["session"]["endpoint_id"],
+            },
+        )
+    assert_counts()
+    with store._relay_engine.connect() as connection:
+        assert connection.execute(
+            text("SELECT count(*) FROM relay_session_work_refs")
+        ).scalar_one() == before
+    assert _counts(client, [decomposed]).json()["counts"] == [
+        {**composed, "participant_count": 2}
+    ]
+
+    detach = client.post(
+        "/relay/sessions/work-refs/detach",
+        json={
+            "runtime": "codex",
+            "session_ref": "first",
+            "container_ref": CONTAINER,
+            **composed,
+        },
+    )
+    assert detach.status_code == 200
+    assert detach.json()["structural_remains"] is True
+    assert_counts()
+    assert client.post(
+        "/relay/turn",
+        json={
+            "runtime": "codex",
+            "session_ref": "first",
+            "container_ref": CONTAINER,
+            "structural_work_refs": [],
+        },
+    ).status_code == 200
+    expected[2] = 1
+    assert_counts()
+    assert client.post(
+        "/relay/sessions/close",
+        json={
+            "runtime": "claude-code",
+            "session_ref": "second",
+            "container_ref": other_container,
+        },
+    ).status_code == 200
+    expected[0] = expected[2] = 0
+    assert_counts()
+    assert client.post(
+        "/relay/turn",
+        json={
+            "runtime": "claude-code",
+            "session_ref": "second",
+            "container_ref": other_container,
+        },
+    ).status_code == 200
+    expected[0] = expected[2] = 1
+    assert_counts()
+    assert first["session"]["endpoint_id"] not in str(_counts(client, refs).json())
+
+
+def test_batch_counts_unavailable_and_storage_errors_are_not_zero(client, monkeypatch):
+    _turn(client, structural_work_refs=[FEATURE])
+    store = client.app.state.pallium_service._storage
+    with monkeypatch.context() as patch:
+        patch.setattr(store, "relay_work_ref_participant_counts", None)
+        assert _counts(client, [FEATURE]).status_code == 501
+
+    def fail(**_kwargs):
+        raise RuntimeError("database unavailable")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(store, "relay_work_ref_participant_counts", fail)
+        with pytest.raises(RuntimeError, match="database unavailable"):
+            _counts(client, [FEATURE])
+    assert _counts(client, [FEATURE]).json()["counts"][0]["participant_count"] == 1
+
+def test_batch_counts_do_not_write_relay_state(client):
+    _turn(client, structural_work_refs=[FEATURE])
+    store = client.app.state.pallium_service._storage
+    engine = store._relay_engine
+
+    def snapshot():
+        with engine.connect() as connection:
+            return tuple(
+                tuple(tuple(row) for row in connection.execute(text(query)))
+                for query in (
+                    "SELECT * FROM relay_sessions ORDER BY id",
+                    "SELECT * FROM relay_session_work_refs ORDER BY endpoint_id, work_ref, origin",
+                    "SELECT * FROM relay_messages ORDER BY id",
+                    "SELECT * FROM relay_deliveries ORDER BY id",
+                )
+            )
+
+    before = snapshot()
+    writes = []
+
+    def record_write(_conn, _cursor, statement, _parameters, _context, _executemany):
+        if statement.lstrip().upper().startswith(("INSERT ", "UPDATE ", "DELETE ", "REPLACE ")):
+            writes.append(statement)
+
+    event.listen(engine, "before_cursor_execute", record_write)
+    try:
+        for _ in range(3):
+            response = _counts(client, [FEATURE, BRANCH])
+            assert response.status_code == 200, response.text
+            assert [row["participant_count"] for row in response.json()["counts"]] == [1, 0]
+    finally:
+        event.remove(engine, "before_cursor_execute", record_write)
+    assert writes == []
+    assert snapshot() == before
+
+
+def test_batch_counts_reflect_attach_detach_before_aggregate_read(client):
+    _turn(client)
+    assert _attach(client, FEATURE).status_code == 200
+    store = client.app.state.pallium_service._storage
+    relay = RelayService(store)
+    changed = False
+
+    def change_before_aggregate(_conn, _cursor, statement, _parameters, _context, _executemany):
+        nonlocal changed
+        if changed or "relay_session_work_refs" not in statement or not statement.lstrip().upper().startswith("SELECT"):
+            return
+        changed = True
+        relay.detach_work_ref(runtime="codex", session_ref="worker", container_ref=CONTAINER, **FEATURE)
+        relay.attach_work_ref(runtime="codex", session_ref="worker", container_ref=CONTAINER, **BRANCH)
+
+    event.listen(store._relay_engine, "before_cursor_execute", change_before_aggregate)
+    try:
+        response = _counts(client, [FEATURE, BRANCH])
+    finally:
+        event.remove(store._relay_engine, "before_cursor_execute", change_before_aggregate)
+    assert changed is True
+    assert response.status_code == 200, response.text
+    assert [row["participant_count"] for row in response.json()["counts"]] == [0, 1]
