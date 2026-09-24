@@ -26,7 +26,7 @@
 
 **Verification plan:** When 1..200 exact pairs are requested, HTTP returns one ordered count per pair (including zero), no unrelated refs or session details -> HTTP E2E. When origins overlap, sessions share refs, containers differ, or scopes reuse a local ref, counts remain distinct and exact -> HTTP E2E. When a session closes/reopens or an origin detaches, counts reflect current nonclosed associations -> HTTP E2E. Invalid, duplicate, empty, over-cap, secret/control, and Unicode identities obey validation -> HTTP E2E. Storage failure remains an error and reads do not mutate association state -> HTTP E2E. Existing item-detail contract remains unchanged -> existing association E2E. Query uses existing index at 1 and 200 requested keys without whole-registry scan -> EXPLAIN on representative data. Repeated local-loopback endpoint and SQL timings meet the predeclared target or drive an indexed correction -> measured median/p95 report, not CI wall-clock assertion. Concurrent attach/detach reads are coherent and read-side writes absent -> focused E2E/read-only audit. Run focused subsystem, workflow check, and full pytest before PR.
 
-**Plan review:** Clean-context exact-batch review by `/root/exact_batch_plan_review` on 2026-09-24 approved the technical plan with no blocking findings; see section below. Consumer/architect confirmation and human approval remain pending.
+**Plan review:** Clean-context exact-batch review by `/root/exact_batch_plan_review` on 2026-09-24 approved the technical plan with no blocking findings; see section below. Consumer and architect confirmed the contract. Human approval alone remains pending.
 
 **Approvals:** Pending task-specific human approval after reviewed plan.
 
@@ -45,21 +45,28 @@ Minimap source item: `C:/Dev/rore/minimap/roadmap/features/show-board-work-prese
 
 ## Plan review
 
-Independent reviewer confirmed counts-only matches Minimap's board requirement but rejected offset pagination: a detach between pages can skip a remaining local reference and create false zero. The accepted correction is one capped grouped read with has_more as an explicit completeness signal; truncation means missing refs are unknown. Reviewer required concrete wire/error semantics, exact scope and population E2E, and migration/index-plan verification. Those points are incorporated in the Plan and Verification plan above. No product edit may begin until consumer and human approval.
+Historical review of the superseded scope-wide proposal: offset pages could skip a local reference after concurrent detach and create false zero. That finding prompted a single complete-or-error read, then Minimap narrowed the request to caller-supplied exact pairs. This section is not approval of the current design; the exact-batch review below is authoritative.
 
 ## Requirement revision
 
-Minimap's Relay message relay-msg-26f926171512481880b75e090dbb569a clarified that the board needs a batch over only exact visible item references, not a scope-wide association inventory. This narrows disclosure and reuses the existing work-ref index. The previous scope-wide plan and its review are superseded; owner confirmation and new review are pending.
+Minimap's Relay message relay-msg-26f926171512481880b75e090dbb569a clarified that the board needs a batch over only exact visible item references, not a scope-wide association inventory. This narrows disclosure and reuses the existing work-ref index. The previous scope-wide plan and its review are superseded. The exact-batch plan was independently reviewed and confirmed by Minimap and the architect; only human approval remains.
 
 ## Exact-batch plan review
 
-The independent Astra reviewer approved the bounded read-only POST over exact pairs. It confirmed canonical NFC duplicate rejection, service-global distinct nonclosed endpoint counts, zero-fill only after one successful query, and reuse of the existing work-ref index. Verification must include EXPLAIN for one and 200 requested keys amid unrelated associations, 200/201 boundary, NFC-equivalent duplicates, case-sensitive identities, dormant/unreachable sessions, dual-origin detach, close/reopen, unsupported storage, and database errors. No migration or additional boundary is needed. The review does not replace Minimap/architect confirmation or human approval.
+The independent Astra reviewer approved the bounded read-only POST over exact pairs. It confirmed canonical NFC duplicate rejection, service-global distinct nonclosed endpoint counts, zero-fill only after one successful query, and reuse of the existing work-ref index. Verification must include EXPLAIN for one and 200 requested keys amid unrelated associations, 200/201 boundary, NFC-equivalent duplicates, case-sensitive identities, dormant/unreachable sessions, dual-origin detach, close/reopen, unsupported storage, and database errors. No migration or additional boundary is needed. Minimap and architect confirmation followed; the review does not replace required human approval.
+
 ## Performance acceptance
 
 Architect relayed the user's explicit requirement in `relay-msg-89dcf9351492439a959e7b21ae63791c`. The exact-key filter must happen in SQL before aggregation; LIMIT or a bounded response alone does not prove bounded query work. Use the existing work-ref index if the measured plan supports it; justify an index only if evidence requires one. Test one and 200 keys, near/over-cap groups, realistic same-scope cardinality, many unrelated scopes, duplicate origins, and concurrent attach/detach. Record endpoint and SQL medians/p95 on repeated runs with dataset/environment and a predeclared local-loopback target; do not add a benchmark framework or wall-clock CI assertion.
+
 ## Consumer contract confirmation
 
 Minimap developer confirmed through Codex app fallback that read-only POST with at most 200 unique exact pairs, request-order complete counts, and no `complete:true` field meets the board need. Minimap will validate exactly one count per requested pair and show unknown on missing/malformed entries or for unqueried cards beyond 200. It reports 157 current roadmap item files. The app fallback was necessary because its wake lacked required Relay scope; the Relay response was preserved and not resent.
+
 ## Contract closure
 
 Architect approval `relay-reply-ebb7dc27b275da370d49c7d5d51f32429ac1871458dcb94918577445fbf77b6f` confirms the exact-batch POST/read-only complete-or-error contract; pagination is not required. Minimap owns whole-board coverage beyond the 200-pair request bound: it confirmed unrequested cards remain unknown rather than zero; its client must make no empty-board request and must guard stale repo/filter results. Successful request completeness is distinct from whole-board coverage. API implementation remains blocked on task-specific human approval under the High-risk workflow.
+
+## Board selection refinement
+
+Architect relayed the user's instruction to omit completed items from automatic board count requests while preserving on-demand item detail. Minimap developer acknowledged this as client-only selection behavior; Pallium's exact-pair API remains generic.
