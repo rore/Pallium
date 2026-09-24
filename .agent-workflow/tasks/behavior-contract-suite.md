@@ -26,19 +26,23 @@
 
 **Verification plan:** One accepted busy wake remains one native submission across recovery checks and delivers once via hook, while an overtaken wake is suppressed → standalone contract test plus original-failure witness. Default PR verification includes the protected directory → hosted `test (3.12)` and `test (3.13)` jobs. Work Record and scope remain valid → Redline and Agent Workflow checks.
 
-**Plan review:** Pending clean-context review.
+**Plan review:** Clean-context review APPROVE; see `## Plan review` below.
 
 **Approvals:** Not required at this risk level.
 
 **Exceptions:** —
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
 
 - Discover: the initial roadmap candidate promising unloaded Codex wake conflicts with current shipped behavior, so the first contract is narrowed to RW-022's loaded/busy path. The existing broad regression and CI job are reusable evidence; policy activation stays in a separate PR.
 - Assess risk: the planned files are blue by Redline, but defining a durable product obligation raises this test-only slice to Elevated.
+
+## Plan review
+
+Clean-context agent verdict: APPROVE. The documented RW-022 failure and existing HTTP → scheduler/recovery → real hook regression support this narrow contract. Keep registry/setup isolation in the new file; do not broaden the promise to unloaded wake or all busy-runtime semantics. Prove the historical 6-to-1 failure or a controlled equivalent, and leave the roadmap queued until the separate policy activation.
 
 ## Evidence
 
