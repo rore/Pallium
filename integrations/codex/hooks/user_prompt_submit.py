@@ -6,6 +6,7 @@ import importlib.util
 import json
 import re
 import sys
+import time
 import uuid
 from pathlib import Path
 
@@ -114,6 +115,29 @@ def main() -> None:
         if relay_scope:
             work_refs_status = "unavailable"
             relay_outcome = "unavailable"
+
+            def measured_relay_request(method, path, body, *, timeout):
+                started = time.monotonic()
+                response = None
+                try:
+                    response = relay_request(method, path, body, timeout=timeout)
+                    return response
+                finally:
+                    if (
+                        wake_delivery_id is not None
+                        and body.get("wake_delivery_id") == wake_delivery_id
+                    ):
+                        record_codex_wake_event(
+                            script=__file__,
+                            delivery_id=wake_delivery_id,
+                            stage="relay_request_completed",
+                            outcome=(
+                                "response" if isinstance(response, dict)
+                                else "unavailable"
+                            ),
+                            elapsed_ms=int((time.monotonic() - started) * 1000),
+                        )
+
             try:
                 relay_response = relay_turn(
                     "codex", session_id, container_ref,
@@ -126,7 +150,7 @@ def main() -> None:
                         if wake_match is not None else None
                     ),
                     timeout=0.75,
-                    request=relay_request,
+                    request=measured_relay_request if wake_delivery_id else relay_request,
                 )
                 if isinstance(relay_response, dict):
                     confirmed_refs = confirmed_registry_work_refs(relay_response)

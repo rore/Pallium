@@ -2187,11 +2187,23 @@ class SQLiteRelayMixin:
                 and latest_completion is not None
                 and latest_completion.outcome == "uncertain"
             ):
+                codex_prompt_guidance = (
+                    len(snapshots) == 1
+                    and snapshots[0]["recipient_runtime"] == "codex"
+                    and latest_completion.delivery_id == snapshots[0]["delivery_id"]
+                )
                 explanation = (
                     "Needs intervention: Native activation is uncertain, so automatic "
                     "retry is held because the submission may already have succeeded. "
-                    "Start an ordinary turn in the recipient task to process the retained "
-                    "message; do not resend it."
+                    + (
+                        "Enter a normal user prompt directly in the existing Codex "
+                        "recipient task to process the retained message; app-message "
+                        "delegation may not invoke UserPromptSubmit; do not resend it."
+                        if codex_prompt_guidance
+                        else
+                        "Start an ordinary turn in the recipient task to process the "
+                        "retained message; do not resend it."
+                    )
                 )
             elif states == {"pending"} and "unreachable" in endpoint_states:
                 explanation = (

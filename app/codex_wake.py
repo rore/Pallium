@@ -545,7 +545,10 @@ def _wake_after_debounce(
             None,
             ("ambiguous", "unexpected_error", None),
         )
-    launch_result = _finish_launch(launch) if launch is not None else None
+    launch_result = (
+        _finish_launch(launch, delivery_id=reservation.delivery_id)
+        if launch is not None else None
+    )
     attempt = _attempt_from_launch(launch_result) if launch_result is not None else None
     if not current or attempt is None:
         _clear_schedule(reservation, registry)
@@ -676,6 +679,7 @@ def _start_launch(session_ref: str, prompt: str) -> _LaunchStart:
             stderr=subprocess.PIPE,
             text=True,
             encoding="utf-8",
+            errors="replace",
             cwd=str(cwd),
             **_hidden_process_kwargs(),
         )
@@ -686,7 +690,22 @@ def _start_launch(session_ref: str, prompt: str) -> _LaunchStart:
     return process, None
 
 
-def _finish_launch(start: _LaunchStart) -> _LaunchResult:
+def _stderr_category(stderr: str | None) -> str:
+    if not stderr:
+        return "empty"
+    sample = stderr[:2048].lower()
+    if "usage:" in sample or "unexpected argument" in sample:
+        return "cli_usage"
+    if any(term in sample for term in ("thread not found", "unknown thread", "no such thread")):
+        return "thread_unavailable"
+    if any(term in sample for term in ("connection refused", "transport error", "timed out")):
+        return "transport"
+    return "other"
+
+
+def _finish_launch(
+    start: _LaunchStart, *, delivery_id: str | None = None,
+) -> _LaunchResult:
     process, immediate = start
     if immediate is not None:
         return immediate
@@ -706,7 +725,7 @@ def _finish_launch(start: _LaunchStart) -> _LaunchResult:
                 pass
 
     try:
-        process.communicate(timeout=_QUEUE_TIMEOUT_SECONDS)
+        _, stderr = process.communicate(timeout=_QUEUE_TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired:
         stop_and_reap()
         return "ambiguous", "timeout", None
@@ -715,6 +734,15 @@ def _finish_launch(start: _LaunchStart) -> _LaunchResult:
         return "ambiguous", "post_start_error", None
     if process.returncode == 0:
         return "queued", None, 0
+    if delivery_id is not None:
+        delivery_ref = (
+            delivery_id if re.fullmatch(r"relay-delivery-[0-9a-f]{32}", delivery_id)
+            else _log_fingerprint(delivery_id)
+        )
+        logger.info(
+            "codex_relay_wake_stderr delivery_ref=%s exit_code=%s category=%s",
+            delivery_ref, process.returncode, _stderr_category(stderr),
+        )
     return "failed", "nonzero_exit", process.returncode
 
 

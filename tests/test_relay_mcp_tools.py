@@ -1599,9 +1599,20 @@ async def test_relay_transport_diagnostic_survives_tool_error():
     with patch.object(PalliumMcpClient, "relay_recipients", new=AsyncMock(return_value=diagnostic)):
         text = await assert_tool_error(create_server(), "pallium_relay_recipients", _SCOPE)
     assert tool_error_payload(text) == diagnostic
+
+
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("runtime", "session"),
+    [("codex", "trace-codex"), ("claude-code", "trace-claude")],
+)
 async def test_registered_trace_preserves_actionable_uncertain_guidance(
-    monkeypatch: pytest.MonkeyPatch, relay_app, asgi_post, asgi_get
+    monkeypatch: pytest.MonkeyPatch,
+    relay_app,
+    asgi_post,
+    asgi_get,
+    runtime,
+    session,
 ) -> None:
     bind_asgi_work_refs(monkeypatch, asgi_post, asgi_get)
     await asgi_post(
@@ -1610,7 +1621,7 @@ async def test_registered_trace_preserves_actionable_uncertain_guidance(
     )
     await asgi_post(
         "/relay/turn",
-        {"runtime": _RUNTIME, "session_ref": _SESSION, **_SCOPE},
+        {"runtime": runtime, "session_ref": session, **_SCOPE},
     )
     from core.relay import RelayService
 
@@ -1618,7 +1629,7 @@ async def test_registered_trace_preserves_actionable_uncertain_guidance(
     sent = service.send(
         sender_runtime="codex",
         sender_session_ref="trace-sender",
-        recipient=f"{_RUNTIME}:{_SESSION}",
+        recipient=f"{runtime}:{session}",
         payload="trace guidance",
         **_SCOPE,
     )
@@ -1639,5 +1650,17 @@ async def test_registered_trace_preserves_actionable_uncertain_guidance(
     )
     trace = json.loads(content[0].text)
     assert trace["explanation"].startswith("Needs intervention:")
-    assert "ordinary turn" in trace["explanation"]
+    if runtime == "codex":
+        assert (
+            "normal user prompt directly in the existing Codex recipient task"
+            in trace["explanation"]
+        )
+        assert "UserPromptSubmit" in trace["explanation"]
+        assert "ordinary turn" not in trace["explanation"]
+    else:
+        assert "ordinary turn" in trace["explanation"]
+        assert "UserPromptSubmit" not in trace["explanation"]
     assert "do not resend" in trace["explanation"]
+    snapshot = trace["delivery_snapshots"][0]
+    assert snapshot["state"] == "pending" and snapshot["attempts"] == 0
+    assert trace["events"][-1]["native_retry_safe"] is False

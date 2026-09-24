@@ -690,6 +690,57 @@ def test_api_and_dashboard_share_projection_and_unknown_is_404(client):
     )
 
 
+def test_api_and_dashboard_explain_uncertain_single_codex_delivery(client):
+    storage = client.app.state.pallium_service._storage
+    scope = "git:example.test/team/relay-trace"
+    for session in ("sender-codex-guidance", "receiver-codex-guidance"):
+        assert client.post(
+            "/relay/turn",
+            json={
+                "runtime": "codex",
+                "session_ref": session,
+                "container_ref": scope,
+            },
+        ).status_code == 200
+    message = client.post(
+        "/relay/messages",
+        json={
+            "sender_runtime": "codex",
+            "sender_session_ref": "sender-codex-guidance",
+            "recipient": "codex:receiver-codex-guidance",
+            "payload": "x",
+            "container_ref": scope,
+        },
+    ).json()
+    delivery_id = message["deliveries"][0]["delivery_id"]
+    assert storage.relay_record_trace_event(
+        {
+            "attempt_id": "relay-activation-" + "c" * 32,
+            "delivery_id": delivery_id,
+            "stage": "completed",
+            "outcome": "uncertain",
+            "reason": "nonzero_exit",
+            "evidence": ["submission_attempted"],
+            "native_retry_safe": False,
+        }
+    )
+
+    api = client.get(f"/relay/messages/{message['message_id']}/trace").json()
+    delivery_api = client.get(f"/relay/messages/{delivery_id}/trace").json()
+    dashboard = client.get(
+        f"/dashboard/api/relay/messages/{message['message_id']}/trace"
+    ).json()
+    assert api == delivery_api == dashboard
+    assert api["explanation"].startswith("Needs intervention:")
+    assert "normal user prompt directly in the existing Codex recipient task" in api[
+        "explanation"
+    ]
+    assert "UserPromptSubmit" in api["explanation"]
+    snapshot = api["delivery_snapshots"][0]
+    assert snapshot["state"] == "pending" and snapshot["attempts"] == 0
+    assert api["events"][-1]["native_retry_safe"] is False
+
+
 def test_mcp_cursor_and_budget_trim_preserve_truthful_continuation():
     from app.mcp.server import _MCP_RELAY_MAX_CHARS, _relay_trace_cursor, _relay_trace_text
 
@@ -953,8 +1004,50 @@ def test_pending_uncertain_trace_gives_safe_ordinary_turn_guidance(
         "explanation"
     ]
     assert explanation.startswith("Needs intervention:")
-    assert "ordinary turn" in explanation
+    if runtime == "codex":
+        assert (
+            "normal user prompt directly in the existing Codex recipient task"
+            in explanation
+        )
+        assert "UserPromptSubmit" in explanation
+        assert "ordinary turn" not in explanation
+    else:
+        assert "ordinary turn" in explanation
+        assert "UserPromptSubmit" not in explanation
     assert "do not resend" in explanation
+
+
+def test_shared_uncertain_completion_does_not_get_codex_prompt_guidance(relay):
+    storage, service, _ = relay
+    message = _message(service)
+    service.turn(
+        runtime="claude-code",
+        session_ref="shared-evidence",
+        container_ref="git:test",
+    )
+    other = _message(service, recipient="claude-code:shared-evidence")
+    attempt = "relay-activation-" + "8" * 32
+    _event(storage, message, attempt, "prepared")
+    for item in (message, other):
+        _event(
+            storage,
+            item,
+            attempt,
+            "completed",
+            **_completion(
+                outcome="uncertain",
+                reason="nonzero_exit",
+                evidence=["submission_attempted"],
+            ),
+        )
+
+    trace = service.trace_message(message_id=message["message_id"])
+    assert trace["delivery_snapshots"][0]["state"] == "pending"
+    assert trace["delivery_snapshots"][0]["attempts"] == 0
+    assert trace["explanation"].startswith("Needs intervention:")
+    assert "ordinary turn" in trace["explanation"]
+    assert "UserPromptSubmit" not in trace["explanation"]
+    assert any(event["shared"] for event in trace["events"])
 
 
 def test_pending_accepted_trace_is_queued_until_a_safe_turn(relay):
@@ -1141,9 +1234,70 @@ def test_terminal_trace_states_disclose_evidence_gaps(relay):
     assert "Activation evidence is incomplete" in expired_trace["explanation"]
 
 
+def test_pending_uncertain_mixed_runtime_fanout_keeps_generic_guidance(relay):
+    storage, service, _ = relay
+    message = _message(service)
+    claude_endpoint = service.turn(
+        runtime="claude-code",
+        session_ref="pending-claude-recipient",
+        container_ref="git:test",
+    )["session"]["endpoint_id"]
+    _event(
+        storage,
+        message,
+        "relay-activation-" + "6" * 32,
+        "completed",
+        **_completion(
+            outcome="uncertain",
+            reason="nonzero_exit",
+            evidence=["submission_attempted"],
+        ),
+    )
+    with storage._relay_session_factory.begin() as db:
+        db.add(
+            RelayDeliveryRecord(
+                id="relay-delivery-" + "f" * 32,
+                message_id=message["message_id"],
+                recipient_runtime="claude-code",
+                recipient_session_ref="pending-claude-recipient",
+                recipient_endpoint_id=claude_endpoint,
+                recipient_container_ref="git:test",
+                state="pending",
+                attempts=0,
+                trace_version=1,
+            )
+        )
+
+    trace = service.trace_message(message_id=message["message_id"])
+    assert {snapshot["state"] for snapshot in trace["delivery_snapshots"]} == {
+        "pending"
+    }
+    assert {
+        snapshot["recipient_runtime"] for snapshot in trace["delivery_snapshots"]
+    } == {"codex", "claude-code"}
+    assert trace["explanation"].startswith("Needs intervention:")
+    assert "ordinary turn" in trace["explanation"]
+    assert "UserPromptSubmit" not in trace["explanation"]
+    assert "do not resend" in trace["explanation"]
+    assert trace["events"][-1]["native_retry_safe"] is False
+
+
 def test_mixed_fanout_trace_counts_three_states(relay):
     storage, service, _ = relay
     message = _message(service)
+    activation = "relay-activation-" + "7" * 32
+    _event(storage, message, activation, "prepared")
+    _event(
+        storage,
+        message,
+        activation,
+        "completed",
+        **_completion(
+            outcome="uncertain",
+            reason="nonzero_exit",
+            evidence=["submission_attempted"],
+        ),
+    )
     claimed = service.turn(
         runtime="codex", session_ref="receiver", container_ref="git:test"
     )["deliveries"][0]
@@ -1199,6 +1353,7 @@ def test_mixed_fanout_trace_counts_three_states(relay):
     assert "claimed=1" in explanation
     assert "delivered=1" in explanation
     assert "pending=1" in explanation
+    assert "UserPromptSubmit" not in explanation
 
 
 def test_mixed_legacy_current_fanout_is_an_evidence_gap(relay):

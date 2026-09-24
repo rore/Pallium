@@ -22,7 +22,7 @@ from app.config import AppConfig
 from app.main import create_app
 from core.claude_wake import ClaudeWakeRegistry
 from core.codex_wake import CodexWakeRegistry, CodexWakeReservation
-from core.relay import RelayService
+from core.relay import RelayService, RelayUnavailableError
 from integrations.codex.hooks import user_prompt_submit as hook_module
 from storage.vector_index import VectorIndexConfig
 from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
@@ -185,6 +185,133 @@ def test_codex_wake_evidence_is_bounded_and_definition_matched(
         home=tmp_path,
     )
 
+@pytest.mark.parametrize(("outcome", "elapsed_ms"), [("response", 0), ("unavailable", 30000)])
+def test_relay_transport_timing_is_bounded_and_dashboard_projected(
+    client, tmp_path, monkeypatch, outcome, elapsed_ms,
+) -> None:
+    python = str(tmp_path / "python.exe")
+    script = str(tmp_path / "user_prompt_submit.py")
+    delivery_id = "relay-delivery-" + "a" * 32
+    codex_readiness.setup(
+        python=python, script=script, changed=True, home=tmp_path,
+    )
+    assert codex_readiness.record_wake_event(
+        python=python,
+        script=script,
+        delivery_id=delivery_id,
+        stage="hook_started",
+        home=tmp_path,
+    )
+    assert codex_readiness.record_wake_event(
+        python=python,
+        script=script,
+        delivery_id=delivery_id,
+        stage="relay_request_completed",
+        outcome=outcome,
+        elapsed_ms=elapsed_ms,
+        home=tmp_path,
+    )
+    assert codex_readiness.record_wake_event(
+        python=python,
+        script=script,
+        delivery_id=delivery_id,
+        stage="hook_failed",
+        reason="relay_unavailable",
+        home=tmp_path,
+    )
+
+    read_marker = codex_readiness.read
+    monkeypatch.setattr(
+        "app.dashboard.codex_readiness.read",
+        lambda: read_marker(tmp_path),
+    )
+    evidence = client.get("/dashboard/api/relay/summary").json()[
+        "codex_readiness"]["relay_wake_evidence"]
+    timing = evidence[1]
+    assert timing == {
+        "delivery_id": delivery_id,
+        "stage": "relay_request_completed",
+        "reason": None,
+        "outcome": outcome,
+        "elapsed_ms": elapsed_ms,
+        "recorded_at": timing["recorded_at"],
+    }
+    assert evidence[0]["stage"] == "hook_started"
+    assert set(evidence[0]) == {
+        "delivery_id", "stage", "reason", "recorded_at",
+    }
+    assert evidence[2]["stage"] == "hook_failed"
+
+
+@pytest.mark.parametrize("elapsed_ms", [None, -1, 30001, True, 1.5, "12"])
+def test_invalid_transport_timing_keeps_event_without_elapsed(
+    tmp_path, elapsed_ms,
+) -> None:
+    python = str(tmp_path / "python.exe")
+    script = str(tmp_path / "user_prompt_submit.py")
+    delivery_id = "relay-delivery-" + "b" * 32
+    codex_readiness.setup(
+        python=python, script=script, changed=True, home=tmp_path,
+    )
+    assert codex_readiness.record_wake_event(
+        python=python,
+        script=script,
+        delivery_id=delivery_id,
+        stage="hook_started",
+        home=tmp_path,
+    )
+    assert codex_readiness.record_wake_event(
+        python=python,
+        script=script,
+        delivery_id=delivery_id,
+        stage="relay_request_completed",
+        outcome="response",
+        elapsed_ms=elapsed_ms,
+        home=tmp_path,
+    )
+    public = codex_readiness.read(tmp_path)
+    evidence = public["relay_wake_evidence"]
+    assert public["state"] == "review_required"
+    assert set(evidence[0]) == {"delivery_id", "stage", "reason", "recorded_at"}
+    assert evidence[0]["stage"] == "hook_started"
+    assert evidence[1] == {
+        "delivery_id": delivery_id,
+        "stage": "relay_request_completed",
+        "reason": None,
+        "outcome": "response",
+        "recorded_at": evidence[1]["recorded_at"],
+    }
+
+
+@pytest.mark.parametrize("outcome", [["bad"], {"bad": "value"}])
+def test_malformed_transport_outcome_does_not_break_readiness(tmp_path, outcome) -> None:
+    python = str(tmp_path / "python.exe")
+    script = str(tmp_path / "user_prompt_submit.py")
+    delivery_id = "relay-delivery-" + "c" * 32
+    codex_readiness.setup(python=python, script=script, changed=True, home=tmp_path)
+    assert codex_readiness.record_wake_event(
+        python=python, script=script, delivery_id=delivery_id,
+        stage="hook_started", home=tmp_path,
+    )
+    assert not codex_readiness.record_wake_event(
+        python=python, script=script, delivery_id=delivery_id,
+        stage="relay_request_completed", outcome=outcome, home=tmp_path,
+    )
+    path = codex_readiness.marker_path(tmp_path)
+    marker = json.loads(path.read_text(encoding="utf-8"))
+    marker["relay_wake_evidence"].append({
+        "delivery_id": delivery_id,
+        "stage": "relay_request_completed",
+        "reason": None,
+        "outcome": outcome,
+        "recorded_at": "2030-01-01T00:00:00+00:00",
+    })
+    path.write_text(json.dumps(marker), encoding="utf-8")
+    public = codex_readiness.read(tmp_path)
+    assert public["state"] == "review_required"
+    assert [event["stage"] for event in public["relay_wake_evidence"]] == [
+        "hook_started",
+    ]
 
 def test_reconciliation_releases_only_exact_terminal_or_missing(tmp_path) -> None:
     from core.relay import RelayNotFoundError, RelayUnavailableError
@@ -1034,6 +1161,7 @@ def test_queue_writes_once_from_neutral_codex_home(tmp_path) -> None:
     assert popen.call_args.kwargs["stdout"] is subprocess.DEVNULL
     assert popen.call_args.kwargs["stderr"] is subprocess.PIPE
     assert popen.call_args.kwargs["encoding"] == "utf-8"
+    assert popen.call_args.kwargs["errors"] == "replace"
     process.communicate.assert_called_once_with(timeout=30)
 
 
@@ -1159,10 +1287,29 @@ def test_launch_result_classifies_without_exposing_process_details(
         assert "秘密" not in message
         assert registry.reserved(endpoint_id) is retained
 
-def test_nonzero_exit_log_keeps_code_without_stderr(
+
+@pytest.mark.parametrize(
+    ("stderr", "category", "private_text"),
+    (
+        ("", "empty", ()),
+        ("usage: codex queue", "cli_usage", ("usage:",)),
+        ("thread not found", "thread_unavailable", ("thread not found",)),
+        ("connection refused", "transport", ("connection refused",)),
+        (
+            "SECRET raw stderr C:/private/秘密/" + "x" * 4096,
+            "other",
+            ("SECRET", "raw stderr", "private", "秘密", "x" * 2048),
+        ),
+        ("�SECRET C:/private/秘密", "other", ("�", "SECRET", "private", "秘密")),
+    ),
+)
+def test_nonzero_exit_logs_safe_stderr_category_and_retains_fence(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
+    stderr: str,
+    category: str,
+    private_text: tuple[str, ...],
 ) -> None:
     registry = CodexWakeRegistry(tmp_path)
     endpoint_id = "relay-session-" + "7" * 32
@@ -1174,24 +1321,33 @@ def test_nonzero_exit_log_keeps_code_without_stderr(
     )
     assert reservation is not None
     process = MagicMock(returncode=7)
-    process.communicate.return_value = (None, "SECRET raw stderr C:/private/秘密")
+    process.communicate.return_value = (None, stderr)
     monkeypatch.setattr(codex_wake.time, "sleep", lambda _: None)
 
     with caplog.at_level(logging.INFO, logger="app.codex_wake"), patch(
         "app.codex_wake._start_launch", return_value=(process, None),
-    ):
+    ) as start_launch:
         codex_wake._wake_after_debounce(reservation, registry)
 
+    messages = [record.getMessage() for record in caplog.records]
     message = next(
-        record.getMessage() for record in caplog.records
-        if record.getMessage().startswith("codex_relay_wake delivery_ref=")
+        item for item in messages
+        if item.startswith("codex_relay_wake delivery_ref=")
     )
     assert "outcome=uncertain reason=nonzero_exit exit_code=7" in message
-    assert "SECRET" not in message
-    assert "private" not in message
-    assert "秘密" not in message
+    stderr_message = next(
+        item for item in messages
+        if item.startswith("codex_relay_wake_stderr delivery_ref=")
+    )
+    assert (
+        f"delivery_ref={reservation.delivery_id} exit_code=7 category={category}"
+        in stderr_message
+    )
+    assert all(text not in "\n".join(messages) for text in private_text)
     assert registry.reserved(endpoint_id) is True
-
+    assert registry.snapshot(endpoint_id).outcome == "uncertain"
+    start_launch.assert_called_once()
+    process.communicate.assert_called_once_with(timeout=30)
 
 def test_interleaved_wake_logs_correlate_without_free_form_identifiers(
     isolated_codex_registry: CodexWakeRegistry,
@@ -2742,6 +2898,107 @@ def test_relay_turn_callback_rearms_only_after_success(client) -> None:
     for body in invalid:
         assert route_client.post("/relay/turn", json=body).status_code == 422
     assert len(callbacks) == 2
+
+def test_relay_turn_logs_correlated_service_and_route_ready_timing(client, caplog) -> None:
+    import re
+    import time
+
+    callbacks = []
+    app = FastAPI()
+
+    def delayed_callback(request, result):
+        callbacks.append((request, result))
+        time.sleep(0.01)
+
+    app.include_router(create_router(
+        client.app.state.pallium_service,
+        relay_service=RelayService(client.app.state.pallium_service._storage),
+        relay_turn_callback=delayed_callback,
+    ))
+    route = TestClient(app)
+    delivery_id = "relay-delivery-" + "b" * 32
+    caplog.set_level(logging.INFO, logger="api.routes")
+
+    response = route.post("/relay/turn", json={
+        "runtime": "codex",
+        "session_ref": "target",
+        "wake_delivery_id": delivery_id,
+        **SCOPE,
+    })
+    assert response.status_code == 200
+    assert response.json()["session"]["session_ref"] == "target"
+    assert len(callbacks) == 1
+    records = [record.getMessage() for record in caplog.records if delivery_id in record.getMessage()]
+    assert len(records) == 1
+    match = re.fullmatch(
+        rf"relay_turn_timing delivery_ref={delivery_id} service_ms=(\d+) route_ready_ms=(\d+) outcome=ready",
+        records[0],
+    )
+    assert match, records[0]
+    service_ms, route_ready_ms = map(int, match.groups())
+    assert route_ready_ms >= service_ms
+    assert route_ready_ms >= 10
+    assert SCOPE["container_ref"] not in records[0]
+
+    caplog.clear()
+    without_wake_id = route.post("/relay/turn", json={
+        "runtime": "codex", "session_ref": "target", **SCOPE,
+    })
+    assert without_wake_id.status_code == 200
+    assert not any("service_ms=" in record.getMessage() for record in caplog.records)
+
+    caplog.clear()
+    invalid = route.post("/relay/turn", json={
+        "runtime": "codex",
+        "session_ref": "target",
+        "wake_delivery_id": "relay-delivery-invalid",
+        **SCOPE,
+    })
+    assert invalid.status_code == 422
+    assert not any("service_ms=" in record.getMessage() for record in caplog.records)
+
+def test_relay_turn_logs_service_time_when_exact_wake_fails(
+    client, caplog, monkeypatch,
+) -> None:
+    import re
+    import time
+
+    relay = RelayService(client.app.state.pallium_service._storage)
+
+    def unavailable_turn(**_kwargs):
+        time.sleep(0.01)
+        raise RelayUnavailableError("unavailable")
+
+    monkeypatch.setattr(relay, "turn", unavailable_turn)
+    app = FastAPI()
+    app.include_router(create_router(
+        client.app.state.pallium_service,
+        relay_service=relay,
+    ))
+    delivery_id = "relay-delivery-" + "d" * 32
+    caplog.set_level(logging.INFO, logger="api.routes")
+    response = TestClient(app).post("/relay/turn", json={
+        "runtime": "codex",
+        "session_ref": "target",
+        "wake_delivery_id": delivery_id,
+        **SCOPE,
+    })
+    assert response.status_code == 501
+    records = [
+        record.getMessage() for record in caplog.records
+        if "relay_turn_timing" in record.getMessage()
+    ]
+    assert len(records) == 1
+    match = re.fullmatch(
+        rf"relay_turn_timing delivery_ref={delivery_id} service_ms=(\d+) "
+        rf"route_ready_ms=(\d+) outcome=error",
+        records[0],
+    )
+    assert match, records[0]
+    service_ms, route_ready_ms = map(int, match.groups())
+    assert service_ms >= 10
+    assert route_ready_ms >= service_ms
+    assert SCOPE["container_ref"] not in records[0]
 
 def test_delivery_specific_turn_claims_exact_message_beyond_normal_limit(client) -> None:
     callbacks = []

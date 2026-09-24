@@ -149,6 +149,8 @@ def record_codex_wake_event(
     delivery_id: str,
     stage: str,
     reason: str | None = None,
+    outcome: str | None = None,
+    elapsed_ms: int | None = None,
 ) -> bool:
     """Best-effort exact-delivery evidence; never affects Relay behavior."""
     def observe() -> bool:
@@ -161,6 +163,8 @@ def record_codex_wake_event(
                 delivery_id=delivery_id,
                 stage=stage,
                 reason=reason,
+                outcome=outcome,
+                elapsed_ms=elapsed_ms,
             )
         )
 
