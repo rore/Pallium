@@ -28,7 +28,7 @@
 
 **Plan review:** Clean-context review requested changes: exercise the protected-path checker predicates, hold State until approval, make candidate acceptance and merge stop gates, and satisfy the policy checkpoint. Revised plan independently re-reviewed: APPROVE (2026-09-24); the synthetic reporter/checker path and sequencing are sufficient. Optional completeness predicates will be checked if exposed by the harness.
 
-**Approvals:** Pending explicit task-owner approval for High-risk policy activation; do not reuse earlier approval for sync or skill edits.
+**Approvals:** Approved by user 2026-09-24T19:05:33Z: "Approve". This followed the pending RW-022 selection and workflow-only policy activation questions; understood as approval of both. No approval for branch protection, CODEOWNERS, required status, or behavior checkpoint was requested or inferred.
 
 **Exceptions:** —
 
