@@ -2109,6 +2109,8 @@ body[data-app-mode="spec"] .topbar-meta { gap: 6px; }
 
 .editor-header {
   gap: 12px;
+  height: auto;
+  min-height: 44px;
 }
 
 .editor-header .editor-heading {
@@ -2323,6 +2325,30 @@ body[data-app-mode="spec"] .topbar-meta { gap: 6px; }
   position: relative;
 }
 
+.board-item.board-card-status-progress,
+.board-column-card.board-card-status-progress {
+  border-left: 3px solid var(--accent);
+  background: rgba(44, 108, 255, 0.035);
+}
+
+.board-item.board-card-status-blocked,
+.board-column-card.board-card-status-blocked {
+  border-left: 3px solid var(--danger);
+  background: rgba(196, 61, 67, 0.045);
+}
+
+.board-card-signals {
+  display: none;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.board-item-participants {
+  color: #5b3da8;
+  border-color: rgba(91, 61, 168, 0.22);
+  background: rgba(91, 61, 168, 0.08);
+}
+
 .board-item:hover {
   border-color: var(--border-strong);
   background: #fff;
@@ -2396,7 +2422,7 @@ body[data-app-mode="spec"] .topbar-meta { gap: 6px; }
 
 .board-column {
   display: grid;
-  flex: 1 0 228px;
+  flex: 1 0 280px;
   container-type: inline-size;
   gap: 8px;
   grid-template-rows: auto minmax(0, 1fr);
@@ -2562,6 +2588,13 @@ body[data-app-mode="spec"] .topbar-meta { gap: 6px; }
 .board-column-dense .badge-row {
   display: none;
 }
+
+.board-column-dense .board-card-signals {
+  display: flex;
+  margin-top: 4px;
+}
+
+.board-column-dense .board-card-signals:empty { display: none; }
 
 .board-column-dense .board-column-card-actions {
   align-self: center;
@@ -3582,13 +3615,10 @@ textarea {
   }
 
   .group-actions {
-    width: 100%;
-    justify-content: stretch;
+    width: auto;
+    justify-content: flex-start;
   }
 
-  .order-button {
-    flex: 1;
-  }
 
   .editor-tabs {
     flex-wrap: wrap;
@@ -3956,11 +3986,39 @@ textarea {
 }
 
 .board-toolbar-row {
-  display: grid;
-  grid-template-columns: minmax(0, 34rem) auto;
+  display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: center;
-  justify-content: start;
+}
+
+.board-toolbar-row .board-search-field {
+  flex: 0 1 34rem;
+  width: min(100%, 34rem);
+}
+
+.board-participant-status {
+  color: var(--muted);
+  font-size: 0.74rem;
+}
+
+.board-focus-label select {
+  min-height: 30px;
+  max-width: 12rem;
+  padding: 4px 8px;
+  font-size: 0.78rem;
+}
+
+.board-focus-unfinished {
+  min-height: 30px;
+  padding: 4px 10px;
+  font-size: 0.78rem;
+}
+
+.board-focus-unfinished.is-active {
+  color: var(--accent-strong);
+  border-color: rgba(44, 108, 255, 0.3);
+  background: var(--accent-soft);
 }
 
 .board-search-field {
@@ -3982,6 +4040,35 @@ textarea {
   flex-wrap: wrap;
 }
 
+@container (max-width: 380px) {
+  .board-toolbar-row .board-control-actions { display: contents; }
+  .board-toolbar-row .board-search-field {
+    flex: 1 1 10rem;
+    width: auto;
+  }
+  .board-toolbar-row .board-clear-button { order: 0; }
+  .board-toolbar-row .board-participant-status:not([hidden]) {
+    order: 0;
+    position: relative;
+    flex: 0 0 20px;
+    width: 20px;
+    overflow: hidden;
+    white-space: nowrap;
+    color: transparent;
+  }
+  .board-toolbar-row .board-participant-status:not([hidden])::after {
+    content: "ⓘ";
+    position: absolute;
+    inset: 0;
+    color: var(--muted);
+    text-align: center;
+  }
+  .board-toolbar-row .board-focus-label,
+  .board-toolbar-row .board-focus-unfinished,
+  .board-toolbar-row .board-filter-toggle { order: 1; }
+  .board-toolbar-row .board-focus-label,
+  .board-toolbar-row .board-focus-label select { width: 7rem; max-width: 7rem; }
+}
 .board-view-toggle,
 .board-filter-toggle,
 .board-clear-button,
@@ -4155,7 +4242,7 @@ textarea {
   }
 
   .board-column:not(.board-column-collapsed) {
-    flex-basis: 206px;
+    flex-basis: 260px;
   }
 }
 
@@ -4788,7 +4875,7 @@ body[data-setup-mode="true"] .setup-side-stack {
 .item-participants[open] {
   display: flex;
   flex-direction: column;
-  max-height: min(46vh, 480px);
+  max-height: min(60vh, 600px);
 }
 
 .item-participants[hidden] {
@@ -4808,7 +4895,7 @@ body[data-setup-mode="true"] .setup-side-stack {
 .item-participants-body {
   display: grid;
   min-height: 0;
-  max-height: min(38vh, 400px);
+  max-height: min(52vh, 520px);
   gap: 10px;
   padding: 0 2px 12px;
   overflow-y: auto;

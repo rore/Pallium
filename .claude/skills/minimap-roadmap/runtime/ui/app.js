@@ -1,6 +1,7 @@
 import { createApi } from "/api.js";
 import { renderMarkdownToHtml } from "/markdown.js";
 import {
+  normalizeFilterValues,
   normalizeFilterMap,
   itemMatchesFilters,
   filterBoardItemIds,
@@ -174,6 +175,12 @@ const stateContainer = createState({
 const state = stateContainer.get();
 
 const api = createApi({ getRepo: () => state.repoPath });
+let boardParticipantCounts = new Map();
+let boardParticipantStatus = "idle";
+let boardParticipantPartial = false;
+let boardParticipantGeneration = 0;
+let boardParticipantController = null;
+let workspaceLoadGeneration = 0;
 
 const roadmapModeButton = document.querySelector("#roadmap-mode-button");
 const specModeButton = document.querySelector("#spec-mode-button");
@@ -234,6 +241,9 @@ const boardViewToggleButton = document.querySelector("#board-view-toggle");
 const boardLayoutControlsElement = document.querySelector("#board-layout-controls");
 const boardLayoutListButton = document.querySelector("#board-layout-list");
 const boardLayoutColumnsButton = document.querySelector("#board-layout-columns");
+const boardFocusMilestoneSelect = document.querySelector("#board-focus-milestone");
+const boardFocusUnfinishedButton = document.querySelector("#board-focus-unfinished");
+const boardParticipantStatusElement = document.querySelector("#board-participant-status");
 const boardFilterToggleButton = document.querySelector("#board-filter-toggle");
 const boardClearFiltersButton = document.querySelector("#board-clear-filters");
 const boardFiltersElement = document.querySelector("#board-filters");
@@ -740,7 +750,7 @@ function getVisibleBoardGroups(workspace = state.workspace) {
     defaultLensKey: DEFAULT_LENS_KEY,
     unassignedKey: UNASSIGNED_GROUP_KEY,
     unassignedLabel: UNASSIGNED_GROUP_LABEL,
-    showEmptyGroups: Array.isArray(activeLens.values) && activeLens.values.length > 0,
+    showEmptyGroups: !isSearchActive() && Array.isArray(activeLens.values) && activeLens.values.length > 0,
   });
 }
 
@@ -1002,7 +1012,7 @@ function getBadgeTone(field, value) {
     if (normalizedValue === "blocked") {
       return "status-blocked";
     }
-    if (normalizedValue === "in-progress") {
+    if (normalizedValue === "in-progress" || normalizedValue === "active") {
       return "status-progress";
     }
     if (normalizedValue === "queued") {
@@ -1068,6 +1078,9 @@ function renderBadge(value, field = "", options = {}) {
   const label = options.showFieldLabel && normalizedField
     ? `${humanizeFilterKey(normalizedField)}: ${value}`
     : value;
+  if (normalizedField === "priority" && /^\d+$/.test(String(value))) {
+    return `<span class="${classes.join(" ")}" title="Priority ${escapeHtml(value)}">${escapeHtml(`P${value}`)}</span>`;
+  }
   return `<span class="${classes.join(" ")}">${escapeHtml(label)}</span>`;
 }
 
@@ -1389,6 +1402,36 @@ function renderLensControls() {
   }
 }
 
+const FINISHED_STATUSES = new Set(["done", "shipped", "superseded", "cancelled", "canceled"]);
+
+function getBoardFieldValues(field) {
+  return Array.from(new Set(Object.values(state.workspace?.items || {})
+    .flatMap((item) => normalizeFilterValues(item.metadata?.[field])))).sort((left, right) => left.localeCompare(right, undefined, { numeric: true }));
+}
+
+function getUnfinishedStatusValues() {
+  return getBoardFieldValues("status").filter((status) => !FINISHED_STATUSES.has(status.toLowerCase()));
+}
+
+function isUnfinishedFocused() {
+  const values = getUnfinishedStatusValues();
+  const selected = state.activeFilters.status || [];
+  return values.length > 0 && values.length === selected.length && values.every((value) => selected.includes(value));
+}
+
+function renderBoardParticipantStatus() {
+  if (!boardParticipantStatusElement) return;
+  const status = boardParticipantStatus;
+  const message = status === "loading" ? "Updating session badges…"
+    : status === "ok" && boardParticipantPartial ? "Session badges limited to 200 items"
+    : status === "unsupported" ? "Session badges need a newer Pallium"
+    : ["disabled", "idle", "ok"].includes(status) ? ""
+    : "Session badges unavailable";
+  boardParticipantStatusElement.hidden = !message || state.appMode !== "roadmap" || !state.workspace;
+  boardParticipantStatusElement.textContent = message;
+  boardParticipantStatusElement.title = message;
+}
+
 function renderSearchControls() {
   if (!boardSearchInput || !boardViewToggleButton || !boardFilterToggleButton || !boardFiltersElement || !boardClearFiltersButton) {
     return;
@@ -1396,8 +1439,18 @@ function renderSearchControls() {
 
   const facets = state.workspace?.availableFilters ?? [];
   const activeFilterKeys = Object.keys(state.activeFilters);
-  const activeFilterCount = activeFilterKeys.reduce((count, key) => count + (state.activeFilters[key]?.length || 0), 0);
+  const activeFilterCount = activeFilterKeys.length;
   const showFilters = facets.length > 0 && state.filtersExpanded;
+
+  const milestones = getBoardFieldValues("milestone");
+  const selectedMilestones = state.activeFilters.milestone || [];
+  boardFocusMilestoneSelect.innerHTML = `<option value="">All milestones</option>${selectedMilestones.length > 1 ? '<option value="__multiple__">Multiple milestones</option>' : ""}${milestones.map((value) => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`).join("")}`;
+  boardFocusMilestoneSelect.value = selectedMilestones.length > 1 ? "__multiple__" : (selectedMilestones[0] || "");
+  boardFocusMilestoneSelect.title = selectedMilestones.length > 1 ? `${selectedMilestones.length} milestones selected` : (selectedMilestones[0] || "All milestones");
+  boardFocusMilestoneSelect.disabled = milestones.length === 0 || state.boardEditMode;
+  boardFocusUnfinishedButton.disabled = getUnfinishedStatusValues().length === 0 || state.boardEditMode;
+  boardFocusUnfinishedButton.setAttribute("aria-pressed", isUnfinishedFocused() ? "true" : "false");
+  boardFocusUnfinishedButton.classList.toggle("is-active", isUnfinishedFocused());
 
   boardSearchInput.value = state.searchQuery;
   boardSearchInput.disabled = !state.workspace || state.boardEditMode;
@@ -1466,6 +1519,7 @@ function renderBoardChrome() {
   boardSaveButton.disabled = !state.boardDirty;
   renderLayoutControls();
   renderSearchControls();
+  renderBoardParticipantStatus();
 }
 
 function renderScopeChrome() {
@@ -2103,6 +2157,40 @@ function clearBoardDragState() {
   }
 }
 
+function buildBoardParticipantBadge(item) {
+  if (FINISHED_STATUSES.has(String(getBadgeMetadata(item).status || "").trim().toLowerCase())) return "";
+  const count = boardParticipantCounts.get(item.id);
+  if (!Number.isSafeInteger(count) || count < 1) return "";
+  const label = `${count} attached`;
+  const ariaLabel = `${count} attached session${count === 1 ? "" : "s"}; open item for details`;
+  return `<span class="badge board-item-participants" title="Pallium-associated sessions, not execution status. Open item for details." aria-label="${escapeHtml(ariaLabel)}">${escapeHtml(label)}</span>`;
+}
+
+function syncBoardParticipantBadges() {
+  for (const card of boardGroupsElement.querySelectorAll(".board-item[data-item-id], .board-column-card-main[data-item-dblopen]")) {
+    const itemId = card.dataset.itemId || card.dataset.itemDblopen;
+    const item = state.workspace?.items?.[itemId];
+    if (!item) continue;
+    const markup = buildBoardParticipantBadge(item);
+    for (const row of card.querySelectorAll(".badge-row, .board-card-signals")) {
+      const current = row.querySelector(".board-item-participants");
+      if (!markup) {
+        current?.remove();
+      } else if (current?.textContent !== `${boardParticipantCounts.get(itemId)} attached`) {
+        current?.remove();
+        row.insertAdjacentHTML("beforeend", markup);
+      }
+    }
+  }
+}
+
+function getBoardCardStatus(item) {
+  const status = normalizeBadgeToken(getBadgeMetadata(item).status);
+  if (status === "blocked") return "blocked";
+  if (status === "active" || status === "in-progress") return "progress";
+  return "";
+}
+
 function buildBoardCardBodyMarkup(item, activeLensKey, extraMetaHtml = "") {
   const metaParts = [];
   if (activeLensKey !== "kind") {
@@ -2114,6 +2202,12 @@ function buildBoardCardBodyMarkup(item, activeLensKey, extraMetaHtml = "") {
 
   const metaHtml = metaParts.length > 0 ? `<span class="board-item-meta">${metaParts.join("")}</span>` : "";
   const overview = item.overviewExcerpt ? `<span class="board-item-overview">${escapeHtml(item.overviewExcerpt)}</span>` : "";
+  const metadata = getBadgeMetadata(item);
+  const cardStatus = getBoardCardStatus(item);
+  const numericPriority = /^\d+$/.test(String(metadata.priority ?? "")) ? renderBadge(metadata.priority, "priority") : "";
+  const participantBadge = buildBoardParticipantBadge(item);
+  const signalBadges = `${cardStatus ? renderBadge(metadata.status, "status") : ""}${numericPriority}${participantBadge}`;
+  const statusSignal = `<span class="board-card-signals">${signalBadges}</span>`;
   const specLink = state.workspace?.specSessionsByItemId?.[item.id];
   const specBadge = specLink
     ? `<span class="board-item-spec-badge" title="${escapeHtml(buildSpecBadgeTitle(specLink))}" aria-label="${escapeHtml(buildSpecBadgeTitle(specLink))}">💬 ${specLink.openComments}${specLink.pendingSuggestions > 0 ? ` · ✎ ${specLink.pendingSuggestions}` : ""}</span>`
@@ -2124,9 +2218,10 @@ function buildBoardCardBodyMarkup(item, activeLensKey, extraMetaHtml = "") {
       <span class="board-item-title" title="${escapeHtml(item.title)}">${escapeHtml(item.title)}</span>
       ${metaHtml}
     </span>
+    ${statusSignal}
     <span class="board-item-id">${escapeHtml(item.id)}</span>
     ${overview}
-    <span class="badge-row">${renderBadges(item, activeLensKey, { cardMode: true })}${specBadge}</span>
+    <span class="badge-row">${renderBadges(item, activeLensKey, { cardMode: true })}${participantBadge}${specBadge}</span>
   `;
 }
 
@@ -2433,7 +2528,7 @@ function renderBoardColumnsMode() {
   const allowColumnReorder = canReorderColumnsInColumnLayout();
   const boardGrouping = activeLens?.key === DEFAULT_LENS_KEY;
   const allowItemReorder = activeLens?.kind === "derived";
-  const metadataGroups = allowItemReorder
+  const metadataGroups = allowItemReorder && !isSearchActive()
     ? visibleGroups.filter((group) => activeLens.values.includes(group.groupKey))
     : [];
 
@@ -2480,7 +2575,7 @@ function renderBoardColumnsMode() {
         : "";
 
       return `
-        <article class="board-column-card${activeClass}${placementAttributes ? " board-column-dropzone" : ""}" title="${escapeHtml(item.title)}" ${placementAttributes} ${itemOrderDropAttributes}>
+        <article class="board-column-card${activeClass}${getBoardCardStatus(item) ? ` board-card-status-${getBoardCardStatus(item)}` : ""}${placementAttributes ? " board-column-dropzone" : ""}" title="${escapeHtml(item.title)}" ${placementAttributes} ${itemOrderDropAttributes}>
           <div class="board-column-card-main" data-item-dblopen="${escapeHtml(item.id)}" title="${escapeHtml(item.title)}">
             ${buildBoardCardBodyMarkup(item, activeLens?.key)}
           </div>
@@ -2730,7 +2825,7 @@ function renderBoardReadMode() {
   const activeLens = getActiveLensDefinition();
   const visibleGroups = getVisibleBoardGroups();
   const filtered = isSearchActive();
-  const allowGroupReorder = activeLens?.key === DEFAULT_LENS_KEY;
+  const allowGroupReorder = activeLens?.key === DEFAULT_LENS_KEY && !filtered;
   const allowDerivedDrag = canDragItemsInActiveLens();
 
   if (visibleGroups.length === 0) {
@@ -2745,7 +2840,7 @@ function renderBoardReadMode() {
   }
 
   const allowItemReorder = activeLens?.kind === "derived";
-  const metadataGroups = allowItemReorder
+  const metadataGroups = allowItemReorder && !filtered
     ? visibleGroups.filter((group) => activeLens.values.includes(group.groupKey))
     : [];
   const restrictionHtml = allowItemReorder && state.workspace.boardGroups.length > 1
@@ -2774,7 +2869,7 @@ function renderBoardReadMode() {
         : "";
       return `
         <div class="board-item-row">
-          <button class="board-item${active}" data-item-id="${escapeHtml(item.id)}" type="button" title="${escapeHtml(item.title)}" aria-label="Open ${escapeHtml(item.title)}" aria-pressed="${item.id === state.selectedItemId ? "true" : "false"}" ${orderAttributes} ${itemOrderDropAttributes}>
+          <button class="board-item${active}${getBoardCardStatus(item) ? ` board-card-status-${getBoardCardStatus(item)}` : ""}" data-item-id="${escapeHtml(item.id)}" type="button" title="${escapeHtml(item.title)}" aria-label="Open ${escapeHtml(item.title)}" aria-pressed="${item.id === state.selectedItemId ? "true" : "false"}" ${orderAttributes} ${itemOrderDropAttributes}>
             ${buildBoardCardBodyMarkup(item, activeLens?.key, dragHandle)}
           </button>
         </div>
@@ -3190,6 +3285,9 @@ function renderItemParticipants() {
   if (quietlyHidden) return;
 
   itemParticipantsStatusElement.textContent = participantStatusText(result);
+  const hasParticipants = result.status === "ok" && result.participants?.length > 0;
+  itemParticipantsStatusElement.classList.toggle("badge", hasParticipants);
+  itemParticipantsStatusElement.classList.toggle("board-item-participants", hasParticipants);
   itemParticipantsRefreshButton.disabled = result.status === "loading";
 
   const reference = result.reference;
@@ -4049,6 +4147,7 @@ async function switchAppMode(nextMode) {
   state.appMode = nextMode;
   applyAppMode();
   if (nextMode === "spec") {
+    invalidateBoardPresence();
     try {
       await loadSpecSessions();
       syncRouteState({ replace: true });
@@ -4059,7 +4158,9 @@ async function switchAppMode(nextMode) {
   }
 
   syncWorkspaceChrome();
+  renderBoard();
   syncRouteState({ replace: true });
+  void refreshBoardPresence();
 }
 
 function resetAncillaryEditModes() {
@@ -4136,6 +4237,7 @@ async function applyRouteStateFromLocation() {
     state.repoPath = route.repo;
   }
   if (route.view === "spec") {
+    invalidateBoardPresence();
     state.appMode = "spec";
     state.spec.selectedPath = route.specFile || state.spec.selectedPath;
     applyAppMode();
@@ -4182,10 +4284,75 @@ async function applyRouteStateFromLocation() {
   });
   clearTransientBanner();
 }
+function boardPresenceIsVisible() {
+  return document.visibilityState === "visible"
+    && state.appMode === "roadmap"
+    && Boolean(state.workspace)
+    && !state.boardEditMode
+    && !state.dragItemId
+    && state.dragColumnIndex === null;
+}
+
+function invalidateBoardPresence() {
+  boardParticipantController?.abort();
+  boardParticipantController = null;
+  boardParticipantGeneration += 1;
+  boardParticipantCounts = new Map();
+  boardParticipantStatus = "idle";
+  boardParticipantPartial = false;
+  renderBoardParticipantStatus();
+  if (state.workspace && state.appMode === "roadmap") syncBoardParticipantBadges();
+}
+
+async function refreshBoardPresence() {
+  if (!boardPresenceIsVisible() || boardParticipantController) return;
+  const controller = new AbortController();
+  const generation = boardParticipantGeneration;
+  const repoPath = state.repoPath;
+  boardParticipantController = controller;
+  if (boardParticipantStatus === "idle") {
+    boardParticipantStatus = "loading";
+    renderBoardParticipantStatus();
+  }
+  try {
+    const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(5_000)]);
+    const result = await api.readBoardParticipantCounts({ signal });
+    if (generation !== boardParticipantGeneration || repoPath !== state.repoPath || !boardPresenceIsVisible()) return;
+    if (result.status === "ok") {
+      if (!Array.isArray(result.counts) || result.counts.length > 200 || result.counts.some((row) =>
+        !row || typeof row.itemId !== "string" || !Object.hasOwn(state.workspace.items || {}, row.itemId)
+        || !Number.isSafeInteger(row.participantCount) || row.participantCount < 0
+      ) || new Set(result.counts.map((row) => row.itemId)).size !== result.counts.length) {
+        throw new Error("Invalid board participant counts.");
+      }
+      boardParticipantCounts = new Map(result.counts.map((row) => [row.itemId, row.participantCount]));
+    } else {
+      boardParticipantCounts = new Map();
+    }
+    boardParticipantStatus = result.status;
+    boardParticipantPartial = result.status === "ok" && result.partial === true;
+    syncBoardParticipantBadges();
+    renderBoardParticipantStatus();
+  } catch (error) {
+    if (controller.signal.aborted || generation !== boardParticipantGeneration || repoPath !== state.repoPath) return;
+    boardParticipantCounts = new Map();
+    boardParticipantStatus = "unavailable";
+    boardParticipantPartial = false;
+    syncBoardParticipantBadges();
+    renderBoardParticipantStatus();
+  } finally {
+    if (boardParticipantController === controller) boardParticipantController = null;
+  }
+}
+
 async function loadWorkspace(preferredItemId = state.selectedItemId, options = {}) {
+  const generation = ++workspaceLoadGeneration;
+  const repoPath = state.repoPath;
   invalidateItemRequests();
+  invalidateBoardPresence();
   try {
     const workspace = await api.loadWorkspace();
+    if (generation !== workspaceLoadGeneration || repoPath !== state.repoPath) return;
     resetAncillaryEditModes();
     state.setupState = null;
     state.workspace = workspace;
@@ -4210,7 +4377,9 @@ async function loadWorkspace(preferredItemId = state.selectedItemId, options = {
       replaceRoute: options.replaceRoute,
       forceReloadItem: options.forceReloadItem === true || Boolean(preferredItemId),
     });
+    if (generation === workspaceLoadGeneration && repoPath === state.repoPath) void refreshBoardPresence();
   } catch (error) {
+    if (generation !== workspaceLoadGeneration || repoPath !== state.repoPath) return;
     state.workspace = null;
     state.setupState = buildSetupState(error);
     roadmapPathElement.textContent = state.setupState?.roadmapPath || "Unavailable";
@@ -5272,6 +5441,24 @@ document.addEventListener("click", (event) => {
   state.spec.selectedQuoteOffset = null;
 });
 
+boardFocusMilestoneSelect.addEventListener("change", () => {
+  if (state.boardEditMode) return;
+  const nextFilters = normalizeFilterMap({ ...state.activeFilters });
+  if (boardFocusMilestoneSelect.value) nextFilters.milestone = [boardFocusMilestoneSelect.value];
+  else delete nextFilters.milestone;
+  state.activeFilters = normalizeFilterMap(nextFilters);
+  void syncVisibleSelection({ replaceRoute: true });
+});
+
+boardFocusUnfinishedButton.addEventListener("click", () => {
+  if (state.boardEditMode) return;
+  const nextFilters = normalizeFilterMap({ ...state.activeFilters });
+  if (isUnfinishedFocused()) delete nextFilters.status;
+  else nextFilters.status = getUnfinishedStatusValues();
+  state.activeFilters = normalizeFilterMap(nextFilters);
+  void syncVisibleSelection({ replaceRoute: true });
+});
+
 boardFilterToggleButton.addEventListener("click", () => {
   if (!state.workspace?.availableFilters?.length || state.boardEditMode) {
     return;
@@ -5359,6 +5546,14 @@ for (const button of modeButtons) {
 window.addEventListener("hashchange", () => {
   void applyRouteStateFromLocation();
 });
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") invalidateBoardPresence();
+  else void refreshBoardPresence();
+});
+window.setInterval(() => {
+  if (boardPresenceIsVisible()) void refreshBoardPresence();
+}, 30_000);
 
 window.addEventListener("resize", () => {
   if (state.lensesExpanded) {

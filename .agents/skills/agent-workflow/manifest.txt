@@ -41,8 +41,8 @@ hooks/merge-agents-section.py	5041
 hooks/reinforce-workflow.sh	565
 hooks/seed-workflow.sh	1591
 opencode/agent-workflow.mjs	3853
-operating-mode.md	10077
-scripts/agent-workflow-check.py	234648
+operating-mode.md	10346
+scripts/agent-workflow-check.py	239731
 scripts/agent-workflow-runtime.ps1	3147
 scripts/agent-workflow-runtime.py	15951
 scripts/agent-workflow-runtime.sh	2276
@@ -54,7 +54,7 @@ templates/agents-section.md.template	2468
 templates/bootstrap-summary.md.template	3830
 templates/checkpoints/applicability.md	3018
 templates/checkpoints/assess-risk.md	3423
-templates/checkpoints/behavioral-integrity.md	4052
+templates/checkpoints/behavioral-integrity.md	4217
 templates/checkpoints/discover.md	2920
 templates/checkpoints/establish-context.md	2922
 templates/checkpoints/implement.md	6501
