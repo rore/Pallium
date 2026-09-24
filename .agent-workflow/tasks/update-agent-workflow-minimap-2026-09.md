@@ -47,13 +47,15 @@ Not required at this risk level.
 **Exceptions:**
 —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
 
 - Established task context, immutable requirement baseline, and pre-edit GRAY classification on `feat/update-agent-workflow-minimap-2026-09`. Clean-context plan review approved before file sync.
-- Exported and manifest-validated the two pinned upstream trees, then copied their complete tracked skill contents and the two mapped Agent Workflow mirrors. Source parity is 67/67 for each Agent Workflow tree and 38/38 for Minimap; two ignored Python bytecode caches were excluded from package inventory. No config, policy, CI, hook, AGENTS, application, or roadmap path changed. pply_patch hit the documented Windows 1385 failure during the plan revision; exact-file deterministic replacement was used only for this Work Record.
+- Exported and manifest-validated the two pinned upstream trees, then copied their complete tracked skill contents and the two mapped Agent Workflow mirrors. Source parity is 67/67 for each Agent Workflow tree and 38/38 for Minimap; two ignored Python bytecode caches were excluded from package inventory. No config, policy, CI, hook, AGENTS, application, or roadmap path changed. `apply_patch` hit the documented Windows 1385 failure during the plan revision; exact-file deterministic replacement was used only for this Work Record.
+
+- Verification complete on committed consumer revision `777a4c06`; focused upstream, browser E2E, Pallium full suite, fresh Redline, and PR-mode checker passed.
 
 ## Plan review
 
@@ -61,7 +63,12 @@ Clean-context reviewer `/root/sync_plan_review` returned REVISE because a local 
 
 ## Evidence
 
-Pending.
+- Agent Workflow package manifest: 66/66 entries valid; both installed skill trees: 67/67 packaged files with zero name/hash mismatches; Minimap skill: 38/38; mapped checker and behavioral-integrity reference exact by SHA-256. Two ignored Python bytecode caches were excluded from package inventory.
+- Agent Workflow baseline-history E2E: 16 passed using `C:\Dev\rore\Pallium\.venv\Scripts\python.exe -m pytest tests/checker/test_baseline_history_e2e.py -q` from the source checkout.
+- Minimap focused Node tests: 161 passed, 2 Windows signal skips; `playwright/board-participant-e2e.spec.js`: 1 passed.
+- Pallium `tests/test_agent_workflow_ci.py`: 1 passed; full `uv run python -m pytest tests/ -x -q`: 5,295 passed, 34 skipped, 2 xfailed in 211.77 seconds.
+- Fresh Redline on `origin/main...777a4c06`: GRAY, no boundary or checkpoint. Agent Workflow PR-mode checker: clean with `--base-ref origin/main --head-ref HEAD`; `requirements.baseline_unchanged` matched first committed baseline `f6238d59`, and detected/declared risk were both Elevated.
+- Exact committed diff contains 23 consumer files and this Work Record, with no config, policy, CI, hook, AGENTS, application, or roadmap change. `git diff origin/main...HEAD --check` passed. No canonical Pallium roadmap item applies.
 
 ## Result review
 
