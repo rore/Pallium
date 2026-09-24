@@ -78,6 +78,7 @@ from api.schemas import (
     SupersedeMemoryResponse,
 )
 from core.claude_wake import ClaudeWakeRegistry
+from core.codex_wake import CodexWakeReservation
 from core.container_ref import canonicalize_container_ref, validate_explicit_container_ref
 from core.history_presentation import compact_history
 from core.errors import HistoryDiagnosticConflictError, HistoryDiagnosticCorruptError, ImmediateTransactionBusyError, LookupRequestLinkError, SupersessionConflictError
@@ -682,6 +683,8 @@ def create_router(
     claude_wake_registry: ClaudeWakeRegistry | None = None,
     relay_send_callback: Callable[[dict[str, Any], dict[str, str]], None] | None = None,
     relay_turn_callback: Callable[[dict[str, Any], dict[str, Any]], None] | None = None,
+    relay_turn_snapshot_callback: Callable[[dict[str, Any]], CodexWakeReservation | None] | None = None,
+    relay_turn_admission_callback: Callable[[dict[str, Any], dict[str, Any], CodexWakeReservation | None], None] | None = None,
     relay_ack_callback: Callable[[dict[str, Any], dict[str, str]], None] | None = None,
     relay_activation_callback: Callable[[dict[str, Any]], dict[str, object]] | None = None,
     relay_runner: Callable[[Callable[[], Any]], Awaitable[Any]] | None = None,
@@ -762,6 +765,15 @@ def create_router(
         request_data = request.model_dump()
         relay_request = dict(request_data)
         relay_request["exact_delivery_id"] = relay_request.pop("wake_delivery_id", None)
+        reservation = None
+        if request.wake_delivery_id is not None and relay_turn_snapshot_callback is not None:
+            try:
+                reservation = relay_turn_snapshot_callback(request_data)
+            except Exception:
+                logger.warning("Relay turn wake snapshot unavailable")
+        if reservation is not None:
+            relay_request["codex_wake_endpoint_id"] = reservation.recipient_endpoint_id
+            relay_request["codex_wake_generation"] = reservation.generation
         try:
             service_started = time.monotonic() if started is not None else None
             try:
@@ -774,6 +786,11 @@ def create_router(
                     relay_turn_callback(request_data, result)
                 except Exception:
                     logger.exception("Relay turn callback failed after admission")
+            if relay_turn_admission_callback is not None:
+                try:
+                    relay_turn_admission_callback(request_data, result, reservation)
+                except Exception:
+                    logger.exception("Relay turn admission callback failed after admission")
             projected = _with_relay_activation(result)
             outcome = "ready"
             return projected

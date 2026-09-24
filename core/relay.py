@@ -147,6 +147,8 @@ class RelayService:
         register_session: bool = True,
         structural_work_refs: Any = None,
         exact_delivery_id: str | None = None,
+        codex_wake_endpoint_id: str | None = None,
+        codex_wake_generation: int | None = None,
         previous_container_ref: str | None = None,
         previous_endpoint_id: str | None = None,
         previous_scope_generation: int | None = None,
@@ -173,6 +175,15 @@ class RelayService:
                 raise ValueError(
                     "exact_delivery_id requires a canonical Codex delivery ID"
                 )
+        if codex_wake_endpoint_id is not None or codex_wake_generation is not None:
+            if (
+                exact_delivery_id is None
+                or not isinstance(codex_wake_endpoint_id, str)
+                or _ENDPOINT_ID_RE.fullmatch(codex_wake_endpoint_id) is None
+                or type(codex_wake_generation) is not int
+                or codex_wake_generation < 1
+            ):
+                raise ValueError("invalid Codex wake claim snapshot")
         transition = (
             previous_container_ref,
             previous_endpoint_id,
@@ -195,6 +206,10 @@ class RelayService:
             max_messages=max_messages,
             lease_seconds=RELAY_CLAIM_LEASE_SECONDS,
             **({"exact_delivery_id": exact_delivery_id} if exact_delivery_id is not None else {}),
+            **({
+                "codex_wake_endpoint_id": codex_wake_endpoint_id,
+                "codex_wake_generation": codex_wake_generation,
+            } if codex_wake_endpoint_id is not None else {}),
             register_session=register_session,
             previous_container_ref=previous_container_ref,
             previous_endpoint_id=previous_endpoint_id,

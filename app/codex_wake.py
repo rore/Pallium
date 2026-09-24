@@ -108,27 +108,19 @@ def _reservation_state_is_stale(
     if state["state"] in {"delivered", "expired", "suppressed"}:
         return True
     return (
-        reservation.correlated_claim_attempts is not None
-        and state["state"] == "pending"
+        state["state"] == "pending"
         and state.get("stored_state") == "claimed"
         and type(state.get("attempts")) is int
-        and state["attempts"] == reservation.correlated_claim_attempts
+        and state["attempts"] > 0
+        and (
+            state["attempts"] == reservation.correlated_claim_attempts
+            or (
+                type(state.get("codex_wake_generation")) is int
+                and state["codex_wake_generation"] == reservation.generation
+            )
+        )
     )
 
-
-def _reservation_is_stale(
-    relay_service: Any,
-    reservation: CodexWakeReservation,
-) -> bool:
-    try:
-        state = relay_service.codex_wake_reservation_state(
-            delivery_id=reservation.delivery_id,
-        )
-    except RelayNotFoundError:
-        return True
-    except Exception:
-        return False
-    return _reservation_state_is_stale(reservation, state)
 
 
 def reconcile_codex_relay_wake_reservations(
@@ -145,9 +137,20 @@ def reconcile_codex_relay_wake_reservations(
     replaced = 0
     for reservation in candidates:
         if reservation.correlated_claim_attempts is None:
-            if _reservation_is_stale(relay_service, reservation):
+            try:
+                state = relay_service.codex_wake_reservation_state(
+                    delivery_id=reservation.delivery_id,
+                )
+            except RelayNotFoundError:
                 stale.append(reservation)
-            continue
+                continue
+            except Exception:
+                continue
+            if not _reservation_state_is_stale(reservation, state):
+                continue
+            if state["state"] in {"delivered", "expired", "suppressed"}:
+                stale.append(reservation)
+                continue
 
         def replace_if_stale(state: dict[str, object]) -> bool:
             if not _reservation_state_is_stale(reservation, state):
@@ -599,12 +602,17 @@ def correlate_codex_relay_wake_claim(
     session_ref: str,
     container_ref: str,
     turn_result: object,
+    reservation: CodexWakeReservation | None,
     *,
     registry: CodexWakeRegistry | None = None,
 ) -> bool:
     """Correlate only the exact claimed delivery from a Codex wake turn."""
     if (
         re.fullmatch(r"relay-delivery-[0-9a-f]{32}", wake_delivery_id) is None
+        or not isinstance(reservation, CodexWakeReservation)
+        or reservation.delivery_id != wake_delivery_id
+        or reservation.session_ref != session_ref
+        or reservation.container_ref != container_ref
         or not isinstance(turn_result, dict)
     ):
         return False
@@ -618,6 +626,7 @@ def correlate_codex_relay_wake_claim(
         and session.get("session_ref") == session_ref
         and session.get("container_ref") == container_ref
         and isinstance(endpoint_id, str)
+        and reservation.recipient_endpoint_id == endpoint_id
     ):
         return False
     matches = [
@@ -642,6 +651,7 @@ def correlate_codex_relay_wake_claim(
         session_ref=session_ref,
         container_ref=container_ref,
         attempts=matches[0]["attempts"],
+        expected_generation=reservation.generation,
     )
 
 
