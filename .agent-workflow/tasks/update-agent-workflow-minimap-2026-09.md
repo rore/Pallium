@@ -33,13 +33,13 @@ Pallium began clean on `main` at `f39b30d7`. Agent Workflow upstream `origin/mai
 The two pinned committed distributions are authoritative; disprove with a missing/inconsistent manifest or package tree, then stop and repair the source rather than hand-editing vendored code. Existing Pallium configuration and live CI remain compatible; disprove with focused integration checks or an unexpected consumer diff, then return to planning.
 
 **Plan:**
-Use the existing consumer mapping: export Agent Workflow `dist/agent-workflow/**` at pinned `cef51bc` to both `.agents/skills/agent-workflow/**` and `.claude/skills/agent-workflow/**`, and Minimap `package/minimap/skills/minimap-roadmap/**` at pinned `45d1b7a` to `.claude/skills/minimap-roadmap/**`. Copy the changed Agent Workflow checker to `scripts/agent-workflow-check.py` and the changed behavioral-integrity reference to `docs/agent-workflow/checkpoints/behavioral-integrity.md`. Compare file inventories and hashes, inspect the exact changed paths, and stop on any required config, policy, CI, hook, AGENTS, application, or roadmap edit. Run focused upstream and Pallium consumer checks, then the repository suite and fresh workflow/redline checks. Keep protected behavior activation and candidate selection for the subsequent discussion/task.
+Use the existing consumer mapping: export Agent Workflow `dist/agent-workflow/**` at pinned `cef51bc` to both `.agents/skills/agent-workflow/**` and `.claude/skills/agent-workflow/**`, and Minimap `package/minimap/skills/minimap-roadmap/**` at pinned `45d1b7a` to `.claude/skills/minimap-roadmap/**`. Copy the changed Agent Workflow checker to `scripts/agent-workflow-check.py` and the changed behavioral-integrity reference to `docs/agent-workflow/checkpoints/behavioral-integrity.md`. Compare file inventories and hashes, inspect the exact changed paths, and stop on any required config, policy, CI, hook, AGENTS, application, or roadmap edit. Run upstream Agent Workflow `tests/checker/test_baseline_history_e2e.py` and Minimap `test/pallium-participants.test.js`, `test/roadmap.test.js`, and `test/ui-api.test.js`; check Pallium integration, then the repository suite and fresh workflow/redline checks. After committing the final change, run the new checker with real `origin/main` and branch `HEAD` refs so its baseline-history predicate does not skip; confirm PR CI repeats this mode. Keep protected behavior activation and candidate selection for the subsequent discussion/task.
 
 **Verification plan:**
-When the sync is complete, the three installed skill trees shall have no missing, extra, or mismatched files against their pinned source trees, and the two mapped Agent Workflow files shall match by hash → full inventory/hash comparison. When Pallium executes the new checker and Minimap runtime, baseline history and participant-count/restart behavior shall pass their focused upstream regressions, while the existing Pallium workflow integration remains valid → focused Agent Workflow and Minimap tests plus `tests/test_agent_workflow_ci.py`. When the final change is reviewed, no unrelated paths or broken Pallium behavior shall appear → exact diff review, `git diff --check`, fresh Redline/workflow checks, and one full `tests/` run.
+When the sync is complete, the three installed skill trees shall have no missing, extra, or mismatched files against their pinned source trees, and the two mapped Agent Workflow files shall match by hash → full inventory/hash comparison. When Pallium executes the new checker and Minimap runtime, baseline history and participant-count/restart behavior shall pass their focused upstream regressions, while the existing Pallium workflow integration remains valid → Agent Workflow `python -m pytest tests/checker/test_baseline_history_e2e.py -q`, Minimap `node --test test/pallium-participants.test.js test/roadmap.test.js test/ui-api.test.js`, and Pallium `python -m pytest tests/test_agent_workflow_ci.py -q -n 0`. When the final change is reviewed, no unrelated paths or broken Pallium behavior shall appear → exact diff review, `git diff --check`, fresh Redline and `scripts/agent-workflow-check.py --base-ref origin/main --head-ref HEAD`, PR CI with actual base/head refs, and one full Pallium `tests/` run.
 
 **Plan review:**
-Pending clean-context review; see `## Plan review`.
+Clean-context reviewer `/root/sync_plan_review`: APPROVE after PR-ref verification revision; see `## Plan review`.
 
 **Approvals:**
 Not required at this risk level.
@@ -47,16 +47,16 @@ Not required at this risk level.
 **Exceptions:**
 —
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
 
-- Established task context, immutable requirement baseline, and pre-edit GRAY classification on `feat/update-agent-workflow-minimap-2026-09`. Awaiting clean-context plan review before file sync.
+- Established task context, immutable requirement baseline, and pre-edit GRAY classification on `feat/update-agent-workflow-minimap-2026-09`. Clean-context plan review approved before file sync.
 
 ## Plan review
 
-Pending.
+Clean-context reviewer `/root/sync_plan_review` returned REVISE because a local checker run without PR refs would skip the new baseline-history gate. The revised plan names its upstream E2E test, exact Minimap focused tests, and a final Pallium checker/CI run with real base/head refs. Final re-review verdict: APPROVE. Reviewer also requested `git diff origin/main...HEAD --check` after the final commit.
 
 ## Evidence
 
