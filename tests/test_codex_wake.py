@@ -4850,6 +4850,7 @@ def test_exact_claim_survives_lost_callback_and_rearms_once_after_lease(
         relay_service=relay,
         relay_turn_snapshot_callback=snapshot_claim,
         relay_turn_callback=lambda _request, _result: (_ for _ in ()).throw(RuntimeError("lost callback")),
+        relay_ack_callback=lambda result, _scope: isolated_codex_registry.release_delivery(result["delivery_id"]),
     ))
     route = TestClient(app)
     for runtime, session in (("claude-code", "sender"), ("codex", "target")):
@@ -4881,6 +4882,7 @@ def test_exact_claim_survives_lost_callback_and_rearms_once_after_lease(
         f"/relay/messages/{sent['message_id']}", params=SCOPE,
     ).json()["deliveries"][0]
     assert (claimed["state"], claimed["attempts"]) == ("claimed", 1)
+    assert controlled_now(datetime.fromisoformat(claimed["lease_expires_at"])) > clock[0]
 
     assert reconcile_codex_relay_wake_reservations(
         relay, registry=isolated_codex_registry,
@@ -4897,6 +4899,35 @@ def test_exact_claim_survives_lost_callback_and_rearms_once_after_lease(
     assert replacement is not None and replacement.generation > reservation.generation
     assert replacement.delivery_id == delivery["delivery_id"]
     assert len(launches) == 1
+
+    assert reconcile_codex_relay_wake_reservations(
+        relay, registry=isolated_codex_registry,
+    ) == 0
+    recovered = route.post("/relay/turn", json={
+        "runtime": "codex", "session_ref": "target",
+        "wake_delivery_id": delivery["delivery_id"], **SCOPE,
+    })
+    assert recovered.status_code == 200, recovered.text
+    assert [(item["delivery_id"], item["payload"]) for item in recovered.json()["deliveries"]] == [
+        (delivery["delivery_id"], "synthetic payload"),
+    ]
+    claim_token = recovered.json()["deliveries"][0]["claim_token"]
+    ack = route.post("/relay/deliveries/ack", json={
+        "delivery_id": delivery["delivery_id"], "claim_token": claim_token, **SCOPE,
+    })
+    assert ack.status_code == 200, ack.text
+    delivered = route.get(
+        f"/relay/messages/{sent['message_id']}", params=SCOPE,
+    ).json()["deliveries"][0]
+    assert (delivered["state"], delivered["attempts"]) == ("delivered", 2)
+    assert isolated_codex_registry.snapshot(delivery["recipient_endpoint_id"]) is None
+    assert reconcile_codex_relay_wake_reservations(
+        relay, registry=isolated_codex_registry,
+    ) == 0
+    assert len(launches) == 1
+    assert route.post("/relay/turn", json={
+        "runtime": "codex", "session_ref": "target", **SCOPE,
+    }).json()["deliveries"] == []
 
 def test_ordinary_and_mismatched_claims_keep_unrelated_wake_fences(
     client, monkeypatch: pytest.MonkeyPatch, isolated_codex_registry,
