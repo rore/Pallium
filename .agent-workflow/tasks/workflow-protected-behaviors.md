@@ -32,9 +32,15 @@
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 ## Activation prerequisites
 
 - Task owner accepted RW-022 with exact reply "Approve" (2026-09-24T19:05:33Z); policy activation was approved in the same reply.
 - Test-only PR #242 merged as 814d8418 after hosted 	est (3.12), 	est (3.13), windows-smoke, Redline, and Agent Workflow passed. Both local checkouts fast-forwarded cleanly; installed wrapper restart and /health, /status, /debug/queue/health passed with mbedding_provider_ok: true.
+
+## Implementation and evidence
+
+- Activated only "tests/behavior_contracts/**" with "protection: workflow" and "verification: test"; no behavior checkpoint, CODEOWNERS, branch rule, or new CI job. Corrected the roadmap's unsupported unloaded-Codex-wake claim, recorded RW-022 as the sole initial contract, and moved the feature to Done.
+- Focused protected directory: 1 passed. Synthetic protected-path Redline report: RED, version 2 workflow, verification "test". Without a classification the checker was blocking; with a reversible equivalent classification, "changed_paths_complete", "changed_paths_classified", "requirement_changes_authorized", and "verification_linked" all passed. The temporary Work Record bytes were restored.
+- Real policy PR changed-file set: Redline RED, architecture-review satisfied by the intended "architecture-reviewed" label, Agent Workflow checker clean. Hosted PR checks and independent result review remain pending.
