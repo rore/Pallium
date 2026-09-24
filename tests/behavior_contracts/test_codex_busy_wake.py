@@ -30,7 +30,7 @@ def isolate_codex_wake(monkeypatch):
         codex_wake._scheduled_session_attempt_ids,
     ):
         state.clear()
-    yield
+    yield registry
     hook_module._common._HOOK_DEADLINE = previous_deadline
     for state in (
         codex_wake._scheduled_delivery_ids,
@@ -41,7 +41,7 @@ def isolate_codex_wake(monkeypatch):
         state.clear()
 
 def test_busy_queue_recovery_stays_single_flight_and_competing_hook_blocks_overtaken_wake(
-    client, monkeypatch, tmp_path, capsys,
+    client, monkeypatch, tmp_path, capsys, isolate_codex_wake,
 ) -> None:
     from app.dependencies import recover_expired_relay_wakes
     from core.claude_wake import ClaudeWakeRegistry
@@ -62,6 +62,7 @@ def test_busy_queue_recovery_stays_single_flight_and_competing_hook_blocks_overt
     app.include_router(build_router(
         client.app.state.pallium_service,
         relay_storage=client.app.state.pallium_service._storage,
+        codex_wake_registry=isolate_codex_wake,
     ))
     route = TestClient(app)
     for runtime, session in (("claude-code", "sender"), ("codex", "target")):
@@ -106,7 +107,9 @@ def test_busy_queue_recovery_stays_single_flight_and_competing_hook_blocks_overt
                     codex_wake._wake_after_debounce(*workers[processed])
                     processed += 1
                 clock[0] += 31
-                recover_expired_relay_wakes(relay, ClaudeWakeRegistry())
+                recover_expired_relay_wakes(
+                    relay, ClaudeWakeRegistry(), codex_registry=isolate_codex_wake,
+                )
 
     queue_calls = [call for call in native_calls if call[0][1] == "queue"]
     assert len(queue_calls) == 1
