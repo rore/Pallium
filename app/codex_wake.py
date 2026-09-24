@@ -27,9 +27,9 @@ _LaunchOutcome = Literal["queued", "ambiguous", "failed"]
 _LaunchResult = tuple[_LaunchOutcome, str | None, int | None]
 _LaunchStart = tuple[subprocess.Popen[str] | None, _LaunchResult | None]
 _scheduled_delivery_ids: set[str] = set()
-_scheduled_session_generations: dict[tuple[str, str], int] = {}
-_scheduled_session_delivery_ids: dict[tuple[str, str], str] = {}
-_scheduled_session_attempt_ids: dict[tuple[str, str], str] = {}
+_scheduled_session_generations: dict[tuple[int, str, str], int] = {}
+_scheduled_session_delivery_ids: dict[tuple[int, str, str], str] = {}
+_scheduled_session_attempt_ids: dict[tuple[int, str, str], str] = {}
 _scheduled_lock = threading.Lock()
 _registry_lock = threading.Lock()
 _default_registry: CodexWakeRegistry | None = None
@@ -52,6 +52,24 @@ def get_codex_wake_registry(state_dir: Path | None = None) -> CodexWakeRegistry:
             _default_registry = CodexWakeRegistry(target)
             _default_registry_dir = target
         return _default_registry
+
+
+def get_codex_wake_registry_for_relay_database(relay_sqlite_url: str) -> CodexWakeRegistry:
+    """Keep one Relay database's wake fences out of every other instance."""
+    override = os.environ.get("PALLIUM_CODEX_WAKE_DIR")
+    if override is not None:
+        return get_codex_wake_registry(Path(override))
+    if relay_sqlite_url == "sqlite:///:memory:":
+        return CodexWakeRegistry()
+    prefix = "sqlite:///"
+    if not relay_sqlite_url.startswith(prefix):
+        raise ValueError("Relay wake registry requires a SQLite database URL")
+    relay_path = Path(relay_sqlite_url[len(prefix):]).resolve()
+    if relay_path.parent.name == "data" and relay_path.name == "pallium-relay.db":
+        state_dir = relay_path.parent.parent / "codex-wake"
+    else:
+        state_dir = relay_path.with_name(relay_path.name + "-codex-wake")
+    return get_codex_wake_registry(state_dir)
 
 
 def relay_wake_log_refs(
@@ -137,7 +155,7 @@ def reconcile_codex_relay_wake_reservations(
             if state["state"] in {"delivered", "expired", "suppressed"}:
                 released = registry.release_generation(reservation)
                 if released:
-                    _clear_schedule(reservation)
+                    _clear_schedule(reservation, registry)
                 return released
             wake_target = state.get("wake_target")
             if not (
@@ -154,7 +172,7 @@ def reconcile_codex_relay_wake_reservations(
             )
             if replacement is None:
                 return False
-            _clear_schedule(reservation)
+            _clear_schedule(reservation, registry)
             _schedule_reserved_codex_relay_wake(
                 replacement, registry, trace_callback=trace_callback
             )
@@ -173,7 +191,7 @@ def reconcile_codex_relay_wake_reservations(
 
     released = registry.release_generations(tuple(stale))
     for reservation in released:
-        _clear_schedule(reservation)
+        _clear_schedule(reservation, registry)
     reconciled = len(released) + replaced
     if reconciled:
         logger.info(
@@ -349,7 +367,7 @@ def _schedule_reserved_codex_relay_wake(
     *,
     trace_callback: Callable[[dict[str, object]], object] | None = None,
 ) -> threading.Thread | None:
-    wake_key = (reservation.session_ref, reservation.container_ref)
+    wake_key = (id(registry), reservation.session_ref, reservation.container_ref)
     attempt_id = f"relay-activation-{uuid.uuid4().hex}"
     with _scheduled_lock:
         _scheduled_delivery_ids.add(reservation.delivery_id)
@@ -369,7 +387,7 @@ def _schedule_reserved_codex_relay_wake(
         worker.start()
     except RuntimeError:
         if registry.release_generation(reservation):
-            _clear_schedule(reservation)
+            _clear_schedule(reservation, registry)
         _emit_trace(
             trace_callback, attempt_id, reservation.delivery_id,
             reservation.recipient_endpoint_id, "completed",
@@ -444,7 +462,7 @@ def schedule_codex_relay_wake(
             and candidate.get("state") == "pending"
         )
 
-    wake_key = (session_ref, container_ref)
+    wake_key = (id(registry), session_ref, container_ref)
     reservation = registry.reserve(
         recipient_endpoint_id=endpoint_id,
         delivery_id=delivery_id,
@@ -496,8 +514,8 @@ def schedule_codex_relay_wake(
         reservation, registry, trace_callback=trace_callback
     )
 
-def _clear_schedule(reservation: CodexWakeReservation) -> None:
-    wake_key = (reservation.session_ref, reservation.container_ref)
+def _clear_schedule(reservation: CodexWakeReservation, registry: CodexWakeRegistry) -> None:
+    wake_key = (id(registry), reservation.session_ref, reservation.container_ref)
     with _scheduled_lock:
         if _scheduled_session_generations.get(wake_key) == reservation.generation:
             _scheduled_session_generations.pop(wake_key, None)
@@ -530,7 +548,7 @@ def _wake_after_debounce(
     launch_result = _finish_launch(launch) if launch is not None else None
     attempt = _attempt_from_launch(launch_result) if launch_result is not None else None
     if not current or attempt is None:
-        _clear_schedule(reservation)
+        _clear_schedule(reservation, registry)
         return
 
     delivery_ref, session_fp, container_fp = relay_wake_log_refs(
@@ -552,7 +570,7 @@ def _wake_after_debounce(
     if attempt.outcome in {"accepted", "uncertain"}:
         registry.record_outcome(reservation, attempt.outcome)
     elif attempt.native_retry_safe and registry.release_generation(reservation):
-        _clear_schedule(reservation)
+        _clear_schedule(reservation, registry)
     if attempt_id is not None:
         _emit_trace(
             trace_callback, attempt_id, reservation.delivery_id,
@@ -569,7 +587,7 @@ def release_codex_relay_wake(
     released = registry.release_delivery(delivery_id)
     if released is None:
         return False
-    _clear_schedule(released)
+    _clear_schedule(released, registry)
     return True
 
 

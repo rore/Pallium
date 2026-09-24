@@ -535,7 +535,7 @@ def test_expired_wake_reconciliation_requires_current_active_recipient(
         assert moved["session"]["endpoint_id"] == endpoint_id
         assert moved["deliveries"] == []
 
-    old_wake_key = ("target", old_scope["container_ref"])
+    old_wake_key = (id(registry), "target", old_scope["container_ref"])
     codex_wake._scheduled_delivery_ids.add(delivery_id)
     codex_wake._scheduled_session_generations[old_wake_key] = correlated.generation
     codex_wake._scheduled_session_delivery_ids[old_wake_key] = delivery_id
@@ -569,7 +569,7 @@ def test_expired_wake_reconciliation_requires_current_active_recipient(
         assert old_wake_key not in codex_wake._scheduled_session_generations
         assert old_wake_key not in codex_wake._scheduled_session_delivery_ids
         assert old_wake_key not in codex_wake._scheduled_session_attempt_ids
-        new_wake_key = ("target", new_scope["container_ref"])
+        new_wake_key = (id(registry), "target", new_scope["container_ref"])
         assert codex_wake._scheduled_session_generations[new_wake_key] == replacement.generation
         assert codex_wake._scheduled_session_delivery_ids[new_wake_key] == delivery_id
         assert new_wake_key in codex_wake._scheduled_session_attempt_ids
@@ -881,7 +881,7 @@ def test_reconciliation_batch_write_failure_retains_fences_and_schedule(
         assert item is not None
         reservations.append(item)
     first = reservations[0]
-    wake_key = (first.session_ref, first.container_ref)
+    wake_key = (id(registry), first.session_ref, first.container_ref)
     codex_wake._scheduled_delivery_ids.add(first.delivery_id)
     codex_wake._scheduled_session_delivery_ids[wake_key] = first.delivery_id
     codex_wake._scheduled_session_generations[wake_key] = first.generation

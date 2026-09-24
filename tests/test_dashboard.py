@@ -1375,7 +1375,7 @@ class TestDashboardSourceAndRelayProjections:
     def test_relay_split_store_and_multi_delivery_projection_boundaries(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         config = replace(_test_config(tmp_path), relay_sqlite_url=f"sqlite:///{tmp_path / 'relay.db'}")
         registry = CodexWakeRegistry(tmp_path / "codex-wake")
-        monkeypatch.setattr("app.codex_wake.get_codex_wake_registry", lambda: registry)
+        monkeypatch.setattr("app.codex_wake.get_codex_wake_registry_for_relay_database", lambda _url: registry)
         app = create_app(config)
         assert app.state.codex_wake_registry is registry
         with TestClient(app) as client:

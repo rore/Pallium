@@ -305,6 +305,7 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
                 claim_recovery=lambda: recover_expired_relay_wakes(
                     relay_service,
                     claude_wake_registry,
+                    codex_registry=codex_wake_registry,
                     trace_callback=relay_trace,
                 ),
                 trace_callback=relay_trace,
@@ -605,7 +606,7 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
         dashboard_relay_service = RelayService(build_result.storage)
     except RelayUnavailableError:
         dashboard_relay_service = None
-    codex_wake_registry = codex_wake.get_codex_wake_registry()
+    codex_wake_registry = codex_wake.get_codex_wake_registry_for_relay_database(resolved_config.resolved_relay_sqlite_url)
     app.state.codex_wake_registry = codex_wake_registry
     mount_dashboard(
         app,
