@@ -35,7 +35,7 @@
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -53,6 +53,15 @@ Verification checkpoint: focused command C:/Dev/rore/Pallium/.venv/Scripts/pytho
 Verification scope update: the full Windows suite stopped at `tests/test_guidance_budget.py` because three committed skill files are exactly 2,800 LF bytes but the checkout has 36 CRLF bytes. This is an existing cross-platform measurement bug, unrelated to the Relay API. Before editing, add only `tests/test_guidance_budget.py` to normalize newline bytes in that assertion; no guidance content or budget changes.
 
 ## Evidence
+
+Verification revision `d3ee4de6`: affected Relay identity/HTTP suite 97 passed; repository suite 5,262 passed, 34 skipped, 2 xfailed after fixing the unrelated Windows CRLF byte-count test. The independent Astra result review found one P2 test gap (read-side mutation coverage); the added SQL-write audit, full Relay state snapshot, and deterministic attach/detach boundary case closed it, with the focused HTTP file 16 passed. The reviewer rechecked the additions and reported no remaining findings. `git diff --check` passed. No paid/model calls were made for these tests.
+
+Performance on the same revision: Windows, CPython 3.13, one isolated Uvicorn process on 127.0.0.1:19837, persistent HTTP connection, synthetic split SQLite databases containing 350 sessions and 1,100 associations (including unrelated scopes), 200 requested exact keys with 20 matching groups. After 10 warmups, 100 read-only samples: endpoint median 5.63 ms / p95 8.17 ms / max 10.81 ms; production SQL method median 0.63 ms / p95 0.65 ms / max 0.84 ms. This meets the predeclared under-100/250 ms loopback target on that fixture; it does not establish production p95. EXPLAIN on a separate 100-session/1,030-association fixture used the covering work-ref index at 1 and 200 keys and one SQL statement per read. No schema/index change was needed.
+
+Operational observation: the first temporary development API run had isolated databases but inherited the default Codex wake-state directory. Its startup reconciled seven reservations; it was stopped immediately. The installed service was not restarted, and the live registry later again contained seven reservations. The subsequent benchmark set isolated Codex/Claude wake directories and home and ran offline. A custom-database startup can still touch default wake state unless those variables are set; this is a separate runtime-isolation bug to investigate, not a batch-read result.
+
+Skill feedback trigger 3 dropped: the `apply_patch` 1385 failure is a machine-local Windows environment limitation, not an upstream agent-workflow defect.
+
 
 Minimap source item: `C:/Dev/rore/minimap/roadmap/features/show-board-work-presence.md`. Authoritative item-ref CLI returned `scope_ref=roadmap:v1:git:github.com/rore/minimap#roadmap`, `local_ref=item:v1:show-board-work-presence`. Relay association attempt failed 409 `association_limit` (three pre-existing explicit refs); no unrelated ref was detached. Redline pre-edit verdict: High risk / Moderate complexity, API checkpoint, no inherent boundary violation; no schema migration in the revised plan.
 
