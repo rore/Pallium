@@ -32,11 +32,11 @@
 
 **Plan review:** Fresh clean-context review approved the revised server-only plan with callback CAS and explicit SQLite migration caveats; see ## Plan review.
 
-**Approvals:** Pending explicit human High-risk plan approval.
+**Approvals:** Approved by user 2026-09-24T17:24:19Z: "approve"
 
 **Exceptions:** —
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Discovery and evidence
@@ -47,6 +47,6 @@ The existing actual-hook/loopback delayed-claim test passed (1 test, 3.44s): aft
 
 The first clean-context review blocked the prompt-generation draft: the file callback could attach to a newer generation, and a strict old-scope comparison would break validated moved-endpoint recovery. The revised server-only snapshot plan fixes the in-flight generation race and preserves moved-scope behavior. A fresh clean-context reviewer approved it with two implementation checks: use the same captured snapshot for callback CAS, and migrate the nullable SQLite column explicitly while old rows remain conservative. An old copied prompt arriving after replacement remains an existing host-origin limitation, not solved here. Historical accepted/null-correlation reservations cannot be auto-repaired from missing evidence; do not blanket-clear them.
 
-## Handoff
+## Implementation
 
-Branch feat/relay-late-claim-fence; last committed revision before this note ebfc8612. One uncommitted test-only positive control remains in tests/test_codex_wake.py; it passed its focused run but does not reproduce the historical missing correlation. No production files have changed, no live reservation was cleared, and no native wake was resent. Next: obtain explicit human High-risk approval for the reviewed server-only plan, then implement and verify the exact DB claim/generation fence. Generate a fresh Redline verdict for the eventual PR; the current local checker passes Task Context traceability but blocks on absent verdict and pending human approval.
+Human approval arrived 2026-09-24T17:24:19Z with verbatim response approve. Resume the reviewed server-only plan from d0a1a8de; no scope, risk, or approach change. Planned production touch points: storage/sqlite_schema.py, storage/sqlite_relay.py, core/relay.py, app/codex_wake.py, core/codex_wake.py, app/dependencies.py, and api/routes.py. Focused caller-surface coverage stays in tests/test_codex_wake.py; the existing uncommitted late-claim positive control is preserved. Roadmap RW-035 and this Work Record are the documentation surfaces. Stop if an additional production path or changed contract is required.
