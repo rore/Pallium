@@ -28,16 +28,18 @@
 
 **Plan review:** Clean-context exact-batch review by `/root/exact_batch_plan_review` on 2026-09-24 approved the technical plan with no blocking findings; see section below. Consumer and architect confirmed the contract. Human approval alone remains pending.
 
-**Approvals:** Pending task-specific human approval after reviewed plan.
+**Approvals:** Approved by user 2026-09-24T08:22:26Z: "i approve"
 
 **Exceptions:** —
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
 
-Isolated branch `feat/board-work-presence` in a Codex-managed worktree at base `8155891eb877c1d3e9d31ff95ded8b1748eb7a97`. No product code edited. Exact-batch technical review passed. Waiting only on High-risk human approval; Minimap confirmed POST/max 200 through app fallback after its Relay wake omitted required scope, and architect approved the exact-batch direction.
+Before the first product edit, intended files/classes are `api/schemas.py` (bounded request/response models), `api/routes.py` (read-only POST route), `core/relay.py` (canonical validation and ordered projection), `storage/sqlite_relay.py` (one grouped exact-key query), `tests/test_relay_work_ref_associations_e2e.py` (HTTP lifecycle and errors), `docs/agent-relay.md` (public contract), and one new Pallium roadmap feature file. Work Record prose is updated at phase boundaries. No SQLite schema/index migration is planned; if EXPLAIN disproves existing-index adequacy, stop and return to planning.
+
+Isolated branch `feat/board-work-presence` in a Codex-managed worktree at base `8155891eb877c1d3e9d31ff95ded8b1748eb7a97`. No product code edited. Exact-batch technical review passed. Human approved the reviewed exact-batch plan on 2026-09-24; Minimap confirmed POST/max 200 through app fallback after its Relay wake omitted required scope, and architect approved the direction. Implementation may begin on this isolated branch.
 
 ## Evidence
 
