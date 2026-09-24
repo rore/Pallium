@@ -27,6 +27,8 @@ For an in-scope change task when `agent-workflow.yaml` exists.
 7. On stop or handoff: leave recovery state explicit.
 ```
 
+At pickup, pause, resume, handoff, and completion, if an applicable canonical roadmap item exists, carry its exact reference and reconcile or report task progress under that roadmap's rules; respect its designated owner/checkout and preserve broader unfinished scope.
+
 ## Step 1 — Read the config
 
 Open `agent-workflow.yaml` and read:

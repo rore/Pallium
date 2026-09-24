@@ -31,13 +31,15 @@ import {
   updateFileSessionSuggestionStatus,
   updateFileSessionCommentStatus,
 } from "./src/sessions.js";
-import { writeServerRegistry, deleteServerRegistry } from "./src/server-registry.js";
+import { readServerRegistry, writeServerRegistry, deleteServerRegistry } from "./src/server-registry.js";
 import { matchRoute } from "./src/router.js";
 import {
   isTrustedLocalRequest,
+  lookupPalliumParticipantCounts,
   lookupPalliumParticipants,
   parsePalliumConfig,
   palliumConfigId,
+  resolveRoadmapItemReferences,
   resolveRoadmapItemReference,
 } from "./src/pallium.js";
 
@@ -65,6 +67,22 @@ const serverVersion = JSON.parse(await fs.readFile(packageJsonPath, "utf8")).ver
 // caller from scheduling a duplicate shutdown() (which would race process.exit
 // against the second response being flushed).
 let shuttingDown = false;
+let restartAcknowledged = false;
+if (process.send) {
+  process.on("message", (message) => {
+    if (message?.type === "minimap-ready-ack") restartAcknowledged = true;
+  });
+  process.once("disconnect", () => {
+    if (!restartAcknowledged && !shuttingDown) {
+      shuttingDown = true;
+      void shutdown("RESTART_PARENT_DISCONNECTED");
+    }
+  });
+}
+
+async function clearOwnRegistry() {
+  if ((await readServerRegistry())?.pid === process.pid) await deleteServerRegistry();
+}
 
 const contentTypes = new Map([
   [".html", "text/html; charset=utf-8"],
@@ -208,6 +226,12 @@ async function handleHealth(request, response) {
 }
 
 async function handleShutdown(request, response) {
+  const expectedPid = request.headers["x-minimap-instance-pid"] ?? null;
+  if (expectedPid !== null && expectedPid !== String(process.pid)) {
+    sendJson(response, 409, { error: "server_instance_mismatch" });
+    return;
+  }
+
   // Cross-platform graceful shutdown. On Windows, child_process.kill() does
   // not deliver SIGTERM/SIGINT to the JS event loop, so a signal-based stop
   // from another process is unreliable. POST /api/shutdown works everywhere
@@ -408,6 +432,57 @@ async function handleItemParticipants(request, response, ctx) {
   }
 }
 
+async function handleBoardParticipantCounts(request, response) {
+  if (!palliumConfig.configured) {
+    sendJson(response, 200, { status: "disabled", counts: [], partial: false });
+    return;
+  }
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  request.once("aborted", abort);
+  response.once("close", abort);
+  try {
+    const repoRoot = await resolveRoadmapRepo(request);
+    const workspace = await loadWorkspace(repoRoot);
+    const boardIds = [];
+    const seen = new Set();
+    for (const group of workspace.boardGroups || []) {
+      for (const item of group.items || []) {
+        const fullItem = workspace.items?.[item?.id];
+        const status = String(fullItem?.status || "").trim().toLowerCase();
+        if (
+          item?.missing || !fullItem || seen.has(item.id)
+          || ["done", "shipped", "superseded", "cancelled", "canceled"].includes(status)
+        ) continue;
+        seen.add(item.id);
+        boardIds.push(item.id);
+      }
+    }
+    const partial = boardIds.length > 200;
+    const itemIds = boardIds.slice(0, 200);
+    if (!itemIds.length) {
+      if (!response.destroyed) sendJson(response, 200, { status: "ok", counts: [], partial });
+      return;
+    }
+    const references = await resolveRoadmapItemReferences(repoRoot, workspace.roadmapPath, itemIds);
+    if (references === null) {
+      if (!response.destroyed) sendJson(response, 200, { status: "identity-unavailable", counts: [], partial });
+      return;
+    }
+    const result = await lookupPalliumParticipantCounts(palliumConfig, references, { signal: controller.signal });
+    if (!response.destroyed) {
+      const counts = result.status === "ok"
+        ? result.counts.map((row, index) => ({ itemId: itemIds[index], participantCount: row.participant_count }))
+        : [];
+      sendJson(response, 200, { status: result.status, counts, partial });
+    }
+  } catch (error) {
+    if (!controller.signal.aborted) throw error;
+  } finally {
+    request.off("aborted", abort);
+    response.off("close", abort);
+  }
+}
 async function handleGetItem(request, response, ctx) {
   const repoRoot = await resolveRoadmapRepo(request);
   const item = await readItemById(repoRoot, decodeURIComponent(ctx.params[0]));
@@ -454,6 +529,7 @@ const routes = [
   { method: "POST",   pattern: /^\/api\/metadata-order$/, handler: handleMetadataOrder },
   { method: "POST",   pattern: /^\/api\/lenses\/([^/]+)\/order$/, handler: handleLensOrder },
   { method: "POST",   pattern: /^\/api\/scope$/, handler: handleScope },
+  { method: "GET",    pattern: /^\/api\/board\/participant-counts$/, handler: handleBoardParticipantCounts },
   { method: "GET",    pattern: /^\/api\/items\/([^/]+)\/participants$/, handler: handleItemParticipants },
   { method: "GET",    pattern: /^\/api\/items\/([^/]+)$/, handler: handleGetItem },
   { method: "POST",   pattern: /^\/api\/items\/([^/]+)$/, handler: handleSaveItem },
@@ -589,13 +665,14 @@ async function startServer() {
       participantMode: palliumConfig.endpoint ? "enabled" : "disabled",
       participantConfigId: palliumConfigId(palliumConfig),
     });
+    process.send?.({ type: "minimap-ready", pid: process.pid, port: boundPort });
     process.stdout.write(`Minimap running at http://localhost:${boundPort}${fallbackNote}\n`);
   } catch (error) {
     if (error && error.code === "EADDRINUSE" && noFallback) {
       // The launcher will re-probe.
       throw error;
     }
-    try { await deleteServerRegistry(); } catch {}
+    try { await clearOwnRegistry(); } catch {}
     process.stderr.write(`${error.message}\n`);
     process.exitCode = 1;
   }
@@ -603,7 +680,7 @@ async function startServer() {
 
 async function shutdown(signal) {
   try {
-    await deleteServerRegistry();
+    await clearOwnRegistry();
   } catch (error) {
     process.stderr.write(`Registry cleanup failed: ${error.message}\n`);
   }
