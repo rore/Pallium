@@ -31,7 +31,7 @@ import {
   updateFileSessionSuggestionStatus,
   updateFileSessionCommentStatus,
 } from "./src/sessions.js";
-import { writeServerRegistry, deleteServerRegistry } from "./src/server-registry.js";
+import { readServerRegistry, writeServerRegistry, deleteServerRegistry } from "./src/server-registry.js";
 import { matchRoute } from "./src/router.js";
 import {
   isTrustedLocalRequest,
@@ -67,6 +67,22 @@ const serverVersion = JSON.parse(await fs.readFile(packageJsonPath, "utf8")).ver
 // caller from scheduling a duplicate shutdown() (which would race process.exit
 // against the second response being flushed).
 let shuttingDown = false;
+let restartAcknowledged = false;
+if (process.send) {
+  process.on("message", (message) => {
+    if (message?.type === "minimap-ready-ack") restartAcknowledged = true;
+  });
+  process.once("disconnect", () => {
+    if (!restartAcknowledged && !shuttingDown) {
+      shuttingDown = true;
+      void shutdown("RESTART_PARENT_DISCONNECTED");
+    }
+  });
+}
+
+async function clearOwnRegistry() {
+  if ((await readServerRegistry())?.pid === process.pid) await deleteServerRegistry();
+}
 
 const contentTypes = new Map([
   [".html", "text/html; charset=utf-8"],
@@ -649,13 +665,14 @@ async function startServer() {
       participantMode: palliumConfig.endpoint ? "enabled" : "disabled",
       participantConfigId: palliumConfigId(palliumConfig),
     });
+    process.send?.({ type: "minimap-ready", pid: process.pid, port: boundPort });
     process.stdout.write(`Minimap running at http://localhost:${boundPort}${fallbackNote}\n`);
   } catch (error) {
     if (error && error.code === "EADDRINUSE" && noFallback) {
       // The launcher will re-probe.
       throw error;
     }
-    try { await deleteServerRegistry(); } catch {}
+    try { await clearOwnRegistry(); } catch {}
     process.stderr.write(`${error.message}\n`);
     process.exitCode = 1;
   }
@@ -663,7 +680,7 @@ async function startServer() {
 
 async function shutdown(signal) {
   try {
-    await deleteServerRegistry();
+    await clearOwnRegistry();
   } catch (error) {
     process.stderr.write(`Registry cleanup failed: ${error.message}\n`);
   }

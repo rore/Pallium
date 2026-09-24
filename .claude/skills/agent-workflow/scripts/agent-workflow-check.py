@@ -3362,8 +3362,8 @@ def requirements_baseline_unchanged(ctx: CheckerContext) -> PredicateResult:
                     anchor_sha = merge_base
         if anchor is None:
             log = _history_git(
-                ctx, "log", "--first-parent", "--reverse", "--format=%H",
-                f"{merge_base}..{head}", "--", path
+                ctx, "log", "--full-history", "--topo-order", "--reverse",
+                "--format=%H", f"{merge_base}..{head}", "--", path
             )
             commits = [sha for sha in log.stdout.decode("ascii").splitlines() if sha]
             for sha in commits:
