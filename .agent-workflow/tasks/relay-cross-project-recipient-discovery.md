@@ -59,6 +59,8 @@ Initial clean-context finding: the dashboard has no session_ref filter, pages at
 
 Initial context and immutable Requirement baseline committed first as 129781df. User confirmed shared Pallium skill scope: "yes, i want this to be updated so other agents will know how to use this" (source item 2f79cf9e-bd0e-4969-9b77-778b1775b531). Pre-edit Redline: GRAY (three skill files gray, Relay doc blue), no watch, boundary, contract flag, or checkpoint. Target files: the three integration pallium-memory/SKILL.md sources and docs/agent-relay.md. No code or installed skill is to be edited before merge. Initial plan review found a pagination and identity-check gap; the approved plan now fails closed on incomplete or ambiguous global lookup. Implementation starts only after this plan commit.
 
+Implemented the approved guidance in the four named files. The skill variants are byte-identical; the public doc explains full pagination, independent target-container confirmation, nonclosed unique selection, sender-scope preservation, admission inspection, and fail-closed fallback. No product code or live integration was changed. The patch helper failed with the documented Windows 1385 error; deterministic replacements were limited to these named files.
+
 ## Evidence
 
 Pending.
