@@ -8,7 +8,7 @@ milestone: pallium-relay
 lane: capability
 ---
 
-## Current execution status (reconciled 2026-09-23)
+## Current execution status (reconciled 2026-09-24)
 
 The Windows/Linux Claude wake foundation, loaded-task Codex wake, Codex first-run
 setup, MCP recovery integration, and live no-manual-turn reply/remediation journey
@@ -49,6 +49,7 @@ new implementation tasks.
 | `RW-029` stranded split identity | guarded Relay operations | Use the offline repair manifest for reviewed per-delivery dispositions. Version 2 can explicitly suppress a finite expired claim; it still refuses adoption, active or ambiguous claims, and automatic cleanup. |
 | `RW-030` Claude install drift | installed integration lifecycle | Repoint the user-scoped Claude MCP and hooks from the development checkout to the stable installed checkout in the coordinated post-merge install window. Existing hosts retain old subprocesses until their normal restart. |
 | `RW-031` Codex native activation reliability | closed as Pallium work; upstream Codex dependency | Actionable trace guidance is shipped. Keep unloaded or uncertain deliveries pending for an ordinary supported recipient turn; do not resubmit or launch a second runtime. Revisit only if Codex exposes owner-routed cold activation plus idempotent exact-submission admission/readback. |
+| `RW-032` compaction-safe Relay scope | recipient context continuity | A loaded Codex wake delivered and ACKed once with trusted scope in the hook-injected context; same-turn compaction later omitted that scope and blocked a scoped follow-up. Investigate runtime-owned identity/tool context or supported trusted reinjection. Do not recover authority from cwd, historical transcripts, or forwarded metadata. This is not a native wake failure or duplicate delivery. |
 
 The dashboard diagnostic is shipped as read-only evidence, not repair. Do not bulk-repair stranded deliveries. The real installed witness gate remains required for send -> next-turn hook claim/injection/ACK -> reply and work-reference attach/detach qualification.
 ## Summary
