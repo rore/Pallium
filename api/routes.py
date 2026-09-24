@@ -756,16 +756,37 @@ def create_router(
 
     @router.post("/relay/turn", response_model=RelayTurnResponse)
     async def relay_turn(request: RelayTurnRequest):
+        started = time.monotonic() if request.wake_delivery_id is not None else None
+        service_ms: int | None = None
+        outcome = "error"
         request_data = request.model_dump()
         relay_request = dict(request_data)
         relay_request["exact_delivery_id"] = relay_request.pop("wake_delivery_id", None)
-        result = await _relay_call("turn", lambda: _relay().turn(**relay_request))
-        if relay_turn_callback is not None:
+        try:
+            service_started = time.monotonic() if started is not None else None
             try:
-                relay_turn_callback(request_data, result)
-            except Exception:
-                logger.exception("Relay turn callback failed after admission")
-        return _with_relay_activation(result)
+                result = await _relay_call("turn", lambda: _relay().turn(**relay_request))
+            finally:
+                if service_started is not None:
+                    service_ms = int((time.monotonic() - service_started) * 1000)
+            if relay_turn_callback is not None:
+                try:
+                    relay_turn_callback(request_data, result)
+                except Exception:
+                    logger.exception("Relay turn callback failed after admission")
+            projected = _with_relay_activation(result)
+            outcome = "ready"
+            return projected
+        finally:
+            if started is not None:
+                logger.info(
+                    "relay_turn_timing delivery_ref=%s service_ms=%s "
+                    "route_ready_ms=%d outcome=%s",
+                    request.wake_delivery_id,
+                    service_ms if service_ms is not None else "none",
+                    int((time.monotonic() - started) * 1000),
+                    outcome,
+                )
 
     @router.post("/relay/sessions/close", response_model=RelaySessionResponse)
     async def relay_close_session(request: RelaySessionMutationRequest):

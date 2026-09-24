@@ -230,6 +230,7 @@ def _exercise_short_prompt(hook, monkeypatch, *, codex: bool):
     if codex:
         assert wake_events == [
             ("hook_started", None),
+            ("relay_request_completed", None),
             ("payload_emitted", None),
             ("delivery_acked", None),
         ]
@@ -370,6 +371,7 @@ def test_codex_internal_wake_blocks_without_confirmed_empty(
     assert captured.err == f"pallium relay wake: outcome={expected_outcome}\n"
     assert wake_events == [
         ("hook_started", None),
+        ("relay_request_completed", None),
         (
             "hook_failed",
             "relay_unavailable"
@@ -378,6 +380,81 @@ def test_codex_internal_wake_blocks_without_confirmed_empty(
         ),
     ]
 
+
+def test_codex_hook_records_unavailable_after_committed_http_claim(
+    client, monkeypatch, tmp_path, capsys,
+):
+    from app import codex_readiness, codex_wake
+    from integrations.codex.hooks import user_prompt_submit as hook
+
+    home = tmp_path
+    codex_readiness.setup(
+        python=sys.executable, script=hook.__file__, changed=True, home=home,
+    )
+    monkeypatch.setattr(hook, "record_codex_hook_execution", lambda **_kwargs: True)
+    monkeypatch.setattr(hook._common, "STATE_DIR", tmp_path)
+    monkeypatch.setattr(hook._common, "SESSIONS_DIR", tmp_path / "sessions")
+    monkeypatch.setattr(
+        hook, "record_codex_wake_event",
+        lambda **event: codex_readiness.record_wake_event(
+            python=sys.executable, home=home, **event
+        ),
+    )
+    scope = {"container_ref": "git:example/repo"}
+    assert client.post("/relay/turn", json={
+        "runtime": "codex", "session_ref": "target-session", **scope,
+    }).status_code == 200
+    assert client.post("/relay/turn", json={
+        "runtime": "claude-code", "session_ref": "sender-session", **scope,
+    }).status_code == 200
+    sent = client.post("/relay/messages", json={
+        "sender_runtime": "claude-code",
+        "sender_session_ref": "sender-session",
+        "recipient": "codex:target-session",
+        "payload": "one persisted request",
+        **scope,
+    }).json()
+    delivery_id = sent["deliveries"][0]["delivery_id"]
+
+    monkeypatch.setattr(hook, "read_hook_input", lambda: {
+        "cwd": str(tmp_path),
+        "session_id": "target-session",
+        "prompt": codex_wake._wake_prompt(delivery_id),
+    })
+    monkeypatch.setattr(hook, "get_pending_relay_close_batch", lambda *_: ([], 0))
+    monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: scope["container_ref"])
+    monkeypatch.setattr(hook, "derive_actor_ref", lambda *_: "actor")
+    monkeypatch.setattr(hook, "check_dedup", lambda *_: False)
+    monkeypatch.setattr(hook, "pallium_request", lambda *_a, **_k: pytest.fail("wake must not query memory"))
+    monkeypatch.setattr(hook, "emit_context", lambda *_a, **_k: pytest.fail("unavailable wake must not emit"))
+    monkeypatch.setattr(hook, "acknowledge_relay", lambda *_a, **_k: pytest.fail("unavailable wake must not ACK"))
+    claimed = {}
+
+    def committed_then_unavailable(method, path, body, *, timeout):
+        response = client.request(method, path, json=body)
+        assert response.status_code == 200, response.text
+        claimed.update(response.json()["deliveries"][0])
+        import time
+        time.sleep(0.02)
+        return None
+
+    monkeypatch.setattr(hook, "relay_request", committed_then_unavailable)
+    monkeypatch.setattr(hook._common, "relay_request", committed_then_unavailable)
+    with pytest.raises(SystemExit) as exited:
+        hook.main()
+
+    assert exited.value.code == 0
+    assert claimed["delivery_id"] == delivery_id
+    assert claimed["attempts"] == 1
+    assert claimed["state"] == "claimed"
+    event = next(
+        event for event in codex_readiness.read(home)["relay_wake_evidence"]
+        if event["stage"] == "relay_request_completed"
+    )
+    assert event["delivery_id"] == delivery_id
+    assert event["outcome"] == "unavailable"
+    assert 10 <= event["elapsed_ms"] <= 30000
+    assert json.loads(capsys.readouterr().out)["decision"] == "block"
 
 def test_codex_internal_wake_without_valid_scope_blocks(monkeypatch, capsys):
     from app import codex_wake
@@ -427,12 +504,13 @@ def test_codex_internal_wake_without_valid_scope_blocks(monkeypatch, capsys):
     [
         (
             "emit",
-            [("hook_started", None), ("hook_failed", "emit_failed")],
+            [("hook_started", None), ("relay_request_completed", None), ("hook_failed", "emit_failed")],
         ),
         (
             "ack",
             [
                 ("hook_started", None),
+                ("relay_request_completed", None),
                 ("payload_emitted", None),
                 ("hook_failed", "ack_failed"),
             ],
