@@ -33,18 +33,18 @@
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
 
-The Codex hook extends only the final validated exact-delivery HTTP request to at most two seconds, reserving one safe-work second for context emission and ACK. Earlier bootstrap/scope-replay requests and ordinary prompts stay at 0.75 seconds. Native reservations, retry, claim, and ACK semantics are unchanged. RW-034 in the roadmap separates this prevention from the upstream native-admission blocker. The actual hook/HTTP test delays the response after claim commit; ordinary and malformed prompt checks retain the short cap.
+The Codex hook extends only the final validated exact-delivery HTTP request to at most two seconds, reserving one safe-work second for context emission and ACK. Earlier bootstrap/scope-replay requests and ordinary prompts stay at 0.75 seconds. The existing HookDeadline also bounds the main-thread wait if HTTP response bytes trickle under the socket timeout; its daemon read is not cancelled. Native reservations, retry, claim, and ACK semantics are unchanged. RW-034 in the roadmap separates this prevention from the upstream native-admission blocker. The actual hook/HTTP test covers delayed and fragmented responses after claim commit; ordinary and malformed prompt checks retain the short cap.
 
 ## Evidence
 
 Focused loopback and prompt-cap nodes: 4 passed in 6.93s. After the independent review requested a whole-hook elapsed assertion, the same four nodes passed in 6.18s. The 1.15-second post-claim response delivered and ACKed once; the 2.2-second response failed closed with trace state claimed and attempts=1. Both complete hook.main() within its seven-second active budget.
 Affected hook/Codex wake subsystem: 196 passed in 46.73s. Existing exact claim lease-expiry recovery node: 1 passed in 3.47s. Repository suite before the final test-only elapsed assertion: 5294 passed, 34 skipped, 2 xfailed in 266.18s; no second full-suite run was done for that assertion.
-The first apply_patch edit worked, but a later invocation failed with Windows 1385. Exact file-scoped PowerShell replacements were used thereafter. One escaped-newline replacement error was caught by py_compile and corrected before tests.
+After the PR reviewer found that socket timeout alone did not bound fragmented reads, the exact wake now passes a derived deadline to the existing Relay request. The fragmented-response E2E case remains claimed, attempts=1, with no emission; the delayed success case still delivers once. Affected hook/Codex wake suites: 197 passed in 56.01s. Final repository suite: 5295 passed, 34 skipped, 2 xfailed in 258.78s. The first apply_patch edit worked, but a later invocation failed with Windows 1385. Exact file-scoped PowerShell replacements were used thereafter. One escaped-newline replacement error was caught by py_compile and corrected before tests.
 
 ## Plan review
 
@@ -52,4 +52,4 @@ The first plan was rejected because relay_turn may make bootstrap and scope-repl
 
 ## Result review
 
-Independent clean-context review found one P2 evidence gap: the loopback test did not assert the total hook runtime. The test now measures hook.main() through request, emission/ACK or fail-closed exit and requires under seven seconds; focused rerun passed. No other actionable issue was found.
+Independent clean-context review found one P2 evidence gap: the loopback test did not assert the total hook runtime. The test now measures hook.main() through request, emission/ACK or fail-closed exit and requires under seven seconds; focused rerun passed. CodeRabbit then found that a fragmented HTTP response could keep the socket read alive despite a 2-second socket timeout. The hook now uses the existing deadline helper to bound caller wait; a real fragmented-response E2E regression passes. A second independent Luna review found no further actionable issue. The HTTP daemon reader is not cancelled, and no automatic native retry is introduced.

@@ -168,8 +168,8 @@ def _exercise_short_prompt(hook, monkeypatch, *, codex: bool):
         else DELIVERY
     )
 
-    def relay(method, path, body, *, timeout):
-        turn_calls.append((method, path, body, timeout))
+    def relay(method, path, body, *, timeout, deadline=None):
+        turn_calls.append((method, path, body, timeout, deadline))
         return _turn_response([
             {**DELIVERY, "delivery_id": "skipped", "payload": "bad\x00value"},
             expected_delivery,
@@ -212,6 +212,7 @@ def _exercise_short_prompt(hook, monkeypatch, *, codex: bool):
         expected_body["wake_delivery_id"] = embedded_delivery_id
     assert turn_calls[0][2] == expected_body
     assert turn_calls[0][3] == (2.0 if codex else 0.75)
+    assert (turn_calls[0][4] is not None) is codex
     assert output and output[0][0].startswith("[Pallium Relay message")
     relay_text, scope_line = output[0][0].rsplit("\n\n", 1)
     assert ("Unicode 😀" if codex else "Review the migration before editing.") in relay_text
@@ -430,7 +431,7 @@ def test_codex_hook_records_unavailable_after_committed_http_claim(
     monkeypatch.setattr(hook, "acknowledge_relay", lambda *_a, **_k: pytest.fail("unavailable wake must not ACK"))
     claimed = {}
 
-    def committed_then_unavailable(method, path, body, *, timeout):
+    def committed_then_unavailable(method, path, body, *, timeout, deadline=None):
         response = client.request(method, path, json=body)
         assert response.status_code == 200, response.text
         claimed.update(response.json()["deliveries"][0])
@@ -458,15 +459,16 @@ def test_codex_hook_records_unavailable_after_committed_http_claim(
 
 
 @pytest.mark.parametrize(
-    ("response_delay", "expected_state", "should_emit"),
+    ("response_delay", "fragmented", "expected_state", "should_emit"),
     [
-        (1.15, "delivered", True),
-        (2.2, "claimed", False),
+        (1.15, False, "delivered", True),
+        (2.2, False, "claimed", False),
+        (0.0, True, "claimed", False),
     ],
 )
 def test_codex_exact_wake_real_http_response_delay_is_bounded_and_traceable(
-    client, monkeypatch, tmp_path, capsys, response_delay, expected_state,
-    should_emit,
+    client, monkeypatch, tmp_path, capsys, response_delay, fragmented,
+    expected_state, should_emit,
 ):
     """Exercise actual hook urllib and /relay/turn through delayed loopback HTTP."""
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -493,6 +495,7 @@ def test_codex_exact_wake_real_http_response_delay_is_bounded_and_traceable(
     delivery_id = sent.json()["deliveries"][0]["delivery_id"]
 
     response_finished = threading.Event()
+    fragment_times = []
 
     class Server(ThreadingHTTPServer):
         daemon_threads = True
@@ -511,7 +514,17 @@ def test_codex_exact_wake_real_http_response_delay_is_bounded_and_traceable(
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(response.content)))
                 self.end_headers()
-                self.wfile.write(response.content)
+                if fragmented and self.path == "/relay/turn":
+                    content = response.content
+                    chunks = (content[:1], content[1:2], content[2:])
+                    for index, chunk in enumerate(chunks):
+                        fragment_times.append(time.monotonic())
+                        self.wfile.write(chunk)
+                        self.wfile.flush()
+                        if index < len(chunks) - 1:
+                            time.sleep(1.1)
+                else:
+                    self.wfile.write(response.content)
             except (ConnectionAbortedError, BrokenPipeError, OSError):
                 pass
             finally:
@@ -553,6 +566,12 @@ def test_codex_exact_wake_real_http_response_delay_is_bounded_and_traceable(
         assert exited.value.code == 0
         assert hook_elapsed < 7.0  # eight-second host limit leaves one second outside the hook
         assert response_finished.wait(timeout=3)
+        if fragmented:
+            assert len(fragment_times) == 3
+            assert all(
+                0.9 < later - earlier < 2.0
+                for earlier, later in zip(fragment_times, fragment_times[1:])
+            )
     finally:
         server.shutdown()
         server.server_close()
