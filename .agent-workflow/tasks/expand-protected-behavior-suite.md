@@ -28,7 +28,7 @@
 
 **Verification plan:** When a selected accepted behavior regresses, its protected public-surface test shall fail → historical or controlled-fault witness for each new contract. When current Pallium runs the suite, all protected tests shall pass → focused directory and affected subsystem pytest. When the PR runs, the existing `test` job shall execute the directory and Agent Workflow shall validate every protected path's classification and verification linkage → hosted CI and local combined checker. README shall not list each test → diff review.
 
-**Plan review:** Pending clean-context review after discovery.
+**Plan review:** APPROVE — independent clean-context review at commit `8fcf4c6a`. Confirmed the five exact protected-path classifications, workflow-only protection, and reuse of the existing CI test job. Review conditions: count distinct obligations, not parameterizations; demonstrate a public-outcome failure witness for every new test; preserve the retrieval-alone accessibility invariant; align the roadmap catalog and completion language.
 
 **Approvals:** Pending explicit user approval of the reviewed High-risk expansion plan.
 
