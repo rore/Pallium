@@ -2349,7 +2349,7 @@ def test_busy_queue_recovery_stays_single_flight_and_competing_hook_blocks_overt
         lambda *_args, **_kwargs: pytest.fail("empty wake must not query memory"),
     )
 
-    def relay_request(method: str, path: str, payload: dict, *, timeout: float):
+    def relay_request(method: str, path: str, payload: dict, *, timeout: float, deadline=None):
         response = route.request(method, path, json=payload)
         assert response.status_code == 200, response.text
         return response.json() if response.content else None
@@ -3293,7 +3293,7 @@ def test_crash_after_claim_rewakes_and_actual_codex_hook_delivers_once(
     timed_out_turn: dict = {}
 
     def timeout_after_server_claim(
-        method: str, path: str, payload: dict, *, timeout: float
+        method: str, path: str, payload: dict, *, timeout: float, deadline=None
     ):
         response = route.request(method, path, json=payload)
         assert response.status_code == 200, response.text
@@ -3358,7 +3358,7 @@ def test_crash_after_claim_rewakes_and_actual_codex_hook_delivers_once(
         hook, "emit_context", lambda output, _event: contexts.append(output)
     )
 
-    def relay_request(method: str, path: str, payload: dict, *, timeout: float):
+    def relay_request(method: str, path: str, payload: dict, *, timeout: float, deadline=None):
         response = route.request(method, path, json=payload)
         assert response.status_code == 200, response.text
         return response.json() if response.content else None
