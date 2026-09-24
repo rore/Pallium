@@ -79,6 +79,6 @@ Clean-context reviewer `/root/sync_plan_review` returned REVISE because a local 
 
 ## Result review
 
-The first-sync approval below is superseded by the corrective-pin resync; a new result review is required.
+The first-sync approval below is superseded by the corrective-pin resync. Independent clean-context reviewer `/root/sync_corrective_result_review`: APPROVE on 819aaa77, no findings. The reviewer verified exact package parity, immutable baseline, approved consumer-only scope, GRAY/Elevated classification, upstream and Pallium regressions, the passing second full suite, and the documented intermittent unrelated hook failure.
 
 Independent non-implementer `/root/sync_result_review`: APPROVE. Verified both Agent Workflow mirrors at 67/67, Minimap at 38/38, mapped files by hash, the exact 23-file consumer diff, full and focused evidence, immutable baseline, GRAY/Elevated classification, and no applicable Pallium roadmap state change. No BEL or formatting blocker. The local default `build/redline-verdict.json` was stale BLUE for an unrelated diff; the task verification used a freshly generated GRAY verdict and fed it explicitly to the PR-mode checker.
