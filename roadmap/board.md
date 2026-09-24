@@ -46,6 +46,7 @@
 - idea-multi-vector-long-text-embedding
 
 # Done
+- add-relay-batch-participant-counts
 - fix-session-history-evidence-access
 - optimize-always-loaded-guidance
 - add-relay-delivery-trace

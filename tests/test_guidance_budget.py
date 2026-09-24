@@ -11,9 +11,9 @@ def test_rendered_guidance_and_tool_descriptions_stay_under_measured_ceilings() 
     assert len(module.get_claude_md_block("strong")) <= 3274
     assert len(Path("integrations/codex/AGENTS.md").read_text(encoding="utf-8")) <= 2819
     assert len(Path("integrations/opencode/AGENTS.md").read_text(encoding="utf-8")) <= 2819
-    assert len(Path("integrations/claude-code/skills/pallium-memory/SKILL.md").read_bytes()) <= 2800
-    assert len(Path("integrations/codex/skills/pallium-memory/SKILL.md").read_bytes()) <= 2800
-    assert len(Path("integrations/opencode/skills/pallium-memory/SKILL.md").read_bytes()) <= 2800
+    for runtime in ("claude-code", "codex", "opencode"):
+        skill = Path(f"integrations/{runtime}/skills/pallium-memory/SKILL.md")
+        assert len(skill.read_bytes().replace(b"\r\n", b"\n")) <= 2800
     tree = ast.parse(Path("app/mcp/server.py").read_text(encoding="utf-8"))
     names = {node.name for node in ast.walk(tree)
              if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))

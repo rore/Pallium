@@ -26,6 +26,8 @@ from api.schemas import (
     RelayWorkRefDetachResponse,
     RelayWorkRefMutationRequest,
     RelayWorkRefParticipantsResponse,
+    RelayWorkRefCountsRequest,
+    RelayWorkRefCountsResponse,
     RelaySessionNameRequest,
     RelaySessionResponse,
     RelayTurnRequest,
@@ -849,6 +851,19 @@ def create_router(
                 limit=limit,
             ),
         ))
+
+    @router.post(
+        "/relay/work-refs/participant-counts",
+        response_model=RelayWorkRefCountsResponse,
+    )
+    async def relay_work_ref_participant_counts(request: RelayWorkRefCountsRequest):
+        return await _relay_call(
+            "work_ref_participant_counts",
+            lambda: _relay().work_ref_participant_counts(
+                references=[item.model_dump() for item in request.references]
+            ),
+        )
+
     @router.post("/relay/sessions/name", response_model=RelaySessionResponse)
     async def relay_name_session(request: RelaySessionNameRequest):
         return _with_relay_activation(await _relay_call("name_session", lambda: _relay().name_session(**request.model_dump())))

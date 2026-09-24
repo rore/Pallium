@@ -90,6 +90,17 @@ structural references discovered from its branch and Agent Workflow record. Use
 `pallium_relay_participants(scope_ref, local_ref)` finds every active participant
 for one exact reference; pass `include_closed=true` only when closed sessions matter.
 
+For board-style reads, `POST /relay/work-refs/participant-counts` accepts an
+ordered `references` list of 1–200 unique exact `{scope_ref, local_ref}` pairs.
+It returns `contract: relay-work-ref-counts/v1` and a `counts` row for every
+requested pair in the same order, including zero. Each `participant_count` is
+the number of distinct nonclosed Relay endpoints attached to that exact pair;
+explicit and structural origins do not double-count an endpoint. Dormant or
+unreachable sessions remain attached participants. Invalid, duplicate, empty,
+or over-limit input returns 422. A failed read returns an error, not zero or a
+partial result. The batch read does not enumerate a scope, disclose sessions,
+or change Relay state; use the single-reference participants read for detail.
+
 Normal inputs are a readable `scope_ref` and `local_ref`. Pallium returns their
 fixed-length `work:v1:<sha256>` exact key for advanced lookup and exact Session
 History search. Repository-scoped producers use a credential-free canonical Git

@@ -932,6 +932,29 @@ class SQLiteRelayMixin:
                 "session_ref": session.session_ref,
                 "container_ref": session.container_ref,
             }
+
+    def relay_work_ref_participant_counts(
+        self, *, work_refs: list[str]
+    ) -> dict[str, int]:
+        statement = (
+            select(
+                RelaySessionWorkRefRecord.work_ref,
+                func.count(func.distinct(RelaySessionWorkRefRecord.endpoint_id)),
+            )
+            .select_from(RelaySessionWorkRefRecord)
+            .join(
+                RelaySessionRecord,
+                RelaySessionRecord.id == RelaySessionWorkRefRecord.endpoint_id,
+            )
+            .where(
+                RelaySessionWorkRefRecord.work_ref.in_(work_refs),
+                RelaySessionRecord.state != "closed",
+            )
+            .group_by(RelaySessionWorkRefRecord.work_ref)
+        )
+        with self._relay_session_factory() as db:
+            return dict(db.execute(statement).all())
+
     def relay_work_ref_participants(
         self,
         *,
