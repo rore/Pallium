@@ -120,7 +120,13 @@ def main() -> None:
                 started = time.monotonic()
                 response = None
                 try:
-                    response = relay_request(method, path, body, timeout=timeout)
+                    request_timeout = (
+                        min(2.0, max(0.0, _common.remaining_safe_time() - 1.0))
+                        if wake_delivery_id is not None
+                        and body.get("wake_delivery_id") == wake_delivery_id
+                        else timeout
+                    )
+                    response = relay_request(method, path, body, timeout=request_timeout)
                     return response
                 finally:
                     if (

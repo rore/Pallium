@@ -33,13 +33,23 @@
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
 
-Planning only; no hook code edited.
+The Codex hook extends only the final validated exact-delivery HTTP request to at most two seconds, reserving one safe-work second for context emission and ACK. Earlier bootstrap/scope-replay requests and ordinary prompts stay at 0.75 seconds. Native reservations, retry, claim, and ACK semantics are unchanged. RW-034 in the roadmap separates this prevention from the upstream native-admission blocker. The actual hook/HTTP test delays the response after claim commit; ordinary and malformed prompt checks retain the short cap.
+
+## Evidence
+
+Focused loopback and prompt-cap nodes: 4 passed in 6.93s. After the independent review requested a whole-hook elapsed assertion, the same four nodes passed in 6.18s. The 1.15-second post-claim response delivered and ACKed once; the 2.2-second response failed closed with trace state claimed and attempts=1. Both complete hook.main() within its seven-second active budget.
+Affected hook/Codex wake subsystem: 196 passed in 46.73s. Existing exact claim lease-expiry recovery node: 1 passed in 3.47s. Repository suite before the final test-only elapsed assertion: 5294 passed, 34 skipped, 2 xfailed in 266.18s; no second full-suite run was done for that assertion.
+The first apply_patch edit worked, but a later invocation failed with Windows 1385. Exact file-scoped PowerShell replacements were used thereafter. One escaped-newline replacement error was caught by py_compile and corrected before tests.
 
 ## Plan review
 
-The first plan was rejected because elay_turn may make bootstrap and scope-replay calls, each with its own timeout. The approved revision extends only the final outgoing request whose body carries the regex-validated exact wake delivery ID. Earlier calls retain 0.75 seconds. The cap also leaves one second inside the hook safe-work budget for emission and ACK. The reviewer required a real loopback HTTP/hook regression and no response-loss retry.
+The first plan was rejected because relay_turn may make bootstrap and scope-replay calls, each with its own timeout. The approved revision extends only the final outgoing request whose body carries the regex-validated exact wake delivery ID. Earlier calls retain 0.75 seconds. The cap leaves one second inside the hook safe-work budget for emission and ACK. The reviewer required a real loopback HTTP/hook regression and no response-loss retry.
+
+## Result review
+
+Independent clean-context review found one P2 evidence gap: the loopback test did not assert the total hook runtime. The test now measures hook.main() through request, emission/ACK or fail-closed exit and requires under seven seconds; focused rerun passed. No other actionable issue was found.

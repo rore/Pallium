@@ -211,7 +211,7 @@ def _exercise_short_prompt(hook, monkeypatch, *, codex: bool):
     if codex:
         expected_body["wake_delivery_id"] = embedded_delivery_id
     assert turn_calls[0][2] == expected_body
-    assert turn_calls[0][3] == 0.75
+    assert turn_calls[0][3] == (2.0 if codex else 0.75)
     assert output and output[0][0].startswith("[Pallium Relay message")
     relay_text, scope_line = output[0][0].rsplit("\n\n", 1)
     assert ("Unicode 😀" if codex else "Review the migration before editing.") in relay_text
@@ -455,6 +455,164 @@ def test_codex_hook_records_unavailable_after_committed_http_claim(
     assert event["outcome"] == "unavailable"
     assert 10 <= event["elapsed_ms"] <= 30000
     assert json.loads(capsys.readouterr().out)["decision"] == "block"
+
+
+@pytest.mark.parametrize(
+    ("response_delay", "expected_state", "should_emit"),
+    [
+        (1.15, "delivered", True),
+        (2.2, "claimed", False),
+    ],
+)
+def test_codex_exact_wake_real_http_response_delay_is_bounded_and_traceable(
+    client, monkeypatch, tmp_path, capsys, response_delay, expected_state,
+    should_emit,
+):
+    """Exercise actual hook urllib and /relay/turn through delayed loopback HTTP."""
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    import threading
+    import time
+
+    from app import codex_wake
+    from integrations.codex.hooks import user_prompt_submit as hook
+
+    scope = {"container_ref": "git:example/repo"}
+    assert client.post("/relay/turn", json={
+        "runtime": "codex", "session_ref": "target-session", **scope,
+    }).status_code == 200
+    assert client.post("/relay/turn", json={
+        "runtime": "claude-code", "session_ref": "sender-session", **scope,
+    }).status_code == 200
+    sent = client.post("/relay/messages", json={
+        "sender_runtime": "claude-code", "sender_session_ref": "sender-session",
+        "recipient": "codex:target-session",
+        "payload": "bounded loopback response check", **scope,
+    })
+    assert sent.status_code == 200, sent.text
+    message_id = sent.json()["message_id"]
+    delivery_id = sent.json()["deliveries"][0]["delivery_id"]
+
+    response_finished = threading.Event()
+
+    class Server(ThreadingHTTPServer):
+        daemon_threads = True
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+            response = client.request(
+                "POST", self.path, content=body,
+                headers={"content-type": self.headers.get("Content-Type", "application/json")},
+            )
+            if self.path == "/relay/turn":
+                time.sleep(response_delay)
+            try:
+                self.send_response(response.status_code)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(response.content)))
+                self.end_headers()
+                self.wfile.write(response.content)
+            except (ConnectionAbortedError, BrokenPipeError, OSError):
+                pass
+            finally:
+                if self.path == "/relay/turn":
+                    response_finished.set()
+
+        def log_message(self, *_args):
+            return
+
+    server = Server(("127.0.0.1", 0), Handler)
+    monkeypatch.setattr(
+        hook._common, "PALLIUM_BASE_URL",
+        f"http://127.0.0.1:{server.server_port}",
+    )
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+    wake_events = []
+    monkeypatch.setattr(hook, "read_hook_input", lambda: {
+        "cwd": str(tmp_path), "session_id": "target-session",
+        "prompt": codex_wake._wake_prompt(delivery_id),
+    })
+    monkeypatch.setattr(hook, "get_pending_relay_close_batch", lambda *_: ([], 0))
+    monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: scope["container_ref"])
+    monkeypatch.setattr(hook, "derive_actor_ref", lambda *_: "actor")
+    monkeypatch.setattr(hook, "check_dedup", lambda *_: False)
+    monkeypatch.setattr(
+        hook, "pallium_request",
+        lambda *_a, **_k: pytest.fail("exact wake must not query memory"),
+    )
+    monkeypatch.setattr(
+        hook, "record_codex_wake_event", lambda **event: wake_events.append(event),
+    )
+
+    try:
+        hook_started = time.monotonic()
+        with pytest.raises(SystemExit) as exited:
+            hook.main()
+        hook_elapsed = time.monotonic() - hook_started
+        assert exited.value.code == 0
+        assert hook_elapsed < 7.0  # eight-second host limit leaves one second outside the hook
+        assert response_finished.wait(timeout=3)
+    finally:
+        server.shutdown()
+        server.server_close()
+        server_thread.join(timeout=2)
+
+    trace_response = client.get(f"/relay/messages/{message_id}/trace")
+    assert trace_response.status_code == 200, trace_response.text
+    snapshot = next(
+        row for row in trace_response.json()["delivery_snapshots"]
+        if row["delivery_id"] == delivery_id
+    )
+    assert snapshot["state"] == expected_state
+    assert snapshot["attempts"] == 1
+    request_event = next(
+        event for event in wake_events
+        if event["stage"] == "relay_request_completed"
+    )
+    assert request_event["delivery_id"] == delivery_id
+    assert request_event["outcome"] == ("response" if should_emit else "unavailable")
+    captured = capsys.readouterr()
+    if should_emit:
+        assert 1000 <= request_event["elapsed_ms"] < 1800
+        assert json.loads(captured.out)["hookSpecificOutput"]["additionalContext"].count(delivery_id) == 1
+        assert any(event["stage"] == "delivery_acked" for event in wake_events)
+    else:
+        assert 1800 <= request_event["elapsed_ms"] < 2400
+        assert not any(event["stage"] == "payload_emitted" for event in wake_events)
+        assert any(event.get("reason") == "relay_unavailable" for event in wake_events)
+        assert json.loads(captured.out)["decision"] == "block"
+
+
+@pytest.mark.parametrize("prompt", [
+    "ordinary user turn",
+    "Pallium Relay wake for relay-delivery-" + "a" * 32 + "!",
+])
+def test_codex_noncanonical_prompt_keeps_short_relay_timeout(
+    monkeypatch, tmp_path, prompt,
+):
+    from integrations.codex.hooks import user_prompt_submit as hook
+
+    calls = []
+    monkeypatch.setattr(hook, "read_hook_input", lambda: {
+        "cwd": str(tmp_path), "session_id": "target-session", "prompt": prompt,
+    })
+    monkeypatch.setattr(hook, "get_pending_relay_close_batch", lambda *_: ([], 0))
+    monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: "git:example/repo")
+    monkeypatch.setattr(hook, "derive_actor_ref", lambda *_: "actor")
+    monkeypatch.setattr(hook, "check_dedup", lambda *_: False)
+    monkeypatch.setattr(hook, "pallium_request", lambda *_a, **_k: None)
+    monkeypatch.setattr(hook, "relay_request", lambda *args, **kwargs: (
+        calls.append((args, kwargs)) or _turn_response()
+    ))
+
+    with pytest.raises(SystemExit):
+        hook.main()
+
+    assert len(calls) == 1
+    assert calls[0][0][:2] == ("POST", "/relay/turn")
+    assert calls[0][1]["timeout"] == 0.75
+    assert "wake_delivery_id" not in calls[0][0][2]
 
 def test_codex_internal_wake_without_valid_scope_blocks(monkeypatch, capsys):
     from app import codex_wake
