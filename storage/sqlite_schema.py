@@ -603,6 +603,7 @@ class RelayDeliveryRecord(Base):
     trace_version = Column(Integer, nullable=True)
     trace_truncated = Column(Integer, nullable=False, default=0)
     trace_pruned = Column(Integer, nullable=False, default=0)
+    codex_wake_generation = Column(Integer, nullable=True)
 
     __table_args__ = (
         UniqueConstraint(
@@ -1079,7 +1080,7 @@ class SQLiteSchemaMixin:
                 ],
             )
             if include_relay:
-                self._ensure_relay_delivery_trace_columns(self._engine)
+                self._ensure_relay_delivery_columns(self._engine)
             self._ensure_thread_processing_lease_nullable_thread_ref()
             self._ensure_thread_processing_lease_columns()
             self._ensure_source_item_columns()
@@ -1122,7 +1123,7 @@ class SQLiteSchemaMixin:
                     RelayEndpointRepairRecord.__table__,
                 ],
             )
-            self._ensure_relay_delivery_trace_columns(engine)
+            self._ensure_relay_delivery_columns(engine)
             with engine.begin() as connection:
                 for name, create_sql in self._INDEX_MIGRATIONS.items():
                     if name.startswith("idx_relay_"):
@@ -1130,7 +1131,7 @@ class SQLiteSchemaMixin:
             self._optimize_query_planner_stats(engine)
 
     @staticmethod
-    def _ensure_relay_delivery_trace_columns(engine) -> None:
+    def _ensure_relay_delivery_columns(engine) -> None:
         with engine.begin() as connection:
             columns = {
                 row[1]
@@ -1147,6 +1148,9 @@ class SQLiteSchemaMixin:
                 "trace_pruned": (
                     "ALTER TABLE relay_deliveries ADD COLUMN "
                     "trace_pruned INTEGER NOT NULL DEFAULT 0"
+                ),
+                "codex_wake_generation": (
+                    "ALTER TABLE relay_deliveries ADD COLUMN codex_wake_generation INTEGER"
                 ),
             }.items():
                 if name not in columns:

@@ -10,7 +10,7 @@ from typing import Any
 
 from api.routes import create_router
 from core.claude_wake import ClaudeWakeRegistry
-from core.codex_wake import CodexWakeRegistry
+from core.codex_wake import CodexWakeRegistry, CodexWakeReservation
 from core.relay_activation import current_platform, relay_activation_snapshot
 from app.codex_wake import (
     correlate_codex_relay_wake_claim,
@@ -777,7 +777,25 @@ def build_router(
         codex_reserved = codex_registry.usable and isinstance(endpoint_id, str) and codex_registry.snapshot(endpoint_id) is not None
         return relay_activation_snapshot(projection, platform=current_platform(), claude_state=claude_state, codex_reserved=codex_reserved)
 
-    def _relay_turn_admission(request: object, result: object) -> None:
+    def _relay_turn_snapshot(request: dict[str, Any]) -> CodexWakeReservation | None:
+        if request.get("runtime") != "codex" or not codex_registry.usable:
+            return None
+        delivery_id = request.get("wake_delivery_id")
+        session_ref = request.get("session_ref")
+        container_ref = request.get("container_ref")
+        return next(
+            (
+                reservation for reservation in codex_registry.reservations()
+                if reservation.delivery_id == delivery_id
+                and reservation.session_ref == session_ref
+                and reservation.container_ref == container_ref
+            ),
+            None,
+        )
+
+    def _relay_turn_admission(
+        request: object, result: object, reservation: CodexWakeReservation | None
+    ) -> None:
         if not isinstance(request, dict):
             return
         session_ref = request.get("session_ref")
@@ -785,12 +803,13 @@ def build_router(
             return
         if request.get("runtime") == "codex":
             wake_delivery_id = request.get("wake_delivery_id")
-            if isinstance(wake_delivery_id, str):
+            if isinstance(wake_delivery_id, str) and reservation is not None:
                 correlate_codex_relay_wake_claim(
                     wake_delivery_id,
                     session_ref,
                     request.get("container_ref", ""),
                     result,
+                    reservation,
                     registry=codex_registry,
                 )
         elif request.get("runtime") == "claude-code":
@@ -810,7 +829,8 @@ def build_router(
             if relay_service is not None
             else None
         ),
-        relay_turn_callback=_relay_turn_admission,
+        relay_turn_admission_callback=_relay_turn_admission,
+        relay_turn_snapshot_callback=_relay_turn_snapshot,
         relay_ack_callback=(_relay_ack_release if relay_service is not None else None),
         relay_activation_callback=(_relay_activation if relay_service is not None else None),
         relay_runner=relay_runner,

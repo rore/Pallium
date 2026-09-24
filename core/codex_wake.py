@@ -111,6 +111,7 @@ class CodexWakeRegistry:
         session_ref: str,
         container_ref: str,
         attempts: int,
+        expected_generation: int,
     ) -> bool:
         """Persist the exact hook claim correlated to the current wake fence."""
         if (
@@ -119,6 +120,8 @@ class CodexWakeRegistry:
             )
             or type(attempts) is not int
             or attempts < 1
+            or type(expected_generation) is not int
+            or expected_generation < 1
         ):
             return False
         with self._lock:
@@ -128,6 +131,7 @@ class CodexWakeRegistry:
                 or current.delivery_id != delivery_id
                 or current.session_ref != session_ref
                 or current.container_ref != container_ref
+                or current.generation != expected_generation
                 or current.correlated_claim_attempts not in (None, attempts)
             ):
                 return False

@@ -36,7 +36,7 @@
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Discovery and evidence
@@ -49,4 +49,6 @@ The first clean-context review blocked the prompt-generation draft: the file cal
 
 ## Implementation
 
-Human approval arrived 2026-09-24T17:24:19Z with verbatim response approve. Resume the reviewed server-only plan from d0a1a8de; no scope, risk, or approach change. Planned production touch points: storage/sqlite_schema.py, storage/sqlite_relay.py, core/relay.py, app/codex_wake.py, core/codex_wake.py, app/dependencies.py, and api/routes.py. Focused caller-surface coverage stays in tests/test_codex_wake.py; the existing uncommitted late-claim positive control is preserved. Roadmap RW-035 and this Work Record are the documentation surfaces. Stop if an additional production path or changed contract is required.
+Human approval arrived 2026-09-24T17:24:19Z with verbatim response approve. Resume the reviewed server-only plan from d0a1a8de; no scope, risk, or approach change. Planned production touch points: storage/sqlite_schema.py, storage/sqlite_relay.py, core/relay.py, app/codex_wake.py, core/codex_wake.py, app/dependencies.py, and api/routes.py. Focused caller-surface coverage is in tests/test_codex_wake.py; the prior late-claim positive control and existing two-argument Relay callback contract are preserved. Roadmap RW-035 and this Work Record are the documentation surfaces. No additional production path or public request contract changed.
+
+Implementation phase boundary: the route captures one preclaim exact reservation; the SQLite claim transaction stores its generation only for that selected delivery and matching endpoint; the postclaim file callback compare-and-sets the same generation. Recovery accepts only current matching claim evidence after lease expiry, and legacy or unrelated evidence remains fenced. A nullable additive migration runs in shared and Relay-only database initialization. New focused Codex caller-surface tests passed 10/10, the full Codex wake file passed 139/139, the affected Claude wake file passed 44 with 2 skipped, and adjacent Relay caller suites passed 120/120. The final full repository suite passed 5,300 with 34 skipped and 2 xfailed. Independent result review found that changing the existing two-argument route callback would silently skip older consumers; the existing callback contract was restored, a separate snapshot-aware callback was added, six exact caller tests passed, and the reviewer confirmed the issue resolved. Fresh Redline classified the diff SCHEMA_CHANGE with no boundary violations. Workflow is advisory only for outstanding API and persistence result-review checkpoints; PR review and installed rollout remain pending. Both delegated storage and tests used the documented Windows 1385 deterministic-edit fallback; changes were reviewed in the shared worktree.

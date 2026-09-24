@@ -561,6 +561,8 @@ class SQLiteRelayMixin:
         max_messages: int,
         lease_seconds: int,
         exact_delivery_id: str | None = None,
+        codex_wake_endpoint_id: str | None = None,
+        codex_wake_generation: int | None = None,
         max_response_chars: int = 0,
         register_session: bool = True,
         previous_container_ref: str | None = None,
@@ -752,6 +754,20 @@ class SQLiteRelayMixin:
                 delivery.claimed_at = current
                 delivery.lease_expires_at = current + timedelta(seconds=lease_seconds)
                 delivery.attempts = int(delivery.attempts or 0) + 1
+                delivery.codex_wake_generation = (
+                    codex_wake_generation
+                    if (
+                        exact_delivery_id == delivery.id
+                        and codex_wake_endpoint_id == registered.id
+                        and codex_wake_generation is not None
+                        and type(codex_wake_generation) is int
+                        and codex_wake_generation > 0
+                        and registered.runtime == delivery.recipient_runtime == "codex"
+                        and registered.session_ref == delivery.recipient_session_ref
+                        and registered.container_ref == delivery.recipient_container_ref
+                    )
+                    else None
+                )
                 claimed.append(_delivery_view(
                     delivery, message, registered.state,
                     payload_limit=len(view["payload"]) if view["content_truncated"] else None,
@@ -1530,6 +1546,7 @@ class SQLiteRelayMixin:
             "state": state,
             "stored_state": delivery.state,
             "attempts": int(delivery.attempts or 0),
+            "codex_wake_generation": delivery.codex_wake_generation,
             "wake_target": wake_target,
         }
 
