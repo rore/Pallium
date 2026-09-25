@@ -50,3 +50,9 @@ Added only the planned AGENTS.md bullet; no protected tests or policy changed. T
 ## Evidence
 
 On branch feat/protected-contract-instructions, git diff --check passed; fresh Redline verdict was GRAY for AGENTS.md with behaviorContractChanges version 2 and no changed protected paths; Agent Workflow check with that verdict returned clean. Full repository suite: 5316 passed, 34 skipped, 2 xfailed (264.16s), exit 0. Test content is the current branch worktree based on cc789032; commit and PR CI remain to verify.
+
+Post-commit verification at 9d83afee: fresh Redline verdict GRAY (advisory, no protected paths), Agent Workflow check clean with origin/main and HEAD refs. The full suite used the same AGENTS.md content before commit; PR CI is pending.
+
+## Result review
+
+Independent non-implementer reviewer returned APPROVE: the added rule matches the suite README and behavioral-integrity policy, preserves the workflow-only limit, stays within scope, and has proportionate verification. No roadmap or docs drift was found.
