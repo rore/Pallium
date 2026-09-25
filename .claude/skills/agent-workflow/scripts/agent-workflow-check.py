@@ -3723,124 +3723,110 @@ def exceptions_not_expired(ctx: CheckerContext) -> PredicateResult:
 # ..." text in the Approvals field. Integrity rests on the human being
 # in the loop and choosing to write the Work Record honestly.
 
-# Values that signal "no clean-context review was performed" for the
-# Elevated predicate. Case-insensitive comparison; whitespace stripped.
-_NO_CLEAN_CONTEXT_VALUES: frozenset[str] = frozenset({
-    "",
-    "—",
-    "—.",
-    "self",
-    "self-review",
-    "self review",
-})
+# Review evidence is an attested source reference, not proof of reviewer
+# identity, competence, or the review's quality (SPEC §5).
+_AGENT_REVIEW_RE = re.compile(
+    r"^Agent technical review:[ \t]*(\S[^\r\n]*)$",
+    re.IGNORECASE | re.MULTILINE,
+)
+_REVIEWED_REVISION_RE = re.compile(
+    r"^Reviewed revision:[ \t]*(\S[^\r\n]*)$",
+    re.IGNORECASE | re.MULTILINE,
+)
+_VERIFICATION_ADEQUACY_RE = re.compile(
+    r"^Verification adequacy:[ \t]*(\S[^\r\n]*)$",
+    re.IGNORECASE | re.MULTILINE,
+)
+_PLACEHOLDER_RE = re.compile(
+    r"^(?:—|self\b|pending\b|todo\b|none\b|n/?a\b|"
+    r"approved by user\b|human\b|codeowner\b|label\b|<|\[)",
+    re.IGNORECASE,
+)
+_MARKDOWN_LINK_RE = re.compile(r"^(?:\[[^\]]+\]\([^)]+\)|<https?://[^>]+>)")
 
 # Sentinel for the High-risk approval line. Format:
 #   Approved by user <timestamp>: "<verbatim quote>"
-# Compiled case-insensitive; whitespace around the colon is tolerated.
 _HIGH_APPROVAL_RE = re.compile(
     r"approved\s+by\s+user\s+[^:]+:",
     re.IGNORECASE,
 )
 
-# Regex to locate a "## Plan review" heading and the prose between
-# it and the next heading. The prose must be at least 20 characters
-# (stripped) to count as a real review record — a bare heading with
-# no content does not satisfy the predicate.
 _PLAN_REVIEW_SECTION_RE = re.compile(
     r"^##\s+Plan review\s*$(.*?)(?=^##\s+|\Z)",
     re.MULTILINE | re.DOTALL,
 )
+_RESULT_REVIEW_SECTION_RE = re.compile(
+    r"^##\s+Result review\s*$(.*?)(?=^##\s+|\Z)",
+    re.MULTILINE | re.DOTALL,
+)
+
+
+def _review_line_value(text: str, pattern: re.Pattern[str]) -> str | None:
+    """Extract a non-placeholder attestation; do not infer its truth."""
+    for match in pattern.finditer(text):
+        value = match.group(1).strip()
+        if value and (_MARKDOWN_LINK_RE.match(value) or not _PLACEHOLDER_RE.match(value)):
+            return value
+    return None
+
+
+def _plan_agent_reference(ctx: CheckerContext) -> str | None:
+    if ctx.record is None:
+        return None
+    field = ctx.record.get("plan_review", "")
+    ref = _review_line_value(field, _AGENT_REVIEW_RE)
+    if ref:
+        return ref
+    for match in _PLAN_REVIEW_SECTION_RE.finditer(ctx.raw_text or ""):
+        ref = _review_line_value(match.group(1), _AGENT_REVIEW_RE)
+        if ref:
+            return ref
+    return None
 
 
 def _normalise_reference(text: str) -> str:
-    """Normalise a reference string for clean-context-vs-human comparison.
-
-    Strips surrounding whitespace and quotes, lowercases, and collapses
-    internal whitespace runs to single spaces. Two references that
-    point at the same thing modulo formatting normalise to the same
-    string.
-    """
+    """Normalise a reference for clean-context-vs-human comparison."""
     s = text.strip()
-    # Strip matched surrounding quote characters.
     if len(s) >= 2 and s[0] == s[-1] and s[0] in ('"', "'"):
         s = s[1:-1]
-    s = " ".join(s.lower().split())
-    return s
+    return " ".join(s.lower().split())
 
 
 def approval_elevated_clean_context_review_present(ctx: CheckerContext) -> PredicateResult:
-    """Predicate: Elevated tasks record a clean-context plan review.
-
-    When Risk == Elevated, the `plan_review` field must reference a
-    real review — either a link/session reference in the field itself,
-    or a `## Plan review` section in the Work Record file with non-
-    trivial prose (≥ 20 chars stripped). A bare `self` or `—` in the
-    field with no section fails the predicate.
-
-    Per default profile §3, presence is enforced (tightened from the
-    portable SPEC's SHOULD). The predicate is waivable via a slice-F
-    task exception — consumers using a custom profile wanting SHOULD behaviour can
-    record an exception per task.
-
-    Fires with a "skipped" detail when Risk != Elevated, so the
-    predicate-list shape stays stable across risk levels.
-    """
+    """Elevated plans require an explicit agent technical-review reference."""
+    name = "approval.elevated_clean_context_review_present"
     if ctx.record is None:
-        return PredicateResult(
-            name="approval.elevated_clean_context_review_present",
-            passed=False,
-            detail="skipped — Work Record could not be parsed.",
-            blocking=True,
-        )
+        return PredicateResult(name, False, "Work Record could not be parsed.", True)
     risk = ctx.record["risk"].strip()
     if risk != "Elevated":
-        return PredicateResult(
-            name="approval.elevated_clean_context_review_present",
-            passed=True,
-            detail=f"skipped — only applies at Risk=Elevated (record is Risk={risk!r}).",
-            blocking=True,
-        )
-    # Field must exist on the expanded shape.
-    plan_review = ctx.record.get("plan_review", "")  # type: ignore[union-attr]
-    normalised_field = plan_review.strip().lower()
-    if normalised_field and normalised_field not in _NO_CLEAN_CONTEXT_VALUES:
-        return PredicateResult(
-            name="approval.elevated_clean_context_review_present",
-            passed=True,
-            detail=f"Plan review references {plan_review.strip()!r}.",
-            blocking=True,
-        )
-    # Field is empty / "—" / "self" / etc. — look for a ## Plan review
-    # section in the surrounding prose. The marker block was excluded
-    # from raw text? No — ctx.raw_text is the whole file. The Plan
-    # review prose lives outside the marker block per the operating-
-    # mode convention.
-    if ctx.raw_text is not None:
-        for match in _PLAN_REVIEW_SECTION_RE.finditer(ctx.raw_text):
-            prose = match.group(1).strip()
-            # Drop bullet-point or table boilerplate; require ≥ 20 chars
-            # of real content.
-            if len(prose) >= 20:
-                return PredicateResult(
-                    name="approval.elevated_clean_context_review_present",
-                    passed=True,
-                    detail=(
-                        "Plan review field is short, but '## Plan review' "
-                        "section carries the review prose."
-                    ),
-                    blocking=True,
-                )
+        return PredicateResult(name, True, f"skipped — Risk={risk!r}.", True)
+    ref = _plan_agent_reference(ctx)
+    if ref:
+        return PredicateResult(name, True, f"Agent plan review references {ref!r}.", True)
     return PredicateResult(
-        name="approval.elevated_clean_context_review_present",
-        passed=False,
-        detail=(
-            "Elevated task requires a clean-context plan review reference. "
-            "The Plan review field is empty / '—' / 'self' and no '## Plan review' "
-            "section with content was found. Either fill the field with a real "
-            "reference, or add a '## Plan review' section below the marker "
-            "block carrying the review prose."
-        ),
-        blocking=True,
+        name, False,
+        "Elevated plan needs 'Agent technical review: <source ref>' in "
+        "Plan review or ## Plan review; human approval, labels, and placeholders do not count.",
+        True,
+    )
+
+
+def approval_high_clean_context_review_present(ctx: CheckerContext) -> PredicateResult:
+    """High plans need agent review in addition to human review and approval."""
+    name = "approval.high_clean_context_review_present"
+    if ctx.record is None:
+        return PredicateResult(name, False, "Work Record could not be parsed.", True)
+    risk = ctx.record["risk"].strip()
+    if risk != "High":
+        return PredicateResult(name, True, f"skipped — Risk={risk!r}.", True)
+    ref = _plan_agent_reference(ctx)
+    if ref:
+        return PredicateResult(name, True, f"Agent plan review references {ref!r}.", True)
+    return PredicateResult(
+        name, False,
+        "High plan needs 'Agent technical review: <source ref>' in "
+        "Plan review or ## Plan review, separate from human review/approval.",
+        True,
     )
 
 
@@ -3957,6 +3943,37 @@ def approval_clean_context_does_not_satisfy_human(ctx: CheckerContext) -> Predic
         passed=True,
         detail="Plan review and Approvals reference distinct items.",
         blocking=True,
+    )
+
+
+def review_agent_result_review_present(ctx: CheckerContext) -> PredicateResult:
+    """Elevated/High results record agent review of a named revision and evidence."""
+    name = "review.agent_result_review_present"
+    if ctx.record is None:
+        return PredicateResult(name, False, "Work Record could not be parsed.", True)
+    risk = ctx.record["risk"].strip()
+    state = ctx.record.get("state", "").rstrip(".").strip()
+    if risk not in {"Elevated", "High"} or state != "Ready for review":
+        return PredicateResult(name, True, f"skipped — Risk={risk!r}, State={state!r}.", True)
+    for match in _RESULT_REVIEW_SECTION_RE.finditer(ctx.raw_text or ""):
+        section = match.group(1)
+        ref = _review_line_value(section, _AGENT_REVIEW_RE)
+        revision = _review_line_value(section, _REVIEWED_REVISION_RE)
+        adequacy = _review_line_value(section, _VERIFICATION_ADEQUACY_RE)
+        if ref and revision and adequacy:
+            return PredicateResult(
+                name, True,
+                f"Agent result review references {ref!r} for revision {revision!r}; "
+                "verification-adequacy assessment recorded (not judged).",
+                True,
+            )
+    return PredicateResult(
+        name, False,
+        "Elevated/High Ready-for-review record needs ## Result review with "
+        "'Agent technical review: <source ref>', 'Reviewed revision: <rev>', "
+        "and 'Verification adequacy: <assessment>'. Human review, approval, "
+        "labels, and placeholders do not count.",
+        True,
     )
 
 
@@ -4182,6 +4199,8 @@ PREDICATE_SOURCE: dict[str, str] = {
     "exceptions.not_against_boundary": "core",
     "exceptions.not_expired": "core",
     "approval.elevated_clean_context_review_present": "core",
+    "approval.high_clean_context_review_present": "core",
+    "review.agent_result_review_present": "core",
     "approval.high_risk_approval_recorded": "core",
     "approval.clean_context_does_not_satisfy_human": "core",
     "evidence.criteria_have_methods": "core",
@@ -4452,8 +4471,10 @@ PREDICATES: tuple = (
     exceptions_not_expired,
     # --- approval predicates (slice D) ------------------------------
     approval_elevated_clean_context_review_present,
+    approval_high_clean_context_review_present,
     approval_high_risk_approval_recorded,
     approval_clean_context_does_not_satisfy_human,
+    review_agent_result_review_present,
     # --- evidence predicates (slice E) ------------------------------
     evidence_criteria_have_methods,
     evidence_failure_not_claimed_as_success,

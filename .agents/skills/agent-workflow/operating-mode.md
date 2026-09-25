@@ -111,9 +111,9 @@ When the subagent finishes, sanity-check the Work Record. If the subagent update
 
 ### Clean-context delegation
 
-Elevated/High plan reviews require clean context. Pre-edit risk classification uses deterministic Redline rules and judgment directly when clear; use a separate classifier only for material uncertainty.
+Elevated/High plan and result reviews require a clean-context non-implementer agent; High human reviews add to, never replace, these. Pre-edit risk classification uses deterministic Redline rules and judgment directly when clear; use a separate classifier only for material uncertainty.
 
-With a Task/Agent primitive, spawn a read-only agent with the Work Record path, SPEC reference, and relevant source paths; do not paraphrase the record. Otherwise use a fresh session with the same references. Put review prose under a Plan review heading in the Work Record and reference it in the marker field.
+With a Task/Agent primitive, spawn a read-only agent with the Work Record path, SPEC reference, and relevant source paths; do not paraphrase the record. Otherwise use a fresh session with the same references. Put plan-review prose under a Plan review heading and reference it in the marker field; record result evidence under ## Result review.
 
 Choose the least costly capable reviewer for the consequence; preserve independent/human/specialist requirements and user-selected settings. Reuse valid review unless scope, assumptions, approach, or risk materially change.
 ## Step 7 — Resolve review threads before merge
@@ -128,6 +128,8 @@ CI green is not "ready to merge." Before invoking the merge:
 The repo SHOULD enable GitHub's `required_conversation_resolution` branch-protection rule so the platform refuses merge while threads are open. Bootstrap proposes it; the harness assumes it.
 
 ## Step 8 — Stop and handoff
+
+When coordinating a handoff, forward a received approval immediately; do not leave a task `Blocked` solely awaiting that approval.
 
 Before ending a session, even if the task is not done:
 

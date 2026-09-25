@@ -45,3 +45,7 @@ Branch feat/update-agent-workflow-review in isolated worktree. The pinned archiv
 ## Plan review
 
 Agent technical review: delegated agent /root/aw_review_plan, 2026-09-25. The reviewer found that upstream checkout HEAD differs from origin/main and that Pallium existing checker test only exercises Routine records. The source is now exported from exact commit 7d6d46d02dd0659859648e652b96eebe5ff7169d and verified by blob and manifest; the plan adds direct CLI acceptance/rejection smoke for Elevated/High across all three checker copies. Risk and scope otherwise fit. Open PR #236 needs an owner-side review-evidence update after this checker lands.
+
+## Verification
+
+Pinned-source parity: both installed 67-file skill trees and the mapped root checker match exact upstream commit 7d6d46d02dd0659859648e652b96eebe5ff7169d; all 67 exported blobs and 66 manifest entries verified before copy. Test-plan selected the governance lane. Focused suite: 14 passed. Direct CLI smoke: 30 positive/negative Elevated/High review-evidence cases passed across all three checker copies. Redline: GRAY advisory (unclassified skill paths), no boundary violations or checkpoints. Local Agent Workflow check: clean.
