@@ -35,7 +35,7 @@
 
 **Exceptions:** —
 
-**State:** Blocked
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -58,3 +58,18 @@ Pinned upstream provenance: 67/67 Git blobs and 66 manifest entries verified. Bo
 Local checks: `python -m py_compile scripts/agent-workflow-check.py` passed; `pytest tests/test_agent_workflow_ci.py -q -n 0` passed (1); import linter passed; fresh Redline result is GRAY advisory, with no boundary violations or checkpoints; Agent Workflow check is clean, including the approved requirement-change chain.
 
 The required one-shot parallel `pytest tests/ -x -q` run was not green: 1,673 passed, 1 xfailed, and two failures at `tests/test_claude_code_hooks/test_session_pin.py::TestResolveContainerRef::test_deliberate_git_project_switch_updates_pin` and `tests/test_codex_wake.py::test_busy_queue_recovery_stays_single_flight_and_competing_hook_blocks_overtaken_wake`. Both exact nodes passed when rerun serially (`-q -n 0`). No changed subsystem overlaps those nodes. The later `--lf --lfnf=none` selected zero tests, so it is not a passing full-suite signal. Action: open the PR and require a fresh passing PR CI `test` job before review completion; investigate if it reproduces either failure. Current branch: `feat/update-agent-workflow-upstream` in the isolated worktree. Final commit and PR CI remain pending.
+PR #247 provided the fresh full-run signal on source commit `c16bbc38`: Python 3.12 and 3.13 `test` jobs, Windows smoke, Redline, and Agent Workflow all passed. See https://github.com/rore/Pallium/actions/runs/36137736258 and https://github.com/rore/Pallium/actions/runs/36137736187. The earlier local parallel failures did not reproduce in PR CI. Independent result review verified source parity and the diff, raised the documentation Scope classification, and that finding was resolved by the task owner's exact approval and the Redline mirror correction. No dedicated roadmap item owns this upstream maintenance sync.
+
+## Skill feedback (unsent)
+
+**Affected surface:** `agent-workflow/operating-mode.md` step 7 at `fbe6c768`; GitHub CLI 2.86.0.
+
+**Expected:** The documented `gh pr view --json reviews,reviewThreads` command returns review summaries and thread state.
+
+**Actual:** The CLI rejects `reviewThreads` as an unknown JSON field.
+
+**Minimal reproduction:** Run that command on any PR with `gh` 2.86.0.
+
+**Evidence:** `Unknown JSON field: "reviewThreads"`; GraphQL `pullRequest.reviewThreads` works.
+
+**Suggested owner:** Upstream `operating-mode.md` step 7 should use a supported GraphQL query for thread state.
