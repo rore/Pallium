@@ -1,7 +1,7 @@
 ---
 id: select-tests-by-change-scope
 title: Select validation by change scope
-status: in-progress
+status: done
 priority: high
 commitment: committed
 milestone: engineering-health
@@ -40,10 +40,10 @@ Application behavior changes, pruning regression tests, broad test-suite repairs
 
 ## Notes
 
-Lead-owned roadmap checkout: C:/Dev/rore/Pallium/.worktrees/select-tests-by-change-scope. Work Record: `.agent-workflow/tasks/select-tests-by-change-scope.md`. Existing `stabilize-test-health-and-ci-cost` remains a completed, narrower slice. This change does not claim regression elimination; two test-isolation/synchronization defects discovered during rollout are repaired without changing application behavior.
+Canonical completion checkout: C:/Dev/rore/Pallium; implementation used isolated worktrees. Work Record: `.agent-workflow/tasks/select-tests-by-change-scope.md`. Existing `stabilize-test-health-and-ci-cost` remains a completed, narrower slice. This change does not claim regression elimination; two test-isolation/synchronization defects discovered during rollout are repaired without changing application behavior.
 
 ## Verified implementation
-PR #248 contains the implementation and is awaiting merge. Local focused lane: 14 passed in 30.90 seconds; full non-slow suite: 5323 passed, 34 skipped, 2 xfailed in 319.18 seconds. The actual 26-path Agent Workflow update in PR #247 selects governance. Independent review findings were addressed. The roadmap remains in progress until final verification and merge; broader application-subsystem selection remains out of scope.
+PR #248 merged the test-selection strategy; PR #249 fixed the Windows SQLite URL compatibility issue found during rollout and added the repair E2E file to Windows smoke. Local focused lane: 14 passed in 30.90 seconds; full non-slow suite: 5323 passed, 34 skipped, 2 xfailed in 319.18 seconds. The actual 26-path Agent Workflow update in PR #247 selects governance. Independent review findings were addressed. Broader application-subsystem selection remains out of scope.
 
 ## Final validation and delivery
-The initial Linux failures were traced to unrelated native-wake diagnostic activity in an ordinary-turn test and an asynchronous restart sweep tested against a one-second deadline. Controlled before/after probes support the two reviewed test-only fixes. Related hook/wake/trace and protected-contract checks: 153 passed, 2 skipped; Codex wake file: 139 passed. Exact delivery, identity, scope and ACK assertions are preserved. Final combined CI, merge, and installed-service verification remain before completion.
+The initial Linux failures were traced to unrelated native-wake diagnostic activity in an ordinary-turn test and an asynchronous restart sweep tested against a one-second deadline. Controlled before/after probes support the two reviewed test-only fixes. Related hook/wake/trace and protected-contract checks: 153 passed, 2 skipped; Codex wake file: 139 passed. Exact delivery, identity, scope and ACK assertions are preserved. Final PR and post-merge CI passed. At merge commit 05b4f138834f10afceae511eb682a28f58b91b93, each Linux version passed 5,301 tests; each full Windows version passed 5,329 tests across its serial and remaining-suite steps; Windows smoke passed 512 tests. Run: https://github.com/rore/Pallium/actions/runs/36152107636. Both clean local clones were synchronized, the installed wrapper restart succeeded, and health/status/queue checks passed with embeddings and ingestion healthy. Follow-up Work Record: `.agent-workflow/tasks/fix-relay-repair-sqlite-urls.md`.

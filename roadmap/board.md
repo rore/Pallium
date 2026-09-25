@@ -1,6 +1,3 @@
-# Active · Test Infrastructure
-- select-tests-by-change-scope
-
 # First · Relay Reliability
 - add-wake-first-relay-delivery
 
@@ -48,6 +45,7 @@
 - idea-multi-vector-long-text-embedding
 
 # Done
+- select-tests-by-change-scope
 - add-protected-behavioral-requirements-regression-suite
 - add-relay-batch-participant-counts
 - fix-session-history-evidence-access
