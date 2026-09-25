@@ -159,7 +159,6 @@ Ask the developer **only** what the inspection didn't already answer:
 
 - Repository-local paths the policy should treat specially that didn't surface in inspection?
 - PR-driven vs push-driven? (Confirm Phase 1's detection.)
-- Per-checkpoint reference docs under `docs/agent-workflow/` (default) or somewhere else?
 - Behavior-contract candidates: select/reject, choose `repository` or `workflow`, and confirm its evidence? Selection is not requirement-change approval. Split, defer, or omit incompatible candidates; never downgrade.
 
 Update both drafts using the approval command in [`applicability.md`](templates/checkpoints/applicability.md); use only its emitted fragment. Direct-default needs separate approval. Show revised drafts until explicit sign-off.
@@ -182,8 +181,7 @@ Write the committed artifacts. Branch each step on existing files; never overwri
 | 4.4 | root `AGENTS.md` owned reference section | Always create or reconcile only the marker-wrapped section in root `AGENTS.md`; preserve every other instruction file, surrounding prose, and third-party hooks. Existing markers are reconciled idempotently. |
 | 4.5 | `.agent-redline/suppressions.yaml` | Invoke redline's Phase 4 write step. |
 | 4.6 | `docs/agent-redline/skills/` | Invoke redline's Phase 4 write step. |
-| 4.7 | `docs/agent-workflow/` | Copy `templates/checkpoints/` (keep the `checkpoints/` subdir) **and** `templates/skill-feedback.md` (as a sibling of `checkpoints/`) from the installed skill. Mirroring the skill's layout keeps the review-result → `../skill-feedback.md` cross-link resolvable. |
-| 4.8 | `.agent-workflow/tasks/README.md` | Skeleton explaining the `{slug}.md` convention; references operating-mode.md. |
+| 4.7 | `.agent-workflow/tasks/README.md` | Skeleton explaining the `{slug}.md` convention; references operating-mode.md. |
 
 ### 4.4 marker shape
 
@@ -198,6 +196,7 @@ Write the committed artifacts. Branch each step on existing files; never overwri
 - Never overwrite an existing `agent-workflow.yaml` without explicit developer confirmation.
 - Never overwrite an existing `agent-redline-policy.yaml` (composition only — adopt the existing policy).
 - Always create or reconcile only the owned marker in root `AGENTS.md`; preserve every other instruction file, surrounding prose, and third-party hooks.
+- Read workflow checkpoint guidance from the installed skill. Leave any existing `docs/agent-workflow/` mirror and links intact on upgrades; do not create or refresh it.
 - Never modify boundary-rule backend definitions (existing ArchUnit tests, import-linter configs). The redline policy's `boundaries:` mirrors them; the existing test stays authoritative.
 - Never write `.github/workflows/*.yml` in Phase 4. That's Phase 5's job, and only with confirmation.
 
