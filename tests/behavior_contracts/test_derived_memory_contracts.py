@@ -73,7 +73,7 @@ def _expand(client, memory_id: str) -> dict:
 
 
 def test_explicit_note_is_recalled_verbatim(memory_client):
-    """docs/derived-memory.md §Notes: a note remains verbatim; fault: extraction paraphrases or drops it."""
+    """docs/derived-memory.md §What Gets Derived: a note remains verbatim; fault: extraction paraphrases or drops it."""
     content = "Archive rotation: prepare → verify Δ → publish. Keep line two\nexactly as entered."
     response = memory_client.post("/items", json=[_note("note-verbatim", content)])
     assert response.status_code == 200, response.text
