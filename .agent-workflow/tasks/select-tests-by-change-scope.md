@@ -12,9 +12,9 @@
 **Material assumptions:** A small explicit allowlist can isolate governance changes; executable runtime hooks without independent coverage remain full. If complete Git evidence is unavailable, select full. Existing application CI may already be red; report baseline failures rather than weakening tests.
 **Plan:** First invoke Agent Workflow, establish this record and classify risk before code edits. Obtain clean-context plan review. Implement a stdlib selector shared by local CLI and CI with docs/governance/full lanes, complete NUL-delimited Git evidence, full fallback, and schedule/manual full override. Governance uses focused serial tests without application conftest plus existing mandatory workflow compliance job; no broad application test path is exempt. Keep existing application matrix for full. Add a stable aggregate CI result that fails for selection failure or required-lane failure. Update instructions and roadmap. Review and verify the combined diff before a PR; this selector/CI change itself requires full validation.
 **Verification plan:** Docs/governance/full and mixed/unknown triggers map conservatively -> selector table tests and real temporary Git CLI lifecycle tests, including rename/delete/untracked/Unicode/missing base. CI uses trusted PR merge-base/head, push before/head, full schedule and stable failing gate -> workflow contract tests. Governance changes run without importing application conftest -> subprocess focused run with --noconftest. Executable governance checker accepts valid and rejects invalid records -> focused CLI tests. Selector/CI changes -> full default suite once plus workflow check; record pre-existing failures separately without retries masking them.
-**Plan review:** Pending clean-context review.
+**Plan review:** Clean-context test_plan_review approved with constraints recorded below; adopted before implementation.
 **Approvals:** User requested planning and execution of testing strategy; no separate approval required at Elevated risk. CI changes are explicitly within this task, not incidental governance edits.
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -22,3 +22,8 @@
 
 ## Evidence
 Read-only risk review: test_policy_risk, Elevated/Moderate, no forbidden boundary or protected behavior test edits.
+
+## Plan review
+Clean-context reviewer test_plan_review (gpt-6-sol, medium) approved after tightening governance scope and failure handling. Adopted: only explicitly supported governance paths qualify; runtime hooks/config and unknown paths stay full. CI uses a trusted base revision selector; missing/unreadable/error bootstrap selects full, and the aggregate gate rejects missing/failed required jobs. Selector/workflow/shared-config edits select full. Existing Redline and Agent Workflow jobs remain. Nightly forces Linux/Windows full and bounded slow smoke. No new dependencies or application startup in narrow tests.
+
+Implementation writes use deterministic scoped replacement after apply_patch failed with machine-local error 1385.
