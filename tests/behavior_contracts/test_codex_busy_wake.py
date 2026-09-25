@@ -1,3 +1,13 @@
+"""RW-022: accepted busy Codex wakes stay single-flight.
+
+Source: roadmap/features/add-wake-first-relay-delivery.md. Original incident:
+at least fourteen accepted native submissions and thirty empty task starts. The
+protected regression drives HTTP send/status and the Codex hook, and observes
+one accepted queue submission plus one emitted/ACKed delivery. Releasing the
+reservation after submission reproduces six calls and fails this test. It does
+not promise wake for unloaded tasks or native admission of a queued turn.
+"""
+
 from __future__ import annotations
 
 import json
