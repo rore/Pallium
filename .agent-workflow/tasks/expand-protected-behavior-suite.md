@@ -64,3 +64,5 @@ Hosted verification for PR #245 at `b7eaa8fb`: `test (3.12)`, `test (3.13)`, `wi
 ## Result review
 
 Independent non-implementer review found no blocking contract or scope issue. CodeRabbit identified one valid placement issue in RW-022 provenance; `b7eaa8fb` moved it into the test function docstring without changing assertions. The inline finding was answered and its thread is resolved. The approved 15-test suite, local fault witnesses, roadmap layout, and hosted checks satisfy the implementation plan. State is Ready for review; a separate human High-risk result review remains required before merge.
+
+Separate human result review: Approved by user 2026-09-25 08:20:56 UTC: "Approved". This followed the request to review PR #245 and approve its merge separately from plan approval. At approval, PR head `28972e71` was clean and mergeable; `test (3.12)`, `test (3.13)`, Windows smoke, Redline, Agent Workflow, and CodeRabbit passed, and the only inline review thread was resolved. Merge is authorized; post-merge checkout and installed-service verification remain.
