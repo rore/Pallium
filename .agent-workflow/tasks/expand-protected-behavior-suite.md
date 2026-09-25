@@ -30,9 +30,17 @@
 
 **Plan review:** APPROVE — independent clean-context review at commit `8fcf4c6a`. Confirmed the five exact protected-path classifications, workflow-only protection, and reuse of the existing CI test job. Review conditions: count distinct obligations, not parameterizations; demonstrate a public-outcome failure witness for every new test; preserve the retrieval-alone accessibility invariant; align the roadmap catalog and completion language.
 
-**Approvals:** Pending explicit user approval of the reviewed High-risk expansion plan.
+**Approvals:** Approved by user 2026-09-25 04:31:48 UTC: "Approve"
 
 **Exceptions:** —
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
+
+## Plan review
+
+Independent clean-context reviewer approved the plan at `8fcf4c6a` for task-owner approval. It confirmed the five exact protected-path classifications, workflow-only mode, and reuse of the existing PR `test` job. It cautioned that each added test must prove a distinct public obligation with a concrete fault witness, that Memory assertions must use public reads instead of SQL-only state, and that the roadmap catalog language must change consistently.
+
+## Implementation
+
+Approved target files: `tests/behavior_contracts/test_relay_delivery_contracts.py`, `tests/behavior_contracts/test_session_history_contracts.py`, `tests/behavior_contracts/test_derived_memory_contracts.py`, `tests/behavior_contracts/test_codex_busy_wake.py`, `tests/behavior_contracts/README.md`, and `roadmap/features/add-protected-behavioral-requirements-regression-suite.md`. No production, policy, or CI files are in scope. Work starts from branch `feat/expand-protected-behavior-suite` at `86d2d0da`.
