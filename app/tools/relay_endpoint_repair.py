@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Sequence
 
+from sqlalchemy.engine import URL, make_url
 from sqlalchemy.exc import SQLAlchemyError
 
 from core.relay import RelayConflictError
@@ -31,7 +32,12 @@ _ENDPOINT_RE = re.compile(r"^relay-session-[0-9a-f]{32}$")
 def _path(url: str) -> Path:
     if not url.startswith("sqlite:///"):
         raise ValueError("only sqlite:/// URLs are supported")
-    return Path(url[10:]).resolve()
+    if make_url(url).query:
+        raise ValueError("SQLite URI query options are not supported")
+    path = SQLiteStorageProvider._sqlite_path(url)
+    if path is None:
+        raise ValueError("only file-backed sqlite:/// URLs are supported")
+    return path.resolve()
 
 
 def _canonical(value: object) -> str:
@@ -104,7 +110,7 @@ def _validate_inputs(source_ids: list[str], destination_id: str, expected_scopes
 def build_manifest(db_url: str, source_ids: list[str], destination_id: str, expected_scopes: dict[str, str], dispositions: object) -> dict[str, Any]:
     dispositions = _validate_inputs(source_ids, destination_id, expected_scopes, dispositions)
     path = _path(db_url)
-    conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, isolation_level=None)
+    conn = sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True, isolation_level=None)
     conn.row_factory = sqlite3.Row
     try:
         conn.execute("BEGIN")
@@ -311,7 +317,7 @@ def _clean_adoption_ids(manifest: dict[str, Any]) -> set[str]:
 
 def _installed_urls(home: Path) -> tuple[str, str]:
     data = home.resolve() / "data"
-    return f"sqlite:///{data / 'pallium.db'}", f"sqlite:///{data / 'pallium-relay.db'}"
+    return tuple(str(URL.create("sqlite", database=str(data / name))) for name in ("pallium.db", "pallium-relay.db"))
 
 
 def _validate_repair_database(db_url: str, home: Path) -> None:
@@ -320,7 +326,7 @@ def _validate_repair_database(db_url: str, home: Path) -> None:
         raise ValueError("--db-url must match the installed home Relay database")
     path = _path(db_url)
     try:
-        with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as conn:
+        with sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True) as conn:
             columns = {row[1] for row in conn.execute("PRAGMA table_info(relay_endpoint_repairs)")}
     except sqlite3.Error as exc:
         raise ValueError("installed Relay database is unreadable") from exc
