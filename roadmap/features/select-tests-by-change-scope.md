@@ -41,3 +41,6 @@ Application behavior changes, pruning regression tests, broad test-suite repairs
 ## Notes
 
 Lead-owned roadmap checkout: C:/Dev/rore/Pallium/.worktrees/select-tests-by-change-scope. Work Record: `.agent-workflow/tasks/select-tests-by-change-scope.md`. Existing `stabilize-test-health-and-ci-cost` remains a completed, narrower slice. This change does not claim regression elimination or repair unrelated red CI.
+
+## Verified implementation
+PR #248 contains the implementation and is awaiting merge. Local focused lane: 14 passed in 30.90 seconds; full non-slow suite: 5323 passed, 34 skipped, 2 xfailed in 319.18 seconds. The actual 26-path Agent Workflow update in PR #247 selects governance. Independent review findings were addressed. The roadmap stays in progress until merge; broader application-subsystem selection remains out of scope.

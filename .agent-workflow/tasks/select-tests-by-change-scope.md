@@ -14,7 +14,7 @@
 **Verification plan:** Docs/governance/full and mixed/unknown triggers map conservatively -> selector table tests and real temporary Git CLI lifecycle tests, including rename/delete/untracked/Unicode/missing base. CI uses trusted PR merge-base/head, push before/head, full schedule and stable failing gate -> workflow contract tests. Governance changes run without importing application conftest -> subprocess focused run with --noconftest. Executable governance checker accepts valid and rejects invalid records -> focused CLI tests. Selector/CI changes -> full default suite once plus workflow check; record pre-existing failures separately without retries masking them.
 **Plan review:** Clean-context test_plan_review approved with constraints recorded below; adopted before implementation.
 **Approvals:** User requested planning and execution of testing strategy; no separate approval required at Elevated risk. CI changes are explicitly within this task, not incidental governance edits.
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -34,4 +34,7 @@ Implementation writes use deterministic scoped replacement after apply_patch fai
 Independent reviewer test_plan_review accepted revision f545fbb1 after two findings were fixed: an untested Redline reporter no longer qualifies for the narrow lane; focused CI installs the checker's existing PyYAML/jsonschema dependencies. No remaining concrete blocker. Lead reviewed the combined implementation and added actual Bash/Git selection lifecycle checks plus executable aggregate-gate tests.
 
 ## Verification progress
-Combined narrow lane on f545fbb1: 14 passed in 30.90 seconds, using --noconftest -q -n 0 and no application fixtures. Import boundaries passed; final whole-change Agent Workflow checker exited 0 against updated main. PR #247's actual 26-path merge diff selects governance; this selector/CI rollout selects full. Full non-slow local run is in progress in build/full-validation.log; no full-pass claim yet. Main f31321cc was merged into this branch to include the concurrent Agent Workflow update.
+Combined narrow lane on f545fbb1: 14 passed in 30.90 seconds, using --noconftest -q -n 0 and no application fixtures. Import boundaries passed; final whole-change Agent Workflow checker exited 0 against updated main. PR #247's actual 26-path merge diff selects governance; this selector/CI rollout selects full. Full non-slow local run on the same implementation passed: 5323 passed, 34 skipped, 2 xfailed in 319.18 seconds. The exact command was python -m pytest tests/ -x -q; output is build/full-validation.log. Only Work Record and roadmap evidence changed afterward; implementation, tests, configuration, and dependencies are unchanged, so local evidence is reused. Main f31321cc was merged into this branch to include the concurrent Agent Workflow update.
+
+## Delivery
+PR: https://github.com/rore/Pallium/pull/248. Implementation and independent review complete. Required remote status and review threads remain the merge gate; no branch-protection change or installed-service change is part of this PR.
