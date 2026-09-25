@@ -32,7 +32,7 @@
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -44,3 +44,9 @@ Planned edit targets: AGENTS.md and this Work Record only. Discovery found no ne
 Clean-context reviewer returned REVISE: name approval by the user as task owner for exact before/after requirement changes; avoid implying authenticated repository authority or GitHub merge prevention. Plan clarified before editing AGENTS.md.
 
 Clean-context reviewer re-reviewed the revised plan and returned APPROVE: exact task-owner approval and workflow-only limits are clear; scope and verification align with policy.
+
+Added only the planned AGENTS.md bullet; no protected tests or policy changed. The wording distinguishes suspected regressions from approved requirement changes and explicitly disclaims GitHub merge enforcement.
+
+## Evidence
+
+On branch feat/protected-contract-instructions, git diff --check passed; fresh Redline verdict was GRAY for AGENTS.md with behaviorContractChanges version 2 and no changed protected paths; Agent Workflow check with that verdict returned clean. Full repository suite: 5316 passed, 34 skipped, 2 xfailed (264.16s), exit 0. Test content is the current branch worktree based on cc789032; commit and PR CI remain to verify.
