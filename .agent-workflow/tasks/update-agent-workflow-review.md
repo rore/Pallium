@@ -35,7 +35,7 @@
 
 **Exceptions:** —
 
-**State:** Ready for review
+**State:** Blocked
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -55,3 +55,7 @@ Pinned-source parity: both installed 67-file skill trees and the mapped root che
 Agent technical review: delegated agent /root/aw_result_review, 2026-09-25; no blocking findings on the exact consumer sync. Both 67-file skill trees match pinned upstream content after line-ending normalization; root checker matches byte-for-byte. Config, policy, CI, hooks, and unrelated docs are untouched.
 Reviewed revision: 2cb429de254905f23bc8079dff7d657ff40eff4b
 Verification adequacy: Focused 14-test suite, 30 direct CLI acceptance/rejection cases, normalized source parity, Redline, and local workflow checks adequately cover this governance-only sync before PR; PR CI remains pending.
+
+## Handoff, 2026-09-25
+
+Pallium PR #250 passed required CI but CodeRabbit identified a valid placeholder-evidence bug in pinned upstream 7d6d46d. This branch remains at reviewed revision 91d46693c0bbdcfd3e8bd4f2328af0e59e560e4b and must not merge as-is. Isolated upstream fix is agent-workflow PR #44, reviewed implementation 7a847cec52c8a1e99a237a10ab156a072a70106b; its test, Redline, and Agent Workflow CI jobs pass, with CodeRabbit still pending. User approval to merge upstream PR #44 has been requested separately; user approval for Pallium PR #250 is already recorded. Next: resolve any upstream review findings, merge #44 only with exact approval, export its merged main commit, resync the minimal corrected package into this branch, rerun parity/governance checks and independent result review as needed, reply to and resolve Pallium CodeRabbit thread 4106872028, then merge PR #250 when clean.
