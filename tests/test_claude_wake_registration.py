@@ -282,11 +282,21 @@ def test_session_start_subprocess_registers_through_loopback_without_secret_outp
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
+    wake_dir = tmp_path / "subprocess-wake"
+    wake_dir.mkdir()
+    relay_id = "a" * 64
+    (wake_dir / "relay-owner.json").write_text(json.dumps({"relay_id": relay_id}), encoding="utf-8")
+    binding_path = tmp_path / ".pallium" / "hooks" / "claude-wake-binding.json"
+    binding_path.parent.mkdir(parents=True)
     secret = "subprocess-secret"
     try:
         payload = json.dumps({"cwd": str(tmp_path), "session_id": "subprocess-session", "source": "startup"})
+        binding_path.write_text(json.dumps({"port": server.server_port, "relay_id": relay_id, "wake_dir": str(wake_dir)}), encoding="utf-8")
         env = {
             **os.environ,
+            "USERPROFILE": str(tmp_path),
+            "HOME": str(tmp_path),
+            "PALLIUM_CLAUDE_WAKE_DIR": str(wake_dir),
             "PALLIUM_PORT": str(server.server_port),
             "CLAUDE_CODE_MESSAGING_SOCKET": r"\\.\pipe\claude",
             "CLAUDE_CODE_MESSAGING_TOKEN": secret,
@@ -316,7 +326,8 @@ def test_session_start_subprocess_registers_through_loopback_without_secret_outp
     )
 
 
-def test_app_instances_have_separate_memory_only_registries(tmp_path: Path) -> None:
+def test_app_instances_have_separate_memory_only_registries(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("PALLIUM_CLAUDE_WAKE_DIR", raising=False)
     def config(name: str) -> AppConfig:
         return AppConfig(
             storage_backend="sqlite",
@@ -844,7 +855,8 @@ def test_session_start_delivers_and_acks_relay_before_orientation(
     })]
 
 
-def test_claude_reconciler_is_lifespan_owned_and_stops_on_repeated_apps(tmp_path: Path) -> None:
+def test_claude_reconciler_is_lifespan_owned_and_stops_on_repeated_apps(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("PALLIUM_CLAUDE_WAKE_DIR", raising=False)
     def config(name: str) -> AppConfig:
         return AppConfig(storage_backend="sqlite", sqlite_url=f"sqlite:///{tmp_path / name}", default_use_case="demo_agent_memory", semantic_packages=DEMO_SEMANTIC_PACKAGES, vector_index=VectorIndexConfig(enabled=False))
 

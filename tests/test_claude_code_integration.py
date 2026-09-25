@@ -216,6 +216,7 @@ def _load_claude_hook(name: str, monkeypatch: pytest.MonkeyPatch):
     state_dir = Path(os.environ["PALLIUM_CLAUDE_WAKE_DIR"]).parent / "hook-state"
     common.STATE_DIR = state_dir
     common.SESSIONS_DIR = state_dir / "sessions"
+    monkeypatch.setattr(common, "_wake_binding_matches_service", lambda: True)  # Transport tests bind temp state directly.
     return module
 
 
@@ -348,6 +349,8 @@ def test_claude_setup_registers_session_end_once_and_uninstall_removes_it(monkey
     monkeypatch.setattr(setup_claude_code, "_remove_skill", lambda: None)
     monkeypatch.setattr(setup_claude_code, "_ensure_state_dir", lambda: None)
     monkeypatch.setattr(setup_claude_code, "_verify_service", lambda *_: True)
+    monkeypatch.setattr(setup_claude_code, "_resolve_wake_binding", lambda *_args, **_kwargs: {"port": 19836, "relay_id": "a" * 64, "wake_dir": str(tmp_path / "wake")})
+    monkeypatch.setattr(setup_claude_code, "hook_binding_path", lambda: tmp_path / "binding.json")
     assert setup_claude_code.install() == setup_claude_code.install() == 0
     registered = json.loads(settings.read_text(encoding="utf-8"))
     session_end = [

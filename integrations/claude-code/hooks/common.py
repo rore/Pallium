@@ -103,7 +103,30 @@ def _run_before_deadline(
     return result[0]
 
 
-PALLIUM_PORT = int(os.environ.get("PALLIUM_PORT", "19836"))
+def _read_wake_binding() -> dict[str, object] | None:
+    path = Path.home() / ".pallium" / "hooks" / "claude-wake-binding.json"
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(value, dict) or set(value) != {"port", "relay_id", "wake_dir"}:
+        return None
+    if not isinstance(value["port"], int) or not 1 <= value["port"] <= 65535:
+        return None
+    if not isinstance(value["relay_id"], str) or len(value["relay_id"]) != 64:
+        return None
+    if not isinstance(value["wake_dir"], str) or not Path(value["wake_dir"]).is_absolute():
+        return None
+    return value
+
+
+_WAKE_BINDING = _read_wake_binding()
+_WAKE_PORT_OVERRIDE = os.environ.get("PALLIUM_PORT")
+_WAKE_PORT_CONFLICT = (
+    _WAKE_BINDING is not None and _WAKE_PORT_OVERRIDE is not None
+    and _WAKE_PORT_OVERRIDE != str(_WAKE_BINDING["port"])
+)
+PALLIUM_PORT = int(_WAKE_BINDING["port"]) if _WAKE_BINDING else int(_WAKE_PORT_OVERRIDE or "19836")
 PALLIUM_BASE_URL = f"http://localhost:{PALLIUM_PORT}"
 HTTP_TIMEOUT = 6
 SUBPROCESS_TIMEOUT = 3
@@ -113,8 +136,13 @@ RELAY_OUTPUT_BUDGET = 2400
 RELAY_NOTICE_RESERVE = len("[Relay: 999+ more; Pallium continues.]") + 2
 RELAY_TURN_BUDGET = RELAY_OUTPUT_BUDGET - RELAY_NOTICE_RESERVE
 CLAUDE_WAKE_REGISTER_PATH = "/internal/claude-wake/register"
-CLAUDE_WAKE_DIR = Path(os.environ.get("PALLIUM_CLAUDE_WAKE_DIR", str(Path.home() / ".pallium" / "claude-wake")))
-CLAUDE_WAKE_INTENTS_DIR = CLAUDE_WAKE_DIR / "intents"
+_WAKE_DIR_OVERRIDE = os.environ.get("PALLIUM_CLAUDE_WAKE_DIR")
+_WAKE_DIR_CONFLICT = (
+    _WAKE_BINDING is not None and _WAKE_DIR_OVERRIDE is not None
+    and Path(_WAKE_DIR_OVERRIDE).resolve() != Path(str(_WAKE_BINDING["wake_dir"])).resolve()
+)
+CLAUDE_WAKE_DIR = Path(str(_WAKE_BINDING["wake_dir"])) if _WAKE_BINDING else (Path(_WAKE_DIR_OVERRIDE) if _WAKE_DIR_OVERRIDE else None)
+CLAUDE_WAKE_INTENTS_DIR = CLAUDE_WAKE_DIR / "intents" if CLAUDE_WAKE_DIR else None
 _CREDENTIAL_HTTP_TIMEOUT = 1
 _CREDENTIAL_BODY_MAX_BYTES = 16_384
 _CREDENTIAL_LIMITS = (32, 512, 512, 4096, 8192)
@@ -1300,6 +1328,25 @@ class _RejectCredentialRedirects(urllib.request.HTTPRedirectHandler):
         return None
 
 
+def _wake_binding_matches_service() -> bool:
+    if _WAKE_DIR_CONFLICT or _WAKE_PORT_CONFLICT:
+        return False
+    if _WAKE_BINDING is None:
+        return False
+    try:
+        owner = json.loads((CLAUDE_WAKE_DIR / "relay-owner.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    if owner != {"relay_id": _WAKE_BINDING["relay_id"]}:
+        return False
+    marker = Path.home() / ".pallium" / "hooks" / f"claude-wake-service-{PALLIUM_PORT}.json"
+    if not marker.exists():
+        return True  # Pinned binding remains valid during service outage.
+    try:
+        return json.loads(marker.read_text(encoding="utf-8")) == _WAKE_BINDING
+    except (OSError, ValueError):
+        return False
+
 def _wake_intent_path(
     runtime: str, session_ref: str, container_ref: str
 ) -> Path:
@@ -1320,6 +1367,8 @@ def _write_wake_intent(payload: dict[str, object]) -> bool:
         for key in ("runtime", "session_ref", "container_ref")
     )
     if "actor_ref" in payload or not all(isinstance(value, str) for value in identity):
+        return False
+    if CLAUDE_WAKE_DIR is None or CLAUDE_WAKE_INTENTS_DIR is None or not _wake_binding_matches_service():
         return False
     temporary: Path | None = None
     try:

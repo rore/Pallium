@@ -83,7 +83,14 @@ resolved Relay SQLite database: a conventional `data/pallium-relay.db` uses its
 parent home's `codex-wake` directory, while any other file uses a sibling
 `<full-database-filename>-codex-wake` directory. In-memory apps keep app-local
 nonpersistent fences. `PALLIUM_CODEX_WAKE_DIR` overrides this selection; never
-copy reservations between instances. An exact
+copy reservations between instances. Claude wake capabilities and intents now
+follow the same Relay-database ownership pattern: conventional
+`data/pallium-relay.db` uses the home `claude-wake`, other files use
+`<full-database-filename>-claude-wake`, and in-memory apps are nonpersistent.
+Claude setup pins its hook port, Relay identity, and wake path. Re-run setup after
+changing the target; a mismatched service marker fails closed before credential
+write-ahead, while an outage keeps the pinned path. Never share
+`PALLIUM_CLAUDE_WAKE_DIR` across different Relay databases. An exact
 internal Codex wake is excluded from deduplication and memory ingestion. The native
 prompt can remain model-visible when no delivery block accompanies it, so it carries
 the exact delivery ID for nonmutating trace inspection. Ordinary user prompts remain
