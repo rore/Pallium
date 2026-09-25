@@ -8,7 +8,27 @@ Keep normal edit feedback targeted and serial so pytest does not pay four spawne
 python -m pytest tests/test_example.py::test_case -q -n 0
 ```
 
-After a coherent change, run the affected subsystem files. Rerun only recorded failures with `python -m pytest --lf --lfnf=none -q -n 0`. A focused slow-marked target needs `-m slow`. Run the full non-slow suite, `python -m pytest tests/ -x -q`, once before review or PR rather than after every edit.
+After a coherent change, run the affected subsystem files. Rerun only recorded failures with `python -m pytest --lf --lfnf=none -q -n 0`. A focused slow-marked target needs `-m slow`.
+
+Before review or PR, select validation using the whole change:
+
+```powershell
+python scripts/test-plan.py --base origin/main
+```
+
+Use a current trusted base. The local command includes branch changes since the merge base, staged and unstaged changes, and untracked files. Run the commands in its report; selection alone is not validation. Missing or incomplete evidence chooses full validation. Recompute after the diff changes.
+
+| Lane | Eligible change | Required validation |
+|---|---|---|
+| Documentation | Only explicitly recognized Markdown documentation | Lightweight repository/selection contracts and existing PR governance checks |
+| Governance | Only supported Agent Workflow files and documentation | Focused caller-contract tests on Linux and Windows, without application fixtures; existing Redline and Agent Workflow PR checks |
+| Full | Application code/tests, mixed changes involving application paths, unknown paths, runtime hooks/configuration, selector/CI/shared test configuration | Full non-slow application suite and existing platform checks |
+
+Test selection is separate from Agent Workflow applicability: a narrow test lane does not exempt a change from its Work Record, risk review, or PR requirements. The selector's explicit allowlist is authoritative. A filename ending in `.md` or living under `.agents/` is not by itself an exemption. Both old and new paths of a rename count; deleted paths still count. Protected behavior-contract tests always select full. Changes to selection policy itself must run full validation. Schedules and manual full CI runs override narrow selection.
+
+For a full local lane, run `python -m pytest tests/ -x -q` once before review. Do not repeat a successful full run at every handoff. Record the revision, relevant dirty diff, command, environment, and result; reuse that evidence while the tested content and dependencies remain unchanged. A changed test target, relevant code, configuration, or integration invalidates the affected evidence. A narrow local run does not replace the required platform CI checks.
+
+Changed features still require E2E coverage of their boundaries and lifecycle. Selection avoids running unrelated features on governance edits; it does not permit dropping regression tests, replacing assertions with weaker proxies, or rerunning flaky failures until green. Diagnose failures and distinguish application bugs, test isolation, and timing assumptions. No test lane guarantees absence of every regression.
 
 ## Test marking
 
@@ -26,7 +46,13 @@ The shared test helpers (`build_llm_test_config` in `tests/config_helpers.py`, t
 
 ## CI profiles
 
-Required Linux CI installs the existing `dev`, `vector`, and `mcp` extras, verifies that the MCP server imports, and reports the 20 slowest tests. Windows smoke and full lanes report the same timing diagnostics.
+Full Linux CI installs the existing `dev`, `vector`, and `mcp` extras, verifies that the MCP server imports, and reports the 20 slowest tests. Windows smoke and full lanes report the same timing diagnostics. Application coverage keeps the existing Python/platform matrix; full Windows runs on push to main and nightly.
+
+Narrow governance checks use `--noconftest` and serial execution so the application fixtures in `tests/conftest.py` are not imported. They exercise governance behavior directly instead of constructing the Pallium service. Existing PR Redline and Agent Workflow checks remain independent and mandatory under the repository workflow.
+
+CI executes the selector from the trusted base revision. If that revision has no selector (including the rollout PR), or selection cannot complete, the fallback is full. A stable `CI result` job checks that every required lane succeeded; unexpected skips or selection-job failure must not produce green. Branch protection is a separate repository setting; this change does not enable it.
+
+Scheduled runs retain the full matrix to check assumptions behind narrow selection. A failure remains actionable: the change owner investigates a PR failure; a scheduled failure needs triage before using that baseline as passing evidence. This rollout does not repair existing unrelated CI failures.
 
 The nightly slow smoke is deliberately an explicit, serial allowlist covering snapshot, SQLite, thread-summary accumulation, and Relay load paths. Do not replace it with the complete `-m slow` suite until the separately tracked stale slow-test expectations are green; opt-in service tests, live providers, model downloads, and generated P2 scenarios remain excluded.
 

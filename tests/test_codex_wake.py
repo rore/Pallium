@@ -3615,7 +3615,8 @@ def test_pending_and_expired_codex_work_rewakes_after_real_app_restart(
     monkeypatch.setattr(main, "start_claude_wake_reconciler", original_start)
     app_b = create_app(config)
     with TestClient(app_b, client=("127.0.0.1", 50000)) as http_b:
-        assert scheduled.wait(timeout=1)
+        # The app reports startup before its background recovery sweep completes.
+        assert scheduled.wait(timeout=5), f"restart recovery scheduled {len(wake_calls)}/2 wakes"
         assert len(wake_calls) == 2
         assert {
             call[0]["deliveries"][0]["delivery_id"] for call in wake_calls

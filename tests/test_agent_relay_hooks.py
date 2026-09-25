@@ -1677,6 +1677,8 @@ def test_configured_actor_hook_registers_and_delivers_across_git_containers(
     client, monkeypatch, tmp_path: Path, runtime: str, relative: str, codex: bool,
 ):
     """Relay delivery crosses containers and configured actor metadata."""
+    # This test drives an ordinary turn; native wake/trace workers have separate coverage.
+    monkeypatch.setattr("app.dependencies.schedule_claude_relay_wake", lambda *_args, **_kwargs: None)
     hook = _load(f"stable_actor_{runtime}", relative)
     repos = []
     for name, git_name in (("source", "Source Git Name"), ("target", "Target Git Name")):
