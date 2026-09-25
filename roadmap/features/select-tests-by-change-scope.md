@@ -1,7 +1,7 @@
 ---
 id: select-tests-by-change-scope
 title: Select validation by change scope
-status: blocked
+status: in-progress
 priority: high
 commitment: committed
 milestone: engineering-health
@@ -40,10 +40,10 @@ Application behavior changes, pruning regression tests, broad test-suite repairs
 
 ## Notes
 
-Lead-owned roadmap checkout: C:/Dev/rore/Pallium/.worktrees/select-tests-by-change-scope. Work Record: `.agent-workflow/tasks/select-tests-by-change-scope.md`. Existing `stabilize-test-health-and-ci-cost` remains a completed, narrower slice. This change does not claim regression elimination or repair unrelated red CI.
+Lead-owned roadmap checkout: C:/Dev/rore/Pallium/.worktrees/select-tests-by-change-scope. Work Record: `.agent-workflow/tasks/select-tests-by-change-scope.md`. Existing `stabilize-test-health-and-ci-cost` remains a completed, narrower slice. This change does not claim regression elimination; two test-isolation/synchronization defects discovered during rollout are repaired without changing application behavior.
 
 ## Verified implementation
-PR #248 contains the implementation and is awaiting merge. Local focused lane: 14 passed in 30.90 seconds; full non-slow suite: 5323 passed, 34 skipped, 2 xfailed in 319.18 seconds. The actual 26-path Agent Workflow update in PR #247 selects governance. Independent review findings were addressed. The roadmap remains blocked until required verification and merge; broader application-subsystem selection remains out of scope.
+PR #248 contains the implementation and is awaiting merge. Local focused lane: 14 passed in 30.90 seconds; full non-slow suite: 5323 passed, 34 skipped, 2 xfailed in 319.18 seconds. The actual 26-path Agent Workflow update in PR #247 selects governance. Independent review findings were addressed. The roadmap remains in progress until final verification and merge; broader application-subsystem selection remains out of scope.
 
-## Merge blocker
-Final PR #248 Linux CI failed in unchanged Relay cross-container delivery (relay_busy) and startup wake reconciliation (one-second callback wait). Windows full local validation passed, as did remote Windows smoke and workflow checks. The first failure has pre-change main evidence; the second remains undiagnosed. Scope selection and the aggregate gate behave correctly, but rollout is blocked until the Relay failures are understood and required Linux checks pass. No assertions, product behavior, or test coverage were weakened.
+## Final validation and delivery
+The initial Linux failures were traced to unrelated native-wake diagnostic activity in an ordinary-turn test and an asynchronous restart sweep tested against a one-second deadline. Controlled before/after probes support the two reviewed test-only fixes. Related hook/wake/trace and protected-contract checks: 153 passed, 2 skipped; Codex wake file: 139 passed. Exact delivery, identity, scope and ACK assertions are preserved. Final combined CI, merge, and installed-service verification remain before completion.
