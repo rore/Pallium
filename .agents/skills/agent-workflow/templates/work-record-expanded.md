@@ -44,7 +44,7 @@
 <!-- each completion criterion and significant risk → verification method -->
 
 **Plan review:**
-<!-- routine: self / elevated: clean-context agent review / high: human approver. Record the reference or note "self" for routine within expanded shape. -->
+<!-- routine: self; elevated/high: Agent technical review: <source ref>. High human plan review and approval remain separate. -->
 
 **Approvals:**
 <!-- Required at High risk. Recorded verbatim as `Approved by user <timestamp>: "<verbatim quote>"` per the local-mode human-approval decision. See `templates/checkpoints/plan-and-review.md` § "High-risk Approvals format". "—" or "Not required at this risk level" otherwise. -->
@@ -59,7 +59,8 @@
 <!--
 Implementation reference, Evidence reference, and Result review reference
 live in the prose around this marker block (typically under `## Implementation`,
-`## Evidence`, `## Result review` headings). The harness exposes them per
+`## Evidence`, `## Result review` headings). Elevated/High result review records
+Agent technical review, Reviewed revision, and Verification adequacy lines. The harness exposes them per
 SPEC.md §13.1; the marker block carries the planning + classification +
 decisional fields.
 -->
