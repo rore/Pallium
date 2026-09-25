@@ -53,7 +53,7 @@ Read [`templates/checkpoints/assess-risk.md`](templates/checkpoints/assess-risk.
 | `(Routine, Simple)` | Compact — fewer fields. Template: [`templates/work-record-routine.md`](templates/work-record-routine.md). |
 | Anything else | Expanded — full §9.4 field set. Template: [`templates/work-record-expanded.md`](templates/work-record-expanded.md). |
 
-Resolve `taskPath` with the slug. If it exists, parse it. On takeover/resume, confirm next action, constraints, and verification from the record, repo, and authoritative links; repair gaps before acting. If absent, copy the matching template. On parse failure, restore every field.
+Resolve `taskPath` with the slug. If it exists, parse it. On updates, verify the owning task/PR's live delivery state before migrating its record; preserve completed history and leave unknown status unresolved. On takeover/resume, confirm next action, constraints, and verification from the record, repo, and authoritative links; repair gaps before acting. If absent, copy the matching template. On parse failure, restore every field.
 
 Surrounding prose holds Implementation, Evidence, and Result-review references.
 

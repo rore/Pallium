@@ -3739,7 +3739,7 @@ _VERIFICATION_ADEQUACY_RE = re.compile(
 )
 _PLACEHOLDER_RE = re.compile(
     r"^(?:—|self\b|pending\b|todo\b|none\b|n/?a\b|"
-    r"approved by user\b|human\b|codeowner\b|label\b|<|\[)",
+    r"unknown\b|not provided\b|approved by user\b|human\b|codeowner\b|label\b|<|\[)",
     re.IGNORECASE,
 )
 _MARKDOWN_LINK_RE = re.compile(r"^(?:\[[^\]]+\]\([^)]+\)|<https?://[^>]+>)")
