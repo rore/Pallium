@@ -14,7 +14,7 @@
 **Verification plan:** Docs/governance/full and mixed/unknown triggers map conservatively -> selector table tests and real temporary Git CLI lifecycle tests, including rename/delete/untracked/Unicode/missing base. CI uses trusted PR merge-base/head, push before/head, full schedule and stable failing gate -> workflow contract tests. Governance changes run without importing application conftest -> subprocess focused run with --noconftest. Executable governance checker accepts valid and rejects invalid records -> focused CLI tests. Selector/CI changes -> full default suite once plus workflow check; record pre-existing failures separately without retries masking them.
 **Plan review:** Clean-context test_plan_review approved with constraints recorded below; adopted before implementation.
 **Approvals:** User requested planning and execution of testing strategy; no separate approval required at Elevated risk. CI changes are explicitly within this task, not incidental governance edits.
-**State:** Ready for review
+**State:** Blocked
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -38,3 +38,8 @@ Combined narrow lane on f545fbb1: 14 passed in 30.90 seconds, using --noconftest
 
 ## Delivery
 PR: https://github.com/rore/Pallium/pull/248. Implementation and independent review complete. Required remote status and review threads remain the merge gate; no branch-protection change or installed-service change is part of this PR.
+
+## Blocking verification
+Final Linux CI on 29366235 failed in unchanged Relay tests: Python 3.13 test_configured_actor_hook_registers_and_delivers_across_git_containers returned relay_busy; Python 3.12 test_pending_and_expired_codex_work_rewakes_after_real_app_restart missed scheduled.wait(timeout=1). Run: https://github.com/rore/Pallium/actions/runs/36142954202. The aggregate CI result correctly failed. Windows smoke and governance checks passed. The exact relay_busy failure also occurred on pre-change main eaf3f4bad in run 36052994547; the wake-timeout cause remains unproven.
+
+Bounded read-only diagnosis found per-test databases and real background activity; there is insufficient evidence to attribute either failure solely to cross-test interference. The hook test substitutes a transport that asserts every response is 200, while relay_busy is retryable. The wake test depends on real scheduling within one second. Do not serialize, lengthen deadlines, remove tests, or retry the full suite merely to obtain green. Next action: diagnose these Relay caller/reconciliation failure classes through their owning reliability work, then rerun the affected Linux checks before merge. This rollout remains a draft; no service install or merge occurred.
