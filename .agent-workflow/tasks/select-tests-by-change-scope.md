@@ -30,3 +30,8 @@ Full suite and combined workflow checks are lead-owned.
 Clean-context reviewer test_plan_review (gpt-6-sol, medium) approved after tightening governance scope and failure handling. Adopted: only explicitly supported governance paths qualify; runtime hooks/config and unknown paths stay full. CI uses a trusted base revision selector; missing/unreadable/error bootstrap selects full, and the aggregate gate rejects missing/failed required jobs. Selector/workflow/shared-config edits select full. Existing Redline and Agent Workflow jobs remain. Nightly forces Linux/Windows full and bounded slow smoke. No new dependencies or application startup in narrow tests.
 
 Implementation writes use deterministic scoped replacement after apply_patch failed with machine-local error 1385.
+## Result review
+Independent reviewer test_plan_review accepted revision f545fbb1 after two findings were fixed: an untested Redline reporter no longer qualifies for the narrow lane; focused CI installs the checker's existing PyYAML/jsonschema dependencies. No remaining concrete blocker. Lead reviewed the combined implementation and added actual Bash/Git selection lifecycle checks plus executable aggregate-gate tests.
+
+## Verification progress
+Combined narrow lane on f545fbb1: 14 passed in 30.90 seconds, using --noconftest -q -n 0 and no application fixtures. Import boundaries passed; final whole-change Agent Workflow checker exited 0 against updated main. PR #247's actual 26-path merge diff selects governance; this selector/CI rollout selects full. Full non-slow local run is in progress in build/full-validation.log; no full-pass claim yet. Main f31321cc was merged into this branch to include the concurrent Agent Workflow update.
