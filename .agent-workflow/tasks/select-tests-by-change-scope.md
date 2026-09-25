@@ -18,10 +18,13 @@
 <!-- agent-workflow:end -->
 
 ## Implementation
-2026-09-25: Initial discovery and risk assessment complete. Isolated checkout C:/Dev/rore/Pallium/.worktrees/select-tests-by-change-scope, branch feat/select-tests-by-change-scope. Lead owns roadmap updates here. Pending clean-context plan review before implementation.
+2026-09-25: Initial discovery and risk assessment complete. Isolated checkout C:/Dev/rore/Pallium/.worktrees/select-tests-by-change-scope, branch feat/select-tests-by-change-scope. Clean-context plan review approved before implementation. Implemented scripts/test-plan.py, tests/test_test_plan.py, and tests/test_agent_workflow_ci.py. Lead owns docs, roadmap, AGENTS.md, .github/workflows/ci.yml, and tests/test_ci_workflow.py. Selector scope remains docs/governance/full with no app imports; only exact checker copies and Markdown/manifest files in mirrored skill trees are eligible.
 
 ## Evidence
 Read-only risk review: test_policy_risk, Elevated/Moderate, no forbidden boundary or protected behavior test edits.
+Focused verification: `C:\Dev\rore\Pallium\.venv\Scripts\python.exe -m pytest --noconftest -q -n 0 tests\test_test_plan.py tests\test_agent_workflow_ci.py` — 5 passed.
+Real-diff replay: PR #247 merge-parent diff (26 paths) classified governance; source branch is already contained in main so the literal `main...feat/update-agent-workflow-upstream` range is empty.
+Full suite and combined workflow checks are lead-owned.
 
 ## Plan review
 Clean-context reviewer test_plan_review (gpt-6-sol, medium) approved after tightening governance scope and failure handling. Adopted: only explicitly supported governance paths qualify; runtime hooks/config and unknown paths stay full. CI uses a trusted base revision selector; missing/unreadable/error bootstrap selects full, and the aggregate gate rejects missing/failed required jobs. Selector/workflow/shared-config edits select full. Existing Redline and Agent Workflow jobs remain. Nightly forces Linux/Windows full and bounded slow smoke. No new dependencies or application startup in narrow tests.

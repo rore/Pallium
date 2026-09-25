@@ -3,13 +3,9 @@ name: CI
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - "docs/*.md"
-      - "docs/**/*.md"
-      - "roadmap/*.md"
-      - "roadmap/**/*.md"
   pull_request:
     branches: [main]
+  workflow_dispatch:
   schedule:
     # Nightly full run (incl. the full Windows matrix). Off-peak, off :00.
     - cron: "17 6 * * *"
@@ -19,8 +15,76 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Full suite on Ubuntu — every PR, push, and nightly. Gates PRs (~3 min).
+  select:
+    runs-on: ubuntu-latest
+    outputs:
+      lane: ${{ steps.plan.outputs.lane }}
+      selector_error: ${{ steps.plan.outputs.selector_error }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Select checks from trusted base policy
+        id: plan
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        shell: bash
+        run: |
+          lane=full
+          selector_error=false
+          if [[ "$EVENT" != schedule && "$EVENT" != workflow_dispatch ]]; then
+            trusted="$BASE"
+            if [[ "$EVENT" == pull_request ]]; then
+              trusted=$(git merge-base "$BASE" "$HEAD") || trusted=""
+            fi
+            # Missing history/policy (including rollout) safely keeps the full lane.
+            if [[ -n "$trusted" ]] && git show "$trusted:scripts/test-plan.py" > "$RUNNER_TEMP/trusted-test-plan.py"; then
+              if python "$RUNNER_TEMP/trusted-test-plan.py" --repo-root "$GITHUB_WORKSPACE" --base "$trusted" --head "$HEAD" --exact > "$RUNNER_TEMP/test-plan.json"; then
+                if ! lane=$(python -c 'import json,sys; p=json.load(open(sys.argv[1])); lane=p["lane"]; assert lane in ("docs","governance","full"); print(lane)' "$RUNNER_TEMP/test-plan.json"); then
+                  lane=full
+                  selector_error=true
+                fi
+              else
+                lane=full
+                selector_error=true
+              fi
+            fi
+          fi
+          echo "lane=$lane" >> "$GITHUB_OUTPUT"
+          echo "selector_error=$selector_error" >> "$GITHUB_OUTPUT"
+          echo "Validation lane: $lane; selector error: $selector_error" >> "$GITHUB_STEP_SUMMARY"
+
+  focused:
+    needs: select
+    if: needs.select.outputs.lane == 'docs' || needs.select.outputs.lane == 'governance'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(needs.select.outputs.lane == 'governance' && '["ubuntu-latest","windows-latest"]' || '["ubuntu-latest"]') }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install focused test dependencies
+        run: pip install "pytest>=8.3,<9" "pytest-xdist>=3.6,<4" pyyaml jsonschema
+      - name: Check documentation and selection contracts
+        if: needs.select.outputs.lane == 'docs'
+        run: python -m pytest --noconftest -q -n 0 tests/test_test_plan.py tests/test_ci_workflow.py --durations=20
+      - name: Check governance caller contracts
+        if: needs.select.outputs.lane == 'governance'
+        run: python -m pytest --noconftest -q -n 0 tests/test_test_plan.py tests/test_ci_workflow.py tests/test_agent_workflow_ci.py --durations=20
+
+  # Full application coverage for application/unknown changes and scheduled/manual runs.
   test:
+    needs: select
+    if: needs.select.outputs.lane == 'full'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -45,11 +109,13 @@ jobs:
       - name: Run tests
         run: python -m pytest tests/ -x -q --durations=20
 
-  # Fast Windows regression — every PR and push. Runs only the
+  # Fast Windows regression for full-lane PRs and pushes. Runs only the
   # Windows-sensitive hotspots (process mgmt, subprocess hooks, file I/O,
   # SQLite locking) so PRs get Windows signal without the ~20 min full suite.
   # The full Windows matrix runs in `windows-full` on push-to-main + nightly.
   windows-smoke:
+    needs: select
+    if: needs.select.outputs.lane == 'full'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -97,9 +163,10 @@ jobs:
           tests/test_config.py
           tests/test_runtime_logging.py
 
-  # Full Windows matrix — push-to-main and nightly only, never on PRs.
+  # Full Windows matrix for full-lane pushes, nightly and manual runs, never on PRs.
   windows-full:
-    if: github.event_name != 'pull_request'
+    needs: select
+    if: needs.select.outputs.lane == 'full' && github.event_name != 'pull_request'
     runs-on: windows-latest
     strategy:
       fail-fast: false
@@ -163,3 +230,38 @@ jobs:
           tests/test_thread_summary_accumulation.py
           tests/test_relay_load_smoke.py
           -m slow -n 0 -q --durations=20
+
+  result:
+    name: CI result
+    needs: [select, focused, test, windows-smoke, windows-full, nightly-slow-smoke]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every selected lane to succeed
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          python - <<'PY'
+          import json, os
+          jobs = json.loads(os.environ["RESULTS"])
+          selection = jobs["select"]
+          assert selection["result"] == "success", "test selection did not succeed"
+          outputs = selection.get("outputs", {})
+          assert outputs.get("selector_error") == "false", "trusted selector failed; full validation was requested"
+          lane = outputs.get("lane")
+          assert lane in {"docs", "governance", "full"}, "missing or invalid lane"
+          event = os.environ["EVENT"]
+          assert event not in {"schedule", "workflow_dispatch"} or lane == "full", "scheduled/manual runs must be full"
+          expected = {
+              "focused": lane != "full",
+              "test": lane == "full",
+              "windows-smoke": lane == "full",
+              "windows-full": lane == "full" and event != "pull_request",
+              "nightly-slow-smoke": event == "schedule",
+          }
+          for job, required in expected.items():
+              wanted = "success" if required else "skipped"
+              assert jobs[job]["result"] == wanted, f"{job}: expected {wanted}, got {jobs[job]['result']}"
+          print(f"All required {lane} checks succeeded")
+          PY
