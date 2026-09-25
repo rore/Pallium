@@ -12,10 +12,13 @@
 **Material assumptions:** Using SQLAlchemy URL parsing must match its own rendered URL on both supported versions; demonstrate in isolated2.1 install without changing live/shared dependencies. Preserve one decoded path and let pathlib encode the SQLite URI exactly once.
 **Plan:** First invoke Agent Workflow and establish this record/classification before edits. Review all _path callers and existing URL construction. Reuse SQLiteStorageProvider._sqlite_path, preserve sqlite:/// validation and refuse non-file databases, resolve the path, and use Path.as_uri for read-only sqlite3 connections. Use SQLAlchemy URL.create in installed URL construction if needed for literal reserved-character paths. Extend existing caller-level repair tests for rendered paths and reserved Unicode/percent/hash filenames; retain existing full repair lifecycle/refusal coverage. Obtain independent plan review, implement smallest compatible change, verify on2.0 and isolated2.1, then full required CI, review, merge, clean-clone sync and wrapper health checks.
 **Verification plan:** Rendered URL opens intended database -> existing repair E2E file under2.0 and isolated2.1; special characters remain literal and read-only -> caller-level temp-database checks including missing-file refusal; safety/lifecycle unchanged -> entire repair E2E file and protected Relay contracts; delivery -> PR CI, post-merge Windows matrix, installed health checks.
-**Plan review:** Pending clean-context review before edits.
+**Plan review:** Independent test_plan_review approved; see review below.
 **Approvals:** User directed continuing through completion; no separate approval required at Elevated risk.
-**State:** Blocked or returned to planning
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Context
 Follow-up to PR #248 and roadmap/features/select-tests-by-change-scope.md. The test strategy is merged; this repair addresses the concrete post-merge Windows blocker. Lead owns canonical roadmap completion in C:/Dev/rore/Pallium. No live database repair is authorized or needed.
+
+## Plan review
+Independent test_plan_review approved the existing-parser plus Path.as_uri approach, retaining strict prefix/file validation and the same resolved path for installed-home comparison and manifest identity. URL.create covers literal percent/hash/Unicode paths; verify physical engine path and manifest identity under isolated2.1. Existing storage schema validation already uses Path.as_uri. Overall Elevated risk remains appropriate.
