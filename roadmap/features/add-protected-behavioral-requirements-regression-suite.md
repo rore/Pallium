@@ -26,11 +26,12 @@ for that contract, not authority to redefine it.
 
 Keep the authoritative surface small:
 
-- `tests/behavior_contracts/README.md` is a plain Markdown catalog. Each entry names
-  the accepted behavior, authoritative source, original failure class, protected
-  test, public surface, and observable outcome.
+- `tests/behavior_contracts/README.md` states qualification, organization, and
+  collection rules; it does not duplicate a growing per-test inventory.
 - `tests/behavior_contracts/test_*.py` contains dedicated black-box regressions and
-  contract-local fixtures. Do not protect today's broad mixed-purpose test files.
+  contract-local fixtures. Each test keeps its accepted source and failure class
+  in its docstring, beside the public-surface assertion. Do not protect today's
+  broad mixed-purpose test files.
 - existing PR job `test` runs all of `tests/`, including this directory, and is the
   named verification. It is intentionally not a branch-required status.
 - the combined Redline/Agent Workflow harness runs on every PR and checks protected
@@ -86,14 +87,15 @@ protected automatically.
 
 These are candidates, not automatically accepted contract files. Each must pass the
 qualification rule independently. The first accepted protected contract is the narrower
-RW-022 busy Codex single-flight behavior, added with its catalog and verified fault
-witness in PR #242. The task owner selected it on 2026-09-24; other candidates
-remain unprotected until they independently qualify.
+RW-022 busy Codex single-flight behavior, added with a verified fault witness
+in PR #242. The task owner selected it on 2026-09-24. Further accepted
+behaviors enter only after they independently meet the qualification rule.
 
 ## Activation Sequence
 
-1. In a dedicated contract-test PR, select the smallest valuable candidate, add its
-   catalog entry and public-surface regression, and prove the original-failure witness.
+1. In a dedicated contract-test PR, select accepted candidates, add dedicated
+   public-surface regressions with test-local provenance, and prove each
+   original-failure or controlled-fault witness.
 2. Confirm existing CI job `test` still runs the protected directory on PRs and the
    combined Redline/Agent Workflow harness runs on PRs. These checks may fail visibly,
    but no branch-required status or GitHub merge block is claimed.
@@ -125,8 +127,9 @@ remain unprotected until they independently qualify.
 
 ## Done When
 
-1. The dedicated directory contains the catalog and selected public-surface regressions,
-   each with a verified original-failure witness.
+1. The dedicated directory contains selection rules and selected public-surface
+   regressions with test-local provenance, each with a verified historical or
+   controlled-fault failure witness.
 2. Existing CI job `test` and the combined Redline/Agent Workflow harness execute on
    PRs, and affected Work Records link the `test` verification identifier. Neither job
    is claimed as branch-required or merge-enforced.
@@ -139,5 +142,6 @@ remain unprotected until they independently qualify.
 ## Notes
 
 Sequence immediately after urgent wake reliability. Expand only from accepted product
-behavior whose external contract and original failure are known. The first slice should
-protect the smallest valuable subset, not all five candidates at once.
+behavior whose external contract and failure class are known. The first slice
+protected RW-022; later slices grow by distinct, independently verified
+requirements without a hand-maintained catalog.

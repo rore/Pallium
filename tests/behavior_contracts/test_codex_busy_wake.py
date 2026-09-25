@@ -43,6 +43,15 @@ def isolate_codex_wake(monkeypatch):
 def test_busy_queue_recovery_stays_single_flight_and_competing_hook_blocks_overtaken_wake(
     client, monkeypatch, tmp_path, capsys, isolate_codex_wake,
 ) -> None:
+    """RW-022: accepted busy Codex wakes stay single-flight.
+
+    Source: roadmap/features/add-wake-first-relay-delivery.md. Original incident:
+    at least fourteen accepted native submissions and thirty empty task starts.
+    This HTTP send/status and Codex hook regression observes one queue submission
+    plus one emitted/ACKed delivery. Releasing the reservation after submission
+    reproduces six calls and fails the test. It does not promise wake for unloaded
+    tasks or native admission of a queued turn.
+    """
     from app.dependencies import recover_expired_relay_wakes
     from core.claude_wake import ClaudeWakeRegistry
     from integrations.codex.hooks import user_prompt_submit as hook
