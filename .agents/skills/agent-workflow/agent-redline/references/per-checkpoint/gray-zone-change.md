@@ -10,9 +10,9 @@ Right behavior when you touch gray:
 
 - Proceed cautiously for *this* PR.
 - Surface the gray-zone touch in the PR description.
-- Suggest a policy update to classify the path explicitly — promote it to `red` (structural surface), `blue` (autonomous), or add it to `watch` (visible but not gating).
+- When evidence supports it, propose a narrow `red` or `blue` classification, or an additive `watch` tag, for future work. Batch nonurgent suggestions; policy edits need human approval.
 
-If you find yourself working in the same gray path repeatedly, the policy is incomplete. Don't keep working it as gray; classify it.
+If the same gray path recurs, use new evidence to propose a narrow correction for future tasks; do not repeat a rejected proposal without new evidence. This task keeps its current floor and checkpoints.
 
 ## Watch means "explicitly tagged for visibility"
 
@@ -28,4 +28,4 @@ When you touch a `watch` path, no checkpoint fires (unless the path is also red)
 
 ## Don't escalate either to red unilaterally
 
-Neither gray-zone code nor `watch`-tagged code requires a checkpoint by itself. If a specific change feels risky enough to deserve human attention, that's a signal about the *path* (it should be red), not about *this PR* (treat it as red ad-hoc). Surface the suggestion; don't reclassify mid-task.
+Neither gray-zone code nor a `watch` tag triggers a Redline checkpoint by itself. If new danger emerges, raise this task's Risk immediately and seek its required review; do not invent a policy checkpoint. Propose an evidence-backed zone change separately with human approval; this task keeps its original floor and checkpoints even after approval.
