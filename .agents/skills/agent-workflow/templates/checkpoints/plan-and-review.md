@@ -23,8 +23,10 @@ Self-review is sufficient; no Plan review field on compact.
 | Risk | Review requirement |
 |---|---|
 | **Routine** | Self-review. No Plan review field on compact. |
-| **Elevated** | **Clean-context agent review required.** Spawn a fresh subagent per the canonical mechanism in [`../../operating-mode.md`](../../operating-mode.md) §"Clean-context delegation" (Task/Agent tool with a read-only agent type, or a fresh session when the harness has no subagent primitive). Subagent reads only the Work Record + SPEC + relevant source files. Review prose lands under `## Plan review` in the same Work Record; the marker-block field references it. The reviewer SHOULD probe one assumption or decision at a time rather than producing a holistic summary — serial questioning surfaces weaknesses that a single-pass read glosses over. |
+| **Elevated** | Clean-context agent review required. Use operating-mode §Clean-context delegation; probe material uncertainty and record the result under Plan review in the Work Record. |
 | **High** | Clean-context review **plus** human approval. Stop, present the plan + clean-context summary to the human, refuse to advance until approved. Record the approval **verbatim** in Approvals (see below). |
+
+Use the least costly reviewer capable of the consequence; preserve required independent, human, and specialist review and user-selected settings. Reuse valid review unless material scope, assumptions, approach, or risk changes.
 
 **Predicates:**
 - `approval.elevated_clean_context_review_present` — blocks when the field is empty/`—`/`self` AND no `## Plan review` section exists.

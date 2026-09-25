@@ -111,13 +111,11 @@ When the subagent finishes, sanity-check the Work Record. If the subagent update
 
 ### Clean-context delegation
 
-Some checkpoints (Elevated Plan review, High-risk approval prep, pre-edit Risk classification when redline isn't pre-integrated) require a **clean-context subagent** — one with no context from the current planning conversation. Canonical mechanism:
+Elevated/High plan reviews require clean context. Pre-edit risk classification uses deterministic Redline rules and judgment directly when clear; use a separate classifier only for material uncertainty.
 
-- **In Claude Code / harnesses with a Task/Agent primitive:** spawn a subagent (e.g., `Task` tool, `subagent_type: "Explore"` for read-only review, or a custom agent type). Pass the Work Record path + relevant source paths + SPEC reference + the question. Do not paraphrase the Work Record into the prompt — point at the file so the subagent reads it fresh.
-- **In harnesses without a subagent primitive:** open a fresh session and provide the same inputs (Work Record file, SPEC reference, source links). The fresh session IS the clean context.
+With a Task/Agent primitive, spawn a read-only agent with the Work Record path, SPEC reference, and relevant source paths; do not paraphrase the record. Otherwise use a fresh session with the same references. Put review prose under a Plan review heading in the Work Record and reference it in the marker field.
 
-The subagent's review prose lands under a `## Plan review` heading in the Work Record. The marker-block `Plan review:` field references that section (or the session id).
-
+Choose the least costly capable reviewer for the consequence; preserve independent/human/specialist requirements and user-selected settings. Reuse valid review unless scope, assumptions, approach, or risk materially change.
 ## Step 7 — Resolve review threads before merge
 
 CI green is not "ready to merge." Before invoking the merge:

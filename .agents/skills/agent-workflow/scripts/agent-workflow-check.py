@@ -3155,18 +3155,31 @@ def risk_declared_not_below_detected(ctx: CheckerContext) -> PredicateResult:
         )
     declared = ctx.record["risk"].strip()
     detected = ctx.redline_verdict.detected_risk()
+    provisional_gray = (
+        detected == "Elevated"
+        and bool(ctx.redline_verdict.zones.get("gray"))
+        and not ctx.redline_verdict.zones.get("red")
+        and not ctx.redline_verdict.checkpoints
+        and not ctx.redline_verdict.runtime_config_changed
+    )
+    basis = ""
+    if detected == "Elevated":
+        basis = (
+            " (provisional: unclassified gray paths)"
+            if provisional_gray else " (red, checkpoint, or operational signal)"
+        )
     if risk_at_least(declared, detected):
         return PredicateResult(
             name="risk.declared_not_below_detected",
             passed=True,
-            detail=f"declared {declared!r} >= detected {detected!r}.",
+            detail=f"declared {declared!r} >= detected {detected!r}{basis}.",
             blocking=True,
         )
     return PredicateResult(
         name="risk.declared_not_below_detected",
         passed=False,
         detail=(
-            f"declared {declared!r} is below detected {detected!r}; "
+            f"declared {declared!r} is below detected {detected!r}{basis}; "
             f"raise the Work Record's Risk to at least {detected!r}."
         ),
         blocking=True,

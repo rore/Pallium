@@ -15,7 +15,7 @@ Generated <date>.
 | Runtime settings | `.claude/settings.json`, `.codex/hooks.json` | Merged without removing third-party hooks; Codex project trust required |
 | Suppression markers | `.agent-redline/suppressions.yaml` | Default exemptions: `**/tests/**` |
 | Root AGENTS.md reference section | `AGENTS.md` | <owned marker created/reconciled; other instruction files preserved> |
-| Per-checkpoint docs (agent-workflow) | `docs/agent-workflow/` | establish-context, assess-risk, verify |
+| Per-checkpoint docs (agent-workflow) | `.claude/skills/agent-workflow/templates/checkpoints/`; `.agents/skills/agent-workflow/templates/checkpoints/` | Installed skill package |
 | Per-checkpoint docs (redline) | `docs/agent-redline/skills/` | blue-zone, red-zone, gray-zone, boundary-violation, pr-discipline |
 | Work Record skeleton | `.agent-workflow/tasks/README.md` | Explains the `{slug}.md` convention |
 | OpenCode plugin | `.opencode/plugins/agent-workflow.mjs` | Stable OpenCode 1.x seed + structured-mutation guard; OpenCode 2 beta excluded |
