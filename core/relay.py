@@ -390,17 +390,23 @@ class RelayService:
             raise RelayUnavailableError(
                 "relay work associations are not supported by configured storage"
             )
-        counts = operation(work_refs=keys)
+        current = datetime.now(timezone.utc)
+        counts = operation(work_refs=keys, now=current, recent_seconds=RELAY_RECENT_SECONDS)
+        rows = []
+        for item in normalized:
+            total, recent = counts.get(item["work_ref"], (0, 0))
+            rows.append({
+                "scope_ref": item["scope_ref"],
+                "local_ref": item["local_ref"],
+                "participant_count": total,
+                "recent_participant_count": recent,
+                "dormant_participant_count": total - recent,
+            })
         return {
             "contract": "relay-work-ref-counts/v1",
-            "counts": [
-                {
-                    "scope_ref": item["scope_ref"],
-                    "local_ref": item["local_ref"],
-                    "participant_count": counts.get(item["work_ref"], 0),
-                }
-                for item in normalized
-            ],
+            "as_of": current,
+            "recent_seconds": RELAY_RECENT_SECONDS,
+            "counts": rows,
         }
 
     def work_ref_participants(
@@ -439,15 +445,20 @@ class RelayService:
             raise RelayUnavailableError(
                 "relay work associations are not supported by configured storage"
             )
+        current = datetime.now(timezone.utc)
         participants = operation(
             work_ref=readable["work_ref"],
             include_closed=include_closed,
             container_ref=container,
             offset=offset,
             limit=limit,
+            now=current,
+            recent_seconds=RELAY_RECENT_SECONDS,
         )
         return {
             "contract": "relay-session-work-associations/v1",
+            "as_of": current,
+            "recent_seconds": RELAY_RECENT_SECONDS,
             **readable,
             "history_guidance": self._work_ref_guidance(readable["work_ref"]),
             "participants": participants,

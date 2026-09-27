@@ -1017,15 +1017,21 @@ class RelayWorkRefCountsRequest(BaseModel):
 
 class RelayWorkRefCountResponse(RelayWorkRefCountReference):
     participant_count: int = Field(ge=0)
+    recent_participant_count: int = Field(ge=0)
+    dormant_participant_count: int = Field(ge=0)
 
 
 class RelayWorkRefCountsResponse(BaseModel):
     contract: Literal["relay-work-ref-counts/v1"]
+    as_of: datetime
+    recent_seconds: int = Field(gt=0)
     counts: list[RelayWorkRefCountResponse]
 
 
 class RelayWorkRefParticipantsResponse(BaseModel):
     contract: Literal["relay-session-work-associations/v1"]
+    as_of: datetime
+    recent_seconds: int = Field(gt=0)
     work_ref: str
     scope_ref: str | None = None
     local_ref: str | None = None

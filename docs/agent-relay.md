@@ -106,7 +106,7 @@ structural references discovered from its branch and Agent Workflow record. Use
 `pallium_relay_attach_work_ref(scope_ref, local_ref)` and
 `pallium_relay_detach_work_ref(scope_ref, local_ref)` for the current session.
 `pallium_relay_work_refs()` reads the current snapshot, and
-`pallium_relay_participants(scope_ref, local_ref)` finds every active participant
+`pallium_relay_participants(scope_ref, local_ref)` finds every nonclosed participant
 for one exact reference; pass `include_closed=true` only when closed sessions matter.
 
 For board-style reads, `POST /relay/work-refs/participant-counts` accepts an
@@ -119,6 +119,17 @@ unreachable sessions remain attached participants. Invalid, duplicate, empty,
 or over-limit input returns 422. A failed read returns an error, not zero or a
 partial result. The batch read does not enumerate a scope, disclose sessions,
 or change Relay state; use the single-reference participants read for detail.
+
+Each counts row also includes `recent_participant_count` and
+`dormant_participant_count`; their sum equals `participant_count`. Batch and
+detail responses include one UTC `as_of` classification time and
+`recent_seconds=86400`. A nonclosed endpoint is recent when its `last_seen_at`
+is at or after `as_of - recent_seconds`, otherwise dormant, including
+unreachable endpoints. Detail retains its separate destination `state` and
+`lifecycle`; closed detail remains opt-in and is never counted. Reads neither
+refresh last-seen nor remove old associations. Recent means seen recently,
+not working now. Different responses may observe clock or registry changes;
+`as_of` does not promise a cross-request snapshot.
 
 Normal inputs are a readable `scope_ref` and `local_ref`. Pallium returns their
 fixed-length `work:v1:<sha256>` exact key for advanced lookup and exact Session
@@ -135,6 +146,15 @@ Future hook turns capture the then-current bounded snapshot into immutable Histo
 metadata; detaching later never relabels older turns. If caller or structural refs
 already fill History's five-reference cap, hook output reports which registry refs
 were omitted rather than claiming they are searchable.
+
+Registry membership does not guarantee History coverage: attaching does not
+backfill older turns, snapshot lookup can fail, and the five-reference cap can
+omit a reference. Alias reassignment leaves captured History on the original
+exact session. Explicit detach removes only that origin, not structural origins
+or captured turns; structural removal needs a producer refresh. Existing source
+forget is a separate explicitly authorized, soft and auditable retrieval
+suppression, not hard deletion or automatic inactivity cleanup. Its scoped form
+affects existing turns, not future ingests; hard deletion follows retention policy.
 
 ## Replies
 
