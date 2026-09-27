@@ -846,23 +846,31 @@ def _read_session_state(session_id: str) -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None
 
 
-def _acquire_session_lock(session_id: str):
+def _acquire_file_lock(lock_path: Path, wait_budget: float):
+    if wait_budget <= 0:
+        return None
+    deadline = time.monotonic() + wait_budget
+    lock_file = None
     try:
-        SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
-        lock_file = open(SESSIONS_DIR / f"{session_id}.lock", "a+b")
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        lock_file = open(lock_path, "a+b")
         lock_file.seek(0, os.SEEK_END)
         if lock_file.tell() == 0:
             lock_file.write(b"0")
             lock_file.flush()
-        wait_budget = min(0.1, remaining_safe_time())
         if wait_budget <= 0:
             lock_file.close()
             return None
-        deadline = time.monotonic() + wait_budget
         while True:
+            if time.monotonic() >= deadline:
+                try:
+                    lock_file.close()
+                except OSError:
+                    pass
+                return None
             try:
                 lock_file.seek(0)
-                if os.name == "nt":
+                if sys.platform == "win32":
                     import msvcrt
                     msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
                 else:
@@ -877,13 +885,18 @@ def _acquire_session_lock(session_id: str):
                     return None
                 time.sleep(min(0.01, max(0.0, deadline - time.monotonic())))
     except OSError:
+        if lock_file is not None:
+            try:
+                lock_file.close()
+            except OSError:
+                pass
         return None
 
 
-def _release_session_lock(lock_file) -> None:
+def _release_file_lock(lock_file) -> None:
     try:
         lock_file.seek(0)
-        if os.name == "nt":
+        if sys.platform == "win32":
             import msvcrt
             msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
         else:
@@ -893,6 +906,17 @@ def _release_session_lock(lock_file) -> None:
         pass
     finally:
         lock_file.close()
+
+
+def _acquire_session_lock(session_id: str):
+    return _acquire_file_lock(
+        SESSIONS_DIR / f"{session_id}.lock",
+        min(0.1, remaining_safe_time()),
+    )
+
+
+def _release_session_lock(lock_file) -> None:
+    _release_file_lock(lock_file)
 
 
 def _update_session_state(
@@ -1321,7 +1345,6 @@ def _write_wake_intent(payload: dict[str, object]) -> bool:
     )
     if "actor_ref" in payload or not all(isinstance(value, str) for value in identity):
         return False
-    temporary: Path | None = None
     try:
         CLAUDE_WAKE_INTENTS_DIR.mkdir(parents=True, exist_ok=True)
         if os.name != "nt":
@@ -1331,21 +1354,30 @@ def _write_wake_intent(payload: dict[str, object]) -> bool:
             except OSError:
                 pass
         target = _wake_intent_path(*identity)
+        lock_file = _acquire_file_lock(
+            target.with_suffix(".lock"), min(0.1, remaining_safe_time())
+        )
+        if lock_file is None:
+            return False
         temporary = target.with_name(target.name + ".tmp")
-        temporary.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
-        if os.name != "nt":
-            try:
-                os.chmod(temporary, 0o600)
-            except OSError:
-                pass
-        os.replace(temporary, target)
-        return True
-    except (OSError, TypeError, ValueError):
-        if temporary is not None:
+        try:
+            temporary.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
+            if os.name != "nt":
+                try:
+                    os.chmod(temporary, 0o600)
+                except OSError:
+                    pass
+            os.replace(temporary, target)
+            return True
+        except (OSError, TypeError, ValueError):
             try:
                 temporary.unlink(missing_ok=True)
             except OSError:
                 pass
+            return False
+        finally:
+            _release_file_lock(lock_file)
+    except (OSError, TypeError, ValueError):
         return False
 
 
