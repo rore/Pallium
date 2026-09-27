@@ -19,7 +19,7 @@
 - When a publisher process exits/crashes, lock ownership releases and next publication/registration succeeds -> subprocess real-lock lifecycle check on Windows and POSIX; Unicode and distinct exact-scope contenders use independent sidecars. Interleaving barriers release the owner before the real 100ms contender deadline; never synchronously publish under an owned lock or use frozen registry clocks for OS wait budgets.
 - Existing delayed-ID, inflight, close/outage and legacy fencing remain unchanged -> affected durability/dispatch/integration/registration/deadline files and selector-selected full non-slow suite once; fresh import boundaries, independent smart review and Linux/Windows CI.
 - Historical restart behavior remains valid -> existing test_expired_claim_rewakes_once_after_real_app_restart unchanged, no artificial reconciler shutdown; report and diagnose any failure separately without claiming this race proves its cause.
-**Plan review:** Pending clean-context technical review of a concrete plan.
+**Plan review:** Agent technical review: /root/intent_race_plan_review, independent clean-context gpt-6-sol high, approved 08476327c3d9a5c7c9b9843b41868d108737ab86 with all three refinements resolved; see Plan review below. Separate human plan consent remains pending.
 **Approvals:** Pending separate review of the concrete High-risk plan through the designated manager; do not ask duplicate questions or treat broad authorization as an unseen plan review.
 **Exceptions:** —
 **State:** Blocked
@@ -33,6 +33,14 @@ Branch feat/claude-intent-race, managed isolated checkout C:\Users\I347041\.code
 
 ## Evidence
 
+Lock identity convention: both standalone publisher and service derive the sidecar as exact scoped intent_path.with_suffix('.lock'). Lock files are persistent and carry no credentials. This is one protocol duplicated only across the required standalone packaging boundary, not separate locks with different identities.
+
 Read-only Sol diagnosis /root/busy_wake_ci_diagnosis ran one isolated temp-only probe using real ClaudeWakeRegistry and hook _write_wake_intent. It intercepted Path.unlink after old intent validation, published newer busy intent with normal os.replace, then allowed old unlink. Observed old registration True, new publication True, newer intent survived False, newer registration False, registry retained stale idle. Reproducible code sent to minimap-manager in relay-msg-1b70f5561add415e8c0aff7ae46a48f2. This proves the production race, not the historical full-suite failure cause.
 
 Fresh base import-boundary report contains no violations. Whole intended scope is non-exempt because it includes runtime and hook paths; ordinary documentation exemption does not apply. Next: inspect existing cross-process lock/publication helpers and every intent-delete caller, propose the smallest correct bounded synchronization, get independent review and route any genuinely required exact plan consent through one manager.
+
+## Plan review
+
+2026-09-27 independent clean-context Sol high /root/intent_race_plan_review approves concrete plan at 08476327c3d9a5c7c9b9843b41868d108737ab86, High/Moderate appropriate, no remaining technical blockers. Reviewer inspected registry/publisher/callers, HTTP/reconciler/installation, relevant durability/deadline/dispatch tests and workflow/risk references. Resolved findings: one non-reentrant OS lock acquisition through close/private-helper lifetime; publisher cleanup before release and HTTP after release; precommit rejection versus unchanged postcommit unlink/fencing semantics; actual create_app/Relay-observable E2E and real subprocess OS lock lifetime. Identical stable intent-derived sidecar, real monotonic budget and unchanged legacy/inflight behavior are implementation obligations. Scoped recovery continues before legacy unlink, so no extra scoped cleanup path is invented. Reviewer performed no edits/tests/probe reruns. This is technical review only, not human consent or implementation evidence.
+
+Recovery: source remains unchanged; only planning record differs from base. Managers accepted continuation, runtime fix owner pall-arc. Next action is route this exact reviewed plan through pallium-manager as sole runtime-plan requester, obtain or forward exact required task-owner consent, record it, validate Ready to implement, then delegate bounded implementation. Minimap manager retains combined delivery; participant PR253 remains separate and blocked. Do not treat pending Relay transport as acceptance or request duplicate approvals.
