@@ -42,7 +42,7 @@ When implementation is coherent, protected existing delivery/retry behavior rema
 
 **Exceptions:** None
 
-**State:** Blocked
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -73,4 +73,4 @@ Final gate: fresh workflow check detected the contract-class High floor from api
 
 Separate private host observation outcome: ordinary disposable initialization was rejected before any observed Python-child startup; no new turn or settings change was witnessed and temporary configuration was restored. Manager accepted this finite inconclusive setup result with no retry. Actual host lifecycle remains unresolved; this PR presents only the validated inert foundation for separate human result/API review. No private instrumentation or configuration is included in the diff.
 
-Publication checkpoint: the sanitized draft PR body is prepared locally. Automatic approval review rejected the branch push/draft-PR command before execution because exact payload/destination publication authority was not present in a trusted user message. No branch was pushed, PR created, CI started, label applied, merge or rollout attempted. State is Blocked for explicit user approval to publish this inert-only branch to `https://github.com/rore/Pallium`; human result/API review remains a later separate gate. Do not route the rejected write through another tool or session. Next action after that exact approval: push `feat/codex-mcp-bridge`, create/attach the draft PR, inspect CI and present the concrete result for review. Source/test hashes and validated behavior are unchanged.
+Historical publication checkpoint: automatic approval review rejected publication before execution; a second relayed approval also failed. Neither rejected command was rerouted. After the user directly approved publication in this task, `feat/codex-mcp-bridge` was pushed and [draft PR #252](https://github.com/rore/Pallium/pull/252) created/attached. Publication approval is not human result/API review, and no label, merge or rollout is claimed. CI is tracked on the PR, the authoritative result surface. Source/test hashes and validated behavior are unchanged. Next action: inspect PR checks and findings, then obtain separate human result/API review before merge/release. Actual-host qualification still needs a supported initialization entrypoint; no further live attempt is authorized by this publication checkpoint.
