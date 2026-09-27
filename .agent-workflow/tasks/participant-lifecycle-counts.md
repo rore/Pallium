@@ -73,9 +73,11 @@ Authoritative CLI output forwarded in relay-msg-07b8de7f617d41019fd02420231d202e
 - local_ref: item:v1:distinguish-recent-dormant-participants
 - work_ref: work:v1:7e384e1e66782b48c1a7622d977c8b5b0f25f4cddd29201d7fa63d7ddcfcd935
 
-Owner-managed canonical file: C:\Dev\rore\minimap\roadmap\features\distinguish-recent-dormant-participants.md, Minimap-dev sole writer. No roadmap edit here. Own successful Relay work-ref list on 2026-09-27 showed three existing explicit references and this pair absent. Capacity prevents attachment; skipped without mutation or eviction. Therefore this task claims no successful own-session association, participant evidence, or automatic History capture for the canonical pair. The exact key is known and preserved, not reconstructed. Capacity limitation reported to the lead; it does not block implementation. No production code edited.
+Owner-managed canonical file: C:\Dev\rore\minimap\roadmap\features\distinguish-recent-dormant-participants.md, Minimap-dev sole writer. No roadmap edit here. Own successful Relay work-ref list on 2026-09-27 showed three existing explicit references and this pair absent. Capacity prevents attachment; skipped without mutation or eviction. Therefore this task claims no successful own-session association, participant evidence, or automatic History capture for the canonical pair. The exact key is known and preserved, not reconstructed. Capacity limitation reported to the lead; it does not block implementation. At that pre-implementation checkpoint on 2026-09-27, no production code had been edited.
 
-## Aligned contract and remaining gate
+## Historical alignment and approval gate
+
+This pre-approval checkpoint is superseded by the direct user consent recorded in Approvals and the implementation transition above; it does not describe a current approval blocker.
 
 Lead alignment relay-reply-6414464a12be5356a5c7223bdb682bf0bca2fd969412480261b567a4347f77fc confirms the exact proposed fields, unchanged v1 total, shared inclusive 86400-second cutoff, as_of/recent_seconds metadata and detail semantics. No Minimap mutation endpoint or larger History subsystem. No material scope or approach change; valid technical review is reused.
 
