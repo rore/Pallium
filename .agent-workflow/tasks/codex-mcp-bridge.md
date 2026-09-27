@@ -42,7 +42,7 @@ When implementation is coherent, protected existing delivery/retry behavior rema
 
 **Exceptions:** None
 
-**State:** Ready for review
+**State:** Blocked
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -72,3 +72,5 @@ Verification adequacy: sufficient for the inert slice: actual stdio failure/conc
 Final gate: fresh workflow check detected the contract-class High floor from api-review. Root corrected its prior risk misclassification; no policy, source, baseline or review evidence was weakened. Independent review conditions are discharged by passing checks, confirmed by manager. Separate human result review remains pending before merge/release. Manager verified that this result gate does not prohibit already-authorized pre-review validation. Live qualification belongs only to the separate private umbrella phase, not this inert implementation's immutable baseline. No live setup is part of this diff. Skill-feedback Trigger 2 dropped: this is root's risk-mapping error, not an upstream instruction defect.
 
 Separate private host observation outcome: ordinary disposable initialization was rejected before any observed Python-child startup; no new turn or settings change was witnessed and temporary configuration was restored. Manager accepted this finite inconclusive setup result with no retry. Actual host lifecycle remains unresolved; this PR presents only the validated inert foundation for separate human result/API review. No private instrumentation or configuration is included in the diff.
+
+Publication checkpoint: the sanitized draft PR body is prepared locally. Automatic approval review rejected the branch push/draft-PR command before execution because exact payload/destination publication authority was not present in a trusted user message. No branch was pushed, PR created, CI started, label applied, merge or rollout attempted. State is Blocked for explicit user approval to publish this inert-only branch to `https://github.com/rore/Pallium`; human result/API review remains a later separate gate. Do not route the rejected write through another tool or session. Next action after that exact approval: push `feat/codex-mcp-bridge`, create/attach the draft PR, inspect CI and present the concrete result for review. Source/test hashes and validated behavior are unchanged.
