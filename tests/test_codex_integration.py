@@ -78,6 +78,25 @@ def test_optional_shadow_service_fault_keeps_normal_http_healthy(monkeypatch, re
         assert client.get("/status").status_code == 200
 
 
+def test_shadow_service_rejects_remote_drive_before_policy_stat(monkeypatch):
+    from app import codex_bridge_pipe
+
+    class RemoteDirectory:
+        anchor = "Z:\\"
+
+        def __truediv__(self, _name):
+            pytest.fail("remote policy path accessed")
+
+    monkeypatch.setattr(codex_bridge_pipe.sys, "platform", "win32")
+    monkeypatch.setattr(codex_bridge_pipe, "shadow_directory", RemoteDirectory)
+    monkeypatch.setattr(codex_bridge_pipe, "native_available", lambda: True)
+    monkeypatch.setattr(codex_bridge_pipe, "_native", lambda: SimpleNamespace(
+        file=SimpleNamespace(GetDriveType=lambda _root: 4),
+        con=SimpleNamespace(DRIVE_FIXED=3),
+    ))
+    assert codex_bridge_pipe.start_shadow_service(None) is None
+
+
 def test_codex_mcp_config_uses_python_module_launch_and_base_url(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

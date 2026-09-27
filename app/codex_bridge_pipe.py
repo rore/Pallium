@@ -704,7 +704,12 @@ def start_shadow_service(storage) -> ShadowService | None:
         return None
     try:
         directory = shadow_directory()
-        if not (directory / "policy.json").is_file() or not native_available():
+        if not native_available():
+            return None
+        w = _native()
+        if w.file.GetDriveType(directory.anchor) != w.con.DRIVE_FIXED:
+            return None
+        if not (directory / "policy.json").is_file():
             return None
         snapshot = getattr(storage, "relay_shadow_snapshot", None)
         if not callable(snapshot):

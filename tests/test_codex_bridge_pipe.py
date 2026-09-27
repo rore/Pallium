@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import json
+import asyncio
 import os
 import secrets
 import shutil
+import sqlite3
 import sys
 import threading
 import time
-from contextlib import contextmanager
+import tempfile
+from contextlib import closing, contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -20,6 +23,12 @@ from app import codex_bridge_pipe as bridge
 
 pytestmark = pytest.mark.slow
 native = pytest.mark.skipif(sys.platform != "win32", reason="Windows kernel pipe contract")
+
+
+@pytest.fixture
+def test_db_url(tmp_path_factory):
+    # Keep the HTTP fixture's SQLite lifetime out of the eagerly disposed policy directory.
+    return f"sqlite:///{tmp_path_factory.mktemp('shadow-http') / 'test.db'}"
 
 
 @pytest.fixture
@@ -505,3 +514,106 @@ def test_runtime_ancestor_foreign_delete_revokes_private_access_and_provision(tm
                                           None, None, original.GetSecurityDescriptorDacl(), None)
         assert bridge._read_private(w, directory / "policy.json", sid) == baseline
         assert not (directory / "new.lock").exists()
+
+
+@native
+@pytest.mark.asyncio
+async def test_stdio_mcp_native_sqlite_shadow_full_caller_lifecycle(client, tmp_path):
+    pytest.importorskip("mcp")
+    from mcp import ClientSession
+    from mcp.client.stdio import StdioServerParameters, stdio_client
+
+    scope = {"container_ref": "git:example.test/native-shadow"}
+    recipient = "recipient-β"
+    registered = client.post("/relay/turn", json={"runtime": "codex", "session_ref": recipient, **scope})
+    assert registered.status_code == 200, registered.text
+    endpoint = registered.json()["session"]
+    assert client.post("/relay/turn", json={"runtime": "claude-code", "session_ref": "sender", **scope}).status_code == 200
+    payload = "private payload must stay pending"
+    sent = client.post("/relay/messages", json={
+        "sender_runtime": "claude-code", "sender_session_ref": "sender",
+        "recipient": "codex:" + recipient, "payload": payload, **scope,
+    })
+    assert sent.status_code == 200, sent.text
+    message_id = sent.json()["message_id"]
+
+    def ordinary_read():
+        response = client.get("/relay/messages/" + message_id, params=scope)
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    storage = client.app.state.pallium_service._storage
+
+    def persisted_relay_state():
+        with closing(sqlite3.connect(storage._relay_engine.url.database)) as db:
+            tables = db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'relay_%'").fetchall()
+            return {table: sorted(db.execute('SELECT * FROM "' + table.replace('"', '""') + '"').fetchall(), key=repr)
+                    for (table,) in tables}
+
+    before = ordinary_read()
+    assert before["deliveries"][0]["state"] == "pending"
+    persisted = persisted_relay_state()
+    directory = provision(tmp_path, policy(
+        recipient_endpoint_id=endpoint["endpoint_id"], recipient_session_ref=recipient,
+        recipient_container_ref=scope["container_ref"], recipient_scope_generation=endpoint["scope_generation"],
+    ))
+    service = bridge.ShadowService(directory, storage.relay_shadow_snapshot)
+    assert service.start() is service
+    env = os.environ.copy()
+    env.update({
+        "PYTHONPATH": str(Path(__file__).resolve().parents[1]),
+        "PALLIUM_MCP_TRANSPORT": "stdio", "PALLIUM_AGENT_REF": "codex",
+        "PALLIUM_CODEX_BRIDGE_MODE": "shadow",
+        "PALLIUM_CODEX_SHADOW_BOOTSTRAP_FILE": str(directory / "active.json"),
+        "CODEX_APP_TOOLS_PIPE_PATH": "unused-desktop-presence-sentinel",
+        "PALLIUM_BASE_URL": "http://127.0.0.1:1", "PALLIUM_CONTAINER_REF": scope["container_ref"],
+    })
+    # Only the unrelated ordinary HTTP client is stubbed; all shadow components are real.
+    child = """from app.mcp import server
+class StatusClient:
+    def __init__(self, ctx): pass
+    async def get_status(self): return {"status": "healthy"}
+server.PalliumMcpClient = StatusClient
+server.main()
+"""
+    params = StdioServerParameters(command=sys.executable, args=["-c", child],
+                                   cwd=str(Path(__file__).resolve().parents[1]), env=env)
+    try:
+        wait_until(lambda: (directory / "active.json").exists() or service.stop_event.is_set())
+        assert not service.stop_event.is_set()
+        with tempfile.TemporaryFile(mode="w+t", encoding="utf-8") as errors:
+            async with stdio_client(params, errlog=errors) as (read, write):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+
+                    async def invoke(operation, metadata):
+                        response = await session.call_tool("pallium_codex_bridge_shadow_" + operation, {}, meta=metadata)
+                        assert not response.isError
+                        result = json.loads(response.content[0].text)
+                        assert set(result) <= {"mode", "status", "reason", "ttl_seconds"}
+                        assert payload not in repr(result) and str(directory) not in repr(result)
+                        return result
+
+                    enrolled = await invoke("enroll", {"threadId": "controller-α", "turnId": "turn-1"})
+                    assert enrolled["status"] == "enrolled", enrolled
+                    assert service.grant is not None
+                    shadow, normal = await asyncio.wait_for(asyncio.gather(
+                        invoke("status", {"threadId": "controller-α", "turnId": "turn-2"}),
+                        session.call_tool("pallium_status", {}),
+                    ), timeout=3)
+                    assert shadow["status"] == "held" and shadow["reason"] == "evidence-limited"
+                    assert not normal.isError and json.loads(normal.content[0].text) == {"status": "healthy"}
+                    wrong = await invoke("status", {"threadId": "other", "turnId": "turn-3"})
+                    assert wrong["reason"] == "wrong-controller"
+                    assert ordinary_read() == before
+            wait_until(lambda: service.grant is None)
+            errors.seek(0)
+            assert "unused-desktop-presence-sentinel" not in errors.read()
+        assert ordinary_read() == before
+        assert persisted_relay_state() == persisted
+    finally:
+        service.stop()
+        assert not service.thread.is_alive() and not service.unresolved
+        assert service.grant is None
+        client.app.state.pallium_service.close()
+        storage.close()
