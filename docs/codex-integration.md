@@ -298,6 +298,22 @@ Normal hook delivery is independent of this recovery path.
 
 ## Configuration
 
+### Optional Windows shadow observation (under review)
+
+This is a diagnostic development mode, not unloaded-session wake delivery.
+Ordinary setup leaves it off. An approved operator policy can be provisioned
+separately with:
+
+```text
+pallium setup codex --bridge-shadow-provision approved-policy.json --expected-policy-revision 0
+```
+
+This command changes only the protected shadow policy, not hooks, MCP configuration,
+model, effort or delivery behavior. A subsequent revision requires the exact previous
+revision. The [bridge design](designs/codex-mcp-desktop-bridge.md#shadow-only-implementation-contract)
+defines the one-pair authority and lifecycle. Do not enable it globally or interpret
+an enrolled/eligible status as delivered. Live activation remains separately gated.
+
 | Setting | Default | Override |
 |---------|---------|----------|
 | Service port | 19836 | `--port` on setup/install commands, or `PALLIUM_PORT` env var |

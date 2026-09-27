@@ -49,8 +49,14 @@ API-review: additive optional empty-argument shadow enroll/status tools only for
 
 ## Implementation
 
-Pre-edit: main and reuse checkout were clean; merged PR252 checkout is free of runtime ownership because integrations/service use the separate stable installed clone. Fresh branch from fetched origin/main 4d75328e; intended thirteen-path Redline classification includes API and persistence checkpoints, no boundary violation. Workflow applicability is normal (application change), not documentation exemption. No code edits yet.
+Pre-edit: main and reuse checkout were clean; merged PR252 checkout is free of runtime ownership because integrations/service use the separate stable installed clone. Fresh branch from fetched origin/main 4d75328e; intended thirteen-path Redline classification includes API and persistence checkpoints, no boundary violation. Workflow applicability is normal (application change), not documentation exemption. Record committed at ce9fa6ac before code. Six approved product paths implemented; native tests and coherent integration verification underway. apply_patch worked; no deterministic fallback needed.
+
+Development review corrected next-turn controller binding, native TokenUser tuple handling, and unresolved write-buffer retention. Reader corrections cover NULL expiry and terminal-history masking. Native reservation and Relay scope generations are different domains; existing traces do not correlate them. Actual anchored work remains held with an explicit evidence limit, accepted by manager; no writer/core scope expansion. This stage qualifies channel/enrollment/lifetime, not production wake eligibility.
+
+Native full-chain checks reject foreign ancestor replacement rights and foreign owners. Ordinary Windows C:\ root is owned by exact canonical TrustedInstaller SID; manager and independent reviewer approved that privileged OS SID for ancestor ownership only. No service-SID prefix/display-name trust, ACL modification or private-owner/peer widening. Fixed local drives only. Unexpected pending I/O failures now use the same cancel-or-retain ownership path; grant/UTC authority is rechecked after reads.
 
 ## Evidence
 
-Pending implementation verification.
+Initial focused evidence: MCP caller file 39 passed (17.53s); vocabulary alignment focused 45 passed/19 deselected (3.58s); separate provisioning CLI 7 passed/49 deselected (0.19s). Reader initial 15 passed; changed null-expiry/history cases and native Windows checks pending. Initial independent development review findings are being resolved before final review. Broader checks have not yet run on this change.
+
+Coherent subsystem checkpoint: MCP bridge, Codex integration, read-only snapshot and Codex wake files: 281 passed in 63.12s. Read-only file corrected: 19 passed. Native kernel suite 54 passed before final ancestor-owner hardening; final exact-SID/ancestor regression run pending. Optional service startup/shutdown faults keep HTTP health/status working: 2 passed (0.98s). Selector reports full lane across the complete thirteen-file union; full non-slow and final independent review remain pending. No live provisioning or activation occurred.

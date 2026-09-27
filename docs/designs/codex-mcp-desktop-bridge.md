@@ -1,6 +1,6 @@
 # Optional Codex MCP Desktop bridge
 
-Status: reviewed design; inert implementation validated locally, 2026-09-27.
+Status: inert implementation shipped; authenticated shadow implementation under review, 2026-09-28.
 No production wake implementation or activation approval.
 Canonical work: [wake-first Relay delivery](../../roadmap/features/add-wake-first-relay-delivery.md).
 Private experiment: `codex-desktop-bridge-spike` Work Record; its history is not publication-ready.
@@ -93,17 +93,18 @@ support inert observation, but cannot issue or validate production wake grants.
 Loopback origin alone is insufficient. An authenticated enrollment and instruction
 channel is a **prerequisite**, not an existing facility to reuse by assumption.
 
-For a later activation proposal, prefer a narrowly scoped, setup-issued local
-bridge credential over changing authentication for all Pallium APIs. Store it only
+The shadow implementation uses a user-private Windows named pipe and separately
+provisioned operator policy, not an HTTP bearer credential or new API authentication.
+Store that policy only
 in an operator-approved user-private location; do not place it in model arguments,
 tool output, logs, repository configuration, or the service's public read surfaces.
 Bind the channel to the configured service instance; reject redirects and remote
 destinations. Authenticated channel possession identifies an enrolled child, but
 does not prove a model-supplied controller ID or mint destination authority.
-Credential possession does not prove that a genuine Desktop child supplied the
-controller metadata. Origin binding and bootstrap remain unresolved prerequisites
-for authenticated shadow, alongside enrollment approval, credential provisioning/
-rotation, the supported local threat model, and platform protection. Same-user
+OS peer authentication does not independently attest Desktop origin. Shadow
+trusts the explicitly enrolled component to assert genuine current request metadata;
+it is not suitable for an untrusted client. Bootstrap and actual Desktop child
+lifetime remain unresolved qualification gates. Same-user
 malicious code and a compromised Desktop
 process are not isolated by a user-private credential. No custom crypto or general
 identity platform is proposed.
@@ -145,7 +146,7 @@ runtime or refresh authorization using historical request metadata. Backlog resc
 requires a new approved grant explicitly covering retained work; removing the
 spike's freshness guard is not authorization for that work.
 
-Use a dedicated bounded async task and separate HTTP/pipe resources, not the normal
+Use dedicated bounded daemon I/O workers and separate pipe resources, not the normal
 tool client's retry budget. Coalesce one notification per authorized destination;
 do not create an agent turn per delivery. Set explicit caps on enrolled grants,
 pending notifications, response bytes, native calls, reconnects, and time spent
@@ -218,7 +219,7 @@ remain intact. Revoke enrollment credentials/grants through their approved lifec
 never clear an uncertain fence merely to restore availability. No service/app restart
 or configuration change is part of this design task.
 
-The next deliverable is the reviewed **inert** slice, not automatic cold delivery.
+The current deliverable is authenticated **shadow observation**, not automatic cold delivery.
 Activation has three gates: authenticated grant enrollment, busy-safe owner
 admission, and qualified executor availability/bootstrap. If Desktop has no eligible
 live MCP child, the proposed adapter cannot wake a task; restart/unload/replacement
@@ -227,3 +228,52 @@ a competing runtime, manual task turn, or discarded fences. Until then report
 unavailable and retain pending messages, rather than promise universal cold wake.
 Publication, installation, and reliability completion remain separate from this
 design draft.
+
+## Shadow-only implementation contract
+
+The optional Windows mode adds two empty-argument MCP tools: enrollment and status.
+It requires local Codex stdio, explicit `PALLIUM_CODEX_BRIDGE_MODE=shadow`, inherited
+Desktop capability presence, a protected bootstrap file, and the required native
+APIs. Neither tool connects to Desktop. OFF, inert and HTTP behavior is unchanged.
+Ordinary setup does not enable shadow or forward the capability.
+
+An operator separately provisions one controller/recipient pair, its exact scope
+generation, action `shadow-only`, monotonically increasing policy revision, UTC
+expiry, and enabled/revoked flags. Provisioning does not edit Codex configuration.
+The policy and service bootstrap live under the user-private
+`PALLIUM_HOME/config/codex-shadow` directory (default `~/.pallium`). Native owner,
+protected DACL, non-reparse paths, exclusive owner lock, first pipe instance,
+remote-client rejection, and both-direction OS process/user checks protect the
+channel. Fixed local drives only are supported. Same-user malicious code,
+administrators, SYSTEM and the exact Windows TrustedInstaller privileged OS owner
+are outside this isolation claim; TrustedInstaller is allowed for ancestor ownership
+only, never private files or channel peers. Other service SIDs are not trusted.
+A restricted-token denial is not a foreign-user-account witness.
+
+Current request thread and turn metadata must be present and agree. Identifiers,
+environment variables, process ancestry, and capability presence cannot grant
+destination authority. The service checks the independently fixed exact pair.
+One serial channel holds at most one opaque process-local grant: maximum lifetime
+300 seconds, lease 15 seconds, renewal no more often than every 5 seconds. Renewal
+never extends the grant. Epoch, policy revision, sequence, retained process handle
+and creation time reject stale or replaced participants. There is no grant table,
+automatic reconnect, or re-enrollment after uncertain failure.
+
+Observations use a separate read-only SQLite connection with `query_only`, no lock
+retry, and a deadline within three seconds. They expose only bounded status/reason
+and remaining grant time. Hypothetical eligibility is not atomic action admission
+or delivery. No payload, handle, policy, scope, capability or raw native error is
+returned. Normal storage timeouts remain unchanged.
+
+Current native trace rows do not correlate their reservation generation with the
+Relay scope generation. Actual native-anchored work therefore stays held, even
+when accepted, with an explicit evidence limit. The channel tests qualify secure
+enrollment and lifetime, not reliable production wake eligibility. Different
+generation domains must never be compared as if interchangeable.
+
+EOF, cancellation, stop, expiry, policy change/revocation, peer loss and restart
+discard authority. Shutdown is bounded; uncertain overlapped I/O retains its owned
+buffers/handles rather than freeing them or starting another worker. This stage
+performs zero wake, claim, ACK, reservation or settings writes. Existing uncertain
+native reservations remain fenced. Live provisioning and runtime qualification are
+separate gates after review; tests use isolated temporary policy/channel fixtures.

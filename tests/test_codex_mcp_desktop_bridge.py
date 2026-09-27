@@ -8,6 +8,9 @@ import os
 import re
 import sys
 import tempfile
+import threading
+import time
+from types import SimpleNamespace
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 from textwrap import dedent
@@ -422,3 +425,209 @@ async def test_http_mcp_keeps_catalog_and_tools_bridge_free(monkeypatch):
                         result = await session.call_tool("pallium_status", {})
                         assert not result.isError
                         assert json.loads(result.content[0].text) == {"status": "healthy"}
+
+
+def _shadow_native(monkeypatch, *, fault=False, block=None):
+    calls = []
+    closed = threading.Event()
+
+    class NativeClient:
+        def __init__(self, path, stop_event):
+            assert threading.current_thread() is not threading.main_thread()
+            calls.append(("connect", str(path)))
+            self.stop_event = stop_event
+
+        def enroll(self, metadata):
+            calls.append(("enroll", metadata))
+            if block is not None:
+                block.wait(5)
+            if fault:
+                raise RuntimeError("private-native-fault")
+            return {"mode": "shadow", "status": "enrolled", "reason": "ok", "ttl_seconds": 15,
+                    "policy": "private-policy", "handle": "private-handle"}
+
+        def status(self):
+            calls.append(("status", None))
+            return {"status": "eligible", "reason": "observed", "ttl_seconds": 10}
+
+        def renew(self):
+            calls.append(("renew", None))
+            return {"status": "held", "reason": "observed", "ttl_seconds": 15}
+
+        def close(self):
+            calls.append(("close", None))
+            closed.set()
+
+    monkeypatch.setitem(sys.modules, "app.codex_bridge_pipe", SimpleNamespace(
+        native_available=lambda: True, NativeShadowClient=NativeClient))
+    monkeypatch.setenv("CODEX_APP_TOOLS_PIPE_PATH", "private-desktop-capability")
+    monkeypatch.setenv("PALLIUM_CODEX_SHADOW_BOOTSTRAP_FILE", "private-bootstrap")
+    monkeypatch.setenv("PALLIUM_AGENT_REF", "codex")
+    monkeypatch.setenv("PALLIUM_BASE_URL", "http://127.0.0.1:1")
+    monkeypatch.setattr(mcp_server, "PalliumMcpClient", _FakeStatusClient)
+    return calls, closed
+
+
+def test_shadow_eligibility_requires_explicit_windows_stdio_native(monkeypatch):
+    _shadow_native(monkeypatch)
+    monkeypatch.setenv("PALLIUM_CODEX_BRIDGE_MODE", "shadow")
+    monkeypatch.setattr(mcp_server.sys, "platform", "linux")
+    assert not mcp_server._codex_shadow_enabled("stdio")
+    monkeypatch.setattr(mcp_server.sys, "platform", "win32")
+    assert mcp_server._codex_shadow_enabled("stdio")
+    assert not mcp_server._codex_shadow_enabled("streamable-http")
+    assert not mcp_server._codex_shadow_enabled("sse")
+    for variable in ("PALLIUM_CODEX_SHADOW_BOOTSTRAP_FILE", "CODEX_APP_TOOLS_PIPE_PATH",
+                     "PALLIUM_AGENT_REF", "PALLIUM_CODEX_BRIDGE_MODE"):
+        with monkeypatch.context() as context:
+            context.delenv(variable)
+            assert not mcp_server._codex_shadow_enabled("stdio")
+    monkeypatch.setitem(sys.modules, "app.codex_bridge_pipe", SimpleNamespace(native_available=lambda: False))
+    assert not mcp_server._codex_shadow_enabled("stdio")
+
+
+def test_main_passes_explicit_shadow_flag_only_when_eligible(monkeypatch):
+    _shadow_native(monkeypatch)
+    monkeypatch.setenv("PALLIUM_CODEX_BRIDGE_MODE", "shadow")
+    monkeypatch.setenv("PALLIUM_MCP_TRANSPORT", "stdio")
+    monkeypatch.setattr(mcp_server.sys, "platform", "win32")
+    captured = {}
+    fake = MagicMock()
+    def create(**kwargs):
+        captured.update(kwargs)
+        return fake
+    monkeypatch.setattr(mcp_server, "create_server", create)
+    mcp_server.main()
+    assert captured["codex_shadow"] is True
+    assert captured["lifespan"] is mcp_server._codex_shadow_lifespan
+    captured.clear()
+    monkeypatch.setenv("PALLIUM_MCP_TRANSPORT", "streamable-http")
+    mcp_server.main()
+    assert "codex_shadow" not in captured and "lifespan" not in captured
+
+
+@pytest.mark.asyncio
+async def test_shadow_protocol_catalog_current_controller_and_eof(monkeypatch):
+    calls, closed = _shadow_native(monkeypatch)
+    server = mcp_server.create_server(codex_shadow=True, lifespan=mcp_server._codex_shadow_lifespan)
+    baseline = mcp_server.create_server()
+    expected = [tool.model_dump() for tool in await baseline.list_tools()]
+    pair = {"threadId": "任务-α", "turnId": "turn-1"}
+
+    async def exercise(session):
+        tools = (await session.list_tools()).tools
+        optional = [tool for tool in tools if tool.name.startswith("pallium_codex_bridge_shadow_")]
+        assert len(optional) == 2
+        assert all(tool.inputSchema.get("properties", {}) == {} for tool in optional)
+        assert [tool.model_dump() for tool in tools if tool not in optional] == expected
+        async def invoke(operation, meta):
+            reply = await session.call_tool("pallium_codex_bridge_shadow_" + operation, {}, meta=meta)
+            assert not reply.isError
+            return json.loads(reply.content[0].text)
+        assert (await invoke("status", pair))["reason"] == "not-enrolled"
+        assert calls == []
+        assert (await invoke("enroll", pair))["status"] == "enrolled"
+        assert calls[1] == ("enroll", {"thread_ref": "任务-α", "turn_ref": "turn-1"})
+        assert (await invoke("status", {"threadId": "other", "turnId": "turn-1"}))["reason"] == "wrong-controller"
+        assert (await invoke("status", {"threadId": "任务-α", "turnId": "turn-2"}))["status"] == "eligible"
+        assert (await invoke("status", None))["reason"] == "invalid-metadata"
+        result = await invoke("status", {"x-codex-turn-metadata": {
+            "thread_id": "任务-α", "session_id": "任务-α", "turn_id": "turn-1"}})
+        assert result == {"mode": "shadow", "status": "eligible", "reason": "observed", "ttl_seconds": 10}
+        assert not (await session.call_tool("pallium_status", {})).isError
+    await _serve_protocol(server, exercise)
+    assert closed.is_set()
+    assert calls[-1] == ("close", None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("meta", [None, {}, {"threadId": "t"}, {"turnId": "u"},
+    {"threadId": "t", "turnId": ""}, {"threadId": "t", "turnId": " u"},
+    {"threadId": "t", "turnId": "\n"}, {"threadId": "t", "turnId": "u" * 256},
+    {"threadId": "t", "turnId": 1}, {"threadId": "t", "turnId": []},
+    {"threadId": "t", "turnId": "u", "x-codex-turn-metadata": {"turn_id": "v"}},
+    {"threadId": "t", "turnId": "u", "x-codex-turn-metadata": {"session_id": "other"}},
+    {"threadId": "t", "turnId": "u", "x-codex-turn-metadata": []}])
+async def test_shadow_protocol_metadata_denies_without_native_access(monkeypatch, meta):
+    calls, _ = _shadow_native(monkeypatch)
+    monkeypatch.setenv("PALLIUM_THREAD_REF", "t")
+    monkeypatch.setenv("CODEX_THREAD_ID", "t")
+    server = mcp_server.create_server(codex_shadow=True, lifespan=mcp_server._codex_shadow_lifespan)
+    async def exercise(session):
+        for operation in ("enroll", "status"):
+            response = await session.call_tool("pallium_codex_bridge_shadow_" + operation, {}, meta=meta)
+            assert json.loads(response.content[0].text)["reason"] == "invalid-metadata"
+        assert calls == []
+    await _serve_protocol(server, exercise)
+
+
+@pytest.mark.asyncio
+async def test_shadow_protocol_native_fault_is_terminal_and_normal_tools_live(monkeypatch):
+    calls, closed = _shadow_native(monkeypatch, fault=True)
+    server = mcp_server.create_server(codex_shadow=True, lifespan=mcp_server._codex_shadow_lifespan)
+    async def exercise(session):
+        meta = {"threadId": "t", "turnId": "u"}
+        normal, shadow = await asyncio.gather(session.call_tool("pallium_status", {}),
+            session.call_tool("pallium_codex_bridge_shadow_enroll", {}, meta=meta))
+        assert not normal.isError and json.loads(normal.content[0].text)["status"] == "healthy"
+        assert json.loads(shadow.content[0].text)["reason"] == "native-failed"
+        again = await session.call_tool("pallium_codex_bridge_shadow_enroll", {}, meta=meta)
+        assert json.loads(again.content[0].text)["reason"] == "stopped"
+        assert sum(operation == "enroll" for operation, _ in calls) == 1
+    await _serve_protocol(server, exercise)
+    assert closed.is_set()
+
+
+@pytest.mark.asyncio
+async def test_shadow_native_cancellation_and_shutdown_are_bounded(monkeypatch):
+    release = threading.Event()
+    calls, closed = _shadow_native(monkeypatch, block=release)
+    worker = codex_desktop_bridge.ShadowWorker(Path("private-bootstrap"))
+    task = asyncio.create_task(worker.request("enroll", {"thread_ref": "t", "turn_ref": "u"}))
+    try:
+        while len(calls) < 2:
+            await asyncio.sleep(0.01)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        before = time.monotonic()
+        await worker.stop()
+        assert time.monotonic() - before < 0.75
+        assert not closed.is_set()
+        assert (await worker.request("enroll", {"thread_ref": "t", "turn_ref": "u"}))["reason"] == "stopped"
+    finally:
+        release.set()
+        await worker.stop()
+    assert closed.is_set()
+
+
+@pytest.mark.asyncio
+async def test_shadow_protocol_max_identity_and_capability_removal_stop(monkeypatch):
+    calls, closed = _shadow_native(monkeypatch)
+    server = mcp_server.create_server(codex_shadow=True, lifespan=mcp_server._codex_shadow_lifespan)
+    meta = {"threadId": "t" * 255, "turnId": "u" * 255}
+    async def exercise(session):
+        enrolled = await session.call_tool("pallium_codex_bridge_shadow_enroll", {}, meta=meta)
+        assert json.loads(enrolled.content[0].text)["status"] == "enrolled"
+        monkeypatch.delenv("CODEX_APP_TOOLS_PIPE_PATH")
+        status = await session.call_tool("pallium_codex_bridge_shadow_status", {}, meta=meta)
+        assert json.loads(status.content[0].text)["reason"] == "stopped"
+        monkeypatch.setenv("CODEX_APP_TOOLS_PIPE_PATH", "returned-capability")
+        again = await session.call_tool("pallium_codex_bridge_shadow_enroll", {}, meta=meta)
+        assert json.loads(again.content[0].text)["reason"] == "stopped"
+        assert sum(operation == "enroll" for operation, _ in calls) == 1
+    await _serve_protocol(server, exercise)
+    assert closed.is_set()
+
+
+def test_shadow_public_output_never_exposes_private_native_fields():
+    assert codex_desktop_bridge.public_status({"mode": "private-mode", "status": "private-status",
+        "reason": "private-policy-token", "ttl_seconds": 301, "policy": "private-policy",
+        "handle": "private-handle", "path": "private-path"}) == {"mode": "shadow", "status": "unavailable"}
+
+
+@pytest.mark.parametrize("status", ["enrolled", "eligible", "held", "inactive", "unavailable"])
+@pytest.mark.parametrize("reason", ["ok", "observed", "evidence-unavailable", "closed", "not-enrolled"])
+def test_shadow_public_output_preserves_exact_native_vocabulary(status, reason):
+    assert codex_desktop_bridge.public_status({"status": status, "reason": reason, "ttl_seconds": 15}) == {
+        "mode": "shadow", "status": status, "reason": reason, "ttl_seconds": 15}

@@ -317,6 +317,14 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
         except RelayUnavailableError:
             app_instance.state._claude_wake_reconciler = None
 
+        shadow_service = None
+        try:
+            from app.codex_bridge_pipe import start_shadow_service
+
+            shadow_service = start_shadow_service(build_result.storage)
+        except Exception:
+            logger.warning("Codex shadow worker unavailable")
+        app_instance.state._codex_shadow_service = shadow_service
         app_instance.state._lifespan_complete = True
         try:
             if mcp_available and session_manager is not None:
@@ -325,6 +333,11 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
             else:
                 yield
         finally:
+            if shadow_service is not None:
+                try:
+                    shadow_service.stop()
+                except Exception:
+                    logger.warning("Codex shadow worker shutdown failed")
             claude_wake_registry.set_reconcile_signal(None)
             if claude_wake_reconciler is not None:
                 claude_wake_reconciler.stop()

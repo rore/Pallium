@@ -919,6 +919,22 @@ def _codex_bridge_enabled(transport: str) -> bool:
     )
 
 
+def _codex_shadow_enabled(transport: str) -> bool:
+    if not (
+        sys.platform == "win32"
+        and transport == "stdio"
+        and os.environ.get("PALLIUM_CODEX_BRIDGE_MODE") == "shadow"
+        and os.environ.get("PALLIUM_AGENT_REF") == "codex"
+        and bool(os.environ.get("CODEX_APP_TOOLS_PIPE_PATH"))
+        and bool(os.environ.get("PALLIUM_CODEX_SHADOW_BOOTSTRAP_FILE"))
+    ):
+        return False
+    try:
+        return bool(importlib.import_module("app.codex_bridge_pipe").native_available())
+    except Exception:
+        return False
+
+
 def _bridge_diagnostic(category: str) -> None:
     try:
         print(f"Pallium Codex bridge inert: {category}", file=sys.stderr, flush=True)
@@ -927,7 +943,7 @@ def _bridge_diagnostic(category: str) -> None:
 
 
 @asynccontextmanager
-async def _codex_bridge_lifespan(server):
+async def _codex_bridge_lifespan(server, *, shadow=False):
     try:
         module = importlib.import_module("app.mcp.codex_desktop_bridge")
     except asyncio.CancelledError:
@@ -938,7 +954,7 @@ async def _codex_bridge_lifespan(server):
         return
 
     try:
-        manager = module.lifespan(server)
+        manager = module.shadow_lifespan(server) if shadow else module.lifespan(server)
         state = await asyncio.wait_for(manager.__aenter__(), timeout=1.0)
     except asyncio.CancelledError:
         raise
@@ -958,7 +974,12 @@ async def _codex_bridge_lifespan(server):
             _bridge_diagnostic("shutdown-failed")
 
 
-def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None) -> FastMCP:
+def _codex_shadow_lifespan(server):
+    return _codex_bridge_lifespan(server, shadow=True)
+
+
+def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None,
+                  codex_shadow: bool = False) -> FastMCP:
     """Create a FastMCP server with Pallium tools registered."""
     from mcp.server.fastmcp import Context, FastMCP
     try:
@@ -971,6 +992,45 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None) -
     # holding a session id from before the restart get -32600 "Session not
     # found" and have to reinitialize.
     server = FastMCP("pallium", host=host, port=port, stateless_http=True, lifespan=lifespan)
+
+    if codex_shadow:
+        async def shadow_request(operation: str, ctx) -> str:
+            from app.mcp.codex_desktop_bridge import public_status
+            result = {"reason": "invalid-metadata"}
+            try:
+                request = ctx.request_context
+                meta = request.meta
+                values = meta if isinstance(meta, dict) else meta.model_dump()
+                thread_ref, error = resolve_codex_thread_ref(values)
+                nested = values.get("x-codex-turn-metadata", {})
+                turns = [values[key] for key in ("turnId",) if key in values]
+                if isinstance(nested, dict) and "turn_id" in nested:
+                    turns.append(nested["turn_id"])
+                valid_turn = bool(turns) and all(
+                    isinstance(value, str) and value == value.strip()
+                    and 0 < len(value) <= 255 and value.isprintable() for value in turns
+                ) and len(set(turns)) == 1
+                if not error and valid_turn and os.environ.get("PALLIUM_AGENT_REF") == "codex":
+                    worker = request.lifespan_context.get("codex_shadow")
+                    if worker is not None:
+                        result = await worker.request(operation, {"thread_ref": thread_ref, "turn_ref": turns[0]})
+                    else:
+                        result = {"reason": "stopped"}
+            except Exception:
+                pass
+            return json.dumps(public_status(result))
+
+        async def pallium_codex_bridge_shadow_enroll(ctx) -> str:
+            """Enroll the independently approved current Codex pair for finite shadow observation."""
+            return await shadow_request("enroll", ctx)
+
+        async def pallium_codex_bridge_shadow_status(ctx) -> str:
+            """Read bounded shadow status for the authenticated current Codex pair."""
+            return await shadow_request("status", ctx)
+
+        for tool in (pallium_codex_bridge_shadow_enroll, pallium_codex_bridge_shadow_status):
+            tool.__annotations__["ctx"] = Context
+            server.tool()(tool)
 
     def relay_tool(function):
         @wraps(function)
@@ -2203,6 +2263,8 @@ def main() -> None:
     host = os.environ.get("FASTMCP_HOST", "127.0.0.1")
     port = int(os.environ.get("FASTMCP_PORT", "8001"))
     options = {"lifespan": _codex_bridge_lifespan} if _codex_bridge_enabled(transport) else {}
+    if _codex_shadow_enabled(transport):
+        options = {"lifespan": _codex_shadow_lifespan, "codex_shadow": True}
     server = create_server(host=host, port=port, **options)
     server.run(transport=transport)
 
