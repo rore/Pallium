@@ -34,7 +34,7 @@
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Checkpoint: architecture-review
@@ -56,3 +56,15 @@ Verification: Reporter CLI regression matrix, selected local suite, independent 
 Skill feedback trigger 3 dropped: the adapter failure was environment-owned (this worktree has no local virtual environment and Python is absent from PATH); its documented PYTHON override recovered the check. No upstream defect report.
 
 Agent technical review: /root/redline_plan_review, 2026-09-27, revision 79a68557a530c26b10556b8ed21ab8777792a226. Approved with no blockers. Six exact routes are supported by existing reporter logic. Skill parity intentionally adds Claude files to size accounting without changing thresholds. Elevated/Simple fits this policy-only change; future API/persistence edits retain their higher floor. Verification is adequate with exact checkpoint/exit assertions and required full validation.
+
+## Evidence
+
+Local verification against implementation revision 86ed20ce7ceb9f8826d14e125f8ec970ef96f281, Windows / Python 3.13.14, existing shared virtual environment. Focused reporter CLI file: 19 passed. Whole-change test-plan selected full. Structural YAML comparison preserved all pre-existing rules and non-approved fields. Fresh workflow checks passed all blocking predicates; the absent PR architecture-review label remained a shadow advisory.
+
+The first full run with early-stop ended at 1 failed, 1911 passed, 2 skipped, 1 xfailed in 135.52s: unchanged test_codex_wake_evidence_is_bounded_and_definition_matched returned false on its fourth event. Its isolated rerun passed in 0.29s; no wake code or test was edited. A failure-only retry selected more tests because a stale cache entry named an obsolete parameter ID; that run was cancelled, not counted as evidence. The complete non-slow run without early-stop (`python -m pytest tests/ -q`, default four workers) then passed: 5346 passed, 34 skipped, 2 xfailed in 243.18s. The transient wake failure's cause remains unconfirmed; it is not represented as fixed.
+
+## Result review
+
+Agent technical review: /root/calibration_result_review, 2026-09-27.
+Reviewed revision: 86ed20ce7ceb9f8826d14e125f8ec970ef96f281.
+Verification adequacy: sufficient focused CLI coverage and exact structural preservation comparison; required full validation is now complete. Independent reviewer found no blocking implementation issues and approved subject to authoritative full-suite and CI results. Reviewer inspected the actual policy, reporter, checker, diff, baseline, and work record; did not rerun tests. Existing rules, boundaries, modes, checkpoint satisfiers, and thresholds are preserved. Elevated/Simple remains appropriate. No applicable active roadmap item or change-induced documentation drift. PR CI and final governance checks remain delivery gates.
