@@ -39,16 +39,20 @@ Desktop/service bridge calls. This milestone is not automatic unloaded delivery.
 Remaining work:
 - Qualify actual Desktop child startup/lifetime for the
   [optional Codex MCP Desktop bridge](../../docs/designs/codex-mcp-desktop-bridge.md);
-  live setup is parked. First establish a finite observer/cleanup process whose
-  lifetime is independent of coordinator turns, using offline checks before any
-  new setup. This test-support prerequisite is not executor bootstrap or wake.
-  Neither bounded actual-Python setup attempt witnessed child startup: Desktop
-  rejected programmatic initialization, and manual preparation ended before any
-  observed user turn. Temporary configuration was restored. Establish a supported
-  setup entrypoint; no lifecycle success/failure or automatic wake is inferred.
-  Cold wake activation remains gated on authenticated origin-bound enrollment, host-safe
-  admission including cold-to-busy races, and executor availability/bootstrap
-  qualification. New grants or generations must not bypass uncertain action fences.
+  live setup is parked. One private offline exact-owner launcher-exit check passed:
+  the child survived launcher exit, exited within a finite bound, and fake-baseline
+  restoration cleaned only the exact owned files and root. This proves only the
+  tested offline launcher-exit and cleanup path. Read-only inspection of installed process
+  topology confirms ordinary Desktop → Codex → venv launcher → base interpreter MCP
+  startup; it does not prove Desktop steering/cancellation, live inert-child lifetime,
+  capability forwarding, or zero-child bootstrap. Earlier temporary opt-in attempts
+  remain inconclusive: Desktop rejected programmatic initialization, and manual
+  preparation ended before any observed user turn. Temporary configuration was
+  restored. Existing `env`/`env_vars` and server eligibility already express inert
+  opt-in, so no new setup feature is needed. Live configuration remains held.
+  Authenticate origin-bound enrollment and qualify executor availability/bootstrap
+  before cold wake; host-safe admission including cold-to-busy races remains required.
+  New grants or generations must not bypass uncertain action fences.
   This is work in progress, not shipped automatic unloaded delivery.
 - Qualify still-unproven interrupted/restart combinations with a bounded matrix
   of runtime, platform, interruption, existing evidence, and missing witness.
