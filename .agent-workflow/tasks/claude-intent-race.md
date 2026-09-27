@@ -22,7 +22,7 @@
 **Plan review:** Agent technical review: /root/intent_race_plan_review, independent clean-context gpt-6-sol high, approved 08476327c3d9a5c7c9b9843b41868d108737ab86 with all three refinements resolved; see Plan review below. Direct user plan consent is recorded in Approvals.
 **Approvals:** Approved by user 2026-09-27: "i apporve". Direct response in the owning chat to the presented reviewed isolated OS-lock fix, with agent technical review and no live-service changes. This is consent to the plan, not a claim of personal technical code review.
 **Exceptions:** —
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Ownership and recovery
@@ -43,7 +43,7 @@ Fresh base import-boundary report contains no violations. Whole intended scope i
 
 2026-09-27 independent clean-context Sol high /root/intent_race_plan_review approves concrete plan at 08476327c3d9a5c7c9b9843b41868d108737ab86, High/Moderate appropriate, no remaining technical blockers. Reviewer inspected registry/publisher/callers, HTTP/reconciler/installation, relevant durability/deadline/dispatch tests and workflow/risk references. Resolved findings: one non-reentrant OS lock acquisition through close/private-helper lifetime; publisher cleanup before release and HTTP after release; precommit rejection versus unchanged postcommit unlink/fencing semantics; actual create_app/Relay-observable E2E and real subprocess OS lock lifetime. Identical stable intent-derived sidecar, real monotonic budget and unchanged legacy/inflight behavior are implementation obligations. Scoped recovery continues before legacy unlink, so no extra scoped cleanup path is invented. Reviewer performed no edits/tests/probe reruns. This is technical review only, not human consent or implementation evidence.
 
-Recovery: isolated checkout `C:\Users\I347041\.codex\worktrees\claude-intent-race\Pallium`, branch `feat/claude-intent-race`, implementation commit `eb4cd2e619829e475c0d7eafb00522e188b429de`, clean working tree. Direct user consent and manager technical approval are recorded; fresh full-scope Redline evidence is GRAY with no boundary violations, and the Ready-to-implement checker exits 0. Implementation and focused evidence are in the exact seven-path scope. Minimap manager retains combined delivery; participant PR253 remains separate. Remaining work: root owns post-rebase selector/full-suite validation, import-boundary check, and independent result review.
+Recovery: isolated checkout `C:\Users\I347041\.codex\worktrees\claude-intent-race\Pallium`, branch `feat/claude-intent-race`, production revision `9ba0e90f0a90290548fd2ae649155ec01abaaf93` rebased onto main `9941c65709f8240bf15669482ae0a8b863a8d3c0`, final test revision `6e67f3c07cbf7562eb8b8f79aef36c702ee58230`. Direct user plan consent and independent technical result approval are recorded. Local verification is complete; remaining gates are Linux/Windows CI, separate High-risk human result review, and coordinated installation of both service and hook. No service operation has occurred. Minimap manager retains combined delivery and roadmap reconciliation; participant PR253 remains separate.
 
 ## Implementation
 
@@ -56,3 +56,17 @@ Recovery: isolated checkout `C:\Users\I347041\.codex\worktrees\claude-intent-rac
 2026-09-27 final focused evidence: the dispatch owner replaced the initial happy-path lifecycle test with eight real `create_app`/HTTP/Relay race nodes; all eight passed in 4.08s. After that change, the affected durability, dispatch, and Claude integration files passed together (122 passed, 2 skipped in 24.43s). The crash-recovery case now also asserts internal registration returns HTTP 409 within a loose 500ms bound while another process owns the sidecar, leaves canonical state and the existing intent unchanged, makes zero hook HTTP attempts on lock-open failure, then recovers after owner exit and completes real hook publication through the HTTP registration route; its final exact node passes (1 passed in 0.64s). State remains Ready to implement pending root-owned selector/full validation and review.
 
 Trigger 3 dropped: forwarded-approval rejection was the runtime approval system's authority-provenance policy, not an agent-workflow defect; direct consent cleared it without a workaround.
+
+## Verification Record
+
+2026-09-27: selector `python scripts/test-plan.py --base origin/main` selected the full lane for exactly the approved seven paths. `python -m pytest tests/ -x -q` passed 5377 tests, with 34 skips and 2 expected failures in 266.90s on production revision `9ba0e90f0a90290548fd2ae649155ec01abaaf93` plus bookkeeping-only `05efd96420991eccb1412193baa4326c0c472a2a`; saved local evidence is `build/claude-intent-full.log`. This includes the unchanged historical restart test; a passing run does not prove the cause of its earlier intermittent failure. Final revision `6e67f3c07cbf7562eb8b8f79aef36c702ee58230` adds nine test-only assertions for occupied-lock hook timeout, zero HTTP calls, and unchanged canonical state/intent; its exact crash-owner recovery node passed in 0.75s. Production is unchanged, and the full suite was not repeated after this assertion-only refinement.
+
+The affected durability, dispatch, and Claude integration files passed 122 tests with 2 skips; the eight real caller-surface race cases passed in 4.08s. Those cases cover overlapping busy/idle/closed transitions through the real hook publisher, HTTP registration/close, active reconciler lost-request recovery, and public Relay readback with controlled native transport. The subprocess journey verifies lock release on process exit and subsequent hook/HTTP registration; failure paths preserve existing intent and make no hook HTTP request. Post-rebase import-boundary check passed; whole-scope Redline is GRAY with no boundary or protected-contract changes. Linux/Windows CI remains required; local Windows evidence alone is not a POSIX execution claim.
+
+## Result review
+
+Agent technical review: /root/intent_race_plan_review, independent clean-context gpt-6-sol high, 2026-09-27.
+Reviewed revision: 6e67f3c07cbf7562eb8b8f79aef36c702ee58230.
+Verification adequacy: APPROVED for the scoped fix locally. Reviewer inspected production, tests, docs and saved full-suite evidence; no actionable findings remain. Prior deadline, observable race, native-contention, recovery, and bounded failure findings are addressed. High risk / Moderate complexity remains appropriate; no scope expansion or protected-test weakening. The full-suite versus final assertion-only node distinction is explicit. Technical approval is not merge/deployment approval; Linux/Windows CI and separate human result review remain unsatisfied delivery gates.
+
+Roadmap reconciliation: this fix is a prerequisite for the separately tracked participant-count/Minimap delivery, not a claim that those features have shipped. The existing owning managers retain roadmap changes and combined delivery; no competing roadmap writer or live qualification is introduced here.
