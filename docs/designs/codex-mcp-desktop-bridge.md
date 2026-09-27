@@ -29,6 +29,13 @@ version-bound. MCP-child survival across Desktop restart, unload, configuration
 refresh, and capability replacement remains unqualified. Existing uncertain native
 reservations remain fenced; none of this permits retrying their queue submissions.
 
+A separately authorized actual-Python lifecycle observation could not initialize
+its disposable through the ordinary Desktop messaging entrypoint: Desktop rejected
+setup without an active turn. No observer startup or new recipient turn was
+witnessed; configuration was restored and observed settings stayed unchanged.
+This is an inconclusive setup result, not a bridge lifecycle failure or success.
+A supported initialization entrypoint is needed before that qualification proceeds.
+
 ## Existing seams and eligibility
 
 `app/cli/setup_codex.py` installs the Python `app.run mcp` child with stdio,
