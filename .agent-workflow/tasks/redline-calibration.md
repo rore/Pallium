@@ -28,13 +28,13 @@
 
 **Verification plan:** When a named path changes, the reporter emits red and the exact checkpoint -> shipped reporter CLI matrix. When either native skill root changes, gray/watch appears without exclusion -> same CLI matrix for both roots. Existing blue/gray/excluded/protected paths retain behavior and shadow-mode labels satisfy only intended checkpoints -> positive/negative/mixed CLI cases plus preservation diff. Selected validation passes -> focused test file, test-plan, full non-slow suite, fresh local governance checks, independent review, and required PR CI.
 
-**Plan review:** Pending independent clean-context review before policy/test edits.
+**Plan review:** Agent technical review: /root/redline_plan_review, 2026-09-27; reviewed clean revision 79a68557a530c26b10556b8ed21ab8777792a226, exact routing plan, reporter, and source responsibilities; no blocking findings.
 
 **Approvals:** Not required at Elevated. User approved the scoped policy-only change on 2026-09-27: "Okay, go for it."
 
 **Exceptions:** —
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Checkpoint: architecture-review
@@ -47,5 +47,8 @@ Verification: Reporter CLI regression matrix, selected local suite, independent 
 
 ## Implementation
 
-2026-09-27: Reused the clean completed-sync worktree at C:\Users\I347041\.codex\worktrees\update-agent-workflow-review\Pallium. New isolated branch feat/redline-calibration starts at deb471f40723794b8d65a23718f0eb36f8d76a2c. No policy or test edit yet. Next action is independent plan review.
+2026-09-27: Reused the clean completed-sync worktree at C:\Users\I347041\.codex\worktrees\update-agent-workflow-review\Pallium. New isolated branch feat/redline-calibration starts at deb471f40723794b8d65a23718f0eb36f8d76a2c. No policy or test edit yet. Independent plan review completed before implementation.
 
+## Plan review
+
+Agent technical review: /root/redline_plan_review, 2026-09-27, revision 79a68557a530c26b10556b8ed21ab8777792a226. Approved with no blockers. Six exact routes are supported by existing reporter logic. Skill parity intentionally adds Claude files to size accounting without changing thresholds. Elevated/Simple fits this policy-only change; future API/persistence edits retain their higher floor. Verification is adequate with exact checkpoint/exit assertions and required full validation.
