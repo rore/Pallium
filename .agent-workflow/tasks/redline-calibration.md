@@ -49,6 +49,10 @@ Verification: Reporter CLI regression matrix, selected local suite, independent 
 
 2026-09-27: Reused the clean completed-sync worktree at C:\Users\I347041\.codex\worktrees\update-agent-workflow-review\Pallium. New isolated branch feat/redline-calibration starts at deb471f40723794b8d65a23718f0eb36f8d76a2c. No policy or test edit yet. Independent plan review completed before implementation.
 
+2026-09-27: Implemented only the approved policy routes/watch calibration, one parameterized reporter CLI matrix, and this record. The pre-edit workflow check reported Python 3.11+ unavailable (exit 2); after implementation, reran with the repository Python 3.13 executable and the fresh workflow check passed (exit 0). Focused regression initially surfaced incorrect expectations for existing app watch, docs blue, checkpoint ordering, and satisfied checkpoints retaining watch warnings; corrected the matrix against reporter output. `C:\Dev\rore\Pallium\.venv\Scripts\python.exe -m pytest --noconftest -q -n 0 tests/test_agent_workflow_ci.py` passed: 19 passed.
+
 ## Plan review
+
+Skill feedback trigger 3 dropped: the adapter failure was environment-owned (this worktree has no local virtual environment and Python is absent from PATH); its documented PYTHON override recovered the check. No upstream defect report.
 
 Agent technical review: /root/redline_plan_review, 2026-09-27, revision 79a68557a530c26b10556b8ed21ab8777792a226. Approved with no blockers. Six exact routes are supported by existing reporter logic. Skill parity intentionally adds Claude files to size accounting without changing thresholds. Elevated/Simple fits this policy-only change; future API/persistence edits retain their higher floor. Verification is adequate with exact checkpoint/exit assertions and required full validation.

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 import subprocess
 import sys
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -107,3 +110,67 @@ def test_work_record_checker_accepts_valid_and_rejects_invalid(tmp_path: Path) -
         record.write_text(record.read_text(encoding="utf-8").replace("**State:** Ready to implement", "**State:** invalid"), encoding="utf-8")
         invalid = check()
         assert invalid.returncode != 0, f"{relative}: invalid Work Record accepted"
+
+
+@pytest.mark.parametrize(
+    ("paths", "zones", "checkpoints", "labels", "exit_code"),
+    [
+        ([".github/workflows/ci.yml"], {"red": [".github/workflows/ci.yml"], "blue": [], "gray": [], "watch": []}, [("architecture-review", False)], "", 1),
+        (["scripts/test-plan.py"], {"red": ["scripts/test-plan.py"], "blue": [], "gray": [], "watch": []}, [("architecture-review", False)], "", 1),
+        (["scripts/agent-workflow-check.py"], {"red": ["scripts/agent-workflow-check.py"], "blue": [], "gray": [], "watch": []}, [("architecture-review", False)], "", 1),
+        (["app/mcp/server.py"], {"red": ["app/mcp/server.py"], "blue": [], "gray": [], "watch": ["app/mcp/server.py"]}, [("api-review", False)], "", 1),
+        (["core/relay.py"], {"red": ["core/relay.py"], "blue": [], "gray": [], "watch": ["core/relay.py"]}, [("architecture-review", False)], "", 1),
+        (["storage/sqlite_relay.py"], {"red": ["storage/sqlite_relay.py"], "blue": [], "gray": [], "watch": ["storage/sqlite_relay.py"]}, [("persistence-review", False)], "", 1),
+        (["scripts/agent-workflow-checker.py"], {"red": [], "blue": ["scripts/agent-workflow-checker.py"], "gray": [], "watch": []}, [], "", 0),
+        (["app/mcp/other.py"], {"red": [], "blue": [], "gray": ["app/mcp/other.py"], "watch": ["app/mcp/other.py"]}, [], "", 1),
+        ([".agents/skills/example/SKILL.md"], {"red": [], "blue": [], "gray": [".agents/skills/example/SKILL.md"], "watch": [".agents/skills/example/SKILL.md"]}, [], "", 1),
+        ([".claude/skills/example/SKILL.md"], {"red": [], "blue": [], "gray": [".claude/skills/example/SKILL.md"], "watch": [".claude/skills/example/SKILL.md"]}, [], "", 1),
+        (["tests/behavior_contracts/caller.md"], {"red": ["tests/behavior_contracts/caller.md"], "blue": [], "gray": [], "watch": []}, [], "", 0),
+        (["scripts/helper.py"], {"red": [], "blue": ["scripts/helper.py"], "gray": [], "watch": []}, [], "", 0),
+        (["build/generated.py"], {"red": [], "blue": [], "gray": [], "watch": []}, [], "", 0),
+        (["misc/例え.md"], {"red": [], "blue": [], "gray": ["misc/例え.md"], "watch": []}, [], "", 1),
+        ([], {"red": [], "blue": [], "gray": [], "watch": []}, [], "", 0),
+        (
+            [".github/workflows/ci.yml", "app/mcp/server.py", "storage/sqlite_relay.py"],
+            {"red": [".github/workflows/ci.yml", "app/mcp/server.py", "storage/sqlite_relay.py"], "blue": [], "gray": [], "watch": ["app/mcp/server.py", "storage/sqlite_relay.py"]},
+            [("architecture-review", True), ("persistence-review", True), ("api-review", True)],
+            "architecture-reviewed,api-reviewed,persistence-reviewed",
+            1,
+        ),
+        (
+            [".github/workflows/ci.yml", "app/mcp/server.py", "storage/sqlite_relay.py"],
+            {"red": [".github/workflows/ci.yml", "app/mcp/server.py", "storage/sqlite_relay.py"], "blue": [], "gray": [], "watch": ["app/mcp/server.py", "storage/sqlite_relay.py"]},
+            [("architecture-review", True), ("persistence-review", False), ("api-review", False)],
+            "architecture-reviewed",
+            1,
+        ),
+    ],
+)
+def test_redline_report_cli_calibration_matrix(
+    tmp_path: Path,
+    paths: list[str],
+    zones: dict[str, list[str]],
+    checkpoints: list[tuple[str, bool]],
+    labels: str,
+    exit_code: int,
+) -> None:
+    changed = tmp_path / "changed-files.z"
+    changed.write_bytes("\0".join(paths).encode("utf-8") + (b"\0" if paths else b""))
+    output = tmp_path / "verdict.json"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts/agent-redline-report.py"),
+            "--policy", str(ROOT / "agent-redline-policy.yaml"),
+            "--changed-files-z", str(changed),
+            "--json-out", str(output),
+            "--pr-labels", labels,
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    verdict = json.loads(output.read_text(encoding="utf-8"))
+    assert result.returncode == verdict["exitCode"] == exit_code, result.stderr
+    assert verdict["zones"] == zones
+    assert sorted((item["id"], item["satisfied"]) for item in verdict["checkpoints"]) == sorted(checkpoints)
