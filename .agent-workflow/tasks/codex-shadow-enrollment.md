@@ -36,7 +36,7 @@ Canonical feature: `roadmap/features/add-wake-first-relay-delivery.md` (umbrella
 
 **Exceptions:** None
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Plan review
@@ -64,3 +64,15 @@ Coherent subsystem checkpoint: MCP bridge, Codex integration, read-only snapshot
 Final native checkpoint: 62 passed in 4.38s, including one real stdio MCP child → real worker/client/service pipe → actual Relay SQLite reader. Next-turn observation, ordinary-tool responsiveness, controller denial, child EOF and unchanged HTTP message/all Relay tables are asserted. Only unrelated normal get_status HTTP client is stubbed in that child; shadow path is real. Actual foreign-account and Desktop child lifetime remain unqualified.
 
 First full non-slow attempt at dfe70d89: 1 failed, 2002 passed, 2 skipped, 1 xfailed (119.60s), stopped on unchanged Claude hook test_confirmed_switch_does_not_attach_old_identity_to_new_pin. Original output is retained in this task's exec-session 21913 transcript, not misrepresented as a saved file or passing run. Exact node passed twice alone; clean main hook file passed 63 tests with four workers and identical source hashes. Cause remains unknown: baseline matches do not prove non-causality. No hook/test contract was altered. A complete final run after the actual-chain coverage correction is required; no retry-until-green loop.
+
+Final complete non-slow checkpoint at 6e1b2f979f2e30883ca5c231c0cf4184189ea388: 5455 passed, 34 skipped, 2 xfailed in 242.41s. Local authoritative output: ignored build/shadow-full-final.log; PR/CI is the published evidence surface. Additional startup/provisioning/remote-drive checks: 10 passed (1.08s). Fresh import-linter/Redline complete-path checks pass boundaries; workflow blocking predicates pass, with pending API/persistence maintainer result-review checkpoints reported as advisories. Reuse unchanged native/subsystem evidence; no application code follows the tested revision.
+
+## Result review
+
+Agent technical review: independent non-implementer review_bridge_security_options (Sol/medium), accepted exact candidate after reviewing production corrections and the real stdio/native/SQLite caller journey; final full-suite condition satisfied by the checkpoint above.
+
+Reviewed revision: 6e1b2f979f2e30883ca5c231c0cf4184189ea388.
+
+Verification adequacy: adequate for the approved shadow-only enrollment/observation slice. Real Windows peer/ACL/channel and actual MCP-to-SQLite lifecycle evidence supplement the full non-slow suite. No outstanding material finding; High risk unchanged and six-product-path scope preserved. Native anchors remain held without invented generation correlation. Restricted-token denial is not foreign-account proof; Desktop lifetime, zero-child bootstrap, busy-safe owner admission, durable owner fencing and actual wake activation remain unqualified and excluded. Original intermittent full-run cause remains unknown despite the passing complete final checkpoint.
+
+Human result review and API/persistence PR checkpoints remain distinct maintainer gates. Manager owns final merge/install decision and canonical roadmap reconciliation. Ready for review is not shipped or reliability complete; no live provisioning/activation is inferred.
