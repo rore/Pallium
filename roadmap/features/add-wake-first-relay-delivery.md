@@ -48,6 +48,21 @@ child lifetime and zero-child bootstrap remain unqualified. Trusted-child
 assertions use the documented trusted-local boundary, not Desktop attestation
 or isolation from compromised same-user code.
 
+Next qualification is blocked on a genuine user turn in the existing disposable
+Desktop chat. The prior app-message initialization was rejected for having no
+active turn; do not retry it or stage temporary configuration while the user is
+unavailable. A reviewed live plan must preserve exact settings, use one finite
+shadow-only controller/recipient pair, and restore the original project config
+with ownership/hash checks. Use the supported MCP-server restart control if the
+host requires it; that is an additional manual prerequisite, not automatic startup.
+Observe actual host-owned child identity, enrollment, bounded lifetime and natural
+unload, without Relay sends or wake actions. If no unload occurs, report only the
+loaded-idle observation. Cleanup must revoke the pair and verify configuration,
+settings and normal tools. No supported unattended bootstrap with zero eligible
+children is established; next-natural-turn fallback does not satisfy the requested
+automatic unloaded wake. The recurring manager follow-up pauses at this human
+prerequisite; no live configuration is armed while waiting.
+
 Remaining work:
 - Qualify actual Desktop child startup/lifetime for the
   [optional Codex MCP Desktop bridge](../../docs/designs/codex-mcp-desktop-bridge.md);
