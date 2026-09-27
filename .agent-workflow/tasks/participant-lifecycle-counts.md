@@ -39,7 +39,7 @@ When delivering the slice, required verification shall pass -> selected full tes
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Blocked
 <!-- agent-workflow:end -->
 
 ## Source and coordination
@@ -47,6 +47,8 @@ When delivering the slice, required verification shall pass -> selected full tes
 Pallium Relay offer relay-msg-5f47ac48cb9c4aad83f156d9058d57cb, delivery relay-delivery-71189c04ed5f42dab0b39ebf2aac91a3. Accepted via atomic hook-delivery reply. Lead session codex:01a0d7cf-2c64-7bb2-a87c-724dd1c405a2 in git:github.com/rore/minimap coordinates API alignment and canonical roadmap ownership. Canonical pair is recorded below; optional attachment was skipped at capacity, with no eviction.
 
 ## Implementation
+
+2026-09-27 repair verification: deterministic new clock-isolation regression fails before repair; regression plus unchanged protected busy-wake contract passes afterward (2 passed). Codex wake plus participant-count subsystem: 159 passed. Independent Sol result supplement finds no defect and accepts the equivalent, nonmaterial fixture refinement. Full rerun at 68bd87986155d4131dd7bc56b301268855c31b4a stops at a different unchanged Claude restart test (empty registry recovery candidates at line 1344): 1 failed, 1302 passed, 2 skipped, 1 xfailed. Preserve failure and pause for specific diagnosis; no blind rerun, protected edit or product-clock change. Earlier production latency evidence remains valid, but complete verification is blocked again.
 
 2026-09-27 narrow verification repair, classified before edits: add only tests/conftest.py and tests/test_codex_wake.py (blue, no additional checkpoint or protected-path edit). Independent Sol diagnosis /root/busy_wake_ci_diagnosis confirms the protected and 33 related tests patch codex_wake.time.sleep on Python's shared module, suppressing SQLite backoff while the prestarted trace writer may contend. An isolated actual-lock control proves no-op backoff can exhaust retries while native backoff succeeds; the exact CI lock holder remains inferred, not proved. Repair the existing autouse fixture by giving codex_wake a per-test SimpleNamespace copy of time's native callables. Add one deterministic unprotected regression demonstrating local clock patches leave stdlib/storage callables untouched; demonstrate failure before repair. All protected wake assertions, runtime retry bounds and product contract stay unchanged. This is a nonmaterial test-fixture refinement of the existing required verification, not new product work or a weakened requirement; unchanged human plan approval is retained. Independent clean-context technical review approved the repair and verification; full suite must rerun because shared test configuration changes. Before edits, regenerate whole-change applicability with both extra intended paths. No live service or paid calls.
 
