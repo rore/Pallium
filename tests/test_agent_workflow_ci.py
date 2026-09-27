@@ -156,6 +156,9 @@ def test_redline_report_cli_calibration_matrix(
 ) -> None:
     changed = tmp_path / "changed-files.z"
     changed.write_bytes("\0".join(paths).encode("utf-8") + (b"\0" if paths else b""))
+    # Routing-only evidence must not depend on ignored local import-linter output.
+    boundary = tmp_path / "boundary.json"
+    boundary.write_text('{"violations": []}', encoding="utf-8")
     output = tmp_path / "verdict.json"
     result = subprocess.run(
         [
@@ -163,13 +166,16 @@ def test_redline_report_cli_calibration_matrix(
             str(ROOT / "scripts/agent-redline-report.py"),
             "--policy", str(ROOT / "agent-redline-policy.yaml"),
             "--changed-files-z", str(changed),
+            "--boundary-report", str(boundary),
+            "--boundary-format", "json-violations",
             "--json-out", str(output),
             "--pr-labels", labels,
         ],
-        cwd=ROOT,
+        cwd=tmp_path,
         capture_output=True,
         text=True,
     )
+    assert output.exists(), f"Reporter exited {result.returncode}: {result.stdout} {result.stderr}"
     verdict = json.loads(output.read_text(encoding="utf-8"))
     assert result.returncode == verdict["exitCode"] == exit_code, result.stderr
     assert verdict["zones"] == zones
