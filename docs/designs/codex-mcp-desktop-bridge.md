@@ -277,3 +277,11 @@ buffers/handles rather than freeing them or starting another worker. This stage
 performs zero wake, claim, ACK, reservation or settings writes. Existing uncertain
 native reservations remain fenced. Live provisioning and runtime qualification are
 separate gates after review; tests use isolated temporary policy/channel fixtures.
+
+An unavailable observation deliberately ends the shadow worker rather than keeping
+or renewing unverified authority. A failed snapshot cannot establish current
+endpoint/scope validity, so the service rejects it and closes the channel. The
+worker also fails closed on an authenticated `unavailable` response. Neither case
+automatically reconnects or re-enrolls. A fresh eligible MCP child requires a new
+explicit enrollment with genuine current metadata and still-valid operator policy.
+Normal MCP tools and retained Relay messages continue unchanged.

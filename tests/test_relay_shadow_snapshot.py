@@ -3,10 +3,12 @@ from __future__ import annotations
 import hashlib
 import sqlite3
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from storage import sqlite_relay
 from storage.sqlite_relay import SQLiteRelayMixin
 
 
@@ -180,6 +182,59 @@ def test_null_expiry_is_a_live_unbounded_message(tmp_path):
     assert _snapshot(store, session) == {
         "category": "held", "reason": "native_evidence_missing", "endpoint_valid": True
     }
+
+
+def test_max_datetime_expiry_is_live_across_sqlite_date_parser_versions(tmp_path):
+    store, session = _bare_snapshot_store(tmp_path / "max-expiry.db", [
+        ("relay-delivery-pending", "message", "pending", "9999-12-31 23:59:59.999999"),
+    ])
+    assert _snapshot(store, session) == {
+        "category": "held", "reason": "native_evidence_missing", "endpoint_valid": True
+    }
+
+
+@pytest.mark.parametrize("with_offset", [False, True])
+def test_expired_same_day_iso_t_and_offset_values_are_not_live(tmp_path, monkeypatch, with_offset):
+    now = datetime(2026, 1, 2, 12, tzinfo=timezone.utc)
+    monkeypatch.setattr(sqlite_relay, "datetime", SimpleNamespace(now=lambda _tz: now))
+    past = now - timedelta(minutes=5)
+    if with_offset:
+        past = past.astimezone(timezone(timedelta(hours=-6)))
+        assert past.date() == now.date()
+    expiry = past.isoformat(timespec="microseconds")
+    store, session = _bare_snapshot_store(tmp_path / f"expired-{with_offset}.db", [
+        ("relay-delivery-pending", "message", "pending", expiry),
+    ])
+    assert _snapshot(store, session) == {
+        "category": "inactive", "reason": "no_live_delivery", "endpoint_valid": True
+    }
+
+
+def test_durable_sentinel_survives_a_date_parser_null_result(tmp_path, monkeypatch):
+    store, session = _bare_snapshot_store(tmp_path / "sentinel-parser-null.db", [
+        ("relay-delivery-pending", "message", "pending", "9999-12-31 23:59:59.999999"),
+    ])
+    real_connect = sqlite3.connect
+    parser = real_connect(":memory:")
+
+    def connect_with_old_parser(*args, **kwargs):
+        connection = real_connect(*args, **kwargs)
+
+        def julianday(value):
+            if isinstance(value, str) and value.startswith("9999-12-31 23:59:59.999999"):
+                return None
+            return parser.execute("SELECT julianday(?)", (value,)).fetchone()[0]
+
+        connection.create_function("julianday", 1, julianday)
+        return connection
+
+    monkeypatch.setattr(sqlite_relay.sqlite3, "connect", connect_with_old_parser)
+    try:
+        assert _snapshot(store, session) == {
+            "category": "held", "reason": "native_evidence_missing", "endpoint_valid": True
+        }
+    finally:
+        parser.close()
 
 
 def test_terminal_history_does_not_mask_current_pending_message(tmp_path):

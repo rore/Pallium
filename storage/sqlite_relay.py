@@ -301,6 +301,8 @@ class SQLiteRelayMixin:
             endpoint_valid = True
 
             current = datetime.now(timezone.utc)
+            # Older SQLite versions round this sentinel beyond their date range.
+            durable_expiry = _DURABLE_EXPIRY.strftime("%Y-%m-%d %H:%M:%S.%f")
             rows = connection.execute(
                 "SELECT d.id, d.message_id, d.state, d.claim_token, d.lease_expires_at, "
                 "m.expires_at, d.codex_wake_generation "
@@ -308,9 +310,13 @@ class SQLiteRelayMixin:
                 "WHERE d.recipient_endpoint_id=? AND d.recipient_runtime=? "
                 "AND d.recipient_session_ref=? AND d.recipient_container_ref=? "
                 "AND d.state IN ('pending', 'claimed') "
-                "AND (m.expires_at IS NULL OR julianday(m.expires_at) > julianday(?)) "
+                "AND (m.expires_at IS NULL OR m.expires_at = ? "
+                "OR julianday(m.expires_at) > julianday(?)) "
                 "ORDER BY d.id LIMIT 2",
-                (endpoint_id, runtime, session_ref, container_ref, current.isoformat()),
+                (
+                    endpoint_id, runtime, session_ref, container_ref,
+                    durable_expiry, current.isoformat(),
+                ),
             ).fetchall()
             check_deadline()
             if not rows:

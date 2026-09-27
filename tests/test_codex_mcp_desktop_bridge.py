@@ -626,6 +626,52 @@ def test_shadow_public_output_never_exposes_private_native_fields():
         "handle": "private-handle", "path": "private-path"}) == {"mode": "shadow", "status": "unavailable"}
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["status", "renew"])
+async def test_shadow_unavailable_evidence_ends_authority_without_rearming(monkeypatch, operation):
+    calls, closed = _shadow_native(monkeypatch)
+    native_client = sys.modules["app.codex_bridge_pipe"].NativeShadowClient
+    now = [0.0]
+    monkeypatch.setattr(codex_desktop_bridge, "time", SimpleNamespace(monotonic=lambda: now[0]))
+
+    def unavailable(_self):
+        calls.append((operation, None))
+        return {"status": "unavailable", "reason": "evidence-unavailable", "ttl_seconds": 10}
+
+    monkeypatch.setattr(native_client, operation, unavailable)
+    server = mcp_server.create_server(codex_shadow=True, lifespan=mcp_server._codex_shadow_lifespan)
+    meta = {"threadId": "controller", "turnId": "current-turn"}
+
+    async def exercise(session):
+        enrolled = await session.call_tool("pallium_codex_bridge_shadow_enroll", {}, meta=meta)
+        assert json.loads(enrolled.content[0].text)["status"] == "enrolled"
+        if operation == "status":
+            response = await session.call_tool("pallium_codex_bridge_shadow_status", {}, meta=meta)
+            assert json.loads(response.content[0].text)["reason"] == "evidence-unavailable"
+        else:
+            now[0] = 6.0
+        with anyio.fail_after(1):
+            while not closed.is_set():
+                await asyncio.sleep(.01)
+        status = await session.call_tool("pallium_codex_bridge_shadow_status", {}, meta=meta)
+        again = await session.call_tool("pallium_codex_bridge_shadow_enroll", {}, meta=meta)
+        assert json.loads(status.content[0].text)["reason"] == "stopped"
+        assert json.loads(again.content[0].text)["reason"] == "stopped"
+        assert sum(call == "enroll" for call, _ in calls) == 1
+        assert not (await session.call_tool("pallium_status", {})).isError
+
+    await _serve_protocol(server, exercise)
+    fresh = mcp_server.create_server(codex_shadow=True, lifespan=mcp_server._codex_shadow_lifespan)
+
+    async def reenroll(session):
+        reply = await session.call_tool("pallium_codex_bridge_shadow_enroll", {},
+            meta={"threadId": "controller", "turnId": "fresh-turn"})
+        assert json.loads(reply.content[0].text)["status"] == "enrolled"
+        assert sum(call == "enroll" for call, _ in calls) == 2
+
+    await _serve_protocol(fresh, reenroll)
+
+
 @pytest.mark.parametrize("status", ["enrolled", "eligible", "held", "inactive", "unavailable"])
 @pytest.mark.parametrize("reason", ["ok", "observed", "evidence-unavailable", "closed", "not-enrolled"])
 def test_shadow_public_output_preserves_exact_native_vocabulary(status, reason):
