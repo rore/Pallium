@@ -4,6 +4,8 @@ import hashlib
 import hmac
 import json
 import re
+import sqlite3
+import time
 import unicodedata
 import uuid
 from pathlib import Path
@@ -228,6 +230,159 @@ def _delivery_view(
 
 
 class SQLiteRelayMixin:
+    def relay_shadow_snapshot(
+        self,
+        *,
+        endpoint_id: str,
+        runtime: str,
+        session_ref: str,
+        container_ref: str,
+        scope_generation: int,
+        deadline: float,
+    ) -> dict[str, str | bool]:
+        """Read one exact Relay pair's shadow eligibility without changing state."""
+        if (
+            any(not isinstance(value, str) or not value or len(value) > 512 for value in (
+                endpoint_id, runtime, session_ref, container_ref,
+            ))
+            or any(
+                unicodedata.category(char) in {"Cc", "Zl", "Zp"}
+                for value in (endpoint_id, runtime, session_ref, container_ref)
+                for char in value
+            )
+            or type(scope_generation) is not int
+            or scope_generation < 0
+            or not isinstance(deadline, (int, float))
+            or not time.monotonic() < deadline <= time.monotonic() + 3
+        ):
+            raise ValueError("invalid shadow snapshot request")
+
+        def result(category: str, reason: str, endpoint_valid: bool = False) -> dict[str, str | bool]:
+            return {"category": category, "reason": reason, "endpoint_valid": endpoint_valid}
+
+        connection = None
+        try:
+            database = self._relay_engine.url.database
+            if not database or database == ":memory:":
+                return result("unavailable", "unsupported_database")
+            path = Path(database).resolve()
+            if not path.is_file():
+                return result("unavailable", "database_missing")
+            connection = sqlite3.connect(
+                f"{path.as_uri()}?mode=ro", uri=True, timeout=0, isolation_level=None
+            )
+            connection.row_factory = sqlite3.Row
+            connection.execute("PRAGMA query_only=ON")
+            connection.set_progress_handler(lambda: int(time.monotonic() >= deadline), 1000)
+            connection.execute("BEGIN")  # deferred read snapshot
+
+            def check_deadline() -> None:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError
+
+            endpoint = connection.execute(
+                "SELECT state FROM relay_sessions WHERE id=? AND runtime=? AND session_ref=? AND container_ref=?",
+                (endpoint_id, runtime, session_ref, container_ref),
+            ).fetchone()
+            check_deadline()
+            if endpoint is None:
+                return result("held", "endpoint_missing_or_scope_mismatch")
+            if endpoint["state"] != "active":
+                return result("inactive", "endpoint_inactive")
+
+            generation = connection.execute(
+                "SELECT generation FROM relay_endpoint_generations WHERE endpoint_id=?",
+                (endpoint_id,),
+            ).fetchone()
+            check_deadline()
+            current_generation = int(generation["generation"]) if generation else 0
+            if current_generation != scope_generation:
+                return result("held", "scope_generation_mismatch")
+            endpoint_valid = True
+
+            current = datetime.now(timezone.utc)
+            # Older SQLite versions round this sentinel beyond their date range.
+            durable_expiry = _DURABLE_EXPIRY.strftime("%Y-%m-%d %H:%M:%S.%f")
+            rows = connection.execute(
+                "SELECT d.id, d.message_id, d.state, d.claim_token, d.lease_expires_at, "
+                "m.expires_at, d.codex_wake_generation "
+                "FROM relay_deliveries d LEFT JOIN relay_messages m ON m.id=d.message_id "
+                "WHERE d.recipient_endpoint_id=? AND d.recipient_runtime=? "
+                "AND d.recipient_session_ref=? AND d.recipient_container_ref=? "
+                "AND d.state IN ('pending', 'claimed') "
+                "AND (m.expires_at IS NULL OR m.expires_at = ? "
+                "OR julianday(m.expires_at) > julianday(?)) "
+                "ORDER BY d.id LIMIT 2",
+                (
+                    endpoint_id, runtime, session_ref, container_ref,
+                    durable_expiry, current.isoformat(),
+                ),
+            ).fetchall()
+            check_deadline()
+            if not rows:
+                return result("inactive", "no_live_delivery", endpoint_valid)
+            if len(rows) != 1:
+                return result("held", "ambiguous_delivery_set", endpoint_valid)
+            delivery = rows[0]
+            if delivery["state"] != "pending":
+                return result("held", "delivery_not_pending", endpoint_valid)
+            if delivery["claim_token"] is not None or delivery["lease_expires_at"] is not None:
+                return result("held", "claim_evidence_present", endpoint_valid)
+            if delivery["codex_wake_generation"] is not None:
+                # This native counter has no persisted trace-generation link.
+                # Keep the anchor held; never compare it to Relay scope generation.
+                return result("held", "native_anchor_uncorrelated", endpoint_valid)
+
+            traces = connection.execute(
+                "SELECT attempt_id, stage, outcome, evidence_json, native_retry_safe, "
+                "scope_generation, recorded_sequence FROM relay_delivery_trace "
+                "WHERE delivery_id=? ORDER BY recorded_sequence DESC LIMIT 25",
+                (delivery["id"],),
+            ).fetchall()
+            check_deadline()
+            if not traces:
+                return result("held", "native_evidence_missing", endpoint_valid)
+            if len(traces) > 24 or any(row["scope_generation"] != scope_generation for row in traces):
+                return result("held", "native_evidence_incomplete", endpoint_valid)
+            latest = traces[0]
+            if latest["stage"] != "completed":
+                return result("held", "native_evidence_incomplete", endpoint_valid)
+            if len({row["attempt_id"] for row in traces}) != 1:
+                return result("held", "native_evidence_incomplete", endpoint_valid)
+            stages = [row["stage"] for row in reversed(traces)]
+            if (
+                stages.count("prepared") != 1
+                or stages.count("associated") != 1
+                or stages.count("completed") != 1
+                or stages != ["prepared", "associated", "completed"]
+            ):
+                return result("held", "native_evidence_incomplete", endpoint_valid)
+            try:
+                evidence = json.loads(latest["evidence_json"] or "[]")
+            except (TypeError, json.JSONDecodeError):
+                return result("held", "native_evidence_incomplete", endpoint_valid)
+            if latest["outcome"] == "uncertain":
+                return result("held", "native_evidence_uncertain", endpoint_valid)
+            if not isinstance(evidence, list):
+                return result("held", "native_evidence_incomplete", endpoint_valid)
+            if latest["outcome"] == "accepted":
+                if not {"transport_accepted", "payload_admitted"}.intersection(evidence):
+                    return result("held", "native_evidence_incomplete", endpoint_valid)
+                return result("eligible", "accepted_native_evidence", endpoint_valid)
+            if (
+                latest["outcome"] not in {"deferred", "failed"}
+                or latest["native_retry_safe"] != 1
+                or "transport_accepted" in evidence
+                or "payload_admitted" in evidence
+            ):
+                return result("held", "native_evidence_incomplete", endpoint_valid)
+            return result("eligible", "complete_retry_safe_native_evidence", endpoint_valid)
+        except (sqlite3.Error, OSError, TimeoutError, TypeError, ValueError):
+            return result("unavailable", "read_failed_or_deadline")
+        finally:
+            if connection is not None:
+                connection.close()
+
     def relay_endpoint_repair_apply(self, manifest: dict[str, Any], *, reservation_validator: Callable[[], set[str]] | None = None, now: datetime | None = None) -> dict[str, Any]:
         """Apply one exact, reviewed repair snapshot under one write transaction."""
         required = {"schema_version", "database_identity", "source_endpoint_ids", "destination_endpoint_id", "expected_scopes", "endpoint_preimage", "reservation_evidence", "dispositions"}
