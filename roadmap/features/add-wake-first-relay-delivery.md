@@ -31,10 +31,12 @@ complete. RW-035 has a shipped forward exact-claim fence fix; the
 umbrella remains queued for other runtime and platform qualification below.
 
 Remaining work:
-- Complete separate human/API result review of [draft PR #252](https://github.com/rore/Pallium/pull/252),
-  the [optional Codex MCP Desktop bridge](../../docs/designs/codex-mcp-desktop-bridge.md)
-  inert lifecycle slice tracked in `.agent-workflow/tasks/codex-mcp-bridge.md`.
-  Required CI passes at `d88adb80`; this is not merged or installed.
+- The [optional Codex MCP Desktop bridge](../../docs/designs/codex-mcp-desktop-bridge.md)
+  inert lifecycle slice in [PR #252](https://github.com/rore/Pallium/pull/252) is
+  independently reviewed and approved for release by the task owner, who delegated
+  technical review to agents. Passing source/test evidence is bound to `d88adb80`;
+  final CI, merge and installed health verification are tracked on the PR and
+  `.agent-workflow/tasks/codex-mcp-bridge.md`. This is not automatic cold delivery.
   Qualify actual Desktop child startup/lifetime separately; live setup is parked.
   It stays off by default and makes zero Desktop/service bridge calls.
   Neither bounded actual-Python setup attempt witnessed child startup: Desktop
