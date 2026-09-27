@@ -33,7 +33,7 @@ When input is empty/max/over-max, malformed, Unicode, canonically duplicate, or 
 When reading 1 or 200 keys with unrelated same-scope and unrelated-scope rows, the batch shall use one indexed aggregate and change no state -> SQL statement/EXPLAIN checks plus no-write/snapshot E2E; measure local loopback latency against the shipped median under 100 ms / p95 under 250 ms 200-key target, report conditions without an unmeasured speedup claim.
 When delivering the slice, required verification shall pass -> selected full tests, independent/human reviews, CI, and installed health.
 
-**Plan review:** Agent technical review: /root/participant_plan_review, 2026-09-27, clean revision 44b029218200f901a6f2719c458df958fdef7a48; approach sound with explicit clock, boundary/refresh, History reassignment, and indexed-query verification refinements now recorded. Lead contract alignment and separate human plan approval remain pending.
+**Plan review:** Agent technical review: /root/participant_plan_review, 2026-09-27, clean revision 44b029218200f901a6f2719c458df958fdef7a48; approach sound with explicit clock, boundary/refresh, History reassignment, and indexed-query verification refinements now recorded. Lead aligned the exact unchanged additive contract in relay-reply-6414464a12be5356a5c7223bdb682bf0bca2fd969412480261b567a4347f77fc. Separate human plan approval remains pending.
 
 **Approvals:** Pending separate human review of the aligned High-risk plan. Lead is the single approval requester; the forwarded broad task authorization is not claimed as review of the concrete contract.
 
@@ -44,7 +44,7 @@ When delivering the slice, required verification shall pass -> selected full tes
 
 ## Source and coordination
 
-Pallium Relay offer relay-msg-5f47ac48cb9c4aad83f156d9058d57cb, delivery relay-delivery-71189c04ed5f42dab0b39ebf2aac91a3. Accepted via atomic hook-delivery reply. Lead session codex:01a0d7cf-2c64-7bb2-a87c-724dd1c405a2 in git:github.com/rore/minimap coordinates API alignment and canonical roadmap ownership. No Minimap pair supplied yet; no association attempted or invented.
+Pallium Relay offer relay-msg-5f47ac48cb9c4aad83f156d9058d57cb, delivery relay-delivery-71189c04ed5f42dab0b39ebf2aac91a3. Accepted via atomic hook-delivery reply. Lead session codex:01a0d7cf-2c64-7bb2-a87c-724dd1c405a2 in git:github.com/rore/minimap coordinates API alignment and canonical roadmap ownership. Canonical pair is recorded below; optional attachment was skipped at capacity, with no eviction.
 
 ## Implementation
 
@@ -68,3 +68,9 @@ Authoritative CLI output forwarded in relay-msg-07b8de7f617d41019fd02420231d202e
 - work_ref: work:v1:7e384e1e66782b48c1a7622d977c8b5b0f25f4cddd29201d7fa63d7ddcfcd935
 
 Owner-managed canonical file: C:\Dev\rore\minimap\roadmap\features\distinguish-recent-dormant-participants.md, Minimap-dev sole writer. No roadmap edit here. Own successful Relay work-ref list on 2026-09-27 showed three existing explicit references and this pair absent. Capacity prevents attachment; skipped without mutation or eviction. Therefore this task claims no successful own-session association, participant evidence, or automatic History capture for the canonical pair. The exact key is known and preserved, not reconstructed. Capacity limitation reported to the lead; it does not block implementation. No production code edited.
+
+## Aligned contract and remaining gate
+
+Lead alignment relay-reply-6414464a12be5356a5c7223bdb682bf0bca2fd969412480261b567a4347f77fc confirms the exact proposed fields, unchanged v1 total, shared inclusive 86400-second cutoff, as_of/recent_seconds metadata and detail semantics. No Minimap mutation endpoint or larger History subsystem. No material scope or approach change; valid technical review is reused.
+
+Only remaining pre-edit gate is separate human consent to the presented High-risk plan, not a second scope authorization or a capacity issue. Exact source: .agents/skills/agent-workflow/templates/checkpoints/plan-and-review.md, High row: "Clean-context agent technical review plus separate human plan review and approval. Stop until both are complete; record human approval verbatim in Approvals." Same file allows ordinary consent to the presented plan with no magic words and preserves unchanged approval. The forwarded broad task authorization precedes this concrete plan and expressly requires applicable approvals; it is not claimed as separate human plan review. The lead remains sole requester: forward an existing exact consent/reference covering this plan, or request one consent to the already-reviewed additive plan. No production edit while pending. Recovery revision before this update: 165ea495387e76a721e49f511d84c2609f6c6d15.
