@@ -36,6 +36,18 @@ The optional Codex MCP Desktop bridge **inert lifecycle foundation** shipped in
 queue and embedding health passed. It remains off by default and makes zero
 Desktop/service bridge calls. This milestone is not automatic unloaded delivery.
 
+The Windows **shadow-only enrollment and observation** slice shipped in
+[PR #255](https://github.com/rore/Pallium/pull/255), merged at
+`2e3f9316f20fdbb6d6c81f18f967f679ef6321c7`. It adds a protected local pipe,
+one explicitly approved pair, finite process-local enrollment and read-only Relay
+observations. Real stdio-to-native-pipe-to-SQLite coverage and Linux/Windows CI
+passed; the final local suite passed 5,461 tests. It remains off by default:
+no live policy was provisioned and no wake action was enabled. Actual native
+anchors remain held because their trace correlation is insufficient. Desktop
+child lifetime and zero-child bootstrap remain unqualified. Trusted-child
+assertions use the documented trusted-local boundary, not Desktop attestation
+or isolation from compromised same-user code.
+
 Remaining work:
 - Qualify actual Desktop child startup/lifetime for the
   [optional Codex MCP Desktop bridge](../../docs/designs/codex-mcp-desktop-bridge.md);
@@ -50,7 +62,7 @@ Remaining work:
   preparation ended before any observed user turn. Temporary configuration was
   restored. Existing `env`/`env_vars` and server eligibility already express inert
   opt-in, so no new setup feature is needed. Live configuration remains held.
-  Authenticate origin-bound enrollment and qualify executor availability/bootstrap
+  Qualify actual Desktop shadow enrollment/lifetime and executor availability/bootstrap
   before cold wake; host-safe admission including cold-to-busy races remains required.
   New grants or generations must not bypass uncertain action fences.
   This is work in progress, not shipped automatic unloaded delivery.
