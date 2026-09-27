@@ -16,7 +16,7 @@
 **Verification plan:** When publication overlaps cleanup, successful newer intent remains available and is admitted/recovered through HTTP after old consumption: deterministic barrier-driven real hook publisher plus real registration/close endpoints, assert durable file and registry readback, both busy/idle directions and closed transitions. When lock is occupied/exhausted or file operations fail, no false success/state mutation or existing-intent loss: bounded failure checks and recovery after release. When publisher exits/crashes, OS lock releases and next publication/registration succeeds: subprocess lifecycle check on host platforms. Unicode/exact session-container scope use independent locks. Preserve delayed-ID, inflight, close/outage and legacy durability tests unchanged; add cases in existing durability home and caller-surface dispatch tests. Run exact new nodes, affected durability/dispatch/integration/registration/deadline files, selector-selected full non-slow suite once, fresh import boundaries, independent smart review and Linux/Windows CI. Historical restart test must pass without weakened assertions or artificial reconciler shutdown; if it fails, report exact evidence and diagnose separately.
 **Plan review:** Pending clean-context technical review of a concrete plan.
 **Approvals:** Pending separate review of the concrete High-risk plan through the designated manager; do not ask duplicate questions or treat broad authorization as an unseen plan review.
-**Exceptions:** None.
+**Exceptions:** —
 **State:** Blocked
 <!-- agent-workflow:end -->
 
