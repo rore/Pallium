@@ -39,7 +39,7 @@ When delivering the slice, required verification shall pass -> selected full tes
 
 **Exceptions:** —
 
-**State:** Ready for review
+**State:** Blocked
 <!-- agent-workflow:end -->
 
 ## Source and coordination
@@ -47,6 +47,8 @@ When delivering the slice, required verification shall pass -> selected full tes
 Pallium Relay offer relay-msg-5f47ac48cb9c4aad83f156d9058d57cb, delivery relay-delivery-71189c04ed5f42dab0b39ebf2aac91a3. Accepted via atomic hook-delivery reply. Lead session codex:01a0d7cf-2c64-7bb2-a87c-724dd1c405a2 in git:github.com/rore/minimap coordinates API alignment and canonical roadmap ownership. Canonical pair is recorded below; optional attachment was skipped at capacity, with no eviction.
 
 ## Implementation
+
+2026-09-27 CI failure: PR #253 head 5302e61c has Python 3.12 failure in the unchanged protected busy-wake contract, message-status read returning relay_busy (503) rather than deliveries; 3.13, Windows smoke, governance and CodeRabbit pass. Do not merge or blindly rerun. Bounded root-cause diagnosis underway; preserve the protected requirement. No new code/scope edit yet. Any needed out-of-scope fix returns to planning/classification before editing. Local passing evidence is retained, not represented as complete CI success.
 
 2026-09-27 verification transition: unchanged implementation at a0e19c1be3c8e5ca7a8f75d930f01c90cdcda94a passes focused/full tests, fresh import boundaries and measured indexed-query latency. Advance to Ready for review. Independent Sol technical result review found no defects; human result review and PR/CI/installed delivery remain pending. The first context-isolated worker's write guard rejected implementation authority, so it made no edits; a full-context worker carrying the actual user approval implemented successfully, without bypassing the guard. No scope expansion. Skill-feedback trigger 2 dropped: the initial approval-record format error was our own bookkeeping error, not an upstream defect.
 
