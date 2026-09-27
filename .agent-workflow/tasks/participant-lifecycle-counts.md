@@ -33,13 +33,13 @@ When input is empty/max/over-max, malformed, Unicode, canonically duplicate, or 
 When reading 1 or 200 keys with unrelated same-scope and unrelated-scope rows, the batch shall use one indexed aggregate and change no state -> SQL statement/EXPLAIN checks plus no-write/snapshot E2E; measure local loopback latency against the shipped median under 100 ms / p95 under 250 ms 200-key target, report conditions without an unmeasured speedup claim.
 When delivering the slice, required verification shall pass -> selected full tests, independent/human reviews, CI, and installed health.
 
-**Plan review:** Agent technical review: /root/participant_plan_review, 2026-09-27, clean revision 44b029218200f901a6f2719c458df958fdef7a48; approach sound with explicit clock, boundary/refresh, History reassignment, and indexed-query verification refinements now recorded. Lead aligned the exact unchanged additive contract in relay-reply-6414464a12be5356a5c7223bdb682bf0bca2fd969412480261b567a4347f77fc. Separate human plan approval remains pending.
+**Plan review:** Agent technical review: /root/participant_plan_review, 2026-09-27, clean revision 44b029218200f901a6f2719c458df958fdef7a48; approach sound with explicit clock, boundary/refresh, History reassignment, and indexed-query verification refinements now recorded. Lead aligned the exact unchanged additive contract in relay-reply-6414464a12be5356a5c7223bdb682bf0bca2fd969412480261b567a4347f77fc. Separate human plan approval received directly from Rotem on 2026-09-27; source and exact consent recorded in Approvals.
 
-**Approvals:** Pending separate human review of the aligned High-risk plan. Lead is the single approval requester; the forwarded broad task authorization is not claimed as review of the concrete contract.
+**Approvals:** Approved by user 2026-09-27: "if you need my approval , you have it". Rotem Hermon, source item d449065c-e203-417e-af1d-a60f31d80b33 in thread 01a08755-3cf7-7691-94c7-643c67e3f3ca. Consent directly follows the recorded gate for this reviewed concrete plan; forwarded immediately to the lead. Human result review remains required after verified implementation.
 
 **Exceptions:** —
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Source and coordination
@@ -47,6 +47,8 @@ When delivering the slice, required verification shall pass -> selected full tes
 Pallium Relay offer relay-msg-5f47ac48cb9c4aad83f156d9058d57cb, delivery relay-delivery-71189c04ed5f42dab0b39ebf2aac91a3. Accepted via atomic hook-delivery reply. Lead session codex:01a0d7cf-2c64-7bb2-a87c-724dd1c405a2 in git:github.com/rore/minimap coordinates API alignment and canonical roadmap ownership. Canonical pair is recorded below; optional attachment was skipped at capacity, with no eviction.
 
 ## Implementation
+
+2026-09-27 approval transition: direct human consent clears the remaining pre-edit gate; forwarded to the lead as relay-msg-fcae62dad8f245c6bf1ca8549efca66d (saved, receipt not inferred). Existing alignment and independent technical review remain valid. Exact implementation targets are api/schemas.py (response fields), core/relay.py (one response clock and shared window), storage/sqlite_relay.py (indexed conditional aggregate and detail window), tests/test_relay_work_ref_associations_e2e.py (HTTP contract and preservation checks), docs/agent-relay.md (contract/limits), and this record. No unrelated cleanup. Next: fresh workflow validation, bounded implementation, verification and independent result review.
 
 2026-09-27: Reused the clean completed-task checkout; isolated branch feat/participant-lifecycle-counts starts from current origin/main. Whole-change intended-path applicability required a Work Record, with red API/persistence/architecture checkpoints. Discovery only; waiting for contract alignment and required plan reviews. Next action: send exact proposed contract and preservation/History limitations to the lead, then review it before edits.
 
