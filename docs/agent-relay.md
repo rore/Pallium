@@ -106,8 +106,9 @@ structural references discovered from its branch and Agent Workflow record. Use
 `pallium_relay_attach_work_ref(scope_ref, local_ref)` and
 `pallium_relay_detach_work_ref(scope_ref, local_ref)` for the current session.
 `pallium_relay_work_refs()` reads the current snapshot, and
-`pallium_relay_participants(scope_ref, local_ref)` finds every nonclosed participant
-for one exact reference; pass `include_closed=true` only when closed sessions matter.
+`pallium_relay_participants(scope_ref, local_ref)` returns a bounded page of nonclosed
+participants for one exact reference; pass a returned `next_offset` as `offset` to
+continue. Pass `include_closed=true` only when closed sessions matter.
 
 For board-style reads, `POST /relay/work-refs/participant-counts` accepts an
 ordered `references` list of 1–200 unique exact `{scope_ref, local_ref}` pairs.

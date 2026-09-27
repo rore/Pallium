@@ -39,7 +39,7 @@ When delivering the slice, required verification shall pass -> selected full tes
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Source and coordination
@@ -62,6 +62,8 @@ Pallium Relay offer relay-msg-5f47ac48cb9c4aad83f156d9058d57cb, delivery relay-d
 
 ## Verification evidence
 
+2026-09-27 integrated validation at `aff5172ec124257bb1ac827cb98284808605d2c0`, after explicit rebase onto installed main `04675d0c5f049934d5597c6583068f4c3dcd3e22`: selector selected the full lane for exactly the existing eight-path scope; `python -m pytest tests/ -x -q` passed 5381 tests, with 34 skips and 2 expected failures in 227.25s (Windows/Python 3.13, default four workers), saved in `build/participant-integration-full.log`. The earlier restart failure remains historical evidence, not a proven race-causality claim. Fresh import check passes, Redline is RED without boundary violations, and workflow exits 0 using the existing actual PR architecture/API/persistence review labels. After this run only pagination documentation and Work Record evidence change: the MCP tool already returns a bounded page with `next_offset`, so remove the inaccurate "every participant" wording. No application retest is needed for that prose-only correction; production and tests remain identical to the tested revision.
+
 2026-09-27 post-PR254 integration: exact clock regression and both runtime variants of the unchanged atomic-reply dispatch test pass (3 passed in 1.73s) after the equivalent assertion reconciliation. Affected Codex wake and participant HTTP E2E files pass together (159 passed in 35.28s). Independent clean-context Sol-high integration reviewer confirms the reconciliation preserves native SQLite backoff and all reservation/dispatch assertions, with no protected-path or runtime edit. The selector selects full for the existing eight-path scope; full non-slow validation will run once on the coherent integrated revision. Existing measured query/latency evidence below remains applicable to the unchanged production implementation.
 
 Tested revision: a0e19c1be3c8e5ca7a8f75d930f01c90cdcda94a, clean. Selector `python scripts/test-plan.py --base origin/main` selects full for exactly the six scoped paths. Focused HTTP E2E: 19 passed. Required `python -m pytest tests/ -x -q`: 5349 passed, 34 skipped, 2 xfailed in 241.63 seconds on Windows / existing Python 3.13 virtualenv, default four workers. Fresh `python scripts/run-import-linter.py --out build/import-linter-report.json` exits 0; no boundary violation. Whitespace check passes. No paid evaluator/model journeys.
@@ -69,6 +71,8 @@ Tested revision: a0e19c1be3c8e5ca7a8f75d930f01c90cdcda94a, clean. Selector `pyth
 Latency verification by /root/participant_counts_performance: production create_app HTTP route, isolated file-backed main/Relay SQLite databases, vector disabled and demo package, lifespan/startup tasks disabled, ephemeral loopback port 58904; 350 sessions, 1100 associations, 200 exact keys with 20 matching dual-origin groups and 180 zero rows, recent/dormant split. Windows 11 build 26200, CPython 3.13.14; 100 samples after 10 warmups. HTTP median 8.35 ms / p95 9.43 ms; production SQL method median 0.83 ms / p95 0.99 ms. Both 1/200-key EXPLAIN plans use covering idx_relay_work_refs_lookup then session primary key, with temporary DISTINCT B-trees. Meets the existing fixture target of median under 100 ms / p95 under 250 ms, not a claim about live production p95 or speedup. First harness invocation aborted before samples due to cleanup introspection; ignored harness corrected, one successful measured run, temporary files removed and live service/wake/home untouched.
 
 ## Result review
+
+Current recovery: clean isolated branch `feat/participant-lifecycle-counts` is integrated with main `04675d0c`; local validation passes as recorded above. Independent integration supplement and updated PR253 CI are next; managers retain final result/merge/install decisions and Minimap-dev retains sole canonical-roadmap writing. No live operation, history backfill, cleanup or participant capture claim is made here. Optional exact-work association remains skipped at capacity. This supersedes the earlier runtime-prerequisite blocker, without deleting its failed-run evidence.
 
 Agent technical review: /root/participant_counts_result_review, independent clean-context gpt-6-sol high, 2026-09-27.
 Reviewed revision: a0e19c1be3c8e5ca7a8f75d930f01c90cdcda94a against 62a4cf5edf7b5cb873595888d0f46cf5d8ec24ff.
