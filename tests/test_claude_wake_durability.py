@@ -869,6 +869,15 @@ def test_crashed_intent_lock_owner_allows_hook_publication_and_http_recovery(
         assert http_requests == []
         assert json.loads(path.read_text(encoding="utf-8"))["intent_id"] == "old"
 
+        started = time.monotonic()
+        assert not common.register_claude_wake(
+            PAYLOAD["session_ref"], PAYLOAD["container_ref"], idle=True,
+        )
+        assert time.monotonic() - started < 0.5
+        assert http_requests == []
+        assert registry._registrations == {} and not registry._canonical.exists()
+        assert json.loads(path.read_text(encoding="utf-8"))["intent_id"] == "old"
+
         process.kill()
         process.wait(timeout=1)
         registry.recover_intents()
