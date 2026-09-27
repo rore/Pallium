@@ -34,6 +34,22 @@ SCOPE = {
 }
 
 
+def test_codex_test_clock_patches_do_not_change_shared_time(monkeypatch):
+    import time
+    from storage import sqlite_queue
+
+    native_sleep, native_monotonic = time.sleep, time.monotonic
+    assert codex_wake.time.sleep is native_sleep
+    assert codex_wake.time.monotonic is native_monotonic
+    with monkeypatch.context() as clock_patch:
+        clock_patch.setattr(codex_wake.time, "sleep", lambda _: None)
+        clock_patch.setattr(codex_wake.time, "monotonic", lambda: 42.0)
+        assert codex_wake.time.sleep(0) is None
+        assert codex_wake.time.monotonic() == 42.0
+        assert time.sleep is sqlite_queue.time.sleep is native_sleep
+        assert time.monotonic is sqlite_queue.time.monotonic is native_monotonic
+
+
 def _delivery(delivery_id: str = "delivery-1", runtime: str = "codex") -> dict:
     return {
         "recipient": "codex:target-session",
@@ -4440,7 +4456,8 @@ def test_atomic_reply_releases_first_and_dispatches_next_pending_once(
         monkeypatch.setattr(codex_wake, "time", SimpleNamespace(
             sleep=lambda _: None, monotonic=original_clock.monotonic,
         ))
-        assert sqlite_queue.time is original_clock
+        assert sqlite_queue.time.sleep is original_clock.sleep
+        assert sqlite_queue.time.monotonic is original_clock.monotonic
         assert sqlite_queue.time.sleep is not codex_wake.time.sleep
         monkeypatch.setattr(codex_wake, "_codex_home", lambda: tmp_path)
 

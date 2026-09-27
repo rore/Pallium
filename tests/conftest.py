@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+import time
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -41,6 +43,10 @@ def drain_queue():
 @pytest.fixture(autouse=True)
 def isolated_claude_wake_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep trusted-local capability tests out of the developer profile."""
+    from app import codex_wake
+
+    # Clock mocks must not disable SQLite backoff or unrelated worker timing.
+    monkeypatch.setattr(codex_wake, "time", SimpleNamespace(**vars(time)))
     monkeypatch.setenv("PALLIUM_CLAUDE_WAKE_DIR", str(tmp_path / "claude-wake"))
     monkeypatch.setenv("PALLIUM_CODEX_WAKE_DIR", str(tmp_path / "codex-wake"))
     monkeypatch.delenv("PALLIUM_HOOK_ACTOR_REF", raising=False)

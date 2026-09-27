@@ -10,10 +10,11 @@ from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
-from sqlalchemy import and_, delete, func, or_, select, update
+from sqlalchemy import and_, case, delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 
 from core.relay import (
+    RELAY_RECENT_SECONDS,
     RELAY_TRACE_MAX_ROWS,
     RELAY_TRACE_MAX_SEQUENCE,
     RelayConflictError,
@@ -950,12 +951,20 @@ class SQLiteRelayMixin:
             }
 
     def relay_work_ref_participant_counts(
-        self, *, work_refs: list[str]
-    ) -> dict[str, int]:
+        self, *, work_refs: list[str], now: datetime, recent_seconds: int
+    ) -> dict[str, tuple[int, int]]:
+        cutoff = _now(now) - timedelta(seconds=recent_seconds)
         statement = (
             select(
                 RelaySessionWorkRefRecord.work_ref,
                 func.count(func.distinct(RelaySessionWorkRefRecord.endpoint_id)),
+                func.count(func.distinct(case(
+                    (
+                        RelaySessionRecord.last_seen_at >= cutoff,
+                        RelaySessionWorkRefRecord.endpoint_id,
+                    ),
+                    else_=None,
+                ))),
             )
             .select_from(RelaySessionWorkRefRecord)
             .join(
@@ -969,7 +978,10 @@ class SQLiteRelayMixin:
             .group_by(RelaySessionWorkRefRecord.work_ref)
         )
         with self._relay_session_factory() as db:
-            return dict(db.execute(statement).all())
+            return {
+                key: (total, recent)
+                for key, total, recent in db.execute(statement).all()
+            }
 
     def relay_work_ref_participants(
         self,
@@ -980,6 +992,7 @@ class SQLiteRelayMixin:
         offset: int,
         limit: int,
         now: datetime | None = None,
+        recent_seconds: int = RELAY_RECENT_SECONDS,
     ) -> list[dict[str, Any]]:
         current = _now(now)
         with self._relay_session_factory() as db:
@@ -1028,7 +1041,7 @@ class SQLiteRelayMixin:
             result = []
             for session, associations in grouped:
                 association = associations[0]
-                session_view = self._relay_session_view(db, session, current, 24 * 60 * 60)
+                session_view = self._relay_session_view(db, session, current, recent_seconds)
                 result.append({
                     **session_view,
                     "state": session.state,

@@ -3,10 +3,11 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from sqlalchemy import event, text
+from sqlalchemy import event, select, text, update
 
 from core.relay import RelayService
 from core.work_ref import readable_work_ref
+from storage.sqlite_schema import RelaySessionRecord, RelaySessionWorkRefRecord
 
 
 CONTAINER = "git:example.test/team/relay"
@@ -267,7 +268,7 @@ def test_concurrent_capacity_admission_keeps_exactly_three_explicit_refs(client)
     ]) == 3
 
 
-def test_alias_transfer_does_not_transfer_associations_and_reopen_retains_them(client):
+def test_alias_transfer_does_not_transfer_associations_and_reopen_retains_them(client, drain_queue):
     ticket = {
         "scope_ref": "tracker:v1:example.test#relay",
         "local_ref": "ticket:owner",
@@ -275,6 +276,16 @@ def test_alias_transfer_does_not_transfer_associations_and_reopen_retains_them(c
     first = _turn(client, session="first")
     second = _turn(client, session="second")
     assert _attach(client, ticket, session="first").status_code == 200
+    key = readable_work_ref(**ticket).key
+    captured = client.post("/items", json=[{
+        "source_type": "chat", "source_id": "captured-before-name-transfer",
+        "content_type": "text/plain", "content": "preserved exact session evidence é",
+        "role": "user", "artifact_kind": "message", "container_ref": CONTAINER,
+        "thread_ref": "first", "visibility": "private",
+        "metadata": {"pallium_work_refs": [key]},
+    }])
+    assert captured.status_code == 200, captured.text
+    source_id = captured.json()[0]["source_item_id"]
     for session, replace in (("first", False), ("second", True)):
         response = client.post(
             "/relay/sessions/name",
@@ -292,6 +303,16 @@ def test_alias_transfer_does_not_transfer_associations_and_reopen_retains_them(c
         first["session"]["endpoint_id"]
     ]
     assert second["session"]["endpoint_id"] not in str(participants)
+    assert _counts(client, [ticket]).json()["counts"][0]["participant_count"] == 1
+    drain_queue(client)
+    for session, expected in (("first", [source_id]), ("second", [])):
+        history = client.post("/query", json={
+            "text": " ", "limit": 5, "source_only": True,
+            "trigger_origin": "agent_pull_work", "work_refs": [key],
+            "container_ref": CONTAINER, "thread_ref": session, "visibility": "private",
+        })
+        assert history.status_code == 200, history.text
+        assert [row["source_item_id"] for row in history.json()["results"]] == expected
 
     assert client.post(
         "/relay/sessions/close",
@@ -301,11 +322,13 @@ def test_alias_transfer_does_not_transfer_associations_and_reopen_retains_them(c
             "container_ref": CONTAINER,
         },
     ).status_code == 200
+    assert _counts(client, [ticket]).json()["counts"][0]["participant_count"] == 0
     reopened = _turn(client, session="first")
     assert reopened["session"]["endpoint_id"] == first["session"]["endpoint_id"]
     assert {row["local_ref"] for row in _list(client, session="first")["work_refs"]} == {
         ticket["local_ref"]
     }
+    assert _counts(client, [ticket]).json()["counts"][0]["participant_count"] == 1
 
 def test_detach_changes_future_history_but_not_captured_snapshot(client, drain_queue):
     _turn(client, session="history")
@@ -527,6 +550,113 @@ def _counts(client, references):
     )
 
 
+def _count_row(ref, total, recent=None):
+    recent = total if recent is None else recent
+    return {**ref, "participant_count": total, "recent_participant_count": recent,
+            "dormant_participant_count": total - recent}
+
+
+def test_batch_detail_share_inclusive_clock_and_age_without_writes(client, monkeypatch):
+    current = datetime(2026, 1, 2, 12, tzinfo=timezone.utc)
+
+    class Clock(datetime):
+        calls = 0
+
+        @classmethod
+        def now(cls, tz=None):
+            cls.calls += 1
+            return current if tz else current.replace(tzinfo=None)
+
+    monkeypatch.setattr("core.relay.datetime", Clock)
+    monkeypatch.setattr("storage.sqlite_relay.datetime", Clock)
+    store = client.app.state.pallium_service._storage
+    endpoint_times = {}
+    for state in ("active", "unreachable"):
+        for delta in (-1, 0, 1):
+            session = f"{state}-{delta}"
+            endpoint = _turn(client, session, [FEATURE])["session"]["endpoint_id"]
+            assert _attach(client, FEATURE, session).status_code == 200
+            seen = current - timedelta(seconds=86400) + timedelta(microseconds=delta)
+            endpoint_times[endpoint] = seen.replace(tzinfo=None)
+            with store._relay_engine.begin() as db:
+                db.execute(update(RelaySessionRecord).where(RelaySessionRecord.id == endpoint).values(
+                    last_seen_at=seen, state=state))
+    _turn(client, "closed", [FEATURE])
+    assert client.post("/relay/sessions/close", json={
+        "runtime": "codex", "session_ref": "closed", "container_ref": CONTAINER,
+    }).status_code == 200
+
+    def assert_views(recent, dormant):
+        Clock.calls = 0
+        batch = _counts(client, [FEATURE, BRANCH])
+        assert batch.status_code == 200, batch.text
+        assert Clock.calls == 1
+        body = batch.json()
+        assert datetime.fromisoformat(body["as_of"]) == current
+        assert body["recent_seconds"] == 86400
+        assert body["counts"] == [_count_row(FEATURE, recent + dormant, recent), _count_row(BRANCH, 0)]
+        Clock.calls = 0
+        detail = client.get("/relay/work-refs/participants", params=FEATURE)
+        assert detail.status_code == 200, detail.text
+        assert Clock.calls == 1
+        page = detail.json()
+        assert page["as_of"] == body["as_of"] and page["recent_seconds"] == body["recent_seconds"]
+        assert sum(row["lifecycle"] == "recent" for row in page["participants"]) == recent
+        assert sum(row["lifecycle"] == "dormant" for row in page["participants"]) == dormant
+
+    assert_views(4, 2)
+    current += timedelta(microseconds=1)
+    assert_views(2, 4)
+    with store._relay_engine.connect() as db:
+        actual = dict(db.execute(select(RelaySessionRecord.id, RelaySessionRecord.last_seen_at)).all())
+    assert {endpoint: actual[endpoint] for endpoint in endpoint_times} == endpoint_times
+    with_closed = client.get("/relay/work-refs/participants", params={**FEATURE, "include_closed": True}).json()
+    assert len(with_closed["participants"]) == 7
+    assert [row["lifecycle"] for row in with_closed["participants"]].count("closed") == 1
+    refreshed = _turn(client, "unreachable--1")
+    assert refreshed["session"]["state"] == "recent"
+    assert_views(3, 3)
+    empty = client.get("/relay/work-refs/participants", params=BRANCH).json()
+    assert empty["participants"] == []
+    assert datetime.fromisoformat(empty["as_of"]) == current and empty["recent_seconds"] == 86400
+
+
+@pytest.mark.parametrize("size", [1, 200])
+def test_batch_counts_use_one_indexed_filtered_aggregate(client, size):
+    _turn(client, structural_work_refs=[FEATURE])
+    assert _attach(client, FEATURE).status_code == 200
+    store = client.app.state.pallium_service._storage
+    table = RelaySessionWorkRefRecord.__table__
+    with store._relay_engine.begin() as db:
+        template = dict(db.execute(select(table).where(table.c.origin == "structural")).mappings().one())
+        noise = []
+        for scope in (FEATURE["scope_ref"], "scope:unrelated-é"):
+            for index in range(100):
+                ref = readable_work_ref(scope, f"unrequested:{index}")
+                noise.append({**template, "work_ref": ref.key, "scope_ref": ref.scope_ref, "local_ref": ref.local_ref})
+        db.execute(table.insert(), noise)
+    statements = []
+
+    def record(_conn, _cursor, statement, parameters, _context, _executemany):
+        if statement.lstrip().upper().startswith("SELECT"):
+            statements.append((statement, parameters))
+
+    refs = [FEATURE] + [{**FEATURE, "local_ref": f"missing:{index}"} for index in range(size - 1)]
+    event.listen(store._relay_engine, "before_cursor_execute", record)
+    try:
+        response = _counts(client, refs)
+    finally:
+        event.remove(store._relay_engine, "before_cursor_execute", record)
+    assert response.status_code == 200, response.text
+    assert response.json()["counts"] == [_count_row(ref, int(ref == FEATURE)) for ref in refs]
+    assert len(statements) == 1
+    statement, parameters = statements[0]
+    with store._relay_engine.connect() as db:
+        plan = db.exec_driver_sql("EXPLAIN QUERY PLAN " + statement, parameters).all()
+    assert any("SEARCH" in row[3] and "idx_relay_work_refs_lookup" in row[3] for row in plan), plan
+    assert not any("SCAN relay_session_work_refs" in row[3] for row in plan), plan
+
+
 def test_batch_counts_order_bounds_and_validation(client):
     _turn(client, structural_work_refs=[FEATURE])
     refs = [
@@ -535,14 +665,17 @@ def test_batch_counts_order_bounds_and_validation(client):
     ] + [FEATURE]
     response = _counts(client, refs)
     assert response.status_code == 200, response.text
-    assert response.json() == {
+    body = response.json()
+    assert datetime.fromisoformat(body["as_of"]).utcoffset() == timedelta(0)
+    assert body == {
         "contract": "relay-work-ref-counts/v1",
+        "as_of": body["as_of"], "recent_seconds": 86400,
         "counts": [
-            {**ref, "participant_count": int(ref == FEATURE)} for ref in refs
+            _count_row(ref, int(ref == FEATURE)) for ref in refs
         ],
     }
     assert _counts(client, [FEATURE]).json()["counts"] == [
-        {**FEATURE, "participant_count": 1}
+        _count_row(FEATURE, 1)
     ]
     for body in (
         {},
@@ -584,10 +717,10 @@ def test_batch_counts_canonical_scope_case_and_lifecycle(client):
     def assert_counts():
         result = _counts(client, refs)
         assert result.status_code == 200, result.text
-        assert result.json()["counts"] == [
-            {**ref, "participant_count": count}
-            for ref, count in zip(refs, expected)
-        ]
+        rows = result.json()["counts"]
+        assert [row["participant_count"] for row in rows] == expected
+        assert [{key: row[key] for key in ("scope_ref", "local_ref")} for row in rows] == refs
+        assert all(row["participant_count"] == row["recent_participant_count"] + row["dormant_participant_count"] for row in rows)
 
     store = client.app.state.pallium_service._storage
     with store._relay_engine.connect() as connection:
@@ -612,7 +745,7 @@ def test_batch_counts_canonical_scope_case_and_lifecycle(client):
             text("SELECT count(*) FROM relay_session_work_refs")
         ).scalar_one() == before
     assert _counts(client, [decomposed]).json()["counts"] == [
-        {**composed, "participant_count": 2}
+        _count_row(composed, 2, 1)
     ]
 
     detach = client.post(
