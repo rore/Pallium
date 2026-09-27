@@ -30,15 +30,18 @@ uncertainty or make cold activation automatic. Session-to-work associations are
 complete. RW-035 has a shipped forward exact-claim fence fix; the
 umbrella remains queued for other runtime and platform qualification below.
 
+The optional Codex MCP Desktop bridge **inert lifecycle foundation** shipped in
+[PR #252](https://github.com/rore/Pallium/pull/252) and was installed at
+`bce09405353f7c9d968d12f3c57c260db993f0a9` on 2026-09-27. Installed service,
+queue and embedding health passed. It remains off by default and makes zero
+Desktop/service bridge calls. This milestone is not automatic unloaded delivery.
+
 Remaining work:
-- The [optional Codex MCP Desktop bridge](../../docs/designs/codex-mcp-desktop-bridge.md)
-  inert lifecycle slice in [PR #252](https://github.com/rore/Pallium/pull/252) is
-  independently reviewed and approved for release by the task owner, who delegated
-  technical review to agents. Passing source/test evidence is bound to `d88adb80`;
-  final CI, merge and installed health verification are tracked on the PR and
-  `.agent-workflow/tasks/codex-mcp-bridge.md`. This is not automatic cold delivery.
-  Qualify actual Desktop child startup/lifetime separately; live setup is parked.
-  It stays off by default and makes zero Desktop/service bridge calls.
+- Qualify actual Desktop child startup/lifetime for the
+  [optional Codex MCP Desktop bridge](../../docs/designs/codex-mcp-desktop-bridge.md);
+  live setup is parked. First establish a finite observer/cleanup process whose
+  lifetime is independent of coordinator turns, using offline checks before any
+  new setup. This test-support prerequisite is not executor bootstrap or wake.
   Neither bounded actual-Python setup attempt witnessed child startup: Desktop
   rejected programmatic initialization, and manual preparation ended before any
   observed user turn. Temporary configuration was restored. Establish a supported
