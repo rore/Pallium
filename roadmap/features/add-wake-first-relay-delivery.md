@@ -8,7 +8,7 @@ milestone: pallium-relay
 lane: capability
 ---
 
-## Current execution status (reconciled 2026-09-24)
+## Current execution status (reconciled 2026-09-27)
 
 The Windows/Linux Claude wake foundation, loaded-task Codex wake, Codex first-run
 setup, MCP recovery integration, and live no-manual-turn reply/remediation journey
@@ -17,18 +17,28 @@ retain Pallium's pending next-turn delivery instead. PR #209 added exact-deliver
 hook-start, payload-emission, ACK, and bounded-failure evidence. An installed
 busy-to-idle witness then delivered and ACKed once after one native submission;
 that proves the normal safe-turn path, not recovery from uncertain native failure.
-RW-031 is closed as Pallium work: the supported public CLI and app-server surfaces
-reviewed in the installed and current checked versions provide neither owner-routed
-cold activation for an unloaded Desktop task nor caller-idempotent admission/readback
-for an uncertain public-CLI submission. Capturing and replaying an execution descriptor
-would start another runtime, not wake the Desktop-owned task. This external limit
-does not block the shipped loaded-task path. RW-034 separately reduces avoidable
+RW-031 diagnostics are shipped. The reviewed supported public CLI and app-server
+surfaces still lack owner-routed cold activation and caller-idempotent admission/
+readback for uncertain public-CLI submissions. Replaying an execution descriptor
+would start another runtime, not wake the Desktop-owned task. A private Desktop
+owner bridge is now experimentally feasible: one combined native-plus-owner cold
+trial delivered through the trusted hook once, without proving loading causality
+or busy-safe admission. Its integration is separate from the supported public-path
+limit and does not change shipped loaded-task behavior. RW-034 separately reduces avoidable
 hook response timeouts for exact loaded-task wakes; it does not change native
 uncertainty or make cold activation automatic. Session-to-work associations are
 complete. RW-035 has a shipped forward exact-claim fence fix; the
 umbrella remains queued for other runtime and platform qualification below.
 
 Remaining work:
+- Publish the locally validated [optional Codex MCP Desktop bridge](../../docs/designs/codex-mcp-desktop-bridge.md)
+  inert lifecycle slice, tracked in `.agent-workflow/tasks/codex-mcp-bridge.md`,
+  and qualify actual Desktop child startup/lifetime separately.
+  It stays off by default and makes zero Desktop/service bridge calls. Cold wake
+  activation remains gated on authenticated origin-bound enrollment, host-safe
+  admission including cold-to-busy races, and executor availability/bootstrap
+  qualification. New grants or generations must not bypass uncertain action fences.
+  This is work in progress, not shipped automatic unloaded delivery.
 - Qualify still-unproven interrupted/restart combinations with a bounded matrix
   of runtime, platform, interruption, existing evidence, and missing witness.
   Reuse passed recovery tests and live witnesses; do not repeat them without cause.

@@ -1,6 +1,7 @@
 # Optional Codex MCP Desktop bridge
 
-Status: design draft, 2026-09-27. No production implementation or activation approval.
+Status: reviewed design; inert implementation validated locally, 2026-09-27.
+No production wake implementation or activation approval.
 Canonical work: [wake-first Relay delivery](../../roadmap/features/add-wake-first-relay-delivery.md).
 Private experiment: `codex-desktop-bridge-spike` Work Record; its history is not publication-ready.
 
@@ -163,6 +164,12 @@ Move to a supervised child only if measured isolation failures justify it; do no
 promise process isolation or build another broker now.
 
 ## Stages, evidence, and rollback
+
+The inert development opt-in is `PALLIUM_CODEX_BRIDGE_MODE=inert`. It is considered
+only by the local stdio entrypoint with `PALLIUM_AGENT_REF=codex` and inherited
+Desktop capability presence. Ordinary setup does not enable it or forward the
+capability. This mode owns one idle task, adds no tools, and does not connect to
+Desktop or the service; it is not a delivery feature or an enrollment grant.
 
 1. **Inert integration:** off by default; explicit local-stdio eligibility;
    optional lifecycle module; fixed bounded diagnostics. No grant issuance, new

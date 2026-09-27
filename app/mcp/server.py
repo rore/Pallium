@@ -9,8 +9,11 @@ from __future__ import annotations
 import asyncio
 import copy
 import hashlib
+import importlib
 import json
 import os
+import sys
+from contextlib import asynccontextmanager
 from functools import wraps
 from typing import Annotated, Literal
 
@@ -907,7 +910,55 @@ NOT_CONFIGURED_MSG = (
 )
 
 
-def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
+def _codex_bridge_enabled(transport: str) -> bool:
+    return (
+        transport == "stdio"
+        and os.environ.get("PALLIUM_CODEX_BRIDGE_MODE") == "inert"
+        and os.environ.get("PALLIUM_AGENT_REF") == "codex"
+        and bool(os.environ.get("CODEX_APP_TOOLS_PIPE_PATH"))
+    )
+
+
+def _bridge_diagnostic(category: str) -> None:
+    try:
+        print(f"Pallium Codex bridge inert: {category}", file=sys.stderr, flush=True)
+    except (OSError, ValueError):
+        pass
+
+
+@asynccontextmanager
+async def _codex_bridge_lifespan(server):
+    try:
+        module = importlib.import_module("app.mcp.codex_desktop_bridge")
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        _bridge_diagnostic("import-failed")
+        yield {}
+        return
+
+    try:
+        manager = module.lifespan(server)
+        state = await asyncio.wait_for(manager.__aenter__(), timeout=1.0)
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        _bridge_diagnostic("startup-failed")
+        yield {}
+        return
+
+    try:
+        yield state
+    finally:
+        try:
+            await asyncio.wait_for(manager.__aexit__(None, None, None), timeout=1.0)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            _bridge_diagnostic("shutdown-failed")
+
+
+def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None) -> FastMCP:
     """Create a FastMCP server with Pallium tools registered."""
     from mcp.server.fastmcp import Context, FastMCP
     try:
@@ -919,7 +970,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
     # restarts (sessions are otherwise in-process only) — without it, clients
     # holding a session id from before the restart get -32600 "Session not
     # found" and have to reinitialize.
-    server = FastMCP("pallium", host=host, port=port, stateless_http=True)
+    server = FastMCP("pallium", host=host, port=port, stateless_http=True, lifespan=lifespan)
 
     def relay_tool(function):
         @wraps(function)
@@ -2151,7 +2202,8 @@ def main() -> None:
     transport: Literal["stdio", "sse", "streamable-http"] = transport_val  # type: ignore[assignment]
     host = os.environ.get("FASTMCP_HOST", "127.0.0.1")
     port = int(os.environ.get("FASTMCP_PORT", "8001"))
-    server = create_server(host=host, port=port)
+    options = {"lifespan": _codex_bridge_lifespan} if _codex_bridge_enabled(transport) else {}
+    server = create_server(host=host, port=port, **options)
     server.run(transport=transport)
 
 
