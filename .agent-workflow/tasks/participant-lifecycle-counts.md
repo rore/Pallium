@@ -3,7 +3,7 @@
 
 **Target:** Pallium.
 
-**Scope:** api/schemas.py, core/relay.py, storage/sqlite_relay.py, tests/test_relay_work_ref_associations_e2e.py, docs/agent-relay.md, and this Work Record.
+**Scope:** api/schemas.py, core/relay.py, storage/sqlite_relay.py, tests/test_relay_work_ref_associations_e2e.py, docs/agent-relay.md, tests/conftest.py, tests/test_codex_wake.py, and this Work Record.
 
 **Constraints:** Keep existing total/count request bounds and detail lifecycle semantics backward-compatible; one read-only aggregate per batch; no automatic cleanup, presence service, scheduler, ownership system, schema migration, or History backfill. Align the contract through the lead before implementation.
 
@@ -12,7 +12,7 @@
 **Requirement baseline:**
 {"source":"relay-msg-5f47ac48cb9c4aad83f156d9058d57cb","outcome":"Minimap can distinguish recent from dormant exact-work participants without treating durable association or a name as evidence of current work.","scope":"api/schemas.py, core/relay.py, storage/sqlite_relay.py, tests/test_relay_work_ref_associations_e2e.py, docs/agent-relay.md, and this Work Record.","constraints":"Keep existing total/count request bounds and detail lifecycle semantics backward-compatible; one read-only aggregate per batch; no automatic cleanup, presence service, scheduler, ownership system, schema migration, or History backfill. Align the contract through the lead before implementation.","completion_criteria":"Batch responses distinguish recent/dormant nonclosed endpoints consistently with detail, preserve total and origin deduplication, and handle lifecycle/cutoff/closed/detach/name reassignment transitions and validation/errors without partial or invented zeros. Explain registry versus History preservation and explicit cleanup limits. Independent reviews, focused/full tests, CI, and installed delivery pass."}
 
-**Behavior changes:** []
+**Behavior changes:** [{"target":"task-context.scope","classification":"equivalent","before":"api/schemas.py, core/relay.py, storage/sqlite_relay.py, tests/test_relay_work_ref_associations_e2e.py, docs/agent-relay.md, and this Work Record.","after":"api/schemas.py, core/relay.py, storage/sqlite_relay.py, tests/test_relay_work_ref_associations_e2e.py, docs/agent-relay.md, tests/conftest.py, tests/test_codex_wake.py, and this Work Record.","reason":"Repair test-only clock isolation required to execute the already-approved CI verification faithfully; public outcome, behavior requirements, production code and protected contract are unchanged."}]
 
 **Risk:** High
 
@@ -39,7 +39,7 @@ When delivering the slice, required verification shall pass -> selected full tes
 
 **Exceptions:** —
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Source and coordination
@@ -47,6 +47,8 @@ When delivering the slice, required verification shall pass -> selected full tes
 Pallium Relay offer relay-msg-5f47ac48cb9c4aad83f156d9058d57cb, delivery relay-delivery-71189c04ed5f42dab0b39ebf2aac91a3. Accepted via atomic hook-delivery reply. Lead session codex:01a0d7cf-2c64-7bb2-a87c-724dd1c405a2 in git:github.com/rore/minimap coordinates API alignment and canonical roadmap ownership. Canonical pair is recorded below; optional attachment was skipped at capacity, with no eviction.
 
 ## Implementation
+
+2026-09-27 narrow verification repair, classified before edits: add only tests/conftest.py and tests/test_codex_wake.py (blue, no additional checkpoint or protected-path edit). Independent Sol diagnosis /root/busy_wake_ci_diagnosis confirms the protected and 33 related tests patch codex_wake.time.sleep on Python's shared module, suppressing SQLite backoff while the prestarted trace writer may contend. An isolated actual-lock control proves no-op backoff can exhaust retries while native backoff succeeds; the exact CI lock holder remains inferred, not proved. Repair the existing autouse fixture by giving codex_wake a per-test SimpleNamespace copy of time's native callables. Add one deterministic unprotected regression demonstrating local clock patches leave stdlib/storage callables untouched; demonstrate failure before repair. All protected wake assertions, runtime retry bounds and product contract stay unchanged. This is a nonmaterial test-fixture refinement of the existing required verification, not new product work or a weakened requirement; unchanged human plan approval is retained. Independent clean-context technical review approved the repair and verification; full suite must rerun because shared test configuration changes. Before edits, regenerate whole-change applicability with both extra intended paths. No live service or paid calls.
 
 2026-09-27 CI failure: PR #253 head 5302e61c has Python 3.12 failure in the unchanged protected busy-wake contract, message-status read returning relay_busy (503) rather than deliveries; 3.13, Windows smoke, governance and CodeRabbit pass. Do not merge or blindly rerun. Bounded root-cause diagnosis underway; preserve the protected requirement. No new code/scope edit yet. Any needed out-of-scope fix returns to planning/classification before editing. Local passing evidence is retained, not represented as complete CI success.
 
