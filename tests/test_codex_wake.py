@@ -4456,7 +4456,8 @@ def test_atomic_reply_releases_first_and_dispatches_next_pending_once(
         monkeypatch.setattr(codex_wake, "time", SimpleNamespace(
             sleep=lambda _: None, monotonic=original_clock.monotonic,
         ))
-        assert sqlite_queue.time is original_clock
+        assert sqlite_queue.time.sleep is original_clock.sleep
+        assert sqlite_queue.time.monotonic is original_clock.monotonic
         assert sqlite_queue.time.sleep is not codex_wake.time.sleep
         monkeypatch.setattr(codex_wake, "_codex_home", lambda: tmp_path)
 

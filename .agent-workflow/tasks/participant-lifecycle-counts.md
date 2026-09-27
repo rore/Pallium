@@ -39,7 +39,7 @@ When delivering the slice, required verification shall pass -> selected full tes
 
 **Exceptions:** —
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Source and coordination
@@ -47,6 +47,8 @@ When delivering the slice, required verification shall pass -> selected full tes
 Pallium Relay offer relay-msg-5f47ac48cb9c4aad83f156d9058d57cb, delivery relay-delivery-71189c04ed5f42dab0b39ebf2aac91a3. Accepted via atomic hook-delivery reply. Lead session codex:01a0d7cf-2c64-7bb2-a87c-724dd1c405a2 in git:github.com/rore/minimap coordinates API alignment and canonical roadmap ownership. Canonical pair is recorded below; optional attachment was skipped at capacity, with no eviction.
 
 ## Implementation
+
+2026-09-27 integration resume: manager confirms PR254 merged/installed at `04675d0c5f049934d5597c6583068f4c3dcd3e22`, both main checkouts clean and health/status/queue checks passing. This isolated branch rebased cleanly onto that main at `6c0bcd74622804ad9a99b4f63a484a8bff1ec526`; fresh whole-change applicability requires the existing Work Record, and fresh Redline is RED with no boundary violations (unchanged High/Simple API/persistence/architecture scope). Existing plan approval and technical reviews remain valid. No service operation here. PR252's test-local clock shim and this task's per-test clock fixture compose, but its unprotected `sqlite_queue.time is original_clock` setup assertion now compares the native module to the fixture's copy; exact Codex node reproduces that assertion failure (1 failed in 1.45s), not a product or protected-contract failure. Before editing, classify the one test-only refinement as equivalent: assert the SQLite sleep/monotonic callables remain identical to the captured native callables while Codex uses its local shim. Retain all atomic reply/reservation/dispatch assertions and the fixture regression. Only tests/test_codex_wake.py and this record will change. Next: exact regression/subsystem, selector-selected full suite once, independent result supplement, CI and owner-coordinated combined delivery.
 
 2026-09-27 bounded restart-failure diagnosis found a separate production defect, not a proven explanation of the full-suite failure. Independent Sol used the real Claude hook intent publisher and ClaudeWakeRegistry in an isolated temporary directory: after old intent validation but before its unlink, publish a newer intent through normal os.replace. Old registration succeeds, old cleanup deletes the newer intent, and registration of the newer intent returns False; stale idle state survives a newer busy transition. The registry RLock does not coordinate with the external hook publisher. No production edit or timing workaround was applied. Report this concrete race to the lead for a separate classified runtime fix; keep this participant-count task blocked pending honest complete verification. A second read before unlink is not a sufficient race fix.
 
@@ -59,6 +61,8 @@ Pallium Relay offer relay-msg-5f47ac48cb9c4aad83f156d9058d57cb, delivery relay-d
 2026-09-27 verification transition: unchanged implementation at a0e19c1be3c8e5ca7a8f75d930f01c90cdcda94a passes focused/full tests, fresh import boundaries and measured indexed-query latency. Advance to Ready for review. Independent Sol technical result review found no defects; human result review and PR/CI/installed delivery remain pending. The first context-isolated worker's write guard rejected implementation authority, so it made no edits; a full-context worker carrying the actual user approval implemented successfully, without bypassing the guard. No scope expansion. Skill-feedback trigger 2 dropped: the initial approval-record format error was our own bookkeeping error, not an upstream defect.
 
 ## Verification evidence
+
+2026-09-27 post-PR254 integration: exact clock regression and both runtime variants of the unchanged atomic-reply dispatch test pass (3 passed in 1.73s) after the equivalent assertion reconciliation. Affected Codex wake and participant HTTP E2E files pass together (159 passed in 35.28s). Independent clean-context Sol-high integration reviewer confirms the reconciliation preserves native SQLite backoff and all reservation/dispatch assertions, with no protected-path or runtime edit. The selector selects full for the existing eight-path scope; full non-slow validation will run once on the coherent integrated revision. Existing measured query/latency evidence below remains applicable to the unchanged production implementation.
 
 Tested revision: a0e19c1be3c8e5ca7a8f75d930f01c90cdcda94a, clean. Selector `python scripts/test-plan.py --base origin/main` selects full for exactly the six scoped paths. Focused HTTP E2E: 19 passed. Required `python -m pytest tests/ -x -q`: 5349 passed, 34 skipped, 2 xfailed in 241.63 seconds on Windows / existing Python 3.13 virtualenv, default four workers. Fresh `python scripts/run-import-linter.py --out build/import-linter-report.json` exits 0; no boundary violation. Whitespace check passes. No paid evaluator/model journeys.
 
