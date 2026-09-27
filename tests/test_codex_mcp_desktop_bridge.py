@@ -5,9 +5,10 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import sys
 import tempfile
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 from textwrap import dedent
 from unittest.mock import MagicMock
@@ -98,16 +99,17 @@ _STDIO_CHILD = dedent(
     import asyncio
     import os
     from contextlib import asynccontextmanager
+    from types import SimpleNamespace
     from app.mcp import server as m
 
     failure = os.environ["TEST_BRIDGE_FAILURE"]
     if failure == "import":
         original_import = m.importlib.import_module
-        def injected_import(name):
+        def injected_import(name, package=None):
             if name == "app.mcp.codex_desktop_bridge":
                 raise RuntimeError("secret import failure")
-            return original_import(name)
-        m.importlib.import_module = injected_import
+            return original_import(name, package)
+        m.importlib = SimpleNamespace(import_module=injected_import)
     else:
         from app.mcp import codex_desktop_bridge as bridge
         if failure == "task":
@@ -157,6 +159,35 @@ _STDIO_CHILD = dedent(
 )
 
 
+@contextmanager
+def _stdio_error_log():
+    with tempfile.TemporaryFile(mode="w+t", encoding="utf-8") as log:
+        try:
+            yield log
+        except BaseException as error:
+            log.seek(0)
+            text = log.read(8192)
+            frames = re.findall(r'File "([^"]+)", line (\d+), in (\w+)', text)
+            kinds = re.findall(r'^([\w.]+(?:Error|Exception)):', text, re.MULTILINE)
+            error.add_note(json.dumps({
+                "child_exception_classes": kinds,
+                "child_frames": [(Path(path).name, line, function)
+                                 for path, line, function in frames],
+            }))
+            raise
+
+
+def test_stdio_failure_note_omits_raw_text_paths_and_capabilities():
+    with pytest.raises(RuntimeError) as caught:
+        with _stdio_error_log() as log:
+            log.write('File "private/user.py", line 3, in fake_entry\n'
+                      'TypeError: private-capability-sentinel\n')
+            raise RuntimeError("test parent failure")
+    note = caught.value.__notes__[0]
+    assert "TypeError" in note and "fake_entry" in note
+    assert "private/" not in note and "private-capability-sentinel" not in note
+
+
 def _stdio_params(
     failure: str,
     *,
@@ -204,7 +235,7 @@ async def test_real_stdio_keeps_concurrent_normal_tools_live_on_bridge_fault(
     failure: str,
     diagnostic: str,
 ) -> None:
-    with tempfile.TemporaryFile(mode="w+t", encoding="utf-8") as error_log:
+    with _stdio_error_log() as error_log:
         async with stdio_client(_stdio_params(failure), errlog=error_log) as (read, write):
             async with ClientSession(read, write) as session:
                 await session.initialize()
@@ -248,7 +279,7 @@ async def test_real_stdio_ineligible_child_never_imports_bridge(
     params = _stdio_params(
         "import", agent=agent, mode=mode, capability=capability
     )
-    with tempfile.TemporaryFile(mode="w+t", encoding="utf-8") as error_log:
+    with _stdio_error_log() as error_log:
         async with stdio_client(params, errlog=error_log) as (read, write):
             async with ClientSession(read, write) as session:
                 await session.initialize()

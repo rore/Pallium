@@ -7,6 +7,7 @@ import logging
 import os
 import subprocess
 import threading
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -4433,7 +4434,14 @@ def test_atomic_reply_releases_first_and_dispatches_next_pending_once(
         return worker
 
     if runtime == "codex":
-        monkeypatch.setattr(codex_wake.time, "sleep", lambda _: None)
+        from storage import sqlite_queue
+
+        original_clock = codex_wake.time
+        monkeypatch.setattr(codex_wake, "time", SimpleNamespace(
+            sleep=lambda _: None, monotonic=original_clock.monotonic,
+        ))
+        assert sqlite_queue.time is original_clock
+        assert sqlite_queue.time.sleep is not codex_wake.time.sleep
         monkeypatch.setattr(codex_wake, "_codex_home", lambda: tmp_path)
 
         def popen(*_args, **_kwargs):

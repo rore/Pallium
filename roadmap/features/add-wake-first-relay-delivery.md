@@ -31,12 +31,14 @@ complete. RW-035 has a shipped forward exact-claim fence fix; the
 umbrella remains queued for other runtime and platform qualification below.
 
 Remaining work:
-- Publish the locally validated [optional Codex MCP Desktop bridge](../../docs/designs/codex-mcp-desktop-bridge.md)
-  inert lifecycle slice, tracked in `.agent-workflow/tasks/codex-mcp-bridge.md`,
-  and qualify actual Desktop child startup/lifetime separately.
+- Finish CI and separate human/API result review of [draft PR #252](https://github.com/rore/Pallium/pull/252),
+  the [optional Codex MCP Desktop bridge](../../docs/designs/codex-mcp-desktop-bridge.md)
+  inert lifecycle slice tracked in `.agent-workflow/tasks/codex-mcp-bridge.md`.
+  Qualify actual Desktop child startup/lifetime separately; live setup is parked.
   It stays off by default and makes zero Desktop/service bridge calls.
-  The first actual-Python observation was inconclusive before child startup:
-  Desktop rejected ordinary disposable initialization. Establish a supported
+  Neither bounded actual-Python setup attempt witnessed child startup: Desktop
+  rejected programmatic initialization, and manual preparation ended before any
+  observed user turn. Temporary configuration was restored. Establish a supported
   setup entrypoint; no lifecycle success/failure or automatic wake is inferred.
   Cold wake activation remains gated on authenticated origin-bound enrollment, host-safe
   admission including cold-to-busy races, and executor availability/bootstrap
