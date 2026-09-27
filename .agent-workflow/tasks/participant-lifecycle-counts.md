@@ -39,7 +39,7 @@ When delivering the slice, required verification shall pass -> selected full tes
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Source and coordination
@@ -47,6 +47,22 @@ When delivering the slice, required verification shall pass -> selected full tes
 Pallium Relay offer relay-msg-5f47ac48cb9c4aad83f156d9058d57cb, delivery relay-delivery-71189c04ed5f42dab0b39ebf2aac91a3. Accepted via atomic hook-delivery reply. Lead session codex:01a0d7cf-2c64-7bb2-a87c-724dd1c405a2 in git:github.com/rore/minimap coordinates API alignment and canonical roadmap ownership. Canonical pair is recorded below; optional attachment was skipped at capacity, with no eviction.
 
 ## Implementation
+
+2026-09-27 verification transition: unchanged implementation at a0e19c1be3c8e5ca7a8f75d930f01c90cdcda94a passes focused/full tests, fresh import boundaries and measured indexed-query latency. Advance to Ready for review. Independent Sol technical result review found no defects; human result review and PR/CI/installed delivery remain pending. The first context-isolated worker's write guard rejected implementation authority, so it made no edits; a full-context worker carrying the actual user approval implemented successfully, without bypassing the guard. No scope expansion. Skill-feedback trigger 2 dropped: the initial approval-record format error was our own bookkeeping error, not an upstream defect.
+
+## Verification evidence
+
+Tested revision: a0e19c1be3c8e5ca7a8f75d930f01c90cdcda94a, clean. Selector `python scripts/test-plan.py --base origin/main` selects full for exactly the six scoped paths. Focused HTTP E2E: 19 passed. Required `python -m pytest tests/ -x -q`: 5349 passed, 34 skipped, 2 xfailed in 241.63 seconds on Windows / existing Python 3.13 virtualenv, default four workers. Fresh `python scripts/run-import-linter.py --out build/import-linter-report.json` exits 0; no boundary violation. Whitespace check passes. No paid evaluator/model journeys.
+
+Latency verification by /root/participant_counts_performance: production create_app HTTP route, isolated file-backed main/Relay SQLite databases, vector disabled and demo package, lifespan/startup tasks disabled, ephemeral loopback port 58904; 350 sessions, 1100 associations, 200 exact keys with 20 matching dual-origin groups and 180 zero rows, recent/dormant split. Windows 11 build 26200, CPython 3.13.14; 100 samples after 10 warmups. HTTP median 8.35 ms / p95 9.43 ms; production SQL method median 0.83 ms / p95 0.99 ms. Both 1/200-key EXPLAIN plans use covering idx_relay_work_refs_lookup then session primary key, with temporary DISTINCT B-trees. Meets the existing fixture target of median under 100 ms / p95 under 250 ms, not a claim about live production p95 or speedup. First harness invocation aborted before samples due to cleanup introspection; ignored harness corrected, one successful measured run, temporary files removed and live service/wake/home untouched.
+
+## Result review
+
+Agent technical review: /root/participant_counts_result_review, independent clean-context gpt-6-sol high, 2026-09-27.
+Reviewed revision: a0e19c1be3c8e5ca7a8f75d930f01c90cdcda94a against 62a4cf5edf7b5cb873595888d0f46cf5d8ec24ff.
+Verification adequacy: adequate; no P1/P2 findings. Reviewer inspected six-file diff, callers, inclusive shared-clock classification, filtered distinct aggregate, compatibility, HTTP lifecycle/History/read-only/validation/index coverage and accepted the full-suite/boundary/latency supplements. No requirement weakening, new dependency, schema migration, suppression, protected-test edit or scope expansion. Human result review, CI and installed delivery are not claimed. Canonical Minimap item remains owner-managed by the lead/Minimap-dev; send exact revision/evidence for its status reconciliation rather than editing it here. Existing completed Pallium batch feature remains accurate for its originally shipped scope.
+
+## Implementation history
 
 2026-09-27 bounded implementation: fresh pre-edit workflow check returned clean, exit 0. Added recent/dormant row counts and one UTC as_of/recent_seconds per batch or detail response; the existing service-owned inclusive window is passed to storage, including detail instead of its former local literal. The filtered indexed aggregate reads total and conditional distinct recent endpoints in one SQL statement; dormant is the nonclosed remainder. Existing bounds, normalization, ordering, zero rows, origin deduplication and complete-or-error semantics remain. No schema migration, service operation, or unrelated code change.
 
