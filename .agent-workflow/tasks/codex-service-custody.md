@@ -38,7 +38,7 @@ Owner: relay-dev. Canonical feature: `roadmap/features/add-wake-first-relay-deli
 
 **Exceptions:** None
 
-**State:** Ready for review
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Corrected finite inventory authority
@@ -156,3 +156,13 @@ Completed fixture correction: both normal and 600ms delayed portal-start cases p
 Independent result review accepts exact tree `e242883a943169f0b8bf4f49375f14be5eda8fe1` without findings and approves narrow local evidence reuse, not a CI waiver or a proven cause for the first 503. The fresh nine-path selector still selects full. Post-rebase import-linter reports zero violations; fresh whole-change Redline recognizes the real API label and reports only the 2,690-line size advisory, with no boundary or behavior-contract failures. Fresh publication CI must qualify the rebased immutable head before manager merge/install or live arming. No live Desktop connection, configuration change, service restart or wake experiment occurred in this correction.
 
 The final history-aware Agent Workflow check returned clean, exit 0: unchanged committed requirement baseline, ordered equivalent scope extension, independent result review, task-owner approval and actual API checkpoint all pass. This local publication checkpoint does not replace fresh PR CI.
+
+## PR #256 bounded native-error correction
+
+Manager reports all CI passed on `6c91aeec52f874b72ea3d2e356eb9c0a694d0e27`, but holds merge for verified CodeRabbit finding `4126115343`. The transfer cleanup currently bare-raises native exceptions while the private request loop bounds only ShadowUnavailable; a missing native endpoint or pipe-server lookup failure can stop the optional owner and return EOF instead of unavailable/native-failed. The existing cleanup and unresolved-I/O fences remain required. A second concrete gap accompanies the requested failure-phase witness: proof state is initialized after pipe-server lookup, so preconnection failures currently cannot publish a correlated failure phase.
+
+Agent Workflow is resumed before application/test edits. Complete intended/committed scope remains the same nine paths, not documentation-only; High/Moderate and the real API checkpoint remain appropriate. No requirement baseline, protected contract, retry, policy authority, model/effort, live setup or roadmap ownership changes. This correction is expressly assigned by the manager under the recorded task-owner blanket approval. State returns to planning only for its independent technical checkpoint, not for new human approval.
+
+Plan: preserve existing ShadowUnavailable categories and normalize other native transfer exceptions to ShadowUnavailable("native-failed") after the existing handle close, custody drop, fence and proof-failure handling. Initialize the existing exact policy/epoch-correlated proof state immediately after the final preconnection authorization, before native CreateFile, rather than introducing a new evidence format or grant. Do not bypass cleanup failures, reopen a pipe, clear a fence or reset authority. Add real private-caller registration with valid armed authority and a unique nonexistent native pipe, plus targeted pipe-server lookup failure after opening an isolated fake Desktop endpoint. Assert bounded unavailable/native-failed, retained live owner, admission/custody/native peer cleanup, failure phase with no before/after success, and no retry/native-call growth after another attempted admission. Preserve existing category and unresolved-I/O tests. Parent owns app/record; cheaper worker owns only this test file. Independent non-implementer plan/result review, the affected native file, fresh whole-change selector/Redline/workflow and publication CI follow. Exact installed arming remains manager-owned; no live experiment occurs here.
+
+Independent plan review: `/root/inventory_result_review`, non-implementer Sol/medium, accepts against `6c91aeec52f874b72ea3d2e356eb9c0a694d0e27` without safety findings. Final preconnection authorization must succeed before proof initialization; cleanup/publication failures remain visible, existing ShadowUnavailable categories remain intact, and no subsequent admission may reopen or issue native calls. The two proposed caller cases cover distinct pre-open and post-open cleanup edges. Fresh prospective whole-change workflow returned clean, exit 0; the API checkpoint is satisfied, requirement baseline unchanged, and no protected contract changes. Final result acceptance still requires the immutable delta and affected native coverage.
