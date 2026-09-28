@@ -124,6 +124,19 @@ availability; do not repeat enrollment or restored-chat configuration investigat
 The design document's header still describes shadow implementation as under review;
 PR #255 and this live enrollment result supersede that stale delivery status.
 
+A user-operated Desktop restart on 2026-09-28 was captured by an independent
+PowerShell process. The capture shows the old Desktop/app-server/MCP processes
+disappearing, followed by a new Desktop at 14:33:39 UTC and new MCP children at
+14:33:50 UTC. Surviving process identities resolve to the installed Pallium MCP.
+However, Desktop logs show automatic chat restoration beginning at 14:33:49 UTC,
+before the first captured MCP child; Pallium became ready for a restored chat at
+14:33:58 UTC. This qualifies ordinary MCP startup during Desktop chat restoration
+without a new user turn, not executor availability with zero loaded chats. A
+null-thread MCP inventory request also overlapped this startup, but the capture
+does not attribute individual children to that request or establish its lifetime.
+No bridge opt-in, grant, wake action or settings change was made for this witness.
+Do not repeat the same restart while automatic restoration confounds the question.
+
 Remaining work:
 - Qualify actual Desktop child startup/lifetime for the
   [optional Codex MCP Desktop bridge](../../docs/designs/codex-mcp-desktop-bridge.md);
