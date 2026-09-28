@@ -8,7 +8,7 @@ milestone: pallium-relay
 lane: capability
 ---
 
-## Current execution status (reconciled 2026-09-27)
+## Current execution status (reconciled 2026-09-28)
 
 The Windows/Linux Claude wake foundation, loaded-task Codex wake, Codex first-run
 setup, MCP recovery integration, and live no-manual-turn reply/remediation journey
@@ -41,27 +41,33 @@ The Windows **shadow-only enrollment and observation** slice shipped in
 `2e3f9316f20fdbb6d6c81f18f967f679ef6321c7`. It adds a protected local pipe,
 one explicitly approved pair, finite process-local enrollment and read-only Relay
 observations. Real stdio-to-native-pipe-to-SQLite coverage and Linux/Windows CI
-passed; the final local suite passed 5,461 tests. It remains off by default:
-no live policy was provisioned and no wake action was enabled. Actual native
+passed; the final local suite passed 5,461 tests. It remains off by default.
+A finite shadow-only policy was provisioned for the supervised trial below and
+then revoked and removed; no wake action was enabled. Actual native
 anchors remain held because their trace correlation is insufficient. Desktop
 child lifetime and zero-child bootstrap remain unqualified. Trusted-child
 assertions use the documented trusted-local boundary, not Desktop attestation
 or isolation from compromised same-user code.
 
-Next qualification is blocked on a genuine user turn in the existing disposable
-Desktop chat. The prior app-message initialization was rejected for having no
-active turn; do not retry it or stage temporary configuration while the user is
-unavailable. A reviewed live plan must preserve exact settings, use one finite
-shadow-only controller/recipient pair, and restore the original project config
-with ownership/hash checks. Use the supported MCP-server restart control if the
-host requires it; that is an additional manual prerequisite, not automatic startup.
-Observe actual host-owned child identity, enrollment, bounded lifetime and natural
-unload, without Relay sends or wake actions. If no unload occurs, report only the
-loaded-idle observation. Cleanup must revoke the pair and verify configuration,
-settings and normal tools. No supported unattended bootstrap with zero eligible
-children is established; next-natural-turn fallback does not satisfy the requested
-automatic unloaded wake. The recurring manager follow-up pauses at this human
-prerequisite; no live configuration is armed while waiting.
+The supervised 2026-09-28 trial reached one genuine user turn in the existing
+disposable Desktop chat. Neither dedicated shadow tool was exposed, so the chat
+stopped without enrollment, status calls or retries. Configuration uptake remains
+unqualified; this result alone does not distinguish project trust, cached
+configuration or an MCP launch failure. Existing trial logs are the next bounded
+read-only diagnostic source; do not repeat activation or assume a supported
+per-server restart control without evidence.
+
+Cleanup completed through the shipped revision-checked provisioning command and
+required service wrapper: the pair was revoked, the service drained, and exactly
+five owned trial files and two empty directories were removed after identity,
+ownership and hash checks. Normal service, embedding and queue health passed.
+Global configuration was preserved; model, effort, approval and effective access
+were unchanged. Raw permission-profile labels and duplicate entries differed, so
+the full context was not byte-identical. No Relay message was sent; target pending,
+claimed and matching reservation counts remained zero. Child startup/lifetime,
+natural unload and zero-child bootstrap remain unqualified. Next-natural-turn
+fallback does not satisfy automatic unloaded wake. No live configuration remains
+armed; the recurring manager follow-up remains paused.
 
 Remaining work:
 - Qualify actual Desktop child startup/lifetime for the
@@ -74,8 +80,9 @@ Remaining work:
   startup; it does not prove Desktop steering/cancellation, live inert-child lifetime,
   capability forwarding, or zero-child bootstrap. Earlier temporary opt-in attempts
   remain inconclusive: Desktop rejected programmatic initialization, and manual
-  preparation ended before any observed user turn. Temporary configuration was
-  restored. Existing `env`/`env_vars` and server eligibility already express inert
+  preparation initially ended before an observed user turn. The subsequent
+  supervised user turn found neither dedicated tool, as recorded above. Temporary
+  configuration was restored. Existing `env`/`env_vars` and server eligibility already express inert
   opt-in, so no new setup feature is needed. Live configuration remains held.
   Qualify actual Desktop shadow enrollment/lifetime and executor availability/bootstrap
   before cold wake; host-safe admission including cold-to-busy races remains required.
