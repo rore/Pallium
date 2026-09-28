@@ -799,14 +799,31 @@ print(common._write_wake_intent(json.loads(sys.argv[4])), flush=True)
             process.wait(timeout=1)
 
 
+@pytest.mark.parametrize("portal_start_delay", [0.0, 0.6], ids=["normal-portal", "delayed-portal"])
 def test_crashed_intent_lock_owner_allows_hook_publication_and_http_recovery(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    portal_start_delay: float,
 ) -> None:
     import contextlib
     import time
 
+    import anyio.from_thread
     from tests.test_claude_code_integration import _load_claude_hook
     from tests.test_claude_wake_registration import _client
+
+    portal_starts = 0
+    original_start_portal = anyio.from_thread.start_blocking_portal
+
+    @contextlib.contextmanager
+    def start_portal_with_delay(**kwargs):
+        nonlocal portal_starts
+        portal_starts += 1
+        if portal_start_delay:
+            time.sleep(portal_start_delay)
+        with original_start_portal(**kwargs) as portal:
+            yield portal
+
+    monkeypatch.setattr(anyio.from_thread, "start_blocking_portal", start_portal_with_delay)
 
     state_dir = tmp_path / "wake"
     old = {**PAYLOAD, "intent_id": "old"}
@@ -832,64 +849,65 @@ def test_crashed_intent_lock_owner_allows_hook_publication_and_http_recovery(
         common = _load_claude_hook("common", monkeypatch)
         common.CLAUDE_WAKE_DIR = state_dir
         common.CLAUDE_WAKE_INTENTS_DIR = state_dir / "intents"
-        http = _client(registry)
-        started = time.monotonic()
-        rejected = http.post("/internal/claude-wake/register", json=old)
-        assert rejected.status_code == 409
-        assert time.monotonic() - started < 0.5
-        assert registry._registrations == {} and not registry._canonical.exists()
-        assert json.loads(path.read_text(encoding="utf-8"))["intent_id"] == "old"
+        with _client(registry) as http:
+            started = time.monotonic()
+            rejected = http.post("/internal/claude-wake/register", json=old)
+            assert rejected.status_code == 409
+            assert time.monotonic() - started < 0.5
+            assert registry._registrations == {} and not registry._canonical.exists()
+            assert json.loads(path.read_text(encoding="utf-8"))["intent_id"] == "old"
 
-        monkeypatch.setenv("CLAUDE_CODE_MESSAGING_SOCKET", PAYLOAD["socket_path"])
-        monkeypatch.setenv("CLAUDE_CODE_MESSAGING_TOKEN", "new-token")
-        http_requests: list[object] = []
+            monkeypatch.setenv("CLAUDE_CODE_MESSAGING_SOCKET", PAYLOAD["socket_path"])
+            monkeypatch.setenv("CLAUDE_CODE_MESSAGING_TOKEN", "new-token")
+            http_requests: list[object] = []
 
-        def open_request(request, **_kwargs):
-            http_requests.append(request)
-            response = http.post(
-                "/internal/claude-wake/register", json=json.loads(request.data),
+            def open_request(request, **_kwargs):
+                http_requests.append(request)
+                response = http.post(
+                    "/internal/claude-wake/register", json=json.loads(request.data),
+                )
+                if response.status_code != 204:
+                    raise OSError("local registration rejected")
+                return contextlib.nullcontext(response)
+
+            monkeypatch.setattr(
+                common.urllib.request, "build_opener",
+                lambda *_args: SimpleNamespace(open=open_request),
             )
-            if response.status_code != 204:
-                raise OSError("local registration rejected")
-            return contextlib.nullcontext(response)
+            with monkeypatch.context() as failure:
+                failure.setattr(
+                    common, "open",
+                    lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("lock open failed")),
+                    raising=False,
+                )
+                assert not common.register_claude_wake(
+                    PAYLOAD["session_ref"], PAYLOAD["container_ref"], idle=True,
+                )
+            assert http_requests == []
+            assert json.loads(path.read_text(encoding="utf-8"))["intent_id"] == "old"
 
-        monkeypatch.setattr(
-            common.urllib.request, "build_opener",
-            lambda *_args: SimpleNamespace(open=open_request),
-        )
-        with monkeypatch.context() as failure:
-            failure.setattr(
-                common, "open",
-                lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("lock open failed")),
-                raising=False,
-            )
+            started = time.monotonic()
             assert not common.register_claude_wake(
                 PAYLOAD["session_ref"], PAYLOAD["container_ref"], idle=True,
             )
-        assert http_requests == []
-        assert json.loads(path.read_text(encoding="utf-8"))["intent_id"] == "old"
+            assert time.monotonic() - started < 0.5
+            assert http_requests == []
+            assert registry._registrations == {} and not registry._canonical.exists()
+            assert json.loads(path.read_text(encoding="utf-8"))["intent_id"] == "old"
 
-        started = time.monotonic()
-        assert not common.register_claude_wake(
-            PAYLOAD["session_ref"], PAYLOAD["container_ref"], idle=True,
-        )
-        assert time.monotonic() - started < 0.5
-        assert http_requests == []
-        assert registry._registrations == {} and not registry._canonical.exists()
-        assert json.loads(path.read_text(encoding="utf-8"))["intent_id"] == "old"
+            process.kill()
+            process.wait(timeout=1)
+            registry.recover_intents()
+            assert registry._registrations[(PAYLOAD["runtime"], PAYLOAD["session_ref"], PAYLOAD["container_ref"])].token == PAYLOAD["token"]
 
-        process.kill()
-        process.wait(timeout=1)
-        registry.recover_intents()
-        assert registry._registrations[(PAYLOAD["runtime"], PAYLOAD["session_ref"], PAYLOAD["container_ref"])].token == PAYLOAD["token"]
-
-        assert common.register_claude_wake(
-            PAYLOAD["session_ref"], PAYLOAD["container_ref"], idle=True,
-        )
-        assert len(http_requests) == 1
-        assert not path.exists()
-        recovered = ClaudeWakeRegistry(state_dir=state_dir)
-        assert recovered._registrations[(PAYLOAD["runtime"], PAYLOAD["session_ref"], PAYLOAD["container_ref"])].token == "new-token"
+            assert common.register_claude_wake(
+                PAYLOAD["session_ref"], PAYLOAD["container_ref"], idle=True,
+            )
+            assert len(http_requests) == 1
+            assert not path.exists()
+            recovered = ClaudeWakeRegistry(state_dir=state_dir)
+            assert recovered._registrations[(PAYLOAD["runtime"], PAYLOAD["session_ref"], PAYLOAD["container_ref"])].token == "new-token"
+            assert portal_starts == 1
     finally:
         if process.poll() is None:
             process.kill()
