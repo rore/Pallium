@@ -935,6 +935,22 @@ def _codex_shadow_enabled(transport: str) -> bool:
         return False
 
 
+def _codex_inventory_enabled(transport: str) -> bool:
+    if not (
+        sys.platform == "win32"
+        and transport == "stdio"
+        and os.environ.get("PALLIUM_CODEX_BRIDGE_MODE") == "inventory"
+        and os.environ.get("PALLIUM_AGENT_REF") == "codex"
+        and "CODEX_APP_TOOLS_PIPE_PATH" in os.environ
+        and bool(os.environ.get("PALLIUM_CODEX_INVENTORY_BOOTSTRAP_FILE"))
+    ):
+        return False
+    try:
+        return bool(importlib.import_module("app.codex_bridge_pipe").native_available())
+    except Exception:
+        return False
+
+
 def _bridge_diagnostic(category: str) -> None:
     try:
         print(f"Pallium Codex bridge inert: {category}", file=sys.stderr, flush=True)
@@ -943,7 +959,7 @@ def _bridge_diagnostic(category: str) -> None:
 
 
 @asynccontextmanager
-async def _codex_bridge_lifespan(server, *, shadow=False):
+async def _codex_bridge_lifespan(server, *, shadow=False, inventory=False):
     try:
         module = importlib.import_module("app.mcp.codex_desktop_bridge")
     except asyncio.CancelledError:
@@ -954,7 +970,10 @@ async def _codex_bridge_lifespan(server, *, shadow=False):
         return
 
     try:
-        manager = module.shadow_lifespan(server) if shadow else module.lifespan(server)
+        if inventory:
+            manager = module.inventory_lifespan(server)
+        else:
+            manager = module.shadow_lifespan(server) if shadow else module.lifespan(server)
         state = await asyncio.wait_for(manager.__aenter__(), timeout=1.0)
     except asyncio.CancelledError:
         raise
@@ -978,8 +997,12 @@ def _codex_shadow_lifespan(server):
     return _codex_bridge_lifespan(server, shadow=True)
 
 
+def _codex_inventory_lifespan(server):
+    return _codex_bridge_lifespan(server, inventory=True)
+
+
 def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None,
-                  codex_shadow: bool = False) -> FastMCP:
+                  codex_shadow: bool = False, codex_inventory: bool = False) -> FastMCP:
     """Create a FastMCP server with Pallium tools registered."""
     from mcp.server.fastmcp import Context, FastMCP
     try:
@@ -1031,6 +1054,22 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None,
         for tool in (pallium_codex_bridge_shadow_enroll, pallium_codex_bridge_shadow_status):
             tool.__annotations__["ctx"] = Context
             server.tool()(tool)
+
+    if codex_inventory:
+        async def pallium_codex_bridge_inventory_register(ctx) -> str:
+            """Request separately armed, finite service custody for read-only Desktop inventory."""
+            from app.mcp.codex_desktop_bridge import inventory_status
+            result = {"reason": "stopped"}
+            try:
+                worker = ctx.request_context.lifespan_context.get("codex_inventory")
+                if worker is not None and os.environ.get("PALLIUM_AGENT_REF") == "codex":
+                    result = await worker.register()
+            except Exception:
+                result = {"reason": "native-failed"}
+            return json.dumps(inventory_status(result))
+
+        pallium_codex_bridge_inventory_register.__annotations__["ctx"] = Context
+        server.tool()(pallium_codex_bridge_inventory_register)
 
     def relay_tool(function):
         @wraps(function)
@@ -2265,6 +2304,8 @@ def main() -> None:
     options = {"lifespan": _codex_bridge_lifespan} if _codex_bridge_enabled(transport) else {}
     if _codex_shadow_enabled(transport):
         options = {"lifespan": _codex_shadow_lifespan, "codex_shadow": True}
+    if _codex_inventory_enabled(transport):
+        options = {"lifespan": _codex_inventory_lifespan, "codex_inventory": True}
     server = create_server(host=host, port=port, **options)
     server.run(transport=transport)
 

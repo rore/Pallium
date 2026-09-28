@@ -393,9 +393,10 @@ async def test_outer_cancellation_releases_cooperative_inert_task(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_http_mcp_keeps_catalog_and_tools_bridge_free(monkeypatch):
+@pytest.mark.parametrize("mode", ["inert", "inventory"])
+async def test_http_mcp_keeps_catalog_and_tools_bridge_free(monkeypatch, mode):
     monkeypatch.setenv("PALLIUM_BASE_URL", "http://127.0.0.1:1")
-    monkeypatch.setenv("PALLIUM_CODEX_BRIDGE_MODE", "inert")
+    monkeypatch.setenv("PALLIUM_CODEX_BRIDGE_MODE", mode)
     monkeypatch.setenv("PALLIUM_AGENT_REF", "codex")
     monkeypatch.setenv("CODEX_APP_TOOLS_PIPE_PATH", "private-capability-sentinel")
     monkeypatch.setattr(mcp_server, "PalliumMcpClient", _FakeStatusClient)
@@ -677,3 +678,330 @@ async def test_shadow_unavailable_evidence_ends_authority_without_rearming(monke
 def test_shadow_public_output_preserves_exact_native_vocabulary(status, reason):
     assert codex_desktop_bridge.public_status({"status": status, "reason": reason, "ttl_seconds": 15}) == {
         "mode": "shadow", "status": status, "reason": reason, "ttl_seconds": 15}
+
+
+def _inventory_native(monkeypatch, *, fault=None, block=None):
+    calls = []
+    disposed = threading.Event()
+
+    class NativeClient:
+        def __init__(self, path, stop):
+            assert threading.current_thread() is not threading.main_thread()
+            calls.append("connect")
+            self.stop = stop
+
+        def ready(self):
+            calls.append("ready")
+            if fault == "ready":
+                raise RuntimeError("private-native-sentinel")
+            return {"status": "ready", "reason": "ready"}
+
+        def register(self):
+            calls.append("register")
+            if block is not None:
+                block.wait(5)
+            if fault == "register":
+                raise RuntimeError("private-native-sentinel")
+            return {"status": "registered", "reason": "ok", "ttl_seconds": 12,
+                    "connected": True, "endpoint": "private-capability-sentinel",
+                    "inventory": "private-inventory-sentinel"}
+
+        def dispose(self):
+            calls.append("dispose")
+            disposed.set()
+
+    monkeypatch.setitem(sys.modules, "app.codex_bridge_pipe", SimpleNamespace(
+        native_available=lambda: True, NativeInventoryClient=NativeClient))
+    monkeypatch.setenv("PALLIUM_CODEX_BRIDGE_MODE", "inventory")
+    monkeypatch.setenv("PALLIUM_CODEX_INVENTORY_BOOTSTRAP_FILE", "private-bootstrap")
+    monkeypatch.setenv("CODEX_APP_TOOLS_PIPE_PATH", "private-capability-sentinel")
+    monkeypatch.setenv("PALLIUM_AGENT_REF", "codex")
+    monkeypatch.setenv("PALLIUM_BASE_URL", "http://127.0.0.1:1")
+    monkeypatch.setattr(mcp_server, "PalliumMcpClient", _FakeStatusClient)
+    return calls, disposed
+
+
+def test_inventory_gate_is_separate_and_only_eligible_stdio(monkeypatch):
+    _inventory_native(monkeypatch)
+    monkeypatch.setattr(mcp_server.sys, "platform", "win32")
+    assert mcp_server._codex_inventory_enabled("stdio")
+    assert not mcp_server._codex_shadow_enabled("stdio")
+    for transport in ("sse", "streamable-http"):
+        assert not mcp_server._codex_inventory_enabled(transport)
+    for name, value in (
+        ("PALLIUM_CODEX_BRIDGE_MODE", "off"), ("PALLIUM_CODEX_BRIDGE_MODE", "shadow"),
+        ("PALLIUM_CODEX_BRIDGE_MODE", "inert"), ("PALLIUM_AGENT_REF", "claude"),
+        ("PALLIUM_CODEX_INVENTORY_BOOTSTRAP_FILE", ""),
+    ):
+        with monkeypatch.context() as context:
+            context.setenv(name, value)
+            assert not mcp_server._codex_inventory_enabled("stdio")
+    with monkeypatch.context() as context:
+        context.delenv("CODEX_APP_TOOLS_PIPE_PATH")
+        assert not mcp_server._codex_inventory_enabled("stdio")
+    monkeypatch.setattr(mcp_server.sys, "platform", "linux")
+    assert not mcp_server._codex_inventory_enabled("stdio")
+    monkeypatch.setattr(mcp_server.sys, "platform", "win32")
+    monkeypatch.setitem(sys.modules, "app.codex_bridge_pipe", SimpleNamespace(native_available=lambda: False))
+    assert not mcp_server._codex_inventory_enabled("stdio")
+
+
+@pytest.mark.asyncio
+async def test_inventory_gate_checks_presence_without_reading_capability(monkeypatch):
+    _inventory_native(monkeypatch)
+    monkeypatch.setattr(mcp_server.sys, "platform", "win32")
+
+    class PresenceOnly(dict):
+        def get(self, key, *args):
+            assert key != "CODEX_APP_TOOLS_PIPE_PATH"
+            return super().get(key, *args)
+
+        def __getitem__(self, key):
+            assert key != "CODEX_APP_TOOLS_PIPE_PATH"
+            return super().__getitem__(key)
+
+    environment = PresenceOnly(mcp_server.os.environ)
+    environment["CODEX_APP_TOOLS_PIPE_PATH"] = ""
+    monkeypatch.setattr(mcp_server.os, "environ", environment)
+    assert mcp_server._codex_inventory_enabled("stdio")
+    server = mcp_server.create_server(codex_inventory=True, lifespan=mcp_server._codex_inventory_lifespan)
+
+    async def exercise(session):
+        reply = await session.call_tool("pallium_codex_bridge_inventory_register", {})
+        assert json.loads(reply.content[0].text)["status"] == "registered"
+
+    await _serve_protocol(server, exercise)
+
+
+def test_inventory_main_catalog_flag_is_not_forwarded_to_http(monkeypatch):
+    _inventory_native(monkeypatch)
+    monkeypatch.setattr(mcp_server.sys, "platform", "win32")
+    captured = {}
+    monkeypatch.setattr(mcp_server, "create_server", lambda **options: (
+        captured.update(options) or MagicMock()))
+    monkeypatch.setenv("PALLIUM_MCP_TRANSPORT", "stdio")
+    mcp_server.main()
+    assert captured["codex_inventory"] is True
+    assert captured["lifespan"] is mcp_server._codex_inventory_lifespan
+    assert "private-capability-sentinel" not in repr(captured)
+    captured.clear()
+    monkeypatch.setenv("PALLIUM_MCP_TRANSPORT", "streamable-http")
+    mcp_server.main()
+    assert "codex_inventory" not in captured and "lifespan" not in captured
+
+
+@pytest.mark.asyncio
+async def test_inventory_caller_catalog_ready_register_and_eof(monkeypatch):
+    calls, disposed = _inventory_native(monkeypatch)
+    baseline = [tool.model_dump() for tool in await mcp_server.create_server().list_tools()]
+    server = mcp_server.create_server(codex_inventory=True, lifespan=mcp_server._codex_inventory_lifespan)
+
+    async def exercise(session):
+        tools = (await session.list_tools()).tools
+        optional = [tool for tool in tools if tool.name == "pallium_codex_bridge_inventory_register"]
+        assert len(optional) == 1 and optional[0].inputSchema.get("properties", {}) == {}
+        assert [tool.model_dump() for tool in tools if tool not in optional] == baseline
+        with anyio.fail_after(1):
+            while "ready" not in calls:
+                await asyncio.sleep(.01)
+        assert "register" not in calls
+        # Inventory authority comes from OS peers and operator policy, not fabricated turn metadata.
+        for _ in range(3):
+            reply = await session.call_tool("pallium_codex_bridge_inventory_register", {})
+            assert not reply.isError
+            assert json.loads(reply.content[0].text) == {
+                "mode": "inventory", "status": "registered", "reason": "ok",
+                "ttl_seconds": 12, "connected": True}
+        assert not (await session.call_tool("pallium_status", {})).isError
+    await _serve_protocol(server, exercise)
+    assert disposed.is_set() and calls == ["connect", "ready", "register", "register", "register", "dispose"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fault", ["ready", "register"])
+async def test_inventory_native_failure_keeps_caller_tools_live_and_no_reconnect(monkeypatch, capsys, fault):
+    calls, disposed = _inventory_native(monkeypatch, fault=fault)
+    server = mcp_server.create_server(codex_inventory=True, lifespan=mcp_server._codex_inventory_lifespan)
+    async def exercise(session):
+        if fault == "ready":
+            with anyio.fail_after(1):
+                while not disposed.is_set():
+                    await asyncio.sleep(.01)
+        normal, optional = await asyncio.gather(
+            session.call_tool("pallium_status", {}),
+            session.call_tool("pallium_codex_bridge_inventory_register", {}))
+        assert not normal.isError and json.loads(normal.content[0].text)["status"] == "healthy"
+        assert json.loads(optional.content[0].text)["status"] == "unavailable"
+        again = await session.call_tool("pallium_codex_bridge_inventory_register", {})
+        assert json.loads(again.content[0].text)["reason"] == "stopped"
+        assert calls.count("connect") == 1
+    await _serve_protocol(server, exercise)
+    assert disposed.is_set()
+    assert "private-" not in repr(capsys.readouterr())
+
+
+@pytest.mark.asyncio
+async def test_inventory_concurrent_caller_is_busy_without_blocking_normal_tool(monkeypatch):
+    release = threading.Event()
+    calls, disposed = _inventory_native(monkeypatch, block=release)
+    server = mcp_server.create_server(codex_inventory=True, lifespan=mcp_server._codex_inventory_lifespan)
+    async def exercise(session):
+        first = asyncio.create_task(session.call_tool("pallium_codex_bridge_inventory_register", {}))
+        try:
+            with anyio.fail_after(1):
+                while "register" not in calls:
+                    await asyncio.sleep(.01)
+            normal, second = await asyncio.gather(
+                session.call_tool("pallium_status", {}),
+                session.call_tool("pallium_codex_bridge_inventory_register", {}))
+            assert not normal.isError
+            assert json.loads(second.content[0].text)["reason"] == "busy"
+            assert calls.count("register") == 1
+        finally:
+            release.set()
+            await first
+    await _serve_protocol(server, exercise)
+    assert disposed.is_set()
+
+
+@pytest.mark.asyncio
+async def test_inventory_cancellation_shutdown_and_capability_loss_are_terminal(monkeypatch):
+    release = threading.Event()
+    calls, disposed = _inventory_native(monkeypatch, block=release)
+    worker = codex_desktop_bridge.InventoryWorker(Path("private-bootstrap"))
+    task = asyncio.create_task(worker.register())
+    try:
+        with anyio.fail_after(1):
+            while "register" not in calls:
+                await asyncio.sleep(.01)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        before = time.monotonic()
+        await worker.stop()
+        assert time.monotonic() - before < .75 and not disposed.is_set()
+        assert (await worker.register())["reason"] == "stopped"
+    finally:
+        release.set()
+        await worker.stop()
+    assert disposed.is_set() and calls.count("connect") == 1
+    calls, disposed = _inventory_native(monkeypatch)
+    fresh = codex_desktop_bridge.InventoryWorker(Path("private-bootstrap"))
+    try:
+        assert (await fresh.register())["status"] == "registered"
+        monkeypatch.delenv("CODEX_APP_TOOLS_PIPE_PATH")
+        assert (await fresh.register())["reason"] == "stopped"
+        monkeypatch.setenv("CODEX_APP_TOOLS_PIPE_PATH", "returned-capability")
+        assert (await fresh.register())["reason"] == "stopped"
+    finally:
+        await fresh.stop()
+    assert disposed.is_set() and calls.count("register") == 1
+
+
+@pytest.mark.parametrize("value", [None, [], {"status": [], "reason": {}, "ttl_seconds": True},
+    {"status": "private", "reason": "private", "ttl_seconds": 301, "connected": "yes",
+     "endpoint": "private", "tools": ["private"]}])
+def test_inventory_redaction_rejects_partial_invalid_and_private_values(value):
+    assert codex_desktop_bridge.inventory_status(value) == {"mode": "inventory", "status": "unavailable"}
+
+
+_INVENTORY_STDIO_CHILD = dedent(r'''
+    import asyncio
+    import os
+    import sys
+    from contextlib import asynccontextmanager
+    from types import SimpleNamespace
+    from app.mcp import server as m
+    class NativeClient:
+        def __init__(self, path, stop): pass
+        def ready(self): return {"status": "ready", "reason": "ready"}
+        def register(self):
+            if os.environ["TEST_BRIDGE_FAILURE"] == "register":
+                raise RuntimeError("private-native-sentinel")
+            return {"status": "registered", "reason": "ok", "connected": True,
+                    "endpoint": "private-capability-sentinel"}
+        def dispose(self): pass
+    sys.modules["app.codex_bridge_pipe"] = SimpleNamespace(
+        native_available=lambda: True, NativeInventoryClient=NativeClient)
+    failure = os.environ["TEST_BRIDGE_FAILURE"]
+    if failure == "import":
+        original_import = m.importlib.import_module
+        def injected_import(name, package=None):
+            if name == "app.mcp.codex_desktop_bridge":
+                raise RuntimeError("private-import-sentinel")
+            return original_import(name, package)
+        m.importlib = SimpleNamespace(import_module=injected_import)
+    elif failure in ("startup", "startup-timeout", "shutdown", "shutdown-timeout"):
+        from app.mcp import codex_desktop_bridge as bridge
+        @asynccontextmanager
+        async def injected(server):
+            if failure.startswith("startup"):
+                if failure.endswith("timeout"):
+                    await asyncio.Future()
+                raise RuntimeError("private-startup-sentinel")
+            yield {}
+            if failure.endswith("timeout"):
+                await asyncio.Future()
+            raise RuntimeError("private-shutdown-sentinel")
+        bridge.inventory_lifespan = injected
+    class FakeClient:
+        def __init__(self, ctx): pass
+        async def get_status(self): return {"status": "healthy"}
+    m.PalliumMcpClient = FakeClient
+    m.main()
+    print("inventory-test-launcher-returned", file=sys.stderr, flush=True)
+''')
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows inventory stdio mode")
+@pytest.mark.parametrize("failure", ["none", "register", "import", "startup", "startup-timeout",
+    "shutdown", "shutdown-timeout"])
+async def test_inventory_real_stdio_caller_and_eof_do_not_leak_native_capability(failure):
+    params = _stdio_params(failure, mode="inventory")
+    params.args = ["-c", _INVENTORY_STDIO_CHILD]
+    params.env["PALLIUM_CODEX_INVENTORY_BOOTSTRAP_FILE"] = "private-bootstrap"
+    with _stdio_error_log() as log:
+        async with stdio_client(params, errlog=log) as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                optional = [tool for tool in (await session.list_tools()).tools
+                    if tool.name.startswith("pallium_codex_bridge_")]
+                assert [tool.name for tool in optional] == ["pallium_codex_bridge_inventory_register"]
+                assert optional[0].inputSchema.get("properties", {}) == {}
+                normal, registered = await asyncio.gather(
+                    session.call_tool("pallium_status", {}),
+                    session.call_tool(optional[0].name, {}))
+                assert not normal.isError and not registered.isError
+                body = json.loads(registered.content[0].text)
+                assert body["status"] == ("registered" if failure == "none" else "unavailable")
+                assert "private-" not in registered.content[0].text
+        log.seek(0)
+        output = log.read()
+    assert "inventory-test-launcher-returned" in output and "private-" not in output
+
+
+@pytest.mark.parametrize("fault", ["start", "stop", None])
+def test_optional_inventory_service_lifecycle_keeps_normal_http_healthy(monkeypatch, request, caplog, fault):
+    from app import codex_bridge_pipe
+    calls = []
+
+    class Worker:
+        def stop(self):
+            calls.append("stop")
+            if fault == "stop":
+                raise RuntimeError("private-shutdown-sentinel")
+
+    def start():
+        calls.append("start")
+        if fault == "start":
+            raise RuntimeError("private-startup-sentinel")
+        return Worker()
+
+    monkeypatch.setattr(codex_bridge_pipe, "start_inventory_service", start)
+    with request.getfixturevalue("client") as client:
+        assert client.get("/health").status_code == 200
+        assert client.get("/status").status_code == 200
+        assert client.get("/debug/queue/health").status_code == 200
+    assert calls == (["start"] if fault == "start" else ["start", "stop"])
+    assert "private-" not in caplog.text

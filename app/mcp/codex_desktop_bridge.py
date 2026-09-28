@@ -171,3 +171,113 @@ async def shadow_lifespan(_server):
         yield {"codex_shadow": worker}
     finally:
         await worker.stop()
+
+
+def inventory_status(value: object) -> dict:
+    """Inventory evidence only; never forward native contents or authority."""
+    result = {"mode": "inventory", "status": "unavailable"}
+    if not isinstance(value, dict):
+        return result
+    if isinstance(value.get("status"), str) and value["status"] in {"ready", "registered", "inactive", "unavailable"}:
+        result["status"] = value["status"]
+    if isinstance(value.get("reason"), str) and value["reason"] in {
+        "ready", "ok", "observed", "closed", "policy-inactive", "policy-changed",
+        "peer-mismatch", "busy", "stopped", "native-failed", "timeout",
+    }:
+        result["reason"] = value["reason"]
+    ttl = value.get("ttl_seconds")
+    if type(ttl) is int and 0 <= ttl <= 300:
+        result["ttl_seconds"] = ttl
+    for field in ("connected", "inventory_ok", "source_exited"):
+        if type(value.get(field)) is bool:
+            result[field] = value[field]
+    return result
+
+
+class InventoryWorker:
+    """One finite child channel; EOF never revokes separate service custody."""
+
+    def __init__(self, bootstrap_path: Path):
+        self.stop_event = threading.Event()
+        self._path = bootstrap_path
+        self._requests = queue.Queue(maxsize=1)
+        self._busy = False
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    async def register(self) -> dict:
+        if self.stop_event.is_set() or "CODEX_APP_TOOLS_PIPE_PATH" not in os.environ:
+            self.stop_event.set()
+            return inventory_status({"reason": "stopped"})
+        if self._busy:
+            return inventory_status({"reason": "busy"})
+        self._busy = True
+        loop = asyncio.get_running_loop()
+        future = loop.create_future()
+        self._requests.put_nowait((loop, future))
+        try:
+            return await asyncio.wait_for(future, timeout=3.5)
+        except asyncio.TimeoutError:
+            self.stop_event.set()
+            return inventory_status({"reason": "timeout"})
+        except asyncio.CancelledError:
+            self.stop_event.set()
+            raise
+        finally:
+            self._busy = False
+
+    def _run(self):
+        client = None
+        try:
+            from app.codex_bridge_pipe import NativeInventoryClient
+            client = NativeInventoryClient(self._path, self.stop_event)
+            ready = inventory_status(client.ready())
+            if ready["status"] != "ready":
+                return
+            while not self.stop_event.is_set():
+                try:
+                    loop, future = self._requests.get(timeout=0.1)
+                except queue.Empty:
+                    continue
+                result = inventory_status(client.register())
+                if result["status"] == "unavailable":
+                    self.stop_event.set()
+                loop.call_soon_threadsafe(ShadowWorker._complete, future, result)
+                if result["status"] == "unavailable":
+                    break
+        except Exception:
+            self.stop_event.set()
+            if "future" in locals():
+                try:
+                    loop.call_soon_threadsafe(ShadowWorker._complete, future,
+                        inventory_status({"reason": "native-failed"}))
+                except RuntimeError:
+                    pass
+        finally:
+            self.stop_event.set()
+            try:
+                loop, pending = self._requests.get_nowait()
+                loop.call_soon_threadsafe(ShadowWorker._complete, pending,
+                    inventory_status({"reason": "stopped"}))
+            except (queue.Empty, RuntimeError):
+                pass
+            if client is not None:
+                try:
+                    client.dispose()
+                except Exception:
+                    pass
+
+    async def stop(self):
+        self.stop_event.set()
+        deadline = time.monotonic() + 0.5
+        while self._thread.is_alive() and time.monotonic() < deadline:
+            await asyncio.sleep(0.01)
+
+
+@asynccontextmanager
+async def inventory_lifespan(_server):
+    worker = InventoryWorker(Path(os.environ["PALLIUM_CODEX_INVENTORY_BOOTSTRAP_FILE"]))
+    try:
+        yield {"codex_inventory": worker}
+    finally:
+        await worker.stop()

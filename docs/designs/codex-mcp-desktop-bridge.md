@@ -1,6 +1,6 @@
 # Optional Codex MCP Desktop bridge
 
-Status: inert implementation shipped; authenticated shadow implementation under review, 2026-09-28.
+Status: inert and authenticated child-shadow implementations shipped; proposed default-off service custody is inventory-only and grants no wake authority.
 No production wake implementation or activation approval.
 Canonical work: [wake-first Relay delivery](../../roadmap/features/add-wake-first-relay-delivery.md).
 Private experiment: `codex-desktop-bridge-spike` Work Record; its history is not publication-ready.
@@ -15,7 +15,8 @@ Desktop mutations**. This document proposes boundaries, not a shipping wake path
 
 The private spike demonstrated legitimate child inheritance of the Desktop
 app-tools connection and genuine per-request metadata. A finite deferred action
-survived completion of its authorizing turn. In one naturally unloaded disposable,
+was accepted after its authorizing turn completed while that child remained alive.
+This does not prove custody after child exit. In one naturally unloaded disposable,
 a native queued wake plus one Desktop owner action led to trusted hook injection
 and ACK on attempt one, with observed settings preserved. That combined witness
 does not identify which action loaded the task or establish an atomic load-only
@@ -29,12 +30,12 @@ version-bound. MCP-child survival across Desktop restart, unload, configuration
 refresh, and capability replacement remains unqualified. Existing uncertain native
 reservations remain fenced; none of this permits retrying their queue submissions.
 
-A separately authorized actual-Python lifecycle observation could not initialize
-its disposable through the ordinary Desktop messaging entrypoint: Desktop rejected
-setup without an active turn. No observer startup or new recipient turn was
-witnessed; configuration was restored and observed settings stayed unchanged.
-This is an inconclusive setup result, not a bridge lifecycle failure or success.
-A supported initialization entrypoint is needed before that qualification proceeds.
+An earlier separately authorized actual-Python lifecycle attempt could not
+initialize its disposable through the ordinary Desktop messaging entrypoint, which
+rejected setup without an active turn. Later authenticated shadow enrollment did
+reach Pallium's protected channel after normal chat use, but did not open a Desktop
+connection. The earlier setup result does not show that shadow enrollment still
+lacks an initialization path; Desktop connection custody remains unqualified.
 
 ## Existing seams and eligibility
 
@@ -63,9 +64,12 @@ runtime-neutral; the app adapter owns Desktop-specific framing and tool discover
 
 ## Custody, authority, and communication
 
-The Desktop capability stays inside the eligible MCP child. Never return it from
-a tool, log it, write it into state, or send it to Pallium's service. The service
-can select eligible Relay work; only the child can communicate with Desktop.
+In the shipped child-shadow mode, the Desktop capability stays inside the eligible
+MCP child. Never return it from a tool, log it, write it into state, or send it to
+Pallium's service. The proposed service-custody mode below is a separate,
+default-off transport-only exception: after exact finite operator admission, the
+existing service may retain one connection for inventory reads only. It does not
+authorize wake actions.
 Normal hook claim, payload rendering, scope injection, and ACK remain unchanged.
 The bridge must not carry message payloads or become a second receive/ACK path.
 
@@ -73,7 +77,8 @@ The bridge must not carry message payloads or become a second receive/ACK path.
 | --- | --- | --- |
 | Desktop → MCP child | Private connection; current request metadata | Standing permission to wake any task |
 | Approved enrollment → child | Bounded action grant with exact coverage | New identities inferred from cwd/history |
-| Child ↔ service | Separate authenticated bridge channel; opaque grant handle | Desktop capability or arbitrary prompts |
+| Shipped child-shadow child ↔ service | Separate authenticated bridge channel; opaque grant handle | Desktop capability or arbitrary prompts |
+| Proposed inventory source child → service | Endpoint transferred after exact operator admission; one RAM-only inventory connection | `tools/call`, wake, claim/ACK, payload, or broader Desktop authority |
 | Service → adapter instruction | Exact delivery and live endpoint generation | Permission to override settings or retry native writes |
 | Hook → recipient | Trusted scope and actual payload; claim/ACK | Bridge authority |
 
@@ -137,10 +142,11 @@ it cannot prove exactly-once execution. Lease expiry, service restart, or a miss
 native queue row must not erase it. Owner-action fences and existing native queue
 reservations are distinct: the bridge must never repeat the native submission.
 
-Service restart changes its bridge epoch, invalidates transient leases/grants,
-and requires fresh enrollment; durable dispatch fences survive. Child EOF,
-cancellation, shutdown, capability loss, or configuration refresh stop background
-work and close its transports. A service outage marks bridge availability offline
+For shipped child-shadow mode, service restart changes its bridge epoch,
+invalidates transient leases/grants, and requires fresh enrollment; durable dispatch
+fences survive. Child EOF, cancellation, shutdown, capability loss, or configuration
+refresh stop background work and close its transports. Proposed service custody
+has a separate EOF rule described below. A service outage marks bridge availability offline
 without blocking normal MCP responses. Do not automatically bootstrap another
 runtime or refresh authorization using historical request metadata. Backlog rescue
 requires a new approved grant explicitly covering retained work; removing the
@@ -219,15 +225,14 @@ remain intact. Revoke enrollment credentials/grants through their approved lifec
 never clear an uncertain fence merely to restore availability. No service/app restart
 or configuration change is part of this design task.
 
-The current deliverable is authenticated **shadow observation**, not automatic cold delivery.
-Activation has three gates: authenticated grant enrollment, busy-safe owner
-admission, and qualified executor availability/bootstrap. If Desktop has no eligible
-live MCP child, the proposed adapter cannot wake a task; restart/unload/replacement
-qualification must establish how an authorized executor becomes available without
-a competing runtime, manual task turn, or discarded fences. Until then report
-unavailable and retain pending messages, rather than promise universal cold wake.
-Publication, installation, and reliability completion remain separate from this
-design draft.
+The shipped current deliverable is authenticated **child-shadow observation**, not automatic cold delivery; that mode requires a live MCP child.
+The separate inventory-custody proposal can bootstrap after ordinary first-chat use
+and retain its admitted connection after source-child exit while the Desktop process
+and epoch remain valid. It does not claim before-first-chat availability, zero-child
+startup, restart recovery, or universal cold wake. Activation still requires
+authenticated grant enrollment, busy-safe owner admission, and qualified executor
+availability. Publication, installation, and reliability completion remain separate
+from this design draft.
 
 ## Shadow-only implementation contract
 
@@ -285,3 +290,69 @@ worker also fails closed on an authenticated `unavailable` response. Neither cas
 automatically reconnects or re-enrolls. A fresh eligible MCP child requires a new
 explicit enrollment with genuine current metadata and still-valid operator policy.
 Normal MCP tools and retained Relay messages continue unchanged.
+
+## Proposed service-owned Desktop inventory custody
+
+This is a separate, default-off implementation in progress, not runtime-qualified. It reuses the existing
+durable Pallium service and never starts a detached helper or competing app-server.
+Its only native operation is a fixed, redacted `tools/list`; it has no `tools/call`,
+wake, claim, ACK, or payload authority. Existing current-request wake authority and
+the shipped child-shadow behavior remain unchanged.
+
+The operator prepares a protected private inventory directory; that creates
+readiness only, not admission. The service publishes an authenticated manifest of
+its PID, creation time, and epoch. A child sends a capability-free ready message
+valid for at most 300 seconds. The operator then arms one exact tuple: OS-
+authenticated source child, service PID/creation/epoch, Desktop PID/creation/user
+SID/executable/version, and enabled inventory-only policy with expiry no later than
+300 seconds and action `desktop-inventory-only`. An explicit tool request asks for
+admission. Only after policy checks
+may the source transfer its inherited endpoint over that same authenticated
+channel. The service rechecks policy, peer, epoch, revision, and expiry, retains at
+most one RAM-only connection, and verifies the actual native server against the
+approved Desktop identity before `tools/list` and each later inventory read. This
+defines the startup sequence, not a general API or final user-facing flow.
+
+Repeated admission for the same tuple/revision is idempotent. There is no
+replacement or reconnect while I/O is ambiguous. Revocation advances the policy
+revision to N+1 by compare-and-swap; only after conclusive close may the operator
+arm N+2. Expiry, Desktop identity loss, or a conclusive close ends custody;
+unresolved I/O remains unavailable until close is conclusive. Source-child EOF
+alone does not revoke an independently
+authorized service registration. A service restart loses the RAM registration and
+requires a new admission after ordinary chat use; zero-child startup bootstrap and
+persisted credential recovery are outside this proposal. This limited custody
+provides no wake authority and does not qualify cold delivery, busy safety, or
+restart recovery.
+
+The proof uses at most two fixed inventory reads, not an external observation API.
+After admission the service reads once while the retained source process is alive;
+that read must finish with the source still alive. Only after a positive signal
+from that retained process handle may it read once more on the same connection.
+Revoke, expiry, shutdown or identity loss wins over that second read; no retry is
+permitted. At most four protected create-once artifacts (`proof-before.json`,
+`proof-exit.json`, `proof-after.json`, `proof-failure.json`) hold strict,
+epoch/revision/fingerprint-correlated redacted evidence. No phase is overwritten or
+reused. The operator-only `read_inventory_proof(directory, expected_policy)`
+performs a strict bounded schema and expected-policy comparison, returning fixed
+historical status and booleans without connection, TTL or current-authority fields.
+Missing phases mean incomplete evidence, not current closure or policy failure.
+The supplied policy is comparison input, not authority;
+this reader grants no authority and performs no tool call or connection. PASS
+requires the complete consistent before/positive retained-handle exit/after sequence
+with no failure artifact. The explicit `historical_transport_pass` remains
+historical after later ordinary expiry, revocation, or stop. Neither the artifacts,
+manifest nor a live HTTP process establish current worker/connection availability
+or authority; the readback makes no such claim and never authorizes wake. Exact-owned cleanup
+precedes rearming. This is not a recurring scheduler, persisted capability or
+delivered-message receipt.
+
+The existing sibling `policy.lock` serializes only `policy.json` pathname/security
+opens and reads through data-handle close, plus policy writes through CAS/replace
+and temporary cleanup. Retry only native WinError 32 at lock creation, with a
+monotonic deadline of at most 0.2 seconds; other errors fail immediately. Release
+the lock before Desktop verification, native I/O, source waits, disposal, or proof
+publication. It never serializes native I/O.
+The lock does not guarantee every Windows replacement succeeds. A failed policy
+write reports failure and preserves the previous policy; failed revocation is not
+reported as revoked. No data-write retry or permission relaxation is added.
