@@ -154,9 +154,12 @@ The accepted next slice is a default-off, inventory-only connection owned by the
 existing Pallium service after explicit handoff from a legitimate MCP child.
 Independent security review required distinct finite inventory authority, separate
 from shadow enrollment and endpoint possession; the corrected plan is accepted.
-Implementation is owned by relay-dev in `feat/codex-service-custody`, with its
-[Work Record](../../.agent-workflow/tasks/codex-service-custody.md) in that branch.
-The record is not yet merged; canonical design alignment accompanies that change.
+Implementation shipped in [PR #256](https://github.com/rore/Pallium/pull/256); see
+the [Work Record](../../.agent-workflow/tasks/codex-service-custody.md). The
+default-off, inventory-only service-custody foundation was installed on
+2026-09-28. It permits only the reviewed finite handoff for fixed inventory reads.
+The child-exit custody witness is pending; this installed transport foundation does
+not establish unloaded-recipient delivery or wake authority.
 
 One exact child/service/Desktop process tuple may authorize one RAM connection.
 Only fixed native tools/list is permitted in this slice. A bounded disposable
