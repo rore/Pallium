@@ -137,6 +137,17 @@ does not attribute individual children to that request or establish its lifetime
 No bridge opt-in, grant, wake action or settings change was made for this witness.
 Do not repeat the same restart while automatic restoration confounds the question.
 
+Exact-version source resolves the separate discovery-lifetime question. The
+[status handler](https://github.com/openai/codex/blob/0d9c7cbfa6cf1489f55a8a9542b75ddd2c061807/codex-rs/app-server/src/request_processors/mcp_processor.rs#L268)
+uses a threadless snapshot for a null-thread request. Its
+[snapshot implementation](https://github.com/openai/codex/blob/0d9c7cbfa6cf1489f55a8a9542b75ddd2c061807/codex-rs/codex-mcp/src/mcp/mod.rs#L485)
+creates a local eager connection set, cancels startup at completion and returns
+only snapshot data; connection destruction cancels its client token. This path
+cannot supply a persistent executor. It does not prove which captured PID served
+which request, or rule out every other host mechanism. The next decision is a
+host-owned persistent executor/owner endpoint or an explicit upstream dependency;
+do not bypass child lifetime by detaching a helper or exporting Desktop capability.
+
 Remaining work:
 - Qualify actual Desktop child startup/lifetime for the
   [optional Codex MCP Desktop bridge](../../docs/designs/codex-mcp-desktop-bridge.md);
