@@ -81,7 +81,7 @@ unchanged from the initial delegated turn. Normal project trust was preserved.
 A finite policy for that exact fresh pair was provisioned and service health
 passed, but automatic approval review rejected enrollment before execution because
 the target retained the user's earlier no-tools instruction. Status was not called
-and no retry occurred. Enrollment remains untested. The policy was revoked through
+and no retry occurred. That attempt did not test enrollment. The policy was revoked through
 revision-checked provisioning, service storage removed, and normal service,
 embedding and queue health verified. A failed stop caused by an already-absent PID
 was recovered with one evidence-based invocation of the required wrapper.
@@ -107,29 +107,41 @@ directories and restored normal service with all health checks passing. Global
 trust, settings and empty delivery/reservation state were preserved. Shadow
 authority is off and namespace cleanup is complete.
 
-The selected next experiment uses a replacement fresh chat, with explicit initial
-authorization, kept loaded through one enrollment/status attempt. Do not expand
-into restored-chat configuration research or additional cleanup machinery. Actual
-enrollment, child lifetime/unload and automatic unloaded wake remain unqualified;
-the next architecture decision depends on capability use and zero-child availability.
+The replacement fresh chat remained loaded through an explicitly authorized
+enrollment/status attempt. Both actual MCP calls succeeded exactly once: enrollment
+returned `enrolled` / `ok` with a 300-second grant; status returned `inactive` /
+`observed` with 294 seconds remaining. This proves eligible Desktop-launched MCP
+startup, inherited capability presence, genuine request metadata and enrollment
+through Pallium's protected native pipe. Neither shadow tool connects to Desktop;
+the result does not prove use of Desktop's app-tools connection or automatic wake.
+The idle test chat was normally archived before cleanup. Revision-checked revocation,
+owned-file removal and the required service restart completed; service, embedding
+and queue health passed. Temporary authority/configuration are absent, global
+configuration and effective caller settings were preserved, and target pending,
+claimed and matching reservation counts remain zero. Child lifetime/unload and
+zero-child bootstrap remain unqualified. The next architecture decision is executor
+availability; do not repeat enrollment or restored-chat configuration investigations.
+The design document's header still describes shadow implementation as under review;
+PR #255 and this live enrollment result supersede that stale delivery status.
 
 Remaining work:
 - Qualify actual Desktop child startup/lifetime for the
   [optional Codex MCP Desktop bridge](../../docs/designs/codex-mcp-desktop-bridge.md);
-  live setup is parked. One private offline exact-owner launcher-exit check passed:
+  live enrollment passed as recorded above. One private offline exact-owner launcher-exit check passed:
   the child survived launcher exit, exited within a finite bound, and fake-baseline
   restoration cleaned only the exact owned files and root. This proves only the
   tested offline launcher-exit and cleanup path. Read-only inspection of installed process
   topology confirms ordinary Desktop → Codex → venv launcher → base interpreter MCP
   startup; it does not prove Desktop steering/cancellation, live inert-child lifetime,
-  capability forwarding, or zero-child bootstrap. Earlier temporary opt-in attempts
+  usable Desktop connection, or zero-child bootstrap. Earlier temporary opt-in attempts
   remain inconclusive: Desktop rejected programmatic initialization, and manual
   preparation initially ended before an observed user turn. The subsequent
   first supervised user turn found neither dedicated tool; the later fresh-chat
   catalog and registration checks passed as recorded above. Namespace cleanup is
-  complete; enrollment remains untested. Existing `env`/`env_vars` and server eligibility already express inert
+  complete, including the successful replacement trial. Existing `env`/`env_vars`
+  and server eligibility already express inert
   opt-in, so no new setup feature is needed. Live configuration remains held.
-  Qualify actual Desktop shadow enrollment/lifetime and executor availability/bootstrap
+  Qualify actual Desktop connection use, child lifetime and executor availability/bootstrap
   before cold wake; host-safe admission including cold-to-busy races remains required.
   New grants or generations must not bypass uncertain action fences.
   This is work in progress, not shipped automatic unloaded delivery.
