@@ -31,7 +31,7 @@ and open-ended chat. Regular sends reject a bare runtime selector; there is no b
 ## Limits
 
 Secret masking happens before storage. Harmless drive-qualified directory paths
-in prose survive when their individual segments are not secret-shaped; direct
+using forward slashes survive in prose when their segments are not secret-shaped; direct
 credential assignments and secret-shaped segments remain masked.
 
 Messages contain at most 16,000 Unicode code points. Omitted expiry is durable
