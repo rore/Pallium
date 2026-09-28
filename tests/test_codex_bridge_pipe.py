@@ -793,6 +793,81 @@ def inventory_running(tmp_path, monkeypatch, *, response=None, arm=True, changes
         assert service.custody is None
 
 
+def inventory_raw_exchange(client, request):
+    deadline = time.monotonic() + 1
+    client.io.write(request, deadline)
+    return client.io.read(deadline)
+
+
+@native
+@pytest.mark.parametrize("sequence", ["4", None, [], True, 0, -1, 3, 2, "missing", 2**31],
+                         ids=["string", "null", "list", "boolean", "zero", "negative", "equal", "decreasing", "missing", "over-max"])
+def test_inventory_rejected_sequence_keeps_floor_and_live_custody(tmp_path, monkeypatch, sequence):
+    with inventory_running(tmp_path, monkeypatch) as (service, client, _, desktop):
+        assert client.register()["status"] == "registered"
+        custody = service.custody
+        assert custody is not None and len(desktop.requests) == 1
+        malformed = {"version": 1, "verb": "ready", "epoch": service.epoch, "sequence": sequence}
+        if sequence == "missing":
+            malformed.pop("sequence")
+        rejected = inventory_raw_exchange(client, malformed)
+        assert rejected["status"] == "unavailable"
+        expected_echo = sequence if bridge._integer(sequence, 1) else 3
+        assert rejected["sequence"] == expected_echo
+
+        replay = inventory_raw_exchange(client, {"version": 1, "verb": "ready", "epoch": service.epoch, "sequence": 3})
+        assert replay["status"] == "unavailable"
+        accepted = inventory_raw_exchange(client, {"version": 1, "verb": "ready", "epoch": service.epoch, "sequence": 4})
+        assert accepted["status"] == "ready" and accepted["sequence"] == 4
+        assert service.thread.is_alive() and service.custody is custody
+        assert desktop.connections == 1 and len(desktop.requests) == 1
+
+
+@native
+def test_inventory_maximum_sequence_is_accepted_then_replay_is_rejected(tmp_path, monkeypatch):
+    with inventory_running(tmp_path, monkeypatch) as (service, client, _, desktop):
+        assert client.register()["status"] == "registered"
+        custody = service.custody
+        maximum = 2**31 - 1
+        accepted = inventory_raw_exchange(client, {"version": 1, "verb": "ready", "epoch": service.epoch,
+                                                    "sequence": maximum})
+        assert accepted["status"] == "ready" and accepted["sequence"] == maximum
+        replay = inventory_raw_exchange(client, {"version": 1, "verb": "ready", "epoch": service.epoch,
+                                                   "sequence": maximum})
+        assert replay["status"] == "unavailable" and replay["sequence"] == maximum
+        assert service.thread.is_alive() and service.custody is custody
+        assert desktop.connections == 1 and len(desktop.requests) == 1
+
+
+@native
+def test_inventory_invalid_body_does_not_consume_floor_and_error_echoes_candidate(tmp_path, monkeypatch):
+    with inventory_running(tmp_path, monkeypatch) as (service, client, _, desktop):
+        assert client.register()["status"] == "registered"
+        custody = service.custody
+        malformed = {"version": 1, "verb": "unsupported", "epoch": service.epoch, "sequence": 100}
+        rejected = inventory_raw_exchange(client, malformed)
+        assert rejected["status"] == "unavailable" and rejected["sequence"] == 100
+        accepted = inventory_raw_exchange(client, {"version": 1, "verb": "ready", "epoch": service.epoch, "sequence": 4})
+        assert accepted["status"] == "ready" and accepted["sequence"] == 4
+        assert service.thread.is_alive() and service.custody is custody
+        assert desktop.connections == 1 and len(desktop.requests) == 1
+
+
+@native
+def test_inventory_valid_request_error_echoes_candidate_without_advancing_floor(tmp_path, monkeypatch):
+    with inventory_running(tmp_path, monkeypatch) as (service, client, _, desktop):
+        assert client.register()["status"] == "registered"
+        custody = service.custody
+        failed = inventory_raw_exchange(client, {"version": 1, "verb": "transfer", "epoch": service.epoch,
+            "sequence": 4, "revision": 2, "endpoint": "\\\\.\\pipe\\unused"})
+        assert failed["status"] == "unavailable" and failed["reason"] == "policy-changed"
+        assert failed["sequence"] == 4
+        accepted = inventory_raw_exchange(client, {"version": 1, "verb": "ready", "epoch": service.epoch, "sequence": 4})
+        assert accepted["status"] == "ready" and accepted["sequence"] == 4
+        assert service.thread.is_alive() and service.custody is custody
+        assert desktop.connections == 1 and len(desktop.requests) == 1
+
+
 @native
 def test_inventory_ready_without_policy_and_cas_provisioning(tmp_path, monkeypatch):
     with inventory_running(tmp_path, monkeypatch, arm=False) as (service, client, directory, desktop):

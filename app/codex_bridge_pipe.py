@@ -1551,8 +1551,11 @@ class InventoryService:
                             response = self._process(request, peer, sequence, deadline)
                         except ShadowUnavailable as exc:
                             response = _inventory_public("unavailable", _inventory_reason(exc))
-                        sequence = request.get("sequence", 0)
-                        response.update(version=1, epoch=self.epoch, sequence=sequence)
+                        else:
+                            sequence = request["sequence"]
+                        candidate = request.get("sequence")
+                        response.update(version=1, epoch=self.epoch,
+                                        sequence=candidate if _integer(candidate, 1) else sequence)
                         io.write(response, deadline)
                 except ShadowUnavailable:
                     if io.unresolved or self.stop_event.is_set():
