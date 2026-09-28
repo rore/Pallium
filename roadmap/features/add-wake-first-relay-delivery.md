@@ -49,13 +49,13 @@ child lifetime and zero-child bootstrap remain unqualified. Trusted-child
 assertions use the documented trusted-local boundary, not Desktop attestation
 or isolation from compromised same-user code.
 
-The supervised 2026-09-28 trial reached one genuine user turn in the existing
+The first supervised 2026-09-28 trial reached one genuine user turn in the existing
 disposable Desktop chat. Neither dedicated shadow tool was exposed, so the chat
-stopped without enrollment, status calls or retries. Configuration uptake remains
-unqualified; this result alone does not distinguish project trust, cached
-configuration or an MCP launch failure. Existing trial logs are the next bounded
-read-only diagnostic source; do not repeat activation or assume a supported
-per-server restart control without evidence.
+stopped without enrollment, status calls or retries. This result alone does not
+distinguish project trust, cached configuration or an MCP launch failure. Existing
+trial logs did not establish the cause. Subsequent source inspection and the
+fresh-chat trial below established a usable configuration-loading path; do not
+repeat the existing-chat experiment or assume a per-server restart control.
 
 Cleanup completed through the shipped revision-checked provisioning command and
 required service wrapper: the pair was revoked, the service drained, and exactly
@@ -69,6 +69,35 @@ natural unload and zero-child bootstrap remain unqualified. Next-natural-turn
 fallback does not satisfy automatic unloaded wake. No live configuration remains
 armed; the recurring manager follow-up remains paused.
 
+The later fresh-chat trial in the separate approved test project exposed both
+shadow tools before policy provisioning. App-created/delegated turns did not
+register a Relay endpoint: matching Codex source runs UserPromptSubmit for user
+input but not function-call-output or inter-agent input. One ordinary user message
+then established a provider-confirmed endpoint, with pending/claimed/reservation
+counts zero. The user turn also supplied a broader writable Documents/Codex root;
+the current host-provided context was accepted and preserved, not described as
+unchanged from the initial delegated turn. Normal project trust was preserved.
+
+A finite policy for that exact fresh pair was provisioned and service health
+passed, but automatic approval review rejected enrollment before execution because
+the target retained the user's earlier no-tools instruction. Status was not called
+and no retry occurred. Enrollment remains untested. The policy was revoked through
+revision-checked provisioning, service storage removed, and normal service,
+embedding and queue health verified. A failed stop caused by an already-absent PID
+was recovered with one evidence-based invocation of the required wrapper.
+
+Project cleanup is not complete: Windows accepted deletion of the exact owned
+config and empty directory, but the directory remained visible and reopening it
+returned access denied. A retained handle is possible, not proven. Original file
+identities, owner and config contents were verified; a narrowly reviewed exception
+allowed only the recorded additive ACL changes while preserving parent permissions.
+No ACL reset, forced handle close, shared process kill or Desktop restart occurred.
+Shadow authority is off. Before another live trial, resolve this namespace residual
+through normal owner release or a quiet-window read-only handle inspection, and
+obtain an explicit target instruction lifting the earlier no-tools restriction.
+Do not repeat the tool catalog or registration investigations. Actual enrollment,
+child lifetime/unload and automatic unloaded wake remain unqualified.
+
 Remaining work:
 - Qualify actual Desktop child startup/lifetime for the
   [optional Codex MCP Desktop bridge](../../docs/designs/codex-mcp-desktop-bridge.md);
@@ -81,8 +110,9 @@ Remaining work:
   capability forwarding, or zero-child bootstrap. Earlier temporary opt-in attempts
   remain inconclusive: Desktop rejected programmatic initialization, and manual
   preparation initially ended before an observed user turn. The subsequent
-  supervised user turn found neither dedicated tool, as recorded above. Temporary
-  configuration was restored. Existing `env`/`env_vars` and server eligibility already express inert
+  first supervised user turn found neither dedicated tool; the later fresh-chat
+  catalog and registration checks passed as recorded above. Its project namespace
+  cleanup residual remains open. Existing `env`/`env_vars` and server eligibility already express inert
   opt-in, so no new setup feature is needed. Live configuration remains held.
   Qualify actual Desktop shadow enrollment/lifetime and executor availability/bootstrap
   before cold wake; host-safe admission including cold-to-busy races remains required.
