@@ -86,17 +86,32 @@ revision-checked provisioning, service storage removed, and normal service,
 embedding and queue health verified. A failed stop caused by an already-absent PID
 was recovered with one evidence-based invocation of the required wrapper.
 
-Project cleanup is not complete: Windows accepted deletion of the exact owned
+At that checkpoint, project cleanup was incomplete: Windows accepted deletion of the exact owned
 config and empty directory, but the directory remained visible and reopening it
 returned access denied. A retained handle is possible, not proven. Original file
 identities, owner and config contents were verified; a narrowly reviewed exception
 allowed only the recorded additive ACL changes while preserving parent permissions.
 No ACL reset, forced handle close, shared process kill or Desktop restart occurred.
-Shadow authority is off. Before another live trial, resolve this namespace residual
-through normal owner release or a quiet-window read-only handle inspection, and
-obtain an explicit target instruction lifting the earlier no-tools restriction.
-Do not repeat the tool catalog or registration investigations. Actual enrollment,
-child lifetime/unload and automatic unloaded wake remain unqualified.
+Native status queries subsequently proved STATUS_DELETE_PENDING for both paths.
+Normally archiving only the idle disposable released them; native absence checks
+then passed, without a Desktop restart or permission change. The user explicitly
+lifted the earlier no-tools restriction in the restored chat.
+
+The next finite window still did not exercise enrollment: the restored chat had
+no callable shadow entry, despite the earlier fresh-load catalog success. That
+evidence was incorrectly reused across archive/restore. Ordinary MCP servers were
+ready in the bounded log evidence; no shadow-server startup was recorded. This
+does not establish a native enrollment failure. Cleanup archived the idle test
+chat before project-file deletion, revoked the exact policy, removed both temporary
+directories and restored normal service with all health checks passing. Global
+trust, settings and empty delivery/reservation state were preserved. Shadow
+authority is off and namespace cleanup is complete.
+
+The selected next experiment uses a replacement fresh chat, with explicit initial
+authorization, kept loaded through one enrollment/status attempt. Do not expand
+into restored-chat configuration research or additional cleanup machinery. Actual
+enrollment, child lifetime/unload and automatic unloaded wake remain unqualified;
+the next architecture decision depends on capability use and zero-child availability.
 
 Remaining work:
 - Qualify actual Desktop child startup/lifetime for the
@@ -111,8 +126,8 @@ Remaining work:
   remain inconclusive: Desktop rejected programmatic initialization, and manual
   preparation initially ended before an observed user turn. The subsequent
   first supervised user turn found neither dedicated tool; the later fresh-chat
-  catalog and registration checks passed as recorded above. Its project namespace
-  cleanup residual remains open. Existing `env`/`env_vars` and server eligibility already express inert
+  catalog and registration checks passed as recorded above. Namespace cleanup is
+  complete; enrollment remains untested. Existing `env`/`env_vars` and server eligibility already express inert
   opt-in, so no new setup feature is needed. Live configuration remains held.
   Qualify actual Desktop shadow enrollment/lifetime and executor availability/bootstrap
   before cold wake; host-safe admission including cold-to-busy races remains required.
