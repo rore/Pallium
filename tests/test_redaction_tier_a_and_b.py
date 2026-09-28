@@ -464,6 +464,26 @@ class TestFalsePositiveFixesFromLiveDryRun:
 
 
 class TestYamlProseSecretBoundary:
+    @pytest.mark.parametrize("drive", ["C", "c", "Z"])
+    @pytest.mark.parametrize("redactor", [redact_sensitive, redact_probable_secrets])
+    def test_drive_directory_prose_survives(self, drive, redactor):
+        value = f"authorization: run from {drive}:/Users/reader/.codex/worktrees/sample-project/workspace_run."
+        assert redactor(value) == value
+
+    @pytest.mark.parametrize("prefix", ["", "https:", "x:", "wordC:"])
+    def test_unqualified_or_uri_token_is_not_a_drive_exemption(self, prefix):
+        secret = _real_shape("", "", 40)
+        value = f"authorization: run from {prefix}//short/{secret} now"
+        assert secret not in redact_sensitive(value)
+
+    @pytest.mark.parametrize("secret", [_real_shape("", "", 17), "aaaaabbbbbcc"])
+    def test_secret_drive_segment_still_masks(self, secret):
+        value = f"authorization: run from C:/short/{secret} now"
+        assert secret not in redact_sensitive(value)
+
+    def test_direct_drive_path_assignment_still_masks(self):
+        assert redact_sensitive("password: C:/short/folder") == "password: [REDACTED]"
+
     def test_session_id_technical_prose_with_long_word_survives(self):
         value = "session_id: wake uses socket/pipe+token+scope after restart"
         assert redact_sensitive(value) == value

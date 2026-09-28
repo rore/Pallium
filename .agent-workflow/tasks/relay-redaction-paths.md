@@ -12,14 +12,23 @@
 **Material assumptions:** Exact source replay and sanitized reproduction establish structural-path false positive. If proposed discrimination permits direct secret assignments or unqualified base64-like secrets, stop and revise the plan; never exempt merely slash-containing candidates.
 **Plan:** Add one shared match-aware predicate using the existing probable-token predicate. Exempt a candidate only if immediately preceded by an ASCII drive-letter colon, begins with slash, has multiple path segments, and none of its individual segments satisfies either existing assignment discriminator: entropy at the 12-character floor or compact >=12-character alphanumeric shape. Reuse at assignment-prose and Tier B callers; retain Tier A and compact-token rules. Add generic unit boundaries and HTTP send/reply/read lifecycle regression for harmless, secret, and mixed content, Unicode, idempotence, and continuation. Explicit negatives: real-shaped secret path segment, drive-prefixed compact secret, arbitrary URI, bare base64, secret beside benign path. Document narrow retention contract. Stop on new API/persistence or broader exemptions. No dependencies or integration copies.
 **Verification plan:** When harmless drive-qualified directory prose is sent/replied, Relay shall retain it across status/paging/turn readback -> HTTP E2E. When direct assignments, unqualified secret-shaped tokens, provider tokens, or mixed real-secret prose occur, redaction shall mask them -> boundary tests plus HTTP E2E. When matching twice, output shall be idempotent -> focused tests. Whole change -> test-plan selector, full non-slow once, workflow check, diff check, independent result review.
-**Plan review:** Pending clean-context agent technical review.
+**Plan review:** Agent technical review: /root/relay_redaction_incident/redaction_plan_review, reviewed 7de393ea; approve with drive-prefix word boundary and rejection of // URI prefix. See Plan review below.
 **Approvals:** Approved by user 2026-09-28: "This is a night job so you have blanket approval for what it needs". Task owner delegates technical review; exact authorization forwarded by root, request_source_item_id e05b03f1-f97d-482b-ba9b-7ea0be68b403.
 **Exceptions:** —
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
-Read-only diagnosis complete. Managed worktree: C:/Users/I347041/.codex/worktrees/relay-redaction-paths/Pallium; branch feat/relay-redaction-paths. Shared development/installed and concurrent wake checkouts remain untouched. Application edits await clean-context plan review; human blanket approval received from root.
+Read-only diagnosis complete. Managed worktree: C:/Users/I347041/.codex/worktrees/relay-redaction-paths/Pallium; branch feat/relay-redaction-paths. Shared development/installed and concurrent wake checkouts remain untouched. Human blanket approval and clean-context technical plan review received before application edits.
+
+Implemented one match-aware predicate reused by assignment prose and Tier B. The initial boundary check caught low-entropy compact path segments falling back to aggregate entropy; the final drive branch classifies suspicious segments directly under caller minimum length. No dependencies, API/persistence changes, or integration edits. All patches used apply_patch successfully; no fallback writes.
+
+## Evidence
+Affected subsystem: `python -m pytest tests/test_redaction_tier_a_and_b.py tests/test_agent_relay_e2e.py -q -n 0`: 143 passed in 23.42s. Initial compact-segment failures were corrected and `--lf --lfnf=none -q -n 0`: 3 passed. Exact original source was replayed locally without printing its contents: 4453 input/output code points, identical output, idempotent. Selector chooses full lane; required full run pending. `git diff --check` passed.
+Roadmap reconciliation: no matching canonical item applies; existing Relay scope remains accurate. Documentation now names the narrow structural-path retention contract. No feature-status changes.
+
+## Plan review
+Agent technical review: /root/relay_redaction_incident/redaction_plan_review. Reviewed revision: 7de393ea, shared predicate, Relay write boundary, and existing redaction tests. Verdict: approve; require drive-prefix word boundary and reject // so URI suffixes cannot resemble drives. Segment checks honor existing FP guards, provider masking stays active, and any separate secret in the RHS still masks. HTTP send/reply/status/paging/turn coverage judged adequate.
 
 ## Sanitized reproduction
 Input: `authorization: run checks from C:/Users/reader/.codex/worktrees/sample-project/workspace_run. Use python check.py --record build/check.json`
