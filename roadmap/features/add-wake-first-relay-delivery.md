@@ -67,7 +67,7 @@ the full context was not byte-identical. No Relay message was sent; target pendi
 claimed and matching reservation counts remained zero. Child startup/lifetime,
 natural unload and zero-child bootstrap remain unqualified. Next-natural-turn
 fallback does not satisfy automatic unloaded wake. No live configuration remains
-armed; the recurring manager follow-up remains paused.
+armed; the recurring manager follow-up was paused at that stage.
 
 The later fresh-chat trial in the separate approved test project exposed both
 shadow tools before policy provisioning. App-created/delegated turns did not
@@ -144,9 +144,31 @@ uses a threadless snapshot for a null-thread request. Its
 creates a local eager connection set, cancels startup at completion and returns
 only snapshot data; connection destruction cancels its client token. This path
 cannot supply a persistent executor. It does not prove which captured PID served
-which request, or rule out every other host mechanism. The next decision is a
-host-owned persistent executor/owner endpoint or an explicit upstream dependency;
-do not bypass child lifetime by detaching a helper or exporting Desktop capability.
+which request, or rule out every other host mechanism. The earlier supported-only,
+child-owned custody constraint is superseded by the reviewed continuation below;
+a detached helper or competing Codex runtime remains outside scope.
+
+The task owner accepts useful partial coverage after normal use of one chat.
+Before-first-chat availability after Desktop restart is not a prerequisite.
+The accepted next slice is a default-off, inventory-only connection owned by the
+existing Pallium service after explicit handoff from a legitimate MCP child.
+Independent security review required distinct finite inventory authority, separate
+from shadow enrollment and endpoint possession; the corrected plan is accepted.
+Implementation is owned by relay-dev in `feat/codex-service-custody`, with its
+[Work Record](../../.agent-workflow/tasks/codex-service-custody.md) in that branch.
+The record is not yet merged; canonical design alignment accompanies that change.
+
+One exact child/service/Desktop process tuple may authorize one RAM connection.
+Only fixed native tools/list is permitted in this slice. A bounded disposable
+trial must observe the originating child actually exit, then successfully list
+on the retained service connection. Archive alone is not exit evidence. A passing
+transport test leads directly to a separately reviewed unloaded-recipient delivery
+witness; it does not establish wake authority or delivery by itself. Service loss
+requires normal-use bootstrap; Desktop loss invalidates the old connection.
+Persistent credentials, automatic zero-child startup and an exhaustive restart
+matrix are deferred. Existing uncertain-action fences and deferred busy-turn
+semantics remain unchanged. No live handoff or new wake is armed; the manager's
+recurring follow-up is active.
 
 Remaining work:
 - Qualify actual Desktop child startup/lifetime for the
@@ -165,8 +187,9 @@ Remaining work:
   complete, including the successful replacement trial. Existing `env`/`env_vars`
   and server eligibility already express inert
   opt-in, so no new setup feature is needed. Live configuration remains held.
-  Qualify actual Desktop connection use, child lifetime and executor availability/bootstrap
-  before cold wake; host-safe admission including cold-to-busy races remains required.
+  Qualify service-owned connection lifetime after normal-chat bootstrap, then
+  unloaded-recipient delivery. Automatic startup before any chat is deferred;
+  host-safe admission including cold-to-busy races remains a separate requirement.
   New grants or generations must not bypass uncertain action fences.
   This is work in progress, not shipped automatic unloaded delivery.
 - Qualify still-unproven interrupted/restart combinations with a bounded matrix
