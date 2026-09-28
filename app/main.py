@@ -325,6 +325,14 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
         except Exception:
             logger.warning("Codex shadow worker unavailable")
         app_instance.state._codex_shadow_service = shadow_service
+        inventory_service = None
+        try:
+            from app.codex_bridge_pipe import start_inventory_service
+
+            inventory_service = start_inventory_service()
+        except Exception:
+            logger.warning("Codex inventory worker unavailable")
+        app_instance.state._codex_inventory_service = inventory_service
         app_instance.state._lifespan_complete = True
         try:
             if mcp_available and session_manager is not None:
@@ -333,6 +341,11 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
             else:
                 yield
         finally:
+            if inventory_service is not None:
+                try:
+                    inventory_service.stop()
+                except Exception:
+                    logger.warning("Codex inventory worker shutdown failed")
             if shadow_service is not None:
                 try:
                     shadow_service.stop()

@@ -12,6 +12,7 @@ import sys
 import threading
 import time
 import tempfile
+import subprocess
 from contextlib import closing, contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -617,3 +618,957 @@ server.main()
         assert service.grant is None
         client.app.state.pallium_service.close()
         storage.close()
+
+
+class FakeDesktop:
+    """Isolated kernel byte pipe using this test process, never Desktop capability."""
+
+    def __init__(self, response=None):
+        self.w = bridge._native()
+        self.stop = threading.Event()
+        self.endpoint = rf"\\.\pipe\inventory-test-{secrets.token_hex(16)}"
+        self.requests = []
+        self.connections = 0
+        self.response = response
+        self.io = None
+        self.thread = threading.Thread(target=self.run, daemon=True)
+        handle = self.w.pipe.CreateNamedPipe(self.endpoint,
+            self.w.pipe.PIPE_ACCESS_DUPLEX | self.w.con.FILE_FLAG_OVERLAPPED | bridge.FIRST_PIPE_INSTANCE,
+            self.w.pipe.PIPE_TYPE_BYTE | self.w.pipe.PIPE_WAIT | self.w.pipe.PIPE_REJECT_REMOTE_CLIENTS,
+            1, 65536, 65536, 1000, bridge._security_attributes(self.w, bridge._self_sid(self.w)))
+        self.io = bridge._DesktopIO(self.w, handle, self.stop)
+        self.thread.start()
+
+    def run(self):
+        try:
+            while not self.stop.is_set():
+                try:
+                    self.io.accept(time.monotonic() + .1)
+                    break
+                except bridge.ShadowUnavailable as exc:
+                    if exc.category != "deadline" or self.io.unresolved:
+                        raise
+            if self.stop.is_set():
+                return
+            self.connections += 1
+            while not self.stop.is_set():
+                try:
+                    request = self.io.read(time.monotonic() + .1)
+                except bridge.ShadowUnavailable as exc:
+                    if exc.category == "deadline" and not self.io.unresolved:
+                        continue
+                    raise
+                self.requests.append(request)
+                assert request == {"jsonrpc": "2.0", "id": len(self.requests), "method": "tools/list", "params": {}}
+                value = {"jsonrpc": "2.0", "id": request["id"], "result": {
+                    "tools": [{"name": "example-β", "description": "private native content", "inputSchema": {"type": "object"}}]}}
+                value = self.response(request, value) if self.response else value
+                if value is None:
+                    continue
+                if isinstance(value, bytes):
+                    raw = len(value).to_bytes(4, "little") + value
+                    self.io._operation(lambda ov: self.w.file.WriteFile(self.io.handle, raw, ov), time.monotonic() + 1, raw)
+                else:
+                    self.io.write(value, time.monotonic() + 1)
+        except bridge.ShadowUnavailable:
+            pass
+        finally:
+            self.io.close()
+
+    def close(self):
+        self.stop.set()
+        self.thread.join(.5)
+        assert not self.thread.is_alive() and not self.io.unresolved
+
+
+def inventory_policy(service, source=None, **changes):
+    w = bridge._native()
+    current = bridge._Peer(w, os.getpid(), bridge._self_sid(w))
+    try:
+        path, version = bridge._process_image(w, current.handle)
+        value = {"version": 1, "action": "desktop-inventory-only", "revision": 1,
+            "expires_at": (datetime.now(timezone.utc) + timedelta(seconds=120)).isoformat(),
+            "enabled": True, "revoked": False, "service_pid": os.getpid(),
+            "service_creation": current.creation, "service_epoch": service.epoch,
+            "source_pid": (source or current).pid, "source_creation": (source or current).creation,
+            "desktop_pid": os.getpid(), "desktop_creation": current.creation,
+            "desktop_user_sid": bridge._self_sid(w), "desktop_executable": path, "desktop_version": version}
+        value.update(changes)
+        return value
+    finally:
+        current.close()
+
+
+def arm_inventory(directory, value):
+    w = bridge._native()
+    bridge._atomic_private(w, directory / "policy.json", bridge._self_sid(w), encode(value))
+
+
+def read_proof(directory):
+    w = bridge._native()
+    for phase in ("failure", "after", "exit", "before"):
+        path = directory / f"proof-{phase}.json"
+        if path.is_file():
+            return bridge._json(bridge._read_private(w, path, bridge._self_sid(w)))
+    return {"before_inventory_ok": False, "after_inventory_ok": False, "source_exited": False, "failure": "none"}
+
+
+def watch_replacements(monkeypatch):
+    events = []
+    original = os.replace
+
+    def replace(source, destination):
+        try:
+            return original(source, destination)
+        except OSError as exc:
+            events.append((Path(destination).name, {5: "access-denied", 32: "sharing-conflict"}.get(exc.winerror, "other")))
+            raise
+
+    monkeypatch.setattr(os, "replace", replace)
+    return events
+
+
+@native
+def test_policy_held_reader_excludes_bounded_writer_until_handle_cleanup(tmp_path, monkeypatch):
+    w = bridge._native()
+    sid = bridge._self_sid(w)
+    path = tmp_path / "policy.json"
+    raw = encode(inventory_policy(SimpleNamespace(epoch="diagnostic-epoch")))
+    bridge._atomic_private(w, path, sid, raw)
+    held, release = threading.Event(), threading.Event()
+    read_results = []
+    original_read = w.file.ReadFile
+
+    def read(handle, *args):
+        result = original_read(handle, *args)
+        held.set()
+        assert release.wait(1), "reader-release-timeout"
+        return result
+
+    monkeypatch.setattr(w.file, "ReadFile", read)
+    monkeypatch.setattr(os, "replace", lambda *args: pytest.fail("replace occurred while policy reader owns lock"))
+
+    def reader():
+        read_results.append(bridge._read_private(w, path, sid))
+
+    thread = threading.Thread(target=reader, daemon=True)
+    thread.start()
+    try:
+        assert held.wait(1)
+        start = time.monotonic()
+        with pytest.raises(bridge.ShadowUnavailable, match="policy-busy"):
+            bridge._atomic_private(w, path, sid, raw, deadline=start + .03)
+        assert time.monotonic() - start < .15
+    finally:
+        release.set()
+        thread.join(1)
+    assert not thread.is_alive() and read_results == [raw]
+    token = bridge._policy_lock(w, path, sid)
+    token.Close()
+
+
+@contextmanager
+def inventory_running(tmp_path, monkeypatch, *, response=None, arm=True, changes=None):
+    home = tmp_path / "inventory-home"
+    directory = bridge.prepare_inventory_service(home)
+    desktop = FakeDesktop(response)
+    monkeypatch.setenv("CODEX_APP_TOOLS_PIPE_PATH", desktop.endpoint)
+    service = bridge.InventoryService(directory)
+    client = None
+    assert service.start() is service
+    try:
+        wait_until(lambda: (directory / "active.json").exists() or service.stop_event.is_set())
+        assert not service.stop_event.is_set()
+        client = bridge.NativeInventoryClient(directory / "active.json", threading.Event())
+        assert client.ready()["status"] == "ready"
+        if arm:
+            arm_inventory(directory, inventory_policy(service, **(changes or {})))
+        yield service, client, directory, desktop
+    finally:
+        if client:
+            client.dispose()
+        service.stop()
+        desktop.close()
+        assert not service.thread.is_alive() and not service.unresolved
+        assert service.custody is None
+
+
+@native
+def test_inventory_ready_without_policy_and_cas_provisioning(tmp_path, monkeypatch):
+    with inventory_running(tmp_path, monkeypatch, arm=False) as (service, client, directory, desktop):
+        ready = json.loads((directory / "ready.json").read_bytes())
+        manifest = json.loads((directory / "active.json").read_bytes())
+        assert set(manifest) == {"version", "pid", "creation", "epoch", "pipe"}
+        assert ready["source_pid"] == os.getpid() and ready["service_epoch"] == service.epoch
+        assert not (directory / "policy.json").exists()
+        assert client.register()["reason"] == "policy-inactive"
+        assert desktop.connections == 0 and desktop.requests == []
+        source = tmp_path / "inventory-policy.json"
+        source.write_bytes(encode(inventory_policy(service)))
+        bridge.provision_inventory_policy(source, directory.parent.parent)
+        with pytest.raises(bridge.ShadowUnavailable, match="revision-conflict"):
+            bridge.provision_inventory_policy(source, directory.parent.parent)
+        assert client.register()["status"] == "registered"
+        assert len(desktop.requests) == 1
+
+
+@native
+@pytest.mark.parametrize("changes", [
+    {"enabled": False}, {"revoked": True}, {"revision": 0}, {"revision": True},
+    {"expires_at": (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()},
+    {"expires_at": (datetime.now(timezone.utc) + timedelta(seconds=600)).isoformat()},
+    {"expires_at": "2026-01-01"}, {"service_epoch": "wrong"}, {"service_pid": 1},
+    {"service_creation": "wrong"}, {"source_pid": 1}, {"source_creation": "wrong"},
+    {"desktop_pid": 1}, {"desktop_creation": "wrong"}, {"desktop_user_sid": "S-1-5-18"},
+    {"desktop_executable": "C:\\not-the-process.exe"}, {"desktop_version": "0.0.0.0"},
+    {"action": "tools/call"}, {"action": []}, {"version": True}, {"extra": "secret"},
+])
+def test_inventory_invalid_authority_denies_before_endpoint_read_or_open(tmp_path, monkeypatch, changes):
+    with inventory_running(tmp_path, monkeypatch, changes=changes) as (_, client, _, desktop):
+        original = os.environ.get
+        reads = []
+
+        def env_get(name, *args):
+            if name == "CODEX_APP_TOOLS_PIPE_PATH":
+                reads.append(name)
+                pytest.fail("capability read before independent finite authority")
+            return original(name, *args)
+
+        monkeypatch.setattr(os.environ, "get", env_get)
+        result = client.register()
+        assert result["status"] == "unavailable"
+        assert reads == [] and desktop.connections == 0 and desktop.requests == []
+
+
+@native
+def test_inventory_registration_idempotent_eof_preserves_service_custody(tmp_path, monkeypatch):
+    with inventory_running(tmp_path, monkeypatch) as (service, client, directory, desktop):
+        assert client.register()["status"] == "registered"
+        wait_until(lambda: desktop.connections == 1)
+        handle = service.custody.handle
+        assert client.register()["status"] == "registered"
+        assert desktop.connections == 1 and len(desktop.requests) == 1
+        before = read_proof(directory)
+        assert before["before_inventory_ok"] and not before["source_exited"]
+        client.dispose()
+        wait_until(lambda: service.admitted is None)
+        after = read_proof(directory)
+        assert not after["after_inventory_ok"] and service.custody.handle is handle
+        assert desktop.connections == 1 and len(desktop.requests) == 1
+        assert "private native content" not in repr(after) and desktop.endpoint not in repr(after)
+        for path in directory.iterdir():
+            if path.suffix == ".json":
+                assert desktop.endpoint.encode() not in path.read_bytes()
+
+
+@native
+@pytest.mark.parametrize("fault", ["duplicate", "wrong-id", "boolean-id", "error", "wrong-jsonrpc", "tool-shape", "invalid-utf8", "empty", "timeout"])
+def test_inventory_native_malformed_timeout_fences_custody(tmp_path, monkeypatch, fault):
+    monkeypatch.setattr(bridge, "EXCHANGE_SECONDS", .4)
+
+    def bad(request, value):
+        if fault == "duplicate":
+            return b'{"jsonrpc":"2.0","id":1,"id":1,"result":{"tools":[]}}'
+        if fault == "invalid-utf8":
+            return b"\xff"
+        if fault == "empty":
+            return b""
+        if fault == "timeout":
+            return None
+        if fault == "wrong-id":
+            value["id"] += 1
+        elif fault == "boolean-id":
+            value["id"] = True
+        elif fault == "error":
+            del value["result"]
+            value["error"] = {"code": -1, "message": "sensitive"}
+        elif fault == "wrong-jsonrpc":
+            value["jsonrpc"] = "1.0"
+        elif fault == "tool-shape":
+            value["result"]["tools"] = [{}]
+        return value
+
+    with inventory_running(tmp_path, monkeypatch, response=bad) as (service, client, _, desktop):
+        if fault == "timeout":
+            with pytest.raises(bridge.ShadowUnavailable):
+                client.register()
+            result = bridge._inventory_public("unavailable", "timeout")
+            wait_until(lambda: service.custody is None)
+        else:
+            result = client.register()
+        assert result["status"] == "unavailable" and not result["connected"]
+        assert service.custody is None
+        if fault != "timeout":
+            try:
+                assert client.register()["status"] == "unavailable"
+            except bridge.ShadowUnavailable as exc:
+                assert exc.category in {"transport-failed", "deadline", "stopped"}
+        assert service.fenced
+        assert desktop.connections == 1 and len(desktop.requests) == 1
+        assert "sensitive" not in repr(result)
+
+
+@native
+@pytest.mark.parametrize("change", ["revoke", "expiry", "revision", "version"])
+def test_inventory_runtime_authority_loss_closes_without_replacement(tmp_path, monkeypatch, change):
+    with inventory_running(tmp_path, monkeypatch) as (service, client, directory, desktop):
+        assert client.register()["status"] == "registered"
+        policy_value = json.loads((directory / "policy.json").read_bytes())
+        if change == "revoke":
+            policy_value.update(revoked=True, enabled=False, revision=2)
+        elif change == "expiry":
+            policy_value["expires_at"] = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
+        elif change == "revision":
+            policy_value["revision"] = 2
+        else:
+            original = bridge._process_image
+            monkeypatch.setattr(bridge, "_process_image", lambda w, h: (original(w, h)[0], "0.0.0.0"))
+        arm_inventory(directory, policy_value)
+        wait_until(lambda: service.custody is None)
+        proof = read_proof(directory)
+        assert not proof["after_inventory_ok"]
+        try:
+            assert client.register()["status"] == "unavailable"
+        except bridge.ShadowUnavailable:
+            assert service.fenced and service.custody is None
+        assert desktop.connections <= 1 and len(desktop.requests) == 1
+
+
+def test_inventory_frame_partial_read_write_and_limits(monkeypatch):
+    incoming = bytearray()
+    written = bytearray()
+    io = bridge._DesktopIO(SimpleNamespace(file=SimpleNamespace()), object(), threading.Event())
+    payload = encode({"data": "β"})
+    incoming.extend(len(payload).to_bytes(4, "little") + payload)
+    io.w.file.ReadFile = lambda _, size, ov: (0, bytes(incoming[:min(size, 2)]))
+    io.w.file.WriteFile = lambda _, raw, ov: (0, raw)
+
+    def operation(fn, deadline, keepalive=None):
+        _, result = fn(None)
+        if keepalive is None:
+            del incoming[:len(result)]
+            return len(result), result
+        count = min(3, len(result))
+        written.extend(result[:count])
+        return count, None
+
+    monkeypatch.setattr(io, "_operation", operation)
+    assert io.read(time.monotonic() + 1) == {"data": "β"}
+    io.write({"data": "β"}, time.monotonic() + 1)
+    length = int.from_bytes(written[:4], "little")
+    assert bridge._json(bytes(written[4:])) == {"data": "β"} and length == len(written) - 4
+    for size in (0, bridge.MAX_DESKTOP_FRAME + 1):
+        incoming.extend(size.to_bytes(4, "little"))
+        with pytest.raises(bridge.ShadowUnavailable, match="message-limit"):
+            io.read(time.monotonic() + 1)
+
+
+@native
+@pytest.mark.parametrize("field,value", [("pid", 1), ("creation", "other"), ("epoch", "other"), ("version", True)])
+def test_inventory_stale_manifest_denies_before_native_access(tmp_path, monkeypatch, field, value):
+    with inventory_running(tmp_path, monkeypatch, arm=False) as (_, client, directory, desktop):
+        manifest = bridge._json(bridge._read_private(client.w, directory / "active.json", bridge._self_sid(client.w)))
+        client.dispose()
+        manifest[field] = value
+        bridge._atomic_private(bridge._native(), directory / "active.json", bridge._self_sid(bridge._native()), encode(manifest))
+        with pytest.raises(bridge.ShadowUnavailable, match="channel-unavailable"):
+            bridge.NativeInventoryClient(directory / "active.json", threading.Event())
+        assert desktop.connections == 0 and desktop.requests == []
+
+
+@native
+@pytest.mark.parametrize("ready_first", [False, True])
+def test_inventory_unarmed_eof_releases_source_slot(tmp_path, monkeypatch, ready_first):
+    directory = bridge.prepare_inventory_service(tmp_path / "unarmed-home")
+    service = bridge.InventoryService(directory)
+    first = replacement = None
+    assert service.start() is service
+    try:
+        wait_until(lambda: (directory / "active.json").exists())
+        first = bridge.NativeInventoryClient(directory / "active.json", threading.Event())
+        if ready_first:
+            assert first.ready()["status"] == "ready"
+        else:
+            wait_until(lambda: service.source is not None)
+        first.dispose()
+        wait_until(lambda: service.source is None)
+        replacement = bridge.NativeInventoryClient(directory / "active.json", threading.Event())
+        assert replacement.ready()["status"] == "ready"
+        assert service.policy is None and service.custody is None
+    finally:
+        for client in (first, replacement):
+            if client:
+                client.dispose()
+        service.stop()
+        assert not service.unresolved
+
+
+@native
+def test_inventory_ready_does_not_extend_assignment_deadline(tmp_path, monkeypatch):
+    with inventory_running(tmp_path, monkeypatch, arm=False) as (service, client, directory, _):
+        original = service.ready_deadline
+        assert client.ready()["status"] == "ready"
+        assert service.ready_deadline == original
+        service.ready_deadline = time.monotonic() - .01
+        wait_until(lambda: service.source is None)
+        assert service.custody is None and service.policy is None
+        with pytest.raises(bridge.ShadowUnavailable):
+            client.ready()
+
+
+@native
+@pytest.mark.parametrize("loss", ["revoke", "expiry"])
+def test_inventory_loss_at_first_observation_entry_never_publishes_before_witness(tmp_path, monkeypatch, loss):
+    with inventory_running(tmp_path, monkeypatch) as (service, client, directory, desktop):
+        original = service._observe
+
+        def lose_authority(deadline):
+            if loss == "revoke":
+                value = inventory_policy(service, revision=2, enabled=False, revoked=True)
+                arm_inventory(directory, value)
+            else:
+                service.utc_clock = lambda: datetime.now(timezone.utc) + timedelta(seconds=400)
+            return original(deadline)
+
+        monkeypatch.setattr(service, "_observe", lose_authority)
+        result = client.register()
+        assert result["status"] == "unavailable"
+        proof = read_proof(directory)
+        assert not proof["before_inventory_ok"] and not proof["after_inventory_ok"]
+        assert not proof["source_exited"] and proof["failure"] == "policy-inactive"
+        assert desktop.requests == [] and service.custody is None
+
+
+def test_inventory_maximum_json_frame_and_partial_body_deadline(monkeypatch):
+    io = bridge._DesktopIO(SimpleNamespace(file=SimpleNamespace()), object(), threading.Event())
+    raw = b'{"data":"' + b"x" * (bridge.MAX_DESKTOP_FRAME - 11) + b'"}'
+    assert len(raw) == bridge.MAX_DESKTOP_FRAME
+    incoming = bytearray(len(raw).to_bytes(4, "little") + raw)
+    io.w.file.ReadFile = lambda _, size, ov: (0, bytes(incoming[:size]))
+
+    def operation(fn, deadline, keepalive=None):
+        _, result = fn(None)
+        del incoming[:len(result)]
+        return len(result), result
+
+    monkeypatch.setattr(io, "_operation", operation)
+    assert len(io.read(time.monotonic() + 1)["data"]) == bridge.MAX_DESKTOP_FRAME - 11
+    incoming.extend((10).to_bytes(4, "little") + b"{}")
+    original = io._operation
+
+    def interrupted(fn, deadline, keepalive=None):
+        if not incoming:
+            raise bridge.ShadowUnavailable("deadline")
+        return original(fn, deadline, keepalive)
+
+    monkeypatch.setattr(io, "_operation", interrupted)
+    with pytest.raises(bridge.ShadowUnavailable, match="deadline"):
+        io.read(time.monotonic() + 1)
+
+
+def test_inventory_unresolved_custody_retains_resource_and_fences_replacement(monkeypatch):
+    service = bridge.InventoryService(Path("C:/isolated-inventory"))
+    custody = SimpleNamespace(unresolved=True, close=lambda: pytest.fail("unresolved resource closed"))
+    desktop = SimpleNamespace(close=lambda: pytest.fail("unresolved Desktop witness disposed"))
+    service.custody, service.desktop = custody, desktop
+    service._drop()
+    assert service.unresolved and service.stop_event.is_set()
+    assert service.custody is custody and service.desktop is desktop
+    with pytest.raises(bridge.ShadowUnavailable, match="stopped"):
+        service._authorize()
+
+
+@native
+@pytest.mark.asyncio
+async def test_inventory_stdio_mcp_private_channel_fake_desktop_full_lifecycle(tmp_path, monkeypatch):
+    pytest.importorskip("mcp")
+    from mcp import ClientSession
+    from mcp.client.stdio import StdioServerParameters, stdio_client
+
+    directory = bridge.prepare_inventory_service(tmp_path / "mcp-inventory-home")
+    desktop = FakeDesktop()
+    service = bridge.InventoryService(directory)
+    assert service.start() is service
+    env = os.environ.copy()
+    env.update({"PYTHONPATH": str(Path(__file__).resolve().parents[1]), "PALLIUM_MCP_TRANSPORT": "stdio",
+        "PALLIUM_AGENT_REF": "codex", "PALLIUM_CODEX_BRIDGE_MODE": "inventory",
+        "PALLIUM_CODEX_INVENTORY_BOOTSTRAP_FILE": str(directory / "active.json"),
+        "CODEX_APP_TOOLS_PIPE_PATH": desktop.endpoint, "PALLIUM_BASE_URL": "http://127.0.0.1:1"})
+    child_code = """from app.mcp import server
+class StatusClient:
+    def __init__(self,ctx): pass
+    async def get_status(self): return {"status":"healthy"}
+server.PalliumMcpClient=StatusClient
+server.main()
+"""
+    params = StdioServerParameters(command=sys.executable, args=["-c", child_code],
+        cwd=str(Path(__file__).resolve().parents[1]), env=env)
+    try:
+        wait_until(lambda: (directory / "active.json").exists())
+        with tempfile.TemporaryFile(mode="w+t", encoding="utf-8") as errors:
+            async with stdio_client(params, errlog=errors) as (read, write):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+                    wait_until(lambda: service.ready_announced)
+                    arm_inventory(directory, inventory_policy(service, service.source))
+                    registered, ordinary = await asyncio.wait_for(asyncio.gather(
+                        session.call_tool("pallium_codex_bridge_inventory_register", {}),
+                        session.call_tool("pallium_status", {})), 5)
+                    assert not registered.isError and not ordinary.isError
+                    result = json.loads(registered.content[0].text)
+                    assert result["status"] == "registered" and result["inventory_ok"]
+                    assert json.loads(ordinary.content[0].text) == {"status": "healthy"}
+                    assert read_proof(directory)["before_inventory_ok"]
+                    assert len(desktop.requests) == 1 and desktop.connections == 1
+            wait_until(lambda: read_proof(directory)["after_inventory_ok"], timeout=3)
+            proof = read_proof(directory)
+            assert proof["source_exited"] and proof["before_inventory_ok"] and proof["after_inventory_ok"]
+            assert len(desktop.requests) == 2 and desktop.connections == 1
+            errors.seek(0)
+            assert desktop.endpoint not in errors.read()
+    finally:
+        service.stop()
+        desktop.close()
+        assert not service.unresolved and service.custody is None
+
+
+@native
+@pytest.mark.parametrize("second_loss", [None, "expiry", "version", "revoke", "shutdown"])
+def test_inventory_confirmed_source_process_exit_retains_same_connection(tmp_path, monkeypatch, second_loss):
+    replacement_errors = watch_replacements(monkeypatch)
+    directory = bridge.prepare_inventory_service(tmp_path / "exit-home")
+    desktop = FakeDesktop()
+    service = bridge.InventoryService(directory)
+    child = None
+    observe = service._observe
+    observations = []
+
+    def observe_with_loss(deadline):
+        observations.append(1)
+        if len(observations) == 2 and second_loss == "expiry":
+            service.utc_clock = lambda: datetime.now(timezone.utc) + timedelta(seconds=400)
+        elif len(observations) == 2 and second_loss == "version":
+            monkeypatch.setattr(bridge, "_process_image", lambda *args: (sys.executable, "0.0.0.0"))
+        elif len(observations) == 2 and second_loss == "revoke":
+            current = bridge._json(bridge._read_private(service.w, directory / "policy.json", service.sid))
+            arm_inventory(directory, {**current, "revision": current["revision"] + 1, "revoked": True})
+        elif len(observations) == 2 and second_loss == "shutdown":
+            service.stop_event.set()
+        return observe(deadline)
+
+    monkeypatch.setattr(service, "_observe", observe_with_loss)
+    assert service.start() is service
+    try:
+        wait_until(lambda: (directory / "active.json").exists())
+        env = os.environ.copy()
+        env["CODEX_APP_TOOLS_PIPE_PATH"] = desktop.endpoint
+        child_code = """import json,sys,threading
+from pathlib import Path
+from app.codex_bridge_pipe import NativeInventoryClient
+c=NativeInventoryClient(Path(sys.argv[1]),threading.Event())
+print(json.dumps(c.ready()),flush=True)
+sys.stdin.readline()
+print(json.dumps(c.register()),flush=True)
+sys.stdin.readline()
+c.dispose()
+"""
+        child = subprocess.Popen([sys.executable, "-c", child_code, str(directory / "active.json")],
+            cwd=Path(__file__).resolve().parents[1], env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, text=True, encoding="utf-8")
+        assert json.loads(child.stdout.readline())["status"] == "ready"
+        # Windows venv launcher may spawn the actual Python pipe owner.
+        assert service.source.pid != os.getpid()
+        armed = inventory_policy(service, service.source)
+        baseline = bridge.InventoryPolicy.parse(encode(armed))
+        arm_inventory(directory, armed)
+        child.stdin.write("register\n")
+        child.stdin.flush()
+        assert json.loads(child.stdout.readline())["status"] == "registered"
+        connection = service.custody.handle
+        proof = read_proof(directory)
+        assert proof["before_inventory_ok"] and not proof["source_exited"]
+        child.stdin.write("exit\n")
+        child.stdin.flush()
+        assert child.wait(timeout=3) == 0
+        if second_loss is not None:
+            wait_until(lambda: read_proof(directory)["failure"] != "none")
+            proof = bridge.read_inventory_proof(directory, baseline)
+            assert not proof["historical_transport_pass"] and not proof["after_inventory_ok"]
+            assert proof["source_exited"] and len(desktop.requests) == 1
+            assert service.custody is None and desktop.connections == 1
+            return
+        try:
+            wait_until(lambda: read_proof(directory)["after_inventory_ok"])
+        except pytest.fail.Exception:
+            pytest.fail(repr((service.stop_event.is_set(), service.unresolved, read_proof(directory), replacement_errors)))
+        result = read_proof(directory)
+        assert result["after_inventory_ok"] and result["source_exited"]
+        assert service.custody is not None, (service.stop_event.is_set(), service.unresolved, read_proof(directory), replacement_errors)
+        assert service.custody.handle is connection and desktop.connections == 1
+        assert len(desktop.requests) == 2
+        assert child.stderr.read() == ""
+        # Completed evidence remains historical after ordinary later expiry and stop.
+        service.utc_clock = lambda: datetime.now(timezone.utc) + timedelta(seconds=400)
+        wait_until(lambda: service.custody is None)
+        service.stop()
+        historic = bridge.read_inventory_proof(directory, baseline)
+        assert historic["historical_transport_pass"] and historic["status"] == "historical"
+        assert set(historic) == {"status", "reason", "source_exited", "before_inventory_ok",
+                                 "after_inventory_ok", "historical_transport_pass"}
+        assert not (directory / "proof-failure.json").exists()
+    finally:
+        if child is not None and child.poll() is None:
+            child.stdin.close()
+            child.wait(timeout=3)
+        service.stop()
+        desktop.close()
+        assert not service.unresolved and service.custody is None
+
+
+@native
+@pytest.mark.parametrize("mutation", [None, "missing", "fingerprint", "revision", "epoch", "failure", "boolean", "expected",
+    "directory", "reparse", "inspection-denied", "inspection-sentinel-denied", "before-exited", "exit-after", "after-before-false", "before-failed"])
+def test_inventory_operator_phase_readback_is_correlated_historical_only(tmp_path, monkeypatch, mutation):
+    with inventory_running(tmp_path, monkeypatch, arm=False) as (service, client, directory, desktop):
+        expected = bridge.InventoryPolicy.parse(encode(inventory_policy(service)))
+        values = {}
+        for phase, exited, after in (("before", False, False), ("exit", True, False), ("after", True, True)):
+            values[phase] = {"version": 1, "epoch": expected.service_epoch, "revision": expected.revision,
+                "policy_fingerprint": bridge._inventory_fingerprint(expected), "before_inventory_ok": True,
+                "after_inventory_ok": after, "source_exited": exited, "failure": "none"}
+        if mutation == "fingerprint":
+            values["after"]["policy_fingerprint"] = "0" * 64
+        elif mutation == "revision":
+            values["exit"]["revision"] += 1
+        elif mutation == "epoch":
+            values["after"]["epoch"] = "stale"
+        elif mutation == "boolean":
+            values["before"]["before_inventory_ok"] = 1
+        elif mutation == "failure":
+            values["failure"] = {**values["after"], "failure": "timeout"}
+        elif mutation == "before-exited":
+            values["before"]["source_exited"] = True
+        elif mutation == "exit-after":
+            values["exit"]["after_inventory_ok"] = True
+        elif mutation == "after-before-false":
+            values["after"]["before_inventory_ok"] = False
+        elif mutation == "before-failed":
+            values["before"]["failure"] = "timeout"
+        for phase, value in values.items():
+            if mutation != "missing" or phase != "exit":
+                bridge._create_phase(service.w, directory / f"proof-{phase}.json", service.sid, encode(value))
+        if mutation == "expected":
+            expected = bridge.InventoryPolicy(**{**expected.__dict__, "service_pid": []})
+        failure_path = directory / "proof-failure.json"
+        if mutation == "directory":
+            service.w.file.CreateDirectory(str(failure_path), bridge._security_attributes(service.w, service.sid, directory=True))
+        elif mutation in {"reparse", "inspection-denied", "inspection-sentinel-denied"}:
+            if mutation == "reparse":
+                bridge._create_phase(service.w, failure_path, service.sid, b"{}")
+            original_attributes = service.w.file.GetFileAttributes
+            def attributes(filename):
+                if str(filename) == str(failure_path):
+                    if mutation == "reparse":
+                        return service.w.con.FILE_ATTRIBUTE_REPARSE_POINT
+                    if mutation == "inspection-sentinel-denied":
+                        return -1
+                    raise service.w.types.error(5, "GetFileAttributes", "injected denial")
+                return original_attributes(filename)
+            monkeypatch.setattr(service.w.file, "GetFileAttributes", attributes)
+            if mutation == "inspection-sentinel-denied":
+                monkeypatch.setattr(service.w.api, "GetLastError", lambda: 5)
+        result = bridge.read_inventory_proof(directory, expected)
+        assert set(result) == {"status", "reason", "source_exited", "before_inventory_ok",
+                               "after_inventory_ok", "historical_transport_pass"}
+        assert result["historical_transport_pass"] is (mutation is None)
+        assert (result["status"] == "historical") is (mutation is None)
+        if mutation not in {None, "missing", "failure"}:
+            assert result["status"] == "invalid" and result["reason"] == "invalid-proof"
+        assert desktop.connections == 0 and desktop.requests == []
+
+
+@native
+def test_inventory_phase_creation_does_not_overwrite_or_conflict_with_prior_reader(tmp_path):
+    w = bridge._native()
+    sid = bridge._self_sid(w)
+    before = tmp_path / "proof-before.json"
+    bridge._create_phase(w, before, sid, b'{"version":1}')
+    handle = w.file.CreateFile(str(before), w.con.GENERIC_READ, w.con.FILE_SHARE_READ,
+        None, w.con.OPEN_EXISTING, 0, None)
+    try:
+        bridge._create_phase(w, tmp_path / "proof-exit.json", sid, b'{"version":1}')
+        with pytest.raises(bridge.ShadowUnavailable, match="file-write-failed"):
+            bridge._create_phase(w, before, sid, b'{"version":2}')
+    finally:
+        bridge._close(handle)
+    assert bridge._read_private(w, before, sid) == b'{"version":1}'
+    assert not list(tmp_path.glob(".*.tmp"))
+
+
+def test_inventory_proof_is_sealed_only_after_successful_after_publication(monkeypatch):
+    service = bridge.InventoryService(Path("C:/isolated-inventory"))
+    service.proof = {"after_inventory_ok": True, "failure": "none"}
+    published = []
+    monkeypatch.setattr(service, "_publish_proof", lambda: published.append(service.proof["failure"]))
+    service._proof_failure("native-failed")
+    assert published == ["native-failed"]
+    service.proof["failure"] = "none"
+    service.published_phases.add("after")
+    service._proof_failure("stopped")
+    assert service.proof["failure"] == "none" and published == ["native-failed"]
+
+
+@native
+@pytest.mark.parametrize("misuse", ["wrong-directory", "closed", "raw", "unissued", "altered-path", "altered-handle", "thread"])
+def test_policy_lock_token_cannot_authorize_unrelated_or_closed_scope(tmp_path, misuse):
+    w = bridge._native()
+    sid = bridge._self_sid(w)
+    path = tmp_path / "policy.json"
+    bridge._atomic_private(w, path, sid, b'{"version":1}')
+    token = bridge._policy_lock(w, path, sid)
+    supplied = token
+    unrelated = None
+    try:
+        if misuse == "wrong-directory":
+            path = tmp_path / "other" / "policy.json"
+        elif misuse == "closed":
+            token.Close()
+        elif misuse == "raw":
+            supplied = token.handle
+        elif misuse == "unissued":
+            supplied = bridge._PolicyLock(token.path, sid, token.handle)
+        elif misuse == "altered-path":
+            path = tmp_path / "other" / "policy.json"
+            token.path = path.parent / "policy.lock"
+        elif misuse == "altered-handle":
+            unrelated = bridge._lock_file(w, tmp_path / "unrelated.lock", sid)
+            token.handle = unrelated
+        elif misuse == "thread":
+            errors = []
+            def read_elsewhere():
+                token.owner = threading.get_ident()
+                try:
+                    bridge._read_private(w, path, sid, policy_lock=token)
+                except bridge.ShadowUnavailable as exc:
+                    errors.append(exc.category)
+            thread = threading.Thread(target=read_elsewhere)
+            thread.start()
+            thread.join(1)
+            assert not thread.is_alive() and errors == ["invalid-policy-lock"]
+            return
+        with pytest.raises(bridge.ShadowUnavailable, match="invalid-policy-lock"):
+            bridge._read_private(w, path, sid, policy_lock=supplied)
+    finally:
+        token.Close()
+        if unrelated is not None:
+            w.file.GetFileInformationByHandle(unrelated)
+            bridge._close(unrelated)
+        reusable = bridge._policy_lock(w, tmp_path / "policy.json", sid)
+        reusable.Close()
+
+
+def test_policy_lock_retries_only_explicit_real_contention(monkeypatch):
+    w = SimpleNamespace()
+    calls = []
+    def deny(*args):
+        calls.append(1)
+        raise bridge.ShadowUnavailable("owner-busy")
+    monkeypatch.setattr(bridge, "_lock_file", deny)
+    with pytest.raises(bridge.ShadowUnavailable, match="owner-busy"):
+        bridge._policy_lock(w, Path("C:/isolated/policy.json"), "sid")
+    assert len(calls) == 1
+    calls.clear()
+    def contend(*args):
+        calls.append(1)
+        raise bridge.ShadowUnavailable("owner-busy", lock_contended=True)
+    monkeypatch.setattr(bridge, "_lock_file", contend)
+    start = time.monotonic()
+    with pytest.raises(bridge.ShadowUnavailable, match="policy-busy"):
+        bridge._policy_lock(w, Path("C:/isolated/policy.json"), "sid", start + .03)
+    assert 1 < len(calls) < 20 and time.monotonic() - start < .15
+
+
+@native
+def test_inventory_failed_revoke_cas_preserves_old_authority_and_reports_failure(tmp_path, monkeypatch):
+    home = tmp_path / "failed-revoke-home"
+    directory = bridge.prepare_inventory_service(home)
+    original = inventory_policy(SimpleNamespace(epoch="failed-revoke-epoch"))
+    old = bridge.InventoryPolicy.parse(encode(original))
+    arm_inventory(directory, original)
+    proposed = tmp_path / "revoke-source.json"
+    proposed.write_bytes(encode({**original, "revision": 2, "enabled": False, "revoked": True}))
+    calls = []
+    def reject(source, target):
+        calls.append(1)
+        raise PermissionError(13, "injected replacement denial")
+    monkeypatch.setattr(os, "replace", reject)
+    with pytest.raises(bridge.ShadowUnavailable, match="file-write-failed"):
+        bridge.provision_inventory_policy(proposed, home, expected_revision=1)
+    w = bridge._native()
+    retained = bridge.InventoryPolicy.parse(bridge._read_private(w, directory / "policy.json", bridge._self_sid(w)))
+    assert retained == old and retained.revision == 1 and not retained.revoked
+    assert retained.valid(datetime.now(timezone.utc))
+    assert calls == [1] and not list(directory.glob(".*.tmp"))
+    token = bridge._policy_lock(w, directory / "policy.json", bridge._self_sid(w))
+    token.Close()
+
+
+@native
+def test_inventory_competing_authenticated_child_cannot_replace_live_custody(tmp_path, monkeypatch):
+    with inventory_running(tmp_path, monkeypatch) as (service, client, directory, desktop):
+        assert client.register()["status"] == "registered"
+        source = (service.source.pid, service.source.creation)
+        connection = service.custody.handle
+        client.dispose()
+        code = """import json,sys,threading
+from pathlib import Path
+from app.codex_bridge_pipe import NativeInventoryClient
+c=NativeInventoryClient(Path(sys.argv[1]),threading.Event())
+try: print(json.dumps(c.ready()),flush=True)
+finally: c.dispose()
+"""
+        child = subprocess.run([sys.executable, "-c", code, str(directory / "active.json")],
+            cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True, encoding="utf-8", timeout=4)
+        assert child.returncode == 0 and child.stderr == ""
+        result = json.loads(child.stdout)
+        assert result["status"] == "unavailable" and result["reason"] == "busy"
+        assert (service.source.pid, service.source.creation) == source
+        assert service.custody.handle is connection and desktop.connections == 1
+        assert len(desktop.requests) == 1
+
+
+@native
+@pytest.mark.parametrize("release", ["revoked", "expiry"])
+def test_inventory_released_revision_requires_owned_phase_cleanup_before_rearm(tmp_path, monkeypatch, release):
+    with inventory_running(tmp_path, monkeypatch) as (service, client, directory, desktop):
+        assert client.register()["status"] == "registered"
+        if release == "revoked":
+            previous = bridge._json(bridge._read_private(service.w, directory / "policy.json", service.sid))
+            arm_inventory(directory, {**previous, "revision": 2, "revoked": True})
+            revision = 3
+        else:
+            service.utc_clock = lambda: datetime.now(timezone.utc) + timedelta(seconds=400)
+            revision = 2
+        wait_until(lambda: service.custody is None and service.replace_allowed)
+        client.dispose()
+        wait_until(lambda: service.source is None or service.stop_event.is_set())
+        assert not service.stop_event.is_set()
+        service.utc_clock = lambda: datetime.now(timezone.utc)
+        replacement_desktop = FakeDesktop()
+        replacement = None
+        monkeypatch.setenv("CODEX_APP_TOOLS_PIPE_PATH", replacement_desktop.endpoint)
+        try:
+            replacement = bridge.NativeInventoryClient(directory / "active.json", threading.Event())
+            assert replacement.ready()["status"] == "ready"
+            arm_inventory(directory, inventory_policy(service, service.source, revision=revision))
+            assert replacement.register()["reason"] == "busy"
+            assert replacement_desktop.connections == 0 and replacement_desktop.requests == []
+            # Explicit operator-owned cleanup, only this isolated completed trial's known evidence.
+            for phase in bridge._PROOF_PHASES:
+                path = directory / f"proof-{phase}.json"
+                if path.exists():
+                    path.unlink()
+            assert replacement.register()["status"] == "registered"
+            assert service.policy.revision == revision and len(replacement_desktop.requests) == 1
+            assert replacement_desktop.connections == 1 and desktop.connections == 1
+        finally:
+            if replacement is not None:
+                replacement.dispose()
+            service.stop()
+            replacement_desktop.close()
+
+
+@native
+@pytest.mark.parametrize("artifact", ["directory", "dangling-reparse-attributes", "inspection-denied", "parent-not-found",
+    "inspection-sentinel-denied", "parent-sentinel-not-found"])
+def test_inventory_prior_phase_presence_denies_before_capability_read(tmp_path, monkeypatch, artifact):
+    with inventory_running(tmp_path, monkeypatch) as (service, client, directory, desktop):
+        path = directory / "proof-before.json"
+        if artifact == "directory":
+            service.w.file.CreateDirectory(str(path), bridge._security_attributes(service.w, service.sid, directory=True))
+        else:
+            original_attributes = service.w.file.GetFileAttributes
+            def attributes(filename):
+                if str(filename) == str(path):
+                    if artifact == "dangling-reparse-attributes":
+                        return service.w.con.FILE_ATTRIBUTE_REPARSE_POINT
+                    if "sentinel" in artifact:
+                        return 0xFFFFFFFF
+                    code = 3 if artifact == "parent-not-found" else 5
+                    raise service.w.types.error(code, "GetFileAttributes", "injected inspection failure")
+                return original_attributes(filename)
+            monkeypatch.setattr(service.w.file, "GetFileAttributes", attributes)
+            if "sentinel" in artifact:
+                code = 3 if artifact == "parent-sentinel-not-found" else 5
+                monkeypatch.setattr(service.w.api, "GetLastError", lambda: code)
+        original_get = os.environ.get
+        def env_get(name, *args):
+            if name == "CODEX_APP_TOOLS_PIPE_PATH":
+                pytest.fail("capability read despite prior phase or inconclusive inspection")
+            return original_get(name, *args)
+        monkeypatch.setattr(os.environ, "get", env_get)
+        result = client.register()
+        assert result["status"] == "unavailable"
+        if artifact in {"directory", "dangling-reparse-attributes"}:
+            assert result["reason"] == "busy"
+        assert desktop.connections == 0 and desktop.requests == []
+
+
+@native
+def test_inventory_source_exits_during_first_read_never_qualifies_before_witness(tmp_path):
+    directory = bridge.prepare_inventory_service(tmp_path / "first-exit-home")
+    service = bridge.InventoryService(directory)
+    child = None
+    exit_witness = []
+    def exit_during_response(request, value):
+        assert request["id"] == 1
+        child.stdin.write("exit\n")
+        child.stdin.flush()
+        state = service.w.event.WaitForSingleObject(service.source.handle, 1000)
+        exit_witness.append(state == service.w.event.WAIT_OBJECT_0)
+        assert exit_witness == [True]
+        return value
+    desktop = FakeDesktop(exit_during_response)
+    assert service.start() is service
+    try:
+        wait_until(lambda: (directory / "active.json").exists())
+        env = os.environ.copy()
+        env["CODEX_APP_TOOLS_PIPE_PATH"] = desktop.endpoint
+        code = """import json,os,sys,threading
+from pathlib import Path
+from app.codex_bridge_pipe import NativeInventoryClient
+c=NativeInventoryClient(Path(sys.argv[1]),threading.Event())
+print(json.dumps(c.ready()),flush=True)
+sys.stdin.readline()
+def exit_on_signal():
+    sys.stdin.readline()
+    os._exit(0)
+threading.Thread(target=exit_on_signal,daemon=True).start()
+c.register()
+"""
+        child = subprocess.Popen([sys.executable, "-c", code, str(directory / "active.json")],
+            cwd=Path(__file__).resolve().parents[1], env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, text=True, encoding="utf-8")
+        assert json.loads(child.stdout.readline())["status"] == "ready"
+        armed = inventory_policy(service, service.source)
+        baseline = bridge.InventoryPolicy.parse(encode(armed))
+        arm_inventory(directory, armed)
+        child.stdin.write("register\n")
+        child.stdin.flush()
+        assert child.wait(timeout=3) == 0 and exit_witness == [True]
+        wait_until(lambda: read_proof(directory)["failure"] != "none")
+        proof = bridge.read_inventory_proof(directory, baseline)
+        assert not proof["historical_transport_pass"]
+        assert not proof["before_inventory_ok"] and not proof["after_inventory_ok"]
+        assert not (directory / "proof-before.json").exists()
+        assert not (directory / "proof-after.json").exists()
+        assert desktop.connections == 1 and len(desktop.requests) == 1
+        assert service.custody is None and child.stderr.read() == ""
+    finally:
+        if child is not None and child.poll() is None:
+            child.stdin.write("exit\n")
+            child.stdin.flush()
+            child.wait(timeout=3)
+        service.stop()
+        desktop.close()
+        assert not service.unresolved and service.custody is None
