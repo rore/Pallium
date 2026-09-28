@@ -204,6 +204,65 @@ def test_reply_payload_boundaries_and_long_preview(client):
     assert 0 < preview["next_offset"] < 16000
 
 
+@pytest.mark.parametrize("case, suffix, secret", [
+    ("harmless", "", None),
+    ("mixed", " rotate this aB3dE4fG5hI6jK7lM8nO9 now", "aB3dE4fG5hI6jK7lM8nO9"),
+    ("segment", " C:/short/aB3dE4fG5hI6jK7lM8nO9", "aB3dE4fG5hI6jK7lM8nO9"),
+    ("compact-segment", " C:/short/aaaaabbbbbcc", "aaaaabbbbbcc"),
+    ("compact-drive", " C:/aaaaabbbbbcc", "aaaaabbbbbcc"),
+    ("uri", " https://short/aB3dE4fG5hI6jK7lM8nO9", "aB3dE4fG5hI6jK7lM8nO9"),
+    ("base64", " aB3dE4fG5hI6jK7lM8nO9+0pQ", "aB3dE4fG5hI6jK7lM8nO9+0pQ"),
+    ("provider-segment", " C:/short/ghp_aB3dE4fG5hI6jK7lM8nO9pQ0rS1tU2vW3xY4zXcVb", "ghp_aB3dE4fG5hI6jK7lM8nO9pQ0rS1tU2vW3xY4zXcVb"),
+    ("assignment", "\npassword: C:/short/folder", "C:/short/folder"),
+])
+def test_drive_directory_prose_redaction_send_reply_lifecycle(client, case, suffix, secret):
+    _turn(client, "claude-code", "sender")
+    _turn(client, "codex", "target")
+    path = "C:/Users/reader/.codex/worktrees/sample-project/workspace_run."
+    raw = f"authorization: run checks from {path} Use python check.py --record build/check.json{suffix}\n完成 → שלום"
+    sent = _send(client, "claude-code", "sender", "codex:target", raw, message_id=f"path-{case}")
+    assert sent.status_code == 200, sent.text
+    message = sent.json()
+    duplicate = _send(client, "claude-code", "sender", "codex:target", raw, message_id=f"path-{case}")
+    assert duplicate.status_code == 200
+    assert duplicate.json()["message_id"] == message["message_id"]
+    claimed = None
+    for runtime, session in [("codex", "target"), ("claude-code", "sender")]:
+        if claimed is not None:
+            replied = _reply(client, claimed["delivery_id"], raw)
+            assert replied.status_code == 200, replied.text
+            message = replied.json()
+            assert _reply(client, claimed["delivery_id"], raw).json()["message_id"] == message["message_id"]
+        stored = message["payload"]
+        assert message["redacted"] is (secret is not None)
+        if secret is None:
+            assert stored == raw
+        else:
+            assert secret not in stored
+            assert "[REDACTED" in stored
+        assert "完成 → שלום" in stored
+        status = _status(client, message["message_id"])
+        assert status.status_code == 200
+        assert status.json()["payload"] == stored
+        assert all(d["payload"] == stored for d in status.json()["deliveries"])
+        rebuilt, offset = "", 0
+        while True:
+            response = _status(client, message["message_id"], offset=offset, page_size=80)
+            assert response.status_code == 200
+            page = response.json()
+            rebuilt += page["payload"]
+            assert all(d["payload"] == page["payload"] for d in page["deliveries"])
+            if page["next_offset"] is None:
+                break
+            assert page["next_offset"] > offset
+            offset = page["next_offset"]
+        assert rebuilt == stored
+        claimed = _turn(client, runtime, session)["deliveries"][0]
+        assert claimed["payload"] == stored
+        assert _ack(client, claimed).status_code == 200
+        assert _status(client, message["message_id"]).json()["deliveries"][0]["state"] == "delivered"
+
+
 def test_scoped_codepoint_pages_reconstruct_redacted_message_body(client):
     _turn(client, "claude-code", "sender")
     _turn(client, "codex", "target-a")

@@ -30,6 +30,10 @@ and open-ended chat. Regular sends reject a bare runtime selector; there is no b
 
 ## Limits
 
+Secret masking happens before storage. Harmless drive-qualified directory paths
+using forward slashes survive in prose when their segments are not secret-shaped; direct
+credential assignments and secret-shaped segments remain masked.
+
 Messages contain at most 16,000 Unicode code points. Omitted expiry is durable
 until delivery; callers can opt into an explicit expiry from 60 seconds through
 7 days. HTTP and hook turns claim three messages by default; a positive

@@ -468,7 +468,7 @@ def _contains_probable_secret_token(
     text: str, minimum_length: int = _TIER_B_MIN_TOKEN_LEN
 ) -> bool:
     return any(
-        _is_probable_secret_token(match.group(0), minimum_length)
+        _is_probable_secret_match(match, text, minimum_length)
         for match in _TIER_B_TOKEN_RE.finditer(text)
     )
 
@@ -481,6 +481,28 @@ def _contains_assignment_compact_token(words: list[str]) -> bool:
         and not _tier_b_is_fp_shape(word)
         for word in words
     )
+
+
+def _is_probable_secret_match(
+    match: re.Match, text: str, minimum_length: int = _TIER_B_MIN_TOKEN_LEN
+) -> bool:
+    token = match.group(0)
+    prefix = text[max(0, match.start() - 3):match.start()]
+    parts = token.lstrip("/").rstrip(".").split("/")
+    # A drive-qualified directory can be high-entropy only in aggregate.
+    # Opaque segments still count as secrets; this is not a path whitelist.
+    if (
+        re.search(r"(?<![A-Za-z0-9_])[A-Za-z]:$", prefix)
+        and token.startswith("/") and not token.startswith("//")
+    ):
+        if _contains_assignment_compact_token(parts) or any(
+            _is_probable_secret_token(part, _ASSIGNMENT_PROBABLE_SECRET_MIN_LEN)
+            for part in parts
+        ):
+            return len(token) >= minimum_length
+        if len(parts) > 1 and all(parts):
+            return False
+    return _is_probable_secret_token(token, minimum_length)
 
 
 def redact_probable_secrets(text: str) -> str:
@@ -506,7 +528,7 @@ def redact_probable_secrets(text: str) -> str:
 
     for match in _TIER_B_TOKEN_RE.finditer(text):
         token = match.group(0)
-        if not _is_probable_secret_token(token):
+        if not _is_probable_secret_match(match, text):
             continue
         start, end = match.span()
         window_start = max(0, start - _TIER_B_CUE_WINDOW)
