@@ -1388,6 +1388,12 @@ class InventoryService:
         try:
             # Authority was independently checked before accepting the capability.
             self._authorize(policy.revision)
+            self.proof = {"version": 1, "epoch": self.epoch, "revision": policy.revision,
+                          "policy_fingerprint": _inventory_fingerprint(policy),
+                          "before_inventory_ok": False, "after_inventory_ok": False,
+                          "source_exited": False, "failure": "none"}
+            self.after_attempted = False
+            self.published_phases = set()
             handle = self.w.file.CreateFile(endpoint, self.w.con.GENERIC_READ | self.w.con.GENERIC_WRITE,
                 0, None, self.w.con.OPEN_EXISTING,
                 self.w.con.FILE_FLAG_OVERLAPPED | self.w.con.SECURITY_SQOS_PRESENT | self.w.file.SECURITY_IDENTIFICATION, None)
@@ -1398,12 +1404,6 @@ class InventoryService:
                 raise ShadowUnavailable("peer-mismatch")
             self._authorize(policy.revision)
             self.admitted = None
-            self.proof = {"version": 1, "epoch": self.epoch, "revision": policy.revision,
-                          "policy_fingerprint": _inventory_fingerprint(policy),
-                          "before_inventory_ok": False, "after_inventory_ok": False,
-                          "source_exited": False, "failure": "none"}
-            self.after_attempted = False
-            self.published_phases = set()
             self.source.check()
             self._observe(deadline)
             # An exit crossing the first read is inconclusive, never the before witness.
@@ -1416,7 +1416,9 @@ class InventoryService:
             self.fenced = True
             self._drop()
             self._proof_failure(_inventory_reason(exc))
-            raise
+            if isinstance(exc, ShadowUnavailable):
+                raise
+            raise ShadowUnavailable("native-failed") from None
 
     def _observe(self, deadline: float) -> dict:
         self._maintain()

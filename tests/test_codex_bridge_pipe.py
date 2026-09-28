@@ -869,6 +869,90 @@ def test_inventory_valid_request_error_echoes_candidate_without_advancing_floor(
 
 
 @native
+@pytest.mark.parametrize("fault", ["missing-pipe", "server-pid"], ids=["missing-desktop-pipe", "server-pid-error"])
+def test_inventory_native_transfer_failure_keeps_owner_live_and_fenced(tmp_path, monkeypatch, fault):
+    with inventory_running(tmp_path, monkeypatch) as (service, client, directory, desktop):
+        expected_policy = bridge.InventoryPolicy.parse((directory / "policy.json").read_bytes())
+        endpoint = desktop.endpoint
+        if fault == "missing-pipe":
+            endpoint = rf"\\.\pipe\inventory-missing-{secrets.token_hex(16)}"
+            monkeypatch.setenv("CODEX_APP_TOOLS_PIPE_PATH", endpoint)
+
+        opened = []
+        desktop_peers = []
+        custody_ios = []
+        original_create = service.w.file.CreateFile
+
+        def create_file(path, *args):
+            if path == endpoint:
+                opened.append(path)
+                desktop_peers.append(service.desktop)
+            return original_create(path, *args)
+
+        monkeypatch.setattr(service.w.file, "CreateFile", create_file)
+        server_pid_calls = []
+        if fault == "server-pid":
+            original_server_pid = service.w.pipe.GetNamedPipeServerProcessId
+
+            def get_server_pid(handle):
+                custody = service.custody
+                if custody is not None and handle == custody.handle:
+                    server_pid_calls.append(handle)
+                    custody_ios.append(custody)
+                    raise OSError("private-native-lookup-sentinel")
+                return original_server_pid(handle)
+
+            monkeypatch.setattr(service.w.pipe, "GetNamedPipeServerProcessId", get_server_pid)
+
+        result = client.register()
+        assert result["status"] == "unavailable" and result["reason"] == "native-failed"
+        assert service.thread.is_alive() and not service.stop_event.is_set() and not service.unresolved
+        assert service.fenced and service.admitted is None and service.custody is None and service.desktop is None
+        assert len(opened) == 1 and opened == [endpoint]
+        assert len(desktop_peers) == 1 and desktop_peers[0].handle is None
+        assert len(server_pid_calls) == (0 if fault == "missing-pipe" else 1)
+        assert len(custody_ios) == (0 if fault == "missing-pipe" else 1)
+        if custody_ios:
+            assert custody_ios[0].handle is None
+        assert desktop.connections == (0 if fault == "missing-pipe" else 1) and desktop.requests == []
+
+        failure_path = directory / "proof-failure.json"
+        failure = bridge._json(bridge._read_private(service.w, failure_path, service.sid))
+        bridge._check_path(service.w, failure_path, service.sid)
+        assert failure == {
+            "version": 1, "epoch": service.epoch, "revision": expected_policy.revision,
+            "policy_fingerprint": bridge._inventory_fingerprint(expected_policy),
+            "before_inventory_ok": False, "after_inventory_ok": False,
+            "source_exited": False, "failure": "native-failed",
+        }
+        assert not any((directory / f"proof-{phase}.json").exists() for phase in ("before", "exit", "after"))
+        assert bridge.read_inventory_proof(directory, expected_policy) == {
+            "status": "incomplete", "reason": "missing-phase", "source_exited": False,
+            "before_inventory_ok": False, "after_inventory_ok": False,
+            "historical_transport_pass": False,
+        }
+        assert endpoint not in repr(result) + repr(failure)
+        assert "private-native-lookup-sentinel" not in repr(result) + repr(failure)
+
+        open_count, server_pid_count = len(opened), len(server_pid_calls)
+        try:
+            retry = client.register()
+        except bridge.ShadowUnavailable as exc:
+            assert exc.category in {"transport-failed", "deadline"}
+        else:
+            assert retry["status"] == "unavailable" and retry["reason"] == "policy-changed"
+        assert len(opened) == open_count and len(server_pid_calls) == server_pid_count
+        assert service.thread.is_alive() and not service.stop_event.is_set()
+        assert service.fenced and service.admitted is None and service.custody is None and service.desktop is None
+        assert desktop.connections == (0 if fault == "missing-pipe" else 1) and desktop.requests == []
+
+    assert not service.thread.is_alive() and not service.unresolved
+    assert service.custody is None and service.desktop is None
+    assert service.source is None or service.source.handle is None
+    assert not desktop.thread.is_alive() and not desktop.io.unresolved
+
+
+@native
 def test_inventory_ready_without_policy_and_cas_provisioning(tmp_path, monkeypatch):
     with inventory_running(tmp_path, monkeypatch, arm=False) as (service, client, directory, desktop):
         ready = json.loads((directory / "ready.json").read_bytes())
