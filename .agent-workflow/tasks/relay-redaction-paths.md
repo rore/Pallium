@@ -15,7 +15,7 @@
 **Plan review:** Agent technical review: /root/relay_redaction_incident/redaction_plan_review, reviewed 7de393ea; approve with drive-prefix word boundary and rejection of // URI prefix. See Plan review below.
 **Approvals:** Approved by user 2026-09-28: "This is a night job so you have blanket approval for what it needs". Task owner delegates technical review; exact authorization forwarded by root, request_source_item_id e05b03f1-f97d-482b-ba9b-7ea0be68b403.
 **Exceptions:** —
-**State:** Ready to implement
+**State:** Blocked
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -24,15 +24,19 @@ Read-only diagnosis complete. Managed worktree: C:/Users/I347041/.codex/worktree
 Implemented one match-aware predicate reused by assignment prose and Tier B. The initial boundary check caught low-entropy compact path segments falling back to aggregate entropy; the final drive branch classifies suspicious segments directly under caller minimum length. No dependencies, API/persistence changes, or integration edits. All patches used apply_patch successfully; no fallback writes.
 
 ## Evidence
-Affected subsystem: `python -m pytest tests/test_redaction_tier_a_and_b.py tests/test_agent_relay_e2e.py -q -n 0`: 143 passed in 23.42s. Initial compact-segment failures were corrected and `--lf --lfnf=none -q -n 0`: 3 passed. Exact original source was replayed locally without printing its contents: 4453 input/output code points, identical output, idempotent. Selector chooses full lane; required full run pending. `git diff --check` passed.
+Affected subsystem: `python -m pytest tests/test_redaction_tier_a_and_b.py tests/test_agent_relay_e2e.py -q -n 0`: 143 passed in 23.42s. Initial compact-segment failures were corrected and `--lf --lfnf=none -q -n 0`: 3 passed. Exact original source was replayed locally without printing its contents: 4453 input/output code points, identical output, idempotent. Selector chooses full lane. `git diff --check` passed. Import-linter: 8 contracts kept, 0 broken; machine-readable boundary report and fresh Redline verdict produced. Workflow runtime check: clean, exit 0.
+Full suite at 9cd003bf stopped after 1 failed, 2027 passed, 2 skipped, 1 xfailed in 144.81s: `tests/test_agent_relay_hooks.py::test_legacy_pin_bootstraps_endpoint_alias_and_queued_delivery[claude-code]` returned None at line 1126. Exact recorded `--lf --lfnf=none -q -n 0` rerun: 1 passed in 0.79s. Hook files and its payload are unchanged; timing/load is a hypothesis, not a proven cause. Root authorized one full rerun; `python -m pytest tests/ -x -q -n 2` is running. State remains Blocked until required whole-suite evidence completes; repeat failure requires diagnosis rather than more full reruns.
 Roadmap reconciliation: no matching canonical item applies; existing Relay scope remains accurate. Documentation now names the narrow structural-path retention contract. No feature-status changes.
+
+## Result review
+Agent technical review: /root/relay_redaction_incident/redaction_plan_review. Reviewed revision: 9cd003bf. Verification adequacy: implementation and focused HTTP evidence approved; required full-suite and workflow completion remain acceptance gates. The reviewer inspected the complete diff and found benign paths alone exempt, suspicious compact/entropy segments still masked, separate candidates and Tier A still active, and send/reply/read/ACK/idempotence/Unicode coverage adequate. No correctness/security findings. User delegates technical review under the recorded blanket approval; root owns final coordinated acceptance and rollout.
 
 ## Plan review
 Agent technical review: /root/relay_redaction_incident/redaction_plan_review. Reviewed revision: 7de393ea, shared predicate, Relay write boundary, and existing redaction tests. Verdict: approve; require drive-prefix word boundary and reject // so URI suffixes cannot resemble drives. Segment checks honor existing FP guards, provider masking stays active, and any separate secret in the RHS still masks. HTTP send/reply/status/paging/turn coverage judged adequate.
 
 ## Sanitized reproduction
 Input: `authorization: run checks from C:/Users/reader/.codex/worktrees/sample-project/workspace_run. Use python check.py --record build/check.json`
-Current output: `authorization: [REDACTED]`
+Before fix: `authorization: [REDACTED]`. After fix: input retained unchanged; exact private-source offline replay also retained unchanged and idempotently.
 
 ## Checkpoint: security-review
 What is changing: distinguish drive-qualified structural paths from opaque high-entropy credential candidates.
