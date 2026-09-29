@@ -18,9 +18,14 @@ The required service wrapper drained the old owner before verified database and
 legacy-file backups, then imported and verified all six reservations (four accepted,
 two uncertain), preserving the legacy bytes. Restart, service, queue and embedding
 health checks passed. This replaces reservation-file writes with transactional
-SQLite authority; conservative native retry behavior is unchanged. Duplicate-aware
-delivery envelopes, wake-health reporting and the separately approved retry contract
-remain next work. Unloaded-session delivery and the source-child lifetime witness
+SQLite authority; conservative native retry behavior is unchanged.
+[PR #261](https://github.com/rore/Pallium/pull/261) subsequently shipped duplicate-aware
+hook/MCP envelopes at `a91dac91d54941a91f0a04711e78a79061e2f27d`, with the required
+installed restart and health checks passing. Claim-attempt metadata and stable-ID
+guidance fit existing budgets; previews may shorten, with continuation preserved.
+These fields do not prove prior emission or completed actions. Wake-health reporting
+and a retry contract requiring exact behavior approval remain next work.
+Unloaded-session delivery and the source-child lifetime witness
 remain unproven; this rollout makes neither claim.
 
 The Windows/Linux Claude wake foundation, loaded-task Codex wake, Codex first-run
