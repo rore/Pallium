@@ -23,8 +23,13 @@ SQLite authority; conservative native retry behavior is unchanged.
 hook/MCP envelopes at `a91dac91d54941a91f0a04711e78a79061e2f27d`, with the required
 installed restart and health checks passing. Claim-attempt metadata and stable-ID
 guidance fit existing budgets; previews may shorten, with continuation preserved.
-These fields do not prove prior emission or completed actions. Wake-health reporting
-and a retry contract requiring exact behavior approval remain next work.
+These fields do not prove prior emission or completed actions.
+[PR #262](https://github.com/rore/Pallium/pull/262) shipped wake-health reporting in
+the status API and existing dashboard Relay panel at
+`2311fe0159553c113d1728b0aabf30c4e6a81e51`. The installed wrapper and service,
+queue and embedding checks passed. Scheduler health and uncertain deliveries are
+reported separately; this does not establish recipient reachability.
+A retry contract requiring exact behavior approval remains next work.
 Unloaded-session delivery and the source-child lifetime witness
 remain unproven; this rollout makes neither claim.
 
