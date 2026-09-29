@@ -1273,7 +1273,10 @@ class InventoryService:
         self._failure_diagnostic = None
 
     def _record_failure(self, exc: Exception) -> None:
-        if self._failure_context is None or self._failure_diagnostic is not None or "after" in self.published_phases:
+        if self._failure_context is None or self._failure_diagnostic is not None:
+            return
+        if ("after" in self.published_phases and self.proof is not None
+                and (self.proof.get("epoch"), self.proof.get("revision")) == self._failure_context):
             return
         stage = self._failure_stage
         stage = stage if type(stage) is str and stage in _INVENTORY_FAILURE_STAGES else "unknown"
