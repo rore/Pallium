@@ -38,7 +38,7 @@ Owner: relay-dev. Canonical roadmap: `roadmap/features/add-wake-first-relay-deli
 
 **Exceptions:** None
 
-**State:** Ready for review
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Planning
@@ -77,4 +77,8 @@ Reviewed revision: `bc8918ff32ca1ad113b6206c4a18df4036360987`, against immutable
 
 Verification adequacy: accepted for the bounded observational slice, based on the passing full non-slow run, caller lifecycle/boundary/privacy coverage, shipped JavaScript execution, and fresh import/workflow/Redline evidence. High / Moderate architecture and persistence classification remains appropriate. Observation establishes scheduling authority plus a live configured recovery thread, not sweep progress, native admission, recipient reachability, completed work or unloaded-session support. Unknown progress and trace-loss fields remain null/not_recorded. No retry, native submission, claim/ACK, TTL, scope, model/effort or schema behavior changed.
 
-Manager owns remaining PR/human checkpoints, final acceptance, roadmap reconciliation, merge and installed rollout. Fresh PR CI and those gates remain outstanding; automatic recovery and unloaded-session gaps remain open.
+Manager owns remaining technical PR checkpoints, final acceptance, roadmap reconciliation, merge and installed rollout. Fresh PR CI and those gates remain outstanding; automatic recovery and unloaded-session gaps remain open. No additional personal user review is implied: the user delegated technical review to the manager.
+
+## PR review correction
+
+Manager held final acceptance of PR #262 for a missing delivery-container equality check in unresolved-uncertainty correlation. Existing checks compare the session to the reservation but omit the delivery's recipient_container_ref. Reproduce through the real SQLite/HTTP caller with a nonterminal uncertain delivery whose scope differs while the session still matches. If reproduced, add only the missing equality guard; preserve terminal precedence and all native/lifecycle behavior. Integrate current main c2399170 while preserving merged envelope budgeting, run focused checks and independent delta review, then qualify the integrated revision in fresh PR CI. Previously accepted full evidence remains valid for the original slice; no extra local full run is required by default for this narrow correction. Scope and risk remain unchanged. Technical manager acceptance/checkpoint labels, not a new personal user gate, precede merge/install.
