@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 from sqlalchemy import delete, func, or_, select, text, update
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from core.contracts import MemoryRetentionPolicy
 from core.relay import RELAY_TRACE_MAX_ROWS
@@ -31,6 +31,8 @@ from storage.sqlite_schema import (
     SourceItemRecord,
     RelayDeliveryRecord,
     RelayDeliveryTraceRecord,
+    RelayCodexWakeReservationRecord,
+    RelayMessageRecord,
 )
 
 
@@ -44,7 +46,37 @@ class SQLiteRetentionMixin:
         try:
             with self._begin_low_priority_relay_write() as session:
                 total = session.scalar(select(func.count()).select_from(RelayDeliveryTraceRecord)) or 0
-                rows = session.scalars(select(RelayDeliveryTraceRecord).where(or_(RelayDeliveryTraceRecord.recorded_at < cutoff, total >= RELAY_TRACE_MAX_ROWS)).order_by(RelayDeliveryTraceRecord.recorded_at, RelayDeliveryTraceRecord.recorded_sequence).limit(limit)).all()
+                associated = aliased(RelayDeliveryTraceRecord)
+                unsafe_attempt = (
+                    select(associated.recorded_sequence)
+                    .outerjoin(RelayDeliveryRecord, RelayDeliveryRecord.id == associated.delivery_id)
+                    .outerjoin(RelayMessageRecord, RelayMessageRecord.id == RelayDeliveryRecord.message_id)
+                    .outerjoin(
+                        RelayCodexWakeReservationRecord,
+                        RelayCodexWakeReservationRecord.delivery_id == associated.delivery_id,
+                    )
+                    .where(
+                        associated.attempt_id == RelayDeliveryTraceRecord.attempt_id,
+                        or_(
+                            RelayDeliveryRecord.id.is_(None),
+                            RelayMessageRecord.id.is_(None),
+                            associated.message_id != RelayDeliveryRecord.message_id,
+                            ~RelayDeliveryRecord.state.in_(("delivered", "expired", "suppressed")),
+                            RelayCodexWakeReservationRecord.delivery_id.is_not(None),
+                        ),
+                    )
+                    .correlate(RelayDeliveryTraceRecord)
+                    .exists()
+                )
+                rows = session.scalars(
+                    select(RelayDeliveryTraceRecord)
+                    .where(
+                        or_(RelayDeliveryTraceRecord.recorded_at < cutoff, total >= RELAY_TRACE_MAX_ROWS),
+                        ~unsafe_attempt,
+                    )
+                    .order_by(RelayDeliveryTraceRecord.recorded_at, RelayDeliveryTraceRecord.recorded_sequence)
+                    .limit(limit)
+                ).all()
                 if not rows:
                     return 0
                 ids = [row.id for row in rows]
