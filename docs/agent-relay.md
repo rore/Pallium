@@ -34,8 +34,9 @@ Secret masking happens before storage. Harmless drive-qualified directory paths
 using forward slashes survive in prose when their segments are not secret-shaped; direct
 credential assignments and secret-shaped segments remain masked.
 
-Messages contain at most 16,000 Unicode code points. Omitted expiry is durable
-until delivery; callers can opt into an explicit expiry from 60 seconds through
+Messages contain at most 16,000 Unicode code points. New messages and replies
+expire after 24 hours when expiry is omitted. Explicit `expires_in_seconds: null`
+requests durable delivery; finite expiry can range from 60 seconds through
 7 days. HTTP and hook turns claim three messages by default; a positive
 `max_messages` sets an explicit cap, while `0` means unlimited. MCP receive
 claims one delivery per call and keeps its compact JSON response within 2,000
@@ -187,6 +188,17 @@ One delivery permits one idempotent reply. Repeating the same reply is safe;
 changing its text conflicts. Use a new `pallium_relay_send` message for a separate
 follow-up rather than treating Relay as a continuous conversation.
 
+Omitted expiry on a retry of an existing message ID or reply preserves its
+recorded expiry. An explicitly different expiry conflicts. Existing durable
+assignments remain durable after upgrades; the new default does not backfill
+their deadlines. Expiry prevents further claims and unacknowledged delivery,
+but does not delete history or prove that work was abandoned or completed.
+
+Dashboard age and durable counts cover live unacknowledged deliveries across
+all runtimes. The over-24-hour and over-7-day bands overlap; age does not prove
+whether work was seen or completed. These totals need not match the separately
+reported Codex wake-eligibility snapshot.
+
 Delivery means that the message entered the recipient session's context. It
 does not prove that the model acted on it.
 
@@ -232,8 +244,9 @@ only after the safe reset durably commits. If a reservation cannot be resolved,
 later messages still arrive on the next natural hook turn; Pallium does not
 blindly resubmit. The Relay claim and trusted-local reservation update are
 separate commits, so a service crash or callback failure between them remains
-conservatively fenced. Reservation files assume one Pallium service process;
-atomic replacement provides crash recovery, not multi-process coordination.
+conservatively fenced. SQLite authority assumes one Pallium service process;
+short transactions persist reservations and generation fences. Native
+submission remains outside database transactions under the ownership guard.
 
 ## Inspecting a delivery trace
 
@@ -299,7 +312,7 @@ A stale, missing, closed, unreachable, or occupied transition fails without movi
 ## Limits and scope
 
 - message and reply text: at most 16,000 Unicode code points
-- omitted expiry: durable until delivery; explicit expiry range: 60 seconds to 7 days
+- new omitted expiry: 24 hours; explicit null: durable; finite expiry range: 60 seconds to 7 days
 - per-turn delivery: three messages by default; positive `max_messages` sets a
   cap and `0` means unlimited; the first oversized body may be a bounded preview
 - MCP receive: one delivery and at most 2,000 serialized characters per call;

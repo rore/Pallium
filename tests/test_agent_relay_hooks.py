@@ -1143,6 +1143,8 @@ def test_legacy_pin_bootstraps_endpoint_alias_and_queued_delivery(
 def test_project_switch_uses_atomic_turn_transition_without_relay_close(
     monkeypatch, relative, runtime, imported
 ):
+    from time import monotonic
+
     if imported:
         from integrations.codex.hooks import user_prompt_submit as hook
     else:
@@ -1167,6 +1169,30 @@ def test_project_switch_uses_atomic_turn_transition_without_relay_close(
     monkeypatch.setattr(hook, "derive_actor_ref", lambda *_: "actor")
     monkeypatch.setattr(hook, "get_pending_relay_close_batch", lambda *_: ([], 0))
     calls = []
+    turn_globals = hook.relay_turn.__globals__
+    diagnostics = []
+
+    def trace_phase(stage, original):
+        def traced(*args, **kwargs):
+            remaining_before = turn_globals["remaining_safe_time"]()
+            started = monotonic()
+            result = original(*args, **kwargs)
+            diagnostics.append({
+                "stage": stage,
+                "elapsed_seconds": monotonic() - started,
+                "remaining_before": remaining_before,
+                "remaining_after": turn_globals["remaining_safe_time"](),
+                "result": result if stage == "intent_write" else result is not None,
+            })
+            return result
+        return traced
+
+    for name, stage in (
+        ("_acquire_session_lock", "session_lock"),
+        ("_read_session_state", "state_read"),
+        ("_write_session_state_locked", "intent_write"),
+    ):
+        monkeypatch.setitem(turn_globals, name, trace_phase(stage, turn_globals[name]))
 
     def relay(method, path, body, *, timeout):
         calls.append((method, path, body, timeout))
@@ -1186,7 +1212,7 @@ def test_project_switch_uses_atomic_turn_transition_without_relay_close(
     with pytest.raises(SystemExit):
         hook.main()
 
-    assert len(calls) == 1
+    assert len(calls) == 1, diagnostics
     assert calls[0][1] == "/relay/turn"
     assert calls[0][2]["container_ref"] == new_container
     assert calls[0][2]["previous_container_ref"] == old_container

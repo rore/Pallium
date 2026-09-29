@@ -574,6 +574,26 @@ def mount_dashboard(
                 ),
                 )
             ) or 0
+            live_unacknowledged = and_(
+                RelayDeliveryRecord.state.in_(active_states),
+                RelayMessageRecord.expires_at > now,
+            )
+            durable_expiry = datetime.max.replace(tzinfo=timezone.utc)
+            (
+                live_unacknowledged_total,
+                durable_unacknowledged_total,
+                unacknowledged_over_24h,
+                unacknowledged_over_7d,
+            ) = session.execute(
+                select(
+                    func.coalesce(func.sum(case((live_unacknowledged, 1), else_=0)), 0),
+                    func.coalesce(func.sum(case((and_(live_unacknowledged, RelayMessageRecord.expires_at == durable_expiry), 1), else_=0)), 0),
+                    func.coalesce(func.sum(case((and_(live_unacknowledged, RelayMessageRecord.created_at < cutoff), 1), else_=0)), 0),
+                    func.coalesce(func.sum(case((and_(live_unacknowledged, RelayMessageRecord.created_at < now - timedelta(days=7)), 1), else_=0)), 0),
+                )
+                .select_from(RelayDeliveryRecord)
+                .join(RelayMessageRecord, RelayMessageRecord.id == RelayDeliveryRecord.message_id)
+            ).one()
             expired_total = session.scalar(
                 select(func.count())
                 .select_from(RelayDeliveryRecord)
@@ -832,6 +852,10 @@ def mount_dashboard(
                 "delivered_total": delivered_total,
                 "total": deliveries_total,
                 "pending_now": pending_now,
+                "live_unacknowledged_total": live_unacknowledged_total,
+                "durable_unacknowledged_total": durable_unacknowledged_total,
+                "unacknowledged_over_24h": unacknowledged_over_24h,
+                "unacknowledged_over_7d": unacknowledged_over_7d,
                 "expired_last_24h": expired_24h,
                 "expired_total": expired_total,
                 "redeliveries_last_24h": redeliveries,

@@ -1646,6 +1646,13 @@ function renderRelaySummary(data) {
   if (latency.acknowledgement_p95 != null) healthDetails.push('hook ack p95 ' + formatUptime(latency.acknowledgement_p95));
   healthDetails.push(fmtNum(deliveries.redeliveries_last_24h || 0) + ' redeliveries');
   healthDetails.push(fmtNum(messages.replies_last_24h || 0) + ' replies');
+  const unacknowledgedCount = value => Number.isSafeInteger(value) && value >= 0 ? fmtNum(value) : 'unknown';
+  healthDetails.push(
+    'All runtimes: ' + unacknowledgedCount(deliveries.live_unacknowledged_total) + ' live unacknowledged (pending/claimed); ' +
+    unacknowledgedCount(deliveries.durable_unacknowledged_total) + ' durable; ' +
+    unacknowledgedCount(deliveries.unacknowledged_over_24h) + ' over 24h; ' +
+    unacknowledgedCount(deliveries.unacknowledged_over_7d) + ' over 7d. Age bands overlap; age does not show whether work was seen or completed.'
+  );
   const readiness = data.codex_readiness || {}, readinessState = readiness.state || 'unknown';
   const readinessNote = readinessState === 'review_required'
     ? 'Codex hook definitions changed; review them and restart Codex. Pallium cannot approve Codex-owned hook trust.'

@@ -19,7 +19,9 @@ RELAY_TURN_MAX_CHARS = 2400
 RELAY_TURN_MAX_MESSAGES = 3
 RELAY_MAX_STRUCTURAL_WORK_REFS = 2
 
-RELAY_DEFAULT_EXPIRY_SECONDS: int | None = None
+RELAY_DEFAULT_EXPIRY_SECONDS = 24 * 60 * 60
+# Null requests durability; omission retains an existing ID's original expiry.
+_RELAY_EXPIRY_OMITTED = object()
 RELAY_MIN_EXPIRY_SECONDS = 60
 RELAY_MAX_EXPIRY_SECONDS = 7 * 24 * 60 * 60
 RELAY_RECENT_SECONDS = 24 * 60 * 60
@@ -557,12 +559,15 @@ class RelayService:
         recipient: str,
         payload: str,
         container_ref: str,
-        expires_in_seconds: int | None = RELAY_DEFAULT_EXPIRY_SECONDS,
+        expires_in_seconds: int | None = _RELAY_EXPIRY_OMITTED,
         in_reply_to: str | None = None,
         message_id: str | None = None,
         now: datetime | None = None,
     ) -> dict[str, Any]:
         container = self._scope(container_ref)
+        expiry_supplied = expires_in_seconds is not _RELAY_EXPIRY_OMITTED
+        if not expiry_supplied:
+            expires_in_seconds = RELAY_DEFAULT_EXPIRY_SECONDS
         if expires_in_seconds is not None and not (
             RELAY_MIN_EXPIRY_SECONDS <= expires_in_seconds <= RELAY_MAX_EXPIRY_SECONDS
         ):
@@ -583,6 +588,7 @@ class RelayService:
             redacted=stored_payload != raw_payload,
             container_ref=container,
             expires_in_seconds=expires_in_seconds,
+            expiry_supplied=expiry_supplied,
             in_reply_to=None if in_reply_to is None else _opaque(in_reply_to, "in_reply_to", maximum=128),
             now=now,
         )
@@ -594,10 +600,13 @@ class RelayService:
         receipt: str | None,
         payload: str,
         container_ref: str,
-        expires_in_seconds: int | None = RELAY_DEFAULT_EXPIRY_SECONDS,
+        expires_in_seconds: int | None = _RELAY_EXPIRY_OMITTED,
         now: datetime | None = None,
     ) -> dict[str, Any]:
         container = self._scope(container_ref)
+        expiry_supplied = expires_in_seconds is not _RELAY_EXPIRY_OMITTED
+        if not expiry_supplied:
+            expires_in_seconds = RELAY_DEFAULT_EXPIRY_SECONDS
         if expires_in_seconds is not None and not (
             RELAY_MIN_EXPIRY_SECONDS <= expires_in_seconds <= RELAY_MAX_EXPIRY_SECONDS
         ):
@@ -615,6 +624,7 @@ class RelayService:
             redacted=stored_payload != raw_payload,
             container_ref=container,
             expires_in_seconds=expires_in_seconds,
+            expiry_supplied=expiry_supplied,
             now=now,
         )
 
