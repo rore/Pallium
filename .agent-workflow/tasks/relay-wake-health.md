@@ -1,0 +1,46 @@
+# Codex scheduling health on existing operational surfaces
+
+Owner: relay-dev. Canonical roadmap: `roadmap/features/add-wake-first-relay-delivery.md`; manager owns roadmap, final acceptance, merge and installed rollout. Source assignment: Pallium Relay `relay-reply-d5415b78c04f7cccd9e86db0b42195ea173dd9822dd6c917873d235016f2632f`, 2026-09-29.
+
+<!-- agent-workflow:start -->
+**Outcome:** Operators can distinguish Codex scheduling authority/recovery health from unresolved delivery uncertainty without treating service liveness or ACK as completed work.
+
+**Target:** Pallium operational status API and existing Relay Health panel.
+
+**Scope:** storage/sqlite_relay.py, core/relay.py, app/relay_wake_health.py, app/main.py, app/dashboard.py, app/dashboard.html, tests/test_relay_wake_health.py, tests/test_health.py, tests/dashboard_relay_wake_health_ui.mjs, docs/dashboard.md and this Work Record.
+
+**Constraints:** Codex-only assessment; no schema, retry, wake admission, native submission, scope, model/effort, claim/ACK, TTL or protected-test change. Consistent bounded SELECTs only; never take the native-initiation lock, mutate state, schedule work or expose recipient identifiers/payloads/errors. Recovery progress and trace-loss data remain null/not_recorded. Reuse existing polling, avoid duplicate expensive browser snapshot reads, and remove stale green on fetch failure. No live operations. Envelope owner changes only projected render budget, not these status helpers.
+
+**Completion criteria:** Existing /status and Relay summary expose one shared additive snapshot with usable/degraded/unknown authority/recovery state, fixed reasons, bounded eligible pending/oldest and reservation metrics, and separate unresolved-uncertain delivery guidance. Usable requires actual observed recovery thread evidence; accepted busy wakes alone are neutral, terminal state takes precedence, unavailable or capped evidence never becomes false zero. Caller/UI E2E proves privacy, read-only behavior, error/boundary/lifecycle cases and unchanged native counts. Independent review, selected full validation once and fresh PR CI precede manager merge/install.
+
+**Requirement baseline:**
+{"source":"relay-reply-d5415b78c04f7cccd9e86db0b42195ea173dd9822dd6c917873d235016f2632f","outcome":"Operators can distinguish Codex scheduling authority/recovery health from unresolved delivery uncertainty without treating service liveness or ACK as completed work.","scope":"storage/sqlite_relay.py, core/relay.py, app/relay_wake_health.py, app/main.py, app/dashboard.py, app/dashboard.html, tests/test_relay_wake_health.py, tests/test_health.py, tests/dashboard_relay_wake_health_ui.mjs, docs/dashboard.md and this Work Record.","constraints":"Codex-only assessment; no schema, retry, wake admission, native submission, scope, model/effort, claim/ACK, TTL or protected-test change. Consistent bounded SELECTs only; never take the native-initiation lock, mutate state, schedule work or expose recipient identifiers/payloads/errors. Recovery progress and trace-loss data remain null/not_recorded. Reuse existing polling, avoid duplicate expensive browser snapshot reads, and remove stale green on fetch failure. No live operations. Envelope owner changes only projected render budget, not these status helpers.","completion_criteria":"Existing /status and Relay summary expose one shared additive snapshot with usable/degraded/unknown authority/recovery state, fixed reasons, bounded eligible pending/oldest and reservation metrics, and separate unresolved-uncertain delivery guidance. Usable requires actual observed recovery thread evidence; accepted busy wakes alone are neutral, terminal state takes precedence, unavailable or capped evidence never becomes false zero. Caller/UI E2E proves privacy, read-only behavior, error/boundary/lifecycle cases and unchanged native counts. Independent review, selected full validation once and fresh PR CI precede manager merge/install."}
+
+**Risk:** High
+
+**Complexity:** Moderate
+
+**Reason:** Storage and Relay capability are persistence/architecture contract surfaces; additive operational JSON must not misstate authority or widen access.
+
+**Discovery:** Prior read-only inspection at c3db54c9 found SQLite marker/rows already validated in one snapshot, with 256 current reservations maximum. Existing wake candidates require active exact endpoints, unexpired messages, pending/expired-claim state and render-safe payloads. Registry properties take the native-initiation ownership lock, so status must read the storage capability directly. The existing service-owned reconciler exposes its actual thread and Codex recovery callback; thread liveness is observable, recipient reachability is not. Progress timestamps/counters do not exist. Relay summary already distinguishes readiness/check-in evidence; its fetch handler currently retains stale data on failure.
+
+**Material assumptions:** Actual reconciler thread plus configured claim-recovery callback can establish task-running evidence, not sweep progress; unknown if unavailable. A capped eligibility scan can preserve exact render safety; overflow produces null count/age and explicit incomplete evidence, never a guessed total. Stop for scope/contract review if these cannot be preserved. New SELECT helper additions must remain disjoint from the envelope owner's render-budget edit.
+
+**Plan:** Invoke Agent Workflow and classify before edits; reuse clean managed codex-service-custody checkout on new feat/relay-wake-health from c3db54c9. Commit this baseline then obtain independent non-implementer plan acceptance. Write caller/UI red tests before production. Add a read-only storage snapshot with one consistent transaction, existing authority validation and shared unchanged candidate predicate. Bound candidate materialization to 256+1 rows; over-cap eligibility metrics are null/incomplete. Count retained outcomes and current nonterminal uncertain deliveries separately. Forward through RelayService and one app projection that observes actual recovery thread/callback without new instrumentation or native lock. Add relay_wake to default /status and Relay summary; browser consumes it through summary only, with an optional /status flag disabling its duplicate expensive snapshot during existing dashboard polling. Render authority/recovery and retained-delivery guidance separately; failed fetch clears prior green. Keep all old response fields/liveness and lifecycle operations. Document limits, run focused/affected and selector-required full once, independent immutable result review and PR/CI; root owns acceptance/rollout.
+
+**Verification plan:** State/reason/evidence distinctions -> real TestClient /status and Relay summary readback with isolated SQLite and fake native boundary. Pending/claim/ACK/expiry and stale uncertain reservations -> caller lifecycle with existing claim/ACK surfaces and terminal precedence. Empty/max/over-max, closed/unreachable endpoints, active/expired leases, Unicode/render-unsafe data and malformed authority -> bounded snapshot caller tests with precise complete/incomplete metrics. DB read/busy failures and absent/partial running evidence -> unknown/degraded without secret output or false zero. Concurrent native ownership and repeated status reads -> no acquisition of native lock, no scheduling and unchanged rows/generation/claims/native counts. UI normal/uncertain/unknown/fetch failure and one snapshot per refresh -> executed shipped JavaScript through existing Node pattern. Entire change -> selector full once, affected wake/status/dashboard checks, fresh Redline/import/workflow checks, independent immutable review and PR CI.
+
+**Plan review:** Pending independent non-implementer review of this seed; no application or test edit yet.
+
+**Approvals:** Approved by user 2026-09-28: "This is a night job so i give blanket approval" (source 15322050-ec54-43b1-bef2-44b942ea0d60). Manager accepts this bounded slice and delegates review/implementation in the exact source Relay assignment above; no personal inspection is claimed and no fresh denial may be bypassed.
+
+**Exceptions:** None
+
+**State:** Blocked or returned to planning
+<!-- agent-workflow:end -->
+
+## Planning
+
+Prior standalone inspection made no changes. This new implementation scope is not documentation-exempt: storage/core/app/test paths require the normal isolated branch/Work Record/PR flow. Provisional Redline requires architecture and persistence attention; no protected behavior test, schema or forbidden import change is intended. Scope is observational only. Existing main/installed rollout and PR259 evidence are complete and must not be rerun as this feature's evidence.
+
+Current checkout: `C:\Users\I347041\.codex\worktrees\codex-service-custody\Pallium`; new branch `feat/relay-wake-health`, trusted base `c3db54c9c66d61bd96fd554060c626c16a159288`. Former PR259 is merged; its branch/history and ignored evidence are preserved. Initial block is independent plan review, not missing personal approval. No code, tests or live action has begun.
