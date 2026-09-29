@@ -325,6 +325,8 @@ class SQLiteRelayMixin:
                         db.delete(row)
                         result = ("released", expected)
                     else:
+                        if state["recipient_endpoint_id"] != expected.recipient_endpoint_id:
+                            return None
                         if state["state"] in {"delivered", "expired", "suppressed"}:
                             db.delete(row)
                             result = ("released", expected)

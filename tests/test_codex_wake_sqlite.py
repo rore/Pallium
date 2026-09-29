@@ -160,6 +160,8 @@ def test_http_send_restart_exact_claim_ack_preserves_sqlite_fence(
     assert observed["state"] == "delivered" and observed["attempts"] == 1
     assert restarted.reservations() == ()
     assert http.post("/relay/turn", json={"runtime": "codex", "session_ref": "target", **SCOPE}).json()["deliveries"] == []
+    # Trace writes use a single-worker queue and can outlive the HTTP response.
+    client.app.state.pallium_service._relay_trace_executor.submit(lambda: None).result(timeout=2)
     trace = http.get(f"/relay/messages/{body['message_id']}/trace", params=SCOPE)
     assert trace.status_code == 200
     assert any(event["stage"] == "completed" for event in trace.json()["events"])
@@ -188,6 +190,41 @@ def test_reconciliation_commits_replacement_before_worker_schedule(relay_store, 
     monkeypatch.setattr(codex_wake, "_schedule_reserved_codex_relay_wake", schedule)
     assert codex_wake.reconcile_codex_relay_wake_reservations(relay, registry=registry) == 1
     assert len(calls) == 1 and calls[0].generation > reservation.generation
+
+
+@pytest.mark.parametrize("state", ["delivered", "expired_claim"])
+def test_imported_mismatched_recipient_fence_is_not_reconciled(
+    relay_store, tmp_path, monkeypatch, state,
+):
+    relay, _, database = relay_store
+    delivery = _send(relay)
+    claim_time = datetime.now(timezone.utc)
+    if state == "expired_claim":
+        claim_time -= timedelta(seconds=RELAY_CLAIM_LEASE_SECONDS + 1)
+    claimed = relay.turn(
+        runtime="codex", session_ref="target", **SCOPE,
+        exact_delivery_id=delivery["delivery_id"], now=claim_time,
+    )["deliveries"][0]
+    if state == "delivered":
+        relay.ack_by_receipt(delivery_id=delivery["delivery_id"], receipt=claimed["receipt"], **SCOPE)
+    item = replace(
+        _item(delivery, outcome="uncertain"),
+        recipient_endpoint_id="relay-session-" + "f" * 32,
+        correlated_claim_attempts=1,
+    )
+    assert item.recipient_endpoint_id != delivery["recipient_endpoint_id"]
+    path = _legacy(tmp_path / "legacy", [item])
+    source = path.read_bytes()
+    registry = _registry(relay, path.parent)
+    assert registry.initialize(old_owner_drained=True)
+    monkeypatch.setattr(
+        codex_wake, "_schedule_reserved_codex_relay_wake",
+        lambda *args, **kwargs: pytest.fail("mismatched recipient scheduled a wake"),
+    )
+    assert codex_wake.reconcile_codex_relay_wake_reservations(relay, registry=registry) == 0
+    assert registry.snapshot(item.recipient_endpoint_id) == item
+    assert _stored_items(database) == {item}
+    assert path.read_bytes() == source
 
 
 def test_release_waits_for_native_initiation_ownership(relay_store, tmp_path):

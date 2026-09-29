@@ -112,6 +112,8 @@ def parse_selector(value: str) -> tuple[str | None, str, str]:
 
 
 class RelayService:
+    """Validated Relay boundary over the optional SQLite relay capability."""
+
     def codex_wake_snapshot(self):
         return self._store.relay_codex_wake_snapshot()
 
@@ -120,8 +122,6 @@ class RelayService:
 
     def codex_wake_transition(self, operation, **kwargs):
         return self._store.relay_codex_wake_transition(operation=operation, **kwargs)
-
-    """Validated Relay boundary over the optional SQLite relay capability."""
 
     def __init__(self, store: Any) -> None:
         required = (
