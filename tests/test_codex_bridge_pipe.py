@@ -869,9 +869,12 @@ def test_inventory_valid_request_error_echoes_candidate_without_advancing_floor(
 
 
 @native
-@pytest.mark.parametrize("fault", ["missing-pipe", "server-pid"], ids=["missing-desktop-pipe", "server-pid-error"])
-def test_inventory_native_transfer_failure_keeps_owner_live_and_fenced(tmp_path, monkeypatch, fault):
+@pytest.mark.parametrize("fault,expected_stage", [
+    ("missing-pipe", "native-open"), ("server-pid", "native-peer"),
+], ids=["missing-desktop-pipe", "server-pid-error"])
+def test_inventory_native_transfer_failure_keeps_owner_live_and_fenced(tmp_path, monkeypatch, caplog, fault, expected_stage):
     with inventory_running(tmp_path, monkeypatch) as (service, client, directory, desktop):
+        caplog.set_level(30, logger="app.codex_bridge_pipe")
         expected_policy = bridge.InventoryPolicy.parse((directory / "policy.json").read_bytes())
         endpoint = desktop.endpoint
         if fault == "missing-pipe":
@@ -906,6 +909,11 @@ def test_inventory_native_transfer_failure_keeps_owner_live_and_fenced(tmp_path,
 
         result = client.register()
         assert result["status"] == "unavailable" and result["reason"] == "native-failed"
+        records = [record for record in caplog.records
+                   if record.name == "app.codex_bridge_pipe"
+                   and record.msg == "codex_inventory_failure stage=%s category=%s epoch=%s revision=%d"]
+        assert len(records) == 1
+        assert records[0].args == (expected_stage, "unexpected", service.epoch, expected_policy.revision)
         assert service.thread.is_alive() and not service.stop_event.is_set() and not service.unresolved
         assert service.fenced and service.admitted is None and service.custody is None and service.desktop is None
         assert len(opened) == 1 and opened == [endpoint]
@@ -941,6 +949,9 @@ def test_inventory_native_transfer_failure_keeps_owner_live_and_fenced(tmp_path,
             assert exc.category in {"transport-failed", "deadline"}
         else:
             assert retry["status"] == "unavailable" and retry["reason"] == "policy-changed"
+        assert len([record for record in caplog.records
+                    if record.name == "app.codex_bridge_pipe"
+                    and record.msg == "codex_inventory_failure stage=%s category=%s epoch=%s revision=%d"]) == 1
         assert len(opened) == open_count and len(server_pid_calls) == server_pid_count
         assert service.thread.is_alive() and not service.stop_event.is_set()
         assert service.fenced and service.admitted is None and service.custody is None and service.desktop is None
