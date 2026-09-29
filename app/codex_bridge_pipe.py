@@ -24,7 +24,6 @@ TRUSTED_INSTALLER_SID = "S-1-5-80-956008885-3418522649-1831038044-1853292631-227
 _retained: list[object] = []
 _native_uncertain = False
 _policy_tokens: dict[object, tuple] = {}
-_log = logging.getLogger(__name__)
 _INVENTORY_FAILURE_STAGES = frozenset({
     "transfer-authority", "native-open", "native-peer", "before-source", "source-exit",
     "before-proof", "exit-proof", "after-proof",
@@ -38,6 +37,20 @@ _INVENTORY_FAILURE_CATEGORIES = frozenset({
     "policy-changed", "policy-inactive", "stopped", "transport-failed", "unsafe-acl", "unsafe-owner",
     "unsafe-path", "unsupported-acl",
 })
+
+
+class _InventoryLogHandler(logging.Handler):
+    def emit(self, record) -> None:
+        try:
+            sys.stderr.write(self.format(record) + "\n")
+            sys.stderr.flush()
+        except Exception:
+            pass  # Never use logging's traceback fallback in a native exception handler.
+
+
+_log = logging.Logger(__name__, logging.WARNING)
+_log.propagate = False
+_log.addHandler(_InventoryLogHandler())
 
 
 class ShadowUnavailable(RuntimeError):
