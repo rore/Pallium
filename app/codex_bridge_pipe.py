@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import logging
 import os
 import secrets
 import sys
@@ -23,6 +24,33 @@ TRUSTED_INSTALLER_SID = "S-1-5-80-956008885-3418522649-1831038044-1853292631-227
 _retained: list[object] = []
 _native_uncertain = False
 _policy_tokens: dict[object, tuple] = {}
+_INVENTORY_FAILURE_STAGES = frozenset({
+    "transfer-authority", "native-open", "native-peer", "before-source", "source-exit",
+    "before-proof", "exit-proof", "after-proof",
+    *(f"{phase}-{action}" for phase in ("before", "after")
+      for action in ("authority", "peer", "write", "read", "validate", "result")),
+})
+_INVENTORY_FAILURE_CATEGORIES = frozenset({
+    "busy", "deadline", "file-unavailable", "file-write-failed", "invalid-message", "invalid-path",
+    "invalid-policy", "invalid-policy-lock", "invalid-response", "message-limit", "native-failed",
+    "path-unavailable", "peer-gone", "peer-mismatch", "peer-unavailable", "policy-busy",
+    "policy-changed", "policy-inactive", "stopped", "transport-failed", "unsafe-acl", "unsafe-owner",
+    "unsafe-path", "unsupported-acl",
+})
+
+
+class _InventoryLogHandler(logging.Handler):
+    def emit(self, record) -> None:
+        try:
+            sys.stderr.write(self.format(record) + "\n")
+            sys.stderr.flush()
+        except Exception:
+            pass  # Never use logging's traceback fallback in a native exception handler.
+
+
+_log = logging.Logger(__name__, logging.WARNING)
+_log.propagate = False
+_log.addHandler(_InventoryLogHandler())
 
 
 class ShadowUnavailable(RuntimeError):
@@ -1240,6 +1268,30 @@ class InventoryService:
         self.proof = None
         self.published_phases = set()
         self.after_attempted = False
+        self._failure_context = None
+        self._failure_stage = "unknown"
+        self._failure_diagnostic = None
+
+    def _record_failure(self, exc: Exception) -> None:
+        if self._failure_context is None or self._failure_diagnostic is not None:
+            return
+        if ("after" in self.published_phases and self.proof is not None
+                and (self.proof.get("epoch"), self.proof.get("revision")) == self._failure_context):
+            return
+        stage = self._failure_stage
+        stage = stage if type(stage) is str and stage in _INVENTORY_FAILURE_STAGES else "unknown"
+        try:
+            category = getattr(exc, "category", None)
+        except Exception:
+            category = None
+        category = category if type(category) is str and category in _INVENTORY_FAILURE_CATEGORIES else "unexpected"
+        # Latch before logging: a failed sink must not retry or replace the original attribution.
+        self._failure_diagnostic = (stage, category)
+        try:
+            _log.warning("codex_inventory_failure stage=%s category=%s epoch=%s revision=%d",
+                         stage, category, *self._failure_context)
+        except Exception:
+            pass  # Diagnostics must not change failure handling.
 
     def start(self):
         if not native_available():
@@ -1288,10 +1340,13 @@ class InventoryService:
     def _maintain(self) -> None:
         if self.policy is None or (self.replace_allowed and self.custody is None and self.desktop is None):
             return
+        phase = "after" if self.after_attempted else "before"
         try:
+            self._failure_stage = f"{phase}-authority"
             current = self._load()
             expired = self.utc_clock() >= self.policy.expires_at
             if expired or current.revoked or not current.enabled:
+                self._record_failure(ShadowUnavailable("policy-inactive"))
                 self._drop()
                 self.replace_allowed = not self.unresolved
                 released = current.revision if current.revoked or not current.enabled else self.policy.revision
@@ -1304,8 +1359,10 @@ class InventoryService:
             if not current.valid(self.utc_clock()):
                 raise ShadowUnavailable("policy-inactive")
             if self.desktop is not None:
+                self._failure_stage = f"{phase}-peer"
                 self.desktop.verify()
         except Exception as exc:
+            self._record_failure(exc)
             self.fenced = True
             self._drop()
             self._proof_failure(_inventory_reason(exc))
@@ -1385,6 +1442,9 @@ class InventoryService:
                 or len(endpoint) > 512 or not endpoint.isprintable() or endpoint != endpoint.strip()):
             raise ShadowUnavailable("invalid-message")
         handle = None
+        self._failure_context = (self.epoch, policy.revision)
+        self._failure_diagnostic = None
+        self._failure_stage = "transfer-authority"
         try:
             # Authority was independently checked before accepting the capability.
             self._authorize(policy.revision)
@@ -1394,24 +1454,32 @@ class InventoryService:
                           "source_exited": False, "failure": "none"}
             self.after_attempted = False
             self.published_phases = set()
+            self._failure_stage = "native-open"
             handle = self.w.file.CreateFile(endpoint, self.w.con.GENERIC_READ | self.w.con.GENERIC_WRITE,
                 0, None, self.w.con.OPEN_EXISTING,
                 self.w.con.FILE_FLAG_OVERLAPPED | self.w.con.SECURITY_SQOS_PRESENT | self.w.file.SECURITY_IDENTIFICATION, None)
             self.custody = _DesktopIO(self.w, handle, self.stop_event)
             self.native_sequence = 0
             handle = None
+            self._failure_stage = "native-peer"
             if self.w.pipe.GetNamedPipeServerProcessId(self.custody.handle) != self.desktop.pid:
                 raise ShadowUnavailable("peer-mismatch")
+            self._failure_stage = "before-authority"
             self._authorize(policy.revision)
             self.admitted = None
+            self._failure_stage = "before-source"
             self.source.check()
             self._observe(deadline)
             # An exit crossing the first read is inconclusive, never the before witness.
+            self._failure_stage = "before-source"
             self.source.check()
             self.proof["before_inventory_ok"] = True
+            self._failure_stage = "before-proof"
             self._publish_proof()
+            self._failure_stage = "before-result"
             return self._result(inventory_ok=True)
         except Exception as exc:
+            self._record_failure(exc)
             _close(handle)
             self.fenced = True
             self._drop()
@@ -1421,18 +1489,24 @@ class InventoryService:
             raise ShadowUnavailable("native-failed") from None
 
     def _observe(self, deadline: float) -> dict:
+        phase = "after" if self.after_attempted else "before"
         self._maintain()
+        self._failure_stage = f"{phase}-authority"
         if self.custody is None:
             raise ShadowUnavailable("policy-inactive")
         if self.stop_event.is_set():
             raise ShadowUnavailable("stopped")
+        self._failure_stage = f"{phase}-peer"
         self.desktop.verify()
         if self.w.pipe.GetNamedPipeServerProcessId(self.custody.handle) != self.desktop.pid:
             raise ShadowUnavailable("peer-mismatch")
         self.native_sequence += 1
         request_id = self.native_sequence
+        self._failure_stage = f"{phase}-write"
         self.custody.write({"jsonrpc": "2.0", "id": request_id, "method": "tools/list", "params": {}}, deadline)
+        self._failure_stage = f"{phase}-read"
         value = self.custody.read(deadline)
+        self._failure_stage = f"{phase}-validate"
         if (set(value) != {"jsonrpc", "id", "result"} or value["jsonrpc"] != "2.0"
                 or type(value["id"]) is not int or value["id"] != request_id
                 or not isinstance(value["result"], dict) or set(value["result"]) != {"tools"}
@@ -1446,9 +1520,12 @@ class InventoryService:
                 raise ShadowUnavailable("invalid-response")
             names.add(tool["name"])
         self._maintain()
+        self._failure_stage = f"{phase}-authority"
         if self.custody is None or time.monotonic() >= deadline:
             raise ShadowUnavailable("policy-inactive")
+        self._failure_stage = f"{phase}-peer"
         self.desktop.verify()
+        self._failure_stage = f"{phase}-result"
         return self._result(reason="observed", inventory_ok=True)
 
     def _publish_proof(self) -> None:
@@ -1469,6 +1546,7 @@ class InventoryService:
         if (self.source is None or self.custody is None or self.proof is None
                 or self.after_attempted or not self.proof["before_inventory_ok"]):
             return
+        self._failure_stage = "source-exit"
         state = self.w.event.WaitForSingleObject(self.source.handle, 0)
         if state == self.w.event.WAIT_TIMEOUT:
             return
@@ -1477,15 +1555,19 @@ class InventoryService:
             if state != self.w.event.WAIT_OBJECT_0:
                 raise ShadowUnavailable("peer-mismatch")
             self.proof["source_exited"] = True
+            self._failure_stage = "exit-proof"
             self._publish_proof()
             # No source liveness requirement here: the retained handle proved exit.
             self._maintain()
+            self._failure_stage = "after-authority"
             if self.stop_event.is_set() or self.custody is None:
                 raise ShadowUnavailable("policy-inactive")
             self._observe(time.monotonic() + EXCHANGE_SECONDS)
             self.proof["after_inventory_ok"] = True
+            self._failure_stage = "after-proof"
             self._publish_proof()
         except Exception as exc:
+            self._record_failure(exc)
             self.fenced = True
             self._drop()
             self._proof_failure(_inventory_reason(exc))
@@ -1576,6 +1658,7 @@ class InventoryService:
                                 peer.close()
                         peer = None
         except Exception as exc:
+            self._record_failure(exc)
             self.stop_event.set()
             try:
                 self._proof_failure(_inventory_reason(exc))

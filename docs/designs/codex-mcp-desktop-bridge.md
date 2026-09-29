@@ -1,6 +1,6 @@
 # Optional Codex MCP Desktop bridge
 
-Status: inert and authenticated child-shadow implementations shipped; proposed default-off service custody is inventory-only and grants no wake authority.
+Status: inert, authenticated child-shadow and default-off service custody implementations shipped. Service custody is inventory-only, remains runtime-unqualified and grants no wake authority.
 No production wake implementation or activation approval.
 Canonical work: [wake-first Relay delivery](../../roadmap/features/add-wake-first-relay-delivery.md).
 Private experiment: `codex-desktop-bridge-spike` Work Record; its history is not publication-ready.
@@ -66,7 +66,7 @@ runtime-neutral; the app adapter owns Desktop-specific framing and tool discover
 
 In the shipped child-shadow mode, the Desktop capability stays inside the eligible
 MCP child. Never return it from a tool, log it, write it into state, or send it to
-Pallium's service. The proposed service-custody mode below is a separate,
+Pallium's service. The shipped service-custody mode below is a separate,
 default-off transport-only exception: after exact finite operator admission, the
 existing service may retain one connection for inventory reads only. It does not
 authorize wake actions.
@@ -78,7 +78,7 @@ The bridge must not carry message payloads or become a second receive/ACK path.
 | Desktop → MCP child | Private connection; current request metadata | Standing permission to wake any task |
 | Approved enrollment → child | Bounded action grant with exact coverage | New identities inferred from cwd/history |
 | Shipped child-shadow child ↔ service | Separate authenticated bridge channel; opaque grant handle | Desktop capability or arbitrary prompts |
-| Proposed inventory source child → service | Endpoint transferred after exact operator admission; one RAM-only inventory connection | `tools/call`, wake, claim/ACK, payload, or broader Desktop authority |
+| Shipped inventory source child → service | Endpoint transferred after exact operator admission; one RAM-only inventory connection | `tools/call`, wake, claim/ACK, payload, or broader Desktop authority |
 | Service → adapter instruction | Exact delivery and live endpoint generation | Permission to override settings or retry native writes |
 | Hook → recipient | Trusted scope and actual payload; claim/ACK | Bridge authority |
 
@@ -145,7 +145,7 @@ reservations are distinct: the bridge must never repeat the native submission.
 For shipped child-shadow mode, service restart changes its bridge epoch,
 invalidates transient leases/grants, and requires fresh enrollment; durable dispatch
 fences survive. Child EOF, cancellation, shutdown, capability loss, or configuration
-refresh stop background work and close its transports. Proposed service custody
+refresh stop background work and close its transports. Shipped service custody
 has a separate EOF rule described below. A service outage marks bridge availability offline
 without blocking normal MCP responses. Do not automatically bootstrap another
 runtime or refresh authorization using historical request metadata. Backlog rescue
@@ -225,8 +225,8 @@ remain intact. Revoke enrollment credentials/grants through their approved lifec
 never clear an uncertain fence merely to restore availability. No service/app restart
 or configuration change is part of this design task.
 
-The shipped current deliverable is authenticated **child-shadow observation**, not automatic cold delivery; that mode requires a live MCP child.
-The separate inventory-custody proposal can bootstrap after ordinary first-chat use
+The shipped child-shadow deliverable is authenticated **observation**, not automatic cold delivery; that mode requires a live MCP child.
+The separate shipped inventory-custody mode is designed to bootstrap after ordinary first-chat use
 and retain its admitted connection after source-child exit while the Desktop process
 and epoch remain valid. It does not claim before-first-chat availability, zero-child
 startup, restart recovery, or universal cold wake. Activation still requires
@@ -291,9 +291,9 @@ automatically reconnects or re-enrolls. A fresh eligible MCP child requires a ne
 explicit enrollment with genuine current metadata and still-valid operator policy.
 Normal MCP tools and retained Relay messages continue unchanged.
 
-## Proposed service-owned Desktop inventory custody
+## Service-owned Desktop inventory custody
 
-This is a separate, default-off implementation in progress, not runtime-qualified. It reuses the existing
+This separate, default-off implementation is shipped, but not runtime-qualified. It reuses the existing
 durable Pallium service and never starts a detached helper or competing app-server.
 Its only native operation is a fixed, redacted `tools/list`; it has no `tools/call`,
 wake, claim, ACK, or payload authority. Existing current-request wake authority and
@@ -321,7 +321,7 @@ unresolved I/O remains unavailable until close is conclusive. Source-child EOF
 alone does not revoke an independently
 authorized service registration. A service restart loses the RAM registration and
 requires a new admission after ordinary chat use; zero-child startup bootstrap and
-persisted credential recovery are outside this proposal. This limited custody
+persisted credential recovery are outside this implementation. This limited custody
 provides no wake authority and does not qualify cold delivery, busy safety, or
 restart recovery.
 
@@ -356,3 +356,14 @@ publication. It never serializes native I/O.
 The lock does not guarantee every Windows replacement succeeds. A failed policy
 write reports failure and preserves the previous policy; failed revocation is not
 reported as revoked. No data-write retry or permission relaxation is added.
+
+Service-only failure diagnostics retain the first fixed stage and allowlisted
+category for an actual transfer, correlated by service epoch and policy revision.
+They distinguish native open/peer checks, before/post-exit authority and inventory
+I/O, and proof publication before public normalization can lose that distinction.
+No exception text, traceback, endpoint, environment, response or tool inventory is
+logged. Unknown diagnostic values use fixed fallbacks; a failed log sink does not
+change failure handling. Later cleanup cannot replace the original attribution,
+and ordinary cleanup after sealed successful proof adds no failure diagnostic.
+Public MCP fields and protected proof fields remain unchanged. These diagnostics
+do not retrospectively explain an earlier failure or qualify unloaded wake.

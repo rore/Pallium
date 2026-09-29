@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import asyncio
+import logging
 import os
 import secrets
 import shutil
@@ -24,6 +25,20 @@ from app import codex_bridge_pipe as bridge
 
 pytestmark = pytest.mark.slow
 native = pytest.mark.skipif(sys.platform != "win32", reason="Windows kernel pipe contract")
+
+
+@pytest.fixture
+def inventory_caplog(caplog):
+    root = logging.getLogger()
+    logger = bridge._log
+    root.removeHandler(caplog.handler)
+    logger.addHandler(caplog.handler)
+    caplog.set_level(30, logger=logger.name)
+    try:
+        yield caplog
+    finally:
+        logger.removeHandler(caplog.handler)
+        root.addHandler(caplog.handler)
 
 
 @pytest.fixture
@@ -799,6 +814,107 @@ def inventory_raw_exchange(client, request):
     return client.io.read(deadline)
 
 
+def inventory_failure_records(caplog):
+    message = "codex_inventory_failure stage=%s category=%s epoch=%s revision=%d"
+    records = {id(record): record for record in caplog.records
+               if record.name == "app.codex_bridge_pipe" and record.msg == message}
+    return list(records.values())
+
+
+@pytest.mark.parametrize("case,expected_stage,expected_category", [
+    ("valid", "native-peer", "transport-failed"),
+    ("missing", "native-peer", "unexpected"),
+    ("unknown", "native-peer", "unexpected"),
+    ("unicode", "native-peer", "unexpected"),
+    ("unhashable", "native-peer", "unexpected"),
+    ("raising", "native-peer", "unexpected"),
+    ("unknown-stage", "unknown", "deadline"),
+])
+def test_inventory_failure_diagnostic_allowlists_untrusted_fields(
+    tmp_path, inventory_caplog, case, expected_stage, expected_category,
+):
+    service = bridge.InventoryService(tmp_path)
+    service._failure_context = ("a" * 32, 7)
+    service._failure_stage = "private-stage-sentinel" if case == "unknown-stage" else "native-peer"
+
+    class RaisingCategory(Exception):
+        @property
+        def category(self):
+            raise OSError("private-category-sentinel")
+
+    if case == "valid":
+        error = bridge.ShadowUnavailable("transport-failed")
+    elif case == "missing":
+        error = RuntimeError("private-message-sentinel")
+    elif case == "unknown":
+        error = SimpleNamespace(category="private-category-sentinel")
+    elif case == "unicode":
+        error = SimpleNamespace(category="β-secret")
+    elif case == "unhashable":
+        error = SimpleNamespace(category=[])
+    elif case == "raising":
+        error = RaisingCategory("private-message-sentinel")
+    else:
+        error = bridge.ShadowUnavailable("deadline")
+
+    service._record_failure(error)
+    records = inventory_failure_records(inventory_caplog)
+    assert len(records) == 1
+    assert records[0].args == (expected_stage, expected_category, service._failure_context[0], 7)
+    assert "private" not in repr(records[0].args) and "β" not in repr(records[0].args)
+
+
+@pytest.mark.parametrize("failure", ["format", "write", "flush"])
+def test_inventory_failure_diagnostic_sink_errors_keep_first_failure(tmp_path, monkeypatch, capsys, failure):
+    service = bridge.InventoryService(tmp_path)
+    service._failure_context = ("b" * 32, 9)
+    service._failure_stage = "before-write"
+    handler = next(h for h in bridge._log.handlers if isinstance(h, bridge._InventoryLogHandler))
+
+    class BrokenStream:
+        def write(self, value):
+            if failure == "write":
+                raise OSError("private-write-sentinel")
+
+        def flush(self):
+            if failure == "flush":
+                raise OSError("private-flush-sentinel")
+
+    if failure == "format":
+        def broken_format(record):
+            raise OSError("private-format-sentinel")
+        monkeypatch.setattr(handler, "format", broken_format)
+    else:
+        monkeypatch.setattr(bridge.sys, "stderr", BrokenStream())
+
+    service._record_failure(bridge.ShadowUnavailable("transport-failed"))
+    assert service._failure_diagnostic == ("before-write", "transport-failed")
+    service._failure_stage = "after-proof"
+    service._record_failure(bridge.ShadowUnavailable("policy-inactive"))
+    assert service._failure_diagnostic == ("before-write", "transport-failed")
+    captured = capsys.readouterr()
+    assert "private-" not in captured.err and "Traceback" not in captured.err
+
+
+def test_inventory_old_sealed_proof_only_suppresses_its_own_failure_context(tmp_path, inventory_caplog):
+    service = bridge.InventoryService(tmp_path)
+    service.published_phases.add("after")
+    service.proof = {"epoch": service.epoch, "revision": 4, "before_inventory_ok": True,
+                     "after_inventory_ok": True, "source_exited": True, "failure": "none"}
+    service._failure_stage = "transfer-authority"
+    service._failure_context = (service.epoch, 4)
+
+    service._record_failure(bridge.ShadowUnavailable("policy-changed"))
+    assert inventory_failure_records(inventory_caplog) == []
+
+    service._failure_context = (service.epoch, 5)
+    service._failure_diagnostic = None
+    service._record_failure(bridge.ShadowUnavailable("policy-changed"))
+    records = inventory_failure_records(inventory_caplog)
+    assert len(records) == 1
+    assert records[0].args == ("transfer-authority", "policy-changed", service.epoch, 5)
+
+
 @native
 @pytest.mark.parametrize("sequence", ["4", None, [], True, 0, -1, 3, 2, "missing", 2**31],
                          ids=["string", "null", "list", "boolean", "zero", "negative", "equal", "decreasing", "missing", "over-max"])
@@ -869,9 +985,12 @@ def test_inventory_valid_request_error_echoes_candidate_without_advancing_floor(
 
 
 @native
-@pytest.mark.parametrize("fault", ["missing-pipe", "server-pid"], ids=["missing-desktop-pipe", "server-pid-error"])
-def test_inventory_native_transfer_failure_keeps_owner_live_and_fenced(tmp_path, monkeypatch, fault):
+@pytest.mark.parametrize("fault,expected_stage", [
+    ("missing-pipe", "native-open"), ("server-pid", "native-peer"),
+], ids=["missing-desktop-pipe", "server-pid-error"])
+def test_inventory_native_transfer_failure_keeps_owner_live_and_fenced(tmp_path, monkeypatch, inventory_caplog, fault, expected_stage):
     with inventory_running(tmp_path, monkeypatch) as (service, client, directory, desktop):
+        caplog = inventory_caplog
         expected_policy = bridge.InventoryPolicy.parse((directory / "policy.json").read_bytes())
         endpoint = desktop.endpoint
         if fault == "missing-pipe":
@@ -933,6 +1052,9 @@ def test_inventory_native_transfer_failure_keeps_owner_live_and_fenced(tmp_path,
         }
         assert endpoint not in repr(result) + repr(failure)
         assert "private-native-lookup-sentinel" not in repr(result) + repr(failure)
+        records = inventory_failure_records(caplog)
+        assert len(records) == 1
+        assert records[0].args == (expected_stage, "unexpected", service.epoch, expected_policy.revision)
 
         open_count, server_pid_count = len(opened), len(server_pid_calls)
         try:
@@ -941,6 +1063,7 @@ def test_inventory_native_transfer_failure_keeps_owner_live_and_fenced(tmp_path,
             assert exc.category in {"transport-failed", "deadline"}
         else:
             assert retry["status"] == "unavailable" and retry["reason"] == "policy-changed"
+        assert len(inventory_failure_records(caplog)) == 1
         assert len(opened) == open_count and len(server_pid_calls) == server_pid_count
         assert service.thread.is_alive() and not service.stop_event.is_set()
         assert service.fenced and service.admitted is None and service.custody is None and service.desktop is None
@@ -1000,13 +1123,15 @@ def test_inventory_invalid_authority_denies_before_endpoint_read_or_open(tmp_pat
 
 
 @native
-def test_inventory_registration_idempotent_eof_preserves_service_custody(tmp_path, monkeypatch):
+def test_inventory_registration_idempotent_eof_preserves_service_custody(tmp_path, monkeypatch, inventory_caplog):
     with inventory_running(tmp_path, monkeypatch) as (service, client, directory, desktop):
+        assert not inventory_failure_records(inventory_caplog)
         assert client.register()["status"] == "registered"
         wait_until(lambda: desktop.connections == 1)
         handle = service.custody.handle
         assert client.register()["status"] == "registered"
         assert desktop.connections == 1 and len(desktop.requests) == 1
+        assert not inventory_failure_records(inventory_caplog)
         before = read_proof(directory)
         assert before["before_inventory_ok"] and not before["source_exited"]
         client.dispose()
@@ -1018,6 +1143,258 @@ def test_inventory_registration_idempotent_eof_preserves_service_custody(tmp_pat
         for path in directory.iterdir():
             if path.suffix == ".json":
                 assert desktop.endpoint.encode() not in path.read_bytes()
+
+
+@native
+@pytest.mark.parametrize("fault,expected_stage,expected_category,expected_reason,request_count", [
+    ("authority", "transfer-authority", "policy-changed", "policy-changed", 0),
+    ("source", "before-source", "peer-mismatch", "peer-mismatch", 0),
+    ("before-maintain", "before-authority", "policy-changed", "policy-inactive", 0),
+    ("before-peer", "before-peer", "peer-mismatch", "policy-inactive", 0),
+    ("write", "before-write", "transport-failed", "native-failed", 0),
+    ("read", "before-read", "transport-failed", "native-failed", 1),
+    ("validate", "before-validate", "invalid-response", "native-failed", 1),
+    ("result", "before-result", "peer-mismatch", "peer-mismatch", 1),
+    ("after-maintain", "before-authority", "policy-changed", "policy-inactive", 1),
+    ("proof", "before-proof", "file-write-failed", "native-failed", 1),
+], ids=["transfer-authority", "source-check", "before-maintain", "before-peer", "write", "read",
+       "validate", "result", "after-maintain", "before-proof"])
+def test_inventory_transfer_stage_diagnostics_from_private_caller(
+    tmp_path, monkeypatch, inventory_caplog, fault, expected_stage, expected_category, expected_reason, request_count,
+):
+    state = {}
+
+    def response(request, value):
+        if fault == "validate":
+            return {"jsonrpc": "2.0", "id": request["id"], "result": {"tools": [{}]}}
+        if fault == "after-maintain":
+            path = state["directory"] / "policy.json"
+            current = json.loads(path.read_bytes())
+            arm_inventory(state["directory"], {**current, "revision": current["revision"] + 1})
+        return value
+
+    with inventory_running(tmp_path, monkeypatch, response=response) as (service, client, directory, desktop):
+        caplog = inventory_caplog
+        state["directory"] = directory
+        expected_policy = bridge.InventoryPolicy.parse((directory / "policy.json").read_bytes())
+
+        if fault in {"authority", "source"}:
+            original = service._authorize
+            calls = 0
+
+            def authorize(revision=None):
+                nonlocal calls
+                calls += 1
+                result = original(revision)
+                if calls == 3 and fault == "authority":
+                    raise bridge.ShadowUnavailable("policy-changed")
+                if calls == 4 and fault == "source":
+                    def source_gone():
+                        raise bridge.ShadowUnavailable("peer-mismatch")
+                    service.source.check = source_gone
+                return result
+
+            monkeypatch.setattr(service, "_authorize", authorize)
+        elif fault == "before-maintain":
+            original_observe = service._observe
+
+            def fail_first_maintenance(deadline):
+                original_load = service._load
+                def fail_load():
+                    monkeypatch.setattr(service, "_load", original_load)
+                    raise bridge.ShadowUnavailable("policy-changed")
+                monkeypatch.setattr(service, "_load", fail_load)
+                return original_observe(deadline)
+
+            monkeypatch.setattr(service, "_observe", fail_first_maintenance)
+        elif fault == "before-peer":
+            original_verify = bridge._DesktopPeer.verify
+            calls = 0
+
+            def fail_before_peer(self):
+                nonlocal calls
+                if self is service.desktop:
+                    calls += 1
+                    if calls == 5:
+                        raise bridge.ShadowUnavailable("peer-mismatch")
+                return original_verify(self)
+
+            monkeypatch.setattr(bridge._DesktopPeer, "verify", fail_before_peer)
+        elif fault in {"write", "read"}:
+            name = "write" if fault == "write" else "read"
+            original = getattr(bridge._DesktopIO, name)
+
+            def fail_io(self, *args):
+                if self is service.custody and (name == "read" or args[0].get("method") == "tools/list"):
+                    raise bridge.ShadowUnavailable("transport-failed")
+                return original(self, *args)
+
+            monkeypatch.setattr(bridge._DesktopIO, name, fail_io)
+        elif fault == "result":
+            original_result = service._result
+            def fail_result(*args, **kwargs):
+                if kwargs.get("inventory_ok") is True:
+                    raise bridge.ShadowUnavailable("peer-mismatch")
+                return original_result(*args, **kwargs)
+            monkeypatch.setattr(service, "_result", fail_result)
+        elif fault == "after-maintain":
+            pass
+        elif fault == "proof":
+            original_create = bridge._create_phase
+            def fail_before(path_owner, path, sid, data):
+                if path.name == "proof-before.json":
+                    raise bridge.ShadowUnavailable("file-write-failed")
+                return original_create(path_owner, path, sid, data)
+            monkeypatch.setattr(bridge, "_create_phase", fail_before)
+
+        result = client.register()
+        assert result["status"] == "unavailable" and result["reason"] == expected_reason
+        assert service.thread.is_alive() and not service.stop_event.is_set() and not service.unresolved
+        assert service.fenced and service.admitted is None and service.custody is None and service.desktop is None
+        if request_count:
+            wait_until(lambda: len(desktop.requests) == request_count)
+        assert desktop.connections <= 1 and len(desktop.requests) == request_count
+        if fault != "authority":
+            proof = read_proof(directory)
+            assert proof["failure"] != "none"
+            assert not proof["after_inventory_ok"]
+        records = inventory_failure_records(caplog)
+        assert len(records) == 1
+        assert records[0].args == (expected_stage, expected_category, service.epoch, expected_policy.revision)
+
+
+@native
+def test_inventory_diagnostic_root_handler_cannot_leak_native_exception(
+    tmp_path, monkeypatch, inventory_caplog, capsys,
+):
+    with inventory_running(tmp_path, monkeypatch) as (service, client, directory, desktop):
+        original = service.w.pipe.GetNamedPipeServerProcessId
+
+        def fail_server_pid(handle):
+            if service.custody is not None and handle == service.custody.handle:
+                raise OSError("private-native-lookup-sentinel")
+            return original(handle)
+
+        monkeypatch.setattr(service.w.pipe, "GetNamedPipeServerProcessId", fail_server_pid)
+
+        class BrokenStream:
+            def write(self, value):
+                raise OSError("private-log-sink-sentinel")
+
+            def flush(self):
+                pass
+
+        root = logging.getLogger()
+        handler = logging.StreamHandler(BrokenStream())
+        root.addHandler(handler)
+        try:
+            result = client.register()
+            assert result["status"] == "unavailable" and result["reason"] == "native-failed"
+            assert service.thread.is_alive() and service.fenced and not service.unresolved
+            assert service.custody is None and service.admitted is None and service.desktop is None
+            assert desktop.connections == 1 and desktop.requests == []
+            failure = read_proof(directory)
+            assert failure["failure"] == "native-failed" and not failure["after_inventory_ok"]
+            captured = capsys.readouterr()
+            assert "private-native-lookup-sentinel" not in captured.err
+            assert "Traceback" not in captured.err
+        finally:
+            root.removeHandler(handler)
+
+
+@native
+def test_inventory_transfer_keeps_primary_failure_when_logger_raises(
+    tmp_path, monkeypatch, inventory_caplog, capsys,
+):
+    with inventory_running(tmp_path, monkeypatch) as (service, client, _, desktop):
+        original = service.w.pipe.GetNamedPipeServerProcessId
+
+        def fail_server_pid(handle):
+            if service.custody is not None and handle == service.custody.handle:
+                raise OSError("private-native-lookup-sentinel")
+            return original(handle)
+
+        def fail_logger(*args, **kwargs):
+            raise OSError("private-log-sink-sentinel")
+
+        monkeypatch.setattr(service.w.pipe, "GetNamedPipeServerProcessId", fail_server_pid)
+        monkeypatch.setattr(bridge._log, "warning", fail_logger)
+        result = client.register()
+        assert result["status"] == "unavailable" and result["reason"] == "native-failed"
+        assert service._failure_diagnostic == ("native-peer", "unexpected")
+        assert service.thread.is_alive() and service.fenced and not service.unresolved
+        assert service.custody is None and service.admitted is None and desktop.requests == []
+        captured = capsys.readouterr()
+        assert "private-" not in captured.err and "Traceback" not in captured.err
+
+
+@native
+def test_inventory_primary_diagnostic_survives_secondary_failure_proof_error(
+    tmp_path, monkeypatch, inventory_caplog,
+):
+    with inventory_running(tmp_path, monkeypatch) as (service, client, _, desktop):
+        original_pid = service.w.pipe.GetNamedPipeServerProcessId
+
+        def fail_server_pid(handle):
+            if service.custody is not None and handle == service.custody.handle:
+                raise OSError("private-native-lookup-sentinel")
+            return original_pid(handle)
+
+        original_create = bridge._create_phase
+
+        def fail_failure_proof(w, path, sid, data):
+            if path.name == "proof-failure.json":
+                raise bridge.ShadowUnavailable("file-write-failed")
+            return original_create(w, path, sid, data)
+
+        monkeypatch.setattr(service.w.pipe, "GetNamedPipeServerProcessId", fail_server_pid)
+        monkeypatch.setattr(bridge, "_create_phase", fail_failure_proof)
+        result = client.register()
+        assert result["status"] == "unavailable" and result["reason"] == "native-failed"
+        assert service._failure_diagnostic == ("native-peer", "unexpected")
+        assert service.thread.is_alive() and service.fenced and not service.unresolved
+        assert service.custody is None and service.admitted is None and desktop.requests == []
+        records = inventory_failure_records(inventory_caplog)
+        assert len(records) == 1
+        assert records[0].args == ("native-peer", "unexpected", service.epoch, 1)
+        assert "private-native-lookup-sentinel" not in repr(result)
+
+
+@native
+def test_inventory_primary_diagnostic_survives_secondary_drop_failure(tmp_path, monkeypatch, inventory_caplog):
+    with inventory_running(tmp_path, monkeypatch) as (service, client, _, desktop):
+        original_pid = service.w.pipe.GetNamedPipeServerProcessId
+
+        def fail_server_pid(handle):
+            if service.custody is not None and handle == service.custody.handle:
+                raise OSError("private-native-lookup-sentinel")
+            return original_pid(handle)
+
+        original_drop = service._drop
+        calls = 0
+
+        def fail_first_drop():
+            nonlocal calls
+            calls += 1
+            original_drop()
+            if calls == 1:
+                raise OSError("private-cleanup-sentinel")
+
+        monkeypatch.setattr(service.w.pipe, "GetNamedPipeServerProcessId", fail_server_pid)
+        monkeypatch.setattr(service, "_drop", fail_first_drop)
+        try:
+            result = client.register()
+        except bridge.ShadowUnavailable as exc:
+            assert exc.category in {"peer-gone", "transport-failed", "deadline"}
+        else:
+            assert result["status"] == "unavailable"
+        wait_until(lambda: not service.thread.is_alive())
+        assert service._failure_diagnostic == ("native-peer", "unexpected")
+        assert service.fenced and not service.unresolved and service.custody is None
+        assert desktop.requests == []
+        records = inventory_failure_records(inventory_caplog)
+        assert len(records) == 1
+        assert records[0].args == ("native-peer", "unexpected", service.epoch, 1)
 
 
 @native
@@ -1292,13 +1669,74 @@ server.main()
 
 
 @native
-@pytest.mark.parametrize("second_loss", [None, "expiry", "version", "revoke", "shutdown"])
-def test_inventory_confirmed_source_process_exit_retains_same_connection(tmp_path, monkeypatch, second_loss):
+@pytest.mark.parametrize("second_loss", [None, "expiry", "version", "revoke", "shutdown", "exit-proof", "after-proof",
+    "rearm-final-authority", "source-exit", "after-peer", "post-maintain-stop", "after-write", "after-read",
+    "after-validate", "after-result"])
+def test_inventory_confirmed_source_process_exit_retains_same_connection(
+    tmp_path, monkeypatch, inventory_caplog, second_loss,
+):
     replacement_errors = watch_replacements(monkeypatch)
     directory = bridge.prepare_inventory_service(tmp_path / "exit-home")
     desktop = FakeDesktop()
     service = bridge.InventoryService(directory)
+    caplog = inventory_caplog
     child = None
+    if second_loss == "after-validate":
+        desktop.response = lambda request, value: (
+            {"jsonrpc": "2.0", "id": request["id"], "result": {"tools": [{}]}}
+            if service.after_attempted else value
+        )
+    original_create_phase = bridge._create_phase
+
+    def fail_exit_phase(w, path, sid, data):
+        phase = "exit" if second_loss == "exit-proof" else "after"
+        if second_loss in {"exit-proof", "after-proof"} and path.name == f"proof-{phase}.json":
+            raise bridge.ShadowUnavailable("file-write-failed")
+        return original_create_phase(w, path, sid, data)
+
+    monkeypatch.setattr(bridge, "_create_phase", fail_exit_phase)
+    if second_loss == "source-exit":
+        native = bridge._native()
+        original_wait = native.event.WaitForSingleObject
+
+        def fail_source_exit_wait(handle, milliseconds):
+            if (service.source is not None and handle == service.source.handle and service.proof is not None
+                    and service.proof["before_inventory_ok"] and not service.after_attempted
+                    and original_wait(handle, 0) == native.event.WAIT_OBJECT_0):
+                return native.event.WAIT_FAILED
+            return original_wait(handle, milliseconds)
+
+        monkeypatch.setattr(native.event, "WaitForSingleObject", fail_source_exit_wait)
+    elif second_loss == "after-peer":
+        original_maintain = service._maintain
+        def fail_after_peer_maintenance():
+            if service.after_attempted:
+                service.desktop.verify = lambda: (_ for _ in ()).throw(bridge.ShadowUnavailable("peer-mismatch"))
+            return original_maintain()
+        monkeypatch.setattr(service, "_maintain", fail_after_peer_maintenance)
+    elif second_loss == "post-maintain-stop":
+        original_maintain = service._maintain
+        def stop_after_authority_maintenance():
+            result = original_maintain()
+            if service.after_attempted:
+                service.stop_event.set()
+            return result
+        monkeypatch.setattr(service, "_maintain", stop_after_authority_maintenance)
+    elif second_loss in {"after-write", "after-read"}:
+        operation = second_loss.removeprefix("after-")
+        original_operation = getattr(bridge._DesktopIO, operation)
+        def fail_after_operation(self, *args):
+            if service.custody is self and service.after_attempted:
+                raise bridge.ShadowUnavailable("transport-failed")
+            return original_operation(self, *args)
+        monkeypatch.setattr(bridge._DesktopIO, operation, fail_after_operation)
+    elif second_loss == "after-result":
+        original_result = service._result
+        def fail_after_result(*args, **kwargs):
+            if service.after_attempted and kwargs.get("reason") == "observed":
+                raise bridge.ShadowUnavailable("peer-mismatch")
+            return original_result(*args, **kwargs)
+        monkeypatch.setattr(service, "_result", fail_after_result)
     observe = service._observe
     observations = []
 
@@ -1349,12 +1787,31 @@ c.dispose()
         child.stdin.write("exit\n")
         child.stdin.flush()
         assert child.wait(timeout=3) == 0
-        if second_loss is not None:
+        if second_loss not in {None, "rearm-final-authority"}:
             wait_until(lambda: read_proof(directory)["failure"] != "none")
             proof = bridge.read_inventory_proof(directory, baseline)
             assert not proof["historical_transport_pass"] and not proof["after_inventory_ok"]
-            assert proof["source_exited"] and len(desktop.requests) == 1
+            assert proof["before_inventory_ok"]
+            assert proof["source_exited"] is (second_loss not in {"exit-proof", "source-exit"})
+            expected_requests = 2 if second_loss in {"after-proof", "after-read", "after-validate", "after-result"} else 1
+            assert len(desktop.requests) == expected_requests
             assert service.custody is None and desktop.connections == 1
+            expected_failure = {
+                "expiry": ("after-authority", "policy-inactive"),
+                "exit-proof": ("exit-proof", "file-write-failed"),
+                "after-proof": ("after-proof", "file-write-failed"),
+                "source-exit": ("source-exit", "peer-mismatch"),
+                "after-peer": ("after-peer", "peer-mismatch"),
+                "post-maintain-stop": ("after-authority", "policy-inactive"),
+                "after-write": ("after-write", "transport-failed"),
+                "after-read": ("after-read", "transport-failed"),
+                "after-validate": ("after-validate", "invalid-response"),
+                "after-result": ("after-result", "peer-mismatch"),
+            }.get(second_loss)
+            if expected_failure:
+                records = inventory_failure_records(caplog)
+                assert len(records) == 1
+                assert records[0].args == (*expected_failure, service.epoch, baseline.revision)
             return
         try:
             wait_until(lambda: read_proof(directory)["after_inventory_ok"])
@@ -1362,6 +1819,7 @@ c.dispose()
             pytest.fail(repr((service.stop_event.is_set(), service.unresolved, read_proof(directory), replacement_errors)))
         result = read_proof(directory)
         assert result["after_inventory_ok"] and result["source_exited"]
+        assert not inventory_failure_records(caplog)
         assert service.custody is not None, (service.stop_event.is_set(), service.unresolved, read_proof(directory), replacement_errors)
         assert service.custody.handle is connection and desktop.connections == 1
         assert len(desktop.requests) == 2
@@ -1369,6 +1827,41 @@ c.dispose()
         # Completed evidence remains historical after ordinary later expiry and stop.
         service.utc_clock = lambda: datetime.now(timezone.utc) + timedelta(seconds=400)
         wait_until(lambda: service.custody is None)
+        assert not inventory_failure_records(caplog)
+        if second_loss == "rearm-final-authority":
+            wait_until(lambda: service.source is None)
+            # Remove only this isolated trial's exact, service-owned sealed phase paths.
+            for phase in bridge._PROOF_PHASES:
+                path = directory / f"proof-{phase}.json"
+                if path.exists():
+                    path.unlink()
+            service.utc_clock = lambda: datetime.now(timezone.utc)
+            replacement = bridge.NativeInventoryClient(directory / "active.json", threading.Event())
+            try:
+                assert replacement.ready()["status"] == "ready"
+                arm_inventory(directory, inventory_policy(service, service.source, revision=3))
+                original_authorize = service._authorize
+                calls = 0
+
+                def fail_new_final_authority(revision=None):
+                    nonlocal calls
+                    calls += 1
+                    result = original_authorize(revision)
+                    if calls == 3:
+                        raise bridge.ShadowUnavailable("policy-changed")
+                    return result
+
+                monkeypatch.setattr(service, "_authorize", fail_new_final_authority)
+                result = replacement.register()
+                assert result["status"] == "unavailable" and result["reason"] == "policy-changed"
+                assert len(desktop.requests) == 2 and desktop.connections == 1
+                records = inventory_failure_records(caplog)
+                assert len(records) == 1
+                assert records[0].args == ("transfer-authority", "policy-changed", service.epoch, 3)
+            finally:
+                replacement.dispose()
+            service.stop()
+            return
         service.stop()
         historic = bridge.read_inventory_proof(directory, baseline)
         assert historic["historical_transport_pass"] and historic["status"] == "historical"
