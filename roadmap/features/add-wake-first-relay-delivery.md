@@ -29,7 +29,13 @@ the status API and existing dashboard Relay panel at
 `2311fe0159553c113d1728b0aabf30c4e6a81e51`. The installed wrapper and service,
 queue and embedding checks passed. Scheduler health and uncertain deliveries are
 reported separately; this does not establish recipient reachability.
-A retry contract requiring exact behavior approval remains next work.
+[PR #263](https://github.com/rore/Pallium/pull/263) adds a 24-hour default for new
+messages and replies, explicit null for durable delivery, and dashboard age counts
+at `f940e02b6abf9bf174658e6aa8fffc6cae2bfaf3`. Existing assignments and expiry
+values remain unchanged, including idempotent retries. Physical history retention
+and disposition of old durable backlog remain separate work; no purge is included.
+The one-lifetime-rescue retry proposal was deferred because its permanent state
+offers limited recurring recovery. Retry behavior is unchanged.
 Unloaded-session delivery and the source-child lifetime witness
 remain unproven; this rollout makes neither claim.
 
