@@ -35,7 +35,7 @@ Root owns roadmap/features/add-wake-first-relay-delivery.md, final result accept
 
 ## Recovery
 
-Next: affected corrections, selector-required full once, independent final result acceptance and final-head PR CI. Production is implemented after independent plan acceptance and meaningful red evidence. Checkout: C:/Users/I347041/.codex/worktrees/codex-wake-persistence/Pallium. Interpreter: C:/Dev/rore/Pallium/.venv/Scripts/python.exe. Do not reopen prior validation or mutate live state.
+Next: final-head PR CI and root acceptance. Production and affected corrections are implemented and independently reviewed; completed full and focused rerun evidence appears below. Checkout: managed worktree (local path omitted). Interpreter: project virtualenv (local path omitted). Do not reopen prior validation or mutate live state.
 
 2026-09-29: Affected checks initially314passed/2failed: obsolete400-char fixture and supported255sender guard. Root/reviewer accepted measured short-envelope budget; identical guidance reduced from281 to198characters, preserving exact ID, completed-action, unknown-target-state, attempt-not-proof and receipt semantics. The unchanged255sender lifecycle recovers its COMPLETE payload. Correction run138passed; formatter29passed and Node54passed/7skipped. Initial selector -x full stopped at2failed/805passed/2skipped/1xfailed: maximum preview fixture assumed whole1500body and Claude payload-once substring matched guideword done. Clearer completed-actions wording preserves the untouched Claude contract. Maximum fixture now verifies positive bounded preview, exact omitted count/offset, public continuation reconstruction and original ACK/readback; exact3failing/relevant nodes pass. Complete full run justified because -x interrupted coverage.
 
