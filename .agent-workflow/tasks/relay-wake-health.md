@@ -30,17 +30,21 @@ Owner: relay-dev. Canonical roadmap: `roadmap/features/add-wake-first-relay-deli
 
 **Verification plan:** State/reason/evidence distinctions -> real TestClient /status and Relay summary readback with isolated SQLite and fake native boundary. Pending/claim/ACK/expiry and stale uncertain reservations -> caller lifecycle with existing claim/ACK surfaces and terminal precedence. Empty/max/over-max, closed/unreachable endpoints, active/expired leases, Unicode/render-unsafe data and malformed authority -> bounded snapshot caller tests with precise complete/incomplete metrics. DB read/busy failures and absent/partial running evidence -> unknown/degraded without secret output or false zero. Concurrent native ownership and repeated status reads -> no acquisition of native lock, no scheduling and unchanged rows/generation/claims/native counts. UI normal/uncertain/unknown/fetch failure and one snapshot per refresh -> executed shipped JavaScript through existing Node pattern. Entire change -> selector full once, affected wake/status/dashboard checks, fresh Redline/import/workflow checks, independent immutable review and PR CI.
 
-**Plan review:** Pending independent non-implementer review of this seed; no application or test edit yet.
+**Plan review:** Independent non-implementer Sol reviewer `/root/wake_health_review` accepted immutable seed 56f2a4ac0acfa27711bfae5b8805f8caf7419be8 on 2026-09-29, with refinements recorded below. No pre-edit blocker; no application or test edit preceded acceptance.
 
 **Approvals:** Approved by user 2026-09-28: "This is a night job so i give blanket approval" (source 15322050-ec54-43b1-bef2-44b942ea0d60). Manager accepts this bounded slice and delegates review/implementation in the exact source Relay assignment above; no personal inspection is claimed and no fresh denial may be bypassed.
 
 **Exceptions:** None
 
-**State:** Blocked or returned to planning
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Planning
 
 Prior standalone inspection made no changes. This new implementation scope is not documentation-exempt: storage/core/app/test paths require the normal isolated branch/Work Record/PR flow. Provisional Redline requires architecture and persistence attention; no protected behavior test, schema or forbidden import change is intended. Scope is observational only. Existing main/installed rollout and PR259 evidence are complete and must not be rerun as this feature's evidence.
 
-Current checkout: `C:\Users\I347041\.codex\worktrees\codex-service-custody\Pallium`; new branch `feat/relay-wake-health`, trusted base `c3db54c9c66d61bd96fd554060c626c16a159288`. Former PR259 is merged; its branch/history and ignored evidence are preserved. Initial block is independent plan review, not missing personal approval. No code, tests or live action has begun.
+Current checkout: `C:\Users\I347041\.codex\worktrees\codex-service-custody\Pallium`; new branch `feat/relay-wake-health`, trusted base `c3db54c9c66d61bd96fd554060c626c16a159288`. Former PR259 is merged; its branch/history and ignored evidence are preserved. Independent technical plan acceptance discharges the initial block; no code, tests or live action preceded it.
+
+Accepted refinements: 256+1 bounds materialized rows and Python render checks, not oldest-first SQL work or the existing 15-second SQLite busy timeout. Apply the cap before render filtering; overflow yields null/incomplete eligibility metrics. Count eligible deliveries, not coalesced endpoints. Missing correlated rows and scope/generation mismatches cannot silently become zero unresolved uncertainty. A set recovery stop event means non-running even if its thread remains briefly alive. Usable establishes authority and an observed live callback-owning thread only, not progress, reachability or admission. Test disabling the snapshot via the optional status flag, invalid flag input, 256/257, fetch failure and native ownership overlap. No trace-history aggregation or new instrumentation.
+
+Implementation files: storage/sqlite_relay.py, core/relay.py, app/relay_wake_health.py, app/main.py, app/dashboard.py, app/dashboard.html, tests/test_relay_wake_health.py, tests/test_health.py, tests/dashboard_relay_wake_health_ui.mjs, docs/dashboard.md and this Work Record. Start with caller/UI tests only; production follows qualifying red evidence. Storage helper scope reported to the manager for envelope-owner coordination.
