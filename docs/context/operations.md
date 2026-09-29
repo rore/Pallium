@@ -78,21 +78,59 @@ and send-time reconciliation remove only missing deliveries or exact
 endpoint-matching terminal reservations; pending, active claims, endpoint
 mismatches, and uncertain reads keep their fences. Service restart reloads those
 durable reservations before reconstructing pending work, preventing blind
-resubmission of accepted or uncertain prompts. Codex wake fences follow the
-resolved Relay SQLite database: a conventional `data/pallium-relay.db` uses its
-parent home's `codex-wake` directory, while any other file uses a sibling
-`<full-database-filename>-codex-wake` directory. In-memory apps keep app-local
-nonpersistent fences. `PALLIUM_CODEX_WAKE_DIR` overrides this selection; never
-copy reservations between instances. An exact
+resubmission of accepted or uncertain prompts. Current Codex fences and their
+generation high-water are stored in the resolved Relay SQLite database. The
+old `reservations.json` is read only during one offline import: a conventional
+`data/pallium-relay.db` uses its parent home's `codex-wake` directory, while
+other files use a sibling `<full-database-filename>-codex-wake` directory.
+`PALLIUM_CODEX_WAKE_DIR` overrides only that legacy import source. Completed
+migration ignores the leftover file, which remains unchanged. In-memory apps
+keep their fences in their app-owned ephemeral Relay database. Never copy
+reservations between instances. An exact
 internal Codex wake is excluded from deduplication and memory ingestion. The native
 prompt can remain model-visible when no delivery block accompanies it, so it carries
 the exact delivery ID for nonmutating trace inspection. Ordinary user prompts remain
 fail-open.
 
-This protects concurrent users inside the supported single-Uvicorn-process service.
-Horizontal multi-process wake dispatch is not yet qualified because recovery
-coalescing is process-local; add durable cross-process wake-attempt reservation when
-a multi-process deployment is introduced.
+This protects concurrent users inside the supported single-owner, single-Uvicorn-process
+service. SQLite serializes current-fence transitions; the native initiation guard
+remains process-local. Horizontal native wake ownership is not qualified.
+
+### One-time Codex wake store upgrade
+
+Fresh `service run`, `serve`, and `all` launches initialize an empty SQLite authority
+automatically under the existing owner lock, before starting children. Both database
+files and the legacy source must be conclusively absent. Ordinary app startup never
+imports an existing store. Reinstall refuses an unmarked store before replacing its
+old launcher/unit metadata.
+
+On Windows, `scripts/restart-service.ps1` drains and verifies the installed old tree,
+imports and verifies wake state using the installed interpreter/home, then starts
+the service. `-StopOnly` only stops and verifies. Failed drain/import/verification
+leaves the service stopped. On Linux, use the same installed home for the one-time
+offline sequence:
+
+```sh
+pallium service stop --home /path/to/pallium-home
+pallium service initialize-wakes --home /path/to/pallium-home
+pallium service start --home /path/to/pallium-home
+```
+
+For a foreground deployment without an installed service, stop all API/supervisor
+owners and native wake workers first, then run `pallium service initialize-wakes
+--home /path/to/pallium-home --foreground-quiescent`. That option is an explicit
+operator declaration of quiescence, not process detection. The supported owner lock
+does not exclude another home pointing at the same database or an unsupported old
+binary started concurrently. Do not mix old file owners and new SQLite owners.
+
+The atomic import preserves reserved, accepted, uncertain, generation and exact-claim
+correlation fences. Corrupt/unreadable/conflicting legacy state refuses migration;
+repair the source while stopped before retrying. Back up the paired databases and
+legacy source before upgrade. After SQLite-owned attempts exist, prefer a forward
+fix. Downgrade requires quiescence and reconciled state export; never launch an old
+file-only binary against the stale leftover JSON. Verify `/health`, `/status`, and
+`/debug/queue/health` after the supported service start/restart.
+
 ## Developing integrations without leaving stale local installs
 
 Claude Code and Codex setup commands write absolute checkout and Python paths into the

@@ -8,6 +8,7 @@ import sqlite3
 import time
 import unicodedata
 import uuid
+from dataclasses import asdict, replace
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
@@ -23,6 +24,7 @@ from core.relay import (
     RelayNotFoundError,
 )
 from redaction import redact_sensitive
+from core.codex_wake import CodexWakeRegistry, CodexWakeReservation, MAX_RESERVATIONS
 from storage.sqlite_schema import (
     RelayAliasRecord,
     RelayDeliveryRecord,
@@ -32,6 +34,8 @@ from storage.sqlite_schema import (
     RelayMessageRecord,
     RelaySessionRecord,
     RelaySessionWorkRefRecord,
+    RelayCodexWakeReservationRecord,
+    RelayCodexWakeStateRecord,
 )
 
 
@@ -230,6 +234,132 @@ def _delivery_view(
 
 
 class SQLiteRelayMixin:
+    @staticmethod
+    def _wake_item(row):
+        return CodexWakeReservation(**{
+            name: getattr(row, name) for name in CodexWakeReservation.__dataclass_fields__
+        })
+
+    def relay_codex_wake_snapshot(self):
+        with self._relay_session_factory() as db:
+            db.connection().exec_driver_sql("BEGIN")  # One consistent marker/row snapshot.
+            marker = db.get(RelayCodexWakeStateRecord, 1)
+            rows = db.scalars(select(RelayCodexWakeReservationRecord).limit(MAX_RESERVATIONS + 1)).all()
+            self._validate_wake_authority(db, marker, rows)
+            return marker is not None, tuple(self._wake_item(row) for row in rows)
+
+    def _validate_wake_authority(self, db, marker, rows=None):
+        if rows is None:
+            rows = db.scalars(select(RelayCodexWakeReservationRecord).limit(MAX_RESERVATIONS + 1)).all()
+        if (db.scalar(select(func.count()).select_from(RelayCodexWakeStateRecord)) != (1 if marker is not None else 0)
+            or len(rows) > MAX_RESERVATIONS
+            or (marker is None and rows)
+            or (marker is not None and (type(marker.generation) is not int or not 0 <= marker.generation < 2**63))
+            or any(not CodexWakeRegistry._valid_item(self._wake_item(row))
+                   or row.generation > marker.generation for row in rows)):
+            raise ValueError("invalid persisted Codex wake authority")
+
+    def relay_codex_wake_initialize(self, *, reservations):
+        with self._begin_relay_immediate() as db:
+            if db.get(RelayCodexWakeStateRecord, 1) is not None:
+                return True
+            if db.scalar(select(func.count()).select_from(RelayCodexWakeReservationRecord)):
+                return False
+            high_water = max(
+                [0, db.scalar(select(func.max(RelayDeliveryRecord.codex_wake_generation))) or 0]
+                + [item.generation for item in reservations]
+            )
+            if high_water >= 2**63 - 1:
+                return False
+            db.add_all(RelayCodexWakeReservationRecord(**asdict(item)) for item in reservations)
+            db.add(RelayCodexWakeStateRecord(id=1, generation=high_water))
+        return True
+
+    def relay_codex_wake_transition(self, *, operation, **kwargs):
+        """Commit one bounded current-fence transition; never invoke caller code."""
+        result = None
+        with self._begin_relay_immediate() as db:
+            marker = db.get(RelayCodexWakeStateRecord, 1)
+            self._validate_wake_authority(db, marker)
+            if marker is None:
+                return None
+            if operation == "reserve":
+                values = kwargs["values"]
+                if db.get(RelayCodexWakeReservationRecord, values["recipient_endpoint_id"]) is not None:
+                    return None
+                if db.scalar(select(RelayCodexWakeReservationRecord).where(
+                    RelayCodexWakeReservationRecord.delivery_id == values["delivery_id"]
+                )) is not None:
+                    return None
+                if db.scalar(select(func.count()).select_from(RelayCodexWakeReservationRecord)) >= MAX_RESERVATIONS:
+                    return None
+                state = self._relay_codex_wake_reservation_state(
+                    db, delivery_id=values["delivery_id"], current=_now()
+                )
+                if (state["state"] != "pending"
+                    or state["recipient_endpoint_id"] != values["recipient_endpoint_id"]
+                    or state["wake_target"] != {"runtime": "codex", "session_ref": values["session_ref"], "container_ref": values["container_ref"]}):
+                    return None
+                if marker.generation >= 2**63 - 1:
+                    return None
+                marker.generation += 1
+                result = CodexWakeReservation(**values, generation=marker.generation)
+                db.add(RelayCodexWakeReservationRecord(**asdict(result)))
+            elif operation == "release":
+                removed = []
+                for expected in kwargs["reservations"]:
+                    row = db.get(RelayCodexWakeReservationRecord, expected.recipient_endpoint_id)
+                    if row is not None and self._wake_item(row) == expected:
+                        db.delete(row)
+                        removed.append(expected)
+                result = tuple(removed)
+            else:
+                expected = kwargs["reservation"]
+                row = db.get(RelayCodexWakeReservationRecord, expected.recipient_endpoint_id)
+                if row is None or self._wake_item(row) != expected:
+                    return None
+                if operation == "reconcile":
+                    try:
+                        state = self._relay_codex_wake_reservation_state(db, delivery_id=expected.delivery_id, current=_now())
+                    except RelayNotFoundError:
+                        db.delete(row)
+                        result = ("released", expected)
+                    else:
+                        if state["state"] in {"delivered", "expired", "suppressed"}:
+                            db.delete(row)
+                            result = ("released", expected)
+                        elif (state["state"] == "pending" and state["stored_state"] == "claimed"
+                              and state["attempts"] > 0
+                              and (state["attempts"] == expected.correlated_claim_attempts
+                                   or state["codex_wake_generation"] == expected.generation)
+                              and state["wake_target"] is not None
+                              and marker.generation < 2**63 - 1):
+                            marker.generation += 1
+                            target = state["wake_target"]
+                            replacement = replace(expected, generation=marker.generation, outcome="reserved",
+                                                  correlated_claim_attempts=None, session_ref=target["session_ref"], container_ref=target["container_ref"])
+                            for name, value in asdict(replacement).items():
+                                setattr(row, name, value)
+                            result = ("replaced", replacement)
+                    # Return only after the enclosing transaction commits.
+                elif operation == "replace":
+                    if marker.generation >= 2**63 - 1:
+                        return None
+                    marker.generation += 1
+                    result = replace(expected, generation=marker.generation, outcome="reserved", correlated_claim_attempts=None, **kwargs["values"])
+                elif operation == "outcome":
+                    result = replace(expected, outcome=kwargs["outcome"])
+                elif operation == "correlate":
+                    if expected.correlated_claim_attempts not in (None, kwargs["attempts"]):
+                        return None
+                    result = replace(expected, correlated_claim_attempts=kwargs["attempts"])
+                else:
+                    raise ValueError("unsupported Codex wake transition")
+                if operation != "reconcile":
+                    for name, value in asdict(result).items():
+                        setattr(row, name, value)
+        return result
+
     def relay_shadow_snapshot(
         self,
         *,
@@ -1729,20 +1859,6 @@ class SQLiteRelayMixin:
             return self._relay_codex_wake_reservation_state(
                 db, delivery_id=delivery_id, current=_now(now)
             )
-
-    def relay_reconcile_codex_wake_reservation(
-        self,
-        *,
-        delivery_id: str,
-        decision: Callable[[dict[str, Any]], bool],
-        now: datetime | None = None,
-    ) -> bool:
-        """Evaluate and replace a wake fence while blocking Relay claims."""
-        with self._begin_relay_immediate() as db:
-            state = self._relay_codex_wake_reservation_state(
-                db, delivery_id=delivery_id, current=_now(now)
-            )
-            return decision(state) is True
 
     def relay_wake_candidates(
         self,

@@ -100,7 +100,11 @@ def test_suppressed_is_terminal_across_http_dashboard_and_wake(client, tmp_path,
     storage = client.app.state.pallium_service._storage
     now = datetime.now(timezone.utc)
     codex_dir, _ = _clean_wake_stores(tmp_path, monkeypatch)
-    registry = CodexWakeRegistry(codex_dir)
+    relay = RelayService(storage)
+    registry = CodexWakeRegistry(
+        relay_service=relay, legacy_state_dir=codex_dir,
+    )
+    assert registry.initialize(old_owner_drained=True)
     _seed(storage, now)
     assert registry.reserve(
         recipient_endpoint_id=SOURCE_A,
@@ -111,13 +115,16 @@ def test_suppressed_is_terminal_across_http_dashboard_and_wake(client, tmp_path,
     manifest = _manifest(storage, [{"delivery_id": DELIVERY_A, "disposition": "suppress"}, {"delivery_id": DELIVERY_B, "disposition": "suppress"}])
     _apply(storage, manifest, now)
 
-    restarted = CodexWakeRegistry(codex_dir)
+    restarted = CodexWakeRegistry(
+        relay_service=relay, legacy_state_dir=codex_dir,
+    )
+    assert restarted.initialize(old_owner_drained=True)
     assert restarted.snapshot(SOURCE_A) is not None
     recover_expired_relay_wakes(
         RelayService(storage), ClaudeWakeRegistry(), codex_registry=restarted,
     )
     assert restarted.snapshot(SOURCE_A) is None
-    assert CodexWakeRegistry(codex_dir).snapshot(SOURCE_A) is None
+    assert CodexWakeRegistry(relay_service=relay).snapshot(SOURCE_A) is None
 
     status = client.get(f"/relay/messages/{MESSAGE_A}", params={"container_ref": "git:sender"})
     assert status.status_code == 200 and status.json()["deliveries"][0]["state"] == "suppressed"

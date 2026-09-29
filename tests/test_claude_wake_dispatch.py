@@ -2015,7 +2015,7 @@ def test_posix_transport_post_frame_failure_is_uncertain(monkeypatch: pytest.Mon
     assert result.evidence == ("submission_attempted",)
     assert result.native_retry_safe is False
 
-def test_default_router_codex_wake_registry_stays_in_test_directory(
+def test_router_codex_wake_registry_uses_isolated_sqlite_authority(
     client, monkeypatch: pytest.MonkeyPatch, tmp_path,
 ) -> None:
     from fastapi import FastAPI
@@ -2023,10 +2023,17 @@ def test_default_router_codex_wake_registry_stays_in_test_directory(
 
     from app import codex_wake
     from app.dependencies import build_router
+    from core.relay import RelayService
 
     expected_dir = Path(os.environ["PALLIUM_CODEX_WAKE_DIR"])
     assert expected_dir.parent == tmp_path
-    registry = codex_wake.get_codex_wake_registry()
+    default = codex_wake.get_codex_wake_registry()
+    assert default._path is None and not default.usable
+    storage = client.app.state.pallium_service._storage
+    registry = codex_wake.get_codex_wake_registry_for_relay_database(
+        str(storage._relay_engine.url), relay_service=RelayService(storage),
+    )
+    assert registry.initialize(old_owner_drained=True)
     assert registry._path == expected_dir / "reservations.json"
     monkeypatch.setattr(
         "app.dependencies.schedule_codex_relay_wake",
@@ -2038,6 +2045,7 @@ def test_default_router_codex_wake_registry_stays_in_test_directory(
     app.include_router(build_router(
         client.app.state.pallium_service,
         relay_storage=client.app.state.pallium_service._storage,
+        codex_wake_registry=registry,
     ))
     http = TestClient(app, client=("127.0.0.1", 50000))
     scope = {"container_ref": "git:example.test/codex-test-state"}
@@ -2061,5 +2069,5 @@ def test_default_router_codex_wake_registry_stays_in_test_directory(
     assert registry.snapshot(delivery["recipient_endpoint_id"]).delivery_id == (
         delivery["delivery_id"]
     )
-    assert registry._path.is_file()
+    assert not registry._path.exists()
     assert registry._path.is_relative_to(tmp_path)

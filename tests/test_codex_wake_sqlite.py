@@ -4,8 +4,10 @@ from contextlib import contextmanager
 from dataclasses import asdict, replace
 from datetime import datetime, timedelta, timezone
 import json
+import logging
 from pathlib import Path
 import sqlite3
+import threading
 
 import pytest
 from sqlalchemy.exc import OperationalError
@@ -13,9 +15,380 @@ from sqlalchemy.exc import OperationalError
 from core.codex_wake import CodexWakeRegistry, CodexWakeReservation
 from core.relay import RELAY_CLAIM_LEASE_SECONDS, RelayService
 from storage.sqlite import SQLiteStorageProvider
+from app import codex_wake
+from app.main import create_app
+from app.config import AppConfig
+from storage.vector_index import VectorIndexConfig
+from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+from app.dependencies import build_router
 
 
 SCOPE = {"container_ref": "git:example.test/wake-東京"}
+
+
+def test_app_uses_sqlite_authority_and_does_not_implicitly_import(tmp_path, monkeypatch):
+    monkeypatch.delenv("PALLIUM_CODEX_WAKE_DIR", raising=False)
+    config = AppConfig(
+        storage_backend="sqlite", sqlite_url=f"sqlite:///{tmp_path / 'app.db'}",
+        default_use_case="demo_agent_memory", semantic_packages=DEMO_SEMANTIC_PACKAGES,
+        vector_index=VectorIndexConfig(enabled=False),
+    )
+    app = create_app(config)
+    assert app.state.codex_wake_registry.persistent
+    assert not app.state.codex_wake_registry.usable
+    assert app.state.codex_wake_registry.reservations() == ()
+
+
+def test_app_recreate_uses_new_storage_and_shared_initiation_guard(tmp_path, monkeypatch):
+    monkeypatch.delenv("PALLIUM_CODEX_WAKE_DIR", raising=False)
+    config = AppConfig(storage_backend="sqlite", sqlite_url=f"sqlite:///{tmp_path / 'app.db'}",
+                       default_use_case="demo_agent_memory", semantic_packages=DEMO_SEMANTIC_PACKAGES,
+                       vector_index=VectorIndexConfig(enabled=False))
+    first = create_app(config)
+    first_registry = first.state.codex_wake_registry
+    first.state.pallium_service._storage.close()
+    second = create_app(config)
+    second_registry = second.state.codex_wake_registry
+    assert second_registry is not first_registry
+    assert second_registry._relay._store is second.state.pallium_service._storage
+    assert second_registry._lock is first_registry._lock
+
+
+def test_unavailable_relay_factory_never_writes_legacy_json(tmp_path):
+    database = tmp_path / "relay.db"
+    registry = codex_wake.get_codex_wake_registry_for_relay_database(f"sqlite:///{database}")
+    assert not registry.usable
+    assert registry.reserve(recipient_endpoint_id="relay-session-" + "1" * 32,
+                            delivery_id="delivery", session_ref="target", **SCOPE) is None
+    assert not (tmp_path / "relay.db-codex-wake" / "reservations.json").exists()
+
+
+def test_decision_callback_does_not_run_inside_sql_transaction(relay_store):
+    relay, _, database = relay_store
+    delivery = _send(relay)
+
+    def decision(state):
+        with sqlite3.connect(database, timeout=0) as second_writer:
+            second_writer.execute("BEGIN IMMEDIATE")
+            second_writer.rollback()
+        return state["delivery_id"] == delivery["delivery_id"]
+
+    assert relay.reconcile_codex_wake_reservation(delivery_id=delivery["delivery_id"], decision=decision)
+
+
+def test_storage_failure_logs_bounded_metadata_without_sql_values(relay_store, tmp_path, monkeypatch, caplog):
+    relay, _, _ = relay_store
+    registry = _registry(relay, tmp_path / "legacy")
+    assert registry.initialize(old_owner_drained=True)
+    delivery = _send(relay)
+
+    def denied(*args, **kwargs):
+        raise OperationalError("secret-sql-payload", {"secret_scope": "secret-scope-value"}, sqlite3.OperationalError("secret-database-path"))
+
+    monkeypatch.setattr(relay, "codex_wake_transition", denied)
+    with caplog.at_level(logging.WARNING, logger="core.codex_wake"):
+        assert _reserve(registry, delivery) is None
+    assert "codex_wake_transition_failed operation=reserve error_type=OperationalError" in caplog.text
+    assert "secret-" not in caplog.text and "secret_scope" not in caplog.text
+
+
+@pytest.mark.parametrize("native_outcome,persisted_outcome", [("queued", "accepted"), ("ambiguous", "uncertain")])
+def test_http_send_restart_exact_claim_ack_preserves_sqlite_fence(
+    client, tmp_path, monkeypatch, native_outcome, persisted_outcome,
+):
+    storage = client.app.state.pallium_service._storage
+    relay = RelayService(storage)
+    directory = tmp_path / "legacy"
+    registry = _registry(relay, directory)
+    assert registry.initialize(old_owner_drained=True)
+    workers, native_calls = [], []
+    original_schedule = codex_wake._schedule_reserved_codex_relay_wake
+
+    def launch(*args):
+        native_calls.append(args)
+        return None, (native_outcome, None, 0)
+
+    def schedule(*args, **kwargs):
+        worker = original_schedule(*args, **kwargs)
+        workers.append(worker)
+        return worker
+
+    monkeypatch.setattr("app.dependencies.schedule_codex_relay_wake", codex_wake.schedule_codex_relay_wake)
+    monkeypatch.setattr(codex_wake, "_schedule_reserved_codex_relay_wake", schedule)
+    monkeypatch.setattr(codex_wake, "_start_launch", launch)
+    monkeypatch.setattr(codex_wake, "_DEBOUNCE_SECONDS", 0)
+
+    def route(actual_registry):
+        app = FastAPI()
+        app.include_router(build_router(client.app.state.pallium_service, relay_storage=storage,
+                                       codex_wake_registry=actual_registry))
+        return TestClient(app)
+
+    http = route(registry)
+    for session in ("sender", "target"):
+        assert http.post("/relay/turn", json={"runtime": "codex", "session_ref": session, **SCOPE}).status_code == 200
+    body = {"sender_runtime": "codex", "sender_session_ref": "sender", "recipient": "codex:target",
+            "message_id": "sqlite-wake-lifecycle", "payload": "Unicode payload 東京", **SCOPE}
+    sent = http.post("/relay/messages", json=body)
+    assert sent.status_code == 200, sent.text
+    for worker in workers:
+        assert worker is not None
+        worker.join(2)
+        assert not worker.is_alive()
+    delivery = sent.json()["deliveries"][0]
+    current = registry.snapshot(delivery["recipient_endpoint_id"])
+    assert current is not None and current.outcome == persisted_outcome
+    assert http.post("/relay/messages", json=body).status_code == 200
+    assert len(native_calls) == 1
+    restarted = _registry(relay, directory)
+    assert restarted.snapshot(current.recipient_endpoint_id) == current
+    http = route(restarted)
+    assert http.post("/relay/messages", json=body).status_code == 200
+    assert len(native_calls) == 1
+    claim = http.post("/relay/turn", json={"runtime": "codex", "session_ref": "target",
+                                             "wake_delivery_id": current.delivery_id, **SCOPE})
+    assert claim.status_code == 200, claim.text
+    claimed = claim.json()["deliveries"][0]
+    assert claimed["payload"] == body["payload"]
+    assert restarted.snapshot(current.recipient_endpoint_id).correlated_claim_attempts == claimed["attempts"]
+    acknowledged = http.post("/relay/deliveries/ack", json={"delivery_id": current.delivery_id,
+                                                              "claim_token": claimed["claim_token"], **SCOPE})
+    assert acknowledged.status_code == 200, acknowledged.text
+    observed = http.get(f"/relay/messages/{body['message_id']}", params=SCOPE).json()["deliveries"][0]
+    assert observed["state"] == "delivered" and observed["attempts"] == 1
+    assert restarted.reservations() == ()
+    assert http.post("/relay/turn", json={"runtime": "codex", "session_ref": "target", **SCOPE}).json()["deliveries"] == []
+    trace = http.get(f"/relay/messages/{body['message_id']}/trace", params=SCOPE)
+    assert trace.status_code == 200
+    assert any(event["stage"] == "completed" for event in trace.json()["events"])
+
+
+def test_reconciliation_commits_replacement_before_worker_schedule(relay_store, tmp_path, monkeypatch):
+    relay, _, database = relay_store
+    registry = _registry(relay, tmp_path / "legacy")
+    assert registry.initialize(old_owner_drained=True)
+    reservation = _reserve(registry, _send(relay))
+    assert registry.record_outcome(reservation, "accepted")
+    relay.turn(runtime="codex", session_ref="target", **SCOPE,
+               exact_delivery_id=reservation.delivery_id,
+               codex_wake_endpoint_id=reservation.recipient_endpoint_id,
+               codex_wake_generation=reservation.generation,
+               now=datetime.now(timezone.utc) - timedelta(seconds=RELAY_CLAIM_LEASE_SECONDS + 1))
+    calls = []
+
+    def schedule(item, actual_registry, **kwargs):
+        with sqlite3.connect(database, timeout=0) as writer:
+            writer.execute("BEGIN IMMEDIATE")
+            assert actual_registry.snapshot(item.recipient_endpoint_id) == item
+            writer.rollback()
+        calls.append(item)
+
+    monkeypatch.setattr(codex_wake, "_schedule_reserved_codex_relay_wake", schedule)
+    assert codex_wake.reconcile_codex_relay_wake_reservations(relay, registry=registry) == 1
+    assert len(calls) == 1 and calls[0].generation > reservation.generation
+
+
+def test_release_waits_for_native_initiation_ownership(relay_store, tmp_path):
+    relay, _, _ = relay_store
+    registry = _registry(relay, tmp_path / "legacy")
+    assert registry.initialize(old_owner_drained=True)
+    reservation = _reserve(registry, _send(relay))
+    entered, finish, released = threading.Event(), threading.Event(), threading.Event()
+
+    def native():
+        entered.set()
+        assert finish.wait(2)
+
+    worker = threading.Thread(target=lambda: registry.run_if_current(reservation, native))
+    release = threading.Thread(target=lambda: (registry.release_generation(reservation), released.set()))
+    worker.start()
+    assert entered.wait(2)
+    release.start()
+    try:
+        assert not released.wait(.05)
+    finally:
+        finish.set()
+        worker.join(2)
+        release.join(2)
+    assert released.is_set()
+    assert registry.run_if_current(reservation, lambda: pytest.fail("stale native launch")) == (False, None)
+
+
+def test_invalid_generation_authority_disables_native_launch(relay_store, tmp_path):
+    relay, _, database = relay_store
+    registry = _registry(relay, tmp_path / "legacy")
+    assert registry.initialize(old_owner_drained=True)
+    reservation = _reserve(registry, _send(relay))
+    with sqlite3.connect(database) as connection:
+        connection.execute("UPDATE relay_codex_wake_state SET generation=-1")
+    assert not registry.usable
+    assert registry.run_if_current(reservation, lambda: pytest.fail("invalid-authority native launch")) == (False, None)
+
+
+def test_uninspectable_legacy_file_fails_closed(relay_store, tmp_path, monkeypatch):
+    relay, _, database = relay_store
+    directory = tmp_path / "legacy"
+    registry = _registry(relay, directory)
+    original = Path.open
+
+    def denied(path, *args, **kwargs):
+        if path == directory / "reservations.json":
+            raise PermissionError("injected metadata denial")
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "exists", lambda path: False)
+    monkeypatch.setattr(Path, "open", denied)
+    assert not registry.initialize(old_owner_drained=True)
+    assert not registry.usable
+    _assert_uninitialized_database(database)
+
+
+@pytest.mark.parametrize("root", [[], None, 1])
+def test_non_object_legacy_input_fails_closed(relay_store, tmp_path, root):
+    relay, _, database = relay_store
+    path = _legacy(tmp_path / "legacy", [])
+    path.write_text(json.dumps(root), encoding="utf-8")
+    assert not _registry(relay, path.parent).initialize(old_owner_drained=True)
+    _assert_uninitialized_database(database)
+
+
+def test_wake_tables_are_only_in_relay_database(relay_store):
+    _, _, database = relay_store
+    with sqlite3.connect(database.with_name("main.db")) as connection:
+        tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    assert "relay_codex_wake_reservations" not in tables
+    assert "relay_codex_wake_state" not in tables
+
+
+def test_maximum_legacy_unicode_rows_fit_bounded_import(relay_store, tmp_path):
+    relay, _, database = relay_store
+    rows = [CodexWakeReservation(
+        recipient_endpoint_id=f"relay-session-{index:032x}",
+        delivery_id=f"{index:04x}" + "😀" * 124,
+        session_ref="😀" * 512, container_ref="😀" * 512, generation=index + 1,
+    ) for index in range(256)]
+    path = _legacy(tmp_path / "legacy", rows)
+    assert _registry(relay, path.parent).initialize(old_owner_drained=True)
+    assert _stored_items(database) == set(rows)
+
+
+def test_authority_read_error_never_consults_legacy_after_migration(relay_store, tmp_path, monkeypatch):
+    relay, _, _ = relay_store
+    path = _legacy(tmp_path / "legacy", [])
+    registry = _registry(relay, path.parent)
+    assert registry.initialize(old_owner_drained=True)
+    original_open = Path.open
+
+    def trap(path_arg, *args, **kwargs):
+        if path_arg == path:
+            pytest.fail("unreadable authority caused legacy reimport")
+        return original_open(path_arg, *args, **kwargs)
+
+    def unavailable():
+        raise OperationalError("SELECT", {}, sqlite3.OperationalError("injected read failure"))
+
+    monkeypatch.setattr(relay, "codex_wake_snapshot", unavailable)
+    monkeypatch.setattr(Path, "open", trap)
+    assert not registry.initialize(old_owner_drained=True)
+
+
+def test_natural_claim_wins_before_reserve_without_starting_worker(relay_store, tmp_path, monkeypatch):
+    relay, _, _ = relay_store
+    registry = _registry(relay, tmp_path / "legacy")
+    assert registry.initialize(old_owner_drained=True)
+    delivery = _send(relay)
+    relay.turn(runtime="codex", session_ref="target", **SCOPE)
+    monkeypatch.setattr(codex_wake, "_schedule_reserved_codex_relay_wake", lambda *a, **kw: pytest.fail("active claim scheduled worker"))
+    assert codex_wake.schedule_codex_relay_wake(
+        {"recipient": "codex:target", "deliveries": [delivery]}, SCOPE,
+        registry=registry, relay_service=relay,
+    ) is None
+    assert registry.reservations() == ()
+
+
+@pytest.mark.parametrize("committed", [False, True])
+@pytest.mark.parametrize("operation", ["outcome", "correlate", "release", "reconcile"])
+def test_ambiguous_settlement_keeps_durable_authority_and_prevents_reschedule(
+    relay_store, tmp_path, monkeypatch, operation, committed,
+):
+    relay, storage, database = relay_store
+    registry = _registry(relay, tmp_path / "legacy")
+    assert registry.initialize(old_owner_drained=True)
+    reservation = _reserve(registry, _send(relay))
+    if operation == "reconcile":
+        relay.turn(runtime="codex", session_ref="target", **SCOPE,
+                   exact_delivery_id=reservation.delivery_id,
+                   codex_wake_endpoint_id=reservation.recipient_endpoint_id,
+                   codex_wake_generation=reservation.generation,
+                   now=datetime.now(timezone.utc) - timedelta(seconds=RELAY_CLAIM_LEASE_SECONDS + 1))
+    original = storage._begin_relay_immediate
+
+    @contextmanager
+    def ambiguous():
+        with original() as session:
+            yield session
+            if not committed:
+                raise OperationalError("COMMIT", {}, sqlite3.OperationalError("before commit"))
+        raise OperationalError("COMMIT", {}, sqlite3.OperationalError("after commit"))
+
+    monkeypatch.setattr(storage, "_begin_relay_immediate", ambiguous)
+    monkeypatch.setattr(codex_wake, "_schedule_reserved_codex_relay_wake", lambda *a, **kw: pytest.fail("ambiguous settlement scheduled worker"))
+    if operation == "outcome":
+        assert not registry.record_outcome(reservation, "uncertain")
+    elif operation == "correlate":
+        assert not registry.correlate_claim(
+            delivery_id=reservation.delivery_id, recipient_endpoint_id=reservation.recipient_endpoint_id,
+            session_ref=reservation.session_ref, container_ref=reservation.container_ref,
+            attempts=1, expected_generation=reservation.generation,
+        )
+    elif operation == "release":
+        assert not registry.release_generation(reservation)
+    else:
+        assert codex_wake.reconcile_codex_relay_wake_reservations(relay, registry=registry) == 0
+    current = registry.snapshot(reservation.recipient_endpoint_id)
+    assert _stored_items(database) == ({current} if current else set())
+    if not committed:
+        assert current == reservation
+    elif operation == "release":
+        assert current is None
+    elif operation == "outcome":
+        assert current == replace(reservation, outcome="uncertain")
+    elif operation == "correlate":
+        assert current == replace(reservation, correlated_claim_attempts=1)
+    else:
+        assert current.generation > reservation.generation
+        assert current.outcome == "reserved"
+    # A committed stale generation can never initiate native I/O.
+    if committed:
+        assert registry.run_if_current(reservation, lambda: pytest.fail("stale generation launch")) == (False, None)
+
+
+@pytest.mark.parametrize("committed", [False, True])
+def test_reserve_failure_never_starts_worker_or_native_effect(relay_store, tmp_path, monkeypatch, committed):
+    relay, storage, _ = relay_store
+    registry = _registry(relay, tmp_path / "legacy")
+    assert registry.initialize(old_owner_drained=True)
+    delivery = _send(relay)
+    original = storage._begin_relay_immediate
+
+    @contextmanager
+    def ambiguous():
+        with original() as session:
+            yield session
+            if not committed:
+                raise OperationalError("COMMIT", {}, sqlite3.OperationalError("before commit"))
+        raise OperationalError("COMMIT", {}, sqlite3.OperationalError("after commit"))
+
+    monkeypatch.setattr(storage, "_begin_relay_immediate", ambiguous)
+    monkeypatch.setattr(codex_wake, "_schedule_reserved_codex_relay_wake", lambda *a, **kw: pytest.fail("failed reserve scheduled worker"))
+    monkeypatch.setattr(codex_wake, "_start_launch", lambda *a, **kw: pytest.fail("failed reserve native launch"))
+    assert codex_wake.schedule_codex_relay_wake(
+        {"recipient": "codex:target", "deliveries": [delivery]}, SCOPE,
+        registry=registry, relay_service=relay,
+    ) is None
+    assert (registry.snapshot(delivery["recipient_endpoint_id"]) is not None) is committed
 
 
 @pytest.fixture

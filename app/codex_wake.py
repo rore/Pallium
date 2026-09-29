@@ -11,6 +11,7 @@ import subprocess
 import threading
 import time
 import uuid
+from weakref import WeakValueDictionary
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
@@ -34,6 +35,7 @@ _scheduled_lock = threading.Lock()
 _registry_lock = threading.Lock()
 _default_registry: CodexWakeRegistry | None = None
 _default_registry_dir: Path | None = None
+_database_guards: WeakValueDictionary = WeakValueDictionary()
 logger = logging.getLogger(__name__)
 _popen = subprocess.Popen
 
@@ -49,18 +51,16 @@ def get_codex_wake_registry(state_dir: Path | None = None) -> CodexWakeRegistry:
     global _default_registry, _default_registry_dir
     with _registry_lock:
         if _default_registry is None or _default_registry_dir != target:
-            _default_registry = CodexWakeRegistry(target)
+            _default_registry = CodexWakeRegistry(enabled=False)
             _default_registry_dir = target
         return _default_registry
 
 
-def get_codex_wake_registry_for_relay_database(relay_sqlite_url: str) -> CodexWakeRegistry:
+def legacy_codex_wake_directory(relay_sqlite_url: str) -> Path:
     """Keep one Relay database's wake fences out of every other instance."""
     override = os.environ.get("PALLIUM_CODEX_WAKE_DIR")
     if override is not None:
-        return get_codex_wake_registry(Path(override))
-    if relay_sqlite_url == "sqlite:///:memory:":
-        return CodexWakeRegistry()
+        return Path(override)
     prefix = "sqlite:///"
     if not relay_sqlite_url.startswith(prefix):
         raise ValueError("Relay wake registry requires a SQLite database URL")
@@ -69,7 +69,27 @@ def get_codex_wake_registry_for_relay_database(relay_sqlite_url: str) -> CodexWa
         state_dir = relay_path.parent.parent / "codex-wake"
     else:
         state_dir = relay_path.with_name(relay_path.name + "-codex-wake")
-    return get_codex_wake_registry(state_dir)
+    return state_dir
+
+
+def get_codex_wake_registry_for_relay_database(relay_sqlite_url: str, *, relay_service=None) -> CodexWakeRegistry:
+    """Keep one app-owned SQLite authority and initiation guard per database."""
+    if relay_sqlite_url == "sqlite:///:memory:":
+        if relay_service is None:
+            return CodexWakeRegistry()
+        registry = CodexWakeRegistry(relay_service=relay_service)
+        registry.initialize(old_owner_drained=True)
+        return registry
+    state_dir = legacy_codex_wake_directory(relay_sqlite_url)
+    if relay_service is None:
+        return CodexWakeRegistry(state_dir)
+    key = str(Path(relay_sqlite_url.removeprefix("sqlite:///")).resolve())
+    with _registry_lock:
+        guard = _database_guards.get(key)
+        if guard is None:
+            guard = threading.RLock()
+            _database_guards[key] = guard
+        return CodexWakeRegistry(relay_service=relay_service, legacy_state_dir=state_dir, ownership_lock=guard)
 
 
 def relay_wake_log_refs(
@@ -133,6 +153,18 @@ def reconcile_codex_relay_wake_reservations(
     """Remove terminal fences and atomically replace expired wake claims."""
     registry = registry or get_codex_wake_registry()
     candidates = registry.reservations() if reservations is None else reservations
+    if registry.persistent:
+        reconciled = 0
+        for reservation in candidates:
+            transition = registry.reconcile(reservation)
+            if transition is None:
+                continue
+            action, current = transition
+            _clear_schedule(reservation, registry)
+            if action == "replaced":
+                _schedule_reserved_codex_relay_wake(current, registry, trace_callback=trace_callback)
+            reconciled += 1
+        return reconciled
     stale = []
     replaced = 0
     for reservation in candidates:
