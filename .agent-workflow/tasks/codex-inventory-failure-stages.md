@@ -39,7 +39,7 @@ Owner: relay-dev. Canonical feature: `roadmap/features/add-wake-first-relay-deli
 
 **Exceptions:** None
 
-**State:** Blocked or returned to planning
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Planning
@@ -132,4 +132,4 @@ Before editing the test, obtain independent plan review of this delta. Reuse its
 
 Verify the exact two parameter cases and inspect failure-only output with a bounded synthetic scheduling delay in a disposable invocation, without editing thresholds or persistent test behavior. Review the immutable delta independently, including call counts, silent success, exception preservation, output bounds/privacy, and evidence reuse. Production/tests for the accepted inventory slice remain byte-identical to 8ec65bbf; prior full/native/MCP evidence is reusable only if the reviewer accepts this instrumentation-only delta. Fresh prospective/final Redline and workflow checks use the complete five-path union. No additional worker, live operation or repeat local full run is planned. Publication proceeds once independent review and exact-node evidence pass; existing Linux CI supplies the missing environment, and merge remains held until its actual result is inspected.
 
-Extension plan review: pending before test edit. Existing production plan/result acceptance remains intact and does not stand in for this new test-only review.
+Extension plan review: Agent technical review: /root/inventory_diagnostic_review, clean-context non-implementer Sol/medium, accepted seed 375c5c0ff9affb9bba02af0fb3450942bf126e38 before test edit. Preserve both exact elapsed expressions and every original lifecycle assertion. Install probes before timing; record only in the two existing timed windows. Capped fixed labels/numeric samples must compare CPU deltas within the same probe/thread, call originals once with correct async/method binding, and never mask an original exception. Optional router probing must not inspect properties or force setup. JSON exists only in failure assertion messages; synthetic delay stays disposable. Reviewer accepts exact-node/synthetic-output checks plus immutable review and reuse of prior inventory/full evidence for this instrumentation-only delta. Small observer overhead means later green cannot establish the original cause. Existing production plan/result acceptance remains intact; release stays held for fresh CI.
