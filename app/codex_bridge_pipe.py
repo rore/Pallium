@@ -1559,6 +1559,7 @@ class InventoryService:
             self._publish_proof()
             # No source liveness requirement here: the retained handle proved exit.
             self._maintain()
+            self._failure_stage = "after-authority"
             if self.stop_event.is_set() or self.custody is None:
                 raise ShadowUnavailable("policy-inactive")
             self._observe(time.monotonic() + EXCHANGE_SECONDS)
