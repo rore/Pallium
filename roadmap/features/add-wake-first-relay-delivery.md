@@ -34,6 +34,12 @@ messages and replies, explicit null for durable delivery, and dashboard age coun
 at `f940e02b6abf9bf174658e6aa8fffc6cae2bfaf3`. Existing assignments and expiry
 values remain unchanged, including idempotent retries. Physical history retention
 and disposition of old durable backlog remain separate work; no purge is included.
+[PR #264](https://github.com/rore/Pallium/pull/264) safeguards the existing trace
+cleaner at `e9eaefee9a6efd3df91f160a689950ee7fc4e3fc`: an attempt with active,
+reserved, missing or mismatched delivery references is retained. Eligible terminal
+diagnostics keep the existing 30-day/cap policy and 64-row batch. Message payloads
+and stable IDs remain untouched. Earlier discovery incorrectly said no time-based
+trace cleanup existed; the shipped Work Record now records that correction.
 The one-lifetime-rescue retry proposal was deferred because its permanent state
 offers limited recurring recovery. Retry behavior is unchanged.
 Unloaded-session delivery and the source-child lifetime witness
