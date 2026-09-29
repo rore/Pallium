@@ -30,13 +30,13 @@ Owner: relay-dev. Canonical feature: `roadmap/features/add-wake-first-relay-deli
 
 **Verification plan:** Each existing caller failure boundary -> bounded stage/category log, unchanged public response/proof fields and original cleanup/fence/native call-count assertions in tests/test_codex_bridge_pipe.py. Cleanup or log-sink failure -> original stage retained and existing exception/resource handling unchanged. Unknown/Unicode/private sentinel input -> allowlist fallback with no endpoint/message/response text. Success and repeated registration -> no failure log and unchanged connection/inventory counts. Later post-exit failure -> original after-observation stage with no false historical PASS. Coherent change -> whole-change selector, full non-slow suite once, fresh import/Redline/workflow checks and independent immutable result review; standalone untraced native suite supplies coverage excluded by ordinary PR CI.
 
-**Plan review:** Pending clean-context independent technical review; no application/test edits until accepted.
+**Plan review:** Agent technical review: /root/inventory_diagnostic_review, clean-context non-implementer Sol/medium, accepts seed revision 62b73300d2469a5644e248ee64e44649b8e21469 with bounded refinements: capture first attribution inside maintenance before it swallows/normalizes a failure; distinguish before/post-exit actions and before/exit/after proof publication; preserve the first tuple through all outer/cleanup handlers; extract unknown, unhashable, Unicode and exception-raising categories into a fixed fallback; contain log-handler failures; do not log ordinary cleanup after sealed success. No boundary/API checkpoint or uncovered human decision remains. Caller coverage and immutable result review are still required.
 
 **Approvals:** Approved by user 2026-09-28: "This is a night job so i give blanket approval" (source 15322050-ec54-43b1-bef2-44b942ea0d60). The manager expressly assigns this bounded diagnostics-only implementation on 2026-09-29 under that standing approval and delegated technical review. This is not permission to bypass a fresh rejection or perform live actions.
 
 **Exceptions:** None
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Planning
@@ -46,3 +46,7 @@ Existing applicability configuration denies a documentation-only exemption becau
 ## Evidence
 
 No application edit, test run or live action yet. The separate wake-registry owner is manager-delegated; intended shared-path set is reported before implementation.
+
+## Implementation
+
+Independent plan accepted before edits. relay-dev owns only app/codex_bridge_pipe.py, the narrow design status/diagnostic description and this new record. The Luna worker owns only tests/test_codex_bridge_pipe.py. Use fixed before/after stage strings and one first-failure RAM tuple for the actual registration, captured before cleanup and lossy normalization in nested maintenance/transfer/post-exit/outer handlers. Reset only when an admitted actual transfer begins; denied repeats do not reset it. Trusted service epoch and validated policy revision provide correlation; there are no new proof/MCP fields. Ignore diagnostic failures without changing existing cleanup or exception propagation. Completed after-proof suppresses ordinary later cleanup diagnostics. Manager confirmed the wake-registry owner touches none of these four paths. Existing source, actions, schemas, assertions and native counts remain the baseline.
