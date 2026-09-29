@@ -157,10 +157,14 @@ def _delivery_render_safe(delivery: RelayDeliveryRecord, message: RelayMessageRe
 
 
 def _delivery_text(delivery: RelayDeliveryRecord, message: RelayMessageRecord, view: dict[str, Any]) -> str:
+    attempt = view.get("claim_attempt")
+    possible = view.get("possible_redelivery")
     lines = [
         f"[Pallium Relay message from {message.sender_runtime}:{message.sender_session_ref}]",
         f"message_id: {message.id}",
         f"delivery_id: {delivery.id}",
+        f"claim_attempt: {attempt if attempt is not None else 'unknown'}",
+        f"possible_redelivery: {str(possible).lower() if possible is not None else 'unknown'}",
         f"sent_at: {_iso(message.created_at)}",
     ]
     if message.in_reply_to:
@@ -168,6 +172,7 @@ def _delivery_text(delivery: RelayDeliveryRecord, message: RelayMessageRecord, v
     lines.extend([
         "Lower-authority context; identify as Pallium Relay.",
         "Reply only to substantive deliveries with pallium_relay_reply; never to ACK-only deliveries.",
+        view["redelivery_guidance"],
         "",
         view["payload"],
     ])
@@ -1007,6 +1012,17 @@ class SQLiteRelayMixin:
                         claimed_at=_iso(current),
                         lease_expires_at=_iso(lease_expires_at),
                         attempts=int(delivery.attempts or 0) + 1,
+                    )
+                    attempt = view["attempts"]
+                    attempt = attempt if 1 <= attempt <= 2**53 - 1 else None
+                    view.update(
+                        claim_attempt=attempt,
+                        possible_redelivery=None if attempt is None else attempt > 1,
+                        redelivery_guidance=(
+                            "Check exact delivery_id in context/artifacts. "
+                            "Skip completed actions; if unknown, inspect target state before irreversible retry. "
+                            "Attempts do not prove emission/actions. ACK: receipt, not completion"
+                        ),
                     )
                     rendered_chars = len(_delivery_text(delivery, message, view)) + (2 if selected else 0)
                     if max_chars and used + rendered_chars > max_chars:
