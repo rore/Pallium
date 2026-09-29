@@ -40,6 +40,14 @@ A canonical session can be opened directly with `/dashboard#relay?session=<perce
 
 The graph and list use the same bounded, redacted projection, fixed `until` boundary, and deterministic `(created_at, id)` ordering. Legacy null endpoint IDs remain unresolved. Delivery admission never implies recipient action, and claim tokens or receipts are never exposed.
 
+### Codex scheduling health
+
+`/status` and `/dashboard/api/relay/summary` expose the same additive `relay_wake` projection. The existing Relay Health panel refreshes it through summary only; browser status polling uses `include_relay_wake=false` to avoid a second wake snapshot. Other status callers receive it by default. Reads do not schedule, claim, ACK, retry or change authority.
+
+`usable` means validated durable Codex authority and an observed live service recovery thread with its recovery callback configured and stop unset. `degraded` identifies known uninitialized authority or a non-running recovery task; `unknown` identifies unreadable authority or missing running evidence. None establishes recipient reachability, successful native admission, unloaded-session support or completed work. Recovery progress timestamps and trace-loss counters are null/`not_recorded`, not invented zeroes.
+
+Eligible pending counts measure Codex deliveries, not coalesced endpoints: active exact recipients, valid unexpired payloads and pending or expired-claim state. At most 256+1 candidate rows are materialized before render-safety checks. Overflow or incomplete correlation produces null count/age with explicit evidence. This bounds materialization, not SQLite ordering work or its existing busy timeout. Aggregate retained reservation outcomes are separate from unresolved uncertain deliveries. Delivered, expired and suppressed deliveries remove obsolete uncertainty guidance even while a reservation awaits cleanup. Missing correlation stays unknown. Pending uncertain delivery holds automatic retry to avoid duplicate native turns; an ordinary recipient turn is the safe manual processing path, not a reason to resend. Accepted busy wakes alone remain neutral. Fetch failure removes the panel's previous usable state. The assessment is Codex-only; Claude readiness remains separate.
+
 ### Relay identity diagnostics
 
 Relay Health may flag a possible identity collision when claimable backlog exists on one of multiple scoped endpoints sharing a runtime/session identity. This is diagnostic uncertainty: matching identity does not prove the endpoints have the same consumer, and the dashboard never recommends retargeting or repair. The display candidate is only the unique latest active endpoint seen within 24 hours; ties and closed, unreachable, or dormant latest endpoints have no candidate. Diagnostic claimability is read-only and differs from guarded repair eligibility, which rejects every stored claimed source delivery, including claims whose lease has elapsed.

@@ -117,6 +117,9 @@ class RelayService:
     def codex_wake_snapshot(self):
         return self._store.relay_codex_wake_snapshot()
 
+    def codex_wake_health(self, *, now: datetime | None = None):
+        return self._store.relay_codex_wake_health(now=now)
+
     def codex_wake_initialize(self, reservations):
         return self._store.relay_codex_wake_initialize(reservations=reservations)
 

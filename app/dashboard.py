@@ -16,6 +16,7 @@ from storage.metrics import MetricsStore
 from storage.sqlite import SQLiteStorageProvider, _extract_display_text
 from app.codex_wake import get_codex_wake_registry
 from app import codex_readiness
+from app.relay_wake_health import relay_wake_health
 from core.codex_wake import CodexWakeRegistry
 from core.filters import source_item_matches_filters
 from core.relay_activation import current_platform, relay_activation_snapshot
@@ -847,6 +848,7 @@ def mount_dashboard(
             "possible_identity_collisions": collisions,
             "codex_readiness": readiness,
             "awaiting_recipient_checkin": awaiting_recipient_checkin,
+            "relay_wake": relay_wake_health(relay_service, getattr(app.state, "_claude_wake_reconciler", None)),
         })
 
     @app.get("/dashboard/api/relay/overview")

@@ -758,6 +758,7 @@
     </div>
     <div id="relay-runtimes" class="relay-runtime-row"></div>
     <div id="relay-note" class="relay-note">Loading Relay activity...</div>
+    <div id="relay-wake-health" class="relay-note" role="status">Codex scheduling: unknown. Loading evidence...</div>
   </div>
 
   <!-- Query Activity (dual-time tiles + hourly stacked bar) -->
@@ -1134,7 +1135,7 @@ function shortContainer(ref) {
 // ──────────────────────────────────────────────────
 async function fetchStatus() {
   try {
-    const r = await fetch('/status');
+    const r = await fetch('/status?include_relay_wake=false');
     if (!r.ok) throw new Error('status ' + r.status);
     const data = await r.json();
     _statusData = data;
@@ -1684,16 +1685,45 @@ function renderRelaySummary(data) {
   document.getElementById('relay-note').textContent = waitingNote + ' ' + healthDetails.join(' - ');
   const relaySummary = document.getElementById('relay-capability-state');
   if (relaySummary) relaySummary.textContent = (data.status || 'unknown') + ' · ' + fmtNum(deliveries.pending_now || 0) + ' pending · ' + fmtNum(deliveries.expired_last_24h || 0) + ' expired';
+  renderRelayWakeHealth(data.relay_wake);
+}
+
+function renderRelayWakeHealth(wake) {
+  const target = document.getElementById('relay-wake-health');
+  if (!target) return;
+  const reasons = {
+    authority_unavailable: 'durable authority could not be read',
+    authority_uninitialized: 'durable authority is not initialized',
+    recovery_unobserved: 'recovery task evidence is unavailable',
+    recovery_not_running: 'the recovery task is not running',
+    recovery_running: 'durable authority is valid and the recovery task is running'
+  };
+  const known = wake && wake.assessment === 'codex_scheduling_only' && Object.hasOwn(reasons, wake.reason);
+  const state = known && ['usable', 'degraded', 'unknown'].includes(wake.state) ? wake.state : 'unknown';
+  const parts = ['Codex scheduling: ' + state + (known ? ' — ' + reasons[wake.reason] : ' — evidence unavailable') + '.'];
+  if (known) {
+    parts.push(wake.eligible_pending_count == null ? 'Eligible pending deliveries: unknown (' + (wake.pending_evidence === 'row_limit' ? 'row limit reached' : 'incomplete evidence') + ').'
+      : fmtNum(wake.eligible_pending_count) + ' eligible pending deliveries' + (wake.oldest_pending_age_seconds == null ? '.' : '; oldest ' + formatUptime(wake.oldest_pending_age_seconds) + '.'));
+    if (wake.unresolved_uncertain_count == null) parts.push('Unresolved delivery uncertainty: unknown.');
+    else if (wake.unresolved_uncertain_count > 0) parts.push(fmtNum(wake.unresolved_uncertain_count) + ' unresolved uncertain deliveries: automatic retry is held to avoid duplicate native turns. An ordinary turn in the recipient task can process retained messages safely; do not resend.');
+  }
+  parts.push('Codex only; this does not prove recipient reachability, unloaded-session support, sweep progress, or completed work. Recovery progress and trace loss are not recorded.');
+  target.textContent = parts.join(' ');
+  target.className = 'relay-note ' + (state === 'usable' ? 'green' : state === 'degraded' ? 'yellow' : '');
 }
 
 async function fetchRelaySummary() {
   try {
     const r = await fetch('/dashboard/api/relay/summary');
-    if (!r.ok) return;
+    if (!r.ok) throw new Error('Relay summary unavailable');
     _relayData = await r.json();
     renderRelaySummary(_relayData);
     renderOperationalSummary();
-  } catch (e) { /* non-fatal */ }
+  } catch (e) {
+    _relayData = null;
+    renderRelayWakeHealth(null);
+    renderOperationalSummary();
+  }
 }
 
 // Render: status (Overview row + Storage card)
