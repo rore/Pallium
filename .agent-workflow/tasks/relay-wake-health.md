@@ -38,7 +38,7 @@ Owner: relay-dev. Canonical roadmap: `roadmap/features/add-wake-first-relay-deli
 
 **Exceptions:** None
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Planning
@@ -60,3 +60,21 @@ First production slice adds one storage/capability snapshot and shared app proje
 Affected verification found 316 passing checks and one regular dashboard read-only comparison failure caused solely by the new volatile observed_at field. Independent non-implementer `/root/wake_health_review` accepted the precise test-only refinement: exclude only observed_at alongside existing volatile ages; all stored state/collision/health evidence comparisons remain. Scope gains tests/test_dashboard.py through the coverage-only chain above; baseline remains immutable. Native admission behavior and protected tests are unchanged. UI seed replay against 6b0ed3b8 proves regression sensitivity but happened after production edits; only the caller red was chronological pre-edit evidence. Manager has this chronology for final adequacy assessment.
 
 Full verification at immutable 315503a5 stopped at a second regular exact-status-key assertion in test_relay_capacity_isolation.py after 3899 passes. It omitted only the approved new relay_wake key; the saturation requests had completed inside the original deadline. The coverage-only scope chain gains that test path before editing. Add only the key, preserving capacity, cancellation, barriers and every timing bound. Other status-key enumerations were inspected; no further stale list found. No production changes are required. Rerun this failure then the required full lane; the stopped run is not full passing evidence.
+
+## Evidence
+
+Validated clean code/test revision `bc8918ff32ca1ad113b6206c4a18df4036360987` against immutable base `c3db54c9c66d61bd96fd554060c626c16a159288`, using development `.venv` Python 3.13.14. `scripts/test-plan.py --base origin/main` selected the full lane; `python -m pytest tests/ -x -q` exited 0: 5658 passed, 34 skipped, 2 xfailed in 325.73s. The earlier stopped run is failed evidence, not a passing full run. The exact capacity caller regression passed after adding only the additive key (1 passed, 0.54s); every existing capacity, cancellation, barrier and timing assertion remains unchanged.
+
+Focused caller coverage passed (71 cases initially; eight further cases are included in the passing full run). Authority-bound and partial/terminal correlation subset: 22 passed, 15.91s. Affected wake/trace/health/dashboard group: 316 passed and one timestamp-comparator failure; its exact coverage-only correction then passed via `--lf --lfnf=none` (1 passed, 6113 deselected). Executed shipped JavaScript through `node tests/dashboard_relay_wake_health_ui.mjs app/dashboard.html`: all cases passed. It exercises existing status/summary requests, one snapshot per refresh, and clearing stale usable evidence on HTTP/network/JSON errors. Strict `/health` caller shape remains unchanged and passed. Caller pre-edit red and later UI seed replay establish regression sensitivity; UI replay is not chronological pre-edit UI TDD.
+
+Fresh import-linter report has no violations. Fresh 13-path Redline report is RED / High with architecture and persistence checkpoints; no schema, protected-contract or boundary rule changes. Workflow check is advisory 1 solely for unsatisfied PR checkpoint labels, with no blocking predicates. PR CI must qualify integration with newer main (`origin/main` advanced to `a91dac91` after local validation); the reviewed merge-base and 13-path PR diff remain unchanged. This record-only follow-up changes no validated production/test blob and does not require repeating the passing full run.
+
+## Result review
+
+Agent technical review: `/root/wake_health_result_review`, independent clean-context non-implementer Sol reviewer.
+
+Reviewed revision: `bc8918ff32ca1ad113b6206c4a18df4036360987`, against immutable base `c3db54c9c66d61bd96fd554060c626c16a159288`. Accepted on 2026-09-29 with no implementation findings. Reviewer inspected the final two-path bookkeeping/coverage delta and confirmed no capacity, timing, barrier or cancellation weakening.
+
+Verification adequacy: accepted for the bounded observational slice, based on the passing full non-slow run, caller lifecycle/boundary/privacy coverage, shipped JavaScript execution, and fresh import/workflow/Redline evidence. High / Moderate architecture and persistence classification remains appropriate. Observation establishes scheduling authority plus a live configured recovery thread, not sweep progress, native admission, recipient reachability, completed work or unloaded-session support. Unknown progress and trace-loss fields remain null/not_recorded. No retry, native submission, claim/ACK, TTL, scope, model/effort or schema behavior changed.
+
+Manager owns remaining PR/human checkpoints, final acceptance, roadmap reconciliation, merge and installed rollout. Fresh PR CI and those gates remain outstanding; automatic recovery and unloaded-session gaps remain open.
