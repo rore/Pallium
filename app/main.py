@@ -29,6 +29,7 @@ from app.dependencies import (
     recover_expired_relay_wakes,
 )
 from app.snapshot import resolve_live_db_path
+from app.relay_wake_health import relay_wake_health
 from core.observability import QueryStats
 from core.relay import RelayService, RelayUnavailableError
 from core.service import PalliumService
@@ -425,7 +426,7 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
         os.kill(os.getpid(), signal.SIGINT)
         return JSONResponse({"status": "shutting_down"})
 
-    def status_body() -> JSONResponse:
+    def status_body(include_relay_wake: bool = True) -> JSONResponse:
         storage = service._storage
         if not isinstance(storage, SQLiteStorageProvider):
             return JSONResponse(content={"error": "status requires SQLite backend"}, status_code=501)
@@ -622,11 +623,14 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
             "derived_memory": derived_memory_info,
             "metrics_summary": metrics_summary,
             "historical_lookup_funnel": funnel_info,
+            "relay_wake": relay_wake_health(
+                dashboard_relay_service, getattr(app.state, "_claude_wake_reconciler", None),
+            ) if include_relay_wake else None,
         })
 
     @app.get("/status")
-    async def status() -> JSONResponse:
-        return await run_diagnostic_operation(status_body)
+    async def status(include_relay_wake: bool = True) -> JSONResponse:
+        return await run_diagnostic_operation(lambda: status_body(include_relay_wake))
 
     try:
         dashboard_relay_service = RelayService(build_result.storage)

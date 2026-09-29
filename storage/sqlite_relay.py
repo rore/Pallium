@@ -120,6 +120,15 @@ def _render_safe(value: str) -> bool:
     )
 
 
+def _wake_pending(current: datetime, include_pending: bool = True):
+    expired_claim = and_(
+        RelayDeliveryRecord.state == "claimed",
+        RelayDeliveryRecord.lease_expires_at.is_not(None),
+        RelayDeliveryRecord.lease_expires_at <= current,
+    )
+    return or_(RelayDeliveryRecord.state == "pending", expired_claim) if include_pending else expired_claim
+
+
 def _single_line_render_safe(value: str) -> bool:
     return not any(unicodedata.category(char) in {"Cc", "Zl", "Zp"} for char in value)
 
@@ -247,6 +256,92 @@ class SQLiteRelayMixin:
             rows = db.scalars(select(RelayCodexWakeReservationRecord).limit(MAX_RESERVATIONS + 1)).all()
             self._validate_wake_authority(db, marker, rows)
             return marker is not None, tuple(self._wake_item(row) for row in rows)
+
+    def relay_codex_wake_health(self, *, now: datetime | None = None):
+        """Read aggregate Codex evidence without the native-initiation guard."""
+        current = _now(now)
+        with self._relay_session_factory() as db:
+            db.connection().exec_driver_sql("BEGIN")
+            marker = db.get(RelayCodexWakeStateRecord, 1)
+            reservations = db.scalars(select(RelayCodexWakeReservationRecord).limit(MAX_RESERVATIONS + 1)).all()
+            self._validate_wake_authority(db, marker, reservations)
+            counts = {outcome: 0 for outcome in ("reserved", "accepted", "uncertain")}
+            for row in reservations:
+                counts[row.outcome] += 1
+
+            # ponytail: cap materialization/render checks, not SQLite sort work; index only if measured SQL latency requires it.
+            candidates = db.execute(
+                select(RelayDeliveryRecord, RelayMessageRecord, RelaySessionRecord)
+                .outerjoin(RelayMessageRecord, RelayMessageRecord.id == RelayDeliveryRecord.message_id)
+                .outerjoin(RelaySessionRecord, RelaySessionRecord.id == RelayDeliveryRecord.recipient_endpoint_id)
+                .where(
+                    RelayDeliveryRecord.recipient_runtime == "codex",
+                    _wake_pending(current),
+                    or_(RelayMessageRecord.id.is_(None), RelayMessageRecord.expires_at > current),
+                    or_(RelaySessionRecord.id.is_(None), RelaySessionRecord.state == "active"),
+                )
+                .order_by(RelayMessageRecord.created_at, RelayDeliveryRecord.id)
+                .limit(MAX_RESERVATIONS + 1)
+            ).all()
+            pending_evidence = "row_limit" if len(candidates) > MAX_RESERVATIONS else "complete"
+            ages = []
+            if pending_evidence == "complete":
+                for delivery, message, session in candidates:
+                    if (message is None or session is None
+                        or session.runtime != delivery.recipient_runtime
+                        or session.session_ref != delivery.recipient_session_ref
+                        or session.container_ref != delivery.recipient_container_ref):
+                        pending_evidence = "incomplete"
+                        break
+                    if _render_safe(message.payload):
+                        ages.append(max(0, int((current - _now(message.created_at)).total_seconds())))
+
+            uncertain = [row for row in reservations if row.outcome == "uncertain"]
+            correlated = {}
+            if uncertain:
+                correlated = {
+                    delivery.id: (delivery, message, session)
+                    for delivery, message, session in db.execute(
+                        select(RelayDeliveryRecord, RelayMessageRecord, RelaySessionRecord)
+                        .outerjoin(RelayMessageRecord, RelayMessageRecord.id == RelayDeliveryRecord.message_id)
+                        .outerjoin(RelaySessionRecord, RelaySessionRecord.id == RelayDeliveryRecord.recipient_endpoint_id)
+                        .where(RelayDeliveryRecord.id.in_([row.delivery_id for row in uncertain]))
+                    )
+                }
+            unresolved = 0
+            uncertainty_evidence = "complete"
+            for row in uncertain:
+                bound = correlated.get(row.delivery_id)
+                if bound is None:
+                    uncertainty_evidence = "incomplete"
+                    break
+                delivery, message, session = bound
+                if delivery.state in {"delivered", "expired", "suppressed"}:
+                    continue
+                if (message is not None and delivery.state in {"pending", "claimed"}
+                    and _now(message.expires_at) <= current):
+                    continue
+                if (message is None or session is None
+                    or delivery.state not in {"pending", "claimed"}
+                    or delivery.recipient_endpoint_id != row.recipient_endpoint_id
+                    or delivery.recipient_runtime != "codex" or session.runtime != "codex"
+                    or session.session_ref != row.session_ref
+                    or delivery.recipient_session_ref != row.session_ref
+                    or session.container_ref != row.container_ref
+                    or delivery.codex_wake_generation not in (None, row.generation)):
+                    uncertainty_evidence = "incomplete"
+                    break
+                unresolved += 1
+            return {
+                "authority_initialized": marker is not None,
+                "reservations": counts,
+                "eligible_pending_count": len(ages) if pending_evidence == "complete" else None,
+                "oldest_pending_age_seconds": max(ages) if ages and pending_evidence == "complete" else None,
+                "pending_evidence": pending_evidence,
+                "unresolved_uncertain_count": unresolved if uncertainty_evidence == "complete" else None,
+                "uncertainty_evidence": uncertainty_evidence,
+                "uncertainty_reason": "evidence_incomplete" if uncertainty_evidence != "complete" else "retry_held" if unresolved else None,
+            }
 
     def _validate_wake_authority(self, db, marker, rows=None):
         if rows is None:
@@ -1887,18 +1982,7 @@ class SQLiteRelayMixin:
                 )
                 .where(
                     RelayDeliveryRecord.recipient_runtime.in_(("codex", "claude-code")),
-                    or_(
-                        RelayDeliveryRecord.state == "pending",
-                        and_(
-                            RelayDeliveryRecord.state == "claimed",
-                            RelayDeliveryRecord.lease_expires_at.is_not(None),
-                            RelayDeliveryRecord.lease_expires_at <= current,
-                        ),
-                    ) if include_pending else and_(
-                        RelayDeliveryRecord.state == "claimed",
-                        RelayDeliveryRecord.lease_expires_at.is_not(None),
-                        RelayDeliveryRecord.lease_expires_at <= current,
-                    ),
+                    _wake_pending(current, include_pending),
                     RelayMessageRecord.expires_at > current,
                     RelaySessionRecord.state == "active",
                 )

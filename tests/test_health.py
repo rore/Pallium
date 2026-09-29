@@ -213,6 +213,7 @@ class TestStatusResponseShape:
             "derived_memory",
             "metrics_summary",
             "historical_lookup_funnel",
+            "relay_wake",
         }
         assert set(body.keys()) == expected_keys
 

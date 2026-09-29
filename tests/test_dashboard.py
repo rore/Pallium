@@ -274,7 +274,7 @@ class TestDashboardRelaySummary:
                 return {
                     key: without_live_ages(item)
                     for key, item in value.items()
-                    if not key.endswith("age_seconds")
+                    if not key.endswith("age_seconds") and key != "observed_at"
                 }
             if isinstance(value, list):
                 return [without_live_ages(item) for item in value]
