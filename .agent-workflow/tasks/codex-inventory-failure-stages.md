@@ -7,7 +7,7 @@ Owner: relay-dev. Canonical feature: `roadmap/features/add-wake-first-relay-deli
 
 **Target:** Optional Windows Codex inventory custody in the existing Pallium service.
 
-**Scope:** app/codex_bridge_pipe.py, tests/test_codex_bridge_pipe.py, docs/designs/codex-mcp-desktop-bridge.md and this Work Record.
+**Scope:** app/codex_bridge_pipe.py, tests/test_codex_bridge_pipe.py, docs/designs/codex-mcp-desktop-bridge.md and this Work Record; tests/test_claude_wake_durability.py solely for failure-only timing diagnostics in the existing crash-lock regression.
 
 **Constraints:** Diagnostics only. No new native action, retry, admission, reconnect, authority, cleanup or fence behavior; no public MCP or protected proof schema changes. Never log exception text/tracebacks, endpoint, environment, native response or inventory contents. No live trial/setup/rearm, archive/unload, process kill or Desktop restart. Preserve scope, model/effort, user trust and existing assertions. Preserve completed PR #256 history and the separate wake-registry incident.
 
@@ -15,6 +15,9 @@ Owner: relay-dev. Canonical feature: `roadmap/features/add-wake-first-relay-deli
 
 **Requirement baseline:**
 {"source":"manager diagnostic implementation assignment, 2026-09-29, thread 01a0d7ce-83c6-77e2-90f7-d413894059e1","outcome":"Identify the failing service-side inventory stage without exposing native connection data or changing execution behavior.","scope":"app/codex_bridge_pipe.py, tests/test_codex_bridge_pipe.py, docs/designs/codex-mcp-desktop-bridge.md and this Work Record.","constraints":"Diagnostics only. No new native action, retry, admission, reconnect, authority, cleanup or fence behavior; no public MCP or protected proof schema changes. Never log exception text/tracebacks, endpoint, environment, native response or inventory contents. No live trial/setup/rearm, archive/unload, process kill or Desktop restart. Preserve scope, model/effort, user trust and existing assertions. Preserve completed PR #256 history and the separate wake-registry incident.","completion_criteria":"Injected caller-path failures distinguish native open, peer check, authority/source recheck, inventory write/read/validation and proof publication through fixed sanitized service diagnostics. The original failing stage/category survives later cleanup failures and lossy public normalization. Unknown diagnostic input and failed log sinks cannot expose data or alter failure/cleanup behavior. Success adds no failure event; repeated denied calls add no native submissions. Public caller results and exact protected proof fields remain unchanged. Focused native caller E2E, affected subsystem, whole-change selected checks, one full non-slow run and independent review qualify the immutable change; fresh PR CI precedes manager merge/install. Diagnostics alone do not qualify transport lifetime or unloaded wake."}
+
+**Behavior changes:**
+[{"target":"task-context.scope","classification":"coverage-only","before":"app/codex_bridge_pipe.py, tests/test_codex_bridge_pipe.py, docs/designs/codex-mcp-desktop-bridge.md and this Work Record.","after":"app/codex_bridge_pipe.py, tests/test_codex_bridge_pipe.py, docs/designs/codex-mcp-desktop-bridge.md and this Work Record; tests/test_claude_wake_durability.py solely for failure-only timing diagnostics in the existing crash-lock regression.","reason":"Manager-authorized failure-only CI evidence for unchanged verification obligations; no timeout, assertion, lock/crash lifecycle, production or product-promise change."}]
 
 **Risk:** High
 
@@ -36,7 +39,7 @@ Owner: relay-dev. Canonical feature: `roadmap/features/add-wake-first-relay-deli
 
 **Exceptions:** None
 
-**State:** Blocked
+**State:** Blocked or returned to planning
 <!-- agent-workflow:end -->
 
 ## Planning
@@ -120,3 +123,13 @@ CI used FastAPI 0.141.1, Starlette 1.7.0 and AnyIO 4.15.1; the local full-suite 
 Cold first POST took 130.925 ms: router setup 27.228 ms, intent lock 100.605 ms and complete registry call 100.698 ms. The readiness comparison moved 27.290 ms of setup outside the POST; its POST took 102.057 ms and lock 100.337 ms. This establishes a small setup contribution, not the cause of CI's 785 ms. The trace ran Windows/Python 3.13.14/Pydantic 2.12.5, not CI's Linux/Python 3.12.14/Pydantic 2.13.5. No fixture-only correction is justified from this evidence, and no meaningful failure was reproduced.
 
 Missing evidence: phase timings on the failing Linux/Python 3.12 path, separating client-to-registry entry, lock entry/exit, first-route setup and response return, with wall and thread-CPU times. Capture those around the unchanged caller/assertions in a targeted diagnostic before attributing failure to lock implementation, initialization or scheduling. Do not blindly rerun the full suite or widen either timeout. Temporary framework packages were removed; project versions, diagnostics app/tests and live configuration remain unchanged. No additional worker or full test run was used.
+
+## CI instrumentation plan
+
+2026-09-29 manager delegation (thread 01a0d7ce-83c6-77e2-90f7-d413894059e1) authorizes narrowly scoped failure-only test diagnostics, independent test review, exact-node checks and one instrumented run of the existing Linux/Python 3.12 full CI job. This is coverage-only scope expansion; the initial baseline is immutable. The added test path is BLUE; the whole PR remains High/Moderate because unchanged native diagnostics code is already in its diff. No API, CI workflow, package, native source, test threshold or protected behavior-contract path changes are authorized. Canonical roadmap and release ownership remain with the manager.
+
+Before editing the test, obtain independent plan review of this delta. Reuse its real HTTP caller and existing held-owner/crash steps. Collect a capped list of fixed-label monotonic wall/thread-CPU samples only during the two existing timed calls. Test-only wrappers call original HTTP, ASGI, registry and native lock operations exactly once and return their original results; add no locks, warm-up or retries. Record client and ASGI boundaries, registry/intent-lock entry and return, response return and hook-side native lock boundaries. Where the exact framework exposes included-router setup, measure it without forcing initialization; older versions explicitly lack that optional probe. Attach a numeric-only JSON diagnostic to the existing timing assertions, evaluated only on failure; never capture arguments, requests, paths, credentials, exception text or environment. Preserve the actual elapsed calculations and both 0.5-second limits.
+
+Verify the exact two parameter cases and inspect failure-only output with a bounded synthetic scheduling delay in a disposable invocation, without editing thresholds or persistent test behavior. Review the immutable delta independently, including call counts, silent success, exception preservation, output bounds/privacy, and evidence reuse. Production/tests for the accepted inventory slice remain byte-identical to 8ec65bbf; prior full/native/MCP evidence is reusable only if the reviewer accepts this instrumentation-only delta. Fresh prospective/final Redline and workflow checks use the complete five-path union. No additional worker, live operation or repeat local full run is planned. Publication proceeds once independent review and exact-node evidence pass; existing Linux CI supplies the missing environment, and merge remains held until its actual result is inspected.
+
+Extension plan review: pending before test edit. Existing production plan/result acceptance remains intact and does not stand in for this new test-only review.
