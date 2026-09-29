@@ -114,6 +114,15 @@ def parse_selector(value: str) -> tuple[str | None, str, str]:
 class RelayService:
     """Validated Relay boundary over the optional SQLite relay capability."""
 
+    def codex_wake_snapshot(self):
+        return self._store.relay_codex_wake_snapshot()
+
+    def codex_wake_initialize(self, reservations):
+        return self._store.relay_codex_wake_initialize(reservations=reservations)
+
+    def codex_wake_transition(self, operation, **kwargs):
+        return self._store.relay_codex_wake_transition(operation=operation, **kwargs)
+
     def __init__(self, store: Any) -> None:
         required = (
             "relay_turn",
@@ -658,18 +667,9 @@ class RelayService:
         delivery_id: str,
         decision: Callable[[dict[str, Any]], bool],
     ) -> bool:
-        """Evaluate one wake fence while serializing Relay claim writes."""
-        operation = getattr(
-            self._store, "relay_reconcile_codex_wake_reservation", None
-        )
-        if not callable(operation):
-            raise RelayUnavailableError(
-                "atomic Relay Codex wake reconciliation is not supported"
-            )
-        return operation(
-            delivery_id=_opaque(delivery_id, "delivery_id", maximum=128),
-            decision=decision,
-        )
+        """Ephemeral caller compatibility; durable transitions use SQLite CAS."""
+        state = self.codex_wake_reservation_state(delivery_id=delivery_id)
+        return decision(state) is True
 
     def wake_candidates(
         self, *, delivery_id: str | None = None, include_coalesced: bool = False

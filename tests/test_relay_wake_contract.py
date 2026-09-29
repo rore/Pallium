@@ -178,42 +178,106 @@ def test_attempt_result_rejects_unbounded_or_unsupported_evidence() -> None:
 
 
 def test_codex_reservations_survive_restart_and_release_only_exact_delivery(tmp_path) -> None:
-    registry = CodexWakeRegistry(tmp_path)
-    reservation = registry.reserve(
-        recipient_endpoint_id=ENDPOINT, delivery_id="delivery-1",
-        session_ref="session-東京", container_ref="git:example/東京",
-        still_pending=lambda: True,
+    from core.relay import RelayService
+    from storage.sqlite import SQLiteStorageProvider
+
+    storage = SQLiteStorageProvider(
+        f"sqlite:///{tmp_path / 'main.db'}",
+        f"sqlite:///{tmp_path / 'relay.db'}",
     )
-    assert reservation is not None
-    assert registry.record_outcome(reservation, "accepted")
-    restarted = CodexWakeRegistry(tmp_path)
-    assert restarted.snapshot(ENDPOINT).outcome == "accepted"
-    assert restarted.release_delivery("other") is None
-    assert restarted.reserved(ENDPOINT)
-    assert restarted.release_delivery("delivery-1") is not None
-    assert not CodexWakeRegistry(tmp_path).reserved(ENDPOINT)
+    try:
+        relay = RelayService(storage)
+        for session in ("sender", "session-東京"):
+            relay.turn(
+                runtime="codex", session_ref=session,
+                container_ref="git:example/東京",
+            )
+        delivery = relay.send(
+            sender_runtime="codex", sender_session_ref="sender",
+            recipient="codex:session-東京", payload="wake payload",
+            container_ref="git:example/東京",
+        )["deliveries"][0]
+        registry = CodexWakeRegistry(relay_service=relay)
+        assert registry.initialize(old_owner_drained=True)
+        reservation = registry.reserve(
+            recipient_endpoint_id=delivery["recipient_endpoint_id"],
+            delivery_id=delivery["delivery_id"],
+            session_ref="session-東京", container_ref="git:example/東京",
+        )
+        assert reservation is not None
+        assert registry.record_outcome(reservation, "accepted")
+        restarted = CodexWakeRegistry(relay_service=relay)
+        assert restarted.snapshot(reservation.recipient_endpoint_id).outcome == "accepted"
+        assert restarted.release_delivery("other") is None
+        assert restarted.reserved(reservation.recipient_endpoint_id)
+        assert restarted.release_delivery(delivery["delivery_id"]) is not None
+        assert not CodexWakeRegistry(relay_service=relay).reserved(
+            reservation.recipient_endpoint_id
+        )
+    finally:
+        storage.close()
 
 
 def test_codex_reservation_corruption_write_capacity_and_stale_candidate_fail_closed(
     tmp_path, monkeypatch,
 ) -> None:
+    from contextlib import contextmanager
+    from sqlalchemy.exc import OperationalError
+    from core.relay import RelayService
+    from storage.sqlite import SQLiteStorageProvider
+
     corrupt = tmp_path / "corrupt"
     corrupt.mkdir()
-    (corrupt / "reservations.json").write_text("{", encoding="utf-8")
-    broken = CodexWakeRegistry(corrupt)
-    assert not broken.usable
-    assert broken.reserve(
-        recipient_endpoint_id=ENDPOINT, delivery_id="delivery",
-        session_ref="session", container_ref="container",
-    ) is None
+    source_path = corrupt / "reservations.json"
+    source_path.write_text("{", encoding="utf-8")
+    source = source_path.read_bytes()
+    storage = SQLiteStorageProvider(
+        f"sqlite:///{tmp_path / 'main.db'}",
+        f"sqlite:///{tmp_path / 'relay.db'}",
+    )
+    try:
+        relay = RelayService(storage)
+        broken = CodexWakeRegistry(
+            relay_service=relay, legacy_state_dir=corrupt,
+        )
+        assert not broken.initialize(old_owner_drained=True)
+        assert not broken.usable and broken.reservations() == ()
+        assert source_path.read_bytes() == source
 
-    write_failed = CodexWakeRegistry(tmp_path / "write")
-    monkeypatch.setattr(write_failed, "_write_locked", lambda *_: False)
-    assert write_failed.reserve(
-        recipient_endpoint_id=ENDPOINT, delivery_id="delivery",
-        session_ref="session", container_ref="container",
-    ) is None
-    assert not write_failed.usable
+        for session in ("sender", "session"):
+            relay.turn(runtime="codex", session_ref=session, container_ref="container")
+        delivery = relay.send(
+            sender_runtime="codex", sender_session_ref="sender",
+            recipient="codex:session", payload="pending",
+            container_ref="container",
+        )["deliveries"][0]
+        write_failed = CodexWakeRegistry(relay_service=relay)
+        assert write_failed.initialize(old_owner_drained=True)
+        original = storage._begin_relay_immediate
+
+        @contextmanager
+        def fail_before_commit():
+            with original() as session:
+                yield session
+                raise OperationalError(
+                    "COMMIT", {}, Exception("injected rollback"),
+                )
+
+        monkeypatch.setattr(storage, "_begin_relay_immediate", fail_before_commit)
+        assert write_failed.reserve(
+            recipient_endpoint_id=delivery["recipient_endpoint_id"],
+            delivery_id=delivery["delivery_id"], session_ref="session",
+            container_ref="container",
+        ) is None
+        monkeypatch.setattr(storage, "_begin_relay_immediate", original)
+        assert write_failed.usable and write_failed.reservations() == ()
+        assert write_failed.reserve(
+            recipient_endpoint_id=delivery["recipient_endpoint_id"],
+            delivery_id=delivery["delivery_id"], session_ref="session",
+            container_ref="container",
+        ) is not None
+    finally:
+        storage.close()
 
     assert CodexWakeRegistry().reserve(
         recipient_endpoint_id=ENDPOINT, delivery_id="stale",

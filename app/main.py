@@ -632,7 +632,9 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
         dashboard_relay_service = RelayService(build_result.storage)
     except RelayUnavailableError:
         dashboard_relay_service = None
-    codex_wake_registry = codex_wake.get_codex_wake_registry_for_relay_database(resolved_config.resolved_relay_sqlite_url)
+    codex_wake_registry = codex_wake.get_codex_wake_registry_for_relay_database(
+        resolved_config.resolved_relay_sqlite_url, relay_service=dashboard_relay_service,
+    )
     app.state.codex_wake_registry = codex_wake_registry
     mount_dashboard(
         app,

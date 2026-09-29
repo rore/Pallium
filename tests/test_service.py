@@ -444,7 +444,7 @@ class TestStartWindows:
         monkeypatch.setattr("app.cli.service._seed_config", lambda _home: None)
         monkeypatch.setattr("app.cli.service._apply_home_env", lambda _home: None)
         monkeypatch.setattr("app.cli.service._missing_declared_credentials", lambda _config: [])
-        monkeypatch.setattr("app.config.AppConfig.from_env", lambda: object())
+        monkeypatch.setattr("app.config.AppConfig.from_env", lambda: SimpleNamespace(storage_backend="memory"))
         monkeypatch.setattr("app.run._run_download_embedding_model", lambda: None)
         monkeypatch.setattr("app.cli.service._service_ready", lambda _port, **_: True)
         monkeypatch.setattr("app.cli.service.time.sleep", lambda _seconds: None)
@@ -486,6 +486,7 @@ class TestStartWindows:
     ):
         home = (tmp_path / "שירות with spaces").resolve()
         config = SimpleNamespace(
+            storage_backend="memory",
             semantic_packages={},
             llm_providers={},
             default_use_case="test",

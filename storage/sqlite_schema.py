@@ -537,6 +537,25 @@ class OperationalFactPromotionLogRecord(Base):
     promoted_at = Column(DateTime(timezone=True), nullable=False)
 
 
+class RelayCodexWakeStateRecord(Base):
+    __tablename__ = "relay_codex_wake_state"
+
+    id = Column(Integer, primary_key=True)
+    generation = Column(Integer, nullable=False)
+
+
+class RelayCodexWakeReservationRecord(Base):
+    __tablename__ = "relay_codex_wake_reservations"
+
+    recipient_endpoint_id = Column(String, primary_key=True)
+    delivery_id = Column(String, nullable=False, unique=True)
+    session_ref = Column(String, nullable=False)
+    container_ref = Column(String, nullable=False)
+    generation = Column(Integer, nullable=False)
+    outcome = Column(String, nullable=False)
+    correlated_claim_attempts = Column(Integer, nullable=True)
+
+
 class RelaySessionRecord(Base):
     __tablename__ = "relay_sessions"
 
@@ -667,6 +686,8 @@ class RelayEndpointRepairRecord(Base):
 
 
 _RELAY_TABLE_NAMES = frozenset({
+    RelayCodexWakeReservationRecord.__tablename__,
+    RelayCodexWakeStateRecord.__tablename__,
     RelaySessionRecord.__tablename__,
     RelaySessionWorkRefRecord.__tablename__,
     RelayMessageRecord.__tablename__,
@@ -1121,6 +1142,8 @@ class SQLiteSchemaMixin:
                     RelayAliasRecord.__table__,
                     RelayEndpointGenerationRecord.__table__,
                     RelayEndpointRepairRecord.__table__,
+                    RelayCodexWakeStateRecord.__table__,
+                    RelayCodexWakeReservationRecord.__table__,
                 ],
             )
             self._ensure_relay_delivery_columns(engine)
