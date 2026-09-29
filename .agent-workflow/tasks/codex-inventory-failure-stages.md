@@ -36,7 +36,7 @@ Owner: relay-dev. Canonical feature: `roadmap/features/add-wake-first-relay-deli
 
 **Exceptions:** None
 
-**State:** Blocked or returned to planning
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Planning
@@ -56,3 +56,11 @@ Independent plan accepted before edits. relay-dev owns only app/codex_bridge_pip
 2026-09-29: The manager requested an end-to-end wake architecture review before fresh implementation, including an explicit comparison with at-least-once delivery and agent-visible duplicate checks. Implementation, publication, full-suite validation and all live actions are held. The test worker was told not to edit or run tests. No application, test or design edits have begun; only this Work Record is changed. The last clean planning revision was 8c134a7f on feat/codex-inventory-failure-stages. Existing plan acceptance remains evidence for its original diagnostic scope, not acceptance of a future architecture or contract change. Manager owns the canonical roadmap and next architecture/rework decision; resume only after that decision is reconciled with this record and applicable gates.
 
 Bounded findings forwarded to the manager: custody currently permits only fixed read-only inventory, not wake; the live failure did not establish successful connection or post-source-exit transport lifetime. Lossy stage attribution cannot identify the historical failure. Native CLI admission can persist despite response loss; its retry risks another queued turn. Duplicate wake, duplicate payload emission and duplicate task action are different boundaries; an at-least-once decision must specify each, including what ACK proves. No automatic-recovery or unloaded-session delivery claim follows from diagnostics or a successful tools/list.
+
+## TDD resumption
+
+2026-09-29: Manager reports task-owner acceptance of architecture plan PR #258 and explicit instruction "ok. let's do this. and with a TDD approach". Resume only this unchanged diagnostics slice, aligned with slice A of docs/designs/relay-wake-architecture-review.md in the manager's wake-architecture-review checkout. Existing clean-context plan acceptance remains applicable; no wake/payload/retry/authority/cleanup contract is changed. Other workers own wake health/duplicate envelopes and SQLite reservations, with no intended shared paths. No live setup, restart or archive is permitted; manager owns merge/install and reads this chat, so rejected outbound forwarding is not retried.
+
+Tests precede production: Luna owns only tests/test_codex_bridge_pipe.py and must add actual private-caller regressions using existing native fixtures, then run and report the red result against unchanged app/codex_bridge_pipe.py before any production edit. Parent records that evidence here first, then owns the minimum stdlib diagnostic change and narrow design status correction. Retain one first-failure stage/category per actual transfer, fixed allowlists, trusted epoch/revision, both before/post-exit observation, unchanged public/proof fields and existing lifecycle/native-count assertions. Success, denied repeats, original failure plus secondary cleanup/proof/log failures and unknown diagnostic inputs remain covered. No new harness or dependency is needed.
+
+Correction to hold wording: the previous architecture findings were prepared but outbound forwarding was rejected by automatic approval review; they were not delivered to the manager. The hold itself was committed at 0b447bcab9772db0c1137e130e8d3f0ae962b329. No application/test/design edits or tests occurred during the hold.
