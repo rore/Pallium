@@ -8,7 +8,20 @@ milestone: pallium-relay
 lane: capability
 ---
 
-## Current execution status (reconciled 2026-09-28)
+## Current execution status (reconciled 2026-09-29)
+
+The wake architecture review in [PR #258](https://github.com/rore/Pallium/pull/258),
+sanitized native failure diagnostics in [PR #259](https://github.com/rore/Pallium/pull/259),
+and SQLite wake authority in [PR #260](https://github.com/rore/Pallium/pull/260)
+are merged and installed at `936f20aedf2a6bb7cd7b136cb5b1cc24a801529f`.
+The required service wrapper drained the old owner before verified database and
+legacy-file backups, then imported and verified all six reservations (four accepted,
+two uncertain), preserving the legacy bytes. Restart, service, queue and embedding
+health checks passed. This replaces reservation-file writes with transactional
+SQLite authority; conservative native retry behavior is unchanged. Duplicate-aware
+delivery envelopes, wake-health reporting and the separately approved retry contract
+remain next work. Unloaded-session delivery and the source-child lifetime witness
+remain unproven; this rollout makes neither claim.
 
 The Windows/Linux Claude wake foundation, loaded-task Codex wake, Codex first-run
 setup, MCP recovery integration, and live no-manual-turn reply/remediation journey
