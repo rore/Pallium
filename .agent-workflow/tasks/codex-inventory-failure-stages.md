@@ -36,7 +36,7 @@ Owner: relay-dev. Canonical feature: `roadmap/features/add-wake-first-relay-deli
 
 **Exceptions:** None
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Planning
@@ -92,3 +92,11 @@ The selected full non-slow lane passed against that production revision: 5,507 p
 Fifth red checkpoint before the review correction: the exact retained-source caller node `tests/test_codex_bridge_pipe.py::test_inventory_confirmed_source_process_exit_retains_same_connection[post-maintain-stop] -q -n 0 -m slow --tb=short` produced 1 failed in 1.07s against unchanged app blob 3e1b861a03145998d57efa6a0179a73edb2d1995. Successful post-exit maintenance followed by stop retained before/exit witnesses, no after/PASS and exactly one native inventory submission; only the diagnostic stage was wrong (after-peer instead of after-authority, category policy-inactive). The test file is frozen at blob 9bf28ca5c35e64273e7ec135afd349fb06792e42. Other focused runs passed hostile fields/sinks, initial/post-exit boundaries, primary failure plus secondary proof/cleanup errors and successful sealed expiry with zero diagnostics. Parent now corrects only the stage before the unchanged guard.
 
 Fifth green checkpoint: that exact caller regression passed (1 passed in 0.69s). The sole production correction assigns after-authority immediately before the existing post-maintenance stop/custody guard. Condition, error category, proof state, cleanup and native operations remain unchanged. Frozen-tree standalone native qualification and final verification-adequacy review follow.
+
+Frozen revision 8ec65bbfbb2e6e5214876e75e7868a566c3a2edd passed the complete standalone, untraced Windows native file (204 passed in 29.03s), including all existing native contracts and the added diagnostic caller journeys. Fresh selector lists exactly the four planned paths; uncached import-linter has zero violations, Redline is GRAY/advisory with no checkpoints, workflow is clean and whitespace checks pass. No live qualification, installation or service operation occurred.
+
+## Result review
+
+Agent technical review: /root/inventory_diagnostic_review, clean-context non-implementer Sol/medium. Reviewed revision: 8ec65bbfbb2e6e5214876e75e7868a566c3a2edd. Verification adequacy: accepted. The reviewer inspected the complete baseline-to-result diff and caller/lifecycle evidence, found the post-maintenance attribution gap, and accepted its tests-first one-line correction. No remaining security, caller/proof schema, native-operation, retry, fence or cleanup defect was identified. The reviewer explicitly accepted reuse of the earlier full non-slow and affected MCP results because the only subsequent production difference was the caller-tested native stage assignment; final native and static checks qualify that difference. Explicit failure cases remain intact; optional fixture shortening is deferred to avoid unnecessary test-only churn. Earlier proposed service-custody wording was corrected after review; code/tests remain unchanged.
+
+Separate human High-risk result review and fresh publication CI remain unsatisfied. Ready for review is not merged, installed or runtime-qualified. The existing canonical roadmap already separates shipped default-off inventory custody from unresolved runtime/unloaded wake; the manager owns recording this diagnostics milestone, merge and rollout. This slice changes attribution only, not automatic recovery or the roadmap's remaining delivery claim.
