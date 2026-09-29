@@ -333,6 +333,7 @@ class SQLiteRelayMixin:
                     or session.session_ref != row.session_ref
                     or delivery.recipient_session_ref != row.session_ref
                     or session.container_ref != row.container_ref
+                    or delivery.recipient_container_ref != row.container_ref
                     or delivery.codex_wake_generation not in (None, row.generation)):
                     uncertainty_evidence = "incomplete"
                     break

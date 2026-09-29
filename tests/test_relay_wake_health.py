@@ -300,6 +300,26 @@ def test_uncertain_correlation_is_unknown_unless_terminal(world, path, case):
 
 
 @pytest.mark.parametrize("path", VIEWS)
+@pytest.mark.parametrize("state", ["pending", "claimed", "delivered", "expired", "suppressed"])
+def test_uncertain_delivery_scope_must_match_unless_terminal(world, path, state):
+    _, delivery = _send(world, "uncertain")
+    with world[1]._relay_session_factory() as db:
+        row = db.get(RelayDeliveryRecord, delivery["delivery_id"])
+        session = db.get(RelaySessionRecord, row.recipient_endpoint_id)
+        reservation = db.get(RelayCodexWakeReservationRecord, row.recipient_endpoint_id)
+        assert session.container_ref == reservation.container_ref == SCOPE["container_ref"]
+        row.state = state
+        row.recipient_container_ref = "git:example.test/other"
+        db.commit()
+    snapshot = _view(world, path)
+    terminal = state in {"delivered", "expired", "suppressed"}
+    assert snapshot["reservations"]["uncertain"] == 1
+    assert snapshot["unresolved_uncertain_count"] == (0 if terminal else None)
+    assert snapshot["uncertainty_evidence"] == ("complete" if terminal else "incomplete")
+    assert snapshot["uncertainty_reason"] == (None if terminal else "evidence_incomplete")
+
+
+@pytest.mark.parametrize("path", VIEWS)
 @pytest.mark.parametrize("count", [0, 256, 257])
 def test_reservation_authority_bound_is_observed_without_weakening_validation(world, path, count):
     with world[1]._relay_session_factory() as db:
