@@ -15,7 +15,7 @@
 **Plan review:** Agent technical review: /root/wake_delivery_architecture and /root/wake_runtime_architecture completed independent read-only source audits at baseline 01b3f065. Root verified emission/ACK and transaction-callback findings. Their bounded synthesis is recorded in docs/designs/relay-wake-architecture-review.md, including disagreement about the need for migration and host-consumption limitations. Clean-context /root/wake_plan_review is reviewing the final synthesis. This field does not approve future application edits.
 **Approvals:** Approved by user 2026-09-29: "let's do a proper architect review of wake to find if we have more stupid issues like this. then let's plan a round of reworking the wrong parts. also, as i said before, where exactly once means overloading with complexity, we can consider at-least-once delivery, and think about how we see that the agent knows it should check for duplicates"
 **Exceptions:** —
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -34,3 +34,11 @@ Both are bounded read-only Sol reviews. No duplicate tests, live setup or runtim
 Both source reviews completed. Root accepted the source-proven split persistence, file-failure disablement, SQL callback, duplicate-envelope and health visibility findings; shutdown and host-consumption windows remain identified risks rather than reproduced outages. SQLite is recommended with explicit migration safeguards and acknowledged limits. At-least-once is separated into notification, payload receipt and downstream work; protected native retry behavior requires its exact before/after decision before implementation.
 
 Prospective Redline is BLUE for document paths with no boundary violations. Risk remains High by architectural judgment. The initial workflow check reports review-evidence gaps while review is pending; no success claimed. No application tests run or needed for this planning-only change. Existing implementation drafts remain held.
+
+## Result review
+
+Agent technical review: /root/wake_plan_review accepts the final synthesis after two corrections: preserve indivisible current-generation/native-initiation ownership outside SQL, and require exclusive stopped old ownership plus verified migration before new dispatch. Both were verified resolved; this accepts the architecture plan, not slice C's protected behavior change.
+
+Reviewed revision: b3cd38adb20a79060a05c10df1f8776d5940f924 (final document); following change records review evidence only.
+
+Verification adequacy: whole-change selector selected governance only; all 31 selected tests passed in 35.00 seconds. Import boundaries report zero violations, prospective Redline BLUE, Agent Workflow clean after method-format correction, and diff checks passed. Documentation changes do not need an application suite. Claims distinguish observed failures, source-proven boundaries and unresolved runtime hypotheses.
