@@ -36,7 +36,7 @@ Owner: relay-dev. Canonical feature: `roadmap/features/add-wake-first-relay-deli
 
 **Exceptions:** None
 
-**State:** Ready for review
+**State:** Blocked
 <!-- agent-workflow:end -->
 
 ## Planning
@@ -106,3 +106,7 @@ Verification adequacy: accepted.
 The reviewer inspected the complete baseline-to-result diff and caller/lifecycle evidence, found the post-maintenance attribution gap, and accepted its tests-first one-line correction. No remaining security, caller/proof schema, native-operation, retry, fence or cleanup defect was identified. The reviewer explicitly accepted reuse of the earlier full non-slow and affected MCP results because the only subsequent production difference was the caller-tested native stage assignment; final native and static checks qualify that difference. Explicit failure cases remain intact; optional fixture shortening is deferred to avoid unnecessary test-only churn. Earlier proposed service-custody wording was corrected after review; code/tests remain unchanged.
 
 Manager-delegated result acceptance: the manager independently read production diff 01b3f065..8ec65bbf and the final technical review and validation evidence, then accepted publication on 2026-09-29 under the task owner's review delegation and blanket approval. This records delegated acceptance, not personal human inspection. Fresh publication CI remains required; the manager owns merge/install and approval obligations. Ready for review is not merged, installed or runtime-qualified. The existing canonical roadmap already separates shipped default-off inventory custody from unresolved runtime/unloaded wake; the manager owns recording this diagnostics milestone. This slice changes attribution only, not automatic recovery or the roadmap's remaining delivery claim.
+
+## Publication blocker
+
+PR #259 is published at 75d461bd3a41ce2e1328c6f63d9d20bdaa2cc882. Required Python 3.12 CI failed in the unchanged `tests/test_claude_wake_durability.py::test_crashed_intent_lock_owner_allows_hook_publication_and_http_recovery[normal-portal]`: expected HTTP 409 passed, but elapsed time was approximately 0.785 seconds against the existing 0.5-second requirement. Its test and production Claude wake code match the trusted base; the cause is not established. Do not waive, weaken or claim that check passed. Manager owns diagnosis or assignment of this outside-slice blocker and fresh CI acceptance before merge/install. This metadata-only local checkpoint is not pushed while the existing CI run remains active; no application/test change or automatic rerun is requested. PR check details remain the authoritative evidence surface.
