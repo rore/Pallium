@@ -1,6 +1,6 @@
 # Optional Codex MCP Desktop bridge
 
-Status: inert and authenticated child-shadow implementations shipped; proposed default-off service custody is inventory-only and grants no wake authority.
+Status: inert, authenticated child-shadow and default-off service custody implementations shipped. Service custody is inventory-only, remains runtime-unqualified and grants no wake authority.
 No production wake implementation or activation approval.
 Canonical work: [wake-first Relay delivery](../../roadmap/features/add-wake-first-relay-delivery.md).
 Private experiment: `codex-desktop-bridge-spike` Work Record; its history is not publication-ready.
@@ -291,9 +291,9 @@ automatically reconnects or re-enrolls. A fresh eligible MCP child requires a ne
 explicit enrollment with genuine current metadata and still-valid operator policy.
 Normal MCP tools and retained Relay messages continue unchanged.
 
-## Proposed service-owned Desktop inventory custody
+## Service-owned Desktop inventory custody
 
-This is a separate, default-off implementation in progress, not runtime-qualified. It reuses the existing
+This separate, default-off implementation is shipped, but not runtime-qualified. It reuses the existing
 durable Pallium service and never starts a detached helper or competing app-server.
 Its only native operation is a fixed, redacted `tools/list`; it has no `tools/call`,
 wake, claim, ACK, or payload authority. Existing current-request wake authority and
@@ -321,7 +321,7 @@ unresolved I/O remains unavailable until close is conclusive. Source-child EOF
 alone does not revoke an independently
 authorized service registration. A service restart loses the RAM registration and
 requires a new admission after ordinary chat use; zero-child startup bootstrap and
-persisted credential recovery are outside this proposal. This limited custody
+persisted credential recovery are outside this implementation. This limited custody
 provides no wake authority and does not qualify cold delivery, busy safety, or
 restart recovery.
 
@@ -356,3 +356,14 @@ publication. It never serializes native I/O.
 The lock does not guarantee every Windows replacement succeeds. A failed policy
 write reports failure and preserves the previous policy; failed revocation is not
 reported as revoked. No data-write retry or permission relaxation is added.
+
+Service-only failure diagnostics retain the first fixed stage and allowlisted
+category for an actual transfer, correlated by service epoch and policy revision.
+They distinguish native open/peer checks, before/post-exit authority and inventory
+I/O, and proof publication before public normalization can lose that distinction.
+No exception text, traceback, endpoint, environment, response or tool inventory is
+logged. Unknown diagnostic values use fixed fallbacks; a failed log sink does not
+change failure handling. Later cleanup cannot replace the original attribution,
+and ordinary cleanup after sealed successful proof adds no failure diagnostic.
+Public MCP fields and protected proof fields remain unchanged. These diagnostics
+do not retrospectively explain an earlier failure or qualify unloaded wake.
