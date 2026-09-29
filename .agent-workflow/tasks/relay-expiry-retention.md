@@ -37,6 +37,8 @@ Existing assignments receive no backfill. Their exact IDs, payloads, sentinel ex
 
 Retention is separate: recommend30days for terminal activation diagnostics, measured conservatively from known last activity, with preview counts before any future deletion. This duration is a proposal, not an approved purge policy. Preserve pending/claimed, accepted/uncertain reservation anchors and any unresolved history. Message/delivery identity cannot be deleted on that clock: deletion would permit old send IDs or deterministic reply IDs to recreate delivery and would break parent/repair/trace references. Payload retention requires a separately reviewed tombstone/fingerprint contract; defer it. Existing code has bounded trace admission but no time-based Relay-history cleanup.
 
+Historical correction (2026-09-29): The last discovery claim above was false. `storage/sqlite_retention.py` already deletes trace rows older than 30 days or when the global trace cap is reached, and `core/service.py` invokes that cleanup even with general retention disabled. The subsequent trace-cleanup-guard task addresses unsafe eligibility in this established cleaner; this correction does not authorize new deletion or change the completed expiry slice.
+
 Docs drift discovered: Relay limits document durable omission and must change with the approved default. The wake section still describes reservation-file ownership despite shipped SQLite authority; flag this independently to root and correct only the directly related statement if accepted.
 
 ## Independent plan acceptance and test map
