@@ -97,6 +97,12 @@ Frozen revision 8ec65bbfbb2e6e5214876e75e7868a566c3a2edd passed the complete sta
 
 ## Result review
 
-Agent technical review: /root/inventory_diagnostic_review, clean-context non-implementer Sol/medium. Reviewed revision: 8ec65bbfbb2e6e5214876e75e7868a566c3a2edd. Verification adequacy: accepted. The reviewer inspected the complete baseline-to-result diff and caller/lifecycle evidence, found the post-maintenance attribution gap, and accepted its tests-first one-line correction. No remaining security, caller/proof schema, native-operation, retry, fence or cleanup defect was identified. The reviewer explicitly accepted reuse of the earlier full non-slow and affected MCP results because the only subsequent production difference was the caller-tested native stage assignment; final native and static checks qualify that difference. Explicit failure cases remain intact; optional fixture shortening is deferred to avoid unnecessary test-only churn. Earlier proposed service-custody wording was corrected after review; code/tests remain unchanged.
+Agent technical review: /root/inventory_diagnostic_review, clean-context non-implementer Sol/medium.
+
+Reviewed revision: 8ec65bbfbb2e6e5214876e75e7868a566c3a2edd.
+
+Verification adequacy: accepted.
+
+The reviewer inspected the complete baseline-to-result diff and caller/lifecycle evidence, found the post-maintenance attribution gap, and accepted its tests-first one-line correction. No remaining security, caller/proof schema, native-operation, retry, fence or cleanup defect was identified. The reviewer explicitly accepted reuse of the earlier full non-slow and affected MCP results because the only subsequent production difference was the caller-tested native stage assignment; final native and static checks qualify that difference. Explicit failure cases remain intact; optional fixture shortening is deferred to avoid unnecessary test-only churn. Earlier proposed service-custody wording was corrected after review; code/tests remain unchanged.
 
 Separate human High-risk result review and fresh publication CI remain unsatisfied. Ready for review is not merged, installed or runtime-qualified. The existing canonical roadmap already separates shipped default-off inventory custody from unresolved runtime/unloaded wake; the manager owns recording this diagnostics milestone, merge and rollout. This slice changes attribution only, not automatic recovery or the roadmap's remaining delivery claim.
