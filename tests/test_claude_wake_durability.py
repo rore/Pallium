@@ -806,10 +806,73 @@ def test_crashed_intent_lock_owner_allows_hook_publication_and_http_recovery(
 ) -> None:
     import contextlib
     import time
+    from types import FunctionType
 
     import anyio.from_thread
+    import fastapi.routing
+    import core.claude_wake as wake
+    from fastapi import FastAPI
     from tests.test_claude_code_integration import _load_claude_hook
     from tests.test_claude_wake_registration import _client
+
+    timing_origin = None
+    timing_samples = []
+
+    @contextlib.contextmanager
+    def measure(label):
+        origin = timing_origin
+        if origin is None:
+            yield
+            return
+        try:
+            wall_start, cpu_start = time.monotonic(), time.thread_time()
+        except Exception:
+            yield
+            return
+        try:
+            yield
+        finally:
+            try:
+                wall_end, cpu_end = time.monotonic(), time.thread_time()
+                if len(timing_samples) < 32:
+                    timing_samples.append({
+                        "phase": label,
+                        "start_ms": round((wall_start - origin) * 1000, 3),
+                        "end_ms": round((wall_end - origin) * 1000, 3),
+                        "wall_ms": round((wall_end - wall_start) * 1000, 3),
+                        "cpu_ms": round((cpu_end - cpu_start) * 1000, 3),
+                    })
+            except Exception:
+                pass  # Diagnostics must not replace an operation's result or exception.
+
+    def timed_sync(label, original):
+        def wrapped(*args, **kwargs):
+            with measure(label):
+                return original(*args, **kwargs)
+        return wrapped
+
+    original_asgi = FastAPI.__call__
+
+    async def timed_asgi(app, scope, receive, send):
+        if scope["type"] != "http":
+            return await original_asgi(app, scope, receive, send)
+
+        async def timed_send(message):
+            if message["type"] == "http.response.body" and not message.get("more_body", False):
+                with measure("response_send"):
+                    return await send(message)
+            return await send(message)
+
+        with measure("asgi"):
+            return await original_asgi(app, scope, receive, timed_send)
+
+    monkeypatch.setattr(FastAPI, "__call__", timed_asgi)
+    monkeypatch.setattr(wake, "_acquire_intent_lock", timed_sync("intent_lock", wake._acquire_intent_lock))
+    included_router = vars(fastapi.routing).get("_IncludedRouter")
+    router_setup = vars(included_router).get("effective_candidates") if isinstance(included_router, type) else None
+    router_setup_probe = isinstance(router_setup, FunctionType)
+    if router_setup_probe:
+        monkeypatch.setattr(included_router, "effective_candidates", timed_sync("router_setup", router_setup))
 
     portal_starts = 0
     original_start_portal = anyio.from_thread.start_blocking_portal
@@ -830,6 +893,7 @@ def test_crashed_intent_lock_owner_allows_hook_publication_and_http_recovery(
     _write_intent(state_dir, old, "old")
     path = _intent_path(state_dir, PAYLOAD["session_ref"])
     registry = ClaudeWakeRegistry(state_dir=state_dir)
+    monkeypatch.setattr(registry, "register", timed_sync("registry", registry.register))
     script = (
         "import sys; from pathlib import Path; "
         "from core.claude_wake import _acquire_intent_lock; "
@@ -849,11 +913,18 @@ def test_crashed_intent_lock_owner_allows_hook_publication_and_http_recovery(
         common = _load_claude_hook("common", monkeypatch)
         common.CLAUDE_WAKE_DIR = state_dir
         common.CLAUDE_WAKE_INTENTS_DIR = state_dir / "intents"
+        monkeypatch.setattr(common, "_acquire_file_lock", timed_sync("hook_lock", common._acquire_file_lock))
+        monkeypatch.setattr(common, "register_claude_wake", timed_sync("hook", common.register_claude_wake))
         with _client(registry) as http:
+            monkeypatch.setattr(http, "post", timed_sync("http", http.post))
             started = time.monotonic()
+            timing_origin = started
             rejected = http.post("/internal/claude-wake/register", json=old)
+            timing_origin = None
             assert rejected.status_code == 409
-            assert time.monotonic() - started < 0.5
+            assert time.monotonic() - started < 0.5, json.dumps({
+                "router_setup_probe": int(router_setup_probe), "timings": timing_samples,
+            })
             assert registry._registrations == {} and not registry._canonical.exists()
             assert json.loads(path.read_text(encoding="utf-8"))["intent_id"] == "old"
 
@@ -886,11 +957,16 @@ def test_crashed_intent_lock_owner_allows_hook_publication_and_http_recovery(
             assert http_requests == []
             assert json.loads(path.read_text(encoding="utf-8"))["intent_id"] == "old"
 
+            timing_samples.clear()
             started = time.monotonic()
+            timing_origin = started
             assert not common.register_claude_wake(
                 PAYLOAD["session_ref"], PAYLOAD["container_ref"], idle=True,
             )
-            assert time.monotonic() - started < 0.5
+            timing_origin = None
+            assert time.monotonic() - started < 0.5, json.dumps({
+                "router_setup_probe": int(router_setup_probe), "timings": timing_samples,
+            })
             assert http_requests == []
             assert registry._registrations == {} and not registry._canonical.exists()
             assert json.loads(path.read_text(encoding="utf-8"))["intent_id"] == "old"
