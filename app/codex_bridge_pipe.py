@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import logging
 import os
 import secrets
 import sys
@@ -23,6 +24,15 @@ TRUSTED_INSTALLER_SID = "S-1-5-80-956008885-3418522649-1831038044-1853292631-227
 _retained: list[object] = []
 _native_uncertain = False
 _policy_tokens: dict[object, tuple] = {}
+_log = logging.getLogger(__name__)
+_INVENTORY_FAILURE_STAGES = frozenset({"transfer-authority", "native-open", "native-peer"})
+_INVENTORY_FAILURE_CATEGORIES = frozenset({
+    "busy", "deadline", "file-unavailable", "file-write-failed", "invalid-message", "invalid-path",
+    "invalid-policy", "invalid-policy-lock", "invalid-response", "message-limit", "native-failed",
+    "path-unavailable", "peer-gone", "peer-mismatch", "peer-unavailable", "policy-busy",
+    "policy-changed", "policy-inactive", "stopped", "transport-failed", "unsafe-acl", "unsafe-owner",
+    "unsafe-path", "unsupported-acl",
+})
 
 
 class ShadowUnavailable(RuntimeError):
@@ -1240,6 +1250,27 @@ class InventoryService:
         self.proof = None
         self.published_phases = set()
         self.after_attempted = False
+        self._failure_context = None
+        self._failure_stage = "unknown"
+        self._failure_diagnostic = None
+
+    def _record_failure(self, exc: Exception) -> None:
+        if self._failure_context is None or self._failure_diagnostic is not None or "after" in self.published_phases:
+            return
+        stage = self._failure_stage
+        stage = stage if type(stage) is str and stage in _INVENTORY_FAILURE_STAGES else "unknown"
+        try:
+            category = getattr(exc, "category", None)
+        except Exception:
+            category = None
+        category = category if type(category) is str and category in _INVENTORY_FAILURE_CATEGORIES else "unexpected"
+        # Latch before logging: a failed sink must not retry or replace the original attribution.
+        self._failure_diagnostic = (stage, category)
+        try:
+            _log.warning("codex_inventory_failure stage=%s category=%s epoch=%s revision=%d",
+                         stage, category, *self._failure_context)
+        except Exception:
+            pass  # Diagnostics must not change failure handling.
 
     def start(self):
         if not native_available():
@@ -1385,6 +1416,9 @@ class InventoryService:
                 or len(endpoint) > 512 or not endpoint.isprintable() or endpoint != endpoint.strip()):
             raise ShadowUnavailable("invalid-message")
         handle = None
+        self._failure_context = (self.epoch, policy.revision)
+        self._failure_diagnostic = None
+        self._failure_stage = "transfer-authority"
         try:
             # Authority was independently checked before accepting the capability.
             self._authorize(policy.revision)
@@ -1394,12 +1428,14 @@ class InventoryService:
                           "source_exited": False, "failure": "none"}
             self.after_attempted = False
             self.published_phases = set()
+            self._failure_stage = "native-open"
             handle = self.w.file.CreateFile(endpoint, self.w.con.GENERIC_READ | self.w.con.GENERIC_WRITE,
                 0, None, self.w.con.OPEN_EXISTING,
                 self.w.con.FILE_FLAG_OVERLAPPED | self.w.con.SECURITY_SQOS_PRESENT | self.w.file.SECURITY_IDENTIFICATION, None)
             self.custody = _DesktopIO(self.w, handle, self.stop_event)
             self.native_sequence = 0
             handle = None
+            self._failure_stage = "native-peer"
             if self.w.pipe.GetNamedPipeServerProcessId(self.custody.handle) != self.desktop.pid:
                 raise ShadowUnavailable("peer-mismatch")
             self._authorize(policy.revision)
@@ -1412,6 +1448,7 @@ class InventoryService:
             self._publish_proof()
             return self._result(inventory_ok=True)
         except Exception as exc:
+            self._record_failure(exc)
             _close(handle)
             self.fenced = True
             self._drop()
