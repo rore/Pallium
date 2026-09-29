@@ -1024,6 +1024,7 @@ async def test_relay_send_uses_exact_scope_and_preserves_unicode(monkeypatch: py
         content, _ = await server.call_tool("pallium_relay_send", {
             "message": "הודעה → 你好",
             "recipient": "@review",
+            "expires_in_seconds": None,
             "sender_runtime": "codex",
             "sender_session_ref": "session-1",
             "container_ref": "git:example/repo",
@@ -1047,6 +1048,7 @@ async def test_relay_reply_uses_delivery_without_model_supplied_identity(monkeyp
         content, _ = await server.call_tool("pallium_relay_reply", {
             "delivery_id": "delivery-1",
             "message": "ack ✓",
+            "expires_in_seconds": None,
             "container_ref": "git:example/repo",
             "actor_ref": "actor-1",
         })

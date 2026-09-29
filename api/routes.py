@@ -908,7 +908,10 @@ def create_router(
 
     @router.post("/relay/messages", response_model=RelayMessageResponse)
     async def relay_send(request: RelaySendRequest):
-        result = await _relay_call("send", lambda: _relay().send(**request.model_dump()))
+        arguments = request.model_dump()
+        if "expires_in_seconds" not in request.model_fields_set:
+            arguments.pop("expires_in_seconds")
+        result = await _relay_call("send", lambda: _relay().send(**arguments))
         if relay_send_callback is not None:
             try:
                 relay_send_callback(result, {
@@ -920,7 +923,10 @@ def create_router(
 
     @router.post("/relay/replies", response_model=RelayMessageResponse)
     async def relay_reply(request: RelayReplyRequest):
-        result = await _relay_call("reply", lambda: _relay().reply(**request.model_dump()))
+        arguments = request.model_dump()
+        if "expires_in_seconds" not in request.model_fields_set:
+            arguments.pop("expires_in_seconds")
+        result = await _relay_call("reply", lambda: _relay().reply(**arguments))
         if relay_ack_callback is not None:
             try:
                 relay_ack_callback(

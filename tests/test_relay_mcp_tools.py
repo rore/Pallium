@@ -26,9 +26,103 @@ from app.mcp.server import create_server
 from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool", ["pallium_relay_send", "pallium_relay_reply"])
+async def test_registered_expiry_schema_is_optional_nullable_bounded_integer(tool):
+    registered = next(item for item in await create_server().list_tools() if item.name == tool)
+    schema = registered.inputSchema
+    assert "expires_in_seconds" not in schema.get("required", [])
+    field = schema["properties"]["expires_in_seconds"]
+    assert "default" not in field
+    assert {part.get("type") for part in field["anyOf"]} == {"integer", "null"}
+    integer = next(part for part in field["anyOf"] if part.get("type") == "integer")
+    assert integer["minimum"] == 60 and integer["maximum"] == 604800
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool", ["pallium_relay_send", "pallium_relay_reply"])
+@pytest.mark.parametrize("expiry", ["omitted", None, 60, 604800])
+async def test_registered_expiry_presence_reaches_http_and_public_status(
+    monkeypatch, asgi_post, asgi_get, tool, expiry,
+):
+    recorded = []
+
+    async def post(_client, path, payload, **kwargs):
+        recorded.append((path, dict(payload)))
+        return await asgi_post(path, payload)
+
+    monkeypatch.setattr(PalliumMcpClient, "_post_or_error", post)
+    await asgi_post("/relay/turn", {"runtime": "codex", "session_ref": "expiry-sender", **_SCOPE})
+    await asgi_post("/relay/turn", {"runtime": _RUNTIME, "session_ref": _SESSION, **_SCOPE})
+    arguments = {"message": "תשובה → 你好"}
+    if tool == "pallium_relay_send":
+        arguments.update(recipient=f"{_RUNTIME}:{_SESSION}", sender_runtime="codex", sender_session_ref="expiry-sender")
+    else:
+        await asgi_post("/relay/messages", {
+            "sender_runtime": "codex", "sender_session_ref": "expiry-sender",
+            "recipient": f"{_RUNTIME}:{_SESSION}", "payload": "question", "expires_in_seconds": None, **_SCOPE,
+        })
+        claimed = (await asgi_post("/relay/turn", {"runtime": _RUNTIME, "session_ref": _SESSION, **_SCOPE}))["deliveries"][0]
+        arguments.update(delivery_id=claimed["delivery_id"], receipt=claimed["receipt"])
+    if expiry != "omitted":
+        arguments["expires_in_seconds"] = expiry
+    await create_server().call_tool(tool, arguments)
+    path, payload = recorded[-1]
+    assert ("expires_in_seconds" in payload) is (expiry != "omitted")
+    if expiry != "omitted":
+        assert payload["expires_in_seconds"] == expiry
+    # Read state through the same HTTP status surface the caller uses.
+    if tool == "pallium_relay_send":
+        message_id = payload["message_id"]
+    else:
+        import hashlib
+        message_id = "relay-reply-" + hashlib.sha256(arguments["delivery_id"].encode()).hexdigest()
+    status = await asgi_get(f"/relay/messages/{message_id}", _SCOPE)
+    if expiry is None:
+        assert status["expires_at"] is None
+    else:
+        created = datetime.fromisoformat(status["created_at"])
+        expires = datetime.fromisoformat(status["expires_at"])
+        assert (expires - created).total_seconds() == (86400 if expiry == "omitted" else expiry)
+    assert status["payload"] == arguments["message"]
+
+
 _SCOPE = {
     "container_ref": "git:example.test/relay-tools",
 }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("expiry", [None, 600])
+async def test_registered_omitted_existing_reply_preserves_ttl_and_explicit_changes_conflict(
+    monkeypatch, asgi_post, asgi_get, expiry,
+):
+    bind_asgi_work_refs(monkeypatch, asgi_post, asgi_get)
+    await asgi_post("/relay/turn", {"runtime": "codex", "session_ref": "legacy-sender", **_SCOPE})
+    await asgi_post("/relay/turn", {"runtime": _RUNTIME, "session_ref": _SESSION, **_SCOPE})
+    await asgi_post("/relay/messages", {
+        "sender_runtime": "codex", "sender_session_ref": "legacy-sender",
+        "recipient": f"{_RUNTIME}:{_SESSION}", "payload": "question", "expires_in_seconds": None, **_SCOPE,
+    })
+    claimed = (await asgi_post("/relay/turn", {"runtime": _RUNTIME, "session_ref": _SESSION, **_SCOPE}))["deliveries"][0]
+    original = await asgi_post("/relay/replies", {
+        "delivery_id": claimed["delivery_id"], "receipt": claimed["receipt"],
+        "payload": "legacy answer", "expires_in_seconds": expiry, **_SCOPE,
+    })
+    original = await asgi_get(f"/relay/messages/{original['message_id']}", _SCOPE)
+    server = create_server()
+    arguments = {"delivery_id": claimed["delivery_id"], "receipt": claimed["receipt"], "message": "legacy answer"}
+    await server.call_tool("pallium_relay_reply", arguments)
+    status = await asgi_get(f"/relay/messages/{original['message_id']}", _SCOPE)
+    assert status["expires_at"] == original["expires_at"]
+    assert status["deliveries"][0]["delivery_id"] == original["deliveries"][0]["delivery_id"]
+    changed = 86400 if expiry is None else None
+    error = await assert_tool_error(server, "pallium_relay_reply", {**arguments, "expires_in_seconds": changed})
+    assert "different parameters" in error
+    error = await assert_tool_error(server, "pallium_relay_reply", {**arguments, "message": "different"})
+    assert "different parameters" in error
+    received = await asgi_post("/relay/turn", {"runtime": "codex", "session_ref": "legacy-sender", **_SCOPE})
+    assert [item["message_id"] for item in received["deliveries"]] == [original["message_id"]]
 _RUNTIME = "claude-code"
 _SESSION = "mcp-tool-session"
 async def assert_tool_error(server, tool, arguments):
@@ -1250,9 +1344,9 @@ async def test_cross_container_fastmcp_relay_lifecycle_and_bare_runtime_rejectio
 
 @pytest.mark.asyncio
 async def test_redacted_send_and_reply_summaries_are_safe_and_bounded(
-    monkeypatch: pytest.MonkeyPatch, asgi_post,
+    monkeypatch: pytest.MonkeyPatch, asgi_post, asgi_get,
 ):
-    bind_asgi_post(monkeypatch, asgi_post)
+    bind_asgi_work_refs(monkeypatch, asgi_post, asgi_get)
     sender = "s" * 255
     for runtime, session in ((_RUNTIME, _SESSION), ("codex", sender)):
         await asgi_post("/relay/turn", {"runtime": runtime, "session_ref": session, **_SCOPE})
@@ -1286,7 +1380,21 @@ async def test_redacted_send_and_reply_summaries_are_safe_and_bounded(
 
     received, _ = await server.call_tool("pallium_relay_receive", {})
     deliveries = json.loads(received[0].text)["deliveries"]
-    reply_delivery = next(item for item in deliveries if item["payload"] == repro)
+    assert len(received[0].text) <= 2000
+    assert len(deliveries) == 1, received[0].text
+    reply_delivery = deliveries[0]
+    assert reply_delivery["payload"] and repro.startswith(reply_delivery["payload"])
+    recovered = reply_delivery["payload"]
+    offset = reply_delivery["next_offset"]
+    while offset is not None:
+        page, _ = await server.call_tool("pallium_relay_status", {"message_id": reply_delivery["message_id"], "offset": offset})
+        assert len(page[0].text) <= 2000
+        body = json.loads(page[0].text)
+        recovered += body["payload"]
+        offset = body["next_offset"]
+    assert recovered == repro
+    original_status = await asgi_get(f"/relay/messages/{reply_delivery['message_id']}", _SCOPE)
+    assert original_status["deliveries"][0]["state"] == "claimed"
     reply_args = {
         "delivery_id": reply_delivery["delivery_id"],
         "receipt": reply_delivery["receipt"],

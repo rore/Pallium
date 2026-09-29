@@ -5,7 +5,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from core.relay import RELAY_MESSAGE_MAX_CHARS
+from core.relay import RELAY_DEFAULT_EXPIRY_SECONDS, RELAY_MESSAGE_MAX_CHARS
 from core.visibility import Visibility
 
 
@@ -904,7 +904,7 @@ class RelaySendRequest(BaseModel):
     recipient: str = Field(min_length=1, max_length=320)
     payload: str = Field(min_length=1, max_length=RELAY_MESSAGE_MAX_CHARS)
     container_ref: str = Field(min_length=1, max_length=512)
-    expires_in_seconds: int | None = Field(default=None, ge=60, le=604800)
+    expires_in_seconds: int | None = Field(default=RELAY_DEFAULT_EXPIRY_SECONDS, ge=60, le=604800)
     in_reply_to: str | None = Field(default=None, min_length=1, max_length=128)
     message_id: str | None = Field(default=None, min_length=1, max_length=128)
 
@@ -914,7 +914,7 @@ class RelayReplyRequest(BaseModel):
     receipt: str | None = Field(default=None, max_length=64)
     payload: str = Field(min_length=1, max_length=RELAY_MESSAGE_MAX_CHARS)
     container_ref: str = Field(min_length=1, max_length=512)
-    expires_in_seconds: int | None = Field(default=None, ge=60, le=604800)
+    expires_in_seconds: int | None = Field(default=RELAY_DEFAULT_EXPIRY_SECONDS, ge=60, le=604800)
 
 
 class RelayAckRequest(BaseModel):

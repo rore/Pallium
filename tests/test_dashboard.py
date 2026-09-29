@@ -149,6 +149,77 @@ class TestDashboardRelaySummary:
         assert body["status"] == "idle"
         assert body["messages"] == {"last_24h": 0, "total": 0, "replies_last_24h": 0}
         assert set(body["sessions"]) == {"claude-code", "codex", "opencode"}
+        assert body["deliveries"]["live_unacknowledged_total"] == 0
+        assert body["deliveries"]["durable_unacknowledged_total"] == 0
+        assert body["deliveries"]["unacknowledged_over_24h"] == 0
+        assert body["deliveries"]["unacknowledged_over_7d"] == 0
+
+    def test_relay_summary_reports_live_unacknowledged_ages_and_durable_count(self, tmp_path: Path, monkeypatch) -> None:
+        import app.dashboard as dashboard
+
+        as_of = datetime(2026, 9, 29, 12, tzinfo=timezone.utc)
+
+        class FixedDateTime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return as_of if tz else as_of.replace(tzinfo=None)
+
+        app = create_app(_test_config(tmp_path))
+        monkeypatch.setattr(dashboard, "datetime", FixedDateTime)
+        storage = app.state.pallium_service._storage
+        durable_expiry = datetime.max.replace(tzinfo=timezone.utc)
+        future_expiry = as_of + timedelta(days=2)
+        rows = [
+            ("recent", "pending", as_of - timedelta(hours=1), future_expiry, "c1"),
+            ("exact-24h", "pending", as_of - timedelta(hours=24), future_expiry, "c1"),
+            ("older-24h", "claimed", as_of - timedelta(hours=25), future_expiry, "c1"),
+            ("exact-7d", "pending", as_of - timedelta(days=7), future_expiry, "c2"),
+            ("durable-old", "claimed", as_of - timedelta(days=8), durable_expiry, "c2"),
+            ("expired-by-time", "pending", as_of - timedelta(days=2), as_of, "c1"),
+            ("delivered", "delivered", as_of - timedelta(days=8), future_expiry, "c2"),
+            ("suppressed", "suppressed", as_of - timedelta(days=8), future_expiry, "c2"),
+            ("terminal-expired", "expired", as_of - timedelta(days=8), future_expiry, "c1"),
+        ]
+        with storage._relay_session_factory() as session:
+            for name, state, created_at, expires_at, container in rows:
+                message_id = f"age-message-{name}"
+                session.add(RelayMessageRecord(
+                    id=message_id, sender_runtime="codex", sender_session_ref="sender",
+                    recipient_selector="codex:target", container_ref="sender-container",
+                    payload="not returned by summary", redacted=0, created_at=created_at,
+                    expires_at=expires_at,
+                ))
+                session.add(RelayDeliveryRecord(
+                    id=f"age-delivery-{name}", message_id=message_id,
+                    recipient_runtime="codex", recipient_session_ref="target",
+                    recipient_container_ref=container, state=state, attempts=1,
+                ))
+            session.commit()
+
+        def relay_state_snapshot():
+            with storage._relay_session_factory() as session:
+                return tuple(
+                    session.execute(text(query)).all()
+                    for query in (
+                        "SELECT id, created_at, expires_at FROM relay_messages ORDER BY id",
+                        "SELECT id, state, attempts, claimed_at, delivered_at FROM relay_deliveries ORDER BY id",
+                        "SELECT id, state, last_seen_at FROM relay_sessions ORDER BY id",
+                        "SELECT delivery_id, stage, outcome FROM relay_delivery_trace ORDER BY recorded_sequence",
+                    )
+                )
+
+        before = relay_state_snapshot()
+        with TestClient(app) as client:
+            response = client.get("/dashboard/api/relay/summary")
+        assert response.status_code == 200
+        summary = response.json()["deliveries"]
+        assert summary["live_unacknowledged_total"] == 5
+        assert summary["durable_unacknowledged_total"] == 1
+        assert summary["unacknowledged_over_24h"] == 3
+        assert summary["unacknowledged_over_7d"] == 1
+        assert summary["pending_now"] == 5
+        assert "not returned by summary" not in str(response.json())
+        assert relay_state_snapshot() == before
 
     def test_relay_summary_reports_pending_delivery_expiry_and_latency_without_content(self, tmp_path: Path) -> None:
         app = create_app(_test_config(tmp_path))
@@ -167,6 +238,7 @@ class TestDashboardRelaySummary:
                     "sender_session_ref": "sender",
                     "recipient": "codex:target",
                     "payload": "private-secret-payload",
+                    "expires_in_seconds": None,
                     **scope,
                 },
             ).json()
@@ -1261,7 +1333,7 @@ class TestDashboardSourceAndRelayProjections:
             for runtime, session_ref in (("codex", "one"), ("claude-code", "two")):
                 assert client.post("/relay/turn", json={"runtime": runtime, "session_ref": session_ref, **scope}).status_code == 200
             sent = client.post("/relay/messages", json={"sender_runtime": "codex", "sender_session_ref": "one",
-                "recipient": "claude-code:two", "payload": "AKIA1234567890ABCDEF", **scope}).json()
+                "recipient": "claude-code:two", "payload": "AKIA1234567890ABCDEF", "expires_in_seconds": None, **scope}).json()
             session_page = client.get("/dashboard/api/relay/sessions?limit=1").json()
             sessions = client.get("/dashboard/api/relay/sessions").json()["sessions"]
             assert session_page["total"] == 2 and len(session_page["sessions"]) == 1

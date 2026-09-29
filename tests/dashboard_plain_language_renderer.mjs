@@ -492,6 +492,32 @@ renderRelaySummaryContract({
 assert.match(relaySummaryElements['relay-note'].textContent, /usually expected/i);
 assert.match(relaySummaryElements['relay-waiting-guidance'].textContent, /waiting is usually normal/i);
 renderRelaySummaryContract({
+  status: 'active', messages: {}, latency_seconds: {}, sessions: {},
+  deliveries: {
+    pending_now: 6, live_unacknowledged_total: 6, durable_unacknowledged_total: 1,
+    unacknowledged_over_24h: 3, unacknowledged_over_7d: 1,
+  },
+  possible_identity_collisions: { claimable_delivery_count: 0 },
+});
+assert.match(relaySummaryElements['relay-note'].textContent, /6 live unacknowledged.*1 durable.*3 over 24h.*1 over 7d/i);
+assert.match(relaySummaryElements['relay-note'].textContent, /age bands overlap/i);
+assert.match(relaySummaryElements['relay-note'].textContent, /does not show whether work was seen or completed/i);
+renderRelaySummaryContract({
+  status: 'idle', messages: {}, latency_seconds: {}, sessions: {},
+  deliveries: {
+    pending_now: 0, live_unacknowledged_total: 0, durable_unacknowledged_total: 0,
+    unacknowledged_over_24h: 0, unacknowledged_over_7d: 0,
+  },
+  possible_identity_collisions: { claimable_delivery_count: 0 },
+});
+assert.match(relaySummaryElements['relay-note'].textContent, /0 live unacknowledged.*0 durable.*0 over 24h.*0 over 7d/i);
+renderRelaySummaryContract({
+  status: 'active', messages: {}, latency_seconds: {}, sessions: {},
+  deliveries: { live_unacknowledged_total: null, unacknowledged_over_7d: null },
+  possible_identity_collisions: { claimable_delivery_count: 0 },
+});
+assert.match(relaySummaryElements['relay-note'].textContent, /unknown live unacknowledged.*unknown durable.*unknown over 24h.*unknown over 7d/i);
+renderRelaySummaryContract({
   status: 'attention', messages: {}, deliveries: { pending_now: 3 }, latency_seconds: {}, sessions: {},
   codex_readiness: { state: 'review_required' },
   awaiting_recipient_checkin: { status: 'actionable', count: 3, failure_count: 0, causes: ['hook_review_required'] },

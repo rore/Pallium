@@ -22,7 +22,7 @@ from pydantic import BeforeValidator, Field, StrictInt, StrictStr
 from app.mcp.client import PalliumMcpClient
 from app.mcp.context import resolve_codex_thread_ref, resolve_context, resolve_relay_context
 from core.history_presentation import compact_history
-from core.relay import RELAY_TRACE_MAX_SEQUENCE, parse_selector
+from core.relay import RELAY_TRACE_MAX_SEQUENCE, _RELAY_EXPIRY_OMITTED, parse_selector
 from core.work_ref import readable_work_ref
 from redaction import redact_sensitive
 from retrieval.common import build_excerpt
@@ -1901,10 +1901,10 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None,
         recipient: str,
         sender_runtime: str,
         sender_session_ref: str,
-        expires_in_seconds: int | None = None,
+        expires_in_seconds: int | None = Field(default_factory=lambda: _RELAY_EXPIRY_OMITTED, ge=60, le=604800),
         container_ref: str | None = None,
     ) -> str:
-        """Send new text of at most 16,000 Unicode code points to one canonical endpoint ID (relay-session-...) or service-global name (@review). For a role recipient, use its current @name; before reusing an exact endpoint, rediscover and verify its session/container. Returned delivery identity is the admission snapshot. A successful send means the message was saved, not that the recipient started. `busy_queue` is a capability, not observed recipient busyness; a pending delivery is unconfirmed. If you need a response now, open the recipient task; let any current work finish, and start an ordinary turn if needed. Do not resend. Bare runtimes are rejected and broadcast is not supported. Copy sender_runtime from injected agent_ref and sender_session_ref from injected thread_ref. Use pallium_relay_reply for one reply to a received delivery."""
+        """Send new text of at most 16,000 Unicode code points to one canonical endpoint ID (relay-session-...) or service-global name (@review). For a role recipient, use its current @name; before reusing an exact endpoint, rediscover and verify its session/container. Returned delivery identity is the admission snapshot. A successful send means the message was saved, not that the recipient started. `busy_queue` is a capability, not observed recipient busyness; a pending delivery is unconfirmed. If you need a response now, open the recipient task; let any current work finish, and start an ordinary turn if needed. Do not resend. Bare runtimes are rejected and broadcast is not supported. Copy sender_runtime from injected agent_ref and sender_session_ref from injected thread_ref. Use pallium_relay_reply for one reply to a received delivery. New omitted expiry is 24 hours; explicit expires_in_seconds=null requests durable delivery. Finite expiry is 60–604800 seconds. Omitted expiry on an existing-ID retry preserves its recorded expiry."""
         ctx, scope_error = resolve_relay_context(container_ref=container_ref)
         if scope_error:
             return scope_error
@@ -1925,10 +1925,10 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None,
         delivery_id: str,
         message: str,
         receipt: str | None = None,
-        expires_in_seconds: int | None = None,
+        expires_in_seconds: int | None = Field(default_factory=lambda: _RELAY_EXPIRY_OMITTED, ge=60, le=604800),
         container_ref: str | None = None,
     ) -> str:
-        """Reply once to a received Relay delivery with at most 16,000 Unicode code points. A delivery permits one idempotent reply. For MCP receive, reply with its receipt or ACK before either the source message expiry or 60-second claim lease ends; after ACK, reply later with the same receipt. If this MCP configuration lacks Relay scope, copy container_ref from injected scope. When replying via pallium_relay_receive, also pass the receipt — this atomically ACKs and replies in one step. Hook-injected delivery replies need no receipt."""
+        """Reply once to a received Relay delivery with at most 16,000 Unicode code points. A delivery permits one idempotent reply. For MCP receive, reply with its receipt or ACK before either the source message expiry or 60-second claim lease ends; after ACK, reply later with the same receipt. If this MCP configuration lacks Relay scope, copy container_ref from injected scope. When replying via pallium_relay_receive, also pass the receipt — this atomically ACKs and replies in one step. Hook-injected delivery replies need no receipt. New omitted expiry is 24 hours; explicit expires_in_seconds=null requests durable delivery. Finite expiry is 60–604800 seconds. Omitted expiry on an existing reply preserves its recorded expiry."""
         ctx, scope_error = resolve_relay_context(container_ref=container_ref)
         if scope_error:
             return scope_error

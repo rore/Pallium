@@ -17,6 +17,7 @@ from urllib.parse import quote
 import httpx
 
 from app.mcp.context import PalliumContext
+from core.relay import _RELAY_EXPIRY_OMITTED
 from redaction import redact_sensitive
 
 def _relay_transport_error(method: str, exc: Exception | None = None) -> dict[str, Any]:
@@ -531,7 +532,7 @@ class PalliumMcpClient:
         recipient: str,
         sender_runtime: str,
         sender_session_ref: str,
-        expires_in_seconds: int | None = None,
+        expires_in_seconds: int | None = _RELAY_EXPIRY_OMITTED,
         in_reply_to: str | None = None,
         message_id: str | None = None,
     ) -> dict[str, Any]:
@@ -544,12 +545,13 @@ class PalliumMcpClient:
             **self._relay_scope_params(),
         }
         for key, value in (
-            ("expires_in_seconds", expires_in_seconds),
             ("in_reply_to", in_reply_to),
             ("message_id", message_id),
         ):
             if value is not None:
                 payload[key] = value
+        if expires_in_seconds is not _RELAY_EXPIRY_OMITTED:
+            payload["expires_in_seconds"] = expires_in_seconds
         return await self._post_or_error("/relay/messages", payload, retry_relay_busy=True)
 
     async def relay_reply(
@@ -558,7 +560,7 @@ class PalliumMcpClient:
         delivery_id: str,
         message: str,
         receipt: str | None = None,
-        expires_in_seconds: int | None = None,
+        expires_in_seconds: int | None = _RELAY_EXPIRY_OMITTED,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "delivery_id": delivery_id,
@@ -567,7 +569,7 @@ class PalliumMcpClient:
         }
         if receipt is not None:
             payload["receipt"] = receipt
-        if expires_in_seconds is not None:
+        if expires_in_seconds is not _RELAY_EXPIRY_OMITTED:
             payload["expires_in_seconds"] = expires_in_seconds
         return await self._post_or_error("/relay/replies", payload, retry_relay_busy=True)
 

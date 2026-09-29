@@ -1607,6 +1607,7 @@ class SQLiteRelayMixin:
         container_ref: str,
         expires_in_seconds: int | None,
         in_reply_to: str | None,
+        expiry_supplied: bool = True,
         now: datetime | None = None,
     ) -> dict[str, Any]:
         current = _now(now)
@@ -1641,7 +1642,7 @@ class SQLiteRelayMixin:
                     and existing_message.payload == payload
                     and bool(existing_message.redacted) == bool(redacted)
                     and existing_message.in_reply_to == in_reply_to
-                    and _expiry_matches(existing_message, expires_in_seconds)
+                    and (not expiry_supplied or _expiry_matches(existing_message, expires_in_seconds))
                 ):
                     return self._relay_status_in_session(db, existing_message, current)
                 raise RelayConflictError("message_id is already in use")
@@ -1692,6 +1693,7 @@ class SQLiteRelayMixin:
         redacted: bool,
         container_ref: str,
         expires_in_seconds: int | None,
+        expiry_supplied: bool = True,
         now: datetime | None = None,
     ) -> dict[str, Any]:
         """Validate, create reply, and optionally ACK the delivery in one transaction."""
@@ -1743,7 +1745,7 @@ class SQLiteRelayMixin:
                 if (
                     existing.payload != payload
                     or bool(existing.redacted) != redacted
-                    or not _expiry_matches(existing, expires_in_seconds)
+                    or (expiry_supplied and not _expiry_matches(existing, expires_in_seconds))
                 ):
                     raise RelayConflictError("reply already exists with different parameters")
                 return self._relay_status_in_session(db, existing, current)

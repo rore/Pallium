@@ -397,7 +397,111 @@ def test_message_id_idempotency_redaction_and_reply_scope(client):
     assert wrong_scope_parent.status_code == 404
 
 
-def test_durable_default_survives_file_restart_dormancy_and_backlog(client, test_db_url):
+def test_default_expiry_exact_deadline_preserves_history_and_rejects_claim_ack_reply(client, monkeypatch):
+    import storage.sqlite_relay as store
+
+    clock = [datetime.now(timezone.utc)]
+    normalize = store._now
+    monkeypatch.setattr(store, "_now", lambda value=None: normalize(value) if value is not None else clock[0])
+    _turn(client, "claude-code", "sender")
+    _turn(client, "codex", "target")
+    sent = _send(client, "claude-code", "sender", "codex:target", "deadline → 你好").json()
+    clock[0] += timedelta(days=1, seconds=-1)
+    claimed = _turn(client, "codex", "target")["deliveries"][0]
+    assert _status(client, sent["message_id"]).json()["deliveries"][0]["state"] == "claimed"
+    clock[0] += timedelta(seconds=1)
+    assert _ack(client, claimed).status_code == 409
+    assert _reply(client, claimed["delivery_id"], receipt=claimed["receipt"]).status_code == 409
+    status = _status(client, sent["message_id"])
+    assert status.status_code == 200
+    assert status.json()["payload"] == "deadline → 你好"
+    assert status.json()["deliveries"][0]["state"] == "expired"
+    assert _turn(client, "codex", "target")["deliveries"] == []
+    trace = client.get(f"/relay/messages/{sent['message_id']}/trace", params=SCOPE)
+    assert trace.status_code == 200
+    assert trace.json()["delivery_snapshots"][0]["state"] == "expired"
+    clock[0] += timedelta(seconds=1)
+    assert _turn(client, "codex", "target")["deliveries"] == []
+    assert _status(client, sent["message_id"]).json()["payload"] == "deadline → 你好"
+
+
+def test_delivered_source_after_expiry_allows_one_reply_and_preserves_retry_expiry(client, monkeypatch):
+    import storage.sqlite_relay as store
+
+    clock = [datetime.now(timezone.utc)]
+    normalize = store._now
+    monkeypatch.setattr(store, "_now", lambda value=None: normalize(value) if value is not None else clock[0])
+    _turn(client, "claude-code", "sender")
+    _turn(client, "codex", "target")
+    source = _send(client, "claude-code", "sender", "codex:target", "source → 你好").json()
+    claimed = _turn(client, "codex", "target")["deliveries"][0]
+    assert _ack(client, claimed).status_code == 200
+    clock[0] += timedelta(days=1, seconds=1)
+    first = _reply(client, claimed["delivery_id"], "answer", receipt=claimed["receipt"])
+    assert first.status_code == 200
+    reply = _status(client, first.json()["message_id"]).json()
+    assert datetime.fromisoformat(reply["expires_at"]) - datetime.fromisoformat(reply["created_at"]) == timedelta(days=1)
+    clock[0] += timedelta(seconds=1)
+    again = _reply(client, claimed["delivery_id"], "answer", receipt=claimed["receipt"])
+    assert again.status_code == 200
+    assert again.json()["message_id"] == reply["message_id"]
+    assert again.json()["expires_at"] == reply["expires_at"]
+    for changed_expiry in (None, 60):
+        assert _reply(client, claimed["delivery_id"], "answer", receipt=claimed["receipt"], expires_in_seconds=changed_expiry).status_code == 409
+    assert _reply(client, claimed["delivery_id"], "different", receipt=claimed["receipt"]).status_code == 409
+    status = _status(client, source["message_id"]).json()
+    assert status["payload"] == "source → 你好"
+    assert status["deliveries"][0]["state"] == "delivered"
+    assert [item["message_id"] for item in _turn(client, "claude-code", "sender")["deliveries"]] == [reply["message_id"]]
+
+
+def test_http_omitted_expiry_defaults_new_send_and_reply_to_one_day(client):
+    _turn(client, "claude-code", "sender")
+    _turn(client, "codex", "target")
+    sent = _send(client, "claude-code", "sender", "codex:target", "שלום → 你好")
+    assert sent.status_code == 200
+    original = sent.json()
+    assert original["expires_at"] is not None
+    assert datetime.fromisoformat(original["expires_at"]) - datetime.fromisoformat(original["created_at"]) == timedelta(days=1)
+    claimed = _turn(client, "codex", "target")["deliveries"][0]
+    reply = _reply(client, claimed["delivery_id"], "answer", receipt=claimed["receipt"])
+    assert reply.status_code == 200
+    result = _status(client, reply.json()["message_id"]).json()
+    assert datetime.fromisoformat(result["expires_at"]) - datetime.fromisoformat(result["created_at"]) == timedelta(days=1)
+    assert _status(client, original["message_id"]).json()["deliveries"][0]["state"] == "delivered"
+
+
+@pytest.mark.parametrize("original_expiry", [None, 600])
+def test_http_omitted_existing_send_and_reply_preserve_original_ttl(client, original_expiry):
+    def expiry_instant(value):
+        if value is None:
+            return None
+        parsed = datetime.fromisoformat(value)
+        return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed
+
+    _turn(client, "claude-code", "sender")
+    _turn(client, "codex", "target")
+    sent = _send(client, "claude-code", "sender", "codex:target", "legacy → 你好", message_id="existing-expiry", expires_in_seconds=original_expiry).json()
+    retry = _send(client, "claude-code", "sender", "codex:target", "legacy → 你好", message_id=sent["message_id"])
+    assert retry.status_code == 200
+    assert expiry_instant(retry.json()["expires_at"]) == expiry_instant(sent["expires_at"])
+    assert retry.json()["deliveries"][0]["delivery_id"] == sent["deliveries"][0]["delivery_id"]
+    explicit_change = 86400 if original_expiry is None else None
+    assert _send(client, "claude-code", "sender", "codex:target", "legacy → 你好", message_id=sent["message_id"], expires_in_seconds=explicit_change).status_code == 409
+    assert _send(client, "claude-code", "sender", "codex:target", "changed", message_id=sent["message_id"]).status_code == 409
+    claimed = _turn(client, "codex", "target")["deliveries"][0]
+    reply = _reply(client, claimed["delivery_id"], "legacy answer", receipt=claimed["receipt"], expires_in_seconds=original_expiry).json()
+    retried_reply = _reply(client, claimed["delivery_id"], "legacy answer", receipt=claimed["receipt"])
+    assert retried_reply.status_code == 200
+    assert retried_reply.json()["message_id"] == reply["message_id"]
+    assert expiry_instant(retried_reply.json()["expires_at"]) == expiry_instant(reply["expires_at"])
+    assert _reply(client, claimed["delivery_id"], "legacy answer", receipt=claimed["receipt"], expires_in_seconds=explicit_change).status_code == 409
+    assert _reply(client, claimed["delivery_id"], "different", receipt=claimed["receipt"]).status_code == 409
+    received = _turn(client, "claude-code", "sender")["deliveries"]
+    assert [item["message_id"] for item in received] == [reply["message_id"]]
+
+
+def test_explicit_durable_survives_file_restart_dormancy_and_backlog(client, test_db_url):
     from app.config import AppConfig
     from app.main import create_app
     from storage.sqlite_relay import _DURABLE_EXPIRY, _now as relay_now
@@ -408,7 +512,7 @@ def test_durable_default_survives_file_restart_dormancy_and_backlog(client, test
     _turn(client, "codex", "target")
     first = _send(
         client, "claude-code", "sender", "codex:target", "durable → 你好",
-        message_id="durable-0",
+        message_id="durable-0", expires_in_seconds=None,
     )
     assert first.status_code == 200
     assert first.json()["expires_at"] is None
@@ -424,7 +528,7 @@ def test_durable_default_survives_file_restart_dormancy_and_backlog(client, test
     for index in range(1, 4):
         sent = _send(
             client, "claude-code", "sender", "codex:target",
-            f"durable {index}", message_id=f"durable-{index}",
+            f"durable {index}", message_id=f"durable-{index}", expires_in_seconds=None,
         )
         assert sent.status_code == 200
         assert sent.json()["expires_at"] is None

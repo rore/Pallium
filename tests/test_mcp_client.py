@@ -257,6 +257,24 @@ class TestRelay:
         assert payload["message_id"] == "m-2"
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("method", ["relay_send", "relay_reply"])
+    @pytest.mark.parametrize("expiry", ["omitted", None])
+    async def test_expiry_presence_preserves_explicit_null(self, ctx, method, expiry):
+        arguments = {"message": "answer"}
+        if method == "relay_send":
+            arguments.update(recipient="codex:target", sender_runtime="codex", sender_session_ref="sender")
+        else:
+            arguments["delivery_id"] = "delivery-1"
+        if expiry != "omitted":
+            arguments["expires_in_seconds"] = expiry
+        with patch("httpx.AsyncClient.post", return_value=_mock_response(json_data={"message_id": "m-1"})) as post:
+            await getattr(PalliumMcpClient(ctx), method)(**arguments)
+        payload = post.call_args.kwargs["json"]
+        assert ("expires_in_seconds" in payload) is (expiry != "omitted")
+        if expiry is None:
+            assert payload["expires_in_seconds"] is None
+
+    @pytest.mark.asyncio
     async def test_reply_uses_delivery_and_scope_only(self, ctx: PalliumContext) -> None:
         response = _mock_response(json_data={"message_id": "reply-1"})
         with patch("httpx.AsyncClient.post", return_value=response) as mock_post:
