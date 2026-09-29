@@ -39,7 +39,7 @@ Owner: relay-dev. Canonical feature: `roadmap/features/add-wake-first-relay-deli
 
 **Exceptions:** None
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Planning
@@ -137,3 +137,13 @@ Extension plan review: Agent technical review: /root/inventory_diagnostic_review
 Instrumentation checkpoint: added only test-local synchronous/ASGI probes to the exact crash-lock test. Originals execute once with unchanged arguments/results/errors; entry/return samples use same-thread CPU deltas, fixed phase names and a 32-sample cap. Recording is active only inside the two original timing windows, and guarded recording failures cannot mask native errors. Optional included-router probing checks an ordinary class method without evaluating a property or forcing setup. JSON is evaluated only by the original timing assertions on failure. Both literal `time.monotonic() - started < 0.5` expressions, assertions, portal setup, actual lock acquisition and owner-death/recovery lifecycle remain unchanged. No warm-up, production, package or workflow change was made.
 
 The exact two-case command passed (2 passed in 1.98s). One disposable in-memory pytest plugin delayed the first original registry call by 550 ms, producing the expected unchanged timing failure: HTTP 653.030 ms, ASGI 652.270 ms, registry 651.036 ms and native lock 100.571 ms. The plugin verified the failure JSON's exact fixed keys, allowed phase names, finite non-negative numeric values, 32-sample cap and exactly one original registry call. It saved no delay or helper file. This validates diagnostic output, not the original CI cause. Local FastAPI lacks the optional router probe, reported numerically as zero. Independent immutable result review and one instrumented existing CI run remain pending; prior inventory/full evidence is not rerun.
+
+## Instrumentation result review
+
+Agent technical review: /root/inventory_diagnostic_review, independent non-implementer Sol/medium.
+
+Reviewed revision: 406ad90c6c03009609ddb359aa55b33d48f8e815.
+
+Verification adequacy: accepted; no concrete defect found.
+
+Reviewer confirmed unchanged calls, bindings, awaiting, results/errors, both 500 ms expressions and the real lock/crash/recovery lifecycle; silent success and bounded safe failure output; no router warm-up/property evaluation. Exact-node and disposable-delay checks are adequate for this test-only delta. The deliberately failed node subsequently passed via `--lf --lfnf=none` (1 passed in 0.69s). Accepted production/native test blobs remain 4e3062cf2c30b148e68d310b339d066f7fafcfbb / 9bf28ca5c35e64273e7ec135afd349fb06792e42, so prior full/native/MCP results remain reusable. Fresh selector covers the five-path union; Redline is GRAY with no checkpoints, workflow implementation readiness and whitespace checks pass. Publish once for the existing Linux/Python 3.12 CI evidence, inspect the actual result, and hold merge/install for manager acceptance. A passing instrumented run cannot establish the original failure's cause.
