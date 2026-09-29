@@ -249,13 +249,16 @@ def test_cross_container_reply_chain_and_bounded_backlog_continuation(client):
         "container_ref": TARGET,
     }).status_code == 200
 
+    backlog = []
     for index in range(3):
-        assert _send(
+        response = _send(
             client,
             "chain-sender",
             target["endpoint_id"],
             payload=f"backlog-{index}",
-        ).status_code == 200
+        )
+        assert response.status_code == 200
+        backlog.append(response.json()["deliveries"][0])
     first = client.post("/relay/turn", json={
         "runtime": "codex",
         "session_ref": "chain-target",
@@ -267,12 +270,18 @@ def test_cross_container_reply_chain_and_bounded_backlog_continuation(client):
     assert first["has_more"] is True
     assert first["remaining_count"] == 2
 
+    from integrations.codex.hooks.common import format_relay
+
+    expected_envelopes = [{**item, "claim_token": "fixture-token", "attempts": 1} for item in backlog[1:]]
+    two_envelope_text, rendered = format_relay(expected_envelopes)
+    assert rendered == expected_envelopes
+    budget = len(two_envelope_text)
     second = client.post("/relay/turn", json={
         "runtime": "codex",
         "session_ref": "chain-target",
         "container_ref": TARGET,
         "max_messages": 2,
-        "max_chars": 1000,
+        "max_chars": budget,
     }).json()
     assert [item["payload"] for item in second["deliveries"]] == [
         "backlog-1",
@@ -280,3 +289,4 @@ def test_cross_container_reply_chain_and_bounded_backlog_continuation(client):
     ]
     assert second["has_more"] is False
     assert second["remaining_count"] == 0
+    assert len(format_relay(second["deliveries"])[0]) <= budget
