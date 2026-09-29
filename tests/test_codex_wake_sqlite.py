@@ -105,6 +105,12 @@ def test_http_send_restart_exact_claim_ack_preserves_sqlite_fence(
     assert registry.initialize(old_owner_drained=True)
     workers, native_calls = [], []
     original_schedule = codex_wake._schedule_reserved_codex_relay_wake
+    # This lifecycle test asserts persisted trace facts, separately from the
+    # best-effort async diagnostic queue's contention/drop contract below.
+    monkeypatch.setattr(
+        client.app.state.pallium_service, "enqueue_relay_trace_event",
+        lambda writer, event: bool(writer(event)),
+    )
 
     def launch(*args):
         native_calls.append(args)
@@ -160,11 +166,48 @@ def test_http_send_restart_exact_claim_ack_preserves_sqlite_fence(
     assert observed["state"] == "delivered" and observed["attempts"] == 1
     assert restarted.reservations() == ()
     assert http.post("/relay/turn", json={"runtime": "codex", "session_ref": "target", **SCOPE}).json()["deliveries"] == []
-    # Trace writes use a single-worker queue and can outlive the HTTP response.
-    client.app.state.pallium_service._relay_trace_executor.submit(lambda: None).result(timeout=2)
     trace = http.get(f"/relay/messages/{body['message_id']}/trace", params=SCOPE)
     assert trace.status_code == 200
     assert any(event["stage"] == "completed" for event in trace.json()["events"])
+
+
+def test_draining_trace_queue_does_not_restore_sqlite_contention_drop(client):
+    service = client.app.state.pallium_service
+    storage = service._storage
+    relay = RelayService(storage)
+    for session in ("sender", "target"):
+        relay.turn(runtime="codex", session_ref=session, **SCOPE)
+    sent = relay.send(sender_runtime="codex", sender_session_ref="sender",
+                      recipient="codex:target", payload="Trace contention", **SCOPE)
+    delivery = sent["deliveries"][0]
+    results = []
+
+    def writer(event):
+        result = relay.record_trace_event(event)
+        results.append(result)
+        return result
+
+    def emit():
+        codex_wake._emit_trace(
+            lambda event: service.enqueue_relay_trace_event(writer, event),
+            "relay-activation-" + "a" * 32,
+            delivery["delivery_id"], delivery["recipient_endpoint_id"], "prepared",
+        )
+
+    database = str(storage._relay_engine.url).removeprefix("sqlite:///")
+    with sqlite3.connect(database) as competing:
+        competing.execute("BEGIN IMMEDIATE")
+        emit()
+        service._relay_trace_executor.submit(lambda: None).result(timeout=2)
+        assert results == [False]
+        competing.rollback()
+    trace = client.get(f"/relay/messages/{sent['message_id']}/trace", params=SCOPE)
+    assert trace.status_code == 200 and trace.json()["events"] == []
+    emit()
+    service._relay_trace_executor.submit(lambda: None).result(timeout=2)
+    assert results == [False, True]
+    trace = client.get(f"/relay/messages/{sent['message_id']}/trace", params=SCOPE)
+    assert [event["stage"] for event in trace.json()["events"]] == ["prepared"]
 
 
 def test_reconciliation_commits_replacement_before_worker_schedule(relay_store, tmp_path, monkeypatch):
