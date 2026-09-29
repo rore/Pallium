@@ -45,7 +45,7 @@ Private fixture residue: root verified no live endpoint/session association, pre
 
 Agent technical review: independent sqlite_plan_review accepted the complete dirty implementation, then independently accepted both narrow budget-guidance corrections and the maximum-preview fixture. No production/result/security blockers remain; metadata is descriptive, both projected budgets include it before claim, secrets and hook ownership remain intact.
 
-Reviewed revision: 51dcbd10 (the committed source and caller tests reviewed as the preceding scoped working tree; production bytes remain unchanged; the subsequent cross-container test-only fixture was independently reviewed separately).
+Reviewed revision: ecb59c1d (independent review covered the exact implementation and caller-test diffs before their commits; this subsequent record-only revision does not change those bytes).
 
 Verification adequacy: meaningful red-before-green caller cases, exact affected corrections and final OpenCode54passed/7existing skips are adequate for the changed boundaries. Complete non-slow result and exact correction evidence are recorded below; final-head PR CI remains pending, not a completion claim. Import-boundary validation passed. Final Redline requires API and persistence review, with no API-spec change or boundary violation.
 
