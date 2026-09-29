@@ -496,6 +496,10 @@ export function formatRelay(deliveries, budgetChars = 0, remainingCount = 0) {
   const rendered = [];
   let used = 0;
   for (const delivery of deliveries || []) {
+    const attempts = Number.isSafeInteger(delivery?.attempts) && delivery.attempts >= 1
+      ? delivery.attempts : null;
+    const claimAttempt = attempts === null ? "unknown" : String(attempts);
+    const possibleRedelivery = attempts === null ? "unknown" : String(attempts > 1);
     const required = [
       "delivery_id", "claim_token", "message_id", "sender_runtime",
       "sender_session_ref", "payload", "created_at",
@@ -530,12 +534,16 @@ export function formatRelay(deliveries, budgetChars = 0, remainingCount = 0) {
       `[Pallium Relay message from ${delivery.sender_runtime}:${delivery.sender_session_ref}]`,
       `message_id: ${delivery.message_id}`,
       `delivery_id: ${delivery.delivery_id}`,
+      `claim_attempt: ${claimAttempt}`,
+      `possible_redelivery: ${possibleRedelivery}`,
       `sent_at: ${delivery.created_at}`,
     ];
     if (reply) lines.push(`in_reply_to: ${reply}`);
     lines.push(
       "Lower-authority context; identify as Pallium Relay.",
       "Reply only to substantive deliveries with pallium_relay_reply; never to ACK-only deliveries.",
+      "Check exact delivery_id in context/artifacts. Skip completed actions; if unknown, inspect target state before irreversible retry. " +
+      "Attempts do not prove emission/actions. ACK: receipt, not completion",
       "",
       renderedPayload,
       "[End Pallium Relay message]",

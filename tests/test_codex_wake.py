@@ -2600,7 +2600,7 @@ def test_actual_codex_hook_keeps_maximum_delivery_with_notice_inside_budget(
     monkeypatch.setattr(hook._common, "STATE_DIR", state_dir)
     monkeypatch.setattr(hook._common, "SESSIONS_DIR", state_dir / "sessions")
     monkeypatch.setattr(hook, "get_pending_relay_close_batch", lambda _: ([], 0))
-    monkeypatch.setattr("app.dependencies.schedule_codex_relay_wake", lambda *_: None)
+    monkeypatch.setattr("app.dependencies.schedule_codex_relay_wake", lambda *_args, **_kwargs: None)
 
     sender = "s" * 255
     target = "maximum-target"
@@ -2677,7 +2677,20 @@ def test_actual_codex_hook_keeps_maximum_delivery_with_notice_inside_budget(
 
     assert len(contexts) == 1
     relay_text, scope_line = contexts[0].rsplit("\n\n", 1)
-    assert relay_text.count("😀") == 1500
+    preview_chars = relay_text.count("😀")
+    assert 0 < preview_chars < 1500
+    assert f"{1500 - preview_chars} characters omitted" in relay_text
+    assert f'pallium_relay_status(message_id="{maximum["message_id"]}", offset={preview_chars})' in relay_text
+    page = client.get(
+        f"/relay/messages/{maximum['message_id']}",
+        params={**scope, "offset": preview_chars, "page_size": 1500},
+    )
+    assert page.status_code == 200, page.text
+    continuation = page.json()
+    assert continuation["payload_offset"] == preview_chars
+    assert continuation["payload_total_chars"] == 1500
+    assert continuation["next_offset"] is None
+    assert "😀" * preview_chars + continuation["payload"] == maximum["payload"]
     assert relay_text.endswith("[Relay: 1 more; Pallium continues.]")
     assert len(relay_text) <= hook.RELAY_OUTPUT_BUDGET
     assert len(scope_line) <= hook.RELAY_OUTPUT_BUDGET

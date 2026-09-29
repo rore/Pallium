@@ -59,6 +59,23 @@ transport-size promise for an empty turn envelope. MCP receive removes session
 metadata after that conservative check and separately guarantees its final tool
 response budget.
 
+Claimed hook messages and MCP receive results expose `claim_attempt` and
+`possible_redelivery`. Attempt 1 reports false; later claims report true. A later
+claim may follow failure before emission or emission followed by a lost ACK, so
+the count does not prove that an agent saw the payload or performed its actions.
+Missing or invalid metadata is `unknown` in hook text and `null` in MCP JSON.
+These fields describe delivery history; they do not decide whether work is complete.
+
+Check prior handling of the exact stable `delivery_id` in the current context or
+existing work artifacts. Do not repeat completed actions. If the outcome is
+unknown, inspect target state before retrying irreversible work. Equal payload
+text with different delivery IDs is separate work; a first claim also does not
+prove that no equivalent business action happened elsewhere. ACK means receipt,
+not completion. Hooks still own claim and ACK; the injected guidance does not
+ask the receiving agent to claim or acknowledge the same payload again.
+Metadata and guidance consume the existing output budgets, so a long payload may
+have a shorter preview with the same continuation mechanism.
+
 ## Get this session's address
 
 Call `pallium_relay_address` when a user asks for the current agent's Relay

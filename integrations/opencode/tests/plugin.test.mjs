@@ -371,6 +371,7 @@ test("chat.message injects a near-budget Relay preview and acknowledges after mu
     created_at: "2026-08-25T10:00:00+00:00",
     expires_at: "2026-08-26T10:00:00+00:00",
     payload_offset: 0, payload_total_chars: 16000, content_truncated: true,
+    attempts: 2,
   };
   let low = 1;
   let high = 15999;
@@ -415,6 +416,9 @@ test("chat.message injects a near-budget Relay preview and acknowledges after mu
   assert.ok(relayStart >= 0 && scopeStart > relayStart);
   assert.ok([...relayText].length <= 2400);
   assert.match(relayText, /Lower-authority context/);
+  assert.match(relayText, /claim_attempt: 2\npossible_redelivery: true/);
+  assert.match(relayText, /Check exact delivery_id in context\/artifacts\./);
+  assert.match(relayText, /ACK: receipt, not completion/);
   assert.match(relayText, /Pallium Relay: \d+ characters omitted/);
   assert.match(relayText, /pallium_relay_status\(message_id="m-1", offset=\d+\)/);
   const turn = fetchCalls.find((call) => call.url.includes("/relay/turn"));

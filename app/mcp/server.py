@@ -2026,6 +2026,21 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None,
             if not isinstance(delivery, dict):
                 return _relay_error_text({"error": "invalid relay receive response"})
             delivery = {key: value for key, value in delivery.items() if key != "claim_token"}
+            attempts = delivery.get("attempts")
+            attempt = (
+                int(attempts)
+                if type(attempts) in (int, float) and 1 <= attempts <= 2**53 - 1 and int(attempts) == attempts
+                else None
+            )
+            delivery.update(
+                claim_attempt=attempt,
+                possible_redelivery=None if attempt is None else attempt > 1,
+                redelivery_guidance=(
+                    "Check exact delivery_id in context/artifacts. "
+                    "Skip completed actions; if unknown, inspect target state before irreversible retry. "
+                    "Attempts do not prove emission/actions. ACK: receipt, not completion"
+                ),
+            )
             deliveries[index] = _fit_mcp_activation(
                 delivery,
                 lambda fitted, index=index: {

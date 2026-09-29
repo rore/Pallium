@@ -835,12 +835,21 @@ def test_small_turn_budget_skips_oversized_message_without_blocking_later_delive
         client, "claude-code", "sender", "codex:small-budget-target",
         "x" * 1000, message_id="oversized-first",
     ).status_code == 200
-    assert _send(
+    short = _send(
         client, "claude-code", "sender", "codex:small-budget-target",
         "fits", message_id="fits-second",
-    ).status_code == 200
-    claimed = _turn(client, "codex", "small-budget-target", max_chars=400)["deliveries"]
+    )
+    assert short.status_code == 200
+    from integrations.codex.hooks.common import format_relay
+
+    envelope = {**short.json()["deliveries"][0], "claim_token": "fixture-token", "attempts": 1}
+    short_text, _ = format_relay([envelope])
+    assert short_text
+    # Admission still skips an oversized first row; the new descriptive envelope consumes space.
+    budget = len(short_text)
+    claimed = _turn(client, "codex", "small-budget-target", max_chars=budget)["deliveries"]
     assert [delivery["message_id"] for delivery in claimed] == ["fits-second"]
+    assert len(format_relay(claimed)[0]) <= budget
     assert _ack(client, claimed[0]).status_code == 200
     assert (
         _turn(client, "codex", "small-budget-target")["deliveries"][0]["message_id"]
