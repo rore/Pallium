@@ -73,7 +73,7 @@ Full non-slow run at 94cc367b completed: 5575 passed, 34 skipped, 2 xfailed, one
 ## Result review
 
 Agent technical review: /root/minimap_wake_diagnosis/sqlite_plan_review, independent non-implementer Sol medium, accepted production/security, final relay-test ports and narrow fixture delta.
-Reviewed revision: 7f8c2105, including the independently accepted recipient guard and trace-test synchronization; subsequent Work Record-only evidence edits do not change tested code.
+Reviewed revision: 4ed6f600, including production guard 7f8c2105 and independently accepted actual-writer trace fixture/contention regression; subsequent Work Record-only evidence edits do not change tested code.
 Verification adequacy: Accepted by the independent reviewer for Slice B. Real SQLite fault/race/migration checks and public HTTP send/claim/ACK/trace coverage retain conservative caller/native invariants. Complete selected-run and no-edit focused-rerun evidence is adequate; the nonreproducing unrelated hook failure remains explicit. No additional full run is justified. PR CI and parent result/roadmap acceptance remain before merge/install.
 
 Earlier read-snapshot, partition, input-shape/bound, ambiguous-read, provider-cache and no-file-fallback findings were reproduced and fixed. Review assumes one supported service owner and one Uvicorn process; cross-home owners and arbitrary old binaries remain outside the guarantee. Root owns separate result acceptance and roadmap alignment before merge/install.
