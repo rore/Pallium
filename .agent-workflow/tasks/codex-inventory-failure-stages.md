@@ -36,7 +36,7 @@ Owner: relay-dev. Canonical feature: `roadmap/features/add-wake-first-relay-deli
 
 **Exceptions:** None
 
-**State:** Ready to implement
+**State:** Blocked or returned to planning
 <!-- agent-workflow:end -->
 
 ## Planning
@@ -50,3 +50,9 @@ No application edit, test run or live action yet. The separate wake-registry own
 ## Implementation
 
 Independent plan accepted before edits. relay-dev owns only app/codex_bridge_pipe.py, the narrow design status/diagnostic description and this new record. The Luna worker owns only tests/test_codex_bridge_pipe.py. Use fixed before/after stage strings and one first-failure RAM tuple for the actual registration, captured before cleanup and lossy normalization in nested maintenance/transfer/post-exit/outer handlers. Reset only when an admitted actual transfer begins; denied repeats do not reset it. Trusted service epoch and validated policy revision provide correlation; there are no new proof/MCP fields. Ignore diagnostic failures without changing existing cleanup or exception propagation. Completed after-proof suppresses ordinary later cleanup diagnostics. Manager confirmed the wake-registry owner touches none of these four paths. Existing source, actions, schemas, assertions and native counts remain the baseline.
+
+## Architecture-review hold
+
+2026-09-29: The manager requested an end-to-end wake architecture review before fresh implementation, including an explicit comparison with at-least-once delivery and agent-visible duplicate checks. Implementation, publication, full-suite validation and all live actions are held. The test worker was told not to edit or run tests. No application, test or design edits have begun; only this Work Record is changed. The last clean planning revision was 8c134a7f on feat/codex-inventory-failure-stages. Existing plan acceptance remains evidence for its original diagnostic scope, not acceptance of a future architecture or contract change. Manager owns the canonical roadmap and next architecture/rework decision; resume only after that decision is reconciled with this record and applicable gates.
+
+Bounded findings forwarded to the manager: custody currently permits only fixed read-only inventory, not wake; the live failure did not establish successful connection or post-source-exit transport lifetime. Lossy stage attribution cannot identify the historical failure. Native CLI admission can persist despite response loss; its retry risks another queued turn. Duplicate wake, duplicate payload emission and duplicate task action are different boundaries; an at-least-once decision must specify each, including what ACK proves. No automatic-recovery or unloaded-session delivery claim follows from diagnostics or a successful tools/list.
