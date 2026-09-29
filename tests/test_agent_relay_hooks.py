@@ -95,19 +95,24 @@ def test_relay_helpers_are_bounded_control_safe_and_use_requested_deadline(monke
         "message_id": "m" * 128,
         "sender_session_ref": "s" * 255,
         "in_reply_to": "p" * 128,
-        "payload": "😀" * 1000,
+        "payload": "😀" * 1400,
         "payload_offset": 0,
         "payload_total_chars": 16000,
         "content_truncated": True,
-        "next_offset": 1000,
+        "next_offset": 1400,
         "created_at": "2026-09-05T12:34:56.123456+00:00",
     }
     maximum_output, maximum_rendered = common.format_relay(
         [maximum], budget_chars=2400, remaining_count=1000,
     )
-    assert maximum_rendered == [maximum]
-    assert 'Pallium Relay: 15000 characters omitted' in maximum_output
-    assert f'pallium_relay_status(message_id="{maximum["message_id"]}", offset=1000)' in maximum_output
+    assert maximum_output == "" and maximum_rendered == []
+    shorter = {**maximum, "payload": "😀" * 700, "next_offset": 700}
+    maximum_output, maximum_rendered = common.format_relay(
+        [shorter], budget_chars=2400, remaining_count=1000,
+    )
+    assert maximum_rendered == [shorter]
+    assert 'Pallium Relay: 15300 characters omitted' in maximum_output
+    assert f'pallium_relay_status(message_id="{maximum["message_id"]}", offset=700)' in maximum_output
     assert maximum_output.endswith("[Relay: 999+ more; Pallium continues.]")
     assert len(maximum_output) <= 2400
     assert common.format_relay([{**maximum, "next_offset": 1499}])[0] == ""
@@ -1664,6 +1669,52 @@ def test_relay_ack_batch_stops_at_shared_deadline(
         assert result == [DELIVERY]
     else:
         assert result == []
+
+
+@pytest.mark.parametrize(
+    ("attempts", "claim_attempt", "possible_redelivery"),
+    [
+        (1, "1", "false"), (2, "2", "true"), (None, "unknown", "unknown"),
+        (True, "unknown", "unknown"), (1.5, "unknown", "unknown"),
+        ("2", "unknown", "unknown"), (0, "unknown", "unknown"),
+        (-1, "unknown", "unknown"), (2**53 - 1, str(2**53 - 1), "true"),
+        (2**53, "unknown", "unknown"), (float("inf"), "unknown", "unknown"),
+        (float("nan"), "unknown", "unknown"), (1.0, "1", "false"),
+    ],
+)
+@pytest.mark.parametrize(
+    ("name", "relative"),
+    [
+        ("claude_common", "integrations/claude-code/hooks/common.py"),
+        ("codex_common", "integrations/codex/hooks/common.py"),
+    ],
+)
+def test_relay_formatter_exposes_normalized_redelivery_envelope(name, relative, attempts, claim_attempt, possible_redelivery):
+    common = _load(name, relative)
+    delivery = {**DELIVERY, "attempts": attempts, "delivery_id": "relay-Ünicode-😀"}
+    text, rendered = common.format_relay([delivery])
+    assert rendered == [delivery]
+    assert "delivery_id: relay-Ünicode-😀" in text
+    assert f"claim_attempt: {claim_attempt}" in text
+    assert "possible_redelivery: " + possible_redelivery in text
+    assert "Check exact delivery_id in context/artifacts." in text
+    assert "Skip completed actions; if unknown, inspect target state before irreversible retry." in text
+    assert "Attempts do not prove emission/actions." in text
+    assert "ACK: receipt, not completion" in text
+    assert (
+        "Check exact delivery_id in context/artifacts. Skip completed actions; if unknown, inspect target state before irreversible retry. "
+        "Attempts do not prove emission/actions. ACK: receipt, not completion"
+    ) in text
+
+
+def test_relay_formatter_redelivery_envelope_respects_budget_without_acknowledging_omitted_delivery():
+    common = _load("codex_common_budget", "integrations/codex/hooks/common.py")
+    delivery = {**DELIVERY, "attempts": 2}
+    full, _ = common.format_relay([delivery])
+    exact, included = common.format_relay([delivery], budget_chars=len(full))
+    over, omitted = common.format_relay([delivery], budget_chars=len(full) - 1)
+    assert exact == full and included == [delivery]
+    assert over == "" and omitted == []
 
 
 @pytest.mark.parametrize(

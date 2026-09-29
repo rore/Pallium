@@ -337,17 +337,54 @@ test("formatRelay preserves complete attributed messages and enforces budget", (
   assert.equal(P.formatRelay([{ ...delivery, payload: "bad\u0000value" }], 2000).text, "");
   const maximum = {
     ...delivery, message_id: "m".repeat(128), sender_session_ref: "s".repeat(255),
-    in_reply_to: "p".repeat(128), payload: "😀".repeat(1000),
+    in_reply_to: "p".repeat(128), payload: "😀".repeat(1400),
     payload_offset: 0, payload_total_chars: 16000,
-    content_truncated: true, next_offset: 1000,
+    content_truncated: true, next_offset: 1400,
   };
-  const preview = P.formatRelay([maximum], 2400, 1000);
-  assert.match(preview.text, /Pallium Relay: 15000 characters omitted/);
-  assert.match(preview.text, /offset=1000/);
+  const tooLong = P.formatRelay([maximum], 2400, 1000);
+  assert.equal(tooLong.text, "");
+  assert.deepEqual(tooLong.deliveries, []);
+  const shorter = { ...maximum, payload: "😀".repeat(700), next_offset: 700 };
+  const preview = P.formatRelay([shorter], 2400, 1000);
+  assert.match(preview.text, /Pallium Relay: 15300 characters omitted/);
+  assert.match(preview.text, /offset=700/);
   assert.match(preview.text, /\[Relay: 999\+ more; Pallium continues\.\]$/);
   assert.ok([...preview.text].length <= 2400);
-  assert.equal(P.formatRelay([{ ...maximum, next_offset: 999 }], 2400).text, "");
+  assert.equal(P.formatRelay([{ ...shorter, next_offset: 699 }], 2400).text, "");
   assert.match(P.formatRelay([{ ...delivery, payload: "line one\nline two\tvalue" }]).text, /line one\nline two\tvalue/);
+});
+
+test("formatRelay normalizes claim attempts and retains payloads with unknown metadata", () => {
+  const base = {
+    delivery_id: "relay-Ünicode-😀", claim_token: "claim-1", message_id: "m-1",
+    sender_runtime: "claude-code", sender_session_ref: "session-a",
+    payload: "safe payload", created_at: "2026-08-25T10:00:00+00:00",
+  };
+  for (const [attempts, claimAttempt, possible] of [
+    [1, "1", "false"], [2, "2", "true"], [undefined, "unknown", "unknown"],
+    [true, "unknown", "unknown"], [1.5, "unknown", "unknown"], ["2", "unknown", "unknown"],
+    [0, "unknown", "unknown"], [-1, "unknown", "unknown"],
+    [Number.MAX_SAFE_INTEGER, String(Number.MAX_SAFE_INTEGER), "true"],
+    [Number.MAX_SAFE_INTEGER + 1, "unknown", "unknown"], [Infinity, "unknown", "unknown"],
+    [NaN, "unknown", "unknown"], [1.0, "1", "false"],
+  ]) {
+    const delivery = { ...base, attempts };
+    const { text, deliveries } = P.formatRelay([delivery]);
+    assert.deepEqual(deliveries, [delivery]);
+    assert.match(text, new RegExp(`delivery_id: relay-Ünicode-😀\\nclaim_attempt: ${claimAttempt}`));
+    assert.match(text, new RegExp(`possible_redelivery: ${possible}`));
+    assert.match(text, /Check exact delivery_id in context\/artifacts\./);
+    assert.match(text, /Skip completed actions; if unknown, inspect target state before irreversible retry\./);
+    assert.match(text, /Attempts do not prove emission\/actions\./);
+    assert.match(text, /ACK: receipt, not completion/);
+    assert.ok(text.includes(
+      "Check exact delivery_id in context/artifacts. Skip completed actions; if unknown, inspect target state before irreversible retry. " +
+      "Attempts do not prove emission/actions. ACK: receipt, not completion",
+    ));
+  }
+  const full = P.formatRelay([{ ...base, attempts: 2 }]).text;
+  assert.deepEqual(P.formatRelay([{ ...base, attempts: 2 }], [...full].length).deliveries.length, 1);
+  assert.equal(P.formatRelay([{ ...base, attempts: 2 }], [...full].length - 1).deliveries.length, 0);
 });
 
 

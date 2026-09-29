@@ -421,6 +421,36 @@ class TestClaimTokenSecrecy:
 
 class TestBoundedReceive:
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(("attempts", "expected"), [
+        (None, None), (True, None), ("2", None), (0, None), (-1, None),
+        (1.5, None), (float("inf"), None), (float("nan"), None),
+        (1.0, 1), (2, 2), (2**53 - 1, 2**53 - 1), (2**53, None),
+    ])
+    async def test_attempt_metadata_is_descriptive_and_fitted_before_pagination(self, attempts, expected):
+        delivery = {
+            "delivery_id": "relay-delivery-" + "d" * 32,
+            "message_id": "m" * 128, "claim_token": "private-claim-token", "receipt": "r" * 32,
+            "sender_runtime": "codex", "sender_session_ref": '"' * 255,
+            "created_at": "2026-09-29T00:00:00Z", "attempts": attempts,
+            "payload": '😀"\\' * 2000, "payload_offset": 0, "payload_total_chars": 6000,
+            "content_truncated": False, "next_offset": None,
+        }
+        receive = AsyncMock(return_value={"deliveries": [delivery], "has_more": False, "remaining_count": 0})
+        with patch.object(PalliumMcpClient, "relay_receive", new=receive):
+            content, _ = await create_server().call_tool("pallium_relay_receive", {})
+        text = content[0].text
+        assert len(text) <= 2000
+        result = json.loads(text)["deliveries"][0]
+        assert result["claim_attempt"] == expected
+        assert result["possible_redelivery"] is (None if expected is None else expected > 1)
+        assert "ACK: receipt, not completion" in result["redelivery_guidance"]
+        assert result["receipt"] == delivery["receipt"]
+        assert result["delivery_id"] == delivery["delivery_id"]
+        assert result["payload"] and result["content_truncated"] is True
+        assert result["next_offset"] == len(result["payload"])
+        assert "private-claim-token" not in text
+
+    @pytest.mark.asyncio
     async def test_receive_returns_one_delivery_per_bounded_call(self, monkeypatch: pytest.MonkeyPatch, asgi_post):
         bind_asgi_post(monkeypatch, asgi_post)
 
@@ -597,6 +627,11 @@ class TestFullLifecycle:
         first_server = create_server()
         first, _ = await first_server.call_tool("pallium_relay_receive", {})
         first_delivery = json.loads(first[0].text)["deliveries"][0]
+        assert first_delivery["claim_attempt"] == 1
+        assert first_delivery["possible_redelivery"] is False
+        assert "exact delivery_id" in first_delivery["redelivery_guidance"]
+        assert "ACK: receipt, not completion" in first_delivery["redelivery_guidance"]
+        assert "do not prove emission/actions" in first_delivery["redelivery_guidance"]
         second, _ = await create_server().call_tool("pallium_relay_receive", {})
         assert json.loads(second[0].text)["deliveries"] == []
 
@@ -611,6 +646,11 @@ class TestFullLifecycle:
         redelivered, _ = await create_server().call_tool("pallium_relay_receive", {})
         current = json.loads(redelivered[0].text)["deliveries"][0]
         assert current["receipt"] != first_delivery["receipt"]
+        assert current["delivery_id"] == first_delivery["delivery_id"]
+        assert current["message_id"] == first_delivery["message_id"]
+        assert current["claim_attempt"] == 2
+        assert current["possible_redelivery"] is True
+        assert current["redelivery_guidance"] == first_delivery["redelivery_guidance"]
 
         stale = await assert_tool_error(create_server(), "pallium_relay_ack", {
             "delivery_id": current["delivery_id"],
@@ -628,7 +668,7 @@ class TestFullLifecycle:
             "sender_runtime": "codex",
             "sender_session_ref": "lifecycle-sender",
             "recipient": f"{_RUNTIME}:{_SESSION}",
-            "payload": "hook wins",
+            "payload": "redeliver me",
             **_SCOPE,
         })
         hook_claim = await asgi_post("/relay/turn", {
@@ -637,6 +677,8 @@ class TestFullLifecycle:
             **_SCOPE,
         })
         assert len(hook_claim["deliveries"]) == 1
+        assert hook_claim["deliveries"][0]["delivery_id"] != current["delivery_id"]
+        assert hook_claim["deliveries"][0]["payload"] == current["payload"]
         mcp_after_hook, _ = await create_server().call_tool("pallium_relay_receive", {})
         assert json.loads(mcp_after_hook[0].text)["deliveries"] == []
 
