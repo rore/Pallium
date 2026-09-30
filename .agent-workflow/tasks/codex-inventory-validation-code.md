@@ -3,14 +3,14 @@
 
 **Target:** Windows Codex inventory observer in `app/codex_bridge_pipe.py`.
 
-**Scope:** Extend the existing validation failure-stage allowlist and set a bounded substage at the existing `_observe` predicates; add private caller tests in `tests/test_codex_bridge_pipe.py`.
+**Scope:** Existing logger and _observe validation, with caller tests only.
 
-**Constraints:** Preserve all response acceptance rules, native-failed caller result, custody fencing, proof, authority, retry and cleanup. Never log native response content, keys, names, schema, endpoint, environment, or exception text. No live registration or service operation.
+**Constraints:** No validation, public result, custody, proof, authority, retry, cleanup, or live-state change; no native content logging.
 
-**Completion criteria:** Each synthetic rejected predicate yields a distinct fixed allowlisted stage and unchanged failure/fence through the private caller; a valid response still registers; no native content appears in diagnostics.
+**Completion criteria:** One ensuing trial identifies the exact failed predicate; synthetic caller failures and positive control verify unchanged behavior and privacy.
 
 **Requirement baseline:**
-{"source":"delegated-user-approved-task","outcome":"A failed private Codex inventory response identifies the rejected validation predicate through a fixed, sanitized service-log stage.","scope":"Extend the existing validation failure-stage allowlist and set a bounded substage at the existing `_observe` predicates; add private caller tests in `tests/test_codex_bridge_pipe.py`.","constraints":"Preserve all response acceptance rules, native-failed caller result, custody fencing, proof, authority, retry and cleanup. Never log native response content, keys, names, schema, endpoint, environment, or exception text. No live registration or service operation.","completion_criteria":"Each synthetic rejected predicate yields a distinct fixed allowlisted stage and unchanged failure/fence through the private caller; a valid response still registers; no native content appears in diagnostics."}
+{"source":"delegated-user-approved-task","outcome":"A failed private Codex inventory response identifies the rejected validation predicate through a fixed, sanitized service-log stage.","scope":"Existing logger and _observe validation, with caller tests only.","constraints":"No validation, public result, custody, proof, authority, retry, cleanup, or live-state change; no native content logging.","completion_criteria":"One ensuing trial identifies the exact failed predicate; synthetic caller failures and positive control verify unchanged behavior and privacy."}
 
 **Risk:** Elevated
 
@@ -44,6 +44,8 @@
 2026-09-30: Source/test diff passed independent result review and was committed at `1d710db7`. Automatic approval review rejected pushing the new branch to the verified public `rore/Pallium` origin because it did not find trusted authorization for publishing this exact code payload. No alternate push or PR path was attempted. Publication and CI are blocked pending explicit user approval for that destination and payload; local work is preserved.
 
 2026-09-30: User directly approved the exact push and PR publication request for this branch and public destination. The prior publication blocker is resolved; fresh current-head CI remains required.
+
+2026-09-30: PR #266 workflow CI found that I had changed the first committed Requirement baseline in a later Work Record edit. Restored that immutable baseline and aligned current Task Context to its equivalent initial wording. The implementation scope, code, and tests did not change.
 
 ## Evidence
 
