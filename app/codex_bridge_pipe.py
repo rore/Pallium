@@ -1264,6 +1264,7 @@ class InventoryService:
         self.unresolved = False
         self.source = self.desktop = self.custody = self.policy = None
         self.admitted = None
+        self.caller = None
         self.ready_deadline = 0.0
         self.ready_announced = False
         self.replace_allowed = False
@@ -1325,6 +1326,7 @@ class InventoryService:
 
     def _drop(self) -> None:
         self.admitted = None
+        self.caller = None
         if self.custody is not None:
             if self.custody.unresolved:
                 self.unresolved = True
@@ -1408,6 +1410,8 @@ class InventoryService:
     def _process(self, request: dict, peer: _Peer, sequence: int, deadline: float) -> dict:
         verb = request.get("verb")
         fields = {"version", "verb", "epoch", "sequence"}
+        if verb == "admit":
+            fields |= {"thread_ref", "turn_ref"}
         if verb == "transfer":
             fields |= {"revision", "endpoint"}
         if (not isinstance(verb, str) or verb not in {"ready", "admit", "transfer"} or set(request) != fields
@@ -1434,9 +1438,14 @@ class InventoryService:
             raise ShadowUnavailable("policy-inactive")
         policy = self._authorize(request.get("revision") if verb == "transfer" else None)
         if self.custody is not None:
+            if verb == "admit" and self.caller != (request["thread_ref"], request["turn_ref"]):
+                raise ShadowUnavailable("peer-mismatch")
             return self._result(inventory_ok=self.proof is not None and self.proof["before_inventory_ok"])
         if verb == "admit":
-            self.admitted = (policy, min(deadline, time.monotonic() + EXCHANGE_SECONDS))
+            if not _text(request["thread_ref"]) or not _text(request["turn_ref"]):
+                raise ShadowUnavailable("invalid-message")
+            self.admitted = (policy, min(deadline, time.monotonic() + EXCHANGE_SECONDS),
+                             (request["thread_ref"], request["turn_ref"]))
             result = self._result("ready", "ok")
             result["revision"] = policy.revision
             return result
@@ -1471,6 +1480,7 @@ class InventoryService:
                 raise ShadowUnavailable("peer-mismatch")
             self._failure_stage = "before-authority"
             self._authorize(policy.revision)
+            caller = self.admitted[2]
             self.admitted = None
             self._failure_stage = "before-source"
             self.source.check()
@@ -1482,7 +1492,9 @@ class InventoryService:
             self._failure_stage = "before-proof"
             self._publish_proof()
             self._failure_stage = "before-result"
-            return self._result(inventory_ok=True)
+            result = self._result(inventory_ok=True)
+            self.caller = caller
+            return result
         except Exception as exc:
             self._record_failure(exc)
             _close(handle)
@@ -1815,8 +1827,11 @@ class NativeInventoryClient:
     def ready(self) -> dict:
         return self._public(self._exchange("ready"))
 
-    def register(self) -> dict:
-        admitted = self._exchange("admit")
+    def register(self, metadata: dict[str, str]) -> dict:
+        if (not isinstance(metadata, dict) or set(metadata) != {"thread_ref", "turn_ref"}
+                or not all(_text(value) for value in metadata.values())):
+            raise ShadowUnavailable("invalid-message")
+        admitted = self._exchange("admit", **metadata)
         if admitted["status"] != "ready" or admitted["reason"] != "ok":
             return self._public(admitted)
         policy = InventoryPolicy.parse(_read_private(self.w, self.bootstrap_path.parent / "policy.json", self.sid))

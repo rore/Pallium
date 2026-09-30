@@ -76,7 +76,9 @@ The installed Desktop parser forwards dynamic `tools/list` input schemas; it doe
 
 ## Evidence
 
-Code references: `app/codex_bridge_pipe.py` policy parse and `InventoryService._observe/_run`; `app/main.py` service lifespan; `core/relay.py` pending/reservation reads; `storage/sqlite_relay.py` exact pending state; `app/codex_wake.py` native reservation and delivery-ID prompt; `integrations/codex/hooks/user_prompt_submit.py` emission/ACK; `docs/designs/codex-mcp-desktop-bridge.md` owner-fence limits. No live action or test run in this planning checkpoint.
+Code references: `app/codex_bridge_pipe.py` policy parse and `InventoryService._observe/_run`; `app/main.py` service lifespan; `core/relay.py` pending/reservation reads; `storage/sqlite_relay.py` exact pending state; `app/codex_wake.py` native reservation and delivery-ID prompt; `integrations/codex/hooks/user_prompt_submit.py` emission/ACK; `docs/designs/codex-mcp-desktop-bridge.md` owner-fence limits.
+
+Runtime-owned caller pair TDD: two actual MCP tests failed before the metadata change, then passed; an actual private-pipe test failed with the old no-argument registration and passed after binding. The affected MCP file passed 91 tests before the expanded invalid-metadata cases. The native affected file first passed 212 and failed 21: fixture registrations lacked the newly required pair, with one additional unclassified pre-write transport failure. After correcting those fixtures, the exact `--lf --lfnf=none -m slow` run passed 21. The same-thread/different-turn regression passed 2 focused cases. These results do not establish that the transport failure was fixed. Independent security review accepted the metadata-only delta for continued owner-action work, with no live action performed.
 
 ## Result review
 
