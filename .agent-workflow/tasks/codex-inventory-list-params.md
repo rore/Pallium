@@ -48,4 +48,8 @@ Installed ASAR source and sanitized fixed-stage incident; no native response con
 
 ## Result review
 
-Agent technical review: `/root/service_handoff_security`, 2026-09-30, accepted the sole production request-member deletion, decoded-wire fixture, red-to-green private caller test, and existing before/after 16-case coverage. Reviewed revision: working delta on branch `fix/codex-inventory-list-params` against `de29df94`, pending final commit. Verification adequate for this narrow request shape; pre-write transport failures and installed Claude hook fixture issue are not claimed fixed. CI pending.
+Agent technical review: `/root/service_handoff_security`, 2026-09-30, accepted the sole production request-member deletion, decoded-wire fixture, red-to-green private caller test, and existing before/after 16-case coverage.
+
+Reviewed revision: `68a34a3b` source and test delta; this record-only formatting follow-up does not change them.
+
+Verification adequacy: Adequate for this narrow request shape: 18 focused cases, existing before/after lifecycle, isolated full 5763 pass, and clean workflow check. Pre-write transport failures and installed Claude hook fixture issue are not claimed fixed. CI pending.
