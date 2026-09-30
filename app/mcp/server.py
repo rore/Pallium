@@ -581,10 +581,7 @@ def _relay_global_discovery_local(base_url: str | None, mcp_host: str) -> bool:
         )
     except ValueError:
         return False
-    return bool(service_local) and (
-        os.environ.get("PALLIUM_MCP_TRANSPORT", "streamable-http") == "stdio"
-        or _relay_loopback(mcp_host)
-    )
+    return bool(service_local) and _relay_loopback(mcp_host)
 
 
 def _relay_global_recipients_text(result: object, offset: int, exact: bool) -> str:

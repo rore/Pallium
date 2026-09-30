@@ -91,6 +91,8 @@ ambiguous, or malformed identity fails closed.
 
 When the target container is unknown, use the read-only
 `pallium_relay_discover_recipients` MCP tool on the trusted local service.
+It is unavailable on wildcard-bound HTTP MCP mounts; a transport environment
+label cannot override the MCP server's configured bind host.
 Omit filters to list recent candidates across all containers, or provide both
 the target's exact `runtime` and `session_ref` to search all lifecycle states.
 The exact pair can occur in multiple containers: inspect every candidate and

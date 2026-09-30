@@ -54,6 +54,12 @@ The trusted-local constraint is enforced at MCP service URL/bind, not assumed
 from caller-supplied scope. The sender's container is never added as a target
 filter, and neither the scoped address book nor send path changed.
 
+CodeRabbit's security pass found that a mismatched `PALLIUM_MCP_TRANSPORT=stdio`
+setting could bypass the wildcard MCP-bind check on the HTTP-mounted server.
+The guard now requires a loopback MCP host regardless of that setting; the
+MCP-to-ASGI regression asserts the mismatched setting is denied before lookup.
+This conservatively denies the tool on the service's wildcard HTTP mount.
+
 Independent result review found a count/page race under concurrent registration.
 The Dashboard listing now begins an explicit SQLite read transaction before
 both reads. Across separate tool calls, offset pages can still shift; guidance
@@ -66,15 +72,19 @@ Pallium, not the upstream Agent Workflow skill; this PR fixes that guidance.
 ## Evidence
 
 `python scripts/test-plan.py --base origin/main` selected the full non-slow
-lane because API/test files changed. On the final working diff, `uv run
+lane because API/test files changed. After the transport guard fix, `uv run
 --offline --extra dev --extra mcp --extra vector python -m pytest tests/ -x
--q` passed: 5,751 passed, 34 skipped, 2 xfailed (2026-09-30). The prior
+-q` passed: 5,751 passed, 34 skipped, 2 xfailed (2026-09-30). The focused
+transport-mismatch regression passed independently. The prior
 focused MCP/HTTP/SQLite/guidance/tool-registration run passed 318 tests; the
 last-failed rerun passed 38 tests with six deselected. The deterministic
 concurrent-insert HTTP regression passed and the full rerun included it.
 Import-linter produced no boundary violations. Redline classified the whole
 path set as `SCHEMA_CHANGE`, with API and persistence review checkpoints in
 shadow/advisory mode. `git diff --check` passed.
+The initial Python 3.13 CI run failed in an unchanged Claude wake test; its
+isolated GitHub job rerun passed, as did the Python 3.12 and Windows smoke jobs.
+The amended PR commit requires fresh CI before merge.
 
 ## Result review
 
@@ -84,6 +94,9 @@ Reviewed revision: tracked working diff `28b0b92a2b90f9b564724daadee419647a0e218
 Work Record and roadmap item. The review found a count/page race, resolved by
 an explicit read snapshot and deterministic concurrent-insert test, then
 reported no remaining actionable code finding.
+The same independent reviewer then inspected the transport-guard delta and
+confirmed it closes CodeRabbit's inferred exposure without an actionable
+finding; the reviewed delta was against `3577c10b135a17ae576cc457b03b56472bcf97b9`.
 Verification adequacy: focused
 caller E2E, representative query plan/index assertion, selected full suite,
 and boundary check cover the approved criteria; skipped/xfail tests retain

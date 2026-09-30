@@ -317,11 +317,13 @@ async def test_global_recipient_discovery_rejects_invalid_inputs_and_untrusted_d
         await server.call_tool("pallium_relay_discover_recipients", {"offset": 1.5})
 
     with patch.object(PalliumMcpClient, "_get_or_error", new_callable=AsyncMock) as request:
+        monkeypatch.setenv("PALLIUM_MCP_TRANSPORT", "stdio")
         nonlocal_bind = await assert_tool_error(
             create_server(host="0.0.0.0"), "pallium_relay_discover_recipients", {},
         )
         assert "trusted local service" in nonlocal_bind
         request.assert_not_awaited()
+        monkeypatch.delenv("PALLIUM_MCP_TRANSPORT")
         monkeypatch.setenv("PALLIUM_BASE_URL", "https://example.test:19836")
         remote = await assert_tool_error(
             create_server(), "pallium_relay_discover_recipients", {},
