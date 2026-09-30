@@ -22,7 +22,7 @@
 
 **Verification:** Disposable binding register/close lifecycle through _load_claude_hook common/session_start/user_prompt_submit/stop/session_end callers and intent readback; existing lost-HTTP TestClient caller; affected Claude hook files; scripts/test-plan.py selected lane; fresh Redline/workflow and diff checks; bounded independent plan/result review.
 
-**State:** Ready to implement
+**State:** Blocked
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -41,4 +41,24 @@ Agent technical review: native clean-context /root/fixture_plan_review, gpt-6.1-
 
 Pre-edit check initially lacked the new checkout's required import-boundary report and blocked correctly. Running the existing scripts/run-import-linter.py generated real backend evidence; fresh Redline then BLUE/exit 0 and Agent Workflow clean/exit 0. No fabricated report or enforcement bypass.
 
-Pending caller red/green and required checks; prior PR268 validation is not validation of this new test-fixture change.
+2026-09-30: The new pinned-binding regression failed before the helper fix for all five entrypoints. It reached each valid profile binding and then found added `intents/`, `.lock`, and intent JSON entries under the pinned wake tree; mocked opener prevented network I/O. After the fix, the five lifecycle cases pass and the complete pinned tree remains byte-for-byte and path-for-path unchanged.
+
+2026-09-30: Eight new loader regression cases pass, including both default HTTP fences, `pallium_request`/`relay_request`/register/close fail-safe behavior, and explicit `urlopen`/`build_opener` mocks before and after repeated imports. Global `urllib.request` remains unchanged outside explicit monkeypatches.
+
+2026-09-30: Existing `tests/test_claude_wake_dispatch.py::test_post_start_lost_http_intent_reconciles_without_claiming_relay` passes (1 passed). Four affected Claude files pass: `tests/test_claude_code_integration.py`, `tests/test_claude_wake_dispatch.py`, `tests/test_claude_wake_registration.py`, and `tests/test_claude_wake_instance_isolation.py` (149 passed, 2 skipped). Every run used a fresh disposable `USERPROFILE`; no real-profile wake state was touched.
+
+2026-09-30: Whole-change selector `C:\Dev\rore\Pallium\.venv\Scripts\python.exe scripts/test-plan.py --base origin/main` selected `full` and `python -m pytest tests/ -x -q`. That run used a fresh disposable `USERPROFILE` and stopped with `1 failed, 2120 passed, 2 skipped, 1 xfailed in 183.64s`: `tests/test_agent_relay_hooks.py::test_confirmed_switch_does_not_attach_old_identity_to_new_pin[claude-code-integrations/claude-code/hooks/common.py]` failed at line 1086 (`result is None`). The exact two-parameter node passed serially (2 passed). A serial run of `tests/test_agent_relay_hooks.py` then exposed a different existing Claude case, `test_legacy_pin_bootstraps_endpoint_alias_and_queued_delivery[claude-code]`, failing at line 1131 with `result is None` (89 passed). No assertions were weakened and no changes were made to that unrelated file; stop before any broader fix or full-suite rerun pending owner review.
+
+Independent result review (parent-reported, base `4fb43677`): approved current diff with no P1/P2 findings, conditional on required validation. Validation remains incomplete because the selected full suite failed.
+
+2026-09-30 bounded baseline diagnosis: exact detached base `de29df94bcd32d10ec5c81d03557ba683e89dc6b` used the same `tests/test_agent_relay_hooks.py` blob (`a2a27eb2a01358904f535a9f8a0ceacf33222be8`) and Claude `common.py` blob (`4b7971b53bbcad2c634e2ce70c85ef523237124d`) as this feature checkout. The one authorized serial run `python -m pytest tests/test_agent_relay_hooks.py -q -n 0`, under a fresh disposable `USERPROFILE`, passed (90 passed in 20.73s). This does not identify the feature-checkout failure cause or waive the failed selector evidence.
+
+`git diff --check` passed. Reviewed test-file blob: `4f1e52cba1c6b95a9fe24e44a08462a2072cd723`. Only this test file and this Work Record are modified. All `apply_patch` calls succeeded; no fallback was used. State is Blocked pending task-owner direction on the unresolved full-suite failure in an unchanged caller test; causality is not established. Prior PR268 validation is not validation of this new test-fixture change.
+
+## Result review
+
+Agent technical review: native clean-context /root/fixture_plan_review, gpt-6.1-sol low, 2026-09-30.
+
+Reviewed revision: 4fb43677 plus the test-file diff with blob 4f1e52cba1c6b95a9fe24e44a08462a2072cd723; reviewed content remains unchanged.
+
+Verification adequacy: no P1/P2 in the shared-helper fix or disposable caller regressions. Focused lifecycle, mock isolation and existing lost-HTTP/subsystem checks are green. Completion remains blocked by the failed selected full suite; the standalone and baseline passes do not resolve or waive it. Preserve this evidence in a draft PR for platform CI and manager disposition; do not merge, claim release, repeat full tests blindly, or change runtime behavior/thresholds here. The roadmap umbrella remains queued and manager-owned.
