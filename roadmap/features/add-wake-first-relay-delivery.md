@@ -10,6 +10,13 @@ lane: capability
 
 ## Current execution status (reconciled 2026-09-30)
 
+[PR #268](https://github.com/rore/Pallium/pull/268) merged advisory stale-message
+reconciliation guidance at `7f4079274c1c7cd83ce17ca945caa7697aa47be5`.
+Installed Codex and Claude skill copies match the bundled 3,054-byte guidance;
+configuration was preserved. The bounded synthetic comparison demonstrated no
+semantic reconciliation improvement, so this is instruction clarification, not
+automatic stale-message recovery or completed unloaded-wake qualification.
+
 The wake architecture review in [PR #258](https://github.com/rore/Pallium/pull/258),
 sanitized native failure diagnostics in [PR #259](https://github.com/rore/Pallium/pull/259),
 and SQLite wake authority in [PR #260](https://github.com/rore/Pallium/pull/260)
