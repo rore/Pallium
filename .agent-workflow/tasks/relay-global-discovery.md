@@ -100,5 +100,13 @@ finding; the reviewed delta was against `3577c10b135a17ae576cc457b03b56472bcf97b
 Verification adequacy: focused
 caller E2E, representative query plan/index assertion, selected full suite,
 and boundary check cover the approved criteria; skipped/xfail tests retain
-their normal baseline status. Separate human High-risk result review and PR
-API/persistence checkpoint satisfaction are pending.
+their normal baseline status. Rotem's "ok" in the pallium manager chat
+(`01a0f213-6d6a-7761-8abd-dd1c98c5085c`) followed the recommendation to
+finish PR #265's API/persistence review and then merge/install. This is the
+separate human High-risk result approval, not a substitute for those technical
+reviews. The API and persistence reviews are recorded on PR #265 at
+`issuecomment-5910470965`; both checkpoint labels were applied afterward.
+Current main `c4fe7881b8aec266f8172e2004e2c66d4421b6c9` changes no path in
+this PR, so the prior full-suite evidence remains applicable without a
+redundant rerun. The installed Relay table had 1,735 rows before rollout; the
+index is idempotent, has no data rewrite, and runs during managed startup.
