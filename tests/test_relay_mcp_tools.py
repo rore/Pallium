@@ -186,6 +186,166 @@ def asgi_get(relay_app):
             return response.json()
     return _get
 
+
+def bind_global_discovery(monkeypatch: pytest.MonkeyPatch, asgi_get, *, url="http://127.0.0.1:19836"):
+    monkeypatch.setenv("PALLIUM_BASE_URL", url)
+    requests = []
+
+    async def _get(_client, path, params):
+        requests.append((path, dict(params)))
+        return await asgi_get(path, params)
+
+    monkeypatch.setattr(PalliumMcpClient, "_get_or_error", _get)
+    return requests
+
+
+@pytest.mark.asyncio
+async def test_global_recipient_discovery_is_read_only_paginated_and_keeps_scoped_lookup(
+    monkeypatch: pytest.MonkeyPatch, relay_app, asgi_post, asgi_get,
+):
+    bind_asgi_work_refs(monkeypatch, asgi_post, asgi_get)
+    requests = bind_global_discovery(monkeypatch, asgi_get)
+    server = create_server()
+
+    async def discover(**arguments):
+        content, _ = await server.call_tool("pallium_relay_discover_recipients", arguments)
+        assert len(content[0].text) <= 2000
+        return json.loads(content[0].text)
+
+    empty = await discover()
+    assert empty["scope"] == "service_global"
+    assert empty["match_status"] == "candidates"
+    assert empty["recipients"] == [] and empty["next_offset"] is None
+
+    shared_ref = "shared-session"
+    registrations = [
+        ("codex", shared_ref, _SCOPE["container_ref"], "מפתח 日本語"),
+        ("codex", shared_ref, "git:example.test/second", None),
+        ("claude-code", shared_ref, "git:example.test/third", None),
+        ("codex", "dormant-session", "git:example.test/dormant", None),
+        ("codex", "closed-session", "git:example.test/closed", None),
+    ]
+    registrations.extend(
+        ("codex", f"page-{index:02d}", f"git:example.test/page-{index:02d}", None)
+        for index in range(12)
+    )
+    for runtime, session_ref, container_ref, title in registrations:
+        payload = {"runtime": runtime, "session_ref": session_ref, "container_ref": container_ref}
+        if title:
+            payload["title"] = title
+        await asgi_post("/relay/turn", payload)
+    await asgi_post("/relay/sessions/close", {
+        "runtime": "codex", "session_ref": "closed-session",
+        "container_ref": "git:example.test/closed",
+    })
+
+    from datetime import datetime, timedelta, timezone
+    from sqlalchemy import select
+    from storage.sqlite_schema import RelaySessionRecord
+
+    storage = relay_app.state.pallium_service._storage
+    with storage._begin_relay_immediate() as db:
+        dormant = db.execute(select(RelaySessionRecord).where(
+            RelaySessionRecord.container_ref == "git:example.test/dormant",
+            RelaySessionRecord.session_ref == "dormant-session",
+        )).scalar_one()
+        dormant.last_seen_at = datetime.now(timezone.utc) - timedelta(days=2)
+
+    broad_pages = []
+    offset = 0
+    while True:
+        page = await discover(offset=offset)
+        assert page["offset"] == offset
+        broad_pages.extend(page["recipients"])
+        if page["next_offset"] is None:
+            break
+        assert page["has_more"] is True
+        assert page["next_offset"] == offset + len(page["recipients"])
+        offset = page["next_offset"]
+    assert len(broad_pages) == 15
+    assert len({row["exact_selector"] for row in broad_pages}) == 15
+    assert all(row["lifecycle"] == "recent" for row in broad_pages)
+    assert all(row["session_ref"] not in {"dormant-session", "closed-session"} for row in broad_pages)
+    assert any(row.get("title_hint") == "מפתח 日本語" for row in broad_pages)
+
+    exact = await discover(runtime="codex", session_ref=shared_ref)
+    assert exact["match_status"] == "ambiguous"
+    assert exact["total_count"] == 2
+    assert {row["container_ref"] for row in exact["recipients"]} == {
+        _SCOPE["container_ref"], "git:example.test/second",
+    }
+    assert all(row["runtime"] == "codex" for row in exact["recipients"])
+    exact_dormant = await discover(runtime="codex", session_ref="dormant-session")
+    assert exact_dormant["match_status"] == "single_candidate"
+    assert exact_dormant["recipients"][0]["lifecycle"] == "dormant"
+    exact_closed = await discover(runtime="codex", session_ref="closed-session")
+    assert exact_closed["recipients"][0]["lifecycle"] == "closed"
+    assert exact_closed["recipients"][0]["destination_health"] is None
+    assert (await discover(runtime="claude-code", session_ref=shared_ref))["total_count"] == 1
+    assert (await discover(runtime="codex", session_ref="missing-session"))["match_status"] == "no_match"
+
+    # The existing address book remains bound to the injected container.
+    scoped, _ = await server.call_tool("pallium_relay_recipients", {"runtime": "codex"})
+    assert json.loads(scoped[0].text)["recipients"]
+    global_requests = [(path, params) for path, params in requests if path == "/dashboard/api/relay/sessions"]
+    scoped_requests = [(path, params) for path, params in requests if path == "/relay/sessions"]
+    assert global_requests and all("container_ref" not in params for _, params in global_requests)
+    assert len(scoped_requests) == 1
+    assert scoped_requests[0][1]["container_ref"] == _SCOPE["container_ref"]
+    with storage._relay_session_factory() as db:
+        from sqlalchemy import func
+        from storage.sqlite_schema import RelayMessageRecord
+        assert db.scalar(select(func.count()).select_from(RelayMessageRecord)) == 0
+
+
+@pytest.mark.asyncio
+async def test_global_recipient_discovery_rejects_invalid_inputs_and_untrusted_destinations(
+    monkeypatch: pytest.MonkeyPatch, asgi_get,
+):
+    bind_global_discovery(monkeypatch, asgi_get)
+    server = create_server()
+    for arguments in (
+        {"session_ref": "session-without-runtime"},
+        {"runtime": "unknown-runtime"},
+        {"runtime": "codex", "session_ref": ""},
+        {"runtime": "codex", "session_ref": "x" * 256},
+        {"offset": -1},
+    ):
+        error = await assert_tool_error(server, "pallium_relay_discover_recipients", arguments)
+        assert "error" in tool_error_payload(error)
+    with pytest.raises(ToolError):
+        await server.call_tool("pallium_relay_discover_recipients", {"offset": 1.5})
+
+    with patch.object(PalliumMcpClient, "_get_or_error", new_callable=AsyncMock) as request:
+        nonlocal_bind = await assert_tool_error(
+            create_server(host="0.0.0.0"), "pallium_relay_discover_recipients", {},
+        )
+        assert "trusted local service" in nonlocal_bind
+        request.assert_not_awaited()
+        monkeypatch.setenv("PALLIUM_BASE_URL", "https://example.test:19836")
+        remote = await assert_tool_error(
+            create_server(), "pallium_relay_discover_recipients", {},
+        )
+        assert "trusted local service" in remote
+        request.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_global_recipient_discovery_transport_error_is_safe(monkeypatch: pytest.MonkeyPatch):
+    bind_global_discovery(monkeypatch, None)
+    diagnostic = _relay_transport_error("GET", httpx.ConnectError("secret-host"))
+    with patch.object(PalliumMcpClient, "relay_discover_recipients", new=AsyncMock(return_value=diagnostic)):
+        error = await assert_tool_error(
+            create_server(), "pallium_relay_discover_recipients", {},
+        )
+    payload = tool_error_payload(error)
+    assert payload == {
+        "error": "global Relay discovery failed",
+        "error_kind": "transport_unavailable",
+        "retryable": True,
+    }
+    assert "secret-host" not in error
+
 def bind_asgi_post(monkeypatch: pytest.MonkeyPatch, asgi_post) -> None:
     async def _post(_client, path, payload, **_kwargs):
         try:

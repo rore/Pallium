@@ -45,6 +45,8 @@
 - idea-multi-vector-long-text-embedding
 
 # Done
+- add-global-relay-recipient-discovery
+
 - select-tests-by-change-scope
 - add-protected-behavioral-requirements-regression-suite
 - add-relay-batch-participant-counts

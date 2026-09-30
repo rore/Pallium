@@ -140,6 +140,118 @@ class TestDashboardMemoriesEndpoint:
 
 class TestDashboardRelaySummary:
 
+    def test_compact_session_page_count_uses_same_sqlite_snapshot(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        from sqlalchemy.orm import Session
+
+        app = create_app(_test_config(tmp_path))
+        with TestClient(app) as client:
+            assert client.post("/relay/turn", json={
+                "runtime": "codex", "session_ref": "snapshot", "container_ref": "before",
+            }).status_code == 200
+            storage = app.state.pallium_service._storage
+            original_scalar = Session.scalar
+            inserted = False
+
+            def scalar_after_count(session, statement, *args, **kwargs):
+                nonlocal inserted
+                result = original_scalar(session, statement, *args, **kwargs)
+                sql = str(statement).lower()
+                if not inserted and "count(" in sql and "relay_sessions" in sql:
+                    inserted = True
+                    now = datetime.now(timezone.utc)
+                    with storage._relay_session_factory() as writer:
+                        writer.add(RelaySessionRecord(
+                            id="relay-session-" + "f" * 32, runtime="codex", session_ref="snapshot",
+                            container_ref="after", state="active", first_seen_at=now, last_seen_at=now,
+                        ))
+                        writer.commit()
+                return result
+
+            with monkeypatch.context() as patch:
+                patch.setattr(Session, "scalar", scalar_after_count)
+                response = client.get("/dashboard/api/relay/sessions", params={
+                    "runtime": "codex", "session_ref": "snapshot", "compact": "true",
+                })
+
+            assert inserted
+            assert response.status_code == 200
+            body = response.json()
+            assert body["total"] == len(body["sessions"]) == 1
+            assert body["sessions"][0]["container_ref"] == "before"
+            with storage._relay_session_factory() as session:
+                assert session.execute(text("SELECT COUNT(*) FROM relay_sessions")).scalar_one() == 2
+
+    def test_global_exact_session_filter_and_compact_projection(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        app = create_app(_test_config(tmp_path))
+        with TestClient(app) as client:
+            for runtime, session_ref, container in (
+                ("codex", "shared-雪", "container-a"),
+                ("codex", "shared-雪", "container-b"),
+                ("claude-code", "shared-雪", "container-c"),
+                ("codex", "other", "container-d"),
+            ):
+                response = client.post("/relay/turn", json={
+                    "runtime": runtime, "session_ref": session_ref, "container_ref": container,
+                })
+                assert response.status_code == 200
+            now = datetime.now(timezone.utc)
+            with app.state.pallium_service._storage._relay_session_factory() as session:
+                session.add(RelaySessionRecord(
+                    id="relay-session-" + "e" * 32, runtime="codex", session_ref="s" * 255,
+                    container_ref="container-e", state="active", first_seen_at=now, last_seen_at=now,
+                ))
+                session.commit()
+
+            with monkeypatch.context() as patch:
+                patch.setattr(
+                    "app.dashboard._dashboard_relay_identity_collisions",
+                    lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("compact lookup ran collision analysis")),
+                )
+                response = client.get("/dashboard/api/relay/sessions", params={
+                    "runtime": "codex", "session_ref": "shared-雪", "compact": "true",
+                })
+            assert response.status_code == 200
+            body = response.json()
+            assert body["total"] == 2
+            assert {row["container_ref"] for row in body["sessions"]} == {"container-a", "container-b"}
+            assert all(row["runtime"] == "codex" and row["session_ref"] == "shared-雪" for row in body["sessions"])
+            assert set(body["sessions"][0]) == {
+                "id", "runtime", "session_ref", "container_ref", "title", "alias",
+                "lifecycle", "destination_health", "last_seen_at",
+            }
+            assert client.get("/dashboard/api/relay/sessions", params={
+                "runtime": "codex", "session_ref": "missing", "compact": "true",
+            }).json()["total"] == 0
+            assert client.get("/dashboard/api/relay/sessions", params={
+                "runtime": "codex", "session_ref": "s" * 255, "compact": "true",
+            }).json()["total"] == 1
+
+            assert client.get("/dashboard/api/relay/sessions", params={
+                "session_ref": "shared-雪",
+            }).status_code == 422
+            assert client.get("/dashboard/api/relay/sessions", params={
+                "runtime": "r" * 33,
+            }).status_code == 422
+            assert client.get("/dashboard/api/relay/sessions", params={
+                "runtime": "codex", "session_ref": "x" * 256,
+            }).status_code == 422
+            for filters in (
+                {"runtime": "codex", "session_ref": ""},
+                {"runtime": "", "session_ref": "valid"},
+                {"runtime": "unknown", "session_ref": "valid"},
+                {"runtime": " codex", "session_ref": "valid"},
+                {"runtime": "codex", "session_ref": " valid"},
+                {"runtime": "codex", "session_ref": "\tbad"},
+            ):
+                assert client.get("/dashboard/api/relay/sessions", params=filters).status_code == 422
+
+            default = client.get("/dashboard/api/relay/sessions", params={
+                "runtime": "codex", "session_ref": "shared-雪",
+            }).json()
+            assert "as_of" in default
+            assert "activation" in default["sessions"][0]
+
+
     def test_empty_relay_is_ready_and_names_all_supported_runtimes(self, tmp_path: Path) -> None:
         app = create_app(_test_config(tmp_path))
         with TestClient(app) as client:

@@ -445,6 +445,25 @@ class PalliumMcpClient:
             params["include_inactive"] = True
         return await self._get_or_error("/relay/sessions", params)
 
+    async def relay_discover_recipients(
+        self,
+        *,
+        runtime: str | None = None,
+        session_ref: str | None = None,
+        include_inactive: bool = False,
+        offset: int = 0,
+    ) -> Any:
+        # Deliberately do not add the sender's container_ref: this is a
+        # read-only service-global candidate lookup, not the scoped address book.
+        params: dict[str, Any] = {"compact": True, "limit": 10, "offset": offset}
+        if runtime is not None:
+            params["runtime"] = runtime
+        if session_ref is not None:
+            params["session_ref"] = session_ref
+        if session_ref is None and not include_inactive:
+            params["lifecycle"] = "recent"
+        return await self._get_or_error("/dashboard/api/relay/sessions", params)
+
     async def relay_name(self, *, alias: str | None, current_runtime: str, current_session_ref: str, replace_existing: bool = False) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "runtime": current_runtime,

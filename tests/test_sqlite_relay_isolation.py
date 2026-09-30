@@ -60,6 +60,16 @@ def test_relay_indexes_support_claim_lookup_plan(tmp_path: Path) -> None:
     _dispose(provider)
 
 
+def test_relay_index_supports_global_exact_session_lookup_plan(tmp_path: Path) -> None:
+    provider = SQLiteStorageProvider(f"sqlite:///{tmp_path / 'main.db'}", relay_database_url=f"sqlite:///{tmp_path / 'relay.db'}")
+    with provider._relay_engine.connect() as connection:
+        plan = connection.execute(text(
+            "EXPLAIN QUERY PLAN SELECT * FROM relay_sessions WHERE runtime='codex' AND session_ref='target'"
+        )).fetchall()
+    assert any("idx_relay_sessions_global_exact" in str(row) for row in plan)
+    _dispose(provider)
+
+
 def test_bounded_multi_agent_relay_fan_in_has_no_lost_deliveries(tmp_path: Path) -> None:
     from concurrent.futures import ThreadPoolExecutor
 

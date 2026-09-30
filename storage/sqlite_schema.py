@@ -774,6 +774,10 @@ class SQLiteSchemaMixin:
         ),
     }
     _INDEX_MIGRATIONS = {
+        "idx_relay_sessions_global_exact": (
+            "CREATE INDEX IF NOT EXISTS idx_relay_sessions_global_exact "
+            "ON relay_sessions(runtime, session_ref)"
+        ),
         "idx_relay_sessions_discovery": (
             "CREATE INDEX IF NOT EXISTS idx_relay_sessions_discovery "
             "ON relay_sessions(container_ref, runtime, state, last_seen_at)"
