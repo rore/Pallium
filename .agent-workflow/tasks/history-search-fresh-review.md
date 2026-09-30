@@ -67,6 +67,16 @@ Plan-review refinement before case-content review: private `C:\Dev\rore\Pallium\
 
 Pending.
 
+## Concrete correction plan and review
+
+2026-09-30: Expanded metadata inventory found eight pre-investigation lookups from September 12-22 whose directly linked user requests were rejected solely by the evaluator's actor-equality check. Production `PalliumService.query` validates request lineage using live/user/container/active-session/visibility, while actor_ref is an optional source filter. `test_request_link_actor_is_optional_metadata` already proves absent and different actors are valid through HTTP and audit. The evaluator's extra equality check is contract drift, not a retrieval or ranking failure.
+
+Selected bounded fix: remove only request/lookup actor equality in `evals/real_corpus_pull_eval.py::load_corpus`; retain all other request checks and source visibility/redaction/forgetting behavior. Extend `tests/test_historical_lookup_funnel_e2e.py::test_request_link_actor_is_optional_metadata` through nonempty HTTP search, audit read, and evaluator loading in both replay modes. Seed older scoped evidence first and assert both exact event IDs and expected source IDs survive. Extend `tests/test_real_corpus_pull_eval.py` only as needed to prove genuine invalid request links remain rejected in both modes. No protected contract edits, dependencies, API, ranking, index, or live-data changes. These eval/test paths are BLUE; Elevated evidence-handling review remains in force.
+
+Before/after acceptance: the new caller regression must fail on the old evaluator with zero admitted valid cases and pass with both valid actor variants admitted; all scope/role/forgotten/time reject cases remain rejected. Validate affected files, whole-change selector, full non-slow lane if selected, architecture/workflow checks, and independent result review. This demonstrates measurement eligibility, not candidate recovery, injection precision, or downstream task effect. Expanded content-equivalence investigation continues and has its own evidence limitations.
+
+Agent technical review: /root/fresh_plan_review APPROVE at dab74103, after independently comparing `core/service.py:1027-1050`, `app/mcp/client.py:113-116`, loader request/source gates, and the existing HTTP contract witness. Reviewer required nonempty older evidence and both replay modes; these requirements are incorporated above.
+
 ## Result review
 
 Pending.
