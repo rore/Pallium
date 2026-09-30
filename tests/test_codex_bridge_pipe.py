@@ -1153,7 +1153,7 @@ def test_inventory_registration_idempotent_eof_preserves_service_custody(tmp_pat
     ("before-peer", "before-peer", "peer-mismatch", "policy-inactive", 0),
     ("write", "before-write", "transport-failed", "native-failed", 0),
     ("read", "before-read", "transport-failed", "native-failed", 1),
-    ("validate", "before-validate", "invalid-response", "native-failed", 1),
+    ("validate", "before-validate-tool-fields", "invalid-response", "native-failed", 1),
     ("result", "before-result", "peer-mismatch", "peer-mismatch", 1),
     ("after-maintain", "before-authority", "policy-changed", "policy-inactive", 1),
     ("proof", "before-proof", "file-write-failed", "native-failed", 1),
@@ -1261,6 +1261,84 @@ def test_inventory_transfer_stage_diagnostics_from_private_caller(
         records = inventory_failure_records(caplog)
         assert len(records) == 1
         assert records[0].args == (expected_stage, expected_category, service.epoch, expected_policy.revision)
+
+
+@native
+@pytest.mark.parametrize("case,stage", [
+    ("envelope", "validate-envelope"),
+    ("version", "validate-version"),
+    ("id-type", "validate-id-type"),
+    ("id-match", "validate-id-match"),
+    ("result-type", "validate-result-type"),
+    ("result-fields", "validate-result-fields"),
+    ("tools-type", "validate-tools-type"),
+    ("tools-limit", "validate-tools-limit"),
+    ("tool-type", "validate-tool-type"),
+    ("tool-fields", "validate-tool-fields"),
+    ("tool-name", "validate-tool-name"),
+    ("tool-duplicate", "validate-tool-duplicate"),
+    ("schema-type", "validate-schema-type"),
+    ("schema-object", "validate-schema-object"),
+])
+def test_inventory_validation_diagnostic_identifies_private_caller_rejection(
+    tmp_path, monkeypatch, inventory_caplog, case, stage,
+):
+    secret = "private-native-sentinel"
+
+    def response(request, value):
+        tool = value["result"]["tools"][0]
+        if case == "envelope":
+            value["_meta"] = {"private": secret}
+        elif case == "version":
+            value["jsonrpc"] = secret
+        elif case == "id-type":
+            value["id"] = True
+        elif case == "id-match":
+            value["id"] = request["id"] + 1
+        elif case == "result-type":
+            value["result"] = []
+        elif case == "result-fields":
+            value["result"]["_meta"] = {"private": secret}
+        elif case == "tools-type":
+            value["result"]["tools"] = {}
+        elif case == "tools-limit":
+            value["result"]["tools"] = [tool.copy() for _ in range(513)]
+        elif case == "tool-type":
+            value["result"]["tools"] = [None]
+        elif case == "tool-fields":
+            del tool["inputSchema"]
+        elif case == "tool-name":
+            tool["name"] = f" {secret} "
+        elif case == "tool-duplicate":
+            value["result"]["tools"].append(tool.copy())
+        elif case == "schema-type":
+            tool["inputSchema"] = None
+        elif case == "schema-object":
+            tool["inputSchema"]["type"] = "array"
+        return value
+
+    with inventory_running(tmp_path, monkeypatch, response=response) as (service, client, directory, desktop):
+        result = client.register()
+        assert result["status"] == "unavailable" and result["reason"] == "native-failed"
+        assert not result["connected"] and not result["inventory_ok"]
+        assert service.fenced and service.custody is None and service.desktop is None
+        assert len(desktop.requests) == 1
+        proof = read_proof(directory)
+        assert proof["failure"] == "native-failed" and not proof["before_inventory_ok"]
+        records = inventory_failure_records(inventory_caplog)
+        assert len(records) == 1
+        assert records[0].args == (f"before-{stage}", "invalid-response", service.epoch, 1)
+        assert secret not in repr(records) and secret not in repr(proof)
+
+
+@native
+def test_inventory_validation_diagnostic_valid_private_caller_response(tmp_path, monkeypatch, inventory_caplog):
+    with inventory_running(tmp_path, monkeypatch) as (service, client, directory, desktop):
+        result = client.register()
+        assert result["status"] == "registered" and result["inventory_ok"]
+        assert len(desktop.requests) == 1
+        assert read_proof(directory)["before_inventory_ok"]
+        assert not inventory_failure_records(inventory_caplog)
 
 
 @native
@@ -1805,7 +1883,7 @@ c.dispose()
                 "post-maintain-stop": ("after-authority", "policy-inactive"),
                 "after-write": ("after-write", "transport-failed"),
                 "after-read": ("after-read", "transport-failed"),
-                "after-validate": ("after-validate", "invalid-response"),
+                "after-validate": ("after-validate-tool-fields", "invalid-response"),
                 "after-result": ("after-result", "peer-mismatch"),
             }.get(second_loss)
             if expected_failure:
