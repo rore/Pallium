@@ -1342,6 +1342,63 @@ def test_inventory_validation_diagnostic_valid_private_caller_response(tmp_path,
 
 
 @native
+@pytest.mark.parametrize("case,stage", [
+    ("invalid-request", "before-validate-error-invalid-request"),
+    ("tool-list-failed", "before-validate-error-tool-list"),
+    ("wrong-id", "before-validate-envelope"),
+    ("boolean-id", "before-validate-envelope"),
+    ("wrong-jsonrpc", "before-validate-envelope"),
+    ("boolean-code", "before-validate-envelope"),
+    ("extra-envelope", "before-validate-envelope"),
+    ("extra-error", "before-validate-envelope"),
+    ("wrong-code", "before-validate-envelope"),
+    ("wrong-message", "before-validate-envelope"),
+    ("malformed-error", "before-validate-envelope"),
+])
+def test_inventory_desktop_error_envelope_classification_from_private_caller(
+    tmp_path, monkeypatch, inventory_caplog, case, stage,
+):
+    secret = "private-native-error-sentinel"
+
+    def response(request, _value):
+        code, message = (-32602, "Invalid app tool request") if case == "invalid-request" else (
+            -32000, "Codex app tool request failed")
+        result = {"id": request["id"], "jsonrpc": "2.0", "error": {"code": code, "message": message}}
+        if case == "wrong-id":
+            result["id"] += 1
+        elif case == "boolean-id":
+            result["id"] = True
+        elif case == "wrong-jsonrpc":
+            result["jsonrpc"] = "1.0"
+        elif case == "boolean-code":
+            result["error"]["code"] = True
+        elif case == "extra-envelope":
+            result["private"] = secret
+        elif case == "extra-error":
+            result["error"]["data"] = secret
+        elif case == "wrong-code":
+            result["error"]["code"] = -1
+        elif case == "wrong-message":
+            result["error"]["message"] = secret
+        elif case == "malformed-error":
+            result["error"] = [secret]
+        return result
+
+    with inventory_running(tmp_path, monkeypatch, response=response) as (service, client, directory, desktop):
+        result = client.register()
+        assert result["status"] == "unavailable" and result["reason"] == "native-failed"
+        assert not result["connected"] and not result["inventory_ok"]
+        assert service.fenced and service.custody is None and service.desktop is None
+        assert len(desktop.requests) == 1
+        proof = read_proof(directory)
+        assert proof["failure"] == "native-failed" and not proof["before_inventory_ok"]
+        records = inventory_failure_records(inventory_caplog)
+        assert len(records) == 1
+        assert records[0].args == (stage, "invalid-response", service.epoch, 1)
+        assert secret not in repr(records) and secret not in repr(proof)
+
+
+@native
 def test_inventory_diagnostic_root_handler_cannot_leak_native_exception(
     tmp_path, monkeypatch, inventory_caplog, capsys,
 ):
@@ -1749,7 +1806,7 @@ server.main()
 @native
 @pytest.mark.parametrize("second_loss", [None, "expiry", "version", "revoke", "shutdown", "exit-proof", "after-proof",
     "rearm-final-authority", "source-exit", "after-peer", "post-maintain-stop", "after-write", "after-read",
-    "after-validate", "after-result"])
+    "after-validate", "after-error-envelope", "after-result"])
 def test_inventory_confirmed_source_process_exit_retains_same_connection(
     tmp_path, monkeypatch, inventory_caplog, second_loss,
 ):
@@ -1759,9 +1816,12 @@ def test_inventory_confirmed_source_process_exit_retains_same_connection(
     service = bridge.InventoryService(directory)
     caplog = inventory_caplog
     child = None
-    if second_loss == "after-validate":
+    if second_loss in {"after-validate", "after-error-envelope"}:
         desktop.response = lambda request, value: (
-            {"jsonrpc": "2.0", "id": request["id"], "result": {"tools": [{}]}}
+            ({"jsonrpc": "2.0", "id": request["id"], "result": {"tools": [{}]}}
+             if second_loss == "after-validate" else
+             {"jsonrpc": "2.0", "id": request["id"], "error": {
+                 "code": -32000, "message": "Codex app tool request failed"}})
             if service.after_attempted else value
         )
     original_create_phase = bridge._create_phase
@@ -1871,7 +1931,7 @@ c.dispose()
             assert not proof["historical_transport_pass"] and not proof["after_inventory_ok"]
             assert proof["before_inventory_ok"]
             assert proof["source_exited"] is (second_loss not in {"exit-proof", "source-exit"})
-            expected_requests = 2 if second_loss in {"after-proof", "after-read", "after-validate", "after-result"} else 1
+            expected_requests = 2 if second_loss in {"after-proof", "after-read", "after-validate", "after-error-envelope", "after-result"} else 1
             assert len(desktop.requests) == expected_requests
             assert service.custody is None and desktop.connections == 1
             expected_failure = {
@@ -1884,6 +1944,7 @@ c.dispose()
                 "after-write": ("after-write", "transport-failed"),
                 "after-read": ("after-read", "transport-failed"),
                 "after-validate": ("after-validate-tool-fields", "invalid-response"),
+                "after-error-envelope": ("after-validate-error-tool-list", "invalid-response"),
                 "after-result": ("after-result", "peer-mismatch"),
             }.get(second_loss)
             if expected_failure:

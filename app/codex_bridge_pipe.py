@@ -32,7 +32,8 @@ _INVENTORY_FAILURE_STAGES = frozenset({
     *(f"{phase}-validate-{check}" for phase in ("before", "after")
       for check in ("envelope", "version", "id-type", "id-match", "result-type",
                     "result-fields", "tools-type", "tools-limit", "tool-type", "tool-fields",
-                    "tool-name", "tool-duplicate", "schema-type", "schema-object")),
+                    "tool-name", "tool-duplicate", "schema-type", "schema-object",
+                    "error-invalid-request", "error-tool-list")),
 })
 _INVENTORY_FAILURE_CATEGORIES = frozenset({
     "busy", "deadline", "file-unavailable", "file-write-failed", "invalid-message", "invalid-path",
@@ -1512,6 +1513,15 @@ class InventoryService:
         value = self.custody.read(deadline)
         self._failure_stage = f"{phase}-validate-envelope"
         if set(value) != {"jsonrpc", "id", "result"}:
+            error = value.get("error")
+            if (set(value) == {"jsonrpc", "id", "error"} and value["jsonrpc"] == "2.0"
+                    and type(value["id"]) is int and value["id"] == request_id
+                    and type(error) is dict and set(error) == {"code", "message"}
+                    and type(error["code"]) is int):
+                if error["code"] == -32602 and error["message"] == "Invalid app tool request":
+                    self._failure_stage = f"{phase}-validate-error-invalid-request"
+                elif error["code"] == -32000 and error["message"] == "Codex app tool request failed":
+                    self._failure_stage = f"{phase}-validate-error-tool-list"
             raise ShadowUnavailable("invalid-response")
         self._failure_stage = f"{phase}-validate-version"
         if value["jsonrpc"] != "2.0":
