@@ -8,7 +8,7 @@ milestone: pallium-relay
 lane: capability
 ---
 
-## Current execution status (reconciled 2026-09-29)
+## Current execution status (reconciled 2026-09-30)
 
 The wake architecture review in [PR #258](https://github.com/rore/Pallium/pull/258),
 sanitized native failure diagnostics in [PR #259](https://github.com/rore/Pallium/pull/259),
@@ -42,6 +42,12 @@ and stable IDs remain untouched. Earlier discovery incorrectly said no time-base
 trace cleanup existed; the shipped Work Record now records that correction.
 The one-lifetime-rescue retry proposal was deferred because its permanent state
 offers limited recurring recovery. Retry behavior is unchanged.
+[PR #266](https://github.com/rore/Pallium/pull/266) adds fixed diagnostic stages
+for individual inventory-response validation checks. Response acceptance,
+authority, custody and public failure behavior remain unchanged. Both Linux CI
+suites and Windows smoke passed; the installed service wrapper and health,
+queue and embedding checks passed. The next bounded transport trial will use
+these diagnostics to identify the rejected response predicate.
 Unloaded-session delivery and the source-child lifetime witness
 remain unproven; this rollout makes neither claim.
 
