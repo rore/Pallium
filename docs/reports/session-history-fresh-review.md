@@ -43,8 +43,9 @@ independent tasks. All have ten exposed source IDs.
 The protocol was frozen before content review: batches of up to 12 eligible
 episodes, at most 60, with independence grouping, protected confirmation cases,
 and an explicit uncertainty stop on eligible-pool exhaustion. Exact previous
-holdout manifests could not be recovered. Earlier evidence therefore remained
-closed. Five of the eight newer linked lookups share exposed source IDs with
+holdout manifests could not be recovered. Earlier source contents therefore
+remained unopened; query metadata was processed only for overlap checks.
+Five of the eight newer linked lookups share exposed source IDs with
 pre-September-12 events; all three groups contain such overlap. None qualified
 as demonstrably untouched confirmation. Source content and fingerprints remained
 unopened; no content-grading batches or current-corpus retrieval replay ran.

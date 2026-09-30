@@ -54,7 +54,7 @@ Approved by user 2026-09-30: "ok. be systematic and remember the goal. you can d
 **Exceptions:**
 —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -67,7 +67,7 @@ Plan-review refinement before case-content review: private `C:\Dev\rore\Pallium\
 
 Expanded census completed with 265 pre-investigation lookup records and 226 expansions in the exact container. The newer eligible metadata window has eight linked events / three request-session groups, all overlapping earlier exposed evidence at group level. Prior holdout identities could not be recovered; no source content was opened, no ranking replay or paid evaluation ran, and content-review coverage remains unmet. This is the protocol's protected-pool exhaustion/uncertainty stop, not saturation or feature completion. Private protocol, reproducible read-only inventory, aggregate, manifest, and report survive under the shared checkout's ignored `.local/history-search-fresh-review/`; public report and both affected roadmap items retain the evidence prerequisite and separate downstream-value gates.
 
-Before result review, fresh `origin/main` remained e0e38178. Whole-change `scripts/test-plan.py --base origin/main` selected the full lane. Redline over all seven changed paths is BLUE with zero boundary violations, no protected-contract edits, and no required checkpoints; declared risk remains Elevated. Agent Workflow check is clean. Full non-slow suite is running against 58a05c6a plus the code/test diff subsequently committed for review.
+Before result review, fresh `origin/main` remained e0e38178. Whole-change `scripts/test-plan.py --base origin/main` selected the full lane. Redline over all seven changed paths is BLUE with zero boundary violations, no protected-contract edits, and no required checkpoints; declared risk remains Elevated. Agent Workflow check is clean. Full non-slow `python -m pytest tests/ -x -q` passed on Windows/shared Python environment: 5772 passed, 34 skipped, 2 xfailed in 346.36 seconds. It ran against 58a05c6a plus exactly the code/test diff committed as 8509038c; subsequent changes are documentation/evidence only. PR CI remains a delivery gate.
 
 2026-09-30 implementation verification: the extended HTTP → persisted audit → `load_corpus` regression failed before the fix because neither persisted lookup was admitted (`cases == {}`). After removing only request/event actor equality, the exact test passed (`1 passed`), and `python -m pytest tests/test_historical_lookup_funnel_e2e.py tests/test_real_corpus_pull_eval.py -q -n 0` passed (`58 passed`). The test asserts both replay modes, exact event IDs, request text, source IDs, and the explicit actor filter's isolation; existing invalid-link attrition is checked in both modes.
 
@@ -83,4 +83,6 @@ Agent technical review: /root/fresh_plan_review APPROVE at dab74103, after indep
 
 ## Result review
 
-Pending.
+Agent technical review: /root/fresh_plan_review (clean-context non-implementer, Sol) APPROVE, conditional on full suite, required checks, and PR CI. The local full suite subsequently passed. Reviewed revision: 8509038c. Verification adequacy: HTTP → persisted audit → evaluator regression covers both replay modes, absent/different source actor filters, exact exposed sources, and preserved invalid-link rejection; focused red→green and 58 affected passing tests are sufficient for the one-condition correction alongside full-suite/CI validation. Reviewer reconciled all published population/group counts against private metadata, found no correctness/privacy blocker, and confirmed uncertainty and the queued umbrella are explicit.
+
+Review clarification: audit/replay and generic regression work already include evaluator eligibility. The concrete correction plan was independently reviewed before code; no task behavior, immutable baseline, or protected contract was changed. An initial request to alter structured Scope was withdrawn after checking behavioral-integrity. Optional report wording now explicitly distinguishes unopened prior source contents from normalized query metadata used for overlap checks. Delivery remains pending PR CI/merge; this record does not assert the wider search-quality feature is finished.
