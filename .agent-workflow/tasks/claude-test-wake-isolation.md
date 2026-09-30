@@ -18,7 +18,7 @@
 
 **Reason:** Only blue-zone tests and Work Record bookkeeping; no protected-contract, runtime, security, or policy mutation.
 
-**Approach:** Invoke Agent Workflow before any code edit, retain this isolated branch and source-backed diagnosis, and obtain the requested bounded independent plan review. Rebind both shared helper wake directories to its existing temporary environment directory; leave production binding logic untouched. Add caller red first using a disposable profile with a valid conflicting pinned binding and mocked HTTP, then the smallest shared-helper fix, focused/subsystem/selector validation and result review. Stop for broader scope or non-test writes.
+**Approach:** Invoke Agent Workflow before any code edit and retain this isolated branch and source-backed diagnosis. Rebind both shared helper wake directories to its existing temporary environment directory. Fence default urlopen/build_opener on a helper-local copy of urllib.request, preserving explicit mocks before/after loading and process-global urllib; leave production binding logic untouched. Add caller red first using a disposable profile with a valid conflicting pinned binding and mocked HTTP, then the shared-helper fix, focused/subsystem/selector validation and result review. Stop for broader scope or non-test writes.
 
 **Verification:** Disposable binding register/close lifecycle through _load_claude_hook common/session_start/user_prompt_submit/stop/session_end callers and intent readback; existing lost-HTTP TestClient caller; affected Claude hook files; scripts/test-plan.py selected lane; fresh Redline/workflow and diff checks; bounded independent plan/result review.
 
@@ -35,8 +35,10 @@ Canonical roadmap: roadmap/features/add-wake-first-relay-delivery.md remains que
 
 ## Plan review
 
-Pending independent bounded reviewer; no code edit until findings are resolved.
+Agent technical review: native clean-context /root/fixture_plan_review, gpt-6.1-sol low, 2026-09-30, reviewed a2da9ecd and the bounded refinement. Approved two-directory rebinding for all shared-loader callers. Pre-existing P2: a session_start caller can contact the imported local service, and USERPROFILE isolation does not fence HTTP. Resolved in the plan with a common-local urllib/request SimpleNamespace copy; capture original urlopen/build_opener at test-module import and fence only copied defaults with OSError, preserving explicit mocks and unrelated global urllib. Cover default fail-closed calls, before/after mocks, repeated imports and five pinned-binding register/close variants with full pinned-tree preservation. No P1/P2 blocker with this test-only design; classification remains Routine/Simple.
 
 ## Evidence
+
+Pre-edit check initially lacked the new checkout's required import-boundary report and blocked correctly. Running the existing scripts/run-import-linter.py generated real backend evidence; fresh Redline then BLUE/exit 0 and Agent Workflow clean/exit 0. No fabricated report or enforcement bypass.
 
 Pending caller red/green and required checks; prior PR268 validation is not validation of this new test-fixture change.
