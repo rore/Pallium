@@ -1508,7 +1508,7 @@ class InventoryService:
         self.native_sequence += 1
         request_id = self.native_sequence
         self._failure_stage = f"{phase}-write"
-        self.custody.write({"jsonrpc": "2.0", "id": request_id, "method": "tools/list", "params": {}}, deadline)
+        self.custody.write({"jsonrpc": "2.0", "id": request_id, "method": "tools/list"}, deadline)
         self._failure_stage = f"{phase}-read"
         value = self.custody.read(deadline)
         self._failure_stage = f"{phase}-validate-envelope"

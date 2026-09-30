@@ -674,7 +674,7 @@ class FakeDesktop:
                         continue
                     raise
                 self.requests.append(request)
-                assert request == {"jsonrpc": "2.0", "id": len(self.requests), "method": "tools/list", "params": {}}
+                assert request == {"jsonrpc": "2.0", "id": len(self.requests), "method": "tools/list"}
                 value = {"jsonrpc": "2.0", "id": request["id"], "result": {
                     "tools": [{"name": "example-β", "description": "private native content", "inputSchema": {"type": "object"}}]}}
                 value = self.response(request, value) if self.response else value
@@ -1143,6 +1143,20 @@ def test_inventory_registration_idempotent_eof_preserves_service_custody(tmp_pat
         for path in directory.iterdir():
             if path.suffix == ".json":
                 assert desktop.endpoint.encode() not in path.read_bytes()
+
+
+@native
+def test_inventory_list_request_matches_desktop_optional_params_schema(tmp_path, monkeypatch):
+    def current_desktop_schema(request, value):
+        if "params" in request and request["params"] != {"threadStartKind": "default"}:
+            return {"jsonrpc": "2.0", "id": request["id"], "error": {
+                "code": -32602, "message": "Invalid app tool request"}}
+        return value
+
+    with inventory_running(tmp_path, monkeypatch, response=current_desktop_schema) as (_, client, directory, desktop):
+        assert client.register()["status"] == "registered"
+        assert desktop.requests == [{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}]
+        assert read_proof(directory)["before_inventory_ok"]
 
 
 @native
