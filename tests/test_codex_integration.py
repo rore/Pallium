@@ -557,6 +557,7 @@ def test_codex_setup_deploys_and_removes_skill(
     }
 
     setup_codex._install_skill()
+    assert "- Reconcile work/state; keep late findings." in (skill_dir / "SKILL.md").read_text(encoding="utf-8")
     assert {
         item.relative_to(skill_dir): item.read_bytes()
         for item in skill_dir.rglob("*")
@@ -588,6 +589,7 @@ def test_codex_setup_deploys_and_removes_skill(
     stale = skill_dir / "references" / "stale.md"
     stale.write_text("obsolete", encoding="utf-8")
     setup_codex._install_skill()
+    assert "- Reconcile work/state; keep late findings." in (skill_dir / "SKILL.md").read_text(encoding="utf-8")
     assert not stale.exists()
     setup_codex._install_skill()
     assert {

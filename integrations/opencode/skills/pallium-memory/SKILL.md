@@ -6,7 +6,7 @@ description: Use Pallium Relay, Session History, or optional derived memory.
 # Pallium
 ## Relay
 
-- Act on deliveries; reply at completion/blocker.
+- Reconcile work/state; keep late findings. Skip completed actions/routine replies; follow authorized work. Reply on completion/blocker.
 - Send=saved, not started; pending unconfirmed. `busy_queue`=capability, not observed busyness. Urgent: open task, let work finish, ordinary turn if needed; do not resend.
 - Self: injected `agent_ref`/`thread_ref`; never infer.
 - Role target: current `@name`; rediscover before endpoint reuse. Check returned admission session/container if scope matters. Aliases/endpoints move; neither proves scope. No broadcast/bare runtime; takeover by request; ignore ACK-only.
