@@ -28,11 +28,11 @@
 
 **Plan review:** Agent technical review: `/root/service_handoff_security`, 2026-09-30. Accepted with exact-match refinement: require exact top-level/error keys, `jsonrpc` 2.0, echoed integer ID, and fixed code plus fixed message; otherwise retain generic stage. Installed source supports but does not prove the live error envelope.
 
-**Approvals:** Not required at Elevated risk; standing user autonomous approval covers this scoped diagnostic plan.
+**Approvals:** Approved by user 2026-09-30: "so let's continue" immediately after the task owner presented the plan to publish and install the reviewed error-response diagnostic and asked approval to push `fix/codex-inventory-error-envelope` to public `rore/Pallium` and open its PR.
 
 **Exceptions:** —
 
-**State:** Blocked
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -44,6 +44,8 @@
 2026-09-30: Independent result reviewer requested wrong-version/boolean-code near misses and one after-phase known error; added all three with no production change. Affected slow file: 227 passed, one existing after-read case failed before a second request was observed; exact `--lf` passed. The new after-error case likewise first hit after-read transport failure, exact `--lf` passed. Reviewer accepted coverage but called the transport-fixture fluctuation unresolved. Selector-required full non-slow run completed: 5745 passed, 34 skipped, 2 xfailed. No root cause is claimed fixed for the earlier transport-fixture failures.
 
 2026-09-30: Reviewed source/tests committed at `752c24da`; automatic approval review rejected a push of this new branch to the verified public repository because exact payload export authorization was not established. No alternate route or retry attempted. Publication and current-head CI are blocked pending direct user authorization for this branch and destination.
+
+2026-09-30: User directly replied "so let's continue" after the task owner stated the exact public branch, PR, install and next-trial plan. This resolves the publication blocker. Refreshed main is `3478417a`; the two intervening commits do not touch the reviewed source, test, or Work Record files, so no rebase or local full rerun is needed.
 
 ## Evidence
 
@@ -65,4 +67,4 @@ Verification adequacy: focused and selected full pass; two recorded slow-fixture
 
 ## Recovery
 
-Branch `fix/codex-inventory-error-envelope` in the existing managed checkout; implementation commit `752c24da` is preserved locally. The first action after direct approval to publish this exact branch to public `rore/Pallium` is to push it, open/attach the PR, and inspect current-head CI. Do not repeat the local full run absent a material finding. Root owns merge, install, and any further finite trial.
+Branch `fix/codex-inventory-error-envelope` in the existing managed checkout; implementation commit `752c24da` is preserved locally. Direct user approval resolved the publication blocker. Push the branch, open/attach the PR, and inspect current-head CI. Do not repeat the local full run absent a material finding. Root owns merge, install, and any further finite trial.
