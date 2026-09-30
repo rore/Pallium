@@ -131,6 +131,10 @@ Canonical umbrella `roadmap/features/add-wake-first-relay-delivery.md` remains q
 
 ## Result review
 
-Agent technical review: native clean-context `/root/stale_result_review`, Sol low, 2026-09-30. Reviewed revision: `cb1cf0395f4d966171718eb93bdad40b9a9c082b` plus the eight dirty implementation paths. No production P1/P2. One P2 evidence finding corrected above: exact baseline artifact failures and absent candidate blocker reply are not full semantic/communication success. Verification adequacy: installed/bundled focused coverage is adequate for advisory text; synthetic comparison is bounded and cannot prove live delivery or deterministic continuation. The subsequent hermetic full suite passed on unchanged reviewed production/test content. Publish for manager result review and CI; shipped/installed completion remains manager-owned and unclaimed.
+Agent technical review: native clean-context `/root/stale_result_review`, Sol low, 2026-09-30.
+
+Reviewed revision: `cb1cf0395f4d966171718eb93bdad40b9a9c082b` plus the eight dirty implementation paths, committed unchanged in `72957198084f63cd5941aa9f72675150ad251bec`.
+
+Verification adequacy: installed/bundled focused coverage is adequate for advisory text; synthetic comparison is bounded and cannot prove live delivery or deterministic continuation. The subsequent hermetic full suite passed on unchanged reviewed production/test content. No production P1/P2; the P2 evidence finding is corrected above. Publish for manager result review and CI; shipped/installed completion remains manager-owned and unclaimed.
 
 Skill-feedback trigger 1 dropped: repeated validation workaround is a consumer test/profile isolation defect, not an Agent Workflow upstream defect; reported to the manager instead. Final local Redline/workflow and diff checks are rerun before publication. No roadmap edit is needed to represent this unmerged advisory-only slice; manager receives the exact umbrella reference and outstanding rollout state.
