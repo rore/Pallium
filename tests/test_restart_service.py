@@ -50,12 +50,13 @@ function Get-ScheduledTask {
 function Start-Process {
     param($FilePath, $ArgumentList, $WorkingDirectory, $WindowStyle, [switch]$Wait, [switch]$PassThru)
     Log-Call "Start-Process:$FilePath"
+    if ($ArgumentList -match 'service initialize-wakes') { Log-Call "Initialize-Wakes" }
     if ($PSBoundParameters.ContainsKey("WorkingDirectory")) {
         Log-Call "PreflightWorkingDirectory:$WorkingDirectory"
     } else {
         Log-Call "PreflightWorkingDirectory:<omitted>"
     }
-    $exitCode = if ($env:RW010_SCENARIO -eq "preflight_failure") { 7 } else { 0 }
+    $exitCode = if (($env:RW010_SCENARIO -eq "preflight_failure") -or (($env:RW010_SCENARIO -eq "wake_import_failure") -and ($ArgumentList -match 'service initialize-wakes'))) { 7 } else { 0 }
     [pscustomobject]@{ ExitCode = $exitCode }
 }
 
@@ -334,6 +335,25 @@ def _assert_port(result: subprocess.CompletedProcess[str], calls: list[str], por
     assert f"URI:http://127.0.0.1:{port}/status" in calls
     assert f"URI:http://127.0.0.1:{port}/debug/queue/health" in calls
     assert f"http://127.0.0.1:{port}/dashboard" in _output(result)
+
+
+def test_wake_import_runs_after_stop_and_before_task_start(tmp_path: Path) -> None:
+    result, calls = _run_restart(tmp_path, "success")
+    assert result.returncode == 0, _output(result)
+    assert calls.index("Stop-ScheduledTask") < calls.index("Initialize-Wakes") < calls.index("Start-ScheduledTask")
+
+
+def test_wake_import_failure_never_starts_service(tmp_path: Path) -> None:
+    result, calls = _run_restart(tmp_path, "wake_import_failure")
+    _assert_failure(result)
+    assert "Initialize-Wakes" in calls
+    assert "Start-ScheduledTask" not in calls
+
+
+def test_stop_only_does_not_import_wakes(tmp_path: Path) -> None:
+    result, calls = _run_restart(tmp_path, "success", stop_only=True)
+    assert result.returncode == 0, _output(result)
+    assert "Initialize-Wakes" not in calls
 
 
 def test_preflight_failure_never_stops_the_healthy_service(tmp_path: Path) -> None:

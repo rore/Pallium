@@ -6,7 +6,7 @@ After writing Task Context and before discovery, copy its exact Outcome, Scope, 
 
     {"source":"work-record-initial","outcome":"...","scope":"...","constraints":"...","completion_criteria":"..."}
 
-Use an authoritative source revision or item reference for source when one exists. Target is not behavioral. Never rewrite the baseline. Legacy records without one stay parseable but cannot advance; ask the task owner to establish it from an authoritative source rather than guessing.
+Use an authoritative source revision or item reference for source when one exists. Target is not behavioral. Never rewrite the baseline. Commit new records with a valid baseline in their first version. Legacy records already on the base branch without one stay parseable but cannot advance; ask the task owner to establish it from an authoritative source rather than guessing.
 
 ## Classify changes
 
@@ -35,7 +35,7 @@ Before approval, keep State Blocked and do not update current Task Context or th
 
 `agent-redline-policy.yaml` owns behaviorContracts paths, protection mode, and PR verification. Repository protection also owns the CODEOWNER-only checkpoint and canonical owner evidence. Workflow protection has neither. Inspect only paths in Redline's versioned behaviorContractChanges detail. Work Record Verification or Verification plan must name its reported verification identifier.
 
-Path protection is mutation integrity, not regression enforcement. Bootstrap requires explicit selection and live PR execution of both the named verification and combined harness. Repository protection additionally requires branch-required status, compatible last-match CODEOWNERS, and required Code Owner review. Workflow protection omits those controls and must be reported as not merge-enforced. The checker validates policy/detail/path agreement, mode-appropriate approval evidence, applicable checkpoint/owner facts, and verification linkage; it cannot judge semantics, authenticate a person or team, prove a test ran, prevent merge, or prove the baseline was never rewritten.
+Path protection is mutation integrity, not regression enforcement. Bootstrap requires explicit selection and live PR execution of both the named verification and combined harness. Repository protection additionally requires branch-required status, compatible last-match CODEOWNERS, and required Code Owner review. Workflow protection omits those controls and must be reported as not merge-enforced. The checker validates policy/detail/path agreement, mode-appropriate approval evidence, applicable checkpoint/owner facts, and verification linkage; with PR refs it compares the first committed baseline, but cannot judge semantics, authenticate a person or team, prove a test ran, prevent merge, prove initial accuracy, or detect rewritten branch history.
 
 ## Checkpoint actions
 

@@ -1,0 +1,44 @@
+<!-- agent-workflow:start -->
+**Outcome:** Produce a source-grounded architecture review and prioritized rework plan for reliable, understandable Relay wake and delivery.
+**Target:** Pallium wake orchestration, durable state, runtime adapters, hook delivery and agent-facing duplicate semantics.
+**Scope:** This Work Record and docs/designs/relay-wake-architecture-review.md. Inspect existing application, storage, hooks, contracts, design and roadmap read-only. No application implementation in this task.
+**Constraints:** Preserve current live state, held drafts and existing user approvals. No live calls, restarts, archiving, fence clearing, environment scraping, private incident identifiers or product behavior changes. Do not imply ACK proves task completion or prompts guarantee exactly-once side effects. Busy-turn changes and zero-child bootstrap remain outside implementation scope.
+**Completion criteria:** Map authoritative state and end-to-end failure boundaries; distinguish wake, payload delivery and downstream action guarantees; identify prioritized evidenced defects and complexity; compare SQLite and existing file state; propose explicit at-least-once and duplicate-awareness contracts, migration and rollout slices with meaningful verification; obtain independent technical review of the resulting plan.
+**Requirement baseline:** {"source":"work-record-initial","outcome":"Produce a source-grounded architecture review and prioritized rework plan for reliable, understandable Relay wake and delivery.","scope":"This Work Record and docs/designs/relay-wake-architecture-review.md. Inspect existing application, storage, hooks, contracts, design and roadmap read-only. No application implementation in this task.","constraints":"Preserve current live state, held drafts and existing user approvals. No live calls, restarts, archiving, fence clearing, environment scraping, private incident identifiers or product behavior changes. Do not imply ACK proves task completion or prompts guarantee exactly-once side effects. Busy-turn changes and zero-child bootstrap remain outside implementation scope.","completion_criteria":"Map authoritative state and end-to-end failure boundaries; distinguish wake, payload delivery and downstream action guarantees; identify prioritized evidenced defects and complexity; compare SQLite and existing file state; propose explicit at-least-once and duplicate-awareness contracts, migration and rollout slices with meaningful verification; obtain independent technical review of the resulting plan."}
+**Risk:** High
+**Complexity:** Moderate
+**Reason:** Documentation-only architecture planning, raised by judgment because recommendations change persistence and delivery guarantees. No runtime behavior or protected contract is edited; future implementation needs its own exact risk/contract gates.
+**Discovery:** Existing reservations.json is a deliberately bounded single-service store selected to avoid schema scope in the earlier activation change. Relay delivery state is already SQLite-backed. A discovered persistence-failure path disables all subsequent Codex reservations. Native custody inventory qualification separately returned an unlocalized native-failed result. Neither incident proves a universal runtime limit.
+**Material assumptions:** Source at 01b3f065 is the shipped baseline. At-least-once is a proposed trade-off, not blanket permission to repeat irreversible actions. Runtime wake admission may be non-idempotent; review must preserve that uncertainty. If evidence contradicts an assumption, revise the plan before implementation.
+**Plan:** First invoke agent-workflow, evaluate applicability and create this classified Work Record before any code edit. Use two bounded read-only reviews: delivery/ACK/duplicate semantics and runtime lifecycle/ownership/recovery. Root reconciles their source-cited findings with held work, creates a minimal staged rework plan, then obtains a clean-context technical result review. No product implementation or blanket contract weakening.
+**Verification plan:** Source-grounded findings and guarantee boundaries -> independent code reviews plus root inspection of emitted payload, ACK and transaction callbacks. Protected behavior and migration safety -> clean-context synthesis review against existing contracts and explicit crash/retry/upgrade scenarios. Planning artifact compliance -> whole-change selector, selected governance tests, Redline, Agent Workflow and diff checks; no application tests for this planning-only change.
+**Plan review:** Agent technical review: /root/wake_delivery_architecture and /root/wake_runtime_architecture completed independent read-only source audits at baseline 01b3f065. Root verified emission/ACK and transaction-callback findings. Their bounded synthesis is recorded in docs/designs/relay-wake-architecture-review.md, including disagreement about the need for migration and host-consumption limitations. Clean-context /root/wake_plan_review is reviewing the final synthesis. This field does not approve future application edits.
+**Approvals:** Approved by user 2026-09-29: "let's do a proper architect review of wake to find if we have more stupid issues like this. then let's plan a round of reworking the wrong parts. also, as i said before, where exactly once means overloading with complexity, we can consider at-least-once delivery, and think about how we see that the agent knows it should check for duplicates"
+**Exceptions:** —
+**State:** Ready for review
+<!-- agent-workflow:end -->
+
+## Implementation
+
+Agent Workflow invoked before planning artifacts. Whole-change exemption does not apply: docs/designs and Work Records are outside the configured documentation-only allowlist. Normal isolated branch and Work Record used. Prospective document paths add no dependency boundary; risk is raised for normative delivery/persistence recommendations. Root owns synthesis. Existing wake-persistence draft and inventory diagnostic work are held pending this review; neither is discarded or treated as shipped.
+
+## Review assignments
+
+- wake_delivery_architecture: state transitions, persistence/transactions, hook claim/emission/ACK, duplicate wake/payload/action distinctions and agent-visible protocol.
+- wake_runtime_architecture: runtime adapters, service/child lifecycle, recovery and health/diagnostics, cross-runtime boundaries and unnecessary machinery.
+
+Both are bounded read-only Sol reviews. No duplicate tests, live setup or runtime experiments.
+
+## Evidence
+
+Both source reviews completed. Root accepted the source-proven split persistence, file-failure disablement, SQL callback, duplicate-envelope and health visibility findings; shutdown and host-consumption windows remain identified risks rather than reproduced outages. SQLite is recommended with explicit migration safeguards and acknowledged limits. At-least-once is separated into notification, payload receipt and downstream work; protected native retry behavior requires its exact before/after decision before implementation.
+
+Prospective Redline is BLUE for document paths with no boundary violations. Risk remains High by architectural judgment. The initial workflow check reports review-evidence gaps while review is pending; no success claimed. No application tests run or needed for this planning-only change. Existing implementation drafts remain held.
+
+## Result review
+
+Agent technical review: /root/wake_plan_review accepts the final synthesis after two corrections: preserve indivisible current-generation/native-initiation ownership outside SQL, and require exclusive stopped old ownership plus verified migration before new dispatch. Both were verified resolved; this accepts the architecture plan, not slice C's protected behavior change.
+
+Reviewed revision: b3cd38adb20a79060a05c10df1f8776d5940f924 (final document); following change records review evidence only.
+
+Verification adequacy: whole-change selector selected governance only; all 31 selected tests passed in 35.00 seconds. Import boundaries report zero violations, prospective Redline BLUE, Agent Workflow clean after method-format correction, and diff checks passed. Documentation changes do not need an application suite. Claims distinguish observed failures, source-proven boundaries and unresolved runtime hypotheses.

@@ -262,8 +262,12 @@ if ($remainingPids.Count -gt 0) {
     Stop-WithError "Could not stop Pallium; port $Port is still listening$pidDetail"
 }
 
-if ($StopOnly) {
-    $allManagedProcesses = @(Get-CimInstance Win32_Process -ErrorAction Stop)
+& {
+    try {
+        $allManagedProcesses = @(Get-CimInstance Win32_Process -ErrorAction Stop)
+    } catch {
+        Stop-WithError "Cannot verify the old service process tree is stopped: $($_.Exception.Message)"
+    }
     $roots = @($allManagedProcesses | Where-Object {
         $c = [string]$_.CommandLine
         $_.ExecutablePath -and $pythonPaths.Contains([IO.Path]::GetFullPath([string]$_.ExecutablePath)) -and ($c -match '(?i)app\.run\s+service\s+run') -and ($c -match $servicePortPattern) -and ($c -match $serviceHomePattern)
@@ -286,8 +290,22 @@ if ($StopOnly) {
     if ($survivors.Count) { Stop-WithError "Managed Pallium process(es) survived stop: $($survivors.ProcessId -join ', ')" }
     $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction Stop
     if ($task.State -notin @('Ready', 'Disabled')) { Stop-WithError "Pallium scheduled task remains $($task.State) after stop" }
-    Write-Host "Pallium stopped."
-    exit 0
+    if ($StopOnly) {
+        Write-Host "Pallium stopped."
+        exit 0
+    }
+}
+
+Write-Host "Initializing and verifying Codex wake state..."
+try {
+    $wakeInitArgs = $preflightArgs.Clone()
+    $wakeInitArgs.ArgumentList = ('-m app.run service initialize-wakes --home "{0}"' -f $ServiceHome)
+    $wakeInit = Start-Process @wakeInitArgs
+} catch {
+    Stop-WithError "Wake initialization could not run: $($_.Exception.Message)"
+}
+if ($wakeInit.ExitCode -ne 0) {
+    Stop-WithError "Wake initialization failed with exit code $($wakeInit.ExitCode); service remains stopped."
 }
 
 Write-Host "Starting Pallium..."

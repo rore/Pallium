@@ -17,10 +17,13 @@ _STATES = {"unknown", "review_required", "verified"}
 _LOCK_WAIT_SECONDS = 2.0
 _HOOK_LOCK_WAIT_SECONDS = 0.15
 _MAX_WAKE_EVENTS = 128
+_MAX_TRANSPORT_MS = 30000
 _DELIVERY_RE = re.compile(r"^relay-delivery-[0-9a-f]{32}$")
 _WAKE_STAGES = frozenset(
-    {"hook_started", "payload_emitted", "delivery_acked", "hook_failed"}
+    {"hook_started", "payload_emitted", "delivery_acked", "hook_failed",
+     "relay_request_completed"}
 )
+_TRANSPORT_OUTCOMES = frozenset({"response", "unavailable"})
 _WAKE_FAILURE_REASONS = frozenset(
     {
         "invalid_scope",
@@ -153,22 +156,24 @@ def _public(value: dict[str, Any] | None) -> dict[str, Any]:
     return result
 
 
-def _wake_events(value: dict[str, Any]) -> list[dict[str, str | None]]:
+def _wake_events(value: dict[str, Any]) -> list[dict[str, str | int | None]]:
     raw = value.get("relay_wake_evidence")
     if not isinstance(raw, list):
         return []
-    events: list[dict[str, str | None]] = []
+    events: list[dict[str, str | int | None]] = []
+    base_keys = {"delivery_id", "stage", "reason", "recorded_at"}
     for item in reversed(raw):
-        if not isinstance(item, dict) or set(item) != {
-            "delivery_id", "stage", "reason", "recorded_at",
-        }:
+        if not isinstance(item, dict) or not base_keys.issubset(item):
             continue
         delivery_id = item["delivery_id"]
         stage = item["stage"]
         reason = item["reason"]
         recorded_at = item["recorded_at"]
+        transport = stage == "relay_request_completed"
+        allowed_keys = base_keys | ({"outcome"} if transport else set()) | {"elapsed_ms"}
         if (
-            not isinstance(delivery_id, str)
+            not set(item).issubset(allowed_keys)
+            or not isinstance(delivery_id, str)
             or _DELIVERY_RE.fullmatch(delivery_id) is None
             or not isinstance(stage, str)
             or stage not in _WAKE_STAGES
@@ -183,20 +188,24 @@ def _wake_events(value: dict[str, Any]) -> list[dict[str, str | None]]:
                 )
             )
             or (stage != "hook_failed" and reason is not None)
+            or (transport and (not isinstance(item.get("outcome"), str) or item["outcome"] not in _TRANSPORT_OUTCOMES))
         ):
             continue
-        events.append(
-            {
-                "delivery_id": delivery_id,
-                "stage": stage,
-                "reason": reason,
-                "recorded_at": recorded_at,
-            }
-        )
+        event: dict[str, str | int | None] = {
+            "delivery_id": delivery_id,
+            "stage": stage,
+            "reason": reason,
+            "recorded_at": recorded_at,
+        }
+        if transport:
+            event["outcome"] = item["outcome"]
+            elapsed_ms = item.get("elapsed_ms")
+            if type(elapsed_ms) is int and 0 <= elapsed_ms <= _MAX_TRANSPORT_MS:
+                event["elapsed_ms"] = elapsed_ms
+        events.append(event)
         if len(events) == _MAX_WAKE_EVENTS:
             break
     return list(reversed(events))
-
 
 def read(home: Path | None = None) -> dict[str, Any]:
     """Return bounded public evidence without local executable or script paths."""
@@ -367,6 +376,8 @@ def record_wake_event(
     delivery_id: str,
     stage: str,
     reason: str | None = None,
+    outcome: str | None = None,
+    elapsed_ms: object = None,
     home: Path | None = None,
 ) -> bool:
     """Append one bounded delivery-only hook observation."""
@@ -378,6 +389,8 @@ def record_wake_event(
         or (reason is not None and not isinstance(reason, str))
         or (stage == "hook_failed" and reason not in _WAKE_FAILURE_REASONS)
         or (stage != "hook_failed" and reason is not None)
+        or (stage == "relay_request_completed" and (not isinstance(outcome, str) or outcome not in _TRANSPORT_OUTCOMES))
+        or (stage != "relay_request_completed" and outcome is not None)
     ):
         return False
     try:
@@ -387,14 +400,17 @@ def record_wake_event(
             if current is None or current.get("definition") != definition:
                 return False
             events = _wake_events(current)
-            events.append(
-                {
-                    "delivery_id": delivery_id,
-                    "stage": stage,
-                    "reason": reason,
-                    "recorded_at": _now(),
-                }
-            )
+            event: dict[str, str | int | None] = {
+                "delivery_id": delivery_id,
+                "stage": stage,
+                "reason": reason,
+                "recorded_at": _now(),
+            }
+            if stage == "relay_request_completed":
+                event["outcome"] = outcome
+                if type(elapsed_ms) is int and 0 <= elapsed_ms <= _MAX_TRANSPORT_MS:
+                    event["elapsed_ms"] = elapsed_ms
+            events.append(event)
             _write(
                 {
                     **current,

@@ -27,6 +27,8 @@ For an in-scope change task when `agent-workflow.yaml` exists.
 7. On stop or handoff: leave recovery state explicit.
 ```
 
+At pickup, pause, resume, handoff, and completion, if an applicable canonical roadmap item exists, carry its exact reference and reconcile or report task progress under that roadmap's rules; respect its designated owner/checkout and preserve broader unfinished scope.
+
 ## Step 1 — Read the config
 
 Open `agent-workflow.yaml` and read:
@@ -51,7 +53,7 @@ Read [`templates/checkpoints/assess-risk.md`](templates/checkpoints/assess-risk.
 | `(Routine, Simple)` | Compact — fewer fields. Template: [`templates/work-record-routine.md`](templates/work-record-routine.md). |
 | Anything else | Expanded — full §9.4 field set. Template: [`templates/work-record-expanded.md`](templates/work-record-expanded.md). |
 
-Resolve `taskPath` with the slug. If it exists, parse it. On takeover/resume, confirm next action, constraints, and verification from the record, repo, and authoritative links; repair gaps before acting. If absent, copy the matching template. On parse failure, restore every field.
+Resolve `taskPath` with the slug. If it exists, parse it. On updates, verify the owning task/PR's live delivery state before migrating its record; preserve completed history and leave unknown status unresolved. On takeover/resume, confirm next action, constraints, and verification from the record, repo, and authoritative links; repair gaps before acting. If absent, copy the matching template. On parse failure, restore every field.
 
 Surrounding prose holds Implementation, Evidence, and Result-review references.
 
@@ -109,13 +111,11 @@ When the subagent finishes, sanity-check the Work Record. If the subagent update
 
 ### Clean-context delegation
 
-Some checkpoints (Elevated Plan review, High-risk approval prep, pre-edit Risk classification when redline isn't pre-integrated) require a **clean-context subagent** — one with no context from the current planning conversation. Canonical mechanism:
+Elevated/High plan and result reviews require a clean-context non-implementer agent; High human reviews add to, never replace, these. Pre-edit risk classification uses deterministic Redline rules and judgment directly when clear; use a separate classifier only for material uncertainty.
 
-- **In Claude Code / harnesses with a Task/Agent primitive:** spawn a subagent (e.g., `Task` tool, `subagent_type: "Explore"` for read-only review, or a custom agent type). Pass the Work Record path + relevant source paths + SPEC reference + the question. Do not paraphrase the Work Record into the prompt — point at the file so the subagent reads it fresh.
-- **In harnesses without a subagent primitive:** open a fresh session and provide the same inputs (Work Record file, SPEC reference, source links). The fresh session IS the clean context.
+With a Task/Agent primitive, spawn a read-only agent with the Work Record path, SPEC reference, and relevant source paths; do not paraphrase the record. Otherwise use a fresh session with the same references. Put plan-review prose under a Plan review heading and reference it in the marker field; record result evidence under ## Result review.
 
-The subagent's review prose lands under a `## Plan review` heading in the Work Record. The marker-block `Plan review:` field references that section (or the session id).
-
+Choose the least costly capable reviewer for the consequence; preserve independent/human/specialist requirements and user-selected settings. Reuse valid review unless scope, assumptions, approach, or risk materially change.
 ## Step 7 — Resolve review threads before merge
 
 CI green is not "ready to merge." Before invoking the merge:
@@ -128,6 +128,8 @@ CI green is not "ready to merge." Before invoking the merge:
 The repo SHOULD enable GitHub's `required_conversation_resolution` branch-protection rule so the platform refuses merge while threads are open. Bootstrap proposes it; the harness assumes it.
 
 ## Step 8 — Stop and handoff
+
+When coordinating a handoff, forward a received approval immediately; do not leave a task `Blocked` solely awaiting that approval.
 
 Before ending a session, even if the task is not done:
 

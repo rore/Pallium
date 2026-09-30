@@ -30,8 +30,13 @@ and open-ended chat. Regular sends reject a bare runtime selector; there is no b
 
 ## Limits
 
-Messages contain at most 16,000 Unicode code points. Omitted expiry is durable
-until delivery; callers can opt into an explicit expiry from 60 seconds through
+Secret masking happens before storage. Harmless drive-qualified directory paths
+using forward slashes survive in prose when their segments are not secret-shaped; direct
+credential assignments and secret-shaped segments remain masked.
+
+Messages contain at most 16,000 Unicode code points. New messages and replies
+expire after 24 hours when expiry is omitted. Explicit `expires_in_seconds: null`
+requests durable delivery; finite expiry can range from 60 seconds through
 7 days. HTTP and hook turns claim three messages by default; a positive
 `max_messages` sets an explicit cap, while `0` means unlimited. MCP receive
 claims one delivery per call and keeps its compact JSON response within 2,000
@@ -55,6 +60,23 @@ transport-size promise for an empty turn envelope. MCP receive removes session
 metadata after that conservative check and separately guarantees its final tool
 response budget.
 
+Claimed hook messages and MCP receive results expose `claim_attempt` and
+`possible_redelivery`. Attempt 1 reports false; later claims report true. A later
+claim may follow failure before emission or emission followed by a lost ACK, so
+the count does not prove that an agent saw the payload or performed its actions.
+Missing or invalid metadata is `unknown` in hook text and `null` in MCP JSON.
+These fields describe delivery history; they do not decide whether work is complete.
+
+Check prior handling of the exact stable `delivery_id` in the current context or
+existing work artifacts. Do not repeat completed actions. If the outcome is
+unknown, inspect target state before retrying irreversible work. Equal payload
+text with different delivery IDs is separate work; a first claim also does not
+prove that no equivalent business action happened elsewhere. ACK means receipt,
+not completion. Hooks still own claim and ACK; the injected guidance does not
+ask the receiving agent to claim or acknowledge the same payload again.
+Metadata and guidance consume the existing output budgets, so a long payload may
+have a shorter preview with the same continuation mechanism.
+
 ## Get this session's address
 
 Call `pallium_relay_address` when a user asks for the current agent's Relay
@@ -66,6 +88,25 @@ ambiguous, or malformed identity fails closed.
 ## Select a recipient
 
 `pallium_relay_recipients` returns a bounded envelope of recent sessions. Each item includes a canonical `exact_selector` and, when named, `alias_selector` (the internal wire-field name for its `@name`); when `has_more` is true, call it again with `next_offset`. When the session reference is known, pass both runtime and session_ref to return zero or one matching session without paging; pass include_inactive=true when a dormant or closed match is needed. The HTTP session-list response remains container-local and exposes each endpoint ID.
+
+Cross-project discovery is separate from `pallium_relay_recipients`. On the same
+trusted local Pallium service, the read-only `GET /dashboard/api/relay/sessions`
+endpoint (or Dashboard Relay Sessions view with Sessions set to `All history`) lists service-global sessions when
+`container_ref` is omitted. It has no `session_ref` filter: page with `limit`
+(at most 200) and `offset` until the listing is complete. Match the exact
+`runtime` and `session_ref` of the known task against an independently known
+target `container_ref`, not one inferred from a cwd, title, or the dashboard
+row itself. Reject an incomplete or unstable listing, an unknown target
+container, or multiple plausible endpoints; a missing row is not proof that
+the recipient does not exist.
+
+Inspect the unique nonclosed row's destination health and use its `id` as the
+canonical exact selector. For a role recipient, verify the current `@name`
+instead. Send with the sender's injected `container_ref`, never the target's,
+and inspect the returned admission destination. If verification cannot finish,
+ask the recipient for `pallium_relay_address` or use an app task-message
+fallback. Do not resend after a saved or uncertain send.
+
 Legacy selectors have three forms:
 
 - `codex` — legacy runtime-wide compatibility selector; regular sends reject it
@@ -87,8 +128,9 @@ structural references discovered from its branch and Agent Workflow record. Use
 `pallium_relay_attach_work_ref(scope_ref, local_ref)` and
 `pallium_relay_detach_work_ref(scope_ref, local_ref)` for the current session.
 `pallium_relay_work_refs()` reads the current snapshot, and
-`pallium_relay_participants(scope_ref, local_ref)` finds every active participant
-for one exact reference; pass `include_closed=true` only when closed sessions matter.
+`pallium_relay_participants(scope_ref, local_ref)` returns a bounded page of nonclosed
+participants for one exact reference; pass a returned `next_offset` as `offset` to
+continue. Pass `include_closed=true` only when closed sessions matter.
 
 For board-style reads, `POST /relay/work-refs/participant-counts` accepts an
 ordered `references` list of 1–200 unique exact `{scope_ref, local_ref}` pairs.
@@ -100,6 +142,17 @@ unreachable sessions remain attached participants. Invalid, duplicate, empty,
 or over-limit input returns 422. A failed read returns an error, not zero or a
 partial result. The batch read does not enumerate a scope, disclose sessions,
 or change Relay state; use the single-reference participants read for detail.
+
+Each counts row also includes `recent_participant_count` and
+`dormant_participant_count`; their sum equals `participant_count`. Batch and
+detail responses include one UTC `as_of` classification time and
+`recent_seconds=86400`. A nonclosed endpoint is recent when its `last_seen_at`
+is at or after `as_of - recent_seconds`, otherwise dormant, including
+unreachable endpoints. Detail retains its separate destination `state` and
+`lifecycle`; closed detail remains opt-in and is never counted. Reads neither
+refresh last-seen nor remove old associations. Recent means seen recently,
+not working now. Different responses may observe clock or registry changes;
+`as_of` does not promise a cross-request snapshot.
 
 Normal inputs are a readable `scope_ref` and `local_ref`. Pallium returns their
 fixed-length `work:v1:<sha256>` exact key for advanced lookup and exact Session
@@ -117,6 +170,15 @@ metadata; detaching later never relabels older turns. If caller or structural re
 already fill History's five-reference cap, hook output reports which registry refs
 were omitted rather than claiming they are searchable.
 
+Registry membership does not guarantee History coverage: attaching does not
+backfill older turns, snapshot lookup can fail, and the five-reference cap can
+omit a reference. Alias reassignment leaves captured History on the original
+exact session. Explicit detach removes only that origin, not structural origins
+or captured turns; structural removal needs a producer refresh. Existing source
+forget is a separate explicitly authorized, soft and auditable retrieval
+suppression, not hard deletion or automatic inactivity cleanup. Its scoped form
+affects existing turns, not future ingests; hard deletion follows retention policy.
+
 ## Replies
 
 A received message includes a `delivery_id`. `pallium_relay_reply` uses that ID
@@ -125,6 +187,17 @@ to address a reply to the original sender.
 One delivery permits one idempotent reply. Repeating the same reply is safe;
 changing its text conflicts. Use a new `pallium_relay_send` message for a separate
 follow-up rather than treating Relay as a continuous conversation.
+
+Omitted expiry on a retry of an existing message ID or reply preserves its
+recorded expiry. An explicitly different expiry conflicts. Existing durable
+assignments remain durable after upgrades; the new default does not backfill
+their deadlines. Expiry prevents further claims and unacknowledged delivery,
+but does not delete history or prove that work was abandoned or completed.
+
+Dashboard age and durable counts cover live unacknowledged deliveries across
+all runtimes. The over-24-hour and over-7-day bands overlap; age does not prove
+whether work was seen or completed. These totals need not match the separately
+reported Codex wake-eligibility snapshot.
 
 Delivery means that the message entered the recipient session's context. It
 does not prove that the model acted on it.
@@ -171,8 +244,9 @@ only after the safe reset durably commits. If a reservation cannot be resolved,
 later messages still arrive on the next natural hook turn; Pallium does not
 blindly resubmit. The Relay claim and trusted-local reservation update are
 separate commits, so a service crash or callback failure between them remains
-conservatively fenced. Reservation files assume one Pallium service process;
-atomic replacement provides crash recovery, not multi-process coordination.
+conservatively fenced. SQLite authority assumes one Pallium service process;
+short transactions persist reservations and generation fences. Native
+submission remains outside database transactions under the ownership guard.
 
 ## Inspecting a delivery trace
 
@@ -238,7 +312,7 @@ A stale, missing, closed, unreachable, or occupied transition fails without movi
 ## Limits and scope
 
 - message and reply text: at most 16,000 Unicode code points
-- omitted expiry: durable until delivery; explicit expiry range: 60 seconds to 7 days
+- new omitted expiry: 24 hours; explicit null: durable; finite expiry range: 60 seconds to 7 days
 - per-turn delivery: three messages by default; positive `max_messages` sets a
   cap and `0` means unlimited; the first oversized body may be a bounded preview
 - MCP receive: one delivery and at most 2,000 serialized characters per call;

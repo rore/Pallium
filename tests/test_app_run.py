@@ -1,6 +1,14 @@
 from __future__ import annotations
 
 from app import run as app_run
+from app.config import AppConfig
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def isolated_run_config(monkeypatch):
+    config = AppConfig(sqlite_url="sqlite:///:memory:", relay_sqlite_url="sqlite:///:memory:")
+    monkeypatch.setattr(AppConfig, "from_env", staticmethod(lambda: config))
 
 
 def test_run_default_invokes_supervisor_with_processors_and_cleaner(monkeypatch) -> None:

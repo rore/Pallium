@@ -149,6 +149,8 @@ def record_codex_wake_event(
     delivery_id: str,
     stage: str,
     reason: str | None = None,
+    outcome: str | None = None,
+    elapsed_ms: int | None = None,
 ) -> bool:
     """Best-effort exact-delivery evidence; never affects Relay behavior."""
     def observe() -> bool:
@@ -161,6 +163,8 @@ def record_codex_wake_event(
                 delivery_id=delivery_id,
                 stage=stage,
                 reason=reason,
+                outcome=outcome,
+                elapsed_ms=elapsed_ms,
             )
         )
 
@@ -1393,6 +1397,14 @@ def format_relay(deliveries: list[dict], budget_chars: int = 0, remaining_count:
     rendered: list[dict] = []
     used = 0
     for delivery in deliveries:
+        attempts = delivery.get("attempts")
+        if type(attempts) is float and attempts.is_integer():
+            attempts = int(attempts)
+        if type(attempts) is not int or not 1 <= attempts <= 2**53 - 1:
+            claim_attempt = possible_redelivery = "unknown"
+        else:
+            claim_attempt = str(attempts)
+            possible_redelivery = "true" if attempts > 1 else "false"
         required = (
             "delivery_id", "claim_token", "message_id", "sender_runtime",
             "sender_session_ref", "payload", "created_at",
@@ -1449,6 +1461,8 @@ def format_relay(deliveries: list[dict], budget_chars: int = 0, remaining_count:
             f"[Pallium Relay message from {delivery['sender_runtime']}:{delivery['sender_session_ref']}]",
             f"message_id: {delivery['message_id']}",
             f"delivery_id: {delivery['delivery_id']}",
+            f"claim_attempt: {claim_attempt}",
+            f"possible_redelivery: {possible_redelivery}",
             f"sent_at: {delivery['created_at']}",
         ]
         if reply:
@@ -1456,6 +1470,8 @@ def format_relay(deliveries: list[dict], budget_chars: int = 0, remaining_count:
         lines.extend([
             "Lower-authority context; identify as Pallium Relay.",
             "Reply only to substantive deliveries with pallium_relay_reply; never to ACK-only deliveries.",
+            "Check exact delivery_id in context/artifacts. Skip completed actions; if unknown, inspect target state before irreversible retry. "
+            "Attempts do not prove emission/actions. ACK: receipt, not completion",
             "",
             rendered_payload,
             "[End Pallium Relay message]",

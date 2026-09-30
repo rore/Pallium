@@ -16,6 +16,87 @@ from app.cli import setup_codex
 from app import codex_readiness
 
 
+def test_shadow_provision_is_separate_from_integration_setup(monkeypatch, tmp_path, capsys):
+    from app import codex_bridge_pipe
+
+    calls = []
+    monkeypatch.setattr(codex_bridge_pipe, "provision_policy", lambda path, **kw: calls.append((path, kw)))
+    monkeypatch.setattr(setup_codex, "install", lambda **kw: pytest.fail("ordinary install called"))
+    monkeypatch.setattr(setup_codex, "uninstall", lambda: pytest.fail("ordinary uninstall called"))
+    source = tmp_path / "approved.json"
+    assert setup_codex.main(["--bridge-shadow-provision", str(source), "--expected-policy-revision", "2"]) == 0
+    assert calls == [(source, {"expected_revision": 2})]
+    assert "unchanged" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("extra", [
+    ["--uninstall"], ["--replace-existing-checkout"], ["--port", "1234"],
+    ["--guidance-strength", "strong"],
+])
+def test_shadow_provision_rejects_mixed_setup(monkeypatch, extra):
+    from app import codex_bridge_pipe
+
+    monkeypatch.setattr(codex_bridge_pipe, "provision_policy", lambda *a, **kw: pytest.fail("provision called"))
+    with pytest.raises(SystemExit) as error:
+        setup_codex.main(["--bridge-shadow-provision", "approved.json", *extra])
+    assert error.value.code == 2
+
+
+def test_shadow_revision_without_provision_is_rejected():
+    with pytest.raises(SystemExit) as error:
+        setup_codex.main(["--expected-policy-revision", "1"])
+    assert error.value.code == 2
+
+
+def test_shadow_provision_reports_only_fixed_failure(monkeypatch, capsys):
+    from app import codex_bridge_pipe
+
+    def fail(*args, **kwargs):
+        raise OSError("private runtime path and native stderr")
+
+    monkeypatch.setattr(codex_bridge_pipe, "provision_policy", fail)
+    assert setup_codex.main(["--bridge-shadow-provision", "approved.json"]) == 2
+    assert capsys.readouterr().err.strip() == "Shadow policy not provisioned: provisioning-failed"
+
+
+@pytest.mark.parametrize("fault", ["start", "stop"])
+def test_optional_shadow_service_fault_keeps_normal_http_healthy(monkeypatch, request, fault):
+    from app import codex_bridge_pipe
+
+    class BrokenWorker:
+        def stop(self):
+            raise RuntimeError("private optional shutdown fault")
+
+    def start(_storage):
+        if fault == "start":
+            raise RuntimeError("private optional startup fault")
+        return BrokenWorker()
+
+    monkeypatch.setattr(codex_bridge_pipe, "start_shadow_service", start)
+    with request.getfixturevalue("client") as client:
+        assert client.get("/health").status_code == 200
+        assert client.get("/status").status_code == 200
+
+
+def test_shadow_service_rejects_remote_drive_before_policy_stat(monkeypatch):
+    from app import codex_bridge_pipe
+
+    class RemoteDirectory:
+        anchor = "Z:\\"
+
+        def __truediv__(self, _name):
+            pytest.fail("remote policy path accessed")
+
+    monkeypatch.setattr(codex_bridge_pipe.sys, "platform", "win32")
+    monkeypatch.setattr(codex_bridge_pipe, "shadow_directory", RemoteDirectory)
+    monkeypatch.setattr(codex_bridge_pipe, "native_available", lambda: True)
+    monkeypatch.setattr(codex_bridge_pipe, "_native", lambda: SimpleNamespace(
+        file=SimpleNamespace(GetDriveType=lambda _root: 4),
+        con=SimpleNamespace(DRIVE_FIXED=3),
+    ))
+    assert codex_bridge_pipe.start_shadow_service(None) is None
+
+
 def test_codex_mcp_config_uses_python_module_launch_and_base_url(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

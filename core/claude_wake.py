@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field, replace
 import json
 import math
 import os
 import re
 from pathlib import Path
+import sys
 import threading
 import time
 from typing import Callable
@@ -65,6 +67,62 @@ def _safe_session_file(runtime: str, session_ref: str, container_ref: str) -> st
     return hashlib.sha256(identity.encode("utf-8")).hexdigest() + ".json"
 
 
+def _acquire_intent_lock(path: Path):
+    """Acquire the exact intent's persistent cross-process lock briefly."""
+    deadline = time.monotonic() + 0.1
+    lock_file = None
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        lock_file = open(path.with_suffix(".lock"), "a+b")
+        lock_file.seek(0, os.SEEK_END)
+        if lock_file.tell() == 0:
+            lock_file.write(b"0")
+            lock_file.flush()
+        while True:
+            if time.monotonic() >= deadline:
+                try:
+                    lock_file.close()
+                except OSError:
+                    pass
+                return None
+            try:
+                lock_file.seek(0)
+                if sys.platform == "win32":
+                    import msvcrt
+                    msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return lock_file
+            except OSError:
+                if time.monotonic() >= deadline:
+                    lock_file.close()
+                    return None
+                time.sleep(min(0.01, max(0.0, deadline - time.monotonic())))
+    except OSError:
+        if lock_file is not None:
+            try:
+                lock_file.close()
+            except OSError:
+                pass
+        return None
+
+
+def _release_intent_lock(lock_file) -> None:
+    try:
+        lock_file.seek(0)
+        if sys.platform == "win32":
+            import msvcrt
+            msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+    except OSError:
+        pass
+    finally:
+        lock_file.close()
+
+
 class ClaudeWakeRegistry:
     """Exact-scope capability state; persistence is trusted-local and fail closed."""
 
@@ -101,7 +159,9 @@ class ClaudeWakeRegistry:
             raise ValueError("invalid registration")
         if self._state_dir is not None and not _valid(intent_id, 128):
             raise ValueError("invalid registration")
-        with self._lock:
+        with self._lock, self._scoped_intent_lock(runtime, session_ref, container_ref) as acquired:
+            if not acquired:
+                return False
             if self._rehydration_refused:
                 return False
             key = (runtime, session_ref, container_ref)
@@ -426,7 +486,9 @@ class ClaudeWakeRegistry:
         self, *, runtime: str, session_ref: str, container_ref: str, intent_id: str | None = None
     ) -> bool:
         """Consume an exact closed intent without opening or admitting its endpoint."""
-        with self._lock:
+        with self._lock, self._scoped_intent_lock(runtime, session_ref, container_ref) as acquired:
+            if not acquired:
+                return False
             if self._state_dir is not None:
                 intent = self._read_intent_locked(runtime, session_ref, container_ref)
                 if not isinstance(intent, dict) or intent.get("intent_id") != intent_id or intent.get("closed") is not True:
@@ -446,7 +508,9 @@ class ClaudeWakeRegistry:
                 expected_intent_id=intent_id,
             )
     def remove(self, *, runtime: str, session_ref: str, container_ref: str) -> bool:
-        with self._lock:
+        with self._lock, self._scoped_intent_lock(runtime, session_ref, container_ref) as acquired:
+            if not acquired:
+                return False
             registration = self._registrations.get((runtime, session_ref, container_ref))
             if registration is None or registration.container_ref != container_ref:
                 return False
@@ -626,6 +690,16 @@ class ClaudeWakeRegistry:
         return self._intents / _safe_session_file(
             runtime, session_ref, container_ref
         ) if self._intents else None
+
+    @contextmanager
+    def _scoped_intent_lock(self, runtime: str, session_ref: str, container_ref: str):
+        path = self._intent_path(runtime, session_ref, container_ref)
+        lock_file = _acquire_intent_lock(path) if path is not None else None
+        try:
+            yield path is None or lock_file is not None
+        finally:
+            if lock_file is not None:
+                _release_intent_lock(lock_file)
 
     def _read_intent_locked(
         self, runtime: str, session_ref: str, container_ref: str

@@ -7,6 +7,12 @@
 
 version: 1
 
+behaviorContracts:
+  protection: workflow
+  paths:
+    - "tests/behavior_contracts/**"
+  verification: test
+
 project:
   name: pallium
   extension: python
@@ -14,10 +20,11 @@ project:
 # Multi-package layout: api / app / capabilities / core / providers /
 # retrieval / semantic / storage. Schema lives in storage/sqlite_schema.py
 # (no Alembic). No committed openapi.json — api: type is none; api-review
-# fires on red-zone touches to api/routes.py and api/schemas.py.
+# fires on red-zone touches to api/routes.py, api/schemas.py, and app/mcp/server.py.
 #
-# Calibration: 0 merged PRs at bootstrap → tuner skipped. Tune red-zone
-# fire rates during Window 1 of shadow mode.
+# Calibration: replayed 50 merged PRs from 2026-09-15 through 2026-09-25:
+# 9 RED, 29 GRAY, 12 BLUE; maximum existing red firing rate was 10%.
+# Inactivity is not evidence that a rule is incorrect.
 
 zones:
   red:
@@ -34,6 +41,18 @@ zones:
     - path: "core/routing.py"
       reason: core ↔ semantic coupling point (see AGENTS.md smells)
       checkpoint: architecture-review
+    - path: ".github/workflows/ci.yml"
+      reason: primary CI workflow and validation routing
+      checkpoint: architecture-review
+    - path: "scripts/test-plan.py"
+      reason: changed-path validation selector
+      checkpoint: architecture-review
+    - path: "scripts/agent-workflow-check.py"
+      reason: workflow policy enforcement checker
+      checkpoint: architecture-review
+    - path: "core/relay.py"
+      reason: Relay coordination and delivery contract
+      checkpoint: architecture-review
 
     # --- Persistence: schema + codec (schema-as-code; no migrations dir)
     - path: "storage/sqlite_schema.py"
@@ -41,6 +60,9 @@ zones:
       checkpoint: persistence-review
     - path: "storage/sqlite_codec.py"
       reason: persisted-payload encoding
+      checkpoint: persistence-review
+    - path: "storage/sqlite_relay.py"
+      reason: persisted Relay state and delivery lifecycle
       checkpoint: persistence-review
 
     # --- Storage→capabilities smell — gate further spread
@@ -54,6 +76,9 @@ zones:
       checkpoint: api-review
     - path: "api/routes.py"
       reason: HTTP routing surface
+      checkpoint: api-review
+    - path: "app/mcp/server.py"
+      reason: MCP caller-facing tool surface
       checkpoint: api-review
 
     # --- Visibility/scoping (closest thing to authz in this codebase)
@@ -101,6 +126,10 @@ zones:
       reason: semantic packages (package-specific)
     - path: "storage/**"
       reason: persistence layer
+    - path: ".agents/skills/**"
+      reason: vendored native agent skills
+    - path: ".claude/skills/**"
+      reason: vendored native agent skills
     - path: "uv.lock"
       reason: dependency lockfile
 
@@ -183,7 +212,7 @@ boundaries:
     severity: error
 
 # No committed OpenAPI spec; api-review is driven by red-zone touches to
-# api/routes.py and api/schemas.py.
+# api/routes.py, api/schemas.py, and app/mcp/server.py.
 api:
   type: none
 
@@ -193,7 +222,7 @@ persistence:
   migrationPaths:
     - "storage/sqlite_schema.py"
   checkpoint: persistence-review
-  notes: "Schema-as-code: SQLite DDL is built directly in storage/sqlite_schema.py rather than versioned migrations. Persistence-review covers schema and codec changes."
+  notes: "Schema-as-code: SQLite DDL is built directly in storage/sqlite_schema.py rather than versioned migrations. Persistence-review covers schema, codec, and Relay storage changes."
 
 security:
   paths:
@@ -254,7 +283,6 @@ excludes:
   - "vector_index.idmap.json"
   - "vector_index.meta.json"
   - "data/longmemeval/**"
-  - ".claude/skills/**"   # vendored skill content; provenance and tests live upstream
 
 boundaryAdapter:
   outputFormat: json-violations

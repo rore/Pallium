@@ -11,10 +11,11 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.engine import URL, make_url
 
 from app.cli.service import _PalliumLock
 from app.dependencies import recover_expired_relay_wakes
-from app.tools.relay_endpoint_repair import _clean_adoption_ids, _digest, _maintenance_fence, _repair_storage, _validate_inputs, build_manifest
+from app.tools.relay_endpoint_repair import _clean_adoption_ids, _digest, _maintenance_fence, _path, _repair_storage, _validate_inputs, _validate_repair_database, build_manifest
 from core.claude_wake import ClaudeWakeRegistry
 from core.codex_wake import CodexWakeRegistry
 from core.relay import RelayConflictError, RelayService
@@ -99,7 +100,11 @@ def test_suppressed_is_terminal_across_http_dashboard_and_wake(client, tmp_path,
     storage = client.app.state.pallium_service._storage
     now = datetime.now(timezone.utc)
     codex_dir, _ = _clean_wake_stores(tmp_path, monkeypatch)
-    registry = CodexWakeRegistry(codex_dir)
+    relay = RelayService(storage)
+    registry = CodexWakeRegistry(
+        relay_service=relay, legacy_state_dir=codex_dir,
+    )
+    assert registry.initialize(old_owner_drained=True)
     _seed(storage, now)
     assert registry.reserve(
         recipient_endpoint_id=SOURCE_A,
@@ -110,13 +115,16 @@ def test_suppressed_is_terminal_across_http_dashboard_and_wake(client, tmp_path,
     manifest = _manifest(storage, [{"delivery_id": DELIVERY_A, "disposition": "suppress"}, {"delivery_id": DELIVERY_B, "disposition": "suppress"}])
     _apply(storage, manifest, now)
 
-    restarted = CodexWakeRegistry(codex_dir)
+    restarted = CodexWakeRegistry(
+        relay_service=relay, legacy_state_dir=codex_dir,
+    )
+    assert restarted.initialize(old_owner_drained=True)
     assert restarted.snapshot(SOURCE_A) is not None
     recover_expired_relay_wakes(
         RelayService(storage), ClaudeWakeRegistry(), codex_registry=restarted,
     )
     assert restarted.snapshot(SOURCE_A) is None
-    assert CodexWakeRegistry(codex_dir).snapshot(SOURCE_A) is None
+    assert CodexWakeRegistry(relay_service=relay).snapshot(SOURCE_A) is None
 
     status = client.get(f"/relay/messages/{MESSAGE_A}", params={"container_ref": "git:sender"})
     assert status.status_code == 200 and status.json()["deliveries"][0]["state"] == "suppressed"
@@ -428,11 +436,40 @@ def test_maintenance_fence_binds_and_restores_installed_paths(tmp_path, monkeypa
     monkeypatch.setenv("PALLIUM_CLAUDE_WAKE_DIR", str(tmp_path / "stale-wake"))
 
     with _maintenance_fence(home, home / "claude-wake"):
-        assert os.environ["PALLIUM_SQLITE_URL"] == f"sqlite:///{home.resolve() / 'data' / 'pallium.db'}"
-        assert os.environ["PALLIUM_RELAY_SQLITE_URL"] == f"sqlite:///{home.resolve() / 'data' / 'pallium-relay.db'}"
+        assert Path(make_url(os.environ["PALLIUM_SQLITE_URL"]).database).resolve() == home.resolve() / "data" / "pallium.db"
+        assert Path(make_url(os.environ["PALLIUM_RELAY_SQLITE_URL"]).database).resolve() == home.resolve() / "data" / "pallium-relay.db"
         assert os.environ["PALLIUM_CLAUDE_WAKE_DIR"] == str(home.resolve() / "claude-wake")
     assert checked == [home.resolve()]
     assert os.environ["PALLIUM_RELAY_SQLITE_URL"] == "sqlite:///stale-relay.db"
+
+
+@pytest.mark.parametrize("url", ["sqlite:///:memory:", "postgresql:///pallium.db"])
+def test_repair_path_refuses_memory_and_non_sqlite_urls(url):
+    with pytest.raises(ValueError):
+        _path(url)
+
+
+@pytest.mark.parametrize("query", ["uri=true&mode=memory", "mode=ro"])
+def test_repair_refuses_sqlite_uri_options_without_creating_database(tmp_path, query):
+    home = tmp_path / "installed"
+    data = home / "data"
+    data.mkdir(parents=True)
+    database = data / "pallium-relay.db"
+    url = f"{URL.create('sqlite', database=str(database))}?{query}"
+    with pytest.raises(ValueError, match="URI query options"):
+        _repair_storage(url, home)
+    assert not database.exists()
+
+
+def test_readonly_repair_validation_does_not_create_missing_database(tmp_path):
+    home = tmp_path / "installed"
+    data = home / "data"
+    data.mkdir(parents=True)
+    database = data / "pallium-relay.db"
+    url = str(URL.create("sqlite", database=str(database)))
+    with pytest.raises(ValueError, match="unreadable"):
+        _validate_repair_database(url, home)
+    assert not database.exists()
 
 
 def test_existing_schema_open_does_not_migrate_refused_database(tmp_path):
@@ -548,15 +585,18 @@ def test_subprocess_cli_apply_refuses_unsafe_claim_without_mutation(tmp_path, mo
         assert after == before
         assert conn.execute("SELECT COUNT(*) FROM relay_endpoint_repairs").fetchone()[0] == 0
 
-def test_subprocess_cli_dry_run_acknowledgement_and_apply(client, tmp_path, monkeypatch):
+@pytest.mark.parametrize("home_name", ["home", "home %20 # hé"])
+def test_subprocess_cli_dry_run_acknowledgement_and_apply(client, tmp_path, monkeypatch, home_name):
     now = datetime.now(timezone.utc)
     token = "subprocess-secret-token"
-    home = tmp_path / "home"
+    home = tmp_path / home_name
     data = home / "data"
     data.mkdir(parents=True)
-    main_url = f"sqlite:///{data / 'pallium.db'}"
-    relay_url = f"sqlite:///{data / 'pallium-relay.db'}"
+    main_url = str(URL.create("sqlite", database=str(data / "pallium.db")))
+    relay_url = str(URL.create("sqlite", database=str(data / "pallium-relay.db")))
+    assert _path(relay_url) == (data / "pallium-relay.db").resolve()
     storage = SQLiteStorageProvider(main_url, relay_database_url=relay_url)
+    assert Path(storage._relay_engine.url.database).resolve() == _path(relay_url)
     _seed(storage, now)
     with storage._begin_relay_immediate() as db:
         delivery = db.get(RelayDeliveryRecord, DELIVERY_A)
@@ -575,6 +615,11 @@ def test_subprocess_cli_dry_run_acknowledgement_and_apply(client, tmp_path, monk
     assert missing_wake.returncode == 2 and "--claude-wake-dir is required" in missing_wake.stderr
     dry = subprocess.run(base + ["--dry-run", *common, *wake_arg, "--source", SOURCE_A, "--source", SOURCE_B, "--destination", DESTINATION, "--scope", f"{SOURCE_A}=git:old-a", "--scope", f"{SOURCE_B}=git:old-b", "--scope", f"{DESTINATION}=git:new", "--dispositions", str(dispositions)], cwd=cwd, env=env, text=True, capture_output=True)
     assert dry.returncode == 0, dry.stderr
+    relay_before_query_refusal = (data / "pallium-relay.db").read_bytes()
+    query_common = ["--db-url", f"{relay_url}?uri=true&mode=memory", *common[2:]]
+    query_refused = subprocess.run(base + ["--dry-run", *query_common, *wake_arg, "--source", SOURCE_A, "--source", SOURCE_B, "--destination", DESTINATION, "--scope", f"{SOURCE_A}=git:old-a", "--scope", f"{SOURCE_B}=git:old-b", "--scope", f"{DESTINATION}=git:new", "--dispositions", str(dispositions)], cwd=cwd, env=env, text=True, capture_output=True)
+    assert query_refused.returncode == 2 and "SQLite URI query options" in query_refused.stderr
+    assert (data / "pallium-relay.db").read_bytes() == relay_before_query_refusal
     manifest_text = manifest_path.read_text(encoding="utf-8")
     assert token not in dry.stdout and token not in manifest_text
     envelope = json.loads(manifest_text)

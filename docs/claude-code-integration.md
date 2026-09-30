@@ -137,6 +137,13 @@ Four hooks run automatically during Claude Code sessions:
 Hooks are fail-safe and budget-capped. If Pallium is unavailable, they do not
 block Claude Code.
 
+Wake intents are published before their loopback request. The hook and service
+serialize each exact scoped intent through the same persistent `.lock` sidecar;
+the lock file contains no credentials and is left in place so process exit can
+release ownership safely. A hook can still return a bounded failure if it
+cannot acquire the lock. Mixed hook/service versions do not share this protocol,
+so coordinated installation is required for the race protection.
+
 ### MCP Tools (Explicit)
 
 The main operations are:

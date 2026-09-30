@@ -66,6 +66,7 @@ export function createApi({ fetch: fetchImpl, getRepo } = {}) {
     reorderLensGroup: (field, payload) => postJson(`/api/lenses/${id(field)}/order`, payload),
     saveScope: (scopeText) => postJson("/api/scope", { scopeText }),
     readItem: (itemId, options = {}) => request(`/api/items/${id(itemId)}`, options),
+    readBoardParticipantCounts: (options = {}) => request("/api/board/participant-counts", options),
     readItemParticipants: (itemId, options = {}) => request(`/api/items/${id(itemId)}/participants`, options),
     saveItem: (itemId, payload) => postJson(`/api/items/${id(itemId)}`, payload),
 

@@ -95,19 +95,24 @@ def test_relay_helpers_are_bounded_control_safe_and_use_requested_deadline(monke
         "message_id": "m" * 128,
         "sender_session_ref": "s" * 255,
         "in_reply_to": "p" * 128,
-        "payload": "😀" * 1000,
+        "payload": "😀" * 1400,
         "payload_offset": 0,
         "payload_total_chars": 16000,
         "content_truncated": True,
-        "next_offset": 1000,
+        "next_offset": 1400,
         "created_at": "2026-09-05T12:34:56.123456+00:00",
     }
     maximum_output, maximum_rendered = common.format_relay(
         [maximum], budget_chars=2400, remaining_count=1000,
     )
-    assert maximum_rendered == [maximum]
-    assert 'Pallium Relay: 15000 characters omitted' in maximum_output
-    assert f'pallium_relay_status(message_id="{maximum["message_id"]}", offset=1000)' in maximum_output
+    assert maximum_output == "" and maximum_rendered == []
+    shorter = {**maximum, "payload": "😀" * 700, "next_offset": 700}
+    maximum_output, maximum_rendered = common.format_relay(
+        [shorter], budget_chars=2400, remaining_count=1000,
+    )
+    assert maximum_rendered == [shorter]
+    assert 'Pallium Relay: 15300 characters omitted' in maximum_output
+    assert f'pallium_relay_status(message_id="{maximum["message_id"]}", offset=700)' in maximum_output
     assert maximum_output.endswith("[Relay: 999+ more; Pallium continues.]")
     assert len(maximum_output) <= 2400
     assert common.format_relay([{**maximum, "next_offset": 1499}])[0] == ""
@@ -168,8 +173,8 @@ def _exercise_short_prompt(hook, monkeypatch, *, codex: bool):
         else DELIVERY
     )
 
-    def relay(method, path, body, *, timeout):
-        turn_calls.append((method, path, body, timeout))
+    def relay(method, path, body, *, timeout, deadline=None):
+        turn_calls.append((method, path, body, timeout, deadline))
         return _turn_response([
             {**DELIVERY, "delivery_id": "skipped", "payload": "bad\x00value"},
             expected_delivery,
@@ -211,7 +216,8 @@ def _exercise_short_prompt(hook, monkeypatch, *, codex: bool):
     if codex:
         expected_body["wake_delivery_id"] = embedded_delivery_id
     assert turn_calls[0][2] == expected_body
-    assert turn_calls[0][3] == 0.75
+    assert turn_calls[0][3] == (2.0 if codex else 0.75)
+    assert (turn_calls[0][4] is not None) is codex
     assert output and output[0][0].startswith("[Pallium Relay message")
     relay_text, scope_line = output[0][0].rsplit("\n\n", 1)
     assert ("Unicode 😀" if codex else "Review the migration before editing.") in relay_text
@@ -230,6 +236,7 @@ def _exercise_short_prompt(hook, monkeypatch, *, codex: bool):
     if codex:
         assert wake_events == [
             ("hook_started", None),
+            ("relay_request_completed", None),
             ("payload_emitted", None),
             ("delivery_acked", None),
         ]
@@ -370,6 +377,7 @@ def test_codex_internal_wake_blocks_without_confirmed_empty(
     assert captured.err == f"pallium relay wake: outcome={expected_outcome}\n"
     assert wake_events == [
         ("hook_started", None),
+        ("relay_request_completed", None),
         (
             "hook_failed",
             "relay_unavailable"
@@ -378,6 +386,257 @@ def test_codex_internal_wake_blocks_without_confirmed_empty(
         ),
     ]
 
+
+def test_codex_hook_records_unavailable_after_committed_http_claim(
+    client, monkeypatch, tmp_path, capsys,
+):
+    from app import codex_readiness, codex_wake
+    from integrations.codex.hooks import user_prompt_submit as hook
+
+    home = tmp_path
+    codex_readiness.setup(
+        python=sys.executable, script=hook.__file__, changed=True, home=home,
+    )
+    monkeypatch.setattr(hook, "record_codex_hook_execution", lambda **_kwargs: True)
+    monkeypatch.setattr(hook._common, "STATE_DIR", tmp_path)
+    monkeypatch.setattr(hook._common, "SESSIONS_DIR", tmp_path / "sessions")
+    monkeypatch.setattr(
+        hook, "record_codex_wake_event",
+        lambda **event: codex_readiness.record_wake_event(
+            python=sys.executable, home=home, **event
+        ),
+    )
+    scope = {"container_ref": "git:example/repo"}
+    assert client.post("/relay/turn", json={
+        "runtime": "codex", "session_ref": "target-session", **scope,
+    }).status_code == 200
+    assert client.post("/relay/turn", json={
+        "runtime": "claude-code", "session_ref": "sender-session", **scope,
+    }).status_code == 200
+    sent = client.post("/relay/messages", json={
+        "sender_runtime": "claude-code",
+        "sender_session_ref": "sender-session",
+        "recipient": "codex:target-session",
+        "payload": "one persisted request",
+        **scope,
+    }).json()
+    delivery_id = sent["deliveries"][0]["delivery_id"]
+
+    monkeypatch.setattr(hook, "read_hook_input", lambda: {
+        "cwd": str(tmp_path),
+        "session_id": "target-session",
+        "prompt": codex_wake._wake_prompt(delivery_id),
+    })
+    monkeypatch.setattr(hook, "get_pending_relay_close_batch", lambda *_: ([], 0))
+    monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: scope["container_ref"])
+    monkeypatch.setattr(hook, "derive_actor_ref", lambda *_: "actor")
+    monkeypatch.setattr(hook, "check_dedup", lambda *_: False)
+    monkeypatch.setattr(hook, "pallium_request", lambda *_a, **_k: pytest.fail("wake must not query memory"))
+    monkeypatch.setattr(hook, "emit_context", lambda *_a, **_k: pytest.fail("unavailable wake must not emit"))
+    monkeypatch.setattr(hook, "acknowledge_relay", lambda *_a, **_k: pytest.fail("unavailable wake must not ACK"))
+    claimed = {}
+
+    def committed_then_unavailable(method, path, body, *, timeout, deadline=None):
+        response = client.request(method, path, json=body)
+        assert response.status_code == 200, response.text
+        claimed.update(response.json()["deliveries"][0])
+        import time
+        time.sleep(0.02)
+        return None
+
+    monkeypatch.setattr(hook, "relay_request", committed_then_unavailable)
+    monkeypatch.setattr(hook._common, "relay_request", committed_then_unavailable)
+    with pytest.raises(SystemExit) as exited:
+        hook.main()
+
+    assert exited.value.code == 0
+    assert claimed["delivery_id"] == delivery_id
+    assert claimed["attempts"] == 1
+    assert claimed["state"] == "claimed"
+    event = next(
+        event for event in codex_readiness.read(home)["relay_wake_evidence"]
+        if event["stage"] == "relay_request_completed"
+    )
+    assert event["delivery_id"] == delivery_id
+    assert event["outcome"] == "unavailable"
+    assert 10 <= event["elapsed_ms"] <= 30000
+    assert json.loads(capsys.readouterr().out)["decision"] == "block"
+
+
+@pytest.mark.parametrize(
+    ("response_delay", "fragmented", "expected_state", "should_emit"),
+    [
+        (1.15, False, "delivered", True),
+        (2.2, False, "claimed", False),
+        (0.0, True, "claimed", False),
+    ],
+)
+def test_codex_exact_wake_real_http_response_delay_is_bounded_and_traceable(
+    client, monkeypatch, tmp_path, capsys, response_delay, fragmented,
+    expected_state, should_emit,
+):
+    """Exercise actual hook urllib and /relay/turn through delayed loopback HTTP."""
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    import threading
+    import time
+
+    from app import codex_wake
+    from integrations.codex.hooks import user_prompt_submit as hook
+
+    scope = {"container_ref": "git:example/repo"}
+    assert client.post("/relay/turn", json={
+        "runtime": "codex", "session_ref": "target-session", **scope,
+    }).status_code == 200
+    assert client.post("/relay/turn", json={
+        "runtime": "claude-code", "session_ref": "sender-session", **scope,
+    }).status_code == 200
+    sent = client.post("/relay/messages", json={
+        "sender_runtime": "claude-code", "sender_session_ref": "sender-session",
+        "recipient": "codex:target-session",
+        "payload": "bounded loopback response check", **scope,
+    })
+    assert sent.status_code == 200, sent.text
+    message_id = sent.json()["message_id"]
+    delivery_id = sent.json()["deliveries"][0]["delivery_id"]
+
+    response_finished = threading.Event()
+    fragment_times = []
+
+    class Server(ThreadingHTTPServer):
+        daemon_threads = True
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+            response = client.request(
+                "POST", self.path, content=body,
+                headers={"content-type": self.headers.get("Content-Type", "application/json")},
+            )
+            if self.path == "/relay/turn":
+                time.sleep(response_delay)
+            try:
+                self.send_response(response.status_code)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(response.content)))
+                self.end_headers()
+                if fragmented and self.path == "/relay/turn":
+                    content = response.content
+                    chunks = (content[:1], content[1:2], content[2:])
+                    for index, chunk in enumerate(chunks):
+                        fragment_times.append(time.monotonic())
+                        self.wfile.write(chunk)
+                        self.wfile.flush()
+                        if index < len(chunks) - 1:
+                            time.sleep(1.1)
+                else:
+                    self.wfile.write(response.content)
+            except (ConnectionAbortedError, BrokenPipeError, OSError):
+                pass
+            finally:
+                if self.path == "/relay/turn":
+                    response_finished.set()
+
+        def log_message(self, *_args):
+            return
+
+    server = Server(("127.0.0.1", 0), Handler)
+    monkeypatch.setattr(
+        hook._common, "PALLIUM_BASE_URL",
+        f"http://127.0.0.1:{server.server_port}",
+    )
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+    wake_events = []
+    monkeypatch.setattr(hook, "read_hook_input", lambda: {
+        "cwd": str(tmp_path), "session_id": "target-session",
+        "prompt": codex_wake._wake_prompt(delivery_id),
+    })
+    monkeypatch.setattr(hook, "get_pending_relay_close_batch", lambda *_: ([], 0))
+    monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: scope["container_ref"])
+    monkeypatch.setattr(hook, "derive_actor_ref", lambda *_: "actor")
+    monkeypatch.setattr(hook, "check_dedup", lambda *_: False)
+    monkeypatch.setattr(
+        hook, "pallium_request",
+        lambda *_a, **_k: pytest.fail("exact wake must not query memory"),
+    )
+    monkeypatch.setattr(
+        hook, "record_codex_wake_event", lambda **event: wake_events.append(event),
+    )
+
+    try:
+        hook_started = time.monotonic()
+        with pytest.raises(SystemExit) as exited:
+            hook.main()
+        hook_elapsed = time.monotonic() - hook_started
+        assert exited.value.code == 0
+        assert hook_elapsed < 7.0  # eight-second host limit leaves one second outside the hook
+        assert response_finished.wait(timeout=3)
+        if fragmented:
+            assert len(fragment_times) == 3
+            assert all(
+                0.9 < later - earlier < 2.0
+                for earlier, later in zip(fragment_times, fragment_times[1:])
+            )
+    finally:
+        server.shutdown()
+        server.server_close()
+        server_thread.join(timeout=2)
+
+    trace_response = client.get(f"/relay/messages/{message_id}/trace")
+    assert trace_response.status_code == 200, trace_response.text
+    snapshot = next(
+        row for row in trace_response.json()["delivery_snapshots"]
+        if row["delivery_id"] == delivery_id
+    )
+    assert snapshot["state"] == expected_state
+    assert snapshot["attempts"] == 1
+    request_event = next(
+        event for event in wake_events
+        if event["stage"] == "relay_request_completed"
+    )
+    assert request_event["delivery_id"] == delivery_id
+    assert request_event["outcome"] == ("response" if should_emit else "unavailable")
+    captured = capsys.readouterr()
+    if should_emit:
+        assert 1000 <= request_event["elapsed_ms"] < 1800
+        assert json.loads(captured.out)["hookSpecificOutput"]["additionalContext"].count(delivery_id) == 1
+        assert any(event["stage"] == "delivery_acked" for event in wake_events)
+    else:
+        assert 1800 <= request_event["elapsed_ms"] < 2400
+        assert not any(event["stage"] == "payload_emitted" for event in wake_events)
+        assert any(event.get("reason") == "relay_unavailable" for event in wake_events)
+        assert json.loads(captured.out)["decision"] == "block"
+
+
+@pytest.mark.parametrize("prompt", [
+    "ordinary user turn",
+    "Pallium Relay wake for relay-delivery-" + "a" * 32 + "!",
+])
+def test_codex_noncanonical_prompt_keeps_short_relay_timeout(
+    monkeypatch, tmp_path, prompt,
+):
+    from integrations.codex.hooks import user_prompt_submit as hook
+
+    calls = []
+    monkeypatch.setattr(hook, "read_hook_input", lambda: {
+        "cwd": str(tmp_path), "session_id": "target-session", "prompt": prompt,
+    })
+    monkeypatch.setattr(hook, "get_pending_relay_close_batch", lambda *_: ([], 0))
+    monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: "git:example/repo")
+    monkeypatch.setattr(hook, "derive_actor_ref", lambda *_: "actor")
+    monkeypatch.setattr(hook, "check_dedup", lambda *_: False)
+    monkeypatch.setattr(hook, "pallium_request", lambda *_a, **_k: None)
+    monkeypatch.setattr(hook, "relay_request", lambda *args, **kwargs: (
+        calls.append((args, kwargs)) or _turn_response()
+    ))
+
+    with pytest.raises(SystemExit):
+        hook.main()
+
+    assert len(calls) == 1
+    assert calls[0][0][:2] == ("POST", "/relay/turn")
+    assert calls[0][1]["timeout"] == 0.75
+    assert "wake_delivery_id" not in calls[0][0][2]
 
 def test_codex_internal_wake_without_valid_scope_blocks(monkeypatch, capsys):
     from app import codex_wake
@@ -427,12 +686,13 @@ def test_codex_internal_wake_without_valid_scope_blocks(monkeypatch, capsys):
     [
         (
             "emit",
-            [("hook_started", None), ("hook_failed", "emit_failed")],
+            [("hook_started", None), ("relay_request_completed", None), ("hook_failed", "emit_failed")],
         ),
         (
             "ack",
             [
                 ("hook_started", None),
+                ("relay_request_completed", None),
                 ("payload_emitted", None),
                 ("hook_failed", "ack_failed"),
             ],
@@ -883,6 +1143,8 @@ def test_legacy_pin_bootstraps_endpoint_alias_and_queued_delivery(
 def test_project_switch_uses_atomic_turn_transition_without_relay_close(
     monkeypatch, relative, runtime, imported
 ):
+    from time import monotonic
+
     if imported:
         from integrations.codex.hooks import user_prompt_submit as hook
     else:
@@ -907,6 +1169,30 @@ def test_project_switch_uses_atomic_turn_transition_without_relay_close(
     monkeypatch.setattr(hook, "derive_actor_ref", lambda *_: "actor")
     monkeypatch.setattr(hook, "get_pending_relay_close_batch", lambda *_: ([], 0))
     calls = []
+    turn_globals = hook.relay_turn.__globals__
+    diagnostics = []
+
+    def trace_phase(stage, original):
+        def traced(*args, **kwargs):
+            remaining_before = turn_globals["remaining_safe_time"]()
+            started = monotonic()
+            result = original(*args, **kwargs)
+            diagnostics.append({
+                "stage": stage,
+                "elapsed_seconds": monotonic() - started,
+                "remaining_before": remaining_before,
+                "remaining_after": turn_globals["remaining_safe_time"](),
+                "result": result if stage == "intent_write" else result is not None,
+            })
+            return result
+        return traced
+
+    for name, stage in (
+        ("_acquire_session_lock", "session_lock"),
+        ("_read_session_state", "state_read"),
+        ("_write_session_state_locked", "intent_write"),
+    ):
+        monkeypatch.setitem(turn_globals, name, trace_phase(stage, turn_globals[name]))
 
     def relay(method, path, body, *, timeout):
         calls.append((method, path, body, timeout))
@@ -926,7 +1212,7 @@ def test_project_switch_uses_atomic_turn_transition_without_relay_close(
     with pytest.raises(SystemExit):
         hook.main()
 
-    assert len(calls) == 1
+    assert len(calls) == 1, diagnostics
     assert calls[0][1] == "/relay/turn"
     assert calls[0][2]["container_ref"] == new_container
     assert calls[0][2]["previous_container_ref"] == old_container
@@ -1412,6 +1698,52 @@ def test_relay_ack_batch_stops_at_shared_deadline(
 
 
 @pytest.mark.parametrize(
+    ("attempts", "claim_attempt", "possible_redelivery"),
+    [
+        (1, "1", "false"), (2, "2", "true"), (None, "unknown", "unknown"),
+        (True, "unknown", "unknown"), (1.5, "unknown", "unknown"),
+        ("2", "unknown", "unknown"), (0, "unknown", "unknown"),
+        (-1, "unknown", "unknown"), (2**53 - 1, str(2**53 - 1), "true"),
+        (2**53, "unknown", "unknown"), (float("inf"), "unknown", "unknown"),
+        (float("nan"), "unknown", "unknown"), (1.0, "1", "false"),
+    ],
+)
+@pytest.mark.parametrize(
+    ("name", "relative"),
+    [
+        ("claude_common", "integrations/claude-code/hooks/common.py"),
+        ("codex_common", "integrations/codex/hooks/common.py"),
+    ],
+)
+def test_relay_formatter_exposes_normalized_redelivery_envelope(name, relative, attempts, claim_attempt, possible_redelivery):
+    common = _load(name, relative)
+    delivery = {**DELIVERY, "attempts": attempts, "delivery_id": "relay-Ünicode-😀"}
+    text, rendered = common.format_relay([delivery])
+    assert rendered == [delivery]
+    assert "delivery_id: relay-Ünicode-😀" in text
+    assert f"claim_attempt: {claim_attempt}" in text
+    assert "possible_redelivery: " + possible_redelivery in text
+    assert "Check exact delivery_id in context/artifacts." in text
+    assert "Skip completed actions; if unknown, inspect target state before irreversible retry." in text
+    assert "Attempts do not prove emission/actions." in text
+    assert "ACK: receipt, not completion" in text
+    assert (
+        "Check exact delivery_id in context/artifacts. Skip completed actions; if unknown, inspect target state before irreversible retry. "
+        "Attempts do not prove emission/actions. ACK: receipt, not completion"
+    ) in text
+
+
+def test_relay_formatter_redelivery_envelope_respects_budget_without_acknowledging_omitted_delivery():
+    common = _load("codex_common_budget", "integrations/codex/hooks/common.py")
+    delivery = {**DELIVERY, "attempts": 2}
+    full, _ = common.format_relay([delivery])
+    exact, included = common.format_relay([delivery], budget_chars=len(full))
+    over, omitted = common.format_relay([delivery], budget_chars=len(full) - 1)
+    assert exact == full and included == [delivery]
+    assert over == "" and omitted == []
+
+
+@pytest.mark.parametrize(
     ("runtime", "relative", "codex"),
     [
         ("claude-code", "integrations/claude-code/hooks/user_prompt_submit.py", False),
@@ -1422,6 +1754,8 @@ def test_configured_actor_hook_registers_and_delivers_across_git_containers(
     client, monkeypatch, tmp_path: Path, runtime: str, relative: str, codex: bool,
 ):
     """Relay delivery crosses containers and configured actor metadata."""
+    # This test drives an ordinary turn; native wake/trace workers have separate coverage.
+    monkeypatch.setattr("app.dependencies.schedule_claude_relay_wake", lambda *_args, **_kwargs: None)
     hook = _load(f"stable_actor_{runtime}", relative)
     repos = []
     for name, git_name in (("source", "Source Git Name"), ("target", "Target Git Name")):

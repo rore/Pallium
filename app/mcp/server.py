@@ -9,8 +9,11 @@ from __future__ import annotations
 import asyncio
 import copy
 import hashlib
+import importlib
 import json
 import os
+import sys
+from contextlib import asynccontextmanager
 from functools import wraps
 from typing import Annotated, Literal
 
@@ -19,7 +22,7 @@ from pydantic import BeforeValidator, Field, StrictInt, StrictStr
 from app.mcp.client import PalliumMcpClient
 from app.mcp.context import resolve_codex_thread_ref, resolve_context, resolve_relay_context
 from core.history_presentation import compact_history
-from core.relay import RELAY_TRACE_MAX_SEQUENCE, parse_selector
+from core.relay import RELAY_TRACE_MAX_SEQUENCE, _RELAY_EXPIRY_OMITTED, parse_selector
 from core.work_ref import readable_work_ref
 from redaction import redact_sensitive
 from retrieval.common import build_excerpt
@@ -907,7 +910,99 @@ NOT_CONFIGURED_MSG = (
 )
 
 
-def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
+def _codex_bridge_enabled(transport: str) -> bool:
+    return (
+        transport == "stdio"
+        and os.environ.get("PALLIUM_CODEX_BRIDGE_MODE") == "inert"
+        and os.environ.get("PALLIUM_AGENT_REF") == "codex"
+        and bool(os.environ.get("CODEX_APP_TOOLS_PIPE_PATH"))
+    )
+
+
+def _codex_shadow_enabled(transport: str) -> bool:
+    if not (
+        sys.platform == "win32"
+        and transport == "stdio"
+        and os.environ.get("PALLIUM_CODEX_BRIDGE_MODE") == "shadow"
+        and os.environ.get("PALLIUM_AGENT_REF") == "codex"
+        and bool(os.environ.get("CODEX_APP_TOOLS_PIPE_PATH"))
+        and bool(os.environ.get("PALLIUM_CODEX_SHADOW_BOOTSTRAP_FILE"))
+    ):
+        return False
+    try:
+        return bool(importlib.import_module("app.codex_bridge_pipe").native_available())
+    except Exception:
+        return False
+
+
+def _codex_inventory_enabled(transport: str) -> bool:
+    if not (
+        sys.platform == "win32"
+        and transport == "stdio"
+        and os.environ.get("PALLIUM_CODEX_BRIDGE_MODE") == "inventory"
+        and os.environ.get("PALLIUM_AGENT_REF") == "codex"
+        and "CODEX_APP_TOOLS_PIPE_PATH" in os.environ
+        and bool(os.environ.get("PALLIUM_CODEX_INVENTORY_BOOTSTRAP_FILE"))
+    ):
+        return False
+    try:
+        return bool(importlib.import_module("app.codex_bridge_pipe").native_available())
+    except Exception:
+        return False
+
+
+def _bridge_diagnostic(category: str) -> None:
+    try:
+        print(f"Pallium Codex bridge inert: {category}", file=sys.stderr, flush=True)
+    except (OSError, ValueError):
+        pass
+
+
+@asynccontextmanager
+async def _codex_bridge_lifespan(server, *, shadow=False, inventory=False):
+    try:
+        module = importlib.import_module("app.mcp.codex_desktop_bridge")
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        _bridge_diagnostic("import-failed")
+        yield {}
+        return
+
+    try:
+        if inventory:
+            manager = module.inventory_lifespan(server)
+        else:
+            manager = module.shadow_lifespan(server) if shadow else module.lifespan(server)
+        state = await asyncio.wait_for(manager.__aenter__(), timeout=1.0)
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        _bridge_diagnostic("startup-failed")
+        yield {}
+        return
+
+    try:
+        yield state
+    finally:
+        try:
+            await asyncio.wait_for(manager.__aexit__(None, None, None), timeout=1.0)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            _bridge_diagnostic("shutdown-failed")
+
+
+def _codex_shadow_lifespan(server):
+    return _codex_bridge_lifespan(server, shadow=True)
+
+
+def _codex_inventory_lifespan(server):
+    return _codex_bridge_lifespan(server, inventory=True)
+
+
+def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None,
+                  codex_shadow: bool = False, codex_inventory: bool = False) -> FastMCP:
     """Create a FastMCP server with Pallium tools registered."""
     from mcp.server.fastmcp import Context, FastMCP
     try:
@@ -919,7 +1014,62 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
     # restarts (sessions are otherwise in-process only) — without it, clients
     # holding a session id from before the restart get -32600 "Session not
     # found" and have to reinitialize.
-    server = FastMCP("pallium", host=host, port=port, stateless_http=True)
+    server = FastMCP("pallium", host=host, port=port, stateless_http=True, lifespan=lifespan)
+
+    if codex_shadow:
+        async def shadow_request(operation: str, ctx) -> str:
+            from app.mcp.codex_desktop_bridge import public_status
+            result = {"reason": "invalid-metadata"}
+            try:
+                request = ctx.request_context
+                meta = request.meta
+                values = meta if isinstance(meta, dict) else meta.model_dump()
+                thread_ref, error = resolve_codex_thread_ref(values)
+                nested = values.get("x-codex-turn-metadata", {})
+                turns = [values[key] for key in ("turnId",) if key in values]
+                if isinstance(nested, dict) and "turn_id" in nested:
+                    turns.append(nested["turn_id"])
+                valid_turn = bool(turns) and all(
+                    isinstance(value, str) and value == value.strip()
+                    and 0 < len(value) <= 255 and value.isprintable() for value in turns
+                ) and len(set(turns)) == 1
+                if not error and valid_turn and os.environ.get("PALLIUM_AGENT_REF") == "codex":
+                    worker = request.lifespan_context.get("codex_shadow")
+                    if worker is not None:
+                        result = await worker.request(operation, {"thread_ref": thread_ref, "turn_ref": turns[0]})
+                    else:
+                        result = {"reason": "stopped"}
+            except Exception:
+                pass
+            return json.dumps(public_status(result))
+
+        async def pallium_codex_bridge_shadow_enroll(ctx) -> str:
+            """Enroll the independently approved current Codex pair for finite shadow observation."""
+            return await shadow_request("enroll", ctx)
+
+        async def pallium_codex_bridge_shadow_status(ctx) -> str:
+            """Read bounded shadow status for the authenticated current Codex pair."""
+            return await shadow_request("status", ctx)
+
+        for tool in (pallium_codex_bridge_shadow_enroll, pallium_codex_bridge_shadow_status):
+            tool.__annotations__["ctx"] = Context
+            server.tool()(tool)
+
+    if codex_inventory:
+        async def pallium_codex_bridge_inventory_register(ctx) -> str:
+            """Request separately armed, finite service custody for read-only Desktop inventory."""
+            from app.mcp.codex_desktop_bridge import inventory_status
+            result = {"reason": "stopped"}
+            try:
+                worker = ctx.request_context.lifespan_context.get("codex_inventory")
+                if worker is not None and os.environ.get("PALLIUM_AGENT_REF") == "codex":
+                    result = await worker.register()
+            except Exception:
+                result = {"reason": "native-failed"}
+            return json.dumps(inventory_status(result))
+
+        pallium_codex_bridge_inventory_register.__annotations__["ctx"] = Context
+        server.tool()(pallium_codex_bridge_inventory_register)
 
     def relay_tool(function):
         @wraps(function)
@@ -1751,10 +1901,10 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         recipient: str,
         sender_runtime: str,
         sender_session_ref: str,
-        expires_in_seconds: int | None = None,
+        expires_in_seconds: int | None = Field(default_factory=lambda: _RELAY_EXPIRY_OMITTED, ge=60, le=604800),
         container_ref: str | None = None,
     ) -> str:
-        """Send new text of at most 16,000 Unicode code points to one canonical endpoint ID (relay-session-...) or service-global name (@review). For a role recipient, use its current @name; before reusing an exact endpoint, rediscover and verify its session/container. Returned delivery identity is the admission snapshot. A successful send means the message was saved, not that the recipient started. `busy_queue` is a capability, not observed recipient busyness; a pending delivery is unconfirmed. If you need a response now, open the recipient task; let any current work finish, and start an ordinary turn if needed. Do not resend. Bare runtimes are rejected and broadcast is not supported. Copy sender_runtime from injected agent_ref and sender_session_ref from injected thread_ref. Use pallium_relay_reply for one reply to a received delivery."""
+        """Send new text of at most 16,000 Unicode code points to one canonical endpoint ID (relay-session-...) or service-global name (@review). For a role recipient, use its current @name; before reusing an exact endpoint, rediscover and verify its session/container. Returned delivery identity is the admission snapshot. A successful send means the message was saved, not that the recipient started. `busy_queue` is a capability, not observed recipient busyness; a pending delivery is unconfirmed. If you need a response now, open the recipient task; let any current work finish, and start an ordinary turn if needed. Do not resend. Bare runtimes are rejected and broadcast is not supported. Copy sender_runtime from injected agent_ref and sender_session_ref from injected thread_ref. Use pallium_relay_reply for one reply to a received delivery. New omitted expiry is 24 hours; explicit expires_in_seconds=null requests durable delivery. Finite expiry is 60–604800 seconds. Omitted expiry on an existing-ID retry preserves its recorded expiry."""
         ctx, scope_error = resolve_relay_context(container_ref=container_ref)
         if scope_error:
             return scope_error
@@ -1775,10 +1925,10 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
         delivery_id: str,
         message: str,
         receipt: str | None = None,
-        expires_in_seconds: int | None = None,
+        expires_in_seconds: int | None = Field(default_factory=lambda: _RELAY_EXPIRY_OMITTED, ge=60, le=604800),
         container_ref: str | None = None,
     ) -> str:
-        """Reply once to a received Relay delivery with at most 16,000 Unicode code points. A delivery permits one idempotent reply. For MCP receive, reply with its receipt or ACK before either the source message expiry or 60-second claim lease ends; after ACK, reply later with the same receipt. If this MCP configuration lacks Relay scope, copy container_ref from injected scope. When replying via pallium_relay_receive, also pass the receipt — this atomically ACKs and replies in one step. Hook-injected delivery replies need no receipt."""
+        """Reply once to a received Relay delivery with at most 16,000 Unicode code points. A delivery permits one idempotent reply. For MCP receive, reply with its receipt or ACK before either the source message expiry or 60-second claim lease ends; after ACK, reply later with the same receipt. If this MCP configuration lacks Relay scope, copy container_ref from injected scope. When replying via pallium_relay_receive, also pass the receipt — this atomically ACKs and replies in one step. Hook-injected delivery replies need no receipt. New omitted expiry is 24 hours; explicit expires_in_seconds=null requests durable delivery. Finite expiry is 60–604800 seconds. Omitted expiry on an existing reply preserves its recorded expiry."""
         ctx, scope_error = resolve_relay_context(container_ref=container_ref)
         if scope_error:
             return scope_error
@@ -1876,6 +2026,21 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001) -> FastMCP:
             if not isinstance(delivery, dict):
                 return _relay_error_text({"error": "invalid relay receive response"})
             delivery = {key: value for key, value in delivery.items() if key != "claim_token"}
+            attempts = delivery.get("attempts")
+            attempt = (
+                int(attempts)
+                if type(attempts) in (int, float) and 1 <= attempts <= 2**53 - 1 and int(attempts) == attempts
+                else None
+            )
+            delivery.update(
+                claim_attempt=attempt,
+                possible_redelivery=None if attempt is None else attempt > 1,
+                redelivery_guidance=(
+                    "Check exact delivery_id in context/artifacts. "
+                    "Skip completed actions; if unknown, inspect target state before irreversible retry. "
+                    "Attempts do not prove emission/actions. ACK: receipt, not completion"
+                ),
+            )
             deliveries[index] = _fit_mcp_activation(
                 delivery,
                 lambda fitted, index=index: {
@@ -2151,7 +2316,12 @@ def main() -> None:
     transport: Literal["stdio", "sse", "streamable-http"] = transport_val  # type: ignore[assignment]
     host = os.environ.get("FASTMCP_HOST", "127.0.0.1")
     port = int(os.environ.get("FASTMCP_PORT", "8001"))
-    server = create_server(host=host, port=port)
+    options = {"lifespan": _codex_bridge_lifespan} if _codex_bridge_enabled(transport) else {}
+    if _codex_shadow_enabled(transport):
+        options = {"lifespan": _codex_shadow_lifespan, "codex_shadow": True}
+    if _codex_inventory_enabled(transport):
+        options = {"lifespan": _codex_inventory_lifespan, "codex_inventory": True}
+    server = create_server(host=host, port=port, **options)
     server.run(transport=transport)
 
 

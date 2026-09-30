@@ -11,6 +11,7 @@ import subprocess
 import threading
 import time
 import uuid
+from weakref import WeakValueDictionary
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
@@ -34,6 +35,7 @@ _scheduled_lock = threading.Lock()
 _registry_lock = threading.Lock()
 _default_registry: CodexWakeRegistry | None = None
 _default_registry_dir: Path | None = None
+_database_guards: WeakValueDictionary = WeakValueDictionary()
 logger = logging.getLogger(__name__)
 _popen = subprocess.Popen
 
@@ -49,18 +51,16 @@ def get_codex_wake_registry(state_dir: Path | None = None) -> CodexWakeRegistry:
     global _default_registry, _default_registry_dir
     with _registry_lock:
         if _default_registry is None or _default_registry_dir != target:
-            _default_registry = CodexWakeRegistry(target)
+            _default_registry = CodexWakeRegistry(enabled=False)
             _default_registry_dir = target
         return _default_registry
 
 
-def get_codex_wake_registry_for_relay_database(relay_sqlite_url: str) -> CodexWakeRegistry:
+def legacy_codex_wake_directory(relay_sqlite_url: str) -> Path:
     """Keep one Relay database's wake fences out of every other instance."""
     override = os.environ.get("PALLIUM_CODEX_WAKE_DIR")
     if override is not None:
-        return get_codex_wake_registry(Path(override))
-    if relay_sqlite_url == "sqlite:///:memory:":
-        return CodexWakeRegistry()
+        return Path(override)
     prefix = "sqlite:///"
     if not relay_sqlite_url.startswith(prefix):
         raise ValueError("Relay wake registry requires a SQLite database URL")
@@ -69,7 +69,27 @@ def get_codex_wake_registry_for_relay_database(relay_sqlite_url: str) -> CodexWa
         state_dir = relay_path.parent.parent / "codex-wake"
     else:
         state_dir = relay_path.with_name(relay_path.name + "-codex-wake")
-    return get_codex_wake_registry(state_dir)
+    return state_dir
+
+
+def get_codex_wake_registry_for_relay_database(relay_sqlite_url: str, *, relay_service=None) -> CodexWakeRegistry:
+    """Keep one app-owned SQLite authority and initiation guard per database."""
+    if relay_sqlite_url == "sqlite:///:memory:":
+        if relay_service is None:
+            return CodexWakeRegistry()
+        registry = CodexWakeRegistry(relay_service=relay_service)
+        registry.initialize(old_owner_drained=True)
+        return registry
+    state_dir = legacy_codex_wake_directory(relay_sqlite_url)
+    if relay_service is None:
+        return CodexWakeRegistry(state_dir)
+    key = str(Path(relay_sqlite_url.removeprefix("sqlite:///")).resolve())
+    with _registry_lock:
+        guard = _database_guards.get(key)
+        if guard is None:
+            guard = threading.RLock()
+            _database_guards[key] = guard
+        return CodexWakeRegistry(relay_service=relay_service, legacy_state_dir=state_dir, ownership_lock=guard)
 
 
 def relay_wake_log_refs(
@@ -108,27 +128,19 @@ def _reservation_state_is_stale(
     if state["state"] in {"delivered", "expired", "suppressed"}:
         return True
     return (
-        reservation.correlated_claim_attempts is not None
-        and state["state"] == "pending"
+        state["state"] == "pending"
         and state.get("stored_state") == "claimed"
         and type(state.get("attempts")) is int
-        and state["attempts"] == reservation.correlated_claim_attempts
+        and state["attempts"] > 0
+        and (
+            state["attempts"] == reservation.correlated_claim_attempts
+            or (
+                type(state.get("codex_wake_generation")) is int
+                and state["codex_wake_generation"] == reservation.generation
+            )
+        )
     )
 
-
-def _reservation_is_stale(
-    relay_service: Any,
-    reservation: CodexWakeReservation,
-) -> bool:
-    try:
-        state = relay_service.codex_wake_reservation_state(
-            delivery_id=reservation.delivery_id,
-        )
-    except RelayNotFoundError:
-        return True
-    except Exception:
-        return False
-    return _reservation_state_is_stale(reservation, state)
 
 
 def reconcile_codex_relay_wake_reservations(
@@ -141,13 +153,36 @@ def reconcile_codex_relay_wake_reservations(
     """Remove terminal fences and atomically replace expired wake claims."""
     registry = registry or get_codex_wake_registry()
     candidates = registry.reservations() if reservations is None else reservations
+    if registry.persistent:
+        reconciled = 0
+        for reservation in candidates:
+            transition = registry.reconcile(reservation)
+            if transition is None:
+                continue
+            action, current = transition
+            _clear_schedule(reservation, registry)
+            if action == "replaced":
+                _schedule_reserved_codex_relay_wake(current, registry, trace_callback=trace_callback)
+            reconciled += 1
+        return reconciled
     stale = []
     replaced = 0
     for reservation in candidates:
         if reservation.correlated_claim_attempts is None:
-            if _reservation_is_stale(relay_service, reservation):
+            try:
+                state = relay_service.codex_wake_reservation_state(
+                    delivery_id=reservation.delivery_id,
+                )
+            except RelayNotFoundError:
                 stale.append(reservation)
-            continue
+                continue
+            except Exception:
+                continue
+            if not _reservation_state_is_stale(reservation, state):
+                continue
+            if state["state"] in {"delivered", "expired", "suppressed"}:
+                stale.append(reservation)
+                continue
 
         def replace_if_stale(state: dict[str, object]) -> bool:
             if not _reservation_state_is_stale(reservation, state):
@@ -545,7 +580,10 @@ def _wake_after_debounce(
             None,
             ("ambiguous", "unexpected_error", None),
         )
-    launch_result = _finish_launch(launch) if launch is not None else None
+    launch_result = (
+        _finish_launch(launch, delivery_id=reservation.delivery_id)
+        if launch is not None else None
+    )
     attempt = _attempt_from_launch(launch_result) if launch_result is not None else None
     if not current or attempt is None:
         _clear_schedule(reservation, registry)
@@ -596,12 +634,17 @@ def correlate_codex_relay_wake_claim(
     session_ref: str,
     container_ref: str,
     turn_result: object,
+    reservation: CodexWakeReservation | None,
     *,
     registry: CodexWakeRegistry | None = None,
 ) -> bool:
     """Correlate only the exact claimed delivery from a Codex wake turn."""
     if (
         re.fullmatch(r"relay-delivery-[0-9a-f]{32}", wake_delivery_id) is None
+        or not isinstance(reservation, CodexWakeReservation)
+        or reservation.delivery_id != wake_delivery_id
+        or reservation.session_ref != session_ref
+        or reservation.container_ref != container_ref
         or not isinstance(turn_result, dict)
     ):
         return False
@@ -615,6 +658,7 @@ def correlate_codex_relay_wake_claim(
         and session.get("session_ref") == session_ref
         and session.get("container_ref") == container_ref
         and isinstance(endpoint_id, str)
+        and reservation.recipient_endpoint_id == endpoint_id
     ):
         return False
     matches = [
@@ -639,6 +683,7 @@ def correlate_codex_relay_wake_claim(
         session_ref=session_ref,
         container_ref=container_ref,
         attempts=matches[0]["attempts"],
+        expected_generation=reservation.generation,
     )
 
 
@@ -676,6 +721,7 @@ def _start_launch(session_ref: str, prompt: str) -> _LaunchStart:
             stderr=subprocess.PIPE,
             text=True,
             encoding="utf-8",
+            errors="replace",
             cwd=str(cwd),
             **_hidden_process_kwargs(),
         )
@@ -686,7 +732,22 @@ def _start_launch(session_ref: str, prompt: str) -> _LaunchStart:
     return process, None
 
 
-def _finish_launch(start: _LaunchStart) -> _LaunchResult:
+def _stderr_category(stderr: str | None) -> str:
+    if not stderr:
+        return "empty"
+    sample = stderr[:2048].lower()
+    if "usage:" in sample or "unexpected argument" in sample:
+        return "cli_usage"
+    if any(term in sample for term in ("thread not found", "unknown thread", "no such thread")):
+        return "thread_unavailable"
+    if any(term in sample for term in ("connection refused", "transport error", "timed out")):
+        return "transport"
+    return "other"
+
+
+def _finish_launch(
+    start: _LaunchStart, *, delivery_id: str | None = None,
+) -> _LaunchResult:
     process, immediate = start
     if immediate is not None:
         return immediate
@@ -706,7 +767,7 @@ def _finish_launch(start: _LaunchStart) -> _LaunchResult:
                 pass
 
     try:
-        process.communicate(timeout=_QUEUE_TIMEOUT_SECONDS)
+        _, stderr = process.communicate(timeout=_QUEUE_TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired:
         stop_and_reap()
         return "ambiguous", "timeout", None
@@ -715,6 +776,15 @@ def _finish_launch(start: _LaunchStart) -> _LaunchResult:
         return "ambiguous", "post_start_error", None
     if process.returncode == 0:
         return "queued", None, 0
+    if delivery_id is not None:
+        delivery_ref = (
+            delivery_id if re.fullmatch(r"relay-delivery-[0-9a-f]{32}", delivery_id)
+            else _log_fingerprint(delivery_id)
+        )
+        logger.info(
+            "codex_relay_wake_stderr delivery_ref=%s exit_code=%s category=%s",
+            delivery_ref, process.returncode, _stderr_category(stderr),
+        )
     return "failed", "nonzero_exit", process.returncode
 
 

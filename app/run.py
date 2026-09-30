@@ -47,6 +47,14 @@ def run(args: list[str] | None = None) -> int:
     parsed, remaining = build_parser().parse_known_args(args)
     if parsed.mode not in ("setup", "service") and remaining:
         build_parser().error(f"unrecognized arguments: {' '.join(remaining)}")
+    if parsed.mode in {"serve", "all"}:
+        from app.codex_wake_lifecycle import prepare_codex_wake_start
+        from app.config import AppConfig
+        try:
+            prepare_codex_wake_start(AppConfig.from_env())
+        except (OSError, RuntimeError, ValueError) as exc:
+            logger.error("Pallium startup refused: %s", exc)
+            return 1
     if parsed.mode == "serve":
         # Auto-set PALLIUM_BASE_URL if not already set — needed by the MCP endpoint
         # which is mounted on this server and calls back to the HTTP API

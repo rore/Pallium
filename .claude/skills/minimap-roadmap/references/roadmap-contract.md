@@ -66,7 +66,7 @@ When editing items:
 
 ## Scope
 
-Use `scope.md` for short current-focus narrative and near-term direction. Item state belongs in item files, not in scope.
+Use `scope.md` for short current-focus narrative and near-term direction. Item state belongs in item files, not in scope. The Milestone and Unfinished quick-focus controls reuse the existing filters; they do not edit item metadata or reorder the canonical board.
 
 ## Manual Metadata-First Migration
 

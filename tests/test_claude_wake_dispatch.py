@@ -1209,6 +1209,194 @@ def test_post_start_lost_http_intent_reconciles_without_claiming_relay(
         assert reconciler is not None
     assert reconciler._thread is not None and not reconciler._thread.is_alive()
 
+
+@pytest.mark.parametrize("old_state,new_state", [
+    ("busy", "idle"), ("idle", "busy"), ("idle", "closed"), ("closed", "idle"),
+])
+@pytest.mark.parametrize("lost_http", [False, True], ids=["http", "recovery"])
+def test_create_app_preserves_new_intent_during_old_cleanup(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    old_state: str, new_state: str, lost_http: bool,
+) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    from contextlib import nullcontext
+
+    from fastapi.testclient import TestClient
+
+    import app.claude_wake as wake
+    from app.config import AppConfig
+    from app.main import create_app
+    from storage.vector_index import VectorIndexConfig
+    from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
+    from tests.test_claude_code_integration import _load_claude_hook
+
+    wake_dir = tmp_path / "wake"
+    monkeypatch.setenv("PALLIUM_CLAUDE_WAKE_DIR", str(wake_dir))
+    recovery_ready = threading.Event()
+    recovered = threading.Event()
+    original_recover = wake.recover_claude_relay_wakes
+
+    def controlled_recover(*args, **kwargs):
+        assert recovery_ready.wait(timeout=3)
+        original_recover(*args, **kwargs)
+        recovered.set()
+
+    monkeypatch.setattr(wake, "recover_claude_relay_wakes", controlled_recover)
+    calls: list[tuple[str, str]] = []
+    wake_called = threading.Event()
+    monkeypatch.setattr(
+        "app.claude_wake.claude_wake_transport",
+        lambda path, token: calls.append((path, token)) or wake_called.set() or True,
+    )
+    app = create_app(AppConfig(
+        storage_backend="sqlite",
+        sqlite_url=f"sqlite:///{tmp_path / 'relay.db'}",
+        default_use_case="demo_agent_memory",
+        semantic_packages=DEMO_SEMANTIC_PACKAGES,
+        vector_index=VectorIndexConfig(enabled=False),
+    ))
+    scope = {"container_ref": PAYLOAD["container_ref"]}
+
+    with TestClient(app, client=("127.0.0.1", 50000)) as http:
+        common = _load_claude_hook("common", monkeypatch)
+        common.CLAUDE_WAKE_DIR = wake_dir
+        common.CLAUDE_WAKE_INTENTS_DIR = wake_dir / "intents"
+
+        session = "overlap-\u2713"
+
+        def turn(session: str) -> None:
+            assert http.post("/relay/turn", json={
+                "runtime": "claude-code", "session_ref": session, **scope,
+            }).status_code == 200
+
+        def intent(state: str, intent_id: str) -> dict[str, object]:
+            payload = {
+                **PAYLOAD, "session_ref": session, "idle": state == "idle",
+                "intent_id": intent_id,
+            }
+            if state == "closed":
+                payload = {key: payload[key] for key in (
+                    "runtime", "session_ref", "container_ref", "intent_id",
+                )}
+                payload["closed"] = True
+            return payload
+
+        def apply(payload: dict[str, object]):
+            path = "/internal/claude-wake/register"
+            if payload.get("closed"):
+                path = "/internal/claude-wake/close"
+                payload = {key: payload[key] for key in (
+                    "runtime", "session_ref", "container_ref", "intent_id",
+                )}
+            return http.post(path, json=payload)
+
+        assert http.post("/relay/turn", json={
+            "runtime": "codex", "session_ref": "sender", **scope,
+        }).status_code == 200
+
+        turn(session)
+        bootstrap = intent("busy", "bootstrap")
+        assert common._write_wake_intent(bootstrap)
+        assert apply(bootstrap).status_code == 204
+        old = intent(old_state, "old")
+        assert common._write_wake_intent(old)
+        target = common._wake_intent_path("claude-code", session, scope["container_ref"])
+        cleanup_held = threading.Event()
+        native_contention = threading.Event()
+        published = threading.Event()
+        send_http = threading.Event()
+        publisher_thread: list[int] = []
+        original_unlink = Path.unlink
+
+        def paused_unlink(path, *args, **kwargs):
+            if path == target and not cleanup_held.is_set():
+                assert json.loads(path.read_text(encoding="utf-8"))["intent_id"] == "old"
+                cleanup_held.set()
+                # The publisher releases this barrier only after a real native failure.
+                assert native_contention.wait(timeout=1)
+            return original_unlink(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "unlink", paused_unlink)
+        if os.name == "nt":
+            import msvcrt as native
+            lock_name, nonblocking = "locking", native.LK_NBLCK
+        else:
+            import fcntl as native
+            lock_name, nonblocking = "flock", native.LOCK_EX | native.LOCK_NB
+        original_native_lock = getattr(native, lock_name)
+
+        def witnessed_lock(fd, operation, *args):
+            try:
+                return original_native_lock(fd, operation, *args)
+            except OSError:
+                if operation == nonblocking and publisher_thread == [threading.get_ident()]:
+                    native_contention.set()
+                raise
+
+        monkeypatch.setattr(native, lock_name, witnessed_lock)
+        monkeypatch.setenv("CLAUDE_CODE_MESSAGING_SOCKET", PAYLOAD["socket_path"])
+        monkeypatch.setenv("CLAUDE_CODE_MESSAGING_TOKEN", PAYLOAD["token"])
+
+        def open_request(request, **kwargs):
+            published.set()
+            assert send_http.wait(timeout=3)
+            if lost_http:
+                raise OSError("loopback request unavailable after durable publication")
+            response = http.post(
+                common.urllib.parse.urlparse(request.full_url).path,
+                json=json.loads(request.data),
+            )
+            assert response.status_code == 204, response.text
+            return nullcontext(response)
+
+        monkeypatch.setattr(common.urllib.request, "build_opener", lambda *_: SimpleNamespace(open=open_request))
+
+        def publish_new():
+            publisher_thread.append(threading.get_ident())
+            if new_state == "closed":
+                return common.close_claude_wake(session, scope["container_ref"])
+            return common.register_claude_wake(session, scope["container_ref"], idle=new_state == "idle")
+
+        try:
+            with ThreadPoolExecutor(max_workers=2) as workers:
+                cleanup = workers.submit(apply, old)
+                assert cleanup_held.wait(timeout=1)
+                publication = workers.submit(publish_new)
+                assert published.wait(timeout=1)
+                assert native_contention.is_set()
+                assert cleanup.result(timeout=1).status_code == 204
+                newer = json.loads(target.read_text(encoding="utf-8"))
+                assert newer["intent_id"] != "old"
+                assert newer.get("closed", False) == (new_state == "closed")
+                if new_state != "closed":
+                    assert newer["idle"] == (new_state == "idle")
+                send_http.set()
+                assert publication.result(timeout=1) is (not lost_http)
+            recovery_ready.set()
+            assert recovered.wait(timeout=1)
+            assert not target.exists()
+        finally:
+            send_http.set()
+            recovery_ready.set()
+
+        sent = http.post("/relay/messages", json={
+            "sender_runtime": "codex", "sender_session_ref": "sender",
+            "recipient": "claude-code:" + session, "payload": "preserved transition \u2713", **scope,
+        })
+        assert sent.status_code == 200
+        if new_state == "idle":
+            assert wake_called.wait(timeout=1)
+        recovered.clear()
+        app.state._claude_wake_reconciler.signal()
+        assert recovered.wait(timeout=1)
+        assert calls == ([(PAYLOAD["socket_path"], PAYLOAD["token"])] if new_state == "idle" else [])
+        status = http.get(f"/relay/messages/{sent.json()['message_id']}", params=scope)
+        assert status.status_code == 200
+        delivery = status.json()["deliveries"][0]
+        assert delivery["state"] == "pending"
+        assert delivery["claim_token"] is None and delivery["receipt"] is None
+        assert delivery["attempts"] == 0
+
 def test_expired_claim_rewakes_once_after_real_app_restart(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -1827,7 +2015,7 @@ def test_posix_transport_post_frame_failure_is_uncertain(monkeypatch: pytest.Mon
     assert result.evidence == ("submission_attempted",)
     assert result.native_retry_safe is False
 
-def test_default_router_codex_wake_registry_stays_in_test_directory(
+def test_router_codex_wake_registry_uses_isolated_sqlite_authority(
     client, monkeypatch: pytest.MonkeyPatch, tmp_path,
 ) -> None:
     from fastapi import FastAPI
@@ -1835,10 +2023,17 @@ def test_default_router_codex_wake_registry_stays_in_test_directory(
 
     from app import codex_wake
     from app.dependencies import build_router
+    from core.relay import RelayService
 
     expected_dir = Path(os.environ["PALLIUM_CODEX_WAKE_DIR"])
     assert expected_dir.parent == tmp_path
-    registry = codex_wake.get_codex_wake_registry()
+    default = codex_wake.get_codex_wake_registry()
+    assert default._path is None and not default.usable
+    storage = client.app.state.pallium_service._storage
+    registry = codex_wake.get_codex_wake_registry_for_relay_database(
+        str(storage._relay_engine.url), relay_service=RelayService(storage),
+    )
+    assert registry.initialize(old_owner_drained=True)
     assert registry._path == expected_dir / "reservations.json"
     monkeypatch.setattr(
         "app.dependencies.schedule_codex_relay_wake",
@@ -1850,6 +2045,7 @@ def test_default_router_codex_wake_registry_stays_in_test_directory(
     app.include_router(build_router(
         client.app.state.pallium_service,
         relay_storage=client.app.state.pallium_service._storage,
+        codex_wake_registry=registry,
     ))
     http = TestClient(app, client=("127.0.0.1", 50000))
     scope = {"container_ref": "git:example.test/codex-test-state"}
@@ -1873,5 +2069,5 @@ def test_default_router_codex_wake_registry_stays_in_test_directory(
     assert registry.snapshot(delivery["recipient_endpoint_id"]).delivery_id == (
         delivery["delivery_id"]
     )
-    assert registry._path.is_file()
+    assert not registry._path.exists()
     assert registry._path.is_relative_to(tmp_path)

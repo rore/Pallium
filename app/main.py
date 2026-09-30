@@ -30,6 +30,7 @@ from app.dependencies import (
     recover_expired_relay_wakes,
 )
 from app.snapshot import resolve_live_db_path
+from app.relay_wake_health import relay_wake_health
 from core.observability import QueryStats
 from core.relay import RelayService, RelayUnavailableError
 from core.service import PalliumService
@@ -292,8 +293,20 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
             app_instance.state._rebuild_coordinator = rebuild_coordinator
 
         claude_wake_reconciler = None
+        shadow_service = None
+        inventory_service = None
 
         def cleanup() -> None:
+            if inventory_service is not None:
+                try:
+                    inventory_service.stop()
+                except Exception:
+                    logger.warning("Codex inventory worker shutdown failed")
+            if shadow_service is not None:
+                try:
+                    shadow_service.stop()
+                except Exception:
+                    logger.warning("Codex shadow worker shutdown failed")
             claude_wake_registry.set_reconcile_signal(None)
             if claude_wake_reconciler is not None:
                 claude_wake_reconciler.stop()
@@ -343,6 +356,20 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
             cleanup()
             raise
 
+        try:
+            from app.codex_bridge_pipe import start_shadow_service
+
+            shadow_service = start_shadow_service(build_result.storage)
+        except Exception:
+            logger.warning("Codex shadow worker unavailable")
+        app_instance.state._codex_shadow_service = shadow_service
+        try:
+            from app.codex_bridge_pipe import start_inventory_service
+
+            inventory_service = start_inventory_service()
+        except Exception:
+            logger.warning("Codex inventory worker unavailable")
+        app_instance.state._codex_inventory_service = inventory_service
         app_instance.state._lifespan_complete = True
         try:
             if mcp_available and session_manager is not None:
@@ -419,7 +446,7 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
         os.kill(os.getpid(), signal.SIGINT)
         return JSONResponse({"status": "shutting_down"})
 
-    def status_body() -> JSONResponse:
+    def status_body(include_relay_wake: bool = True) -> JSONResponse:
         storage = service._storage
         if not isinstance(storage, SQLiteStorageProvider):
             return JSONResponse(content={"error": "status requires SQLite backend"}, status_code=501)
@@ -616,17 +643,22 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
             "derived_memory": derived_memory_info,
             "metrics_summary": metrics_summary,
             "historical_lookup_funnel": funnel_info,
+            "relay_wake": relay_wake_health(
+                dashboard_relay_service, getattr(app.state, "_claude_wake_reconciler", None),
+            ) if include_relay_wake else None,
         })
 
     @app.get("/status")
-    async def status() -> JSONResponse:
-        return await run_diagnostic_operation(status_body)
+    async def status(include_relay_wake: bool = True) -> JSONResponse:
+        return await run_diagnostic_operation(lambda: status_body(include_relay_wake))
 
     try:
         dashboard_relay_service = RelayService(build_result.storage)
     except RelayUnavailableError:
         dashboard_relay_service = None
-    codex_wake_registry = codex_wake.get_codex_wake_registry_for_relay_database(resolved_config.resolved_relay_sqlite_url)
+    codex_wake_registry = codex_wake.get_codex_wake_registry_for_relay_database(
+        resolved_config.resolved_relay_sqlite_url, relay_service=dashboard_relay_service,
+    )
     app.state.codex_wake_registry = codex_wake_registry
     mount_dashboard(
         app,

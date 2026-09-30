@@ -8,6 +8,8 @@ import pytest
 from app import codex_wake, main
 from app.config import AppConfig
 from core.codex_wake import CodexWakeRegistry
+from core.relay import RelayService
+from storage.sqlite import SQLiteStorageProvider
 from storage.vector_index import VectorIndexConfig
 from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
 
@@ -71,15 +73,22 @@ def test_isolated_app_startup_does_not_reconcile_another_registry(
     assert isolated_path == tmp_path / "isolated" / "memory-relay.db-codex-wake" / "reservations.json"
 
     legacy_dir = tmp_path / "legacy-codex-wake"
-    foreign = CodexWakeRegistry(legacy_dir)
+    foreign_storage = SQLiteStorageProvider(f"sqlite:///{tmp_path / 'foreign-main.db'}", f"sqlite:///{tmp_path / 'foreign-relay.db'}")
+    foreign_relay = RelayService(foreign_storage)
+    foreign = CodexWakeRegistry(relay_service=foreign_relay, legacy_state_dir=legacy_dir)
+    assert foreign.initialize(old_owner_drained=True)
+    for session in ("sender", "other-agent"):
+        foreign_relay.turn(runtime="codex", session_ref=session, container_ref="git:example.test/other")
+    sent = foreign_relay.send(sender_runtime="codex", sender_session_ref="sender", recipient="codex:other-agent",
+                              payload="foreign isolated payload", container_ref="git:example.test/other")["deliveries"][0]
     reservation = foreign.reserve(
-        recipient_endpoint_id="relay-session-" + "a" * 32,
-        delivery_id="relay-delivery-" + "b" * 32,
+        recipient_endpoint_id=sent["recipient_endpoint_id"],
+        delivery_id=sent["delivery_id"],
         session_ref="other-agent",
         container_ref="git:example.test/other",
     )
     assert reservation is not None
-    before = (legacy_dir / "reservations.json").read_bytes()
+    before = foreign.reservations()
     monkeypatch.setenv("PALLIUM_CODEX_WAKE_DIR", str(legacy_dir))
 
     class ImmediateReconciler:
@@ -97,13 +106,16 @@ def test_isolated_app_startup_does_not_reconcile_another_registry(
     with TestClient(app) as client:
         assert client.get("/health").status_code == 200
 
-    assert (legacy_dir / "reservations.json").read_bytes() == before
-    assert CodexWakeRegistry(legacy_dir).reservations() == (reservation,)
+    assert foreign.reservations() == before == (reservation,)
+    reopened = CodexWakeRegistry(relay_service=foreign_relay, legacy_state_dir=legacy_dir)
+    assert reopened.reservations() == (reservation,)
+    assert not (legacy_dir / "reservations.json").exists()
+    foreign_storage.close()
 
 
 def test_schedule_keys_are_isolated_by_registry(tmp_path: Path) -> None:
-    first = CodexWakeRegistry(tmp_path / "first")
-    second = CodexWakeRegistry(tmp_path / "second")
+    first = CodexWakeRegistry()
+    second = CodexWakeRegistry()
     reservations = []
     for registry, digit in ((first, "1"), (second, "2")):
         reservation = registry.reserve(

@@ -2,9 +2,7 @@
 
 Fix two values in the Work Record's marker block before plan-and-review: **Risk** and **Complexity**.
 
-Risk classification is **delegated to agent-redline**. Redline knows about zones, boundary rules, and surface-touch detection; agent-workflow translates its verdict into our Risk values.
-
-To get redline's pre-edit verdict on the intended scope, invoke the redline skill per the canonical mechanism in [`../../operating-mode.md`](../../operating-mode.md) §"Clean-context delegation" — point a subagent at [`../../agent-redline/SKILL.md`](../../agent-redline/SKILL.md) with the list of paths you intend to change. The subagent returns the verdict (zones, boundary findings, surface-touch flags); you translate it via the table below.
+Use the effective Redline policy or reporter on the complete intended path set, then apply the table. Classify directly when the rules and scope are clear; use a clean-context agent only for material uncertainty. This pre-edit result is provisional: CI checks the final diff.
 
 ## Allowed values
 
@@ -22,11 +20,11 @@ Inputs: the intended scope from Establish-Context + redline's pre-edit classific
 | Redline verdict on intended scope | Risk |
 |---|---|
 | All paths **blue** | `Routine` |
-| Any **gray** path | `Elevated` (default conservative) |
+| Any **gray** path | `Elevated` (provisional unclassified floor, not proof of danger) |
 | Any **red** zone touched | `Elevated` — or `High` when the red zone is a contract, security, persistence, or financial surface (use the repo's `agent-redline-policy.yaml` checkpoint metadata) |
 | Any **boundary violation** | **Stop the workflow** — escalate; no Risk value |
 
-Engineering judgment may **raise** Risk above what redline derived (e.g. "technically blue zone but irreversible at runtime"). It may not **lower** it.
+Judgment may **raise** Risk; it may not lower the effective floor. A proposed policy relaxation does not change this task. For exact-path evidence and approved policy learning, follow Redline operating-mode.
 
 ## Complexity
 

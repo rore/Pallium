@@ -738,6 +738,13 @@ def _cmd_install(args: argparse.Namespace) -> int:
     pallium_cmd = _find_pallium_cmd()
     print(f"  Command: {pallium_cmd}")
 
+    from app.codex_wake_lifecycle import assert_codex_wake_install_ready
+    try:
+        assert_codex_wake_install_ready(AppConfig.from_env())
+    except (OSError, RuntimeError, ValueError) as exc:
+        print(f"  Error: {exc}", file=sys.stderr)
+        return 1
+
     if sys.platform == "win32":
         _install_windows(pallium_cmd, port, home)
     elif sys.platform != "linux":
@@ -1025,6 +1032,20 @@ def _cmd_restart(args: argparse.Namespace) -> int:
     return 1
 
 
+def _cmd_initialize_wakes(args: argparse.Namespace) -> int:
+    home = _pallium_home(args.home)
+    _apply_home_env(home)
+    from app.config import AppConfig
+    from app.codex_wake_lifecycle import initialize_codex_wakes_offline
+    try:
+        initialize_codex_wakes_offline(AppConfig.from_env(), home, foreground_quiescent=args.foreground_quiescent)
+    except (OSError, RuntimeError, ValueError) as exc:
+        print(f"Wake initialization refused: {exc}", file=sys.stderr)
+        return 1
+    print("Codex wake SQLite authority initialized and verified.")
+    return 0
+
+
 def _cmd_run(args: argparse.Namespace) -> int:
     """Internal daemon entry point — what the OS service invokes."""
     home = _pallium_home(args.home if hasattr(args, "home") else None)
@@ -1066,6 +1087,12 @@ def _cmd_run(args: argparse.Namespace) -> int:
         emit_runtime_log("service", "Ingestion paused: configured provider credential is missing")
 
     try:
+        from app.codex_wake_lifecycle import prepare_codex_wake_start
+        try:
+            prepare_codex_wake_start(config, owner_lock=lock)
+        except (OSError, RuntimeError, ValueError) as exc:
+            emit_runtime_log("service", f"Startup refused: {exc}", stderr=True)
+            return 1
         from app.supervisor import run_supervisor
         supervisor_args = [
             "--host", "127.0.0.1",
@@ -1120,6 +1147,11 @@ def service_main(args: list[str]) -> int:
     run_p.add_argument("--port", type=int, default=_DEFAULT_PORT)
     run_p.add_argument("--home", type=str, default=None)
 
+    wake_p = sub.add_parser("initialize-wakes", help="Import and verify wake state while the service is stopped")
+    wake_p.add_argument("--home", type=str, default=None)
+    wake_p.add_argument("--foreground-quiescent", action="store_true",
+                        help="Declare all foreground owners and native wake workers stopped (nonservice deployments only)")
+
     parsed = parser.parse_args(args)
     if not parsed.action:
         parser.print_help()
@@ -1133,5 +1165,6 @@ def service_main(args: list[str]) -> int:
         "stop": _cmd_stop,
         "restart": _cmd_restart,
         "run": _cmd_run,
+        "initialize-wakes": _cmd_initialize_wakes,
     }
     return dispatch[parsed.action](parsed)

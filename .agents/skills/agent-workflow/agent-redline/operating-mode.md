@@ -70,7 +70,7 @@ If the developer has already authorized the change (e.g., the task says "extend 
 If the request is ambiguous, ask before editing.
 
 ### GRAY
-Proceed cautiously. Surface in the PR description that gray-zone code was touched. Suggest those paths be classified explicitly.
+Proceed cautiously. Surface exact gray paths in the PR. If inspected code, tests, or change evidence supports a narrow red/blue classification, show the paths, evidence, proposed rule, and consequences to the human. Batch nonurgent suggestions; do not repeat a rejected proposal without new evidence or block ready work on an optional proposal. Persist only an approved change in a separate reviewed policy change; the current task retains its floor. Raise current-task Risk immediately if new danger is found.
 
 ### BOUNDARY_RISK
 Do not work around the rule.
@@ -133,11 +133,9 @@ Use the repo's PR template. Tick the classification and checkpoint boxes.
 
 Generated source files classified as red, new top-level packages the policy doesn't mention, paths that no longer exist after a refactor:
 
-- Treat affected paths as gray for *this* PR.
-- Surface the inconsistency in the PR description.
-- Suggest a separate PR to update the policy.
-
-Do not silently fix the policy as part of unrelated work.
+- Keep the effective verdict, floor, and checkpoint for *this* PR, including red; a stale-looking rule is not a self-waiver.
+- Surface exact paths, observed evidence, and the consequence of a narrow correction to the human.
+- Change the policy only after human approval through a separate reviewed governance PR. Missing history alone is not a safety finding when inspected code and layout suffice.
 
 ## Do not load during operating mode
 

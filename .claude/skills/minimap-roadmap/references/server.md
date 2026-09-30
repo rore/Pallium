@@ -13,7 +13,7 @@ The server binds to IPv4 loopback (`127.0.0.1`) only. Every API request must com
 | `node <skill>/scripts/start-server.mjs` | 0 = running (started or already up); 1 = port held by non-minimap process | Probe `$MINIMAP_HOME/server.json`, validate `/health`, reuse if alive; otherwise bind. |
 | `node <skill>/scripts/status.mjs` | 0 = running; 1 = stale registry; 3 = not running | Print port, pid, version, startedAt. |
 | `node <skill>/scripts/stop-server.mjs` | 0 = stopped (or was already not running, or stale cleaned); 1 = shutdown failed | `POST /api/shutdown`, wait for the port to free. |
-| `node <skill>/scripts/restart-server.mjs` | 0 = restarted; 1 = stop or start failed | Stop, spawn a fresh detached server, wait for `/health`. |
+| `node <skill>/scripts/restart-server.mjs` | 0 = restarted; 1 = stop, start, or verification failed | Serialize restarts per Minimap home, recover a crashed launcher lock, then stop and spawn. Verify the child-reported port via `/health`; on failure, shut down only that child by PID without deleting another server's registry. |
 
 Exit codes follow `systemctl` conventions for `status` (0/1/3 = running/stale/not-running).
 

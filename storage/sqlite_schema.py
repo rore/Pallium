@@ -537,6 +537,25 @@ class OperationalFactPromotionLogRecord(Base):
     promoted_at = Column(DateTime(timezone=True), nullable=False)
 
 
+class RelayCodexWakeStateRecord(Base):
+    __tablename__ = "relay_codex_wake_state"
+
+    id = Column(Integer, primary_key=True)
+    generation = Column(Integer, nullable=False)
+
+
+class RelayCodexWakeReservationRecord(Base):
+    __tablename__ = "relay_codex_wake_reservations"
+
+    recipient_endpoint_id = Column(String, primary_key=True)
+    delivery_id = Column(String, nullable=False, unique=True)
+    session_ref = Column(String, nullable=False)
+    container_ref = Column(String, nullable=False)
+    generation = Column(Integer, nullable=False)
+    outcome = Column(String, nullable=False)
+    correlated_claim_attempts = Column(Integer, nullable=True)
+
+
 class RelaySessionRecord(Base):
     __tablename__ = "relay_sessions"
 
@@ -603,6 +622,7 @@ class RelayDeliveryRecord(Base):
     trace_version = Column(Integer, nullable=True)
     trace_truncated = Column(Integer, nullable=False, default=0)
     trace_pruned = Column(Integer, nullable=False, default=0)
+    codex_wake_generation = Column(Integer, nullable=True)
 
     __table_args__ = (
         UniqueConstraint(
@@ -666,6 +686,8 @@ class RelayEndpointRepairRecord(Base):
 
 
 _RELAY_TABLE_NAMES = frozenset({
+    RelayCodexWakeReservationRecord.__tablename__,
+    RelayCodexWakeStateRecord.__tablename__,
     RelaySessionRecord.__tablename__,
     RelaySessionWorkRefRecord.__tablename__,
     RelayMessageRecord.__tablename__,
@@ -1079,7 +1101,7 @@ class SQLiteSchemaMixin:
                 ],
             )
             if include_relay:
-                self._ensure_relay_delivery_trace_columns(self._engine)
+                self._ensure_relay_delivery_columns(self._engine)
             self._ensure_thread_processing_lease_nullable_thread_ref()
             self._ensure_thread_processing_lease_columns()
             self._ensure_source_item_columns()
@@ -1120,9 +1142,11 @@ class SQLiteSchemaMixin:
                     RelayAliasRecord.__table__,
                     RelayEndpointGenerationRecord.__table__,
                     RelayEndpointRepairRecord.__table__,
+                    RelayCodexWakeStateRecord.__table__,
+                    RelayCodexWakeReservationRecord.__table__,
                 ],
             )
-            self._ensure_relay_delivery_trace_columns(engine)
+            self._ensure_relay_delivery_columns(engine)
             with engine.begin() as connection:
                 for name, create_sql in self._INDEX_MIGRATIONS.items():
                     if name.startswith("idx_relay_"):
@@ -1130,7 +1154,7 @@ class SQLiteSchemaMixin:
             self._optimize_query_planner_stats(engine)
 
     @staticmethod
-    def _ensure_relay_delivery_trace_columns(engine) -> None:
+    def _ensure_relay_delivery_columns(engine) -> None:
         with engine.begin() as connection:
             columns = {
                 row[1]
@@ -1147,6 +1171,9 @@ class SQLiteSchemaMixin:
                 "trace_pruned": (
                     "ALTER TABLE relay_deliveries ADD COLUMN "
                     "trace_pruned INTEGER NOT NULL DEFAULT 0"
+                ),
+                "codex_wake_generation": (
+                    "ALTER TABLE relay_deliveries ADD COLUMN codex_wake_generation INTEGER"
                 ),
             }.items():
                 if name not in columns:

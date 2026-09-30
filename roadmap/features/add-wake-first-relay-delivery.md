@@ -8,7 +8,48 @@ milestone: pallium-relay
 lane: capability
 ---
 
-## Current execution status (reconciled 2026-09-24)
+## Current execution status (reconciled 2026-09-30)
+
+The wake architecture review in [PR #258](https://github.com/rore/Pallium/pull/258),
+sanitized native failure diagnostics in [PR #259](https://github.com/rore/Pallium/pull/259),
+and SQLite wake authority in [PR #260](https://github.com/rore/Pallium/pull/260)
+are merged and installed at `936f20aedf2a6bb7cd7b136cb5b1cc24a801529f`.
+The required service wrapper drained the old owner before verified database and
+legacy-file backups, then imported and verified all six reservations (four accepted,
+two uncertain), preserving the legacy bytes. Restart, service, queue and embedding
+health checks passed. This replaces reservation-file writes with transactional
+SQLite authority; conservative native retry behavior is unchanged.
+[PR #261](https://github.com/rore/Pallium/pull/261) subsequently shipped duplicate-aware
+hook/MCP envelopes at `a91dac91d54941a91f0a04711e78a79061e2f27d`, with the required
+installed restart and health checks passing. Claim-attempt metadata and stable-ID
+guidance fit existing budgets; previews may shorten, with continuation preserved.
+These fields do not prove prior emission or completed actions.
+[PR #262](https://github.com/rore/Pallium/pull/262) shipped wake-health reporting in
+the status API and existing dashboard Relay panel at
+`2311fe0159553c113d1728b0aabf30c4e6a81e51`. The installed wrapper and service,
+queue and embedding checks passed. Scheduler health and uncertain deliveries are
+reported separately; this does not establish recipient reachability.
+[PR #263](https://github.com/rore/Pallium/pull/263) adds a 24-hour default for new
+messages and replies, explicit null for durable delivery, and dashboard age counts
+at `f940e02b6abf9bf174658e6aa8fffc6cae2bfaf3`. Existing assignments and expiry
+values remain unchanged, including idempotent retries. Physical history retention
+and disposition of old durable backlog remain separate work; no purge is included.
+[PR #264](https://github.com/rore/Pallium/pull/264) safeguards the existing trace
+cleaner at `e9eaefee9a6efd3df91f160a689950ee7fc4e3fc`: an attempt with active,
+reserved, missing or mismatched delivery references is retained. Eligible terminal
+diagnostics keep the existing 30-day/cap policy and 64-row batch. Message payloads
+and stable IDs remain untouched. Earlier discovery incorrectly said no time-based
+trace cleanup existed; the shipped Work Record now records that correction.
+The one-lifetime-rescue retry proposal was deferred because its permanent state
+offers limited recurring recovery. Retry behavior is unchanged.
+[PR #266](https://github.com/rore/Pallium/pull/266) adds fixed diagnostic stages
+for individual inventory-response validation checks. Response acceptance,
+authority, custody and public failure behavior remain unchanged. Both Linux CI
+suites and Windows smoke passed; the installed service wrapper and health,
+queue and embedding checks passed. The next bounded transport trial will use
+these diagnostics to identify the rejected response predicate.
+Unloaded-session delivery and the source-child lifetime witness
+remain unproven; this rollout makes neither claim.
 
 The Windows/Linux Claude wake foundation, loaded-task Codex wake, Codex first-run
 setup, MCP recovery integration, and live no-manual-turn reply/remediation journey
@@ -17,16 +58,184 @@ retain Pallium's pending next-turn delivery instead. PR #209 added exact-deliver
 hook-start, payload-emission, ACK, and bounded-failure evidence. An installed
 busy-to-idle witness then delivered and ACKed once after one native submission;
 that proves the normal safe-turn path, not recovery from uncertain native failure.
-RW-031 is closed as Pallium work: the supported public CLI and app-server surfaces
-reviewed in the installed and current checked versions provide neither owner-routed
-cold activation for an unloaded Desktop task nor caller-idempotent admission/readback
-for an uncertain public-CLI submission. Capturing and replaying an execution descriptor
-would start another runtime, not wake the Desktop-owned task. This external limit
-does not block the shipped loaded-task path. Session-to-work associations are
-complete. The umbrella remains queued only for the other runtime and platform
-qualification tracked below.
+RW-031 diagnostics are shipped. The reviewed supported public CLI and app-server
+surfaces still lack owner-routed cold activation and caller-idempotent admission/
+readback for uncertain public-CLI submissions. Replaying an execution descriptor
+would start another runtime, not wake the Desktop-owned task. A private Desktop
+owner bridge is now experimentally feasible: one combined native-plus-owner cold
+trial delivered through the trusted hook once, without proving loading causality
+or busy-safe admission. Its integration is separate from the supported public-path
+limit and does not change shipped loaded-task behavior. RW-034 separately reduces avoidable
+hook response timeouts for exact loaded-task wakes; it does not change native
+uncertainty or make cold activation automatic. Session-to-work associations are
+complete. RW-035 has a shipped forward exact-claim fence fix; the
+umbrella remains queued for other runtime and platform qualification below.
+
+The optional Codex MCP Desktop bridge **inert lifecycle foundation** shipped in
+[PR #252](https://github.com/rore/Pallium/pull/252) and was installed at
+`bce09405353f7c9d968d12f3c57c260db993f0a9` on 2026-09-27. Installed service,
+queue and embedding health passed. It remains off by default and makes zero
+Desktop/service bridge calls. This milestone is not automatic unloaded delivery.
+
+The Windows **shadow-only enrollment and observation** slice shipped in
+[PR #255](https://github.com/rore/Pallium/pull/255), merged at
+`2e3f9316f20fdbb6d6c81f18f967f679ef6321c7`. It adds a protected local pipe,
+one explicitly approved pair, finite process-local enrollment and read-only Relay
+observations. Real stdio-to-native-pipe-to-SQLite coverage and Linux/Windows CI
+passed; the final local suite passed 5,461 tests. It remains off by default.
+A finite shadow-only policy was provisioned for the supervised trial below and
+then revoked and removed; no wake action was enabled. Actual native
+anchors remain held because their trace correlation is insufficient. Desktop
+child lifetime and zero-child bootstrap remain unqualified. Trusted-child
+assertions use the documented trusted-local boundary, not Desktop attestation
+or isolation from compromised same-user code.
+
+The first supervised 2026-09-28 trial reached one genuine user turn in the existing
+disposable Desktop chat. Neither dedicated shadow tool was exposed, so the chat
+stopped without enrollment, status calls or retries. This result alone does not
+distinguish project trust, cached configuration or an MCP launch failure. Existing
+trial logs did not establish the cause. Subsequent source inspection and the
+fresh-chat trial below established a usable configuration-loading path; do not
+repeat the existing-chat experiment or assume a per-server restart control.
+
+Cleanup completed through the shipped revision-checked provisioning command and
+required service wrapper: the pair was revoked, the service drained, and exactly
+five owned trial files and two empty directories were removed after identity,
+ownership and hash checks. Normal service, embedding and queue health passed.
+Global configuration was preserved; model, effort, approval and effective access
+were unchanged. Raw permission-profile labels and duplicate entries differed, so
+the full context was not byte-identical. No Relay message was sent; target pending,
+claimed and matching reservation counts remained zero. Child startup/lifetime,
+natural unload and zero-child bootstrap remain unqualified. Next-natural-turn
+fallback does not satisfy automatic unloaded wake. No live configuration remains
+armed; the recurring manager follow-up was paused at that stage.
+
+The later fresh-chat trial in the separate approved test project exposed both
+shadow tools before policy provisioning. App-created/delegated turns did not
+register a Relay endpoint: matching Codex source runs UserPromptSubmit for user
+input but not function-call-output or inter-agent input. One ordinary user message
+then established a provider-confirmed endpoint, with pending/claimed/reservation
+counts zero. The user turn also supplied a broader writable Documents/Codex root;
+the current host-provided context was accepted and preserved, not described as
+unchanged from the initial delegated turn. Normal project trust was preserved.
+
+A finite policy for that exact fresh pair was provisioned and service health
+passed, but automatic approval review rejected enrollment before execution because
+the target retained the user's earlier no-tools instruction. Status was not called
+and no retry occurred. That attempt did not test enrollment. The policy was revoked through
+revision-checked provisioning, service storage removed, and normal service,
+embedding and queue health verified. A failed stop caused by an already-absent PID
+was recovered with one evidence-based invocation of the required wrapper.
+
+At that checkpoint, project cleanup was incomplete: Windows accepted deletion of the exact owned
+config and empty directory, but the directory remained visible and reopening it
+returned access denied. A retained handle is possible, not proven. Original file
+identities, owner and config contents were verified; a narrowly reviewed exception
+allowed only the recorded additive ACL changes while preserving parent permissions.
+No ACL reset, forced handle close, shared process kill or Desktop restart occurred.
+Native status queries subsequently proved STATUS_DELETE_PENDING for both paths.
+Normally archiving only the idle disposable released them; native absence checks
+then passed, without a Desktop restart or permission change. The user explicitly
+lifted the earlier no-tools restriction in the restored chat.
+
+The next finite window still did not exercise enrollment: the restored chat had
+no callable shadow entry, despite the earlier fresh-load catalog success. That
+evidence was incorrectly reused across archive/restore. Ordinary MCP servers were
+ready in the bounded log evidence; no shadow-server startup was recorded. This
+does not establish a native enrollment failure. Cleanup archived the idle test
+chat before project-file deletion, revoked the exact policy, removed both temporary
+directories and restored normal service with all health checks passing. Global
+trust, settings and empty delivery/reservation state were preserved. Shadow
+authority is off and namespace cleanup is complete.
+
+The replacement fresh chat remained loaded through an explicitly authorized
+enrollment/status attempt. Both actual MCP calls succeeded exactly once: enrollment
+returned `enrolled` / `ok` with a 300-second grant; status returned `inactive` /
+`observed` with 294 seconds remaining. This proves eligible Desktop-launched MCP
+startup, inherited capability presence, genuine request metadata and enrollment
+through Pallium's protected native pipe. Neither shadow tool connects to Desktop;
+the result does not prove use of Desktop's app-tools connection or automatic wake.
+The idle test chat was normally archived before cleanup. Revision-checked revocation,
+owned-file removal and the required service restart completed; service, embedding
+and queue health passed. Temporary authority/configuration are absent, global
+configuration and effective caller settings were preserved, and target pending,
+claimed and matching reservation counts remain zero. Child lifetime/unload and
+zero-child bootstrap remain unqualified. The next architecture decision is executor
+availability; do not repeat enrollment or restored-chat configuration investigations.
+The design document's header still describes shadow implementation as under review;
+PR #255 and this live enrollment result supersede that stale delivery status.
+
+A user-operated Desktop restart on 2026-09-28 was captured by an independent
+PowerShell process. The capture shows the old Desktop/app-server/MCP processes
+disappearing, followed by a new Desktop at 14:33:39 UTC and new MCP children at
+14:33:50 UTC. Surviving process identities resolve to the installed Pallium MCP.
+However, Desktop logs show automatic chat restoration beginning at 14:33:49 UTC,
+before the first captured MCP child; Pallium became ready for a restored chat at
+14:33:58 UTC. This qualifies ordinary MCP startup during Desktop chat restoration
+without a new user turn, not executor availability with zero loaded chats. A
+null-thread MCP inventory request also overlapped this startup, but the capture
+does not attribute individual children to that request or establish its lifetime.
+No bridge opt-in, grant, wake action or settings change was made for this witness.
+Do not repeat the same restart while automatic restoration confounds the question.
+
+Exact-version source resolves the separate discovery-lifetime question. The
+[status handler](https://github.com/openai/codex/blob/0d9c7cbfa6cf1489f55a8a9542b75ddd2c061807/codex-rs/app-server/src/request_processors/mcp_processor.rs#L268)
+uses a threadless snapshot for a null-thread request. Its
+[snapshot implementation](https://github.com/openai/codex/blob/0d9c7cbfa6cf1489f55a8a9542b75ddd2c061807/codex-rs/codex-mcp/src/mcp/mod.rs#L485)
+creates a local eager connection set, cancels startup at completion and returns
+only snapshot data; connection destruction cancels its client token. This path
+cannot supply a persistent executor. It does not prove which captured PID served
+which request, or rule out every other host mechanism. The earlier supported-only,
+child-owned custody constraint is superseded by the reviewed continuation below;
+a detached helper or competing Codex runtime remains outside scope.
+
+The task owner accepts useful partial coverage after normal use of one chat.
+Before-first-chat availability after Desktop restart is not a prerequisite.
+The accepted next slice is a default-off, inventory-only connection owned by the
+existing Pallium service after explicit handoff from a legitimate MCP child.
+Independent security review required distinct finite inventory authority, separate
+from shadow enrollment and endpoint possession; the corrected plan is accepted.
+Implementation shipped in [PR #256](https://github.com/rore/Pallium/pull/256); see
+the [Work Record](../../.agent-workflow/tasks/codex-service-custody.md). The
+default-off, inventory-only service-custody foundation was installed on
+2026-09-28. It permits only the reviewed finite handoff for fixed inventory reads.
+The child-exit custody witness is pending; this installed transport foundation does
+not establish unloaded-recipient delivery or wake authority.
+
+One exact child/service/Desktop process tuple may authorize one RAM connection.
+Only fixed native tools/list is permitted in this slice. A bounded disposable
+trial must observe the originating child actually exit, then successfully list
+on the retained service connection. Archive alone is not exit evidence. A passing
+transport test leads directly to a separately reviewed unloaded-recipient delivery
+witness; it does not establish wake authority or delivery by itself. Service loss
+requires normal-use bootstrap; Desktop loss invalidates the old connection.
+Persistent credentials, automatic zero-child startup and an exhaustive restart
+matrix are deferred. Existing uncertain-action fences and deferred busy-turn
+semantics remain unchanged. No live handoff or new wake is armed; the manager's
+recurring follow-up is active.
 
 Remaining work:
+- Qualify actual Desktop child startup/lifetime for the
+  [optional Codex MCP Desktop bridge](../../docs/designs/codex-mcp-desktop-bridge.md);
+  live enrollment passed as recorded above. One private offline exact-owner launcher-exit check passed:
+  the child survived launcher exit, exited within a finite bound, and fake-baseline
+  restoration cleaned only the exact owned files and root. This proves only the
+  tested offline launcher-exit and cleanup path. Read-only inspection of installed process
+  topology confirms ordinary Desktop → Codex → venv launcher → base interpreter MCP
+  startup; it does not prove Desktop steering/cancellation, live inert-child lifetime,
+  usable Desktop connection, or zero-child bootstrap. Earlier temporary opt-in attempts
+  remain inconclusive: Desktop rejected programmatic initialization, and manual
+  preparation initially ended before an observed user turn. The subsequent
+  first supervised user turn found neither dedicated tool; the later fresh-chat
+  catalog and registration checks passed as recorded above. Namespace cleanup is
+  complete, including the successful replacement trial. Existing `env`/`env_vars`
+  and server eligibility already express inert
+  opt-in, so no new setup feature is needed. Live configuration remains held.
+  Qualify service-owned connection lifetime after normal-chat bootstrap, then
+  unloaded-recipient delivery. Automatic startup before any chat is deferred;
+  host-safe admission including cold-to-busy races remains a separate requirement.
+  New grants or generations must not bypass uncertain action fences.
+  This is work in progress, not shipped automatic unloaded delivery.
 - Qualify still-unproven interrupted/restart combinations with a bounded matrix
   of runtime, platform, interruption, existing evidence, and missing witness.
   Reuse passed recovery tests and live witnesses; do not repeat them without cause.
@@ -48,8 +257,9 @@ new implementation tasks.
 | `RW-028` Codex MCP exposure | host recovery follow-up | Same-host/project tasks expose different tool catalogs, including zero Pallium tools after successful hook delivery. Treat this as a Codex host registry/rehydration blocker; do not infer MCP health from hook/service health or add a speculative Pallium workaround. |
 | `RW-029` stranded split identity | guarded Relay operations | Use the offline repair manifest for reviewed per-delivery dispositions. Version 2 can explicitly suppress a finite expired claim; it still refuses adoption, active or ambiguous claims, and automatic cleanup. |
 | `RW-030` Claude install drift | installed integration lifecycle | Repoint the user-scoped Claude MCP and hooks from the development checkout to the stable installed checkout in the coordinated post-merge install window. Existing hosts retain old subprocesses until their normal restart. |
-| `RW-031` Codex native activation reliability | closed as Pallium work; upstream Codex dependency | Actionable trace guidance is shipped. Keep unloaded or uncertain deliveries pending for an ordinary supported recipient turn; do not resubmit or launch a second runtime. Revisit only if Codex exposes owner-routed cold activation plus idempotent exact-submission admission/readback. |
+| `RW-031` Codex native activation reliability | automatic recovery blocked by upstream Codex contract | Actionable trace guidance and bounded failure/timing diagnostics explain retained uncertain submissions and help classify the next occurrence; they do not repair one. For uncertain Codex submissions, use a normal user prompt directly in the existing task: observed app-message delegation did not invoke UserPromptSubmit. Keep the delivery pending; do not resubmit or launch a second runtime. This is manual recovery, not automatic recovery. Revisit automation only if Codex exposes owner-routed cold activation plus idempotent exact-submission admission/readback. |
 | `RW-032` compaction-safe Relay scope | recipient context continuity | A loaded Codex wake delivered and ACKed once with trusted scope in the hook-injected context; same-turn compaction later omitted that scope and blocked a scoped follow-up. Investigate runtime-owned identity/tool context or supported trusted reinjection. Do not recover authority from cwd, historical transcripts, or forwarded metadata. This is not a native wake failure or duplicate delivery. |
+| `RW-035` loaded Codex claim correlation | `.agent-workflow/tasks/relay-late-claim-fence.md` | Forward fix shipped and installed: a matching exact claim stores same-generation recovery evidence atomically, and an in-flight old callback cannot correlate a replacement fence. Focused callback-loss through recovered delivery, race, migration/restart, and ACK tests pass. Historical accepted/null-correlation reservations remain fenced; the old incident cause is unproven and no live uncertain-native recovery is claimed. |
 
 The dashboard diagnostic is shipped as read-only evidence, not repair. Do not bulk-repair stranded deliveries. The real installed witness gate remains required for send -> next-turn hook claim/injection/ACK -> reply and work-reference attach/detach qualification.
 ## Summary
@@ -320,6 +530,9 @@ where the runtime exists locally, an installed witness close it.
 | `RW-031` | A Codex native queue call can persist a fresh queue row before its response is lost, while the public CLI returns nonzero and creates a new client message ID on every retry. Retaining an uncertain reservation prevents duplicate native turns but can leave a pending delivery without actionable recovery guidance. | **Pallium work closed; the remaining automatic-recovery gap is upstream.** PR #209 records exact-delivery hook start, payload emission, ACK, and bounded failure evidence. An installed busy-to-idle witness proved one accepted submission, one later safe turn, one injection, and one ACK; it did not exercise uncertain failure. Trace explanations distinguish queued, delivered, expired-before-claim, needs-intervention, mixed, and incomplete evidence. A later delivery in the same never-moved exact scope (generation 0) blocked by a retained uncertain fence after service restart now reuses only complete durable prepared/completed evidence to expose the same needs-intervention guidance; it never releases the fence or submits another native turn, and moved or ambiguous scope evidence fails closed. Startup and periodic recovery enumerate already-pending coalesced deliveries oldest-first so later items receive that association without weakening the single native-submission fence; default candidate reads and exact-ID rechecks remain unchanged. Review of the public CLI and app-server sources for Codex `0.155.0-alpha.9.2`, `0.156.1`, and `0.157.0-alpha.11` found no composition on those surfaces that wakes an unloaded task in its Desktop-owned app-server and atomically admits one exact queued submission. `codex exec resume` starts a second runtime, `thread/queue/start` is loaded-only, and the public queue path has no caller idempotency key. Therefore Pallium deliberately keeps the delivery pending for an ordinary supported recipient turn. This is not a Pallium release gate; revisit only when Codex provides owner-routed cold activation with server-side idempotency and authoritative admission results. |
 
 | `RW-033` | A temporary service with an isolated Relay database but no Codex wake-dir override opened the installed shared wake registry; startup reconciliation logged seven missing reservations as stale and released their fences. The precise delivery impact was not established. | **Codex fix in this slice.** Registry selection follows the actual Relay database, startup recovery receives the app-owned registry, and process-global schedule keys include registry identity; deterministic two-instance coverage checks the foreign reservation file is unchanged. The distinct Claude hook-intent cross-instance risk from [issue #234](https://github.com/rore/Pallium/issues/234) is addressed by Relay-database-scoped Claude state, setup-pinned hook binding, pre-write marker checks, and two-instance hook/HTTP/outage tests. |
+
+| `RW-034` | An exact Codex wake can commit its `/relay/turn` claim but lose the response at the hook's 0.75-second HTTP limit. The existing correlated lease-expiry recovery then waits at least 60 seconds plus a recovery sweep before another safe wake. | **Bounded prevention in this slice; native uncertainty remains separate.** Only the final HTTP request carrying the validated exact wake delivery ID may wait up to two seconds, with one second of the hook safe-work budget reserved for emission and ACK. Bootstrap, scope replay, ordinary prompts, and malformed wake text retain the 0.75-second cap; responses beyond two seconds still fail closed into existing exact-correlated recovery. Synthetic loopback HTTP plus actual-hook coverage verifies claim, emission, ACK, and the delayed-response boundary. This establishes a general failure class, not the uncorrelated historical incident's precise cause or universal latency immunity. |
+| `RW-035` | One accepted loaded Codex wake started its recipient turn, but the hook reported Relay unavailable; a later exact-delivery claim committed with attempts 1 and no correlation in the retained wake reservation. The old server did not retain the request body or callback result. | **Forward fix in this slice; historical fence remains conservative.** An exact /relay/turn request captures the current reservation before claim. The claim transaction stores its generation only when the selected delivery and endpoint match; a post-claim callback also checks that same generation. If the callback is lost, an expired lease can rearm from the durable same-generation claim, while a live lease, ordinary or mismatched claim, legacy NULL, and uncertain native outcome without an exact claim remain fenced. Caller-surface callback-loss through recovered HTTP payload and ACK, generation-race, migration/restart, and ACK regressions pass. This does not establish the historical failure cause, clear its fence, or prove installed recovery from a live uncertain native submission. |
 
 The Windows Claude regression floor remains: idle text and zero-tool turns, empty
 Stop rearm, busy delivery, ordered bursts, Unicode, recursive-Stop loop prevention,

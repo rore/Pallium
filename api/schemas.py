@@ -5,7 +5,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from core.relay import RELAY_MESSAGE_MAX_CHARS
+from core.relay import RELAY_DEFAULT_EXPIRY_SECONDS, RELAY_MESSAGE_MAX_CHARS
 from core.visibility import Visibility
 
 
@@ -904,7 +904,7 @@ class RelaySendRequest(BaseModel):
     recipient: str = Field(min_length=1, max_length=320)
     payload: str = Field(min_length=1, max_length=RELAY_MESSAGE_MAX_CHARS)
     container_ref: str = Field(min_length=1, max_length=512)
-    expires_in_seconds: int | None = Field(default=None, ge=60, le=604800)
+    expires_in_seconds: int | None = Field(default=RELAY_DEFAULT_EXPIRY_SECONDS, ge=60, le=604800)
     in_reply_to: str | None = Field(default=None, min_length=1, max_length=128)
     message_id: str | None = Field(default=None, min_length=1, max_length=128)
 
@@ -914,7 +914,7 @@ class RelayReplyRequest(BaseModel):
     receipt: str | None = Field(default=None, max_length=64)
     payload: str = Field(min_length=1, max_length=RELAY_MESSAGE_MAX_CHARS)
     container_ref: str = Field(min_length=1, max_length=512)
-    expires_in_seconds: int | None = Field(default=None, ge=60, le=604800)
+    expires_in_seconds: int | None = Field(default=RELAY_DEFAULT_EXPIRY_SECONDS, ge=60, le=604800)
 
 
 class RelayAckRequest(BaseModel):
@@ -1017,15 +1017,21 @@ class RelayWorkRefCountsRequest(BaseModel):
 
 class RelayWorkRefCountResponse(RelayWorkRefCountReference):
     participant_count: int = Field(ge=0)
+    recent_participant_count: int = Field(ge=0)
+    dormant_participant_count: int = Field(ge=0)
 
 
 class RelayWorkRefCountsResponse(BaseModel):
     contract: Literal["relay-work-ref-counts/v1"]
+    as_of: datetime
+    recent_seconds: int = Field(gt=0)
     counts: list[RelayWorkRefCountResponse]
 
 
 class RelayWorkRefParticipantsResponse(BaseModel):
     contract: Literal["relay-session-work-associations/v1"]
+    as_of: datetime
+    recent_seconds: int = Field(gt=0)
     work_ref: str
     scope_ref: str | None = None
     local_ref: str | None = None

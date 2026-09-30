@@ -9,12 +9,16 @@
 //   0 — restart succeeded; new server is running and /health-checks ok.
 //   1 — failed to stop, or new server did not come up within the timeout.
 import net from "node:net";
+import fs from "node:fs/promises";
+import { readFileSync, unlinkSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { readServerRegistry, deleteServerRegistry, readPalliumPreference, writePalliumPreference, clearPalliumPreference } from "../runtime/src/server-registry.js";
 import { parsePalliumConfig, palliumConfigId } from "../runtime/src/pallium.js";
-import { probePort, probeRunningServer } from "./health-check.mjs";
+import { resolveMinimapHome } from "../runtime/src/sessions.js";
+import { probePort } from "./health-check.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -23,6 +27,49 @@ const requestedPort = Number(process.env.PORT || 4312);
 const STOP_WAIT_TIMEOUT_MS = 5000;
 const START_WAIT_TIMEOUT_MS = 10000;
 const POLL_INTERVAL_MS = 100;
+
+const restartLockPath = path.join(resolveMinimapHome(), "restart.lock");
+const restartLockToken = randomUUID();
+await fs.mkdir(path.dirname(restartLockPath), { recursive: true });
+const lockDeadline = Date.now() + 30_000;
+while (true) {
+  try {
+    await fs.writeFile(restartLockPath, JSON.stringify({ pid: process.pid, token: restartLockToken }), { flag: "wx" });
+    break;
+  } catch (error) {
+    if (error?.code !== "EEXIST") throw error;
+    let raw = null;
+    let owner = null;
+    try {
+      raw = await fs.readFile(restartLockPath, "utf8");
+      owner = JSON.parse(raw);
+    } catch {}
+    let stale = false;
+    if (Number.isSafeInteger(owner?.pid) && owner.pid > 0) {
+      // Signal 0 checks the launcher PID without stopping it or the server.
+      try { process.kill(owner.pid, 0); } catch (error) { stale = error?.code === "ESRCH"; }
+    }
+    const stat = await fs.stat(restartLockPath).catch(() => null);
+    if (stat && Date.now() - stat.mtimeMs > (owner ? 120_000 : 5_000)) stale = true;
+    if (stale && raw !== null) {
+      const current = await fs.readFile(restartLockPath, "utf8").catch(() => null);
+      if (current === raw) await fs.unlink(restartLockPath).catch((error) => {
+        if (error?.code !== "ENOENT") throw error;
+      });
+      continue;
+    }
+    if (Date.now() >= lockDeadline) {
+      process.stderr.write("Another Minimap restart is still running.\n");
+      process.exit(1);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+}
+process.once("exit", () => {
+  try {
+    if (JSON.parse(readFileSync(restartLockPath, "utf8")).token === restartLockToken) unlinkSync(restartLockPath);
+  } catch {}
+});
 
 const endpointExplicit = Object.hasOwn(process.env, "MINIMAP_PALLIUM_ENDPOINT");
 const dashboardExplicit = Object.hasOwn(process.env, "MINIMAP_PALLIUM_DASHBOARD_ENDPOINT");
@@ -102,11 +149,12 @@ function canBindPort(port) {
 // a defensive sweep — the registry only tracks ONE server, but earlier
 // sessions can leave others alive on adjacent ports if a prior restart
 // fell forward into TIME_WAIT.
-async function shutdownIfMinimap(port) {
+async function shutdownIfMinimap(port, expectedPid = null) {
   const found = await probePort(port);
   if (!found) return false;
   try {
-    const resp = await fetch(`http://127.0.0.1:${port}/api/shutdown`, { method: "POST" });
+    const headers = expectedPid === null ? undefined : { "X-Minimap-Instance-Pid": String(expectedPid) };
+    const resp = await fetch(`http://127.0.0.1:${port}/api/shutdown`, { method: "POST", headers });
     return resp.ok;
   } catch {
     return false;
@@ -188,39 +236,68 @@ const child = spawn(process.execPath, [bundledServer], {
   cwd: process.cwd(),
   env: childEnv,
   detached: true,
-  stdio: "ignore",
+  stdio: ["ignore", "ignore", "ignore", "ipc"],
 });
 child.unref();
 
-// 3. Wait for /health to come up. We do NOT require the port to equal
-//    requestedPort because the bundled server may have fallen forward by
-//    one or two ports if the kernel was still holding 4312. The registry
-//    that probeRunningServer reads tells us where it actually landed.
-const startDeadline = Date.now() + START_WAIT_TIMEOUT_MS;
-let alive = null;
-while (Date.now() < startDeadline) {
-  await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
-  alive = await probeRunningServer();
-  if (alive) break;
+// The registry is shared; another restart may replace it before our first
+// probe. The child reports its own bound port over IPC instead.
+const ready = await new Promise((resolve) => {
+  let settled = false;
+  const finish = (message) => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timer);
+    resolve(message);
+  };
+  const timer = setTimeout(() => finish(null), START_WAIT_TIMEOUT_MS);
+  child.once("message", finish);
+  child.once("exit", () => finish(null));
+  child.once("error", () => finish(null));
+});
+
+if (ready?.type !== "minimap-ready" || ready.pid !== child.pid || !Number.isInteger(ready.port)) {
+  if (child.connected) child.disconnect();
+  process.stderr.write("New server did not report its bound port within " + START_WAIT_TIMEOUT_MS + "ms.\n");
+  process.exit(1);
 }
 
-if (!alive) {
-  process.stderr.write(`New server did not come up within ${START_WAIT_TIMEOUT_MS}ms.\n`);
-  process.exit(1);
-}
-if (alive.participantConfigId !== expectedConfigId) {
-  process.stderr.write("Restarted server did not report the requested Participants configuration.\n");
-  process.exit(1);
-}
-if (endpointExplicit || dashboardExplicit) {
-  if (palliumConfig.endpoint) {
-    await writePalliumPreference({
-      palliumEndpoint: palliumConfig.endpoint,
-      palliumDashboardEndpoint: palliumConfig.dashboardEndpoint,
+const alive = await probePort(ready.port);
+const registry = await readServerRegistry();
+if (!alive || alive.participantConfigId !== expectedConfigId
+    || registry?.pid !== child.pid || registry.port !== ready.port) {
+  if (!alive) {
+    process.stderr.write("Restarted child did not respond to /health.\n");
+  } else if (alive.participantConfigId !== expectedConfigId) {
+    process.stderr.write("Restarted server did not report the requested Participants configuration.\n");
+  } else {
+    process.stderr.write("Another server replaced the restarted child's registry entry.\n");
+  }
+  await shutdownIfMinimap(ready.port, child.pid);
+  if (child.connected) child.disconnect();
+  process.exitCode = 1;
+} else {
+  if (endpointExplicit || dashboardExplicit) {
+    if (palliumConfig.endpoint) {
+      await writePalliumPreference({
+        palliumEndpoint: palliumConfig.endpoint,
+        palliumDashboardEndpoint: palliumConfig.dashboardEndpoint,
+      });
+    } else await clearPalliumPreference();
+  }
+
+  try {
+    await new Promise((resolve, reject) => {
+      child.send({ type: "minimap-ready-ack" }, (error) => error ? reject(error) : resolve());
     });
-  } else await clearPalliumPreference();
-}
+  } catch (error) {
+    await shutdownIfMinimap(ready.port, child.pid);
+    if (child.connected) child.disconnect();
+    process.stderr.write("Restart acknowledgement failed: " + error.message + "\n");
+    process.exit(1);
+  }
+  if (child.connected) child.disconnect();
 
-const portNote = alive.port === requestedPort ? "" : ` (requested ${requestedPort})`;
-process.stdout.write(`Minimap restarted on http://localhost:${alive.port}${portNote} (pid ${alive.pid ?? "?"}).\n`);
-process.exit(0);
+  const portNote = ready.port === requestedPort ? "" : " (requested " + requestedPort + ")";
+  process.stdout.write("Minimap restarted on http://localhost:" + ready.port + portNote + " (pid " + child.pid + ").\n");
+}

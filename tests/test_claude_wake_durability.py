@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import subprocess
+import sys
 import threading
 from pathlib import Path
 from types import SimpleNamespace
@@ -701,6 +704,316 @@ def test_session_end_outage_preserves_newer_registration_intent(tmp_path: Path, 
     restarted.recover_intents()
     assert restarted.recovery_candidates() == []
     assert json.loads(closed_path.read_text(encoding="utf-8"))["intent_id"] == "newer"
+
+
+def test_new_publisher_waits_for_registry_compare_delete(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    state_dir = tmp_path / "wake"
+    registry = ClaudeWakeRegistry(state_dir=state_dir)
+    old_intent = {**PAYLOAD, "intent_id": "older"}
+    newer = {**PAYLOAD, "token": "new-token", "intent_id": "newer", "idle": False}
+    _write_intent(state_dir, old_intent, "older")
+    (state_dir / "relay-owner.json").write_text(
+        json.dumps({"relay_id": "0" * 64}), encoding="utf-8"
+    )
+    path = _intent_path(state_dir, PAYLOAD["session_ref"])
+    deleting = threading.Event()
+    finish_delete = threading.Event()
+    result: list[bool] = []
+    original_unlink = Path.unlink
+
+    def pause_after_compare(candidate: Path, *args, **kwargs):
+        if candidate == path and threading.current_thread().name == "register-old":
+            deleting.set()
+            assert finish_delete.wait(timeout=1)
+        return original_unlink(candidate, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", pause_after_compare)
+    worker = threading.Thread(
+        target=lambda: result.append(registry.register(**old_intent)),
+        name="register-old",
+    )
+    worker.start()
+    process = None
+    try:
+        assert deleting.wait(timeout=1)
+        hook_dir = Path(__file__).parents[1] / "integrations" / "claude-code" / "hooks"
+        script = """
+import json, os, sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+import common
+common.CLAUDE_WAKE_DIR = Path(sys.argv[2])
+common.CLAUDE_WAKE_INTENTS_DIR = Path(sys.argv[3])
+common.PALLIUM_PORT = 65534
+common._WAKE_BINDING = {"port": 65534, "relay_id": "0" * 64, "wake_dir": str(common.CLAUDE_WAKE_DIR)}
+if os.name == "nt":
+    import msvcrt
+    native_lock = msvcrt.locking
+    reported = [False]
+    def observe_lock(fd, mode, count):
+        try:
+            return native_lock(fd, mode, count)
+        except OSError:
+            if not reported[0]:
+                reported[0] = True
+                print("contended", flush=True)
+            raise
+    msvcrt.locking = observe_lock
+else:
+    import fcntl
+    native_lock = fcntl.flock
+    reported = [False]
+    def observe_lock(fd, operation):
+        try:
+            return native_lock(fd, operation)
+        except OSError:
+            if operation & fcntl.LOCK_NB and not reported[0]:
+                reported[0] = True
+                print("contended", flush=True)
+            raise
+    fcntl.flock = observe_lock
+print("publishing", flush=True)
+print(common._write_wake_intent(json.loads(sys.argv[4])), flush=True)
+"""
+        process = subprocess.Popen(
+            [sys.executable, "-c", script, str(hook_dir), str(state_dir),
+             str(state_dir / "intents"), json.dumps(newer)],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True,
+            env={**os.environ, "HOME": str(tmp_path), "USERPROFILE": str(tmp_path)},
+        )
+        assert process.stdout is not None
+        assert process.stdout.readline() == "publishing\n"
+        assert process.stdout.readline() == "contended\n"
+        finish_delete.set()
+        assert process.stdout.readline() == "True\n"
+        _output, errors = process.communicate(timeout=1)
+        worker.join(timeout=1)
+        assert not worker.is_alive()
+        assert process.returncode == 0, errors
+        assert result == [True]
+
+        assert json.loads(path.read_text(encoding="utf-8"))["intent_id"] == "newer"
+        restarted = ClaudeWakeRegistry(state_dir=state_dir)
+        restarted.recover_intents()
+        recovered = restarted._registrations[(PAYLOAD["runtime"], PAYLOAD["session_ref"], PAYLOAD["container_ref"])]
+        assert recovered.token == "new-token" and recovered.state == "busy"
+    finally:
+        finish_delete.set()
+        worker.join(timeout=1)
+        if process is not None and process.poll() is None:
+            process.kill()
+            process.wait(timeout=1)
+
+
+@pytest.mark.parametrize("portal_start_delay", [0.0, 0.6], ids=["normal-portal", "delayed-portal"])
+def test_crashed_intent_lock_owner_allows_hook_publication_and_http_recovery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    portal_start_delay: float,
+) -> None:
+    import contextlib
+    import time
+    from types import FunctionType
+
+    import anyio.from_thread
+    import fastapi.routing
+    import core.claude_wake as wake
+    from fastapi import FastAPI
+    from tests.test_claude_code_integration import _load_claude_hook
+    from tests.test_claude_wake_registration import _client
+
+    timing_origin = None
+    timing_samples = []
+
+    @contextlib.contextmanager
+    def measure(label):
+        origin = timing_origin
+        if origin is None:
+            yield
+            return
+        try:
+            wall_start, cpu_start = time.monotonic(), time.thread_time()
+        except Exception:
+            yield
+            return
+        try:
+            yield
+        finally:
+            try:
+                wall_end, cpu_end = time.monotonic(), time.thread_time()
+                if len(timing_samples) < 32:
+                    timing_samples.append({
+                        "phase": label,
+                        "start_ms": round((wall_start - origin) * 1000, 3),
+                        "end_ms": round((wall_end - origin) * 1000, 3),
+                        "wall_ms": round((wall_end - wall_start) * 1000, 3),
+                        "cpu_ms": round((cpu_end - cpu_start) * 1000, 3),
+                    })
+            except Exception:
+                pass  # Diagnostics must not replace an operation's result or exception.
+
+    def timed_sync(label, original):
+        def wrapped(*args, **kwargs):
+            with measure(label):
+                return original(*args, **kwargs)
+        return wrapped
+
+    original_asgi = FastAPI.__call__
+
+    async def timed_asgi(app, scope, receive, send):
+        if scope["type"] != "http":
+            return await original_asgi(app, scope, receive, send)
+
+        async def timed_send(message):
+            if message["type"] == "http.response.body" and not message.get("more_body", False):
+                with measure("response_send"):
+                    return await send(message)
+            return await send(message)
+
+        with measure("asgi"):
+            return await original_asgi(app, scope, receive, timed_send)
+
+    monkeypatch.setattr(FastAPI, "__call__", timed_asgi)
+    monkeypatch.setattr(wake, "_acquire_intent_lock", timed_sync("intent_lock", wake._acquire_intent_lock))
+    included_router = vars(fastapi.routing).get("_IncludedRouter")
+    router_setup = vars(included_router).get("effective_candidates") if isinstance(included_router, type) else None
+    router_setup_probe = isinstance(router_setup, FunctionType)
+    if router_setup_probe:
+        monkeypatch.setattr(included_router, "effective_candidates", timed_sync("router_setup", router_setup))
+
+    portal_starts = 0
+    original_start_portal = anyio.from_thread.start_blocking_portal
+
+    @contextlib.contextmanager
+    def start_portal_with_delay(**kwargs):
+        nonlocal portal_starts
+        portal_starts += 1
+        if portal_start_delay:
+            time.sleep(portal_start_delay)
+        with original_start_portal(**kwargs) as portal:
+            yield portal
+
+    monkeypatch.setattr(anyio.from_thread, "start_blocking_portal", start_portal_with_delay)
+
+    state_dir = tmp_path / "wake"
+    old = {**PAYLOAD, "intent_id": "old"}
+    _write_intent(state_dir, old, "old")
+    path = _intent_path(state_dir, PAYLOAD["session_ref"])
+    registry = ClaudeWakeRegistry(state_dir=state_dir)
+    monkeypatch.setattr(registry, "register", timed_sync("registry", registry.register))
+    script = (
+        "import sys; from pathlib import Path; "
+        "from core.claude_wake import _acquire_intent_lock; "
+        "lock=_acquire_intent_lock(Path(sys.argv[1])); "
+        "print('locked' if lock else 'failed',flush=True); "
+        "sys.stdin.read()"
+    )
+    process = subprocess.Popen(
+        [sys.executable, "-c", script, str(path)],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert process.stdout is not None
+        assert process.stdout.readline() == "locked\n"
+        monkeypatch.setenv("PALLIUM_CLAUDE_WAKE_DIR", str(state_dir))
+        common = _load_claude_hook("common", monkeypatch)
+        common.CLAUDE_WAKE_DIR = state_dir
+        common.CLAUDE_WAKE_INTENTS_DIR = state_dir / "intents"
+        monkeypatch.setattr(common, "_acquire_file_lock", timed_sync("hook_lock", common._acquire_file_lock))
+        monkeypatch.setattr(common, "register_claude_wake", timed_sync("hook", common.register_claude_wake))
+        with _client(registry) as http:
+            monkeypatch.setattr(http, "post", timed_sync("http", http.post))
+            started = time.monotonic()
+            timing_origin = started
+            rejected = http.post("/internal/claude-wake/register", json=old)
+            timing_origin = None
+            assert rejected.status_code == 409
+            assert time.monotonic() - started < 0.5, json.dumps({
+                "router_setup_probe": int(router_setup_probe), "timings": timing_samples,
+            })
+            assert registry._registrations == {} and not registry._canonical.exists()
+            assert json.loads(path.read_text(encoding="utf-8"))["intent_id"] == "old"
+
+            monkeypatch.setenv("CLAUDE_CODE_MESSAGING_SOCKET", PAYLOAD["socket_path"])
+            monkeypatch.setenv("CLAUDE_CODE_MESSAGING_TOKEN", "new-token")
+            http_requests: list[object] = []
+
+            def open_request(request, **_kwargs):
+                http_requests.append(request)
+                response = http.post(
+                    "/internal/claude-wake/register", json=json.loads(request.data),
+                )
+                if response.status_code != 204:
+                    raise OSError("local registration rejected")
+                return contextlib.nullcontext(response)
+
+            monkeypatch.setattr(
+                common.urllib.request, "build_opener",
+                lambda *_args: SimpleNamespace(open=open_request),
+            )
+            with monkeypatch.context() as failure:
+                failure.setattr(
+                    common, "open",
+                    lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("lock open failed")),
+                    raising=False,
+                )
+                assert not common.register_claude_wake(
+                    PAYLOAD["session_ref"], PAYLOAD["container_ref"], idle=True,
+                )
+            assert http_requests == []
+            assert json.loads(path.read_text(encoding="utf-8"))["intent_id"] == "old"
+
+            timing_samples.clear()
+            started = time.monotonic()
+            timing_origin = started
+            assert not common.register_claude_wake(
+                PAYLOAD["session_ref"], PAYLOAD["container_ref"], idle=True,
+            )
+            timing_origin = None
+            assert time.monotonic() - started < 0.5, json.dumps({
+                "router_setup_probe": int(router_setup_probe), "timings": timing_samples,
+            })
+            assert http_requests == []
+            assert registry._registrations == {} and not registry._canonical.exists()
+            assert json.loads(path.read_text(encoding="utf-8"))["intent_id"] == "old"
+
+            process.kill()
+            process.wait(timeout=1)
+            registry.recover_intents()
+            assert registry._registrations[(PAYLOAD["runtime"], PAYLOAD["session_ref"], PAYLOAD["container_ref"])].token == PAYLOAD["token"]
+
+            assert common.register_claude_wake(
+                PAYLOAD["session_ref"], PAYLOAD["container_ref"], idle=True,
+            )
+            assert len(http_requests) == 1
+            assert not path.exists()
+            recovered = ClaudeWakeRegistry(state_dir=state_dir)
+            assert recovered._registrations[(PAYLOAD["runtime"], PAYLOAD["session_ref"], PAYLOAD["container_ref"])].token == "new-token"
+            assert portal_starts == 1
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=1)
+
+
+def test_distinct_intent_scopes_use_independent_lock_files(tmp_path: Path) -> None:
+    from core.claude_wake import _acquire_intent_lock, _release_intent_lock
+
+    first = _intent_path(tmp_path, PAYLOAD["session_ref"], PAYLOAD["container_ref"])
+    second = _intent_path(tmp_path, PAYLOAD["session_ref"], "git:example/other")
+    first_lock = _acquire_intent_lock(first)
+    second_lock = None
+    try:
+        assert first_lock is not None
+        assert first.with_suffix(".lock") != second.with_suffix(".lock")
+        second_lock = _acquire_intent_lock(second)
+        assert second_lock is not None
+    finally:
+        if second_lock is not None:
+            _release_intent_lock(second_lock)
+        if first_lock is not None:
+            _release_intent_lock(first_lock)
 
 @pytest.mark.parametrize(("present", "accepted"), [(False, True), (True, False)])
 def test_posix_capacity_reclaims_only_provably_absent_endpoints(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, present: bool, accepted: bool) -> None:

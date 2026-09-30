@@ -9,7 +9,7 @@ This repository uses [agent-workflow](https://github.com/rore/agent-workflow) wi
 | `.agent-redline/suppressions.yaml` | Suppression markers for redline. |
 | `.agent-workflow/tasks/<slug>.md` | One Work Record per non-exempt task. Slug derives from branch name. |
 | `scripts/agent-workflow-check.py` | CI checker; `scripts/agent-workflow-runtime.py/.sh/.ps1` are runtime adapters. |
-| `docs/agent-workflow/` | Per-checkpoint reference docs. |
+| `<skill>/templates/checkpoints/` | Per-checkpoint reference docs. |
 | `docs/agent-redline/skills/` | Redline's per-checkpoint reference docs. |
 | `.claude/hooks/` | Claude Code hooks that keep the workflow engaged in plan mode (see below). |
 | `.codex/hooks.json` | Codex hooks for the seed and structured-mutation guard; project trust is required. |

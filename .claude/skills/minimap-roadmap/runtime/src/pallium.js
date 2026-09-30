@@ -231,31 +231,41 @@ function encodedRoadmapRoot(gitRoot, roadmapRoot) {
   return parts.map(encodeReferencePart).join("/");
 }
 
-export async function resolveRoadmapItemReference(repoRoot, roadmapPath, itemId, options = {}) {
+export async function resolveRoadmapItemReferences(repoRoot, roadmapPath, itemIds, options = {}) {
+  if (!Array.isArray(itemIds) || itemIds.length > 200 || itemIds.some((id) => typeof id !== "string" || !id)) return null;
   const git = options.runGit || runGit;
   const realpath = options.realpath || fs.realpath;
   try {
-    const gitRoot = await realpath(path.resolve(await git(["rev-parse", "--show-toplevel"], repoRoot)));
-    const remote = await git(["remote", "get-url", "origin"], gitRoot);
-    const repositoryRef = canonicalGitRemote(remote);
+    const [gitRootText, remoteUrl] = await Promise.all([
+      git(["rev-parse", "--show-toplevel"], repoRoot),
+      git(["remote", "get-url", "origin"], repoRoot),
+    ]);
+    const gitRoot = await realpath(path.resolve(gitRootText));
+    const repositoryRef = canonicalGitRemote(remoteUrl);
     if (!repositoryRef) return null;
 
     const roadmapRoot = await realpath(path.resolve(repoRoot, roadmapPath));
     const encodedRoot = encodedRoadmapRoot(gitRoot, roadmapRoot);
     if (encodedRoot === null) return null;
-
     const scopeRef = "roadmap:v1:" + repositoryRef + "#" + encodedRoot;
-    const localRef = "item:v1:" + encodeReferencePart(itemId);
-    if (!validateReadablePart(scopeRef) || !validateReadablePart(localRef, { local: true })) return null;
+    if (!validateReadablePart(scopeRef)) return null;
 
-    return {
-      contract: REFERENCE_CONTRACT,
-      scope_ref: scopeRef,
-      local_ref: localRef,
-    };
+    const unique = new Set();
+    const references = [];
+    for (const itemId of itemIds) {
+      const localRef = "item:v1:" + encodeReferencePart(itemId);
+      if (!validateReadablePart(localRef, { local: true }) || unique.has(localRef)) return null;
+      unique.add(localRef);
+      references.push({ contract: REFERENCE_CONTRACT, scope_ref: scopeRef, local_ref: localRef });
+    }
+    return references;
   } catch {
     return null;
   }
+}
+
+export async function resolveRoadmapItemReference(repoRoot, roadmapPath, itemId, options = {}) {
+  return (await resolveRoadmapItemReferences(repoRoot, roadmapPath, [itemId], options))?.[0] || null;
 }
 
 function boundedString(value, maximum, optional = false) {
@@ -352,6 +362,73 @@ async function readJsonBounded(response, pageLimit, remainingTotal) {
   }
 }
 
+export async function lookupPalliumParticipantCounts(config, references, options = {}) {
+  const unavailable = (status) => ({ status, counts: [], partial: false });
+  if (!config?.configured) return unavailable("disabled");
+  if (!config.endpoint) return unavailable("unsupported");
+  if (!Array.isArray(references) || references.length > 200) return unavailable("invalid-request");
+
+  const seen = new Set();
+  for (const reference of references) {
+    if (
+      !reference || typeof reference !== "object" || Array.isArray(reference)
+      || typeof reference.scope_ref !== "string" || reference.scope_ref.normalize("NFC") !== reference.scope_ref
+      || typeof reference.local_ref !== "string" || reference.local_ref.normalize("NFC") !== reference.local_ref
+      || !/^roadmap:v1:git:[^#]+#(?:\.|[^#].*)$/.test(reference.scope_ref)
+      || !reference.local_ref.startsWith("item:v1:")
+      || !validateReadablePart(reference.scope_ref) || !validateReadablePart(reference.local_ref, { local: true })
+    ) return unavailable("invalid-request");
+    const key = JSON.stringify([reference.scope_ref, reference.local_ref]);
+    if (seen.has(key)) return unavailable("invalid-request");
+    seen.add(key);
+  }
+  if (!references.length) return { status: "ok", counts: [], partial: false };
+  const externalSignal = options.signal;
+  if (externalSignal?.aborted) throw new DOMException("aborted", "AbortError");
+
+  const controller = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => { timedOut = true; controller.abort(); }, options.timeoutMs || LOOKUP_TIMEOUT_MS);
+  const abortFromCaller = () => controller.abort();
+  externalSignal?.addEventListener("abort", abortFromCaller, { once: true });
+  try {
+    const response = await (options.fetchImpl || globalThis.fetch)(
+      new URL("/relay/work-refs/participant-counts", config.endpoint),
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ references: references.map(({ scope_ref, local_ref }) => ({ scope_ref, local_ref })) }),
+        signal: controller.signal,
+        redirect: "error",
+      },
+    );
+    if ([404, 405, 501].includes(response.status)) return unavailable("unsupported");
+    if (!response.ok) return unavailable("unreachable");
+    const { payload } = await readJsonBounded(response, options.maxResponseBytes || MAX_TOTAL_BYTES, options.maxResponseBytes || MAX_TOTAL_BYTES);
+    if (
+      !payload || typeof payload !== "object" || Array.isArray(payload)
+      || payload.contract !== "relay-work-ref-counts/v1"
+      || !Array.isArray(payload.counts) || payload.counts.length !== references.length
+    ) throw new LookupError("invalid-response");
+    const counts = payload.counts.map((row, index) => {
+      const expected = references[index];
+      if (
+        !row || typeof row !== "object" || Array.isArray(row)
+        || row.scope_ref !== expected.scope_ref || row.local_ref !== expected.local_ref
+        || !Number.isSafeInteger(row.participant_count) || row.participant_count < 0
+      ) throw new LookupError("invalid-response");
+      return { scope_ref: expected.scope_ref, local_ref: expected.local_ref, participant_count: row.participant_count };
+    });
+    return { status: "ok", counts, partial: false };
+  } catch (error) {
+    if (externalSignal?.aborted) throw error;
+    if (timedOut) return unavailable("timeout");
+    return unavailable(error instanceof LookupError ? error.code : "unreachable");
+  } finally {
+    clearTimeout(timer);
+    externalSignal?.removeEventListener("abort", abortFromCaller);
+  }
+}
 function safeResult(status, reference, participants = [], partial = false, refreshedAt = null) {
   return { status, reference, participants, partial, refreshedAt };
 }

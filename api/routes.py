@@ -78,6 +78,7 @@ from api.schemas import (
     SupersedeMemoryResponse,
 )
 from core.claude_wake import ClaudeWakeRegistry
+from core.codex_wake import CodexWakeReservation
 from core.container_ref import canonicalize_container_ref, validate_explicit_container_ref
 from core.history_presentation import compact_history
 from core.errors import HistoryDiagnosticConflictError, HistoryDiagnosticCorruptError, ImmediateTransactionBusyError, LookupRequestLinkError, SupersessionConflictError
@@ -682,6 +683,8 @@ def create_router(
     claude_wake_registry: ClaudeWakeRegistry | None = None,
     relay_send_callback: Callable[[dict[str, Any], dict[str, str]], None] | None = None,
     relay_turn_callback: Callable[[dict[str, Any], dict[str, Any]], None] | None = None,
+    relay_turn_snapshot_callback: Callable[[dict[str, Any]], CodexWakeReservation | None] | None = None,
+    relay_turn_admission_callback: Callable[[dict[str, Any], dict[str, Any], CodexWakeReservation | None], None] | None = None,
     relay_ack_callback: Callable[[dict[str, Any], dict[str, str]], None] | None = None,
     relay_activation_callback: Callable[[dict[str, Any]], dict[str, object]] | None = None,
     relay_runner: Callable[[Callable[[], Any]], Awaitable[Any]] | None = None,
@@ -756,16 +759,51 @@ def create_router(
 
     @router.post("/relay/turn", response_model=RelayTurnResponse)
     async def relay_turn(request: RelayTurnRequest):
+        started = time.monotonic() if request.wake_delivery_id is not None else None
+        service_ms: int | None = None
+        outcome = "error"
         request_data = request.model_dump()
         relay_request = dict(request_data)
         relay_request["exact_delivery_id"] = relay_request.pop("wake_delivery_id", None)
-        result = await _relay_call("turn", lambda: _relay().turn(**relay_request))
-        if relay_turn_callback is not None:
+        reservation = None
+        if request.wake_delivery_id is not None and relay_turn_snapshot_callback is not None:
             try:
-                relay_turn_callback(request_data, result)
+                reservation = relay_turn_snapshot_callback(request_data)
             except Exception:
-                logger.exception("Relay turn callback failed after admission")
-        return _with_relay_activation(result)
+                logger.warning("Relay turn wake snapshot unavailable")
+        if reservation is not None:
+            relay_request["codex_wake_endpoint_id"] = reservation.recipient_endpoint_id
+            relay_request["codex_wake_generation"] = reservation.generation
+        try:
+            service_started = time.monotonic() if started is not None else None
+            try:
+                result = await _relay_call("turn", lambda: _relay().turn(**relay_request))
+            finally:
+                if service_started is not None:
+                    service_ms = int((time.monotonic() - service_started) * 1000)
+            if relay_turn_callback is not None:
+                try:
+                    relay_turn_callback(request_data, result)
+                except Exception:
+                    logger.exception("Relay turn callback failed after admission")
+            if relay_turn_admission_callback is not None:
+                try:
+                    relay_turn_admission_callback(request_data, result, reservation)
+                except Exception:
+                    logger.exception("Relay turn admission callback failed after admission")
+            projected = _with_relay_activation(result)
+            outcome = "ready"
+            return projected
+        finally:
+            if started is not None:
+                logger.info(
+                    "relay_turn_timing delivery_ref=%s service_ms=%s "
+                    "route_ready_ms=%d outcome=%s",
+                    request.wake_delivery_id,
+                    service_ms if service_ms is not None else "none",
+                    int((time.monotonic() - started) * 1000),
+                    outcome,
+                )
 
     @router.post("/relay/sessions/close", response_model=RelaySessionResponse)
     async def relay_close_session(request: RelaySessionMutationRequest):
@@ -870,7 +908,10 @@ def create_router(
 
     @router.post("/relay/messages", response_model=RelayMessageResponse)
     async def relay_send(request: RelaySendRequest):
-        result = await _relay_call("send", lambda: _relay().send(**request.model_dump()))
+        arguments = request.model_dump()
+        if "expires_in_seconds" not in request.model_fields_set:
+            arguments.pop("expires_in_seconds")
+        result = await _relay_call("send", lambda: _relay().send(**arguments))
         if relay_send_callback is not None:
             try:
                 relay_send_callback(result, {
@@ -882,7 +923,10 @@ def create_router(
 
     @router.post("/relay/replies", response_model=RelayMessageResponse)
     async def relay_reply(request: RelayReplyRequest):
-        result = await _relay_call("reply", lambda: _relay().reply(**request.model_dump()))
+        arguments = request.model_dump()
+        if "expires_in_seconds" not in request.model_fields_set:
+            arguments.pop("expires_in_seconds")
+        result = await _relay_call("reply", lambda: _relay().reply(**arguments))
         if relay_ack_callback is not None:
             try:
                 relay_ack_callback(

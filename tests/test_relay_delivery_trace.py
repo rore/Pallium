@@ -690,6 +690,57 @@ def test_api_and_dashboard_share_projection_and_unknown_is_404(client):
     )
 
 
+def test_api_and_dashboard_explain_uncertain_single_codex_delivery(client):
+    storage = client.app.state.pallium_service._storage
+    scope = "git:example.test/team/relay-trace"
+    for session in ("sender-codex-guidance", "receiver-codex-guidance"):
+        assert client.post(
+            "/relay/turn",
+            json={
+                "runtime": "codex",
+                "session_ref": session,
+                "container_ref": scope,
+            },
+        ).status_code == 200
+    message = client.post(
+        "/relay/messages",
+        json={
+            "sender_runtime": "codex",
+            "sender_session_ref": "sender-codex-guidance",
+            "recipient": "codex:receiver-codex-guidance",
+            "payload": "x",
+            "container_ref": scope,
+        },
+    ).json()
+    delivery_id = message["deliveries"][0]["delivery_id"]
+    assert storage.relay_record_trace_event(
+        {
+            "attempt_id": "relay-activation-" + "c" * 32,
+            "delivery_id": delivery_id,
+            "stage": "completed",
+            "outcome": "uncertain",
+            "reason": "nonzero_exit",
+            "evidence": ["submission_attempted"],
+            "native_retry_safe": False,
+        }
+    )
+
+    api = client.get(f"/relay/messages/{message['message_id']}/trace").json()
+    delivery_api = client.get(f"/relay/messages/{delivery_id}/trace").json()
+    dashboard = client.get(
+        f"/dashboard/api/relay/messages/{message['message_id']}/trace"
+    ).json()
+    assert api == delivery_api == dashboard
+    assert api["explanation"].startswith("Needs intervention:")
+    assert "normal user prompt directly in the existing Codex recipient task" in api[
+        "explanation"
+    ]
+    assert "UserPromptSubmit" in api["explanation"]
+    snapshot = api["delivery_snapshots"][0]
+    assert snapshot["state"] == "pending" and snapshot["attempts"] == 0
+    assert api["events"][-1]["native_retry_safe"] is False
+
+
 def test_mcp_cursor_and_budget_trim_preserve_truthful_continuation():
     from app.mcp.server import _MCP_RELAY_MAX_CHARS, _relay_trace_cursor, _relay_trace_text
 
@@ -742,6 +793,15 @@ def test_cleanup_marks_every_known_associate_and_discloses_page_gap(relay):
         stage="associated",
         recorded_at=datetime.now(timezone.utc),
     )
+    for message in (first, second):
+        claimed = service.turn(
+            runtime="codex", session_ref="receiver", container_ref="git:test",
+            exact_delivery_id=message["deliveries"][0]["delivery_id"],
+        )["deliveries"][0]
+        service.acknowledge(
+            delivery_id=claimed["delivery_id"], claim_token=claimed["claim_token"],
+            container_ref="git:test",
+        )
     assert storage.relay_cleanup_trace(now=datetime.now(timezone.utc), limit=1) == 1
 
     with storage._relay_session_factory() as db:
@@ -762,6 +822,246 @@ def test_cleanup_marks_every_known_associate_and_discloses_page_gap(relay):
         assert all(row.trace_pruned == 1 for row in rows)
     trace = service.trace_message(message_id=second["message_id"])
     assert trace["pruned"] and trace["gap"]
+
+
+def test_service_cleanup_retains_old_pending_trace_and_public_recovery_evidence(client):
+    storage = client.app.state.pallium_service._storage
+    service = RelayService(storage)
+    service.turn(runtime="codex", session_ref="sender", container_ref="git:test")
+    receiver = service.turn(runtime="codex", session_ref="receiver", container_ref="git:test")
+    message = _message(service)
+    delivery_id = message["deliveries"][0]["delivery_id"]
+    attempt = "relay-activation-" + "7" * 32
+    now = datetime.now(timezone.utc)
+    assert storage.relay_trace_record(
+        attempt_id=attempt, delivery_id=delivery_id, stage="prepared",
+        recorded_at=now - timedelta(days=31),
+    )["recorded"]
+
+    stats = client.app.state.pallium_service.run_retention_pass(
+        worker_id="trace-cleaner", now=now,
+    )
+    assert stats.deleted_relay_trace_events == 0
+    trace = client.get(f"/relay/messages/{message['message_id']}/trace").json()
+    assert [event["attempt_id"] for event in trace["events"]] == [attempt]
+    assert trace["delivery_snapshots"][0]["trace_pruned"] is False
+    assert storage.relay_codex_wake_health(now=now)["eligible_pending_count"] == 1
+    assert receiver["session"]["endpoint_id"] == message["deliveries"][0]["recipient_endpoint_id"]
+
+
+def test_cleanup_retains_claimed_and_shared_pending_attempts(relay):
+    storage, service, _ = relay
+    now = datetime.now(timezone.utc)
+    first = _message(service)
+    second = _message(service)
+    attempt = "relay-activation-" + "8" * 32
+    assert storage.relay_trace_record(
+        attempt_id=attempt, delivery_id=first["deliveries"][0]["delivery_id"],
+        stage="prepared", recorded_at=now - timedelta(days=31),
+    )["recorded"]
+    assert _event(storage, second, attempt, "associated")["recorded"]
+    claimed = service.turn(
+        runtime="codex", session_ref="receiver", container_ref="git:test",
+        exact_delivery_id=first["deliveries"][0]["delivery_id"],
+    )["deliveries"][0]
+    assert claimed["delivery_id"] == first["deliveries"][0]["delivery_id"]
+    assert storage.relay_cleanup_trace(now=now) == 0
+    service.acknowledge(
+        delivery_id=claimed["delivery_id"], claim_token=claimed["claim_token"],
+        container_ref="git:test",
+    )
+    assert storage.relay_cleanup_trace(now=now) == 0
+    assert len(service.trace_message(message_id=second["message_id"])["events"]) == 2
+    claimed_second = service.turn(
+        runtime="codex", session_ref="receiver", container_ref="git:test",
+        exact_delivery_id=second["deliveries"][0]["delivery_id"],
+    )["deliveries"][0]
+    service.acknowledge(
+        delivery_id=claimed_second["delivery_id"], claim_token=claimed_second["claim_token"],
+        container_ref="git:test",
+    )
+    assert storage.relay_cleanup_trace(now=now, limit=1) == 1
+    trace = service.trace_message(message_id=second["message_id"])
+    assert trace["pruned"] and trace["gap"]
+
+
+@pytest.mark.parametrize("outcome", ["reserved", "accepted", "uncertain"])
+def test_cleanup_retains_terminal_attempt_until_reservation_released(relay, outcome):
+    storage, service, endpoint_id = relay
+    assert storage.relay_codex_wake_initialize(reservations=())
+    registry = CodexWakeRegistry(relay_service=service)
+    message = _message(service)
+    delivery_id = message["deliveries"][0]["delivery_id"]
+    reservation = registry.reserve(
+        recipient_endpoint_id=endpoint_id, delivery_id=delivery_id,
+        session_ref="receiver", container_ref="git:test",
+    )
+    assert reservation is not None
+    if outcome != "reserved":
+        assert registry.record_outcome(reservation, outcome)
+        reservation = registry.snapshot(endpoint_id)
+    now = datetime.now(timezone.utc)
+    assert storage.relay_trace_record(
+        attempt_id="relay-activation-" + "9" * 32, delivery_id=delivery_id,
+        stage="prepared", recorded_at=now - timedelta(days=31),
+    )["recorded"]
+    claimed = service.turn(runtime="codex", session_ref="receiver", container_ref="git:test")["deliveries"][0]
+    service.acknowledge(
+        delivery_id=delivery_id, claim_token=claimed["claim_token"], container_ref="git:test",
+    )
+    assert storage.relay_cleanup_trace(now=now) == 0
+    assert service.trace_message(message_id=message["message_id"])["events"]
+    assert registry.release_generation(reservation)
+    assert storage.relay_cleanup_trace(now=now) == 1
+
+
+@pytest.mark.parametrize("broken_reference", ["delivery", "message", "mismatch"])
+def test_cleanup_retains_whole_attempt_with_broken_association(relay, broken_reference):
+    storage, service, _ = relay
+    first = _message(service)
+    second = _message(service)
+    attempt = "relay-activation-" + "a" * 32
+    now = datetime.now(timezone.utc)
+    assert storage.relay_trace_record(
+        attempt_id=attempt, delivery_id=first["deliveries"][0]["delivery_id"],
+        stage="prepared", recorded_at=now - timedelta(days=31),
+    )["recorded"]
+    assert _event(storage, second, attempt, "associated")["recorded"]
+    for expected in (first, second):
+        claimed = service.turn(
+            runtime="codex", session_ref="receiver", container_ref="git:test",
+            exact_delivery_id=expected["deliveries"][0]["delivery_id"],
+        )["deliveries"][0]
+        service.acknowledge(
+            delivery_id=claimed["delivery_id"], claim_token=claimed["claim_token"],
+            container_ref="git:test",
+        )
+    with storage._relay_session_factory.begin() as db:
+        second_id = second["deliveries"][0]["delivery_id"]
+        if broken_reference == "delivery":
+            db.delete(db.get(RelayDeliveryRecord, second_id))
+        else:
+            row = db.query(RelayDeliveryTraceRecord).filter_by(
+                delivery_id=second_id, attempt_id=attempt,
+            ).one()
+            if broken_reference == "message":
+                from storage.sqlite_schema import RelayMessageRecord
+                db.delete(db.get(RelayMessageRecord, second["message_id"]))
+            else:
+                row.message_id = "missing-message"
+
+    assert storage.relay_cleanup_trace(now=now) == 0
+    assert [event["stage"] for event in service.trace_message(message_id=first["message_id"])["events"]] == ["prepared"]
+    with storage._relay_session_factory() as db:
+        assert db.query(RelayDeliveryTraceRecord).filter_by(attempt_id=attempt).count() == 2
+
+
+def test_cleanup_at_capacity_skips_unsafe_old_and_evicts_safe_recent(relay, monkeypatch):
+    import storage.sqlite_relay as sqlite_relay
+    import storage.sqlite_retention as sqlite_retention
+
+    storage, service, _ = relay
+    monkeypatch.setattr(sqlite_relay, "RELAY_TRACE_MAX_ROWS", 2)
+    monkeypatch.setattr(sqlite_retention, "RELAY_TRACE_MAX_ROWS", 2)
+    now = datetime.now(timezone.utc)
+    unsafe = _message(service)
+    safe = _message(service)
+    next_message = _message(service)
+    unsafe_attempt = "relay-activation-" + "b" * 32
+    assert storage.relay_trace_record(
+        attempt_id=unsafe_attempt, delivery_id=unsafe["deliveries"][0]["delivery_id"],
+        stage="prepared", recorded_at=now - timedelta(days=31),
+    )["recorded"]
+    assert _event(storage, safe, "relay-activation-" + "c" * 32, "prepared")["recorded"]
+    claimed = service.turn(
+        runtime="codex", session_ref="receiver", container_ref="git:test",
+        exact_delivery_id=safe["deliveries"][0]["delivery_id"],
+    )["deliveries"][0]
+    service.acknowledge(
+        delivery_id=claimed["delivery_id"], claim_token=claimed["claim_token"],
+        container_ref="git:test",
+    )
+    assert storage.relay_cleanup_trace(now=now, limit=1) == 1
+    assert service.trace_message(message_id=unsafe["message_id"])["events"][0]["attempt_id"] == unsafe_attempt
+    assert _event(storage, next_message, "relay-activation-" + "d" * 32, "prepared")["recorded"]
+    assert storage.relay_cleanup_trace(now=now, limit=1) == 0
+    dropped = _event(storage, next_message, "relay-activation-" + "d" * 32, "completed", **_completion())
+    assert dropped["dropped"]
+    assert service.trace_message(message_id=next_message["message_id"])["truncated"]
+
+
+def test_cleanup_keeps_the_existing_64_row_batch_limit(relay):
+    storage, service, _ = relay
+    now = datetime.now(timezone.utc)
+    messages = [_message(service) for _ in range(65)]
+    for index, message in enumerate(messages):
+        assert storage.relay_trace_record(
+            attempt_id=f"relay-activation-{index:032x}",
+            delivery_id=message["deliveries"][0]["delivery_id"],
+            stage="prepared", recorded_at=now - timedelta(days=31),
+        )["recorded"]
+    with storage._relay_session_factory.begin() as db:
+        for message in messages:
+            db.get(RelayDeliveryRecord, message["deliveries"][0]["delivery_id"]).state = "delivered"
+    assert storage.relay_cleanup_trace(now=now) == 64
+    with storage._relay_session_factory() as db:
+        assert db.query(RelayDeliveryTraceRecord).count() == 1
+    assert storage.relay_cleanup_trace(now=now) == 1
+
+
+def test_cleanup_finds_safe_row_after_64_older_unsafe_rows(relay):
+    storage, service, _ = relay
+    now = datetime.now(timezone.utc)
+    messages = [_message(service) for _ in range(65)]
+    for index, message in enumerate(messages):
+        assert storage.relay_trace_record(
+            attempt_id=f"relay-activation-{index:032x}",
+            delivery_id=message["deliveries"][0]["delivery_id"],
+            stage="prepared", recorded_at=now - timedelta(days=31) + timedelta(seconds=index),
+        )["recorded"]
+    safe = messages[-1]
+    with storage._relay_session_factory.begin() as db:
+        db.get(RelayDeliveryRecord, safe["deliveries"][0]["delivery_id"]).state = "delivered"
+    assert storage.relay_cleanup_trace(now=now, limit=64) == 1
+    with storage._relay_session_factory() as db:
+        assert db.query(RelayDeliveryTraceRecord).count() == 64
+    assert service.trace_message(message_id=messages[0]["message_id"])["events"]
+    assert service.trace_message(message_id=safe["message_id"])["pruned"]
+
+
+def test_cleanup_rolls_back_when_new_shared_attempt_commits_after_snapshot(relay):
+    storage, service, _ = relay
+    first = _message(service)
+    second = _message(service)
+    attempt = "relay-activation-" + "e" * 32
+    now = datetime.now(timezone.utc)
+    assert storage.relay_trace_record(
+        attempt_id=attempt, delivery_id=first["deliveries"][0]["delivery_id"],
+        stage="prepared", recorded_at=now - timedelta(days=31),
+    )["recorded"]
+    claimed = service.turn(
+        runtime="codex", session_ref="receiver", container_ref="git:test",
+        exact_delivery_id=first["deliveries"][0]["delivery_id"],
+    )["deliveries"][0]
+    service.acknowledge(
+        delivery_id=claimed["delivery_id"], claim_token=claimed["claim_token"],
+        container_ref="git:test",
+    )
+    committed = []
+
+    def add_association(_conn, _cursor, statement, _parameters, _context, _executemany):
+        if statement.lstrip().upper().startswith("DELETE FROM RELAY_DELIVERY_TRACE") and not committed:
+            committed.append(_event(storage, second, attempt, "associated"))
+
+    event.listen(storage._relay_engine, "before_cursor_execute", add_association)
+    try:
+        assert storage.relay_cleanup_trace(now=now) == 0
+    finally:
+        event.remove(storage._relay_engine, "before_cursor_execute", add_association)
+    assert len(committed) == 1 and committed[0]["recorded"]
+    assert [row["stage"] for row in service.trace_message(message_id=first["message_id"])["events"]] == ["prepared"]
+    assert [row["stage"] for row in service.trace_message(message_id=second["message_id"])["events"]] == ["prepared", "associated"]
+    assert service.trace_message(message_id=first["message_id"])["delivery_snapshots"][0]["trace_pruned"] is False
 
 
 def test_trace_writer_failure_is_best_effort_and_releases_slot(client):
@@ -804,6 +1104,11 @@ def test_pruning_never_reuses_a_frozen_sequence(relay):
         stage="prepared",
         recorded_at=datetime.now(timezone.utc) - timedelta(days=31),
     )
+    claimed = service.turn(runtime="codex", session_ref="receiver", container_ref="git:test")["deliveries"][0]
+    service.acknowledge(
+        delivery_id=claimed["delivery_id"], claim_token=claimed["claim_token"],
+        container_ref="git:test",
+    )
     assert storage.relay_cleanup_trace(now=datetime.now(timezone.utc), limit=64) == 1
     second = storage.relay_trace_record(
         attempt_id="relay-activation-" + "4" * 32,
@@ -831,6 +1136,14 @@ def test_cleanup_frees_space_at_exact_global_capacity(relay, monkeypatch):
     assert _event(storage, second, "relay-activation-" + "6" * 32, "prepared")[
         "dropped"
     ]
+    claimed = service.turn(
+        runtime="codex", session_ref="receiver", container_ref="git:test",
+        exact_delivery_id=first["deliveries"][0]["delivery_id"],
+    )["deliveries"][0]
+    service.acknowledge(
+        delivery_id=claimed["delivery_id"], claim_token=claimed["claim_token"],
+        container_ref="git:test",
+    )
     assert storage.relay_cleanup_trace(now=datetime.now(timezone.utc), limit=1) == 1
     assert _event(storage, second, "relay-activation-" + "6" * 32, "prepared")[
         "recorded"
@@ -953,8 +1266,50 @@ def test_pending_uncertain_trace_gives_safe_ordinary_turn_guidance(
         "explanation"
     ]
     assert explanation.startswith("Needs intervention:")
-    assert "ordinary turn" in explanation
+    if runtime == "codex":
+        assert (
+            "normal user prompt directly in the existing Codex recipient task"
+            in explanation
+        )
+        assert "UserPromptSubmit" in explanation
+        assert "ordinary turn" not in explanation
+    else:
+        assert "ordinary turn" in explanation
+        assert "UserPromptSubmit" not in explanation
     assert "do not resend" in explanation
+
+
+def test_shared_uncertain_completion_does_not_get_codex_prompt_guidance(relay):
+    storage, service, _ = relay
+    message = _message(service)
+    service.turn(
+        runtime="claude-code",
+        session_ref="shared-evidence",
+        container_ref="git:test",
+    )
+    other = _message(service, recipient="claude-code:shared-evidence")
+    attempt = "relay-activation-" + "8" * 32
+    _event(storage, message, attempt, "prepared")
+    for item in (message, other):
+        _event(
+            storage,
+            item,
+            attempt,
+            "completed",
+            **_completion(
+                outcome="uncertain",
+                reason="nonzero_exit",
+                evidence=["submission_attempted"],
+            ),
+        )
+
+    trace = service.trace_message(message_id=message["message_id"])
+    assert trace["delivery_snapshots"][0]["state"] == "pending"
+    assert trace["delivery_snapshots"][0]["attempts"] == 0
+    assert trace["explanation"].startswith("Needs intervention:")
+    assert "ordinary turn" in trace["explanation"]
+    assert "UserPromptSubmit" not in trace["explanation"]
+    assert any(event["shared"] for event in trace["events"])
 
 
 def test_pending_accepted_trace_is_queued_until_a_safe_turn(relay):
@@ -1141,9 +1496,70 @@ def test_terminal_trace_states_disclose_evidence_gaps(relay):
     assert "Activation evidence is incomplete" in expired_trace["explanation"]
 
 
+def test_pending_uncertain_mixed_runtime_fanout_keeps_generic_guidance(relay):
+    storage, service, _ = relay
+    message = _message(service)
+    claude_endpoint = service.turn(
+        runtime="claude-code",
+        session_ref="pending-claude-recipient",
+        container_ref="git:test",
+    )["session"]["endpoint_id"]
+    _event(
+        storage,
+        message,
+        "relay-activation-" + "6" * 32,
+        "completed",
+        **_completion(
+            outcome="uncertain",
+            reason="nonzero_exit",
+            evidence=["submission_attempted"],
+        ),
+    )
+    with storage._relay_session_factory.begin() as db:
+        db.add(
+            RelayDeliveryRecord(
+                id="relay-delivery-" + "f" * 32,
+                message_id=message["message_id"],
+                recipient_runtime="claude-code",
+                recipient_session_ref="pending-claude-recipient",
+                recipient_endpoint_id=claude_endpoint,
+                recipient_container_ref="git:test",
+                state="pending",
+                attempts=0,
+                trace_version=1,
+            )
+        )
+
+    trace = service.trace_message(message_id=message["message_id"])
+    assert {snapshot["state"] for snapshot in trace["delivery_snapshots"]} == {
+        "pending"
+    }
+    assert {
+        snapshot["recipient_runtime"] for snapshot in trace["delivery_snapshots"]
+    } == {"codex", "claude-code"}
+    assert trace["explanation"].startswith("Needs intervention:")
+    assert "ordinary turn" in trace["explanation"]
+    assert "UserPromptSubmit" not in trace["explanation"]
+    assert "do not resend" in trace["explanation"]
+    assert trace["events"][-1]["native_retry_safe"] is False
+
+
 def test_mixed_fanout_trace_counts_three_states(relay):
     storage, service, _ = relay
     message = _message(service)
+    activation = "relay-activation-" + "7" * 32
+    _event(storage, message, activation, "prepared")
+    _event(
+        storage,
+        message,
+        activation,
+        "completed",
+        **_completion(
+            outcome="uncertain",
+            reason="nonzero_exit",
+            evidence=["submission_attempted"],
+        ),
+    )
     claimed = service.turn(
         runtime="codex", session_ref="receiver", container_ref="git:test"
     )["deliveries"][0]
@@ -1199,6 +1615,7 @@ def test_mixed_fanout_trace_counts_three_states(relay):
     assert "claimed=1" in explanation
     assert "delivered=1" in explanation
     assert "pending=1" in explanation
+    assert "UserPromptSubmit" not in explanation
 
 
 def test_mixed_legacy_current_fanout_is_an_evidence_gap(relay):

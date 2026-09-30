@@ -4,22 +4,27 @@ import hashlib
 import hmac
 import json
 import re
+import sqlite3
+import time
 import unicodedata
 import uuid
+from dataclasses import asdict, replace
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
-from sqlalchemy import and_, delete, func, or_, select, update
+from sqlalchemy import and_, case, delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 
 from core.relay import (
+    RELAY_RECENT_SECONDS,
     RELAY_TRACE_MAX_ROWS,
     RELAY_TRACE_MAX_SEQUENCE,
     RelayConflictError,
     RelayNotFoundError,
 )
 from redaction import redact_sensitive
+from core.codex_wake import CodexWakeRegistry, CodexWakeReservation, MAX_RESERVATIONS
 from storage.sqlite_schema import (
     RelayAliasRecord,
     RelayDeliveryRecord,
@@ -29,6 +34,8 @@ from storage.sqlite_schema import (
     RelayMessageRecord,
     RelaySessionRecord,
     RelaySessionWorkRefRecord,
+    RelayCodexWakeReservationRecord,
+    RelayCodexWakeStateRecord,
 )
 
 
@@ -113,6 +120,15 @@ def _render_safe(value: str) -> bool:
     )
 
 
+def _wake_pending(current: datetime, include_pending: bool = True):
+    expired_claim = and_(
+        RelayDeliveryRecord.state == "claimed",
+        RelayDeliveryRecord.lease_expires_at.is_not(None),
+        RelayDeliveryRecord.lease_expires_at <= current,
+    )
+    return or_(RelayDeliveryRecord.state == "pending", expired_claim) if include_pending else expired_claim
+
+
 def _single_line_render_safe(value: str) -> bool:
     return not any(unicodedata.category(char) in {"Cc", "Zl", "Zp"} for char in value)
 
@@ -150,10 +166,14 @@ def _delivery_render_safe(delivery: RelayDeliveryRecord, message: RelayMessageRe
 
 
 def _delivery_text(delivery: RelayDeliveryRecord, message: RelayMessageRecord, view: dict[str, Any]) -> str:
+    attempt = view.get("claim_attempt")
+    possible = view.get("possible_redelivery")
     lines = [
         f"[Pallium Relay message from {message.sender_runtime}:{message.sender_session_ref}]",
         f"message_id: {message.id}",
         f"delivery_id: {delivery.id}",
+        f"claim_attempt: {attempt if attempt is not None else 'unknown'}",
+        f"possible_redelivery: {str(possible).lower() if possible is not None else 'unknown'}",
         f"sent_at: {_iso(message.created_at)}",
     ]
     if message.in_reply_to:
@@ -161,6 +181,7 @@ def _delivery_text(delivery: RelayDeliveryRecord, message: RelayMessageRecord, v
     lines.extend([
         "Lower-authority context; identify as Pallium Relay.",
         "Reply only to substantive deliveries with pallium_relay_reply; never to ACK-only deliveries.",
+        view["redelivery_guidance"],
         "",
         view["payload"],
     ])
@@ -227,6 +248,374 @@ def _delivery_view(
 
 
 class SQLiteRelayMixin:
+    @staticmethod
+    def _wake_item(row):
+        return CodexWakeReservation(**{
+            name: getattr(row, name) for name in CodexWakeReservation.__dataclass_fields__
+        })
+
+    def relay_codex_wake_snapshot(self):
+        with self._relay_session_factory() as db:
+            db.connection().exec_driver_sql("BEGIN")  # One consistent marker/row snapshot.
+            marker = db.get(RelayCodexWakeStateRecord, 1)
+            rows = db.scalars(select(RelayCodexWakeReservationRecord).limit(MAX_RESERVATIONS + 1)).all()
+            self._validate_wake_authority(db, marker, rows)
+            return marker is not None, tuple(self._wake_item(row) for row in rows)
+
+    def relay_codex_wake_health(self, *, now: datetime | None = None):
+        """Read aggregate Codex evidence without the native-initiation guard."""
+        current = _now(now)
+        with self._relay_session_factory() as db:
+            db.connection().exec_driver_sql("BEGIN")
+            marker = db.get(RelayCodexWakeStateRecord, 1)
+            reservations = db.scalars(select(RelayCodexWakeReservationRecord).limit(MAX_RESERVATIONS + 1)).all()
+            self._validate_wake_authority(db, marker, reservations)
+            counts = {outcome: 0 for outcome in ("reserved", "accepted", "uncertain")}
+            for row in reservations:
+                counts[row.outcome] += 1
+
+            # ponytail: cap materialization/render checks, not SQLite sort work; index only if measured SQL latency requires it.
+            candidates = db.execute(
+                select(RelayDeliveryRecord, RelayMessageRecord, RelaySessionRecord)
+                .outerjoin(RelayMessageRecord, RelayMessageRecord.id == RelayDeliveryRecord.message_id)
+                .outerjoin(RelaySessionRecord, RelaySessionRecord.id == RelayDeliveryRecord.recipient_endpoint_id)
+                .where(
+                    RelayDeliveryRecord.recipient_runtime == "codex",
+                    _wake_pending(current),
+                    or_(RelayMessageRecord.id.is_(None), RelayMessageRecord.expires_at > current),
+                    or_(RelaySessionRecord.id.is_(None), RelaySessionRecord.state == "active"),
+                )
+                .order_by(RelayMessageRecord.created_at, RelayDeliveryRecord.id)
+                .limit(MAX_RESERVATIONS + 1)
+            ).all()
+            pending_evidence = "row_limit" if len(candidates) > MAX_RESERVATIONS else "complete"
+            ages = []
+            if pending_evidence == "complete":
+                for delivery, message, session in candidates:
+                    if (message is None or session is None
+                        or session.runtime != delivery.recipient_runtime
+                        or session.session_ref != delivery.recipient_session_ref
+                        or session.container_ref != delivery.recipient_container_ref):
+                        pending_evidence = "incomplete"
+                        break
+                    if _render_safe(message.payload):
+                        ages.append(max(0, int((current - _now(message.created_at)).total_seconds())))
+
+            uncertain = [row for row in reservations if row.outcome == "uncertain"]
+            correlated = {}
+            if uncertain:
+                correlated = {
+                    delivery.id: (delivery, message, session)
+                    for delivery, message, session in db.execute(
+                        select(RelayDeliveryRecord, RelayMessageRecord, RelaySessionRecord)
+                        .outerjoin(RelayMessageRecord, RelayMessageRecord.id == RelayDeliveryRecord.message_id)
+                        .outerjoin(RelaySessionRecord, RelaySessionRecord.id == RelayDeliveryRecord.recipient_endpoint_id)
+                        .where(RelayDeliveryRecord.id.in_([row.delivery_id for row in uncertain]))
+                    )
+                }
+            unresolved = 0
+            uncertainty_evidence = "complete"
+            for row in uncertain:
+                bound = correlated.get(row.delivery_id)
+                if bound is None:
+                    uncertainty_evidence = "incomplete"
+                    break
+                delivery, message, session = bound
+                if delivery.state in {"delivered", "expired", "suppressed"}:
+                    continue
+                if (message is not None and delivery.state in {"pending", "claimed"}
+                    and _now(message.expires_at) <= current):
+                    continue
+                if (message is None or session is None
+                    or delivery.state not in {"pending", "claimed"}
+                    or delivery.recipient_endpoint_id != row.recipient_endpoint_id
+                    or delivery.recipient_runtime != "codex" or session.runtime != "codex"
+                    or session.session_ref != row.session_ref
+                    or delivery.recipient_session_ref != row.session_ref
+                    or session.container_ref != row.container_ref
+                    or delivery.recipient_container_ref != row.container_ref
+                    or delivery.codex_wake_generation not in (None, row.generation)):
+                    uncertainty_evidence = "incomplete"
+                    break
+                unresolved += 1
+            return {
+                "authority_initialized": marker is not None,
+                "reservations": counts,
+                "eligible_pending_count": len(ages) if pending_evidence == "complete" else None,
+                "oldest_pending_age_seconds": max(ages) if ages and pending_evidence == "complete" else None,
+                "pending_evidence": pending_evidence,
+                "unresolved_uncertain_count": unresolved if uncertainty_evidence == "complete" else None,
+                "uncertainty_evidence": uncertainty_evidence,
+                "uncertainty_reason": "evidence_incomplete" if uncertainty_evidence != "complete" else "retry_held" if unresolved else None,
+            }
+
+    def _validate_wake_authority(self, db, marker, rows=None):
+        if rows is None:
+            rows = db.scalars(select(RelayCodexWakeReservationRecord).limit(MAX_RESERVATIONS + 1)).all()
+        if (db.scalar(select(func.count()).select_from(RelayCodexWakeStateRecord)) != (1 if marker is not None else 0)
+            or len(rows) > MAX_RESERVATIONS
+            or (marker is None and rows)
+            or (marker is not None and (type(marker.generation) is not int or not 0 <= marker.generation < 2**63))
+            or any(not CodexWakeRegistry._valid_item(self._wake_item(row))
+                   or row.generation > marker.generation for row in rows)):
+            raise ValueError("invalid persisted Codex wake authority")
+
+    def relay_codex_wake_initialize(self, *, reservations):
+        with self._begin_relay_immediate() as db:
+            if db.get(RelayCodexWakeStateRecord, 1) is not None:
+                return True
+            if db.scalar(select(func.count()).select_from(RelayCodexWakeReservationRecord)):
+                return False
+            high_water = max(
+                [0, db.scalar(select(func.max(RelayDeliveryRecord.codex_wake_generation))) or 0]
+                + [item.generation for item in reservations]
+            )
+            if high_water >= 2**63 - 1:
+                return False
+            db.add_all(RelayCodexWakeReservationRecord(**asdict(item)) for item in reservations)
+            db.add(RelayCodexWakeStateRecord(id=1, generation=high_water))
+        return True
+
+    def relay_codex_wake_transition(self, *, operation, **kwargs):
+        """Commit one bounded current-fence transition; never invoke caller code."""
+        result = None
+        with self._begin_relay_immediate() as db:
+            marker = db.get(RelayCodexWakeStateRecord, 1)
+            self._validate_wake_authority(db, marker)
+            if marker is None:
+                return None
+            if operation == "reserve":
+                values = kwargs["values"]
+                if db.get(RelayCodexWakeReservationRecord, values["recipient_endpoint_id"]) is not None:
+                    return None
+                if db.scalar(select(RelayCodexWakeReservationRecord).where(
+                    RelayCodexWakeReservationRecord.delivery_id == values["delivery_id"]
+                )) is not None:
+                    return None
+                if db.scalar(select(func.count()).select_from(RelayCodexWakeReservationRecord)) >= MAX_RESERVATIONS:
+                    return None
+                state = self._relay_codex_wake_reservation_state(
+                    db, delivery_id=values["delivery_id"], current=_now()
+                )
+                if (state["state"] != "pending"
+                    or state["recipient_endpoint_id"] != values["recipient_endpoint_id"]
+                    or state["wake_target"] != {"runtime": "codex", "session_ref": values["session_ref"], "container_ref": values["container_ref"]}):
+                    return None
+                if marker.generation >= 2**63 - 1:
+                    return None
+                marker.generation += 1
+                result = CodexWakeReservation(**values, generation=marker.generation)
+                db.add(RelayCodexWakeReservationRecord(**asdict(result)))
+            elif operation == "release":
+                removed = []
+                for expected in kwargs["reservations"]:
+                    row = db.get(RelayCodexWakeReservationRecord, expected.recipient_endpoint_id)
+                    if row is not None and self._wake_item(row) == expected:
+                        db.delete(row)
+                        removed.append(expected)
+                result = tuple(removed)
+            else:
+                expected = kwargs["reservation"]
+                row = db.get(RelayCodexWakeReservationRecord, expected.recipient_endpoint_id)
+                if row is None or self._wake_item(row) != expected:
+                    return None
+                if operation == "reconcile":
+                    try:
+                        state = self._relay_codex_wake_reservation_state(db, delivery_id=expected.delivery_id, current=_now())
+                    except RelayNotFoundError:
+                        db.delete(row)
+                        result = ("released", expected)
+                    else:
+                        if state["recipient_endpoint_id"] != expected.recipient_endpoint_id:
+                            return None
+                        if state["state"] in {"delivered", "expired", "suppressed"}:
+                            db.delete(row)
+                            result = ("released", expected)
+                        elif (state["state"] == "pending" and state["stored_state"] == "claimed"
+                              and state["attempts"] > 0
+                              and (state["attempts"] == expected.correlated_claim_attempts
+                                   or state["codex_wake_generation"] == expected.generation)
+                              and state["wake_target"] is not None
+                              and marker.generation < 2**63 - 1):
+                            marker.generation += 1
+                            target = state["wake_target"]
+                            replacement = replace(expected, generation=marker.generation, outcome="reserved",
+                                                  correlated_claim_attempts=None, session_ref=target["session_ref"], container_ref=target["container_ref"])
+                            for name, value in asdict(replacement).items():
+                                setattr(row, name, value)
+                            result = ("replaced", replacement)
+                    # Return only after the enclosing transaction commits.
+                elif operation == "replace":
+                    if marker.generation >= 2**63 - 1:
+                        return None
+                    marker.generation += 1
+                    result = replace(expected, generation=marker.generation, outcome="reserved", correlated_claim_attempts=None, **kwargs["values"])
+                elif operation == "outcome":
+                    result = replace(expected, outcome=kwargs["outcome"])
+                elif operation == "correlate":
+                    if expected.correlated_claim_attempts not in (None, kwargs["attempts"]):
+                        return None
+                    result = replace(expected, correlated_claim_attempts=kwargs["attempts"])
+                else:
+                    raise ValueError("unsupported Codex wake transition")
+                if operation != "reconcile":
+                    for name, value in asdict(result).items():
+                        setattr(row, name, value)
+        return result
+
+    def relay_shadow_snapshot(
+        self,
+        *,
+        endpoint_id: str,
+        runtime: str,
+        session_ref: str,
+        container_ref: str,
+        scope_generation: int,
+        deadline: float,
+    ) -> dict[str, str | bool]:
+        """Read one exact Relay pair's shadow eligibility without changing state."""
+        if (
+            any(not isinstance(value, str) or not value or len(value) > 512 for value in (
+                endpoint_id, runtime, session_ref, container_ref,
+            ))
+            or any(
+                unicodedata.category(char) in {"Cc", "Zl", "Zp"}
+                for value in (endpoint_id, runtime, session_ref, container_ref)
+                for char in value
+            )
+            or type(scope_generation) is not int
+            or scope_generation < 0
+            or not isinstance(deadline, (int, float))
+            or not time.monotonic() < deadline <= time.monotonic() + 3
+        ):
+            raise ValueError("invalid shadow snapshot request")
+
+        def result(category: str, reason: str, endpoint_valid: bool = False) -> dict[str, str | bool]:
+            return {"category": category, "reason": reason, "endpoint_valid": endpoint_valid}
+
+        connection = None
+        try:
+            database = self._relay_engine.url.database
+            if not database or database == ":memory:":
+                return result("unavailable", "unsupported_database")
+            path = Path(database).resolve()
+            if not path.is_file():
+                return result("unavailable", "database_missing")
+            connection = sqlite3.connect(
+                f"{path.as_uri()}?mode=ro", uri=True, timeout=0, isolation_level=None
+            )
+            connection.row_factory = sqlite3.Row
+            connection.execute("PRAGMA query_only=ON")
+            connection.set_progress_handler(lambda: int(time.monotonic() >= deadline), 1000)
+            connection.execute("BEGIN")  # deferred read snapshot
+
+            def check_deadline() -> None:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError
+
+            endpoint = connection.execute(
+                "SELECT state FROM relay_sessions WHERE id=? AND runtime=? AND session_ref=? AND container_ref=?",
+                (endpoint_id, runtime, session_ref, container_ref),
+            ).fetchone()
+            check_deadline()
+            if endpoint is None:
+                return result("held", "endpoint_missing_or_scope_mismatch")
+            if endpoint["state"] != "active":
+                return result("inactive", "endpoint_inactive")
+
+            generation = connection.execute(
+                "SELECT generation FROM relay_endpoint_generations WHERE endpoint_id=?",
+                (endpoint_id,),
+            ).fetchone()
+            check_deadline()
+            current_generation = int(generation["generation"]) if generation else 0
+            if current_generation != scope_generation:
+                return result("held", "scope_generation_mismatch")
+            endpoint_valid = True
+
+            current = datetime.now(timezone.utc)
+            # Older SQLite versions round this sentinel beyond their date range.
+            durable_expiry = _DURABLE_EXPIRY.strftime("%Y-%m-%d %H:%M:%S.%f")
+            rows = connection.execute(
+                "SELECT d.id, d.message_id, d.state, d.claim_token, d.lease_expires_at, "
+                "m.expires_at, d.codex_wake_generation "
+                "FROM relay_deliveries d LEFT JOIN relay_messages m ON m.id=d.message_id "
+                "WHERE d.recipient_endpoint_id=? AND d.recipient_runtime=? "
+                "AND d.recipient_session_ref=? AND d.recipient_container_ref=? "
+                "AND d.state IN ('pending', 'claimed') "
+                "AND (m.expires_at IS NULL OR m.expires_at = ? "
+                "OR julianday(m.expires_at) > julianday(?)) "
+                "ORDER BY d.id LIMIT 2",
+                (
+                    endpoint_id, runtime, session_ref, container_ref,
+                    durable_expiry, current.isoformat(),
+                ),
+            ).fetchall()
+            check_deadline()
+            if not rows:
+                return result("inactive", "no_live_delivery", endpoint_valid)
+            if len(rows) != 1:
+                return result("held", "ambiguous_delivery_set", endpoint_valid)
+            delivery = rows[0]
+            if delivery["state"] != "pending":
+                return result("held", "delivery_not_pending", endpoint_valid)
+            if delivery["claim_token"] is not None or delivery["lease_expires_at"] is not None:
+                return result("held", "claim_evidence_present", endpoint_valid)
+            if delivery["codex_wake_generation"] is not None:
+                # This native counter has no persisted trace-generation link.
+                # Keep the anchor held; never compare it to Relay scope generation.
+                return result("held", "native_anchor_uncorrelated", endpoint_valid)
+
+            traces = connection.execute(
+                "SELECT attempt_id, stage, outcome, evidence_json, native_retry_safe, "
+                "scope_generation, recorded_sequence FROM relay_delivery_trace "
+                "WHERE delivery_id=? ORDER BY recorded_sequence DESC LIMIT 25",
+                (delivery["id"],),
+            ).fetchall()
+            check_deadline()
+            if not traces:
+                return result("held", "native_evidence_missing", endpoint_valid)
+            if len(traces) > 24 or any(row["scope_generation"] != scope_generation for row in traces):
+                return result("held", "native_evidence_incomplete", endpoint_valid)
+            latest = traces[0]
+            if latest["stage"] != "completed":
+                return result("held", "native_evidence_incomplete", endpoint_valid)
+            if len({row["attempt_id"] for row in traces}) != 1:
+                return result("held", "native_evidence_incomplete", endpoint_valid)
+            stages = [row["stage"] for row in reversed(traces)]
+            if (
+                stages.count("prepared") != 1
+                or stages.count("associated") != 1
+                or stages.count("completed") != 1
+                or stages != ["prepared", "associated", "completed"]
+            ):
+                return result("held", "native_evidence_incomplete", endpoint_valid)
+            try:
+                evidence = json.loads(latest["evidence_json"] or "[]")
+            except (TypeError, json.JSONDecodeError):
+                return result("held", "native_evidence_incomplete", endpoint_valid)
+            if latest["outcome"] == "uncertain":
+                return result("held", "native_evidence_uncertain", endpoint_valid)
+            if not isinstance(evidence, list):
+                return result("held", "native_evidence_incomplete", endpoint_valid)
+            if latest["outcome"] == "accepted":
+                if not {"transport_accepted", "payload_admitted"}.intersection(evidence):
+                    return result("held", "native_evidence_incomplete", endpoint_valid)
+                return result("eligible", "accepted_native_evidence", endpoint_valid)
+            if (
+                latest["outcome"] not in {"deferred", "failed"}
+                or latest["native_retry_safe"] != 1
+                or "transport_accepted" in evidence
+                or "payload_admitted" in evidence
+            ):
+                return result("held", "native_evidence_incomplete", endpoint_valid)
+            return result("eligible", "complete_retry_safe_native_evidence", endpoint_valid)
+        except (sqlite3.Error, OSError, TimeoutError, TypeError, ValueError):
+            return result("unavailable", "read_failed_or_deadline")
+        finally:
+            if connection is not None:
+                connection.close()
+
     def relay_endpoint_repair_apply(self, manifest: dict[str, Any], *, reservation_validator: Callable[[], set[str]] | None = None, now: datetime | None = None) -> dict[str, Any]:
         """Apply one exact, reviewed repair snapshot under one write transaction."""
         required = {"schema_version", "database_identity", "source_endpoint_ids", "destination_endpoint_id", "expected_scopes", "endpoint_preimage", "reservation_evidence", "dispositions"}
@@ -561,6 +950,8 @@ class SQLiteRelayMixin:
         max_messages: int,
         lease_seconds: int,
         exact_delivery_id: str | None = None,
+        codex_wake_endpoint_id: str | None = None,
+        codex_wake_generation: int | None = None,
         max_response_chars: int = 0,
         register_session: bool = True,
         previous_container_ref: str | None = None,
@@ -718,6 +1109,17 @@ class SQLiteRelayMixin:
                         lease_expires_at=_iso(lease_expires_at),
                         attempts=int(delivery.attempts or 0) + 1,
                     )
+                    attempt = view["attempts"]
+                    attempt = attempt if 1 <= attempt <= 2**53 - 1 else None
+                    view.update(
+                        claim_attempt=attempt,
+                        possible_redelivery=None if attempt is None else attempt > 1,
+                        redelivery_guidance=(
+                            "Check exact delivery_id in context/artifacts. "
+                            "Skip completed actions; if unknown, inspect target state before irreversible retry. "
+                            "Attempts do not prove emission/actions. ACK: receipt, not completion"
+                        ),
+                    )
                     rendered_chars = len(_delivery_text(delivery, message, view)) + (2 if selected else 0)
                     if max_chars and used + rendered_chars > max_chars:
                         return None
@@ -752,6 +1154,20 @@ class SQLiteRelayMixin:
                 delivery.claimed_at = current
                 delivery.lease_expires_at = current + timedelta(seconds=lease_seconds)
                 delivery.attempts = int(delivery.attempts or 0) + 1
+                delivery.codex_wake_generation = (
+                    codex_wake_generation
+                    if (
+                        exact_delivery_id == delivery.id
+                        and codex_wake_endpoint_id == registered.id
+                        and codex_wake_generation is not None
+                        and type(codex_wake_generation) is int
+                        and codex_wake_generation > 0
+                        and registered.runtime == delivery.recipient_runtime == "codex"
+                        and registered.session_ref == delivery.recipient_session_ref
+                        and registered.container_ref == delivery.recipient_container_ref
+                    )
+                    else None
+                )
                 claimed.append(_delivery_view(
                     delivery, message, registered.state,
                     payload_limit=len(view["payload"]) if view["content_truncated"] else None,
@@ -934,12 +1350,20 @@ class SQLiteRelayMixin:
             }
 
     def relay_work_ref_participant_counts(
-        self, *, work_refs: list[str]
-    ) -> dict[str, int]:
+        self, *, work_refs: list[str], now: datetime, recent_seconds: int
+    ) -> dict[str, tuple[int, int]]:
+        cutoff = _now(now) - timedelta(seconds=recent_seconds)
         statement = (
             select(
                 RelaySessionWorkRefRecord.work_ref,
                 func.count(func.distinct(RelaySessionWorkRefRecord.endpoint_id)),
+                func.count(func.distinct(case(
+                    (
+                        RelaySessionRecord.last_seen_at >= cutoff,
+                        RelaySessionWorkRefRecord.endpoint_id,
+                    ),
+                    else_=None,
+                ))),
             )
             .select_from(RelaySessionWorkRefRecord)
             .join(
@@ -953,7 +1377,10 @@ class SQLiteRelayMixin:
             .group_by(RelaySessionWorkRefRecord.work_ref)
         )
         with self._relay_session_factory() as db:
-            return dict(db.execute(statement).all())
+            return {
+                key: (total, recent)
+                for key, total, recent in db.execute(statement).all()
+            }
 
     def relay_work_ref_participants(
         self,
@@ -964,6 +1391,7 @@ class SQLiteRelayMixin:
         offset: int,
         limit: int,
         now: datetime | None = None,
+        recent_seconds: int = RELAY_RECENT_SECONDS,
     ) -> list[dict[str, Any]]:
         current = _now(now)
         with self._relay_session_factory() as db:
@@ -1012,7 +1440,7 @@ class SQLiteRelayMixin:
             result = []
             for session, associations in grouped:
                 association = associations[0]
-                session_view = self._relay_session_view(db, session, current, 24 * 60 * 60)
+                session_view = self._relay_session_view(db, session, current, recent_seconds)
                 result.append({
                     **session_view,
                     "state": session.state,
@@ -1179,6 +1607,7 @@ class SQLiteRelayMixin:
         container_ref: str,
         expires_in_seconds: int | None,
         in_reply_to: str | None,
+        expiry_supplied: bool = True,
         now: datetime | None = None,
     ) -> dict[str, Any]:
         current = _now(now)
@@ -1213,7 +1642,7 @@ class SQLiteRelayMixin:
                     and existing_message.payload == payload
                     and bool(existing_message.redacted) == bool(redacted)
                     and existing_message.in_reply_to == in_reply_to
-                    and _expiry_matches(existing_message, expires_in_seconds)
+                    and (not expiry_supplied or _expiry_matches(existing_message, expires_in_seconds))
                 ):
                     return self._relay_status_in_session(db, existing_message, current)
                 raise RelayConflictError("message_id is already in use")
@@ -1264,6 +1693,7 @@ class SQLiteRelayMixin:
         redacted: bool,
         container_ref: str,
         expires_in_seconds: int | None,
+        expiry_supplied: bool = True,
         now: datetime | None = None,
     ) -> dict[str, Any]:
         """Validate, create reply, and optionally ACK the delivery in one transaction."""
@@ -1315,7 +1745,7 @@ class SQLiteRelayMixin:
                 if (
                     existing.payload != payload
                     or bool(existing.redacted) != redacted
-                    or not _expiry_matches(existing, expires_in_seconds)
+                    or (expiry_supplied and not _expiry_matches(existing, expires_in_seconds))
                 ):
                     raise RelayConflictError("reply already exists with different parameters")
                 return self._relay_status_in_session(db, existing, current)
@@ -1530,6 +1960,7 @@ class SQLiteRelayMixin:
             "state": state,
             "stored_state": delivery.state,
             "attempts": int(delivery.attempts or 0),
+            "codex_wake_generation": delivery.codex_wake_generation,
             "wake_target": wake_target,
         }
 
@@ -1544,20 +1975,6 @@ class SQLiteRelayMixin:
             return self._relay_codex_wake_reservation_state(
                 db, delivery_id=delivery_id, current=_now(now)
             )
-
-    def relay_reconcile_codex_wake_reservation(
-        self,
-        *,
-        delivery_id: str,
-        decision: Callable[[dict[str, Any]], bool],
-        now: datetime | None = None,
-    ) -> bool:
-        """Evaluate and replace a wake fence while blocking Relay claims."""
-        with self._begin_relay_immediate() as db:
-            state = self._relay_codex_wake_reservation_state(
-                db, delivery_id=delivery_id, current=_now(now)
-            )
-            return decision(state) is True
 
     def relay_wake_candidates(
         self,
@@ -1584,18 +2001,7 @@ class SQLiteRelayMixin:
                 )
                 .where(
                     RelayDeliveryRecord.recipient_runtime.in_(("codex", "claude-code")),
-                    or_(
-                        RelayDeliveryRecord.state == "pending",
-                        and_(
-                            RelayDeliveryRecord.state == "claimed",
-                            RelayDeliveryRecord.lease_expires_at.is_not(None),
-                            RelayDeliveryRecord.lease_expires_at <= current,
-                        ),
-                    ) if include_pending else and_(
-                        RelayDeliveryRecord.state == "claimed",
-                        RelayDeliveryRecord.lease_expires_at.is_not(None),
-                        RelayDeliveryRecord.lease_expires_at <= current,
-                    ),
+                    _wake_pending(current, include_pending),
                     RelayMessageRecord.expires_at > current,
                     RelaySessionRecord.state == "active",
                 )
@@ -2187,11 +2593,23 @@ class SQLiteRelayMixin:
                 and latest_completion is not None
                 and latest_completion.outcome == "uncertain"
             ):
+                codex_prompt_guidance = (
+                    len(snapshots) == 1
+                    and snapshots[0]["recipient_runtime"] == "codex"
+                    and latest_completion.delivery_id == snapshots[0]["delivery_id"]
+                )
                 explanation = (
                     "Needs intervention: Native activation is uncertain, so automatic "
                     "retry is held because the submission may already have succeeded. "
-                    "Start an ordinary turn in the recipient task to process the retained "
-                    "message; do not resend it."
+                    + (
+                        "Enter a normal user prompt directly in the existing Codex "
+                        "recipient task to process the retained message; app-message "
+                        "delegation may not invoke UserPromptSubmit; do not resend it."
+                        if codex_prompt_guidance
+                        else
+                        "Start an ordinary turn in the recipient task to process the "
+                        "retained message; do not resend it."
+                    )
                 )
             elif states == {"pending"} and "unreachable" in endpoint_states:
                 explanation = (

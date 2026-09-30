@@ -817,6 +817,16 @@ def parse_requirement_baseline(text: str) -> RequirementBaseline:
     )
 
 
+def extract_requirement_baseline(text: str) -> RequirementBaseline | None:
+    """Read only the baseline from a historical Work Record version.
+
+    Older snapshots need not satisfy today's unrelated field schema.
+    """
+    fields = _extract_fields(_extract_block(text))
+    baseline = fields.get("Requirement baseline")
+    return None if baseline is None else parse_requirement_baseline(baseline)
+
+
 def _parse_behavior_entry(value: object, index: int) -> BehaviorChange:
     label = f"Behavior changes entry #{index}"
     if not isinstance(value, dict):
@@ -2646,6 +2656,7 @@ from datetime import date
 
 
 _WINDOWS_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+_GIT_TIMEOUT_SEC = 15  # Bound Git history subprocesses.
 
 # Allowed Work Record state values. Both shapes share the same allowed
 # states; routine fast-path lists three (SPEC §7), expanded uses the
@@ -3144,18 +3155,31 @@ def risk_declared_not_below_detected(ctx: CheckerContext) -> PredicateResult:
         )
     declared = ctx.record["risk"].strip()
     detected = ctx.redline_verdict.detected_risk()
+    provisional_gray = (
+        detected == "Elevated"
+        and bool(ctx.redline_verdict.zones.get("gray"))
+        and not ctx.redline_verdict.zones.get("red")
+        and not ctx.redline_verdict.checkpoints
+        and not ctx.redline_verdict.runtime_config_changed
+    )
+    basis = ""
+    if detected == "Elevated":
+        basis = (
+            " (provisional: unclassified gray paths)"
+            if provisional_gray else " (red, checkpoint, or operational signal)"
+        )
     if risk_at_least(declared, detected):
         return PredicateResult(
             name="risk.declared_not_below_detected",
             passed=True,
-            detail=f"declared {declared!r} >= detected {detected!r}.",
+            detail=f"declared {declared!r} >= detected {detected!r}{basis}.",
             blocking=True,
         )
     return PredicateResult(
         name="risk.declared_not_below_detected",
         passed=False,
         detail=(
-            f"declared {declared!r} is below detected {detected!r}; "
+            f"declared {declared!r} is below detected {detected!r}{basis}; "
             f"raise the Work Record's Risk to at least {detected!r}."
         ),
         blocking=True,
@@ -3278,6 +3302,116 @@ def requirements_baseline_present(ctx: CheckerContext) -> PredicateResult:
             True,
         )
     return PredicateResult(name, True, "Requirement baseline is present.", True)
+
+
+def _history_git(
+    ctx: CheckerContext, *args: str, allow_failure: bool = False
+) -> subprocess.CompletedProcess[bytes]:
+    assert ctx.repo_root is not None
+    result = subprocess.run(
+        ["git", *args],
+        cwd=str(ctx.repo_root),
+        capture_output=True,
+        timeout=_GIT_TIMEOUT_SEC,
+        creationflags=_WINDOWS_NO_WINDOW,
+    )
+    if result.returncode and not allow_failure:
+        raise ValueError(f"git {args[0]} could not read the supplied PR history")
+    return result
+
+
+def _history_commit(ctx: CheckerContext, ref: str) -> str:
+    raw = _history_git(
+        ctx, "rev-parse", "--verify", "--end-of-options", f"{ref}^{{commit}}"
+    ).stdout.decode("ascii").strip()
+    if not re.fullmatch(r"[0-9a-f]{40,64}", raw):
+        raise ValueError(f"invalid commit resolved from history ref {ref!r}")
+    return raw
+
+
+def _history_blob(ctx: CheckerContext, sha: str, path: str) -> str | None:
+    blob = _history_git(ctx, "show", f"{sha}:./{path}", allow_failure=True)
+    if blob.returncode:
+        tree = _history_git(ctx, "ls-tree", "-z", "--name-only", sha, "--", path)
+        if path.encode("utf-8") in tree.stdout.split(b"\x00"):
+            raise ValueError(f"committed Work Record {path!r} could not be read")
+        return None
+    return blob.stdout.decode("utf-8")
+
+
+def requirements_baseline_unchanged(ctx: CheckerContext) -> PredicateResult:
+    """Compare the checked baseline with the first authoritative Git snapshot."""
+    name = "requirements.baseline_unchanged"
+    base_ref = ctx.base_ref or os.environ.get("BASE_SHA")
+    head_ref = ctx.head_ref or os.environ.get("HEAD_SHA")
+    if base_ref is None and head_ref is None:
+        return PredicateResult(name, True, "skipped — no PR history supplied.", True)
+    if not base_ref or not head_ref or ctx.repo_root is None:
+        return PredicateResult(
+            name, False, "both PR base/head refs and a repository are required.", True
+        )
+    try:
+        base = _history_commit(ctx, base_ref)
+        head = _history_commit(ctx, head_ref)
+        merge_base = _history_git(ctx, "merge-base", base, head).stdout.decode(
+            "ascii"
+        ).strip()
+        if not re.fullmatch(r"[0-9a-f]{40,64}", merge_base):
+            raise ValueError("PR base/head refs have no usable shared ancestry")
+        path = ctx.backend.resolve_location(ctx.slug).replace("\\", "/")
+        base_blob = _history_blob(ctx, base, path)
+        anchor = (
+            extract_requirement_baseline(base_blob)
+            if base_blob is not None else None
+        )
+        existing = base_blob is not None
+        anchor_sha = base
+        if anchor is None and merge_base != base:
+            common_blob = _history_blob(ctx, merge_base, path)
+            if common_blob is not None:
+                existing = True
+                anchor = extract_requirement_baseline(common_blob)
+                if anchor is not None:
+                    anchor_sha = merge_base
+        if anchor is None:
+            log = _history_git(
+                ctx, "log", "--full-history", "--topo-order", "--reverse",
+                "--format=%H", f"{merge_base}..{head}", "--", path
+            )
+            commits = [sha for sha in log.stdout.decode("ascii").splitlines() if sha]
+            for sha in commits:
+                blob = _history_blob(ctx, sha, path)
+                if blob is None:
+                    continue
+                baseline = extract_requirement_baseline(blob)
+                if baseline is None:
+                    if not existing:
+                        raise ValueError(
+                            "new Work Record lacks a baseline in its first commit"
+                        )
+                    continue
+                anchor, anchor_sha = baseline, sha
+                break
+        if anchor is None:
+            raise ValueError("no committed Requirement baseline could be established")
+        head_blob = _history_blob(ctx, head, path)
+        if head_blob is not None and extract_requirement_baseline(head_blob) != anchor:
+            raise ValueError(
+                f"branch-head baseline differs from committed baseline at {anchor_sha[:8]}"
+            )
+        error = _integrity_error(ctx)
+        if error is not None:
+            raise ValueError(error)
+        assert ctx.record is not None
+        if ctx.record.get("requirement_baseline") != anchor:
+            raise ValueError(
+                f"checked baseline differs from committed baseline at {anchor_sha[:8]}"
+            )
+    except (OSError, subprocess.TimeoutExpired, UnicodeError, WorkRecordParseError, ValueError) as exc:
+        return PredicateResult(name, False, str(exc), True)
+    return PredicateResult(
+        name, True, f"Requirement baseline matches committed {anchor_sha[:8]}.", True
+    )
 
 
 def behavior_changes_well_formed(ctx: CheckerContext) -> PredicateResult:
@@ -3410,6 +3544,7 @@ _NON_WAIVABLE_PREDICATES: frozenset[str] = frozenset({
     "workrecord.shape_matches_classification",
     "workrecord.implementation_ready",
     "requirements.baseline_present",
+    "requirements.baseline_unchanged",
     "requirements.behavior_changes_well_formed",
     "requirements.task_context_traceable",
     "requirements.requirement_changes_authorized",
@@ -3588,124 +3723,110 @@ def exceptions_not_expired(ctx: CheckerContext) -> PredicateResult:
 # ..." text in the Approvals field. Integrity rests on the human being
 # in the loop and choosing to write the Work Record honestly.
 
-# Values that signal "no clean-context review was performed" for the
-# Elevated predicate. Case-insensitive comparison; whitespace stripped.
-_NO_CLEAN_CONTEXT_VALUES: frozenset[str] = frozenset({
-    "",
-    "—",
-    "—.",
-    "self",
-    "self-review",
-    "self review",
-})
+# Review evidence is an attested source reference, not proof of reviewer
+# identity, competence, or the review's quality (SPEC §5).
+_AGENT_REVIEW_RE = re.compile(
+    r"^Agent technical review:[ \t]*(\S[^\r\n]*)$",
+    re.IGNORECASE | re.MULTILINE,
+)
+_REVIEWED_REVISION_RE = re.compile(
+    r"^Reviewed revision:[ \t]*(\S[^\r\n]*)$",
+    re.IGNORECASE | re.MULTILINE,
+)
+_VERIFICATION_ADEQUACY_RE = re.compile(
+    r"^Verification adequacy:[ \t]*(\S[^\r\n]*)$",
+    re.IGNORECASE | re.MULTILINE,
+)
+_PLACEHOLDER_RE = re.compile(
+    r"^(?:—|self\b|pending\b|todo\b|none\b|n/?a\b|"
+    r"unknown\b|not provided\b|approved by user\b|human\b|codeowner\b|label\b|<|\[)",
+    re.IGNORECASE,
+)
+_MARKDOWN_LINK_RE = re.compile(r"^(?:\[[^\]]+\]\([^)]+\)|<https?://[^>]+>)")
 
 # Sentinel for the High-risk approval line. Format:
 #   Approved by user <timestamp>: "<verbatim quote>"
-# Compiled case-insensitive; whitespace around the colon is tolerated.
 _HIGH_APPROVAL_RE = re.compile(
     r"approved\s+by\s+user\s+[^:]+:",
     re.IGNORECASE,
 )
 
-# Regex to locate a "## Plan review" heading and the prose between
-# it and the next heading. The prose must be at least 20 characters
-# (stripped) to count as a real review record — a bare heading with
-# no content does not satisfy the predicate.
 _PLAN_REVIEW_SECTION_RE = re.compile(
     r"^##\s+Plan review\s*$(.*?)(?=^##\s+|\Z)",
     re.MULTILINE | re.DOTALL,
 )
+_RESULT_REVIEW_SECTION_RE = re.compile(
+    r"^##\s+Result review\s*$(.*?)(?=^##\s+|\Z)",
+    re.MULTILINE | re.DOTALL,
+)
+
+
+def _review_line_value(text: str, pattern: re.Pattern[str]) -> str | None:
+    """Extract a non-placeholder attestation; do not infer its truth."""
+    for match in pattern.finditer(text):
+        value = match.group(1).strip()
+        if value and (_MARKDOWN_LINK_RE.match(value) or not _PLACEHOLDER_RE.match(value)):
+            return value
+    return None
+
+
+def _plan_agent_reference(ctx: CheckerContext) -> str | None:
+    if ctx.record is None:
+        return None
+    field = ctx.record.get("plan_review", "")
+    ref = _review_line_value(field, _AGENT_REVIEW_RE)
+    if ref:
+        return ref
+    for match in _PLAN_REVIEW_SECTION_RE.finditer(ctx.raw_text or ""):
+        ref = _review_line_value(match.group(1), _AGENT_REVIEW_RE)
+        if ref:
+            return ref
+    return None
 
 
 def _normalise_reference(text: str) -> str:
-    """Normalise a reference string for clean-context-vs-human comparison.
-
-    Strips surrounding whitespace and quotes, lowercases, and collapses
-    internal whitespace runs to single spaces. Two references that
-    point at the same thing modulo formatting normalise to the same
-    string.
-    """
+    """Normalise a reference for clean-context-vs-human comparison."""
     s = text.strip()
-    # Strip matched surrounding quote characters.
     if len(s) >= 2 and s[0] == s[-1] and s[0] in ('"', "'"):
         s = s[1:-1]
-    s = " ".join(s.lower().split())
-    return s
+    return " ".join(s.lower().split())
 
 
 def approval_elevated_clean_context_review_present(ctx: CheckerContext) -> PredicateResult:
-    """Predicate: Elevated tasks record a clean-context plan review.
-
-    When Risk == Elevated, the `plan_review` field must reference a
-    real review — either a link/session reference in the field itself,
-    or a `## Plan review` section in the Work Record file with non-
-    trivial prose (≥ 20 chars stripped). A bare `self` or `—` in the
-    field with no section fails the predicate.
-
-    Per default profile §3, presence is enforced (tightened from the
-    portable SPEC's SHOULD). The predicate is waivable via a slice-F
-    task exception — consumers using a custom profile wanting SHOULD behaviour can
-    record an exception per task.
-
-    Fires with a "skipped" detail when Risk != Elevated, so the
-    predicate-list shape stays stable across risk levels.
-    """
+    """Elevated plans require an explicit agent technical-review reference."""
+    name = "approval.elevated_clean_context_review_present"
     if ctx.record is None:
-        return PredicateResult(
-            name="approval.elevated_clean_context_review_present",
-            passed=False,
-            detail="skipped — Work Record could not be parsed.",
-            blocking=True,
-        )
+        return PredicateResult(name, False, "Work Record could not be parsed.", True)
     risk = ctx.record["risk"].strip()
     if risk != "Elevated":
-        return PredicateResult(
-            name="approval.elevated_clean_context_review_present",
-            passed=True,
-            detail=f"skipped — only applies at Risk=Elevated (record is Risk={risk!r}).",
-            blocking=True,
-        )
-    # Field must exist on the expanded shape.
-    plan_review = ctx.record.get("plan_review", "")  # type: ignore[union-attr]
-    normalised_field = plan_review.strip().lower()
-    if normalised_field and normalised_field not in _NO_CLEAN_CONTEXT_VALUES:
-        return PredicateResult(
-            name="approval.elevated_clean_context_review_present",
-            passed=True,
-            detail=f"Plan review references {plan_review.strip()!r}.",
-            blocking=True,
-        )
-    # Field is empty / "—" / "self" / etc. — look for a ## Plan review
-    # section in the surrounding prose. The marker block was excluded
-    # from raw text? No — ctx.raw_text is the whole file. The Plan
-    # review prose lives outside the marker block per the operating-
-    # mode convention.
-    if ctx.raw_text is not None:
-        for match in _PLAN_REVIEW_SECTION_RE.finditer(ctx.raw_text):
-            prose = match.group(1).strip()
-            # Drop bullet-point or table boilerplate; require ≥ 20 chars
-            # of real content.
-            if len(prose) >= 20:
-                return PredicateResult(
-                    name="approval.elevated_clean_context_review_present",
-                    passed=True,
-                    detail=(
-                        "Plan review field is short, but '## Plan review' "
-                        "section carries the review prose."
-                    ),
-                    blocking=True,
-                )
+        return PredicateResult(name, True, f"skipped — Risk={risk!r}.", True)
+    ref = _plan_agent_reference(ctx)
+    if ref:
+        return PredicateResult(name, True, f"Agent plan review references {ref!r}.", True)
     return PredicateResult(
-        name="approval.elevated_clean_context_review_present",
-        passed=False,
-        detail=(
-            "Elevated task requires a clean-context plan review reference. "
-            "The Plan review field is empty / '—' / 'self' and no '## Plan review' "
-            "section with content was found. Either fill the field with a real "
-            "reference, or add a '## Plan review' section below the marker "
-            "block carrying the review prose."
-        ),
-        blocking=True,
+        name, False,
+        "Elevated plan needs 'Agent technical review: <source ref>' in "
+        "Plan review or ## Plan review; human approval, labels, and placeholders do not count.",
+        True,
+    )
+
+
+def approval_high_clean_context_review_present(ctx: CheckerContext) -> PredicateResult:
+    """High plans need agent review in addition to human review and approval."""
+    name = "approval.high_clean_context_review_present"
+    if ctx.record is None:
+        return PredicateResult(name, False, "Work Record could not be parsed.", True)
+    risk = ctx.record["risk"].strip()
+    if risk != "High":
+        return PredicateResult(name, True, f"skipped — Risk={risk!r}.", True)
+    ref = _plan_agent_reference(ctx)
+    if ref:
+        return PredicateResult(name, True, f"Agent plan review references {ref!r}.", True)
+    return PredicateResult(
+        name, False,
+        "High plan needs 'Agent technical review: <source ref>' in "
+        "Plan review or ## Plan review, separate from human review/approval.",
+        True,
     )
 
 
@@ -3822,6 +3943,37 @@ def approval_clean_context_does_not_satisfy_human(ctx: CheckerContext) -> Predic
         passed=True,
         detail="Plan review and Approvals reference distinct items.",
         blocking=True,
+    )
+
+
+def review_agent_result_review_present(ctx: CheckerContext) -> PredicateResult:
+    """Elevated/High results record agent review of a named revision and evidence."""
+    name = "review.agent_result_review_present"
+    if ctx.record is None:
+        return PredicateResult(name, False, "Work Record could not be parsed.", True)
+    risk = ctx.record["risk"].strip()
+    state = ctx.record.get("state", "").rstrip(".").strip()
+    if risk not in {"Elevated", "High"} or state != "Ready for review":
+        return PredicateResult(name, True, f"skipped — Risk={risk!r}, State={state!r}.", True)
+    for match in _RESULT_REVIEW_SECTION_RE.finditer(ctx.raw_text or ""):
+        section = match.group(1)
+        ref = _review_line_value(section, _AGENT_REVIEW_RE)
+        revision = _review_line_value(section, _REVIEWED_REVISION_RE)
+        adequacy = _review_line_value(section, _VERIFICATION_ADEQUACY_RE)
+        if ref and revision and adequacy:
+            return PredicateResult(
+                name, True,
+                f"Agent result review references {ref!r} for revision {revision!r}; "
+                "verification-adequacy assessment recorded (not judged).",
+                True,
+            )
+    return PredicateResult(
+        name, False,
+        "Elevated/High Ready-for-review record needs ## Result review with "
+        "'Agent technical review: <source ref>', 'Reviewed revision: <rev>', "
+        "and 'Verification adequacy: <assessment>'. Human review, approval, "
+        "labels, and placeholders do not count.",
+        True,
     )
 
 
@@ -4047,12 +4199,15 @@ PREDICATE_SOURCE: dict[str, str] = {
     "exceptions.not_against_boundary": "core",
     "exceptions.not_expired": "core",
     "approval.elevated_clean_context_review_present": "core",
+    "approval.high_clean_context_review_present": "core",
+    "review.agent_result_review_present": "core",
     "approval.high_risk_approval_recorded": "core",
     "approval.clean_context_does_not_satisfy_human": "core",
     "evidence.criteria_have_methods": "core",
     "evidence.failure_not_claimed_as_success": "core",
     "workrecord.commit_order": "core",
     "requirements.baseline_present": "core",
+    "requirements.baseline_unchanged": "core",
     "requirements.behavior_changes_well_formed": "core",
     "requirements.task_context_traceable": "core",
     "requirements.requirement_changes_authorized": "core",
@@ -4073,12 +4228,6 @@ PREDICATE_SOURCE: dict[str, str] = {
 # Work Record commit-order discipline (advisory)
 # ---------------------------------------------------------------------------
 
-
-# Consistent timeout for every git invocation in this layer. The
-# branch walk + per-commit `git show` calls all use this. Picked to
-# tolerate slow GHES clones without letting a wedged subprocess hang
-# the predicate indefinitely.
-_GIT_TIMEOUT_SEC = 15
 
 
 def workrecord_commit_order(ctx: CheckerContext) -> PredicateResult:
@@ -4312,6 +4461,7 @@ PREDICATES: tuple = (
     review_checkpoints_satisfied,
     # --- behavioral requirement integrity ---------------------------
     requirements_baseline_present,
+    requirements_baseline_unchanged,
     behavior_changes_well_formed,
     task_context_traceable,
     requirement_changes_authorized,
@@ -4321,8 +4471,10 @@ PREDICATES: tuple = (
     exceptions_not_expired,
     # --- approval predicates (slice D) ------------------------------
     approval_elevated_clean_context_review_present,
+    approval_high_clean_context_review_present,
     approval_high_risk_approval_recorded,
     approval_clean_context_does_not_satisfy_human,
+    review_agent_result_review_present,
     # --- evidence predicates (slice E) ------------------------------
     evidence_criteria_have_methods,
     evidence_failure_not_claimed_as_success,
@@ -4755,7 +4907,7 @@ def discover_slugs_from_changed_files(
     changed_paths: list[str] | None = None,
     nul_delimited: bool = False,
 ) -> list[str]:
-    """Return existing changed Work Record slugs for the configured taskPath."""
+    """Return changed Work Record slugs, including deleted/renamed-old paths."""
     paths = changed_paths
     if paths is None:
         paths = read_changed_paths(changed_files_path, nul_delimited=nul_delimited)
@@ -4773,8 +4925,6 @@ def discover_slugs_from_changed_files(
         slug = norm[len(prefix):end]
         name = f"{slug}{suffix}"
         if not slug or "/" in slug or name in _NON_TASK_FILENAMES or slug.startswith("."):
-            continue
-        if not (repo_root / norm).exists():
             continue
         if slug not in seen:
             seen.add(slug)

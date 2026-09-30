@@ -146,7 +146,7 @@ class TestConcurrentWriteDoesNotFail:
         def hold_write_lock():
             """Hold a write lock for 2 seconds using BEGIN IMMEDIATE."""
             import sqlite3
-            db_path = str(storage._engine.url).replace("sqlite:///", "")
+            db_path = storage._engine.url.database
             conn = sqlite3.connect(db_path)
             conn.execute("PRAGMA busy_timeout=0")
             conn.execute("BEGIN IMMEDIATE")

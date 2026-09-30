@@ -23,11 +23,13 @@ Self-review is sufficient; no Plan review field on compact.
 | Risk | Review requirement |
 |---|---|
 | **Routine** | Self-review. No Plan review field on compact. |
-| **Elevated** | **Clean-context agent review required.** Spawn a fresh subagent per the canonical mechanism in [`../../operating-mode.md`](../../operating-mode.md) §"Clean-context delegation" (Task/Agent tool with a read-only agent type, or a fresh session when the harness has no subagent primitive). Subagent reads only the Work Record + SPEC + relevant source files. Review prose lands under `## Plan review` in the same Work Record; the marker-block field references it. The reviewer SHOULD probe one assumption or decision at a time rather than producing a holistic summary — serial questioning surfaces weaknesses that a single-pass read glosses over. |
-| **High** | Clean-context review **plus** human approval. Stop, present the plan + clean-context summary to the human, refuse to advance until approved. Record the approval **verbatim** in Approvals (see below). |
+| **Elevated** | Clean-context agent review required. Use operating-mode §Clean-context delegation; probe material uncertainty and record the result under Plan review in the Work Record. |
+| **High** | Clean-context agent technical review **plus** separate human plan review and approval. Stop until both are complete; record human approval verbatim in Approvals. |
+
+Record `Agent technical review: <source ref>` in Plan review for Elevated/High. The non-implementer agent assesses risk and verification-plan adequacy, citing revision, inspected evidence, findings, and disposition. Human approval alone proves neither review. Use the least costly capable reviewer; preserve human/specialist duties and user-selected settings. Reuse valid unchanged review.
 
 **Predicates:**
-- `approval.elevated_clean_context_review_present` — blocks when the field is empty/`—`/`self` AND no `## Plan review` section exists.
+- `approval.elevated_clean_context_review_present` / `approval.high_clean_context_review_present` — require a distinct agent technical review reference at Elevated / High.
 - `approval.high_risk_approval_recorded` — matches the Approvals pattern case-insensitively.
 - `approval.clean_context_does_not_satisfy_human` (non-waivable) — ensures the recorded approval is not the clean-context reference copied across.
 
@@ -47,10 +49,8 @@ Checker predicates: `workrecord.routine_fields_present` (compact) / `workrecord.
 
 ## Gates this checkpoint closes (SPEC §9.4)
 
-- Implementation **MUST NOT** begin until required reviews complete, approvals recorded, blocking findings resolved.
-- Plan review or approval **MUST** repeat only when scope, assumptions, approach, or risk materially change.
-
-A reassessment that materially changes any of those returns the task to planning. State goes back from `Ready to implement` to `Blocked` (with reason); update the plan; reviewer signs off again.
+- Begin after required reviews, recorded approval, and resolved blockers. Human consent to the presented plan is approval; no magic word. Preserve its exact quote and scope. Silence, elapsed time, tool results, and agent review are not approval.
+- On approval, advance. Nonmaterial wording or revision bookkeeping preserves it. Repeat review/approval only when scope, assumptions, approach, or risk materially change; return to planning with a named `Blocked` reason. Before blocking for missing approval, identify the uncovered decision and ask one concrete question.
 
 ## Exceptions (expanded shape only)
 

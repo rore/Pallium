@@ -892,8 +892,34 @@ def main(args: list[str] | None = None) -> int:
             "Requires Codex hook review and restart."
         ),
     )
+    parser.add_argument(
+        "--bridge-shadow-provision", type=Path,
+        help="Provision an explicitly approved shadow-only pair policy; do not install or activate MCP",
+    )
+    parser.add_argument("--expected-policy-revision", type=int, default=None)
     parsed = parser.parse_args(args)
 
+    if parsed.bridge_shadow_provision is not None:
+        if (parsed.uninstall or parsed.replace_existing_checkout or parsed.port != 19836
+                or parsed.guidance_strength != "base"):
+            parser.error("shadow policy provisioning cannot be combined with integration setup options")
+        from app.codex_bridge_pipe import ShadowUnavailable, provision_policy
+
+        try:
+            provision_policy(
+                parsed.bridge_shadow_provision,
+                expected_revision=parsed.expected_policy_revision or 0,
+            )
+        except ShadowUnavailable as exc:
+            print(f"Shadow policy not provisioned: {exc.category}", file=sys.stderr)
+            return 2
+        except Exception:
+            print("Shadow policy not provisioned: provisioning-failed", file=sys.stderr)
+            return 2
+        print("Shadow-only policy provisioned. MCP configuration and delivery behavior are unchanged.")
+        return 0
+    if parsed.expected_policy_revision is not None:
+        parser.error("--expected-policy-revision requires --bridge-shadow-provision")
     if parsed.uninstall:
         return uninstall()
     guidance_strength = _normalize_guidance_strength(parsed.guidance_strength)

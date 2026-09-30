@@ -46,6 +46,10 @@ For ownership rules, item shape, board rules, and edit constraints, read [refere
 
 When explicitly implementing or substantively reviewing a known roadmap item, and only when Pallium MCP work-reference tools are available, follow [references/pallium-participants.md](references/pallium-participants.md). Pallium is optional: never install it, shell out to it, or block ordinary Minimap work when those tools are absent.
 
+## Agent Handoffs
+
+For assigned roadmap work, use the manager-designated shared checkout and make roadmap edits there; do not automatically sync changes across worktrees. On pickup or resume, confirm the canonical item id and read its current file and relevant roadmap state. On pause or handoff, report the exact item id and repository-relative item path (and exact Pallium `scope_ref`/`local_ref` when applicable), changed files, and current worktree state, including any uncommitted work. The receiving agent re-reads the item and attaches its own Pallium association when applicable; the sender detaches only an association it attached and only after leaving the work. On completion, reconcile the owning roadmap item under [Completion Reconciliation](references/roadmap-contract.md#completion-reconciliation) and report the resulting state and changed files. These notes do not transfer roadmap file ownership or imply an Agent Workflow requirement.
+
 ## Composing With Spec Review
 
 A roadmap item is just a markdown file. To open a review thread on one item (anchored comments, suggestions), attach the item file via the `minimap-spec-review` skill if it is installed alongside this one. Spec sessions never auto-mutate the file, so the layers compose safely.

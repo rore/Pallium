@@ -1152,9 +1152,12 @@ async function loadItemIndex(roadmapRoot) {
   ];
   const index = new Map();
 
-  for (const entry of files) {
-    const text = await fs.readFile(entry.filePath, "utf8");
-    const parsed = parseItemText(text, entry.filePath);
+  const texts = [];
+  for (let start = 0; start < files.length; start += 32) {
+    texts.push(...await Promise.all(files.slice(start, start + 32).map((entry) => fs.readFile(entry.filePath, "utf8"))));
+  }
+  for (const [fileIndex, entry] of files.entries()) {
+    const parsed = parseItemText(texts[fileIndex], entry.filePath);
     const id = String(parsed.frontmatter.id);
 
     if (index.has(id)) {

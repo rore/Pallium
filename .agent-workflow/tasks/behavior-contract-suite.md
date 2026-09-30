@@ -1,0 +1,60 @@
+<!-- agent-workflow:start -->
+**Outcome:** Pallium has a dedicated, evidence-backed regression for one accepted caller-visible Relay behavior, ready for workflow-only protection.
+
+**Target:** Pallium.
+
+**Scope:** Add `tests/behavior_contracts/README.md` and one standalone HTTP-to-hook RW-022 regression; leave the existing broad test file intact. Reconcile the roadmap item only if its status changes. Policy activation is a separate reviewed change.
+
+**Constraints:** Do not claim automatic unloaded Codex wake, modify production behavior, protect broad mixed-purpose tests, add a CI job, CODEOWNERS, branch protection, or a required status. Keep the test deterministic and in the default PR `test` job.
+
+**Completion criteria:** When one native wake submission is accepted for a busy Codex target, repeated recovery checks shall not submit duplicates; a later admitted hook turn shall emit and ACK the delivery once, and an overtaken wake shall not start an empty model turn. The standalone regression passes on current code, has a pre-fix failure witness, and runs in PR `test`.
+
+**Requirement baseline:**
+{"source":"roadmap/features/add-protected-behavioral-requirements-regression-suite.md","outcome":"Pallium has a dedicated, evidence-backed regression for one accepted caller-visible Relay behavior, ready for workflow-only protection.","scope":"Add `tests/behavior_contracts/README.md` and one standalone HTTP-to-hook RW-022 regression; leave the existing broad test file intact. Reconcile the roadmap item only if its status changes. Policy activation is a separate reviewed change.","constraints":"Do not claim automatic unloaded Codex wake, modify production behavior, protect broad mixed-purpose tests, add a CI job, CODEOWNERS, branch protection, or a required status. Keep the test deterministic and in the default PR `test` job.","completion_criteria":"When one native wake submission is accepted for a busy Codex target, repeated recovery checks shall not submit duplicates; a later admitted hook turn shall emit and ACK the delivery once, and an overtaken wake shall not start an empty model turn. The standalone regression passes on current code, has a pre-fix failure witness, and runs in PR `test`."}
+
+**Risk:** Elevated
+
+**Complexity:** Moderate
+
+**Reason:** Redline classifies the intended test and Work Record files blue, but this selects an authoritative product contract. Moderate complexity covers standalone extraction, a historical regression witness, and PR verification.
+
+**Discovery:** `roadmap/features/add-protected-behavioral-requirements-regression-suite.md` requires a small dedicated catalog and public-surface regression before a separate policy change. RW-022 records repeated accepted native queue prompts and empty turns; `tests/test_codex_wake.py::test_busy_queue_recovery_stays_single_flight_and_competing_hook_blocks_overtaken_wake` already drives HTTP, scheduler recovery, and the real hook, but lives in a broad mixed file. The existing `test` CI job runs `tests/`. Current docs exclude unattended unloaded Codex wake.
+
+**Material assumptions:** The RW-022 test can be made standalone using contract-local isolation and existing shared `client` fixture; if extraction needs production changes or broad helper dependencies, return to planning. The documented pre-fix scheduler can provide a direct witness; if current test APIs make that revision incompatible, use a minimal controlled reintroduction in a disposable checkout and report the limitation. Task-owner selection is provisional until confirmed before policy activation.
+
+**Plan:** 1. Invoke the `/agent-workflow` skill to create the Work Record and classify risk, before any code edit. 2. Get clean-context plan review. 3. Add only a plain catalog and self-contained RW-022 caller-surface regression under `tests/behavior_contracts/`; do not move or edit the broad existing file. 4. Run focused/default-suite tests and prove a pre-fix or controlled-fault failure witness. 5. Verify PR `test` and combined Redline/Agent Workflow harness, review findings, then merge the test-only PR. Stop and replan if the candidate is rejected or the witness cannot be established.
+
+**Verification plan:** One accepted busy wake remains one native submission across recovery checks and delivers once via hook, while an overtaken wake is suppressed → standalone contract test plus original-failure witness. Default PR verification includes the protected directory → hosted `test (3.12)` and `test (3.13)` jobs. Work Record and scope remain valid → Redline and Agent Workflow checks.
+
+**Plan review:** Clean-context review APPROVE; see `## Plan review` below.
+
+**Approvals:** Not required at this risk level.
+
+**Exceptions:** —
+
+**State:** Ready for review
+<!-- agent-workflow:end -->
+
+## Implementation
+
+- Discover: the initial roadmap candidate promising unloaded Codex wake conflicts with current shipped behavior, so the first contract is narrowed to RW-022's loaded/busy path. The existing broad regression and CI job are reusable evidence; policy activation stays in a separate PR.
+- Assess risk: the planned files are blue by Redline, but defining a durable product obligation raises this test-only slice to Elevated.
+- Implement: added a standalone copy of the existing RW-022 HTTP → scheduler → hook regression with contract-local registry isolation, plus a narrow catalog entry. The broad source test remains unchanged.
+- Verify: affected wake subsystem and contract passed (140 tests); full default suite passed (5,302 passed, 34 skipped, 2 xfailed). The controlled fault failed as intended.
+
+## Plan review
+
+Clean-context agent verdict: APPROVE. The documented RW-022 failure and existing HTTP → scheduler/recovery → real hook regression support this narrow contract. Keep registry/setup isolation in the new file; do not broaden the promise to unloaded wake or all busy-runtime semantics. Prove the historical 6-to-1 failure or a controlled equivalent, and leave the roadmap queued until the separate policy activation.
+
+## Task-owner selection
+
+- Approved by user 2026-09-24T19:05:33Z: "Approve". In response to the pending RW-022 selection and workflow-only activation decisions; treated as accepting RW-022 as the first contract.
+
+## Evidence
+
+- Focused contract directory: 1 passed on current code. A disposable-checkout controlled fault that releases the accepted native reservation produced 6 queue submissions and failed the one-call assertion; the witness checkout was removed.
+- Affected subsystem: 140 passed. Full default suite: 5,302 passed, 34 skipped, 2 xfailed on the test content committed as 2ee44e4d. CI job test runs tests/ on PRs for Python 3.12 and 3.13. Local Redline verdict BLUE with no boundary/checkpoint findings; Agent Workflow checker clean.
+
+## Result review
+
+- Independent clean-context agent: APPROVE. Caller-visible HTTP → scheduler/recovery → hook and read-path assertions cover the narrow RW-022 guarantee; fixture isolation and documented failure witness are adequate. Reviewer noted an in-memory test reservation was called durable in the catalog; corrected to accepted wake reservation. CodeRabbit found the router/recovery path did not explicitly use the fixture registry; both now receive it, and the focused contract passed. Hosted PR checks remain to verify before merge. The roadmap remains queued until separate policy activation.

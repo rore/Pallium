@@ -251,8 +251,11 @@
                 <input id="board-search" type="search" placeholder="Search" autocomplete="off" spellcheck="false" />
               </label>
               <div class="board-control-actions">
+                <label class="board-focus-label" for="board-focus-milestone"><span class="visually-hidden">Focus milestone</span><select id="board-focus-milestone" aria-label="Focus milestone"><option value="">All milestones</option></select></label>
+                <button id="board-focus-unfinished" class="ghost-button board-focus-unfinished" type="button" aria-pressed="false" title="Hide done, shipped, superseded, and canceled items">Unfinished</button>
                 <button id="board-filter-toggle" class="ghost-button board-filter-toggle" type="button" aria-expanded="false">Filters</button>
                 <button id="board-clear-filters" class="ghost-button board-clear-button" type="button">Clear</button>
+                <span id="board-participant-status" class="board-participant-status" role="status" hidden></span>
               </div>
             </div>
             <div id="board-filters" class="board-filters" hidden></div>

@@ -220,6 +220,44 @@ def _load_claude_hook(name: str, monkeypatch: pytest.MonkeyPatch):
     return module
 
 
+def test_wake_intent_lock_setup_cannot_outlive_hook_deadline(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    import time
+
+    monkeypatch.setenv("PALLIUM_CLAUDE_WAKE_DIR", str(tmp_path / "wake"))
+    common = _load_claude_hook("common", monkeypatch)
+    common.CLAUDE_WAKE_DIR = tmp_path / "wake"
+    common.CLAUDE_WAKE_INTENTS_DIR = tmp_path / "wake" / "intents"
+    monkeypatch.setenv("CLAUDE_CODE_MESSAGING_SOCKET", "socket")
+    monkeypatch.setenv("CLAUDE_CODE_MESSAGING_TOKEN", "token")
+    old = {
+        "runtime": "claude-code", "session_ref": "deadline",
+        "container_ref": "git:example/repo", "intent_id": "old",
+        "socket_path": "old-socket", "token": "old-token", "idle": True,
+    }
+    assert common._write_wake_intent(old)
+    common.start_hook_deadline(0.015, clock=lambda: 0.0)
+    original_open = open
+    http_attempts: list[object] = []
+
+    def slow_lock_open(path, *args, **kwargs):
+        if str(path).endswith(".lock"):
+            time.sleep(0.03)
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(common, "open", slow_lock_open, raising=False)
+    monkeypatch.setattr(
+        common.urllib.request, "build_opener",
+        lambda *args: http_attempts.append(args),
+    )
+
+    assert not common.register_claude_wake("deadline", "git:example/repo", idle=True)
+    assert http_attempts == []
+    path = common._wake_intent_path("claude-code", "deadline", "git:example/repo")
+    assert json.loads(path.read_text(encoding="utf-8"))["intent_id"] == "old"
+
+
 def test_claude_injection_scope_is_exact_bounded_and_optional(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

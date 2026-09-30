@@ -19,7 +19,9 @@ RELAY_TURN_MAX_CHARS = 2400
 RELAY_TURN_MAX_MESSAGES = 3
 RELAY_MAX_STRUCTURAL_WORK_REFS = 2
 
-RELAY_DEFAULT_EXPIRY_SECONDS: int | None = None
+RELAY_DEFAULT_EXPIRY_SECONDS = 24 * 60 * 60
+# Null requests durability; omission retains an existing ID's original expiry.
+_RELAY_EXPIRY_OMITTED = object()
 RELAY_MIN_EXPIRY_SECONDS = 60
 RELAY_MAX_EXPIRY_SECONDS = 7 * 24 * 60 * 60
 RELAY_RECENT_SECONDS = 24 * 60 * 60
@@ -114,6 +116,18 @@ def parse_selector(value: str) -> tuple[str | None, str, str]:
 class RelayService:
     """Validated Relay boundary over the optional SQLite relay capability."""
 
+    def codex_wake_snapshot(self):
+        return self._store.relay_codex_wake_snapshot()
+
+    def codex_wake_health(self, *, now: datetime | None = None):
+        return self._store.relay_codex_wake_health(now=now)
+
+    def codex_wake_initialize(self, reservations):
+        return self._store.relay_codex_wake_initialize(reservations=reservations)
+
+    def codex_wake_transition(self, operation, **kwargs):
+        return self._store.relay_codex_wake_transition(operation=operation, **kwargs)
+
     def __init__(self, store: Any) -> None:
         required = (
             "relay_turn",
@@ -147,6 +161,8 @@ class RelayService:
         register_session: bool = True,
         structural_work_refs: Any = None,
         exact_delivery_id: str | None = None,
+        codex_wake_endpoint_id: str | None = None,
+        codex_wake_generation: int | None = None,
         previous_container_ref: str | None = None,
         previous_endpoint_id: str | None = None,
         previous_scope_generation: int | None = None,
@@ -173,6 +189,15 @@ class RelayService:
                 raise ValueError(
                     "exact_delivery_id requires a canonical Codex delivery ID"
                 )
+        if codex_wake_endpoint_id is not None or codex_wake_generation is not None:
+            if (
+                exact_delivery_id is None
+                or not isinstance(codex_wake_endpoint_id, str)
+                or _ENDPOINT_ID_RE.fullmatch(codex_wake_endpoint_id) is None
+                or type(codex_wake_generation) is not int
+                or codex_wake_generation < 1
+            ):
+                raise ValueError("invalid Codex wake claim snapshot")
         transition = (
             previous_container_ref,
             previous_endpoint_id,
@@ -195,6 +220,10 @@ class RelayService:
             max_messages=max_messages,
             lease_seconds=RELAY_CLAIM_LEASE_SECONDS,
             **({"exact_delivery_id": exact_delivery_id} if exact_delivery_id is not None else {}),
+            **({
+                "codex_wake_endpoint_id": codex_wake_endpoint_id,
+                "codex_wake_generation": codex_wake_generation,
+            } if codex_wake_endpoint_id is not None else {}),
             register_session=register_session,
             previous_container_ref=previous_container_ref,
             previous_endpoint_id=previous_endpoint_id,
@@ -375,17 +404,23 @@ class RelayService:
             raise RelayUnavailableError(
                 "relay work associations are not supported by configured storage"
             )
-        counts = operation(work_refs=keys)
+        current = datetime.now(timezone.utc)
+        counts = operation(work_refs=keys, now=current, recent_seconds=RELAY_RECENT_SECONDS)
+        rows = []
+        for item in normalized:
+            total, recent = counts.get(item["work_ref"], (0, 0))
+            rows.append({
+                "scope_ref": item["scope_ref"],
+                "local_ref": item["local_ref"],
+                "participant_count": total,
+                "recent_participant_count": recent,
+                "dormant_participant_count": total - recent,
+            })
         return {
             "contract": "relay-work-ref-counts/v1",
-            "counts": [
-                {
-                    "scope_ref": item["scope_ref"],
-                    "local_ref": item["local_ref"],
-                    "participant_count": counts.get(item["work_ref"], 0),
-                }
-                for item in normalized
-            ],
+            "as_of": current,
+            "recent_seconds": RELAY_RECENT_SECONDS,
+            "counts": rows,
         }
 
     def work_ref_participants(
@@ -424,15 +459,20 @@ class RelayService:
             raise RelayUnavailableError(
                 "relay work associations are not supported by configured storage"
             )
+        current = datetime.now(timezone.utc)
         participants = operation(
             work_ref=readable["work_ref"],
             include_closed=include_closed,
             container_ref=container,
             offset=offset,
             limit=limit,
+            now=current,
+            recent_seconds=RELAY_RECENT_SECONDS,
         )
         return {
             "contract": "relay-session-work-associations/v1",
+            "as_of": current,
+            "recent_seconds": RELAY_RECENT_SECONDS,
             **readable,
             "history_guidance": self._work_ref_guidance(readable["work_ref"]),
             "participants": participants,
@@ -519,12 +559,15 @@ class RelayService:
         recipient: str,
         payload: str,
         container_ref: str,
-        expires_in_seconds: int | None = RELAY_DEFAULT_EXPIRY_SECONDS,
+        expires_in_seconds: int | None = _RELAY_EXPIRY_OMITTED,
         in_reply_to: str | None = None,
         message_id: str | None = None,
         now: datetime | None = None,
     ) -> dict[str, Any]:
         container = self._scope(container_ref)
+        expiry_supplied = expires_in_seconds is not _RELAY_EXPIRY_OMITTED
+        if not expiry_supplied:
+            expires_in_seconds = RELAY_DEFAULT_EXPIRY_SECONDS
         if expires_in_seconds is not None and not (
             RELAY_MIN_EXPIRY_SECONDS <= expires_in_seconds <= RELAY_MAX_EXPIRY_SECONDS
         ):
@@ -545,6 +588,7 @@ class RelayService:
             redacted=stored_payload != raw_payload,
             container_ref=container,
             expires_in_seconds=expires_in_seconds,
+            expiry_supplied=expiry_supplied,
             in_reply_to=None if in_reply_to is None else _opaque(in_reply_to, "in_reply_to", maximum=128),
             now=now,
         )
@@ -556,10 +600,13 @@ class RelayService:
         receipt: str | None,
         payload: str,
         container_ref: str,
-        expires_in_seconds: int | None = RELAY_DEFAULT_EXPIRY_SECONDS,
+        expires_in_seconds: int | None = _RELAY_EXPIRY_OMITTED,
         now: datetime | None = None,
     ) -> dict[str, Any]:
         container = self._scope(container_ref)
+        expiry_supplied = expires_in_seconds is not _RELAY_EXPIRY_OMITTED
+        if not expiry_supplied:
+            expires_in_seconds = RELAY_DEFAULT_EXPIRY_SECONDS
         if expires_in_seconds is not None and not (
             RELAY_MIN_EXPIRY_SECONDS <= expires_in_seconds <= RELAY_MAX_EXPIRY_SECONDS
         ):
@@ -577,6 +624,7 @@ class RelayService:
             redacted=stored_payload != raw_payload,
             container_ref=container,
             expires_in_seconds=expires_in_seconds,
+            expiry_supplied=expiry_supplied,
             now=now,
         )
 
@@ -632,18 +680,9 @@ class RelayService:
         delivery_id: str,
         decision: Callable[[dict[str, Any]], bool],
     ) -> bool:
-        """Evaluate one wake fence while serializing Relay claim writes."""
-        operation = getattr(
-            self._store, "relay_reconcile_codex_wake_reservation", None
-        )
-        if not callable(operation):
-            raise RelayUnavailableError(
-                "atomic Relay Codex wake reconciliation is not supported"
-            )
-        return operation(
-            delivery_id=_opaque(delivery_id, "delivery_id", maximum=128),
-            decision=decision,
-        )
+        """Ephemeral caller compatibility; durable transitions use SQLite CAS."""
+        state = self.codex_wake_reservation_state(delivery_id=delivery_id)
+        return decision(state) is True
 
     def wake_candidates(
         self, *, delivery_id: str | None = None, include_coalesced: bool = False
