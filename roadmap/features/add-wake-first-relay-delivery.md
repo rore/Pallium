@@ -46,8 +46,15 @@ offers limited recurring recovery. Retry behavior is unchanged.
 for individual inventory-response validation checks. Response acceptance,
 authority, custody and public failure behavior remain unchanged. Both Linux CI
 suites and Windows smoke passed; the installed service wrapper and health,
-queue and embedding checks passed. The next bounded transport trial will use
-these diagnostics to identify the rejected response predicate.
+queue and embedding checks passed. A bounded trial localized rejection to the
+first response envelope. [PR #267](https://github.com/rore/Pallium/pull/267)
+adds fixed labels for two exact known error envelopes without accepting either
+response or changing authority. It is merged and installed at
+`dfcd35abc5690cfb88f91bf7a7646cc3b6871c1f`; required CI, independent review,
+installed restart, and service, queue and embedding checks passed. The actual
+Desktop error branch remains unproven. The next bounded diagnostic trial must
+verify the registration tool through discovery before arming; model self-report
+alone does not establish catalog absence.
 Unloaded-session delivery and the source-child lifetime witness
 remain unproven; this rollout makes neither claim.
 
