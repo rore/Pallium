@@ -6,12 +6,21 @@ import importlib.util
 import json
 import os
 import sys
+import urllib.request
+from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from app.cli import setup_claude_code
+
+_ORIGINAL_URLOPEN = urllib.request.urlopen
+_ORIGINAL_BUILD_OPENER = urllib.request.build_opener
+
+
+def _blocked_hook_http(*_args, **_kwargs):
+    raise OSError("hook HTTP requires an explicit test mock")
 
 
 def _base_block() -> str:
@@ -215,11 +224,114 @@ def _load_claude_hook(name: str, monkeypatch: pytest.MonkeyPatch):
     sys.modules[module_name] = module
     spec.loader.exec_module(module)
     common = module if name == "common" else sys.modules["common"]
+    common.urllib = SimpleNamespace(**vars(common.urllib))
+    common.urllib.request = SimpleNamespace(**vars(common.urllib.request))
+    if common.urllib.request.urlopen is _ORIGINAL_URLOPEN:
+        common.urllib.request.urlopen = _blocked_hook_http
+    if common.urllib.request.build_opener is _ORIGINAL_BUILD_OPENER:
+        common.urllib.request.build_opener = _blocked_hook_http
     state_dir = Path(os.environ["PALLIUM_CLAUDE_WAKE_DIR"]).parent / "hook-state"
     common.STATE_DIR = state_dir
     common.SESSIONS_DIR = state_dir / "sessions"
+    common.CLAUDE_WAKE_DIR = Path(os.environ["PALLIUM_CLAUDE_WAKE_DIR"])
+    common.CLAUDE_WAKE_INTENTS_DIR = common.CLAUDE_WAKE_DIR / "intents"
     monkeypatch.setattr(common, "_wake_binding_matches_service", lambda: True)  # Transport tests bind temp state directly.
     return module
+
+
+@pytest.mark.parametrize(
+    "entrypoint", ("common", "session_start", "user_prompt_submit", "stop", "session_end")
+)
+def test_claude_hook_loader_isolates_pinned_wake_binding(
+    entrypoint: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    profile = tmp_path / "profile"
+    pinned_wake = tmp_path / "pinned-wake"
+    binding_dir = profile / ".pallium" / "hooks"
+    binding_dir.mkdir(parents=True)
+    pinned_wake.mkdir()
+    (pinned_wake / "sentinel.bin").write_bytes(b"pinned state\x00\xff")
+    binding = {"port": 19836, "relay_id": "a" * 64, "wake_dir": str(pinned_wake)}
+    (binding_dir / "claude-wake-binding.json").write_text(
+        json.dumps(binding), encoding="utf-8"
+    )
+    before = {
+        path.relative_to(pinned_wake): (None if path.is_dir() else path.read_bytes())
+        for path in pinned_wake.rglob("*")
+    }
+    monkeypatch.setattr(Path, "home", lambda: profile)
+    monkeypatch.setenv("PALLIUM_CLAUDE_WAKE_DIR", str(tmp_path / "test-wake"))
+    monkeypatch.setenv("CLAUDE_CODE_MESSAGING_SOCKET", "mock-socket")
+    monkeypatch.setenv("CLAUDE_CODE_MESSAGING_TOKEN", "mock-token")
+
+    module = _load_claude_hook(entrypoint, monkeypatch)
+    common = module if entrypoint == "common" else sys.modules["common"]
+    assert common._WAKE_BINDING == binding
+
+    class MockOpener:
+        def open(self, *_args, **_kwargs):
+            return nullcontext()
+
+    monkeypatch.setattr(
+        common.urllib.request,
+        "build_opener",
+        lambda *_args, **_kwargs: MockOpener(),
+    )
+    session = f"isolated-{entrypoint}"
+    assert common.register_claude_wake(session, "git:example/repo")
+    intent = common._wake_intent_path("claude-code", session, "git:example/repo")
+    registered = json.loads(intent.read_text(encoding="utf-8"))
+    assert registered["session_ref"] == session
+    assert not registered.get("closed", False)
+
+    assert common.close_claude_wake(session, "git:example/repo")
+    closed = json.loads(intent.read_text(encoding="utf-8"))
+    assert closed["session_ref"] == session
+    assert closed["closed"] is True
+    assert {
+        path.relative_to(pinned_wake): (None if path.is_dir() else path.read_bytes())
+        for path in pinned_wake.rglob("*")
+    } == before
+    assert intent.is_relative_to(tmp_path / "test-wake")
+
+
+def test_claude_hook_loader_blocks_default_http_without_changing_global_urllib(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    common = _load_claude_hook("common", monkeypatch)
+    assert common.urllib.request.urlopen is _blocked_hook_http
+    assert common.urllib.request.build_opener is _blocked_hook_http
+    assert common.urllib.request.urlopen is not urllib.request.urlopen
+    assert common.pallium_request("GET", "/health") is None
+    assert common.relay_request("GET", "/relay", {}, timeout=0.1) is None
+    monkeypatch.setenv("CLAUDE_CODE_MESSAGING_SOCKET", "mock-socket")
+    monkeypatch.setenv("CLAUDE_CODE_MESSAGING_TOKEN", "mock-token")
+    assert not common.register_claude_wake("http-fence", "git:example/repo")
+    assert not common.close_claude_wake("http-fence", "git:example/repo")
+    assert urllib.request.urlopen is _ORIGINAL_URLOPEN
+    assert urllib.request.build_opener is _ORIGINAL_BUILD_OPENER
+
+
+@pytest.mark.parametrize("http_function", ("urlopen", "build_opener"))
+def test_claude_hook_loader_preserves_explicit_http_mocks_across_imports(
+    http_function: str, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first_mock = lambda *_args, **_kwargs: "first mock"
+    monkeypatch.setattr(urllib.request, http_function, first_mock)
+    first = _load_claude_hook("common", monkeypatch)
+    first_common = first
+    assert getattr(first_common.urllib.request, http_function) is first_mock
+
+    post_load_mock = lambda *_args, **_kwargs: "post-load mock"
+    setattr(first_common.urllib.request, http_function, post_load_mock)
+    second = _load_claude_hook("session_end", monkeypatch)
+    second_common = sys.modules["common"]
+
+    assert getattr(first_common.urllib.request, http_function) is post_load_mock
+    assert second_common is not first_common
+    assert getattr(second_common.urllib.request, http_function) is first_mock
+    assert second is not first
+    assert getattr(urllib.request, http_function) is first_mock
 
 
 def test_wake_intent_lock_setup_cannot_outlive_hook_deadline(
