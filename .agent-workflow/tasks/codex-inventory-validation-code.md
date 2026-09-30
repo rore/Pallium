@@ -28,11 +28,11 @@
 
 **Plan review:** Agent technical review: `/root/service_handoff_security`, 2026-09-30. Accepted Elevated/Simple plan with no blocking finding; requires isolated atomic predicates, valid positive and after-phase witness, fixed log identity, unchanged caller/fence/proof, and no sensitive content.
 
-**Approvals:** Not required at this risk level; standing user implementation approval applies.
+**Approvals:** Approved by user 2026-09-30: "approve" in direct response to "May I push fix/codex-inventory-validation-code to the public rore/Pallium repository and open its PR? It adds fixed validation-stage labels and tests; CI is still pending."
 
 **Exceptions:** —
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -42,6 +42,8 @@
 2026-09-30: Added 14 synthetic private-caller rejection cases, a valid-response control, and an after-phase expectation. All 14 rejected cases failed red on the old generic stage, with the unchanged public failure. Split the existing validation conditions into ordered atomic checks with fixed stages; focused before/after/positive run is green (40 passed). Affected file: 218 passed, one pre-validation transport failure in the existing `result` case; exact `--lf` rerun passed. Selector-required full non-slow run stopped at an unrelated Claude pending-close assertion after 1500 passes; exact `--lf` rerun passed. Neither failure's root cause is claimed fixed. Independent result review and fresh CI remain.
 
 2026-09-30: Source/test diff passed independent result review and was committed at `1d710db7`. Automatic approval review rejected pushing the new branch to the verified public `rore/Pallium` origin because it did not find trusted authorization for publishing this exact code payload. No alternate push or PR path was attempted. Publication and CI are blocked pending explicit user approval for that destination and payload; local work is preserved.
+
+2026-09-30: User directly approved the exact push and PR publication request for this branch and public destination. The prior publication blocker is resolved; fresh current-head CI remains required.
 
 ## Evidence
 
@@ -61,4 +63,4 @@ Agent technical review: `/root/service_handoff_security`, 2026-09-30. Accepted t
 
 ## Recovery
 
-Branch `fix/codex-inventory-validation-code` in the existing managed checkout. Preserve local implementation commit `1d710db7` and this Work Record. First resolve the explicit public-repository publication authorization rejection; then push this exact branch, open a PR, inspect current-head CI and review threads. Do not repeat local full validation absent a new finding.
+Branch `fix/codex-inventory-validation-code` in the existing managed checkout. Preserve local implementation commit `1d710db7` and this Work Record. User approval resolved the prior public-repository publication rejection. Push this exact branch, open a PR, inspect current-head CI and review threads. Do not repeat local full validation absent a new finding.
