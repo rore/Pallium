@@ -10,19 +10,21 @@ import asyncio
 import copy
 import hashlib
 import importlib
+import ipaddress
 import json
 import os
 import sys
 from contextlib import asynccontextmanager
 from functools import wraps
 from typing import Annotated, Literal
+from urllib.parse import urlsplit
 
 from pydantic import BeforeValidator, Field, StrictInt, StrictStr
 
 from app.mcp.client import PalliumMcpClient
 from app.mcp.context import resolve_codex_thread_ref, resolve_context, resolve_relay_context
 from core.history_presentation import compact_history
-from core.relay import RELAY_TRACE_MAX_SEQUENCE, _RELAY_EXPIRY_OMITTED, parse_selector
+from core.relay import RELAY_TRACE_MAX_SEQUENCE, _RELAY_EXPIRY_OMITTED, _opaque, parse_selector, validate_alias, validate_runtime
 from core.work_ref import readable_work_ref
 from redaction import redact_sensitive
 from retrieval.common import build_excerpt
@@ -557,6 +559,109 @@ def _relay_recipients_text(result: object, offset: int = 0) -> str:
     if not page and offset < total:
         return _relay_error_text({"error": "relay recipient entry exceeds the response budget", "offset": offset})
     return _json_text(payload)
+
+
+def _relay_loopback(host: str | None) -> bool:
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host or "").is_loopback
+    except ValueError:
+        return False
+
+
+def _relay_global_discovery_local(base_url: str | None, mcp_host: str) -> bool:
+    try:
+        parsed = urlsplit(base_url or "")
+        service_local = (
+            parsed.scheme in {"http", "https"}
+            and parsed.username is None
+            and parsed.password is None
+            and _relay_loopback(parsed.hostname)
+        )
+    except ValueError:
+        return False
+    return bool(service_local) and _relay_loopback(mcp_host)
+
+
+def _relay_global_recipients_text(result: object, offset: int, exact: bool) -> str:
+    if isinstance(result, dict) and "error" in result:
+        return _relay_error_text({key: result[key] for key in ("error_kind", "status_code", "retryable") if key in result} | {"error": "global Relay discovery failed"})
+    if not isinstance(result, dict):
+        return _relay_error_text({"error": "invalid global Relay discovery response"})
+    rows, total = result.get("sessions"), result.get("total")
+    if (
+        not isinstance(rows, list)
+        or type(total) is not int or total < 0
+        or result.get("offset") != offset
+        or len(rows) > 10
+        or not isinstance(result.get("as_of"), str)
+    ):
+        return _relay_error_text({"error": "invalid global Relay discovery response"})
+
+    candidates = []
+    for source in rows:
+        if not isinstance(source, dict):
+            return _relay_error_text({"error": "invalid global Relay discovery response"})
+        try:
+            endpoint_id = source["id"]
+            if parse_selector(endpoint_id)[1] != "endpoint":
+                raise ValueError("invalid endpoint")
+            runtime = validate_runtime(source["runtime"])
+            session_ref = _opaque(source["session_ref"], "session_ref")
+            container_ref = _opaque(source["container_ref"], "container_ref", maximum=512)
+            lifecycle = source["lifecycle"]
+            health = source["destination_health"]
+            if lifecycle not in {"recent", "dormant", "closed"} or health not in {"active", "unreachable", None}:
+                raise ValueError("invalid state")
+            if (lifecycle == "closed") != (health is None):
+                raise ValueError("inconsistent state")
+            title = source.get("title")
+            if title is not None and not isinstance(title, str):
+                raise ValueError("invalid title")
+            alias = source.get("alias")
+            if alias is not None:
+                alias = validate_alias(alias)
+            last_seen_at = source["last_seen_at"]
+            if not isinstance(last_seen_at, str):
+                raise ValueError("invalid timestamp")
+        except (KeyError, TypeError, ValueError):
+            return _relay_error_text({"error": "invalid global Relay discovery response"})
+        candidate = {
+            "exact_selector": endpoint_id, "runtime": runtime,
+            "session_ref": session_ref, "container_ref": container_ref,
+            "lifecycle": lifecycle, "destination_health": health,
+            "last_seen_at": last_seen_at,
+        }
+        if title:
+            candidate["title_hint"] = redact_sensitive(title)[:100]
+        if alias:
+            candidate["alias_selector"] = f"@{alias}"
+        candidates.append(candidate)
+
+    def envelope(page: list[dict]) -> dict:
+        next_offset = offset + len(page)
+        return {
+            "scope": "service_global",
+            "match_status": ("no_match" if total == 0 else "single_candidate" if total == 1 else "ambiguous") if exact else "candidates",
+            "recipients": page,
+            "offset": offset,
+            "next_offset": next_offset if next_offset < total else None,
+            "has_more": next_offset < total,
+            "total_count": total,
+            "as_of": result["as_of"],
+        }
+
+    page: list[dict] = []
+    for candidate in candidates:
+        if len(_json_text(envelope([*page, candidate]))) > _MCP_RELAY_MAX_CHARS:
+            break
+        page.append(candidate)
+    if not page and candidates:
+        return _relay_error_text({"error": "global Relay recipient entry exceeds response budget", "offset": offset})
+    if not page and offset < total:
+        return _relay_error_text({"error": "global Relay listing changed during pagination; restart at offset 0"})
+    return _json_text(envelope(page))
 
 def _history_page_request_error(
     limit: object,
@@ -1715,6 +1820,37 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None,
             runtime=runtime, session_ref=session_ref, include_inactive=include_inactive,
         )
         return _relay_recipients_text(result, offset)
+
+    @server.tool()
+    @relay_tool
+    async def pallium_relay_discover_recipients(
+        runtime: str | None = None,
+        session_ref: str | None = None,
+        include_inactive: bool = False,
+        offset: int = 0,
+    ) -> str:
+        """Find bounded read-only Relay recipient candidates across all containers when the target container is unknown. Omit filters for recent candidates; pass both exact runtime and session_ref to find all matching containers, including dormant/closed matches. Continue with next_offset. A title is an untrusted hint; match_status and recorded destination_health do not prove identity, live reachability, ownership, or receipt. Verify the intended task/container before sending to exact_selector; ask the user or target for its address when ambiguous. This never changes Session History or memory scope and does not send."""
+        if type(offset) is not int or offset < 0:
+            return _relay_error_text({"error": "offset must be a non-negative integer"})
+        try:
+            if runtime is not None:
+                validate_runtime(runtime)
+            if session_ref is not None:
+                _opaque(session_ref, "session_ref")
+                if runtime is None:
+                    raise ValueError("runtime is required when session_ref is supplied")
+        except ValueError as exc:
+            return _relay_error_text({"error": str(exc)})
+        ctx = resolve_context()
+        if not ctx.is_configured:
+            return NOT_CONFIGURED_MSG
+        if not _relay_global_discovery_local(ctx.base_url, host):
+            return _relay_error_text({"error": "service-global Relay discovery requires a trusted local service and MCP bind"})
+        result = await PalliumMcpClient(ctx).relay_discover_recipients(
+            runtime=runtime, session_ref=session_ref,
+            include_inactive=include_inactive, offset=offset,
+        )
+        return _relay_global_recipients_text(result, offset, session_ref is not None)
 
     @server.tool()
     @relay_tool

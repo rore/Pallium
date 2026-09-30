@@ -22,6 +22,7 @@ from core.filters import source_item_matches_filters
 from core.relay_activation import current_platform, relay_activation_snapshot
 from core.relay import (
     RelayConflictError, RelayNotFoundError, RelayService, RelayUnavailableError,
+    _opaque, validate_runtime,
 )
 from core.models import QueryFilters, SourceItem
 from core.service import _redact_ingest_value
@@ -1065,12 +1066,23 @@ def mount_dashboard(
 
     @app.get("/dashboard/api/relay/sessions")
     def dashboard_relay_sessions(
-        runtime: str | None = Query(None),
+        runtime: str | None = Query(None, max_length=32),
+        session_ref: str | None = Query(None, max_length=255),
         container_ref: str | None = Query(None),
         lifecycle: Literal["recent", "dormant", "closed"] | None = Query(None),
         destination_health: Literal["active", "unreachable"] | None = Query(None), endpoint_id: str | None = Query(None, pattern=r"^relay-session-[0-9a-f]{32}$"), limit: int = Query(100, ge=1, le=200),
         offset: int = Query(0, ge=0),
+        compact: bool = False,
     ) -> JSONResponse:
+        if session_ref is not None and runtime is None:
+            raise HTTPException(status_code=422, detail="runtime is required with session_ref")
+        try:
+            if runtime is not None:
+                runtime = validate_runtime(runtime)
+            if session_ref is not None:
+                session_ref = _opaque(session_ref, "session_ref")
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         storage = app.state.pallium_service._storage
         if not isinstance(storage, SQLiteStorageProvider):
             return JSONResponse(content={"error": "requires SQLite backend"}, status_code=501)
@@ -1081,6 +1093,8 @@ def mount_dashboard(
             clause = and_(clause, RelaySessionRecord.id == endpoint_id)
         if runtime is not None:
             clause = and_(clause, RelaySessionRecord.runtime == runtime)
+        if session_ref is not None:
+            clause = and_(clause, RelaySessionRecord.session_ref == session_ref)
         if container_ref is not None:
             clause = and_(clause, RelaySessionRecord.container_ref == container_ref)
         if destination_health is not None:
@@ -1093,15 +1107,27 @@ def mount_dashboard(
             clause = and_(clause, RelaySessionRecord.state != "closed", RelaySessionRecord.last_seen_at < cutoff)
         factory = getattr(storage, "_relay_session_factory", storage._session_factory)
         with factory() as session:
+            connection = session.connection()
+            if not connection.connection.driver_connection.in_transaction:
+                connection.exec_driver_sql("BEGIN")
             total = session.scalar(select(func.count()).select_from(RelaySessionRecord).where(clause)) or 0
             records = session.scalars(select(RelaySessionRecord).where(clause).order_by(
                 RelaySessionRecord.last_seen_at.desc(), RelaySessionRecord.id.desc()).offset(offset).limit(limit)).all()
-            _, collision_by_endpoint = _dashboard_relay_identity_collisions(
-                session, as_of, endpoint_ids={record.id for record in records},
-            )
+            collision_by_endpoint = {}
+            if not compact:
+                _, collision_by_endpoint = _dashboard_relay_identity_collisions(
+                    session, as_of, endpoint_ids={record.id for record in records},
+                )
         sessions = [_dashboard_relay_session(
-            record, cutoff, relay_activation, collision_by_endpoint.get(record.id),
+            record, cutoff, None if compact else relay_activation,
+            None if compact else collision_by_endpoint.get(record.id),
         ) for record in records]
+        if compact:
+            fields = (
+                "id", "runtime", "session_ref", "container_ref", "title", "alias",
+                "lifecycle", "destination_health", "last_seen_at",
+            )
+            sessions = [{field: item[field] for field in fields} for item in sessions]
         return JSONResponse(content={"sessions": sessions, "total": total, "offset": offset, "limit": limit,
                                      "as_of": _dashboard_time(as_of)})
     @app.post("/dashboard/api/relay/sessions/{endpoint_id}/work-refs")

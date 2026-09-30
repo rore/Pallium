@@ -89,23 +89,37 @@ ambiguous, or malformed identity fails closed.
 
 `pallium_relay_recipients` returns a bounded envelope of recent sessions. Each item includes a canonical `exact_selector` and, when named, `alias_selector` (the internal wire-field name for its `@name`); when `has_more` is true, call it again with `next_offset`. When the session reference is known, pass both runtime and session_ref to return zero or one matching session without paging; pass include_inactive=true when a dormant or closed match is needed. The HTTP session-list response remains container-local and exposes each endpoint ID.
 
-Cross-project discovery is separate from `pallium_relay_recipients`. On the same
-trusted local Pallium service, the read-only `GET /dashboard/api/relay/sessions`
-endpoint (or Dashboard Relay Sessions view with Sessions set to `All history`) lists service-global sessions when
-`container_ref` is omitted. It has no `session_ref` filter: page with `limit`
-(at most 200) and `offset` until the listing is complete. Match the exact
-`runtime` and `session_ref` of the known task against an independently known
-target `container_ref`, not one inferred from a cwd, title, or the dashboard
-row itself. Reject an incomplete or unstable listing, an unknown target
-container, or multiple plausible endpoints; a missing row is not proof that
-the recipient does not exist.
+When the target container is unknown, use the read-only
+`pallium_relay_discover_recipients` MCP tool on the trusted local service.
+It is unavailable on wildcard-bound HTTP MCP mounts; a transport environment
+label cannot override the MCP server's configured bind host.
+Omit filters to list recent candidates across all containers, or provide both
+the target's exact `runtime` and `session_ref` to search all lifecycle states.
+The exact pair can occur in multiple containers: inspect every candidate and
+the `match_status` (`no_match`, `single_candidate`, or `ambiguous`), then follow
+`next_offset` while `has_more` is true. `total_count` and `as_of` describe an
+observation, not a frozen snapshot; concurrent registration can shift offset
+pages. A missing row or incomplete listing is not proof of absence.
 
-Inspect the unique nonclosed row's destination health and use its `id` as the
-canonical exact selector. For a role recipient, verify the current `@name`
-instead. Send with the sender's injected `container_ref`, never the target's,
-and inspect the returned admission destination. If verification cannot finish,
-ask the recipient for `pallium_relay_address` or use an app task-message
-fallback. Do not resend after a saved or uncertain send.
+Each candidate gives a canonical `exact_selector`, `container_ref`, runtime,
+session reference, lifecycle, last-seen time, and recorded
+`destination_health`. The optional `title_hint` is untrusted and not an
+identity check; recorded health is not observed live reachability. Compare the
+candidate with independently known task/project context, not a cwd or title
+alone. Even a single candidate does not prove intended ownership. If several
+plausible endpoints remain, or verification cannot finish, ask the user or
+target for `pallium_relay_address`, or use an app task-message fallback. For a
+role recipient, verify its current `@name` instead of choosing by title.
+Send with the sender's injected `container_ref`, never the target's, and
+inspect the returned admission destination. Saved delivery is not receipt;
+do not resend after a saved or uncertain send.
+
+For an older integration without this MCP tool, the read-only
+`GET /dashboard/api/relay/sessions` endpoint (or Dashboard Relay Sessions view
+with Sessions set to `All history`) is a manual fallback. Omit
+`container_ref` for global candidates; use exact `runtime` and `session_ref`
+filters when known, or page with `limit` (maximum 200) and `offset`. Apply the
+same identity, ambiguity, lifecycle, and pagination cautions.
 
 Legacy selectors have three forms:
 
