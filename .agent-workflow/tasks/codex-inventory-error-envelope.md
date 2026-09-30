@@ -32,7 +32,7 @@
 
 **Exceptions:** —
 
-**State:** Ready for review
+**State:** Blocked
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -42,6 +42,8 @@
 2026-09-30: Added nine private-caller cases: two exact installed Desktop errors and seven near misses. Red: exactly the two new expected-stage cases failed; near misses retained generic stage. Added two fixed allowlisted stages inside existing envelope rejection, with exact key/ID/code/message checks and unchanged invalid-response rejection. Focused native caller/after-phase set: 49 passed.
 
 2026-09-30: Independent result reviewer requested wrong-version/boolean-code near misses and one after-phase known error; added all three with no production change. Affected slow file: 227 passed, one existing after-read case failed before a second request was observed; exact `--lf` passed. The new after-error case likewise first hit after-read transport failure, exact `--lf` passed. Reviewer accepted coverage but called the transport-fixture fluctuation unresolved. Selector-required full non-slow run completed: 5745 passed, 34 skipped, 2 xfailed. No root cause is claimed fixed for the earlier transport-fixture failures.
+
+2026-09-30: Reviewed source/tests committed at `752c24da`; automatic approval review rejected a push of this new branch to the verified public repository because exact payload export authorization was not established. No alternate route or retry attempted. Publication and current-head CI are blocked pending direct user authorization for this branch and destination.
 
 ## Evidence
 
@@ -60,3 +62,7 @@ Agent technical review: `/root/service_handoff_security`, 2026-09-30. Accepted t
 Reviewed revision: uncommitted implementation diff against Work Record seed `e402e2ab`, including reviewer-requested tests; no production change after result review.
 
 Verification adequacy: focused and selected full pass; two recorded slow-fixture early transport failures passed exact reruns and remain unexplained; current-head PR CI is still required. Installed-source evidence is exact-version package metadata and bounded source literals in this private task's read-only tool transcript; the reviewer could not independently open that installed archive from its checkout. This is inferred live-envelope classification, not proof of observed response bytes.
+
+## Recovery
+
+Branch `fix/codex-inventory-error-envelope` in the existing managed checkout; implementation commit `752c24da` is preserved locally. The first action after direct approval to publish this exact branch to public `rore/Pallium` is to push it, open/attach the PR, and inspect current-head CI. Do not repeat the local full run absent a material finding. Root owns merge, install, and any further finite trial.
