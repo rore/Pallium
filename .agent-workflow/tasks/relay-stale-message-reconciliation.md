@@ -18,9 +18,9 @@
 
 **Reason:** This planning-only change needs independent review of cross-integration interpretation. The proposed envelope implementation would be High: `app/mcp/server.py` requires API review and `storage/sqlite_relay.py` requires persistence review, even though only projected guidance would change. Reclassify and obtain the applicable reviews before production edits.
 
-**Discovery:** Existing envelopes protect exact-ID redelivery, not current-work reconciliation for distinct delayed messages. Relay has no authoritative assignment-completion or supersession state. Exact incident evidence remains requested from the manager; source inspection establishes a guidance gap, not the incident's cause. See the source map and proposal below.
+**Discovery:** Existing envelopes protect exact-ID redelivery, not current-work reconciliation for distinct delayed messages. Relay has no authoritative assignment-completion or supersession state. Manager-supplied incident evidence confirms historical-task reconciliation/replies and delayed handoff, but not that the newer assignment was read before idle or that old copies were previously delivered. Source inspection establishes a guidance gap, not queue causality. See the source map and proposal below.
 
-**Material assumptions:** Exact incident evidence will come from the manager. Delivery timestamps and transport state alone cannot establish whether work is complete or superseded.
+**Material assumptions:** Manager-provided evidence is sufficient for an anonymized coordination scenario, not a duplicate-transport or ignored-known-assignment claim. Delivery timestamps and transport state alone cannot establish whether work is complete or superseded. A receiver cannot preserve an assignment it has not read; the sender must track explicit acceptance and unfinished followthrough separately.
 
 **Plan:** Agent Workflow and isolation are established. Review the existing-surface proposal below independently, compare the manager's exact incident evidence when available, and return the contract, red cases, limits, and implementation risk to the manager. Stop before production/TDD until the manager authorizes that phase.
 
@@ -46,7 +46,7 @@
 - `docs/agent-relay.md` already distinguishes receipt from action completion and warns that different IDs may concern equivalent business actions. The three bundled `pallium-memory` skills say only "Act on deliveries; reply at completion/blocker". Each currently uses 2,967 normalized UTF-8 bytes against a 3,072-byte ceiling.
 - Installed `collection-coordination` step 6 requires the lead to reconcile results with latest authorized requirements, but is not vendored here. Receiver reconciliation is not explicit. Do not silently change that external skill.
 - No transport field proves business completion, task authority, or supersession. Delivery state, attempt count, payload equality and age are insufficient. A valid delayed result can still contain a new blocker or useful finding.
-- Incident evidence still needed: exact unique deliveries and contents, the recipient's known authorized assignment at each turn, prior completion evidence, and the turn where it stopped newer work. Do not duplicate the manager's evidence request or claim a transport defect from the report alone.
+- Incident evidence supplied by the manager: an authorized closure/handoff assignment and clarification were sent; the recipient then reconciled historical instructions with completed work, replied and sometimes repeated read-only checks; the lead later observed idle without the requested publication. A direct current-task fallback was followed by publication. No duplicate deployment or paid call was observed. It is not established that the newer assignment was read before idle or that the same historical delivery copies had previously been delivered. Do not claim ignored known work, duplicate transport, fallback proof of autonomous wake, or internal-queue causality. The manager also reported redundant replies added chatter and delayed followthrough. No further tests/messages to the incident team are needed.
 
 ## Proposed smallest contract
 
@@ -56,6 +56,7 @@ Use existing bundled skill/docs first; per-delivery guidance is conditional on e
 2. A completion notice about verified completed work is context, not permission to repeat the action or end a different unfinished assignment. Continue that assignment unless an authorized instruction changes it; incorporate material new findings or blockers.
 3. Age, arrival order, text equality and a different ID never establish supersession. Unknown outcome requires inspection before irreversible retry; unclear authority does not authorize takeover. Report a concrete conflict when inspection cannot resolve it, while continuing independent authorized work.
 4. Exact-ID redelivery safeguards remain distinct from semantic reconciliation. ACK remains receipt, not completion; hooks still own claim/ACK. Already-delivered/conflict rules invalidate only that copy, not surrounding established work.
+5. Sender/lead acceptance and followthrough are separate from receiver relevance: saved/delivered does not prove the recipient knows or accepted newer work. Track explicit acceptance and the current requested artifact in the existing work source. Historical closure without material new information needs no routine confirmation reply; communicate substantive results, blockers or required decisions instead. A delayed useful result still requires reconciliation and appropriate reporting.
 
 The product guarantee is visible advisory guidance plus unchanged payload/lifecycle safety, not deterministic LLM obedience. Do not label this exactly-once business execution or automatic stale-message suppression.
 
@@ -70,6 +71,8 @@ Cheapest implementation candidate: replace the skill's first bullet compactly wi
 | Old timestamp alone, no completion/supersession evidence | Message remains claimable/pageable; replay does not dismiss it solely for age. |
 | Unknown previous action outcome or conflicting authority | Guidance requires target inspection before irreversible retry; replay exposes the conflict and does not guess authority. |
 | Explicit authorized reassignment | Replay follows the changed assignment; preserving current work must not override an actual authorized change. |
+| Newer assignment sent but not known to receiver | Sender does not infer acceptance from delivered/idle or historical replies; receiver is not tested as if it had unseen instructions. Followthrough remains visibly unfinished in the existing work source. |
+| Historical closure needs no new action/decision | No redundant confirmation exchange or repeated external check merely to reconfirm verified completion; material new findings and requested decisions are still reported. |
 | Same-ID lease redelivery, first/later/unknown attempts | Existing receipt rotation, emitted-only ACK, stale receipt conflict and delivered state remain unchanged through hook/MCP read paths. |
 | Empty, maximum, over-budget, Unicode, reply chains longer than two | No overflow or hidden claim; longer advisory fits pre-claim budgets, omitted payload reconstructs through continuation, ordering/IDs/reply ancestry survive. |
 
@@ -79,6 +82,6 @@ Agent-action evidence is separate and labeled downstream-task-effect: after auth
 
 ## Review and handoff
 
-Independent Sol-low review completed; source/contract verified and refinements incorporated. Manager now reviews exact incident fit and authorizes TDD or redirects. Guidance-only scope remains Elevated; envelope scope would require High-risk API/persistence checkpoints. Either needs independent implementation review, appropriate caller coverage, roadmap honesty and manager-owned rollout. This plan neither closes the incident nor changes the wake reliability claim.
+Independent Sol-low review completed; source/contract verified and refinements incorporated. Manager-supplied incident evidence incorporated as a narrowed diagnosis, with receiver relevance and sender acceptance/followthrough separated. Manager now reviews the revised plan and authorizes TDD or redirects. Guidance-only scope remains Elevated; envelope scope would require High-risk API/persistence checkpoints. Either needs independent implementation review, appropriate caller coverage, roadmap honesty and manager-owned rollout. This plan neither closes the incident nor changes the wake reliability claim.
 
 Planning verification: `git diff --check` passed; repository Redline reporter plus Agent Workflow checker returned clean/exit 0 for the whole planning-only change. The PowerShell adapter could not find Python in this reused worktree; the same checker was run using the existing development `.venv/Scripts/python.exe`. No application tests were rerun and no production paths changed. One coordination send failed to connect while service health reported initializing; the tool-instructed single retry saved the update. No restart or fallback message was used.
