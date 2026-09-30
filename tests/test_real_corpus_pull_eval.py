@@ -138,8 +138,9 @@ def test_lifecycle_filters_sources_and_keeps_aggregate_private_free(tmp_path: Pa
     assert "with_history" not in judge_prompt and "without_history" not in judge_prompt
 
 
+@pytest.mark.parametrize("replay_mode", ["current_replay", "as_of_lookup"])
 def test_loader_uses_exact_linked_request_and_reports_link_attrition(
-    tmp_path: Path,
+    tmp_path: Path, replay_mode: str,
 ) -> None:
     db = tmp_path / "links.db"
     events = [
@@ -178,7 +179,8 @@ def test_loader_uses_exact_linked_request_and_reports_link_attrition(
         )
 
     snapshot = load_corpus(
-        db, container_ref="c:test", visibility="private", sample_size=20
+        db, container_ref="c:test", visibility="private", sample_size=20,
+        replay_mode=replay_mode,
     )
 
     assert [case.event_id for case in snapshot.cases] == ["e7"]

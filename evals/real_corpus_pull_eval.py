@@ -423,10 +423,10 @@ def load_corpus(
             if request is None:
                 attrition["missing_request_links"] += 1
                 continue
+            # actor_ref is an optional source filter, not request identity.
             if (
                 request["container_ref"] != row["container_ref"]
                 or request["thread_ref"] != row["session_id"]
-                or request["actor_ref"] != row["actor_ref"]
                 or request["visibility"] != row["visibility"]
             ):
                 attrition["wrong_scope_request_links"] += 1
