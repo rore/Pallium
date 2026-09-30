@@ -22,10 +22,12 @@
 
 **Verification:** Disposable binding register/close lifecycle through _load_claude_hook common/session_start/user_prompt_submit/stop/session_end callers and intent readback; existing lost-HTTP TestClient caller; affected Claude hook files; scripts/test-plan.py selected lane; fresh Redline/workflow and diff checks; bounded independent plan/result review.
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
+
+2026-09-30 continuation: Manager authorization relay-reply-b5261bba4ea50d2460fa3b7b1c0dd4461665e7cae9a9d7973427224f80e0a673 confirms retained ownership and bounded causal diagnosis within the test-only slice. The task is no longer waiting for human direction. PR270 stays draft; full validation still blocks Ready for review. Compare changed helper import/mock lifetimes and temporary paths against the exact caller and passing base, use only the smallest discriminating sequence/instrumentation supported by a concrete hypothesis, and independently review any correction before editing. No blind full rerun, runtime/threshold change, weakened assertion, real-profile run, or live cleanup. Current classification and scope remain unchanged; broader test-file edits return to planning first.
 
 2026-09-30: Agent Workflow invoked first; new isolated branch feat/claude-test-wake-isolation in C:/Dev/rore/Pallium/.worktrees/claude-test-wake-isolation at de29df94. Intended paths are only tests/test_claude_code_integration.py and this record. Whole-change applicability selects normal workflow: neither tests nor Work Records are doc-only exempt. Pre-edit Redline rules classify both paths blue; Routine/Simple. Independent bounded plan review requested before code edits. PR268 remains frozen at 86e243e0 except its completed attribution correction.
 
