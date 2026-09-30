@@ -86,7 +86,14 @@ other files use a sibling `<full-database-filename>-codex-wake` directory.
 `PALLIUM_CODEX_WAKE_DIR` overrides only that legacy import source. Completed
 migration ignores the leftover file, which remains unchanged. In-memory apps
 keep their fences in their app-owned ephemeral Relay database. Never copy
-reservations between instances. An exact
+reservations between instances. Claude wake capabilities and intents follow
+the same Relay-database ownership pattern: conventional `data/pallium-relay.db`
+uses the home `claude-wake`, other files use
+`<full-database-filename>-claude-wake`, and in-memory apps are nonpersistent.
+Claude setup pins its hook port, Relay identity, and wake path. Re-run setup after
+changing the target; a mismatched service marker fails closed before credential
+write-ahead, while an outage keeps the pinned path. Never share
+`PALLIUM_CLAUDE_WAKE_DIR` across different Relay databases. An exact
 internal Codex wake is excluded from deduplication and memory ingestion. The native
 prompt can remain model-visible when no delivery block accompanies it, so it carries
 the exact delivery ID for nonmutating trace inspection. Ordinary user prompts remain

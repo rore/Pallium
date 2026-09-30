@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
 import sys
 import threading
@@ -711,6 +712,9 @@ def test_new_publisher_waits_for_registry_compare_delete(tmp_path: Path, monkeyp
     old_intent = {**PAYLOAD, "intent_id": "older"}
     newer = {**PAYLOAD, "token": "new-token", "intent_id": "newer", "idle": False}
     _write_intent(state_dir, old_intent, "older")
+    (state_dir / "relay-owner.json").write_text(
+        json.dumps({"relay_id": "0" * 64}), encoding="utf-8"
+    )
     path = _intent_path(state_dir, PAYLOAD["session_ref"])
     deleting = threading.Event()
     finish_delete = threading.Event()
@@ -740,6 +744,8 @@ sys.path.insert(0, sys.argv[1])
 import common
 common.CLAUDE_WAKE_DIR = Path(sys.argv[2])
 common.CLAUDE_WAKE_INTENTS_DIR = Path(sys.argv[3])
+common.PALLIUM_PORT = 65534
+common._WAKE_BINDING = {"port": 65534, "relay_id": "0" * 64, "wake_dir": str(common.CLAUDE_WAKE_DIR)}
 if os.name == "nt":
     import msvcrt
     native_lock = msvcrt.locking
@@ -774,6 +780,7 @@ print(common._write_wake_intent(json.loads(sys.argv[4])), flush=True)
              str(state_dir / "intents"), json.dumps(newer)],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True,
+            env={**os.environ, "HOME": str(tmp_path), "USERPROFILE": str(tmp_path)},
         )
         assert process.stdout is not None
         assert process.stdout.readline() == "publishing\n"

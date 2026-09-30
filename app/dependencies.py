@@ -21,6 +21,7 @@ from app.codex_wake import (
     schedule_codex_relay_wake,
 )
 from app.claude_wake import schedule_claude_relay_wake
+from app.claude_wake_binding import binding_for_relay_database, claim_wake_directory
 from app.config import AppConfig, EmbeddingProviderConfig, SemanticPackageConfig
 from core.contracts import MemoryRetentionPolicy
 from core.observability import IntegrationDebugLogger, QueryStats
@@ -567,9 +568,12 @@ def _load_or_create_vector_index(
         return None
 
 
-def build_claude_wake_registry() -> ClaudeWakeRegistry:
-    registry = ClaudeWakeRegistry(state_dir=Path(os.environ.get("PALLIUM_CLAUDE_WAKE_DIR", str(Path.home() / ".pallium" / "claude-wake"))) )
-    return registry
+def build_claude_wake_registry(relay_sqlite_url: str) -> ClaudeWakeRegistry:
+    binding = binding_for_relay_database(relay_sqlite_url)
+    if binding is None:
+        return ClaudeWakeRegistry()
+    claim_wake_directory(binding)
+    return ClaudeWakeRegistry(state_dir=Path(binding["wake_dir"]))
 
 
 def dispatch_relay_wake(
@@ -694,7 +698,7 @@ def build_router(
             relay_service = RelayService(relay_storage)
         except RelayUnavailableError:
             pass
-    registry = claude_wake_registry if claude_wake_registry is not None else build_claude_wake_registry()
+    registry = claude_wake_registry if claude_wake_registry is not None else ClaudeWakeRegistry()
     codex_registry = codex_wake_registry if codex_wake_registry is not None else get_codex_wake_registry()
 
     def _relay_trace(event: dict[str, object]) -> bool:

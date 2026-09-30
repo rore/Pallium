@@ -29,6 +29,7 @@ def _benchmark_config() -> AppConfig:
 
 
 def test_integration_readiness_scenario_surfaces_scope_guard_injection_boundary_failure(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("PALLIUM_CLAUDE_WAKE_DIR", raising=False)  # Each benchmark scenario owns a distinct Relay DB.
     monkeypatch.setattr("app.dependencies.build_llm_provider", lambda config, **_: TieredMemorySemanticProvider())
 
     run_dir = run_integration_readiness_scenario(

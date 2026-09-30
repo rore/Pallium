@@ -17,6 +17,11 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from app.claude_wake_binding import (
+    binding_fingerprint, binding_for_relay_database, claim_wake_directory, hook_binding_path, read_binding,
+    service_marker_path, write_json_atomic,
+)
+
 
 def _pallium_repo_root() -> Path:
     """Walk up from this file to find the repo root (contains app/run.py)."""
@@ -348,8 +353,38 @@ def _verify_service(port: int) -> bool:
         return False
 
 
+def _service_binding_id(port: int) -> str | None:
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=2) as response:
+            value = json.load(response).get("claude_wake_binding_id")
+        return value if isinstance(value, str) and len(value) == 64 else None
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
+def _resolve_wake_binding(port: int, *, online: bool) -> dict[str, object] | None:
+    if online:
+        marker = read_binding(service_marker_path(port))
+        return marker if marker is not None and binding_fingerprint(marker) == _service_binding_id(port) else None
+    relay_url = os.environ.get("PALLIUM_RELAY_SQLITE_URL")
+    if relay_url is None and port == 19836:
+        relay_url = f"sqlite:///{Path.home() / '.pallium' / 'data' / 'pallium-relay.db'}"
+    binding = binding_for_relay_database(relay_url) if relay_url else None
+    return {"port": port, **binding} if binding is not None else None
+
+
 def install(port: int = 19836, guidance_strength: str = "base") -> int:
     print(f"Setting up Pallium Claude Code integration (port {port})...")
+    online = _verify_service(port)
+    try:
+        binding = _resolve_wake_binding(port, online=online)
+        if binding is None:
+            print("  Error: Claude wake target is unbound; start the service or provide PALLIUM_RELAY_SQLITE_URL for offline setup.", file=sys.stderr)
+            return 1
+        claim_wake_directory(binding)
+    except (OSError, ValueError) as exc:
+        print(f"  Error: Claude wake binding rejected: {exc}", file=sys.stderr)
+        return 1
 
     _register_mcp(port)
     print(f"  Registered MCP server (user scope)")
@@ -370,17 +405,19 @@ def install(port: int = 19836, guidance_strength: str = "base") -> int:
     _ensure_state_dir()
     print("  Created hook state directory")
 
-    if _verify_service(port):
+    if online:
         print(f"  Pallium service verified at port {port}")
     else:
         print(f"  WARNING: Pallium service not reachable at port {port}")
         print(f"  Start it with: python -m app.run all --port {port}")
 
+    write_json_atomic(hook_binding_path(), binding)
     print("\nDone. Pallium is now integrated with Claude Code.")
     return 0
 
 
 def uninstall() -> int:
+    hook_binding_path().unlink(missing_ok=True)
     print("Removing Pallium Claude Code integration...")
 
     _unregister_mcp()
