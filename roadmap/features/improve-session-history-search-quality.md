@@ -17,6 +17,13 @@ search and its use, not whether history can help in principle.
 
 ## Current status and boundaries
 
+The September 30 [expanded review](../../docs/reports/session-history-fresh-review.md)
+completed its bounded audit and identified an evaluator-only request-link correction.
+The review covered 265 earlier lookup records in this container, including eight
+newer linked lookups across three related request/session groups. No independent
+content-quality comparison was possible: fresh lookups were absent and prior
+holdout lineage was unresolved. This umbrella remains queued, not completed.
+
 This is the open search-quality umbrella. It is not the completed caller-reliability
 feature and it does not commit Pallium to a reranker, generated compression, or a new
 index.
@@ -24,12 +31,16 @@ index.
 | Work | State | Boundary |
 |---|---|---|
 | [Evidence access and retry reliability](fix-session-history-evidence-access.md) | **Done** | Shipped source/result continuation, explicit source scope, diagnostics, and bounded replay-safe guidance. It measured navigation/presentation, not ranking or downstream task effect. |
-| Prospective equivalent-result review | **Next** | Review content-equivalent results while retaining provenance, dates, and source-opening paths. Decide whether there is a presentation problem worth changing. |
+| Request-link evaluation eligibility | **Corrected in September 30 slice** | Optional source actor filtering no longer rejects a valid linked request; caller regression covers both replay modes. This is measurement alignment, not improved ranking. |
+| Prospective equivalent-result review | **Next; evidence prerequisite open** | Recover prior exclusion manifests or collect disjoint prospective linked cases before content review. Retain provenance, dates, and source-opening paths. Decide whether there is a presentation problem worth changing. |
 | Candidate-availability and local reranking gate | **Conditional** | First run the zero-model-call fixed-candidate preflight below. Compare local scorers only if enough failures are genuinely rank-only. |
 | [Navigation and on-demand compression](investigate-history-navigation-and-on-demand-compression.md) | **Separate queued follow-up** | Reuse the shipped reliability baseline. Do not run this broader representation study in parallel with the narrow review above. |
 
-The next action for this feature is the prospective equivalent-result review. The
-candidate preflight follows only if that review leaves a distinct ranking question.
+The next action is to establish protected, traceable cases for the prospective
+equivalent-result review. Do not repeat the completed metadata census or reopen
+unknown holdouts. The candidate preflight follows only if content review leaves a
+distinct ranking question. Broader real-corpus downstream-value validation remains
+[separately gated](../ideas/idea-pull-real-corpus-validation.md).
 
 ### Shipped: response-local navigation and Relay-wake availability
 

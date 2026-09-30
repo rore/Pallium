@@ -65,7 +65,11 @@ Plan-review refinement before case-content review: private `C:\Dev\rore\Pallium\
 
 ## Evidence
 
-Pending.
+Expanded census completed with 265 pre-investigation lookup records and 226 expansions in the exact container. The newer eligible metadata window has eight linked events / three request-session groups, all overlapping earlier exposed evidence at group level. Prior holdout identities could not be recovered; no source content was opened, no ranking replay or paid evaluation ran, and content-review coverage remains unmet. This is the protocol's protected-pool exhaustion/uncertainty stop, not saturation or feature completion. Private protocol, reproducible read-only inventory, aggregate, manifest, and report survive under the shared checkout's ignored `.local/history-search-fresh-review/`; public report and both affected roadmap items retain the evidence prerequisite and separate downstream-value gates.
+
+Before result review, fresh `origin/main` remained e0e38178. Whole-change `scripts/test-plan.py --base origin/main` selected the full lane. Redline over all seven changed paths is BLUE with zero boundary violations, no protected-contract edits, and no required checkpoints; declared risk remains Elevated. Agent Workflow check is clean. Full non-slow suite is running against 58a05c6a plus the code/test diff subsequently committed for review.
+
+2026-09-30 implementation verification: the extended HTTP → persisted audit → `load_corpus` regression failed before the fix because neither persisted lookup was admitted (`cases == {}`). After removing only request/event actor equality, the exact test passed (`1 passed`), and `python -m pytest tests/test_historical_lookup_funnel_e2e.py tests/test_real_corpus_pull_eval.py -q -n 0` passed (`58 passed`). The test asserts both replay modes, exact event IDs, request text, source IDs, and the explicit actor filter's isolation; existing invalid-link attrition is checked in both modes.
 
 ## Concrete correction plan and review
 

@@ -266,3 +266,14 @@ linked cases. Run the four-case, no-model-judge pilot once four answerable cases
 more than one task shape are available; expand toward 20 only if that pilot is
 informative. The separate replacement-guard study still requires eight genuine
 durable replacements across four sessions and three task types.
+
+### Request-link eligibility correction — 2026-09-30
+
+The [expanded search review](../../docs/reports/session-history-fresh-review.md)
+found that the loader incorrectly treated the optional source actor filter as
+request identity. Removing that equality check aligns it with the existing caller
+contract; every other request/source guard remains. Eight observed linked lookups
+across three related request/session groups exposed the mismatch, but were not
+graded as answerable, independent, or replay-ready. No paid replay ran and none of
+this item's evidence gates changed. Recover protected-case lineage or collect
+disjoint linked cases before selecting the next pilot.

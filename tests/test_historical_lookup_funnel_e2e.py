@@ -13,6 +13,10 @@ exclusion from the persisted exposed set.
 """
 from __future__ import annotations
 
+import json
+import sqlite3
+from pathlib import Path
+
 from fastapi.testclient import TestClient
 import pytest
 
@@ -22,6 +26,7 @@ from evals.historical_lookup_measurement import (
     compute_reuse_rollup,
     load_events_from_storage,
 )
+from evals.real_corpus_pull_eval import load_corpus
 from retrieval.base import RetrievalQueryResult
 from sqlalchemy import text
 from tests.config_helpers import build_llm_test_config
@@ -85,11 +90,12 @@ def _search_history(client: TestClient, *, container_ref: str = CONTAINER,
                     active_session_ref: str | None = THREAD,
                     visibility: str = "private",
                     actor_ref: str | None = None,
+                    text: str = "reservation ordering duplicate holds",
                     request_source_item_id: str | None = None,
                     work_refs: list[str] | None = None,
                     defer_delivery: bool = False) -> dict:
     payload = {
-        "text": "reservation ordering duplicate holds",
+        "text": text,
         "container_ref": container_ref,
         "actor_ref": actor_ref,
         "visibility": visibility,
@@ -259,10 +265,30 @@ def test_request_link_actor_is_optional_metadata(
     monkeypatch, test_db_url: str,
 ) -> None:
     with _build_client(monkeypatch, test_db_url) as client:
+        older_source_ids = {
+            "操作员甲": _ingest(
+                client,
+                source_id="actor-metadata-source-a",
+                content="cross actor history marker for source A",
+                role="assistant",
+                artifact_kind="assistant_output",
+                actor_ref="操作员甲",
+                visibility="public",
+            ),
+            "操作员乙": _ingest(
+                client,
+                source_id="actor-metadata-source-b",
+                content="cross actor history marker for source B",
+                role="assistant",
+                artifact_kind="assistant_output",
+                actor_ref="操作员乙",
+                visibility="public",
+            ),
+        }
         request_id = _ingest(
             client,
             source_id="actor-metadata-request",
-            content="Please find the cross actor history marker.",
+            content="Please retrieve the saved discussion about the reservation pattern.",
             role="user",
             artifact_kind="message",
             actor_ref="操作员甲",
@@ -272,16 +298,46 @@ def test_request_link_actor_is_optional_metadata(
             result = _search_history(
                 client,
                 actor_ref=actor_ref,
+                text="cross actor history marker",
                 request_source_item_id=request_id,
             )
             assert result["decision_reason"] == "source_only_search"
 
+        lookup_rows = _events(client, "lookup")
         assert {
             (event["actor_ref"], event["request_source_item_id"])
-            for event in _events(client, "lookup")
-        } == {
-            (None, request_id), ("操作员乙", request_id),
+            for event in lookup_rows
+        } == {(None, request_id), ("操作员乙", request_id)}
+        expected_sources = {
+            None: set(older_source_ids.values()),
+            "操作员乙": {older_source_ids["操作员乙"]},
         }
+        for event in lookup_rows:
+            assert {
+                entry["source_item_id"]
+                for entry in json.loads(event["exposed_json"])
+            } == expected_sources[event["actor_ref"]]
+
+        with sqlite3.connect(_db_file(test_db_url)) as conn:
+            assert conn.execute(
+                "SELECT content FROM source_items WHERE id = ?", (request_id,)
+            ).fetchone()[0] == "Please retrieve the saved discussion about the reservation pattern."
+
+        for replay_mode in ("current_replay", "as_of_lookup"):
+            snapshot = load_corpus(
+                Path(_db_file(test_db_url)),
+                container_ref=CONTAINER,
+                visibility="private",
+                sample_size=20,
+                replay_mode=replay_mode,
+            )
+            cases = {case.event_id: case for case in snapshot.cases}
+            assert set(cases) == {event["id"] for event in lookup_rows}
+            for event in lookup_rows:
+                case = cases[event["id"]]
+                assert case.query == "Please retrieve the saved discussion about the reservation pattern."
+                assert set(case.source_ids) == expected_sources[event["actor_ref"]]
+                assert case.replay_mode == replay_mode
 
 # ---------------------------------------------------------------------------
 # Governance invariants (visibility-enforcing plugin)
