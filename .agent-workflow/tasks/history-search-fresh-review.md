@@ -46,7 +46,7 @@ Fresh audit data may be insufficient: expand to older unused cases and replay th
 - Delivered changes and roadmap shall agree -> PR review, CI, merge SHA and installed health verification; leave wider umbrella open unless its criteria are actually met.
 
 **Plan review:**
-Pending clean-context agent technical review before material implementation. Read-only discovery may proceed.
+Agent technical review: /root/fresh_plan_review approved bbc5174d with the frozen sampling protocol recorded before case-content review. The protocol below resolves the sole finding; no other blocking findings. Approval covers observational research, not a yet-unspecified production change.
 
 **Approvals:**
 Approved by user 2026-09-30: "ok. be systematic and remember the goal. you can drive this". Prior approval includes PRs and merge according to guidelines; user explicitly requires expanding researched cases if fresh data is insufficient.
@@ -54,12 +54,14 @@ Approved by user 2026-09-30: "ok. be systematic and remember the goal. you can d
 **Exceptions:**
 —
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
 
 2026-09-30: Created isolated worktree from e0e38178. Initial scope is not documentation-exempt because it includes research/eval/test work. Read-only inventory and plan review are next; material implementation waits for plan review. Lead owns roadmap updates and this record; workers receive explicit bounded file ownership.
+
+Plan-review refinement before case-content review: private `C:\Dev\rore\Pallium\.local\history-search-fresh-review\PROTOCOL.md` freezes eligibility, exclusions, connected-component grouping, deterministic confirmation reservation, 12-case batches up to 60 or eligible-pool exhaustion, coverage descriptors, and saturation/uncertainty stopping rules. This operationalizes the authorized expansion without changing Task Context. The first review requested these explicit limits; re-review approved. Initial tracked path classification is BLUE with zero boundary violations; judgment retains Elevated for evidence-handling uncertainty.
 
 ## Evidence
 
