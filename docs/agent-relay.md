@@ -68,12 +68,25 @@ Missing or invalid metadata is `unknown` in hook text and `null` in MCP JSON.
 These fields describe delivery history; they do not decide whether work is complete.
 
 Check prior handling of the exact stable `delivery_id` in the current context or
-existing work artifacts. Do not repeat completed actions. If the outcome is
-unknown, inspect target state before retrying irreversible work. Equal payload
-text with different delivery IDs is separate work; a first claim also does not
-prove that no equivalent business action happened elsewhere. ACK means receipt,
-not completion. Hooks still own claim and ACK; the injected guidance does not
-ask the receiving agent to claim or acknowledge the same payload again.
+existing work artifacts. A first claim does not prove that no equivalent business
+action happened elsewhere.
+
+Different IDs identify separate deliveries, not necessarily separate business
+actions or new authority. Reconcile each message with the current authorized
+task known to you and verified work state. Preserve useful late findings and
+blockers. Do not repeat verified completed actions/checks or send routine
+confirmation replies unless new evidence or an authorized change requires
+action. When an outcome is unknown, make only the necessary state reconciliation
+before irreversible retry; report unresolved conflicts rather than guessing
+authority. Continue other accepted unfinished work unless authorized
+instructions change it. Age or arrival order alone does not establish
+supersession. Reply for substantive completion, blockers or requested decisions,
+not just to reconfirm historical closure. Leads track explicit acceptance and
+reviewed completion in the existing work source; saved/delivered/ACK does not
+establish acceptance, and recipients cannot act on unseen instructions. ACK
+means receipt, not completion. Hooks still own claim and ACK; the injected
+guidance does not ask the receiving agent to claim or acknowledge the same
+payload again.
 Metadata and guidance consume the existing output budgets, so a long payload may
 have a shorter preview with the same continuation mechanism.
 

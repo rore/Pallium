@@ -14,6 +14,17 @@ def test_rendered_guidance_and_tool_descriptions_stay_under_measured_ceilings() 
     for runtime in ("claude-code", "codex", "opencode"):
         skill = Path(f"integrations/{runtime}/skills/pallium-memory/SKILL.md")
         assert len(skill.read_bytes().replace(b"\r\n", b"\n")) <= 3072
+    relay_rule = "- Reconcile work/state; keep late findings. Skip completed actions/routine replies; follow authorized work. Reply on completion/blocker."
+    skills = [Path(f"integrations/{runtime}/skills/pallium-memory/SKILL.md").read_text(encoding="utf-8")
+              for runtime in ("claude-code", "codex", "opencode")]
+    assert all(relay_rule in skill.splitlines() for skill in skills)
+    assert skills[1:] == skills[:-1]
+    guide = " ".join(Path("docs/agent-relay.md").read_text(encoding="utf-8").split())
+    assert "Check prior handling of the exact stable `delivery_id` in the current context or existing work artifacts." in guide
+    assert "A first claim does not prove that no equivalent business action happened elsewhere." in guide
+    assert "Different IDs identify separate deliveries, not necessarily separate business actions or new authority." in guide
+    assert "Reconcile each message with the current authorized task known to you and verified work state." in guide
+    assert "Age or arrival order alone does not establish supersession." in guide
     tree = ast.parse(Path("app/mcp/server.py").read_text(encoding="utf-8"))
     names = {node.name for node in ast.walk(tree)
              if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
