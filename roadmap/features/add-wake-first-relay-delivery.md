@@ -10,6 +10,16 @@ lane: capability
 
 ## Current execution status (reconciled 2026-09-30)
 
+[PR #270](https://github.com/rore/Pallium/pull/270) merged test-helper isolation
+at `5ed3cf96342d61ff4d3740e800a86e0232f8c28b`. Claude hook tests now rebind wake
+directories to temporary state and block unmocked HTTP on a helper-local copy;
+installed bindings and process-global HTTP helpers remain unchanged. Caller
+red/green coverage, independent review, final-head CI and a disposable-profile
+Windows full run (5,771 passed, 34 skipped, 2 expected failures) support the fix.
+Earlier intermittent test failures remain unexplained. Both checkouts were
+synchronized; the required installed restart and health/status/queue/embedding
+checks passed. This is test isolation, not live unloaded-wake qualification.
+
 [PR #269](https://github.com/rore/Pallium/pull/269) merged the native `tools/list`
 request correction at `0d82bffbbca551448389d12060854de5c7e0a331`: omit the empty
 `params` object so Desktop uses its default. A private-pipe regression reproduced
