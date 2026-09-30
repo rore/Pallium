@@ -29,6 +29,10 @@ _INVENTORY_FAILURE_STAGES = frozenset({
     "before-proof", "exit-proof", "after-proof",
     *(f"{phase}-{action}" for phase in ("before", "after")
       for action in ("authority", "peer", "write", "read", "validate", "result")),
+    *(f"{phase}-validate-{check}" for phase in ("before", "after")
+      for check in ("envelope", "version", "id-type", "id-match", "result-type",
+                    "result-fields", "tools-type", "tools-limit", "tool-type", "tool-fields",
+                    "tool-name", "tool-duplicate", "schema-type", "schema-object")),
 })
 _INVENTORY_FAILURE_CATEGORIES = frozenset({
     "busy", "deadline", "file-unavailable", "file-write-failed", "invalid-message", "invalid-path",
@@ -1506,17 +1510,49 @@ class InventoryService:
         self.custody.write({"jsonrpc": "2.0", "id": request_id, "method": "tools/list", "params": {}}, deadline)
         self._failure_stage = f"{phase}-read"
         value = self.custody.read(deadline)
-        self._failure_stage = f"{phase}-validate"
-        if (set(value) != {"jsonrpc", "id", "result"} or value["jsonrpc"] != "2.0"
-                or type(value["id"]) is not int or value["id"] != request_id
-                or not isinstance(value["result"], dict) or set(value["result"]) != {"tools"}
-                or not isinstance(value["result"]["tools"], list) or len(value["result"]["tools"]) > 512):
+        self._failure_stage = f"{phase}-validate-envelope"
+        if set(value) != {"jsonrpc", "id", "result"}:
+            raise ShadowUnavailable("invalid-response")
+        self._failure_stage = f"{phase}-validate-version"
+        if value["jsonrpc"] != "2.0":
+            raise ShadowUnavailable("invalid-response")
+        self._failure_stage = f"{phase}-validate-id-type"
+        if type(value["id"]) is not int:
+            raise ShadowUnavailable("invalid-response")
+        self._failure_stage = f"{phase}-validate-id-match"
+        if value["id"] != request_id:
+            raise ShadowUnavailable("invalid-response")
+        self._failure_stage = f"{phase}-validate-result-type"
+        if not isinstance(value["result"], dict):
+            raise ShadowUnavailable("invalid-response")
+        self._failure_stage = f"{phase}-validate-result-fields"
+        if set(value["result"]) != {"tools"}:
+            raise ShadowUnavailable("invalid-response")
+        self._failure_stage = f"{phase}-validate-tools-type"
+        if not isinstance(value["result"]["tools"], list):
+            raise ShadowUnavailable("invalid-response")
+        self._failure_stage = f"{phase}-validate-tools-limit"
+        if len(value["result"]["tools"]) > 512:
             raise ShadowUnavailable("invalid-response")
         names = set()
         for tool in value["result"]["tools"]:
-            if (not isinstance(tool, dict) or not {"name", "inputSchema"} <= set(tool)
-                    or not _text(tool["name"]) or tool["name"] in names
-                    or not isinstance(tool["inputSchema"], dict) or tool["inputSchema"].get("type") != "object"):
+            self._failure_stage = f"{phase}-validate-tool-type"
+            if not isinstance(tool, dict):
+                raise ShadowUnavailable("invalid-response")
+            self._failure_stage = f"{phase}-validate-tool-fields"
+            if not {"name", "inputSchema"} <= set(tool):
+                raise ShadowUnavailable("invalid-response")
+            self._failure_stage = f"{phase}-validate-tool-name"
+            if not _text(tool["name"]):
+                raise ShadowUnavailable("invalid-response")
+            self._failure_stage = f"{phase}-validate-tool-duplicate"
+            if tool["name"] in names:
+                raise ShadowUnavailable("invalid-response")
+            self._failure_stage = f"{phase}-validate-schema-type"
+            if not isinstance(tool["inputSchema"], dict):
+                raise ShadowUnavailable("invalid-response")
+            self._failure_stage = f"{phase}-validate-schema-object"
+            if tool["inputSchema"].get("type") != "object":
                 raise ShadowUnavailable("invalid-response")
             names.add(tool["name"])
         self._maintain()

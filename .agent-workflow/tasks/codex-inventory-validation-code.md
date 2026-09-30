@@ -10,7 +10,7 @@
 **Completion criteria:** Each synthetic rejected predicate yields a distinct fixed allowlisted stage and unchanged failure/fence through the private caller; a valid response still registers; no native content appears in diagnostics.
 
 **Requirement baseline:**
-{"source":"delegated-user-approved-task","outcome":"A failed private Codex inventory response identifies the rejected validation predicate through a fixed, sanitized service-log stage.","scope":"Existing logger and _observe validation, with caller tests only.","constraints":"No validation, public result, custody, proof, authority, retry, cleanup, or live-state change; no native content logging.","completion_criteria":"One ensuing trial identifies the exact failed predicate; synthetic caller failures and positive control verify unchanged behavior and privacy."}
+{"source":"delegated-user-approved-task","outcome":"A failed private Codex inventory response identifies the rejected validation predicate through a fixed, sanitized service-log stage.","scope":"Extend the existing validation failure-stage allowlist and set a bounded substage at the existing `_observe` predicates; add private caller tests in `tests/test_codex_bridge_pipe.py`.","constraints":"Preserve all response acceptance rules, native-failed caller result, custody fencing, proof, authority, retry and cleanup. Never log native response content, keys, names, schema, endpoint, environment, or exception text. No live registration or service operation.","completion_criteria":"Each synthetic rejected predicate yields a distinct fixed allowlisted stage and unchanged failure/fence through the private caller; a valid response still registers; no native content appears in diagnostics."}
 
 **Risk:** Elevated
 
@@ -26,23 +26,31 @@
 
 **Verification plan:** When each synthetic response violates one predicate, private `register()` shall return the same native-failed unavailable result, fence custody, and log one fixed stage with the matching epoch/revision → parameterized private-caller test. When a valid response arrives, registration shall still succeed without a failure log → positive control. When native data is present, no logged field or proof shall include it → privacy assertions. Run focused, affected, then selector-required full suite once.
 
-**Plan review:** Pending clean-context technical review by existing service-handoff security reviewer.
+**Plan review:** Agent technical review: `/root/service_handoff_security`, 2026-09-30. Accepted Elevated/Simple plan with no blocking finding; requires isolated atomic predicates, valid positive and after-phase witness, fixed log identity, unchanged caller/fence/proof, and no sensitive content.
 
 **Approvals:** Not required at this risk level; standing user implementation approval applies.
 
 **Exceptions:** —
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
 
-2026-09-30: Entered Agent Workflow, confirmed whole-change application scope is non-exempt, reused a clean managed checkout, refreshed `origin/main`, and created `fix/codex-inventory-validation-code`. Classified Elevated/Simple before code edits. Awaiting independent plan review.
+2026-09-30: Entered Agent Workflow, confirmed whole-change application scope is non-exempt, reused a clean managed checkout, refreshed `origin/main`, and created `fix/codex-inventory-validation-code`. Classified Elevated/Simple before code edits. Independent security plan review accepted the narrow two-file change.
+
+2026-09-30: Added 14 synthetic private-caller rejection cases, a valid-response control, and an after-phase expectation. All 14 rejected cases failed red on the old generic stage, with the unchanged public failure. Split the existing validation conditions into ordered atomic checks with fixed stages; focused before/after/positive run is green (40 passed). Affected file: 218 passed, one pre-validation transport failure in the existing `result` case; exact `--lf` rerun passed. Selector-required full non-slow run stopped at an unrelated Claude pending-close assertion after 1500 passes; exact `--lf` rerun passed. Neither failure's root cause is claimed fixed. Independent result review and fresh CI remain.
 
 ## Evidence
 
 Incident stage/category is fixed and sanitized: `before-validate/invalid-response`; no raw response was read.
 
+Red: 14 caller cases failed on stage-only mismatch. Green: `test_codex_bridge_pipe.py -m slow -k 'validation_diagnostic or transfer_stage_diagnostics_from_private_caller or confirmed_source_process_exit_retains_same_connection' -n 0`: 40 passed, 179 deselected.
+
+Affected: `test_codex_bridge_pipe.py -m slow -n 0`: 218 passed, 1 failed at existing `test_inventory_transfer_stage_diagnostics_from_private_caller[result]`; log stage was `before-write`/`transport-failed`, earlier than injected `before-result`. Exact `--lf --lfnf=none -m slow -n 0`: 1 passed. This is a non-reproduced failure, not a fixed root cause.
+
+Selector `scripts/test-plan.py --base origin/main`: full. `pytest tests/ -x -q`: 1 failed at `test_claude_wake_registration.py::test_prompt_cleanup_retries_real_wake_and_relay_transition`, 1500 passed, 2 skipped, 1 xfailed; pending close remained after the second hook turn. Exact `--lf --lfnf=none -n 0`: 1 passed. Cause unproven; no full rerun was spent.
+
 ## Result review
 
-Pending.
+Agent technical review: `/root/service_handoff_security`, 2026-09-30. Accepted the two-file source/test diff with no actionable code or privacy finding. The 14 fixed stages retain the original short-circuit order and `_record_failure` still emits only allowlisted stage/category and epoch/revision. Reviewer confirmed positive and after-phase coverage. Reviewed revision: pre-commit implementation diff following Work Record seed `4ee61f95`; no production change followed review. Verification adequacy: focused native caller coverage passed; affected and selected full runs had separately recorded non-reproduced failures, so fresh current-head CI remains required before `Ready for review`.
