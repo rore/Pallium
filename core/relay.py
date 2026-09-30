@@ -116,6 +116,53 @@ def parse_selector(value: str) -> tuple[str | None, str, str]:
 class RelayService:
     """Validated Relay boundary over the optional SQLite relay capability."""
 
+    def codex_trial_native_suppressed(self, endpoint_id: str) -> bool:
+        endpoint_id = _opaque(endpoint_id, "endpoint_id", maximum=46)
+        if not _ENDPOINT_ID_RE.fullmatch(endpoint_id):
+            raise ValueError("endpoint_id must be a canonical Relay endpoint")
+        return self._store.relay_codex_trial_native_suppressed(endpoint_id)
+
+    def enroll_codex_trial(
+        self, *, endpoint_id: str, session_ref: str, container_ref: str, trial_id: str,
+    ) -> bool:
+        endpoint_id = _opaque(endpoint_id, "endpoint_id", maximum=46)
+        if not _ENDPOINT_ID_RE.fullmatch(endpoint_id):
+            raise ValueError("endpoint_id must be a canonical Relay endpoint")
+        return self._store.relay_codex_trial_enroll(
+            endpoint_id=endpoint_id,
+            session_ref=_opaque(session_ref, "session_ref"),
+            container_ref=self._scope(container_ref),
+            trial_id=_opaque(trial_id, "trial_id", maximum=128),
+        )
+
+    def bind_codex_trial_delivery(self, *, endpoint_id: str, trial_id: str, delivery_id: str) -> bool:
+        return self._store.relay_codex_trial_bind(
+            endpoint_id=self._codex_trial_endpoint(endpoint_id),
+            trial_id=_opaque(trial_id, "trial_id", maximum=128),
+            delivery_id=_opaque(delivery_id, "delivery_id", maximum=128),
+        )
+
+    def spend_codex_trial(self, *, endpoint_id: str, trial_id: str, delivery_id: str) -> bool:
+        return self._store.relay_codex_trial_spend(
+            endpoint_id=self._codex_trial_endpoint(endpoint_id),
+            trial_id=_opaque(trial_id, "trial_id", maximum=128),
+            delivery_id=_opaque(delivery_id, "delivery_id", maximum=128),
+        )
+
+    def codex_trial_action_ready(self, *, endpoint_id: str, trial_id: str, delivery_id: str) -> bool:
+        return self._store.relay_codex_trial_action_ready(
+            endpoint_id=self._codex_trial_endpoint(endpoint_id),
+            trial_id=_opaque(trial_id, "trial_id", maximum=128),
+            delivery_id=_opaque(delivery_id, "delivery_id", maximum=128),
+        )
+
+    @staticmethod
+    def _codex_trial_endpoint(endpoint_id: str) -> str:
+        endpoint_id = _opaque(endpoint_id, "endpoint_id", maximum=46)
+        if not _ENDPOINT_ID_RE.fullmatch(endpoint_id):
+            raise ValueError("endpoint_id must be a canonical Relay endpoint")
+        return endpoint_id
+
     def codex_wake_snapshot(self):
         return self._store.relay_codex_wake_snapshot()
 

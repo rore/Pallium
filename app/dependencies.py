@@ -615,13 +615,30 @@ def dispatch_relay_wake(
             trace_callback=trace_callback,
         )
     elif runtime == "codex":
-        schedule_codex_relay_wake(
-            target_result,
-            target_scope,
-            relay_service=relay_service,
-            registry=codex_registry,
-            trace_callback=trace_callback,
-        )
+        # The finite trial installs its endpoint guard under this same lock
+        # before the pending delivery is created. Keep the guard check and
+        # native reservation indivisible with that installation.
+        with codex_registry._lock:
+            if _trial_endpoint_suppressed(relay_service, delivery.get("recipient_endpoint_id")):
+                return
+            schedule_codex_relay_wake(
+                target_result,
+                target_scope,
+                relay_service=relay_service,
+                registry=codex_registry,
+                trace_callback=trace_callback,
+            )
+
+
+def _trial_endpoint_suppressed(
+    relay_service: RelayService, endpoint_id: object,
+) -> bool:
+    try:
+        return relay_service.codex_trial_native_suppressed(endpoint_id)
+    except Exception:
+        # A failed authority read cannot permit a native launch that could
+        # duplicate the separately fenced service-owned trial action.
+        return True
 
 def recover_expired_relay_wakes(
     relay_service: RelayService,

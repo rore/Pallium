@@ -1044,7 +1044,8 @@ def test_optional_inventory_service_lifecycle_keeps_normal_http_healthy(monkeypa
             if fault == "stop":
                 raise RuntimeError("private-shutdown-sentinel")
 
-    def start():
+    def start(*, trial_relay, trial_registry):
+        assert trial_relay is not None and trial_registry is not None
         calls.append("start")
         if fault == "start":
             raise RuntimeError("private-startup-sentinel")

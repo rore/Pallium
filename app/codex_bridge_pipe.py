@@ -953,6 +953,27 @@ class NativeShadowClient:
 MAX_DESKTOP_FRAME = 8 * 1024 * 1024
 
 
+def _owner_tool_schema_valid(tools: object) -> bool:
+    if not isinstance(tools, list):
+        return False
+    matches = [tool for tool in tools if isinstance(tool, dict)
+               and tool.get("namespace") == "codex_app"
+               and tool.get("name") == "send_message_to_thread"]
+    if len(matches) != 1:
+        return False
+    schema = matches[0].get("inputSchema")
+    if not isinstance(schema, dict) or schema.get("type") != "object":
+        return False
+    required, properties = schema.get("required"), schema.get("properties")
+    if (not isinstance(required, list) or len(required) != 2
+            or any(type(name) is not str for name in required)
+            or set(required) != {"threadId", "prompt"} or not isinstance(properties, dict)):
+        return False
+    return all(isinstance(properties.get(name), dict)
+               and properties[name].get("type") == "string"
+               for name in ("threadId", "prompt"))
+
+
 @dataclass(frozen=True)
 class InventoryPolicy:
     revision: int
@@ -1255,9 +1276,15 @@ def read_inventory_proof(directory: Path, expected_policy: InventoryPolicy) -> d
 class InventoryService:
     """One serial ready/admission slot, one RAM connection, one fixed operator action."""
 
-    def __init__(self, directory: Path, *, utc_clock=None):
+    def __init__(self, directory: Path, *, utc_clock=None, trial_relay=None, trial_registry=None):
         self.directory = directory
         self.utc_clock = utc_clock or (lambda: datetime.now(timezone.utc))
+        self.trial_relay = trial_relay
+        self.trial_registry = trial_registry
+        self._trial_install_seen = False
+        self._trial_action_seen = False
+        self._trial_owner_attempted = False
+        self.trial_action = None
         self.stop_event = threading.Event()
         self.thread = None
         self.epoch = secrets.token_hex(16)
@@ -1265,6 +1292,8 @@ class InventoryService:
         self.source = self.desktop = self.custody = self.policy = None
         self.admitted = None
         self.caller = None
+        self.owner_tool_before = False
+        self.owner_tool_after = False
         self.ready_deadline = 0.0
         self.ready_announced = False
         self.replace_allowed = False
@@ -1327,6 +1356,9 @@ class InventoryService:
     def _drop(self) -> None:
         self.admitted = None
         self.caller = None
+        self.trial_action = None
+        self.owner_tool_before = False
+        self.owner_tool_after = False
         if self.custody is not None:
             if self.custody.unresolved:
                 self.unresolved = True
@@ -1467,6 +1499,8 @@ class InventoryService:
                           "before_inventory_ok": False, "after_inventory_ok": False,
                           "source_exited": False, "failure": "none"}
             self.after_attempted = False
+            self.owner_tool_before = False
+            self.owner_tool_after = False
             self.published_phases = set()
             self._failure_stage = "native-open"
             handle = self.w.file.CreateFile(endpoint, self.w.con.GENERIC_READ | self.w.con.GENERIC_WRITE,
@@ -1577,6 +1611,11 @@ class InventoryService:
             if tool["inputSchema"].get("type") != "object":
                 raise ShadowUnavailable("invalid-response")
             names.add(tool["name"])
+        compatible = _owner_tool_schema_valid(value["result"]["tools"])
+        if self.after_attempted:
+            self.owner_tool_after = compatible
+        else:
+            self.owner_tool_before = compatible
         self._maintain()
         self._failure_stage = f"{phase}-authority"
         if self.custody is None or time.monotonic() >= deadline:
@@ -1630,6 +1669,165 @@ class InventoryService:
             self._drop()
             self._proof_failure(_inventory_reason(exc))
 
+    def _maybe_install_trial(self) -> None:
+        if (self._trial_install_seen or self.trial_relay is None or self.trial_registry is None
+                or self.custody is None or self.caller is None or self.proof is None
+                or self.proof.get("before_inventory_ok") is not True):
+            return
+        request_path = self.directory / "trial-request.json"
+        if not request_path.is_file():
+            return
+        self._trial_install_seen = True
+        try:
+            value = _json(_read_private(self.w, request_path, self.sid))
+            if (set(value) != {"version", "action", "service_epoch", "revision", "source_thread_ref",
+                               "endpoint_id", "session_ref", "container_ref", "trial_id"}
+                    or type(value["version"]) is not int or value["version"] != 1
+                    or value["action"] != "codex-unloaded-payload-trial"
+                    or value["service_epoch"] != self.epoch
+                    or type(value["revision"]) is not int or value["revision"] != self.policy.revision
+                    or value["source_thread_ref"] != self.caller[0]
+                    or value["session_ref"] == self.caller[0]
+                    or not all(_text(value[key]) for key in (
+                        "endpoint_id", "session_ref", "container_ref", "trial_id"))):
+                raise ShadowUnavailable("invalid-message")
+            self._authorize(self.policy.revision)
+            with self.trial_registry._lock:
+                if self.trial_registry.reserved(value["endpoint_id"]):
+                    return
+                installed = self.trial_relay.enroll_codex_trial(
+                    endpoint_id=value["endpoint_id"], session_ref=value["session_ref"],
+                    container_ref=value["container_ref"], trial_id=value["trial_id"],
+                )
+            if not installed:
+                return
+            _create_phase(self.w, self.directory / "trial-installed.json", self.sid, json.dumps({
+                "version": 1, "service_epoch": self.epoch, "revision": self.policy.revision,
+                "status": "installed",
+            }).encode("utf-8"))
+        except Exception:
+            _log.warning("codex_trial_install outcome=denied")
+
+    def _maybe_bind_trial(self) -> None:
+        if (self._trial_action_seen or self.trial_relay is None or self.trial_registry is None
+                or self.custody is None or self.caller is None or self.policy is None
+                or self.proof is None or self.proof.get("before_inventory_ok") is not True
+                or not (self.directory / "trial-installed.json").is_file()):
+            return
+        path = self.directory / "trial-action.json"
+        if not path.is_file():
+            return
+        self._trial_action_seen = True
+        try:
+            installed = _json(_read_private(self.w, self.directory / "trial-installed.json", self.sid))
+            if (set(installed) != {"version", "service_epoch", "revision", "status"}
+                    or installed != {"version": 1, "service_epoch": self.epoch,
+                                     "revision": self.policy.revision, "status": "installed"}):
+                raise ShadowUnavailable("invalid-proof")
+            value = _json(_read_private(self.w, path, self.sid))
+            if (set(value) != {"version", "action", "service_epoch", "revision", "source_thread_ref",
+                               "endpoint_id", "trial_id", "delivery_id", "expires_at"}
+                    or type(value["version"]) is not int or value["version"] != 1
+                    or value["action"] != "codex-unloaded-payload-owner-call"
+                    or value["service_epoch"] != self.epoch
+                    or type(value["revision"]) is not int or value["revision"] != self.policy.revision
+                    or value["source_thread_ref"] != self.caller[0]
+                    or not all(_text(value[key]) for key in ("endpoint_id", "trial_id", "delivery_id"))):
+                raise ShadowUnavailable("invalid-message")
+            expiry = datetime.fromisoformat(value["expires_at"].replace("Z", "+00:00"))
+            if (expiry.tzinfo is None or expiry.utcoffset().total_seconds() != 0
+                    or not 0 < (expiry - self.utc_clock()).total_seconds() <= 180):
+                raise ShadowUnavailable("policy-inactive")
+            self.source.check()
+            self._authorize(self.policy.revision)
+            with self.trial_registry._lock:
+                bound = self.trial_relay.bind_codex_trial_delivery(
+                    endpoint_id=value["endpoint_id"], trial_id=value["trial_id"],
+                    delivery_id=value["delivery_id"],
+                )
+            if not bound:
+                return
+            _create_phase(self.w, self.directory / "trial-bound.json", self.sid, json.dumps({
+                "version": 1, "service_epoch": self.epoch, "revision": self.policy.revision,
+                "status": "bound",
+            }).encode("utf-8"))
+            self.trial_action = (value, expiry)
+        except Exception:
+            _log.warning("codex_trial_bind outcome=denied")
+
+    def _maybe_execute_trial(self) -> None:
+        if (self._trial_owner_attempted or self.trial_action is None or self.trial_relay is None
+                or self.trial_registry is None or self.policy is None or self.caller is None
+                or self.custody is None or self.source is None or self.desktop is None
+                or self.proof is None or self.proof.get("before_inventory_ok") is not True
+                or self.proof.get("source_exited") is not True
+                or self.proof.get("after_inventory_ok") is not True
+                or "after" not in self.published_phases):
+            return
+        self._trial_owner_attempted = True
+        action, expiry = self.trial_action
+        outcome = "denied"
+        try:
+            if (not self.owner_tool_before or not self.owner_tool_after
+                    or self.utc_clock() >= expiry or self.stop_event.is_set()
+                    or self.w.event.WaitForSingleObject(self.source.handle, 0) != self.w.event.WAIT_OBJECT_0
+                    or self._load() != self.policy):
+                raise ShadowUnavailable("policy-inactive")
+            self.current.check()
+            self.desktop.verify()
+            if self.w.pipe.GetNamedPipeServerProcessId(self.custody.handle) != self.desktop.pid:
+                raise ShadowUnavailable("peer-mismatch")
+            endpoint_id = action["endpoint_id"]
+            trial_id = action["trial_id"]
+            delivery_id = action["delivery_id"]
+            with self.trial_registry._lock:
+                target = self.trial_relay.session_scope_by_endpoint(endpoint_id)
+                if (target.get("runtime") != "codex" or not _text(target.get("session_ref"))
+                        or target["session_ref"] == self.caller[0]):
+                    raise ShadowUnavailable("invalid-message")
+                if not self.trial_relay.spend_codex_trial(
+                        endpoint_id=endpoint_id, trial_id=trial_id, delivery_id=delivery_id):
+                    raise ShadowUnavailable("policy-inactive")
+                # The durable fence is now spent, including if any later operation is ambiguous.
+                outcome = "inconclusive"
+                if not self.trial_relay.codex_trial_action_ready(
+                        endpoint_id=endpoint_id, trial_id=trial_id, delivery_id=delivery_id):
+                    raise ShadowUnavailable("policy-inactive")
+                if (self.stop_event.is_set() or self.utc_clock() >= expiry
+                        or self._load() != self.policy):
+                    raise ShadowUnavailable("policy-inactive")
+                self.current.check()
+                self.desktop.verify()
+                if self.w.pipe.GetNamedPipeServerProcessId(self.custody.handle) != self.desktop.pid:
+                    raise ShadowUnavailable("peer-mismatch")
+                from app.codex_wake import _wake_prompt
+                self.native_sequence += 1
+                request_id = self.native_sequence
+                deadline = time.monotonic() + EXCHANGE_SECONDS
+                self.custody.write({"jsonrpc": "2.0", "id": request_id, "method": "tools/call",
+                    "params": {"namespace": "codex_app", "tool": "send_message_to_thread",
+                        "arguments": {"threadId": target["session_ref"],
+                                      "prompt": _wake_prompt(delivery_id)},
+                        "callerSource": "codex", "callId": secrets.token_hex(16),
+                        "threadId": self.caller[0], "turnId": self.caller[1]}}, deadline)
+                response = self.custody.read(deadline)
+                if (set(response) == {"jsonrpc", "id", "result"}
+                        and response["jsonrpc"] == "2.0"
+                        and type(response["id"]) is int and response["id"] == request_id
+                        and isinstance(response["result"], dict)
+                        and response["result"].get("isError", False) is False):
+                    outcome = "submitted"
+        except Exception:
+            pass  # Only the fixed outcome may leave this custody boundary.
+        try:
+            _create_phase(self.w, self.directory / "trial-outcome.json", self.sid, json.dumps({
+                "version": 1, "service_epoch": self.epoch, "revision": self.policy.revision,
+                "status": outcome,
+            }).encode("utf-8"))
+        except Exception:
+            pass  # The spent SQLite fence is authoritative even without this advisory proof.
+        _log.warning("codex_trial_owner outcome=%s", outcome)
+
     def _run(self) -> None:
         owner = io = peer = None
         self.current = None
@@ -1651,6 +1849,9 @@ class InventoryService:
             while not self.stop_event.is_set():
                 self._maintain()
                 self._after_source_exit()
+                self._maybe_install_trial()
+                self._maybe_bind_trial()
+                self._maybe_execute_trial()
                 if (self.source is not None and (self.policy is None or self.replace_allowed)
                         and (time.monotonic() >= self.ready_deadline
                              or self.w.event.WaitForSingleObject(self.source.handle, 0) == self.w.event.WAIT_OBJECT_0)):
@@ -1680,6 +1881,9 @@ class InventoryService:
                     while not self.stop_event.is_set():
                         self._maintain()
                         self._after_source_exit()
+                        self._maybe_install_trial()
+                        self._maybe_bind_trial()
+                        self._maybe_execute_trial()
                         if self.custody is None and (self.fenced or time.monotonic() >= self.ready_deadline):
                             break
                         try:
@@ -1739,7 +1943,7 @@ class InventoryService:
                 _close(owner)
 
 
-def start_inventory_service() -> InventoryService | None:
+def start_inventory_service(*, trial_relay=None, trial_registry=None) -> InventoryService | None:
     if sys.platform != "win32":
         return None
     try:
@@ -1753,7 +1957,7 @@ def start_inventory_service() -> InventoryService | None:
             return None
         _check_path(w, directory, _self_sid(w))
         _check_private_parent(w, directory / "active.json", _self_sid(w))
-        return InventoryService(directory).start()
+        return InventoryService(directory, trial_relay=trial_relay, trial_registry=trial_registry).start()
     except Exception:
         return None
 

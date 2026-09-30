@@ -36,6 +36,7 @@ from storage.sqlite_schema import (
     RelaySessionWorkRefRecord,
     RelayCodexWakeReservationRecord,
     RelayCodexWakeStateRecord,
+    RelayCodexTrialRecord,
 )
 
 
@@ -261,6 +262,118 @@ class SQLiteRelayMixin:
             rows = db.scalars(select(RelayCodexWakeReservationRecord).limit(MAX_RESERVATIONS + 1)).all()
             self._validate_wake_authority(db, marker, rows)
             return marker is not None, tuple(self._wake_item(row) for row in rows)
+
+    def relay_codex_trial_native_suppressed(self, endpoint_id: str) -> bool:
+        """Read the endpoint tombstone and trial row from one snapshot."""
+        with self._relay_session_factory() as db:
+            db.connection().exec_driver_sql("BEGIN")
+            session = db.get(RelaySessionRecord, endpoint_id)
+            row = db.get(RelayCodexTrialRecord, endpoint_id)
+            if session is None or session.trial_enrolled not in (0, 1):
+                raise ValueError("invalid trial authority")
+            if session.trial_enrolled == 0:
+                if row is not None:
+                    raise ValueError("invalid trial authority")
+                return False
+            if (row is None or row.recipient_endpoint_id != endpoint_id
+                    or row.session_ref != session.session_ref
+                    or row.container_ref != session.container_ref
+                    or not isinstance(row.trial_id, str) or not row.trial_id
+                    or type(row.scope_generation) is not int or row.scope_generation < 0
+                    or row.spent not in (0, 1)):
+                raise ValueError("invalid trial authority")
+            return True
+
+    def relay_codex_trial_enroll(
+        self, *, endpoint_id: str, session_ref: str, container_ref: str, trial_id: str,
+    ) -> bool:
+        """Create one immutable endpoint trial before any delivery to that endpoint."""
+        with self._begin_relay_immediate() as db:
+            session = db.get(RelaySessionRecord, endpoint_id)
+            if (session is None or session.runtime != "codex" or session.state != "active"
+                    or session.session_ref != session_ref or session.container_ref != container_ref
+                    or session.trial_enrolled != 0
+                    or db.get(RelayCodexTrialRecord, endpoint_id) is not None
+                    or db.scalars(select(RelayDeliveryRecord.id).where(
+                        RelayDeliveryRecord.recipient_endpoint_id == endpoint_id,
+                    ).limit(1)).first() is not None
+                    or db.get(RelayCodexWakeReservationRecord, endpoint_id) is not None):
+                return False
+            session.trial_enrolled = 1
+            generation = db.get(RelayEndpointGenerationRecord, endpoint_id)
+            db.add(RelayCodexTrialRecord(
+                recipient_endpoint_id=endpoint_id, trial_id=trial_id,
+                session_ref=session_ref, container_ref=container_ref,
+                scope_generation=0 if generation is None else generation.generation,
+                delivery_id=None, spent=0,
+            ))
+            return True
+
+    @staticmethod
+    def _codex_trial_endpoint_current(db, session: RelaySessionRecord, row: RelayCodexTrialRecord) -> bool:
+        generation = db.get(RelayEndpointGenerationRecord, session.id)
+        current_generation = 0 if generation is None else generation.generation
+        return bool(
+            session.runtime == "codex" and session.state == "active"
+            and row.session_ref == session.session_ref
+            and row.container_ref == session.container_ref
+            and row.scope_generation == current_generation
+        )
+
+    @staticmethod
+    def _codex_trial_pending(db, row: RelayCodexTrialRecord, delivery_id: str) -> bool:
+        delivery = db.get(RelayDeliveryRecord, delivery_id)
+        message = db.get(RelayMessageRecord, delivery.message_id) if delivery is not None else None
+        return bool(
+            delivery is not None and message is not None
+            and delivery.recipient_endpoint_id == row.recipient_endpoint_id
+            and delivery.recipient_runtime == "codex"
+            and delivery.recipient_session_ref == row.session_ref
+            and delivery.recipient_container_ref == row.container_ref
+            and delivery.state == "pending" and delivery.attempts == 0
+            and delivery.claim_token is None and delivery.claimed_at is None
+            and (message.expires_at is None or _now(message.expires_at) > _now())
+        )
+
+    def relay_codex_trial_bind(self, *, endpoint_id: str, trial_id: str, delivery_id: str) -> bool:
+        with self._begin_relay_immediate() as db:
+            session = db.get(RelaySessionRecord, endpoint_id)
+            row = db.get(RelayCodexTrialRecord, endpoint_id)
+            if (session is None or session.trial_enrolled != 1 or row is None
+                    or row.trial_id != trial_id or row.delivery_id is not None or row.spent != 0
+                    or not self._codex_trial_endpoint_current(db, session, row)
+                    or db.get(RelayCodexWakeReservationRecord, endpoint_id) is not None
+                    or not self._codex_trial_pending(db, row, delivery_id)):
+                return False
+            row.delivery_id = delivery_id
+            return True
+
+    def relay_codex_trial_spend(self, *, endpoint_id: str, trial_id: str, delivery_id: str) -> bool:
+        """Commit the irreversible owner-action fence before any native write."""
+        with self._begin_relay_immediate() as db:
+            session = db.get(RelaySessionRecord, endpoint_id)
+            row = db.get(RelayCodexTrialRecord, endpoint_id)
+            if (session is None or session.trial_enrolled != 1 or row is None
+                    or row.trial_id != trial_id or row.delivery_id != delivery_id or row.spent != 0
+                    or not self._codex_trial_endpoint_current(db, session, row)
+                    or db.get(RelayCodexWakeReservationRecord, endpoint_id) is not None
+                    or not self._codex_trial_pending(db, row, delivery_id)):
+                return False
+            row.spent = 1
+            return True
+
+    def relay_codex_trial_action_ready(self, *, endpoint_id: str, trial_id: str, delivery_id: str) -> bool:
+        """Recheck the spent fence and exact pending target immediately before native initiation."""
+        with self._relay_session_factory() as db:
+            db.connection().exec_driver_sql("BEGIN")
+            session = db.get(RelaySessionRecord, endpoint_id)
+            row = db.get(RelayCodexTrialRecord, endpoint_id)
+            return bool(
+                session is not None and session.trial_enrolled == 1 and row is not None
+                and row.trial_id == trial_id and row.delivery_id == delivery_id and row.spent == 1
+                and self._codex_trial_endpoint_current(db, session, row)
+                and self._codex_trial_pending(db, row, delivery_id)
+            )
 
     def relay_codex_wake_health(self, *, now: datetime | None = None):
         """Read aggregate Codex evidence without the native-initiation guard."""

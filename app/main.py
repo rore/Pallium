@@ -295,6 +295,7 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
         claude_wake_reconciler = None
         shadow_service = None
         inventory_service = None
+        relay_service = None
 
         def cleanup() -> None:
             if inventory_service is not None:
@@ -366,7 +367,9 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
         try:
             from app.codex_bridge_pipe import start_inventory_service
 
-            inventory_service = start_inventory_service()
+            inventory_service = start_inventory_service(
+                trial_relay=relay_service, trial_registry=codex_wake_registry,
+            )
         except Exception:
             logger.warning("Codex inventory worker unavailable")
         app_instance.state._codex_inventory_service = inventory_service

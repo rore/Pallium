@@ -639,13 +639,14 @@ server.main()
 class FakeDesktop:
     """Isolated kernel byte pipe using this test process, never Desktop capability."""
 
-    def __init__(self, response=None):
+    def __init__(self, response=None, *, allow_call=False):
         self.w = bridge._native()
         self.stop = threading.Event()
         self.endpoint = rf"\\.\pipe\inventory-test-{secrets.token_hex(16)}"
         self.requests = []
         self.connections = 0
         self.response = response
+        self.allow_call = allow_call
         self.io = None
         self.thread = threading.Thread(target=self.run, daemon=True)
         handle = self.w.pipe.CreateNamedPipe(self.endpoint,
@@ -675,9 +676,14 @@ class FakeDesktop:
                         continue
                     raise
                 self.requests.append(request)
-                assert request == {"jsonrpc": "2.0", "id": len(self.requests), "method": "tools/list"}
-                value = {"jsonrpc": "2.0", "id": request["id"], "result": {
-                    "tools": [{"name": "example-β", "description": "private native content", "inputSchema": {"type": "object"}}]}}
+                assert request.get("jsonrpc") == "2.0" and request.get("id") == len(self.requests)
+                if request.get("method") == "tools/list":
+                    assert set(request) == {"jsonrpc", "id", "method"}
+                    value = {"jsonrpc": "2.0", "id": request["id"], "result": {
+                        "tools": [{"name": "example-β", "description": "private native content", "inputSchema": {"type": "object"}}]}}
+                else:
+                    assert self.allow_call and request.get("method") == "tools/call"
+                    value = {"jsonrpc": "2.0", "id": request["id"], "result": {"content": []}}
                 value = self.response(request, value) if self.response else value
                 if value is None:
                     continue
@@ -784,12 +790,13 @@ def test_policy_held_reader_excludes_bounded_writer_until_handle_cleanup(tmp_pat
 
 
 @contextmanager
-def inventory_running(tmp_path, monkeypatch, *, response=None, arm=True, changes=None):
+def inventory_running(tmp_path, monkeypatch, *, response=None, arm=True, changes=None,
+                      trial_relay=None, trial_registry=None):
     home = tmp_path / "inventory-home"
     directory = bridge.prepare_inventory_service(home)
     desktop = FakeDesktop(response)
     monkeypatch.setenv("CODEX_APP_TOOLS_PIPE_PATH", desktop.endpoint)
-    service = bridge.InventoryService(directory)
+    service = bridge.InventoryService(directory, trial_relay=trial_relay, trial_registry=trial_registry)
     client = None
     assert service.start() is service
     try:
@@ -1183,6 +1190,224 @@ def test_inventory_changed_caller_pair_cannot_rebind_retained_custody(tmp_path, 
         assert result["status"] == "unavailable" and result["reason"] == "peer-mismatch"
         assert service.caller == ("source-chat", "source-turn")
         assert service.custody is custody and len(desktop.requests) == 1
+
+
+@native
+@pytest.mark.parametrize("target_session", ["target", "source-chat"])
+def test_inventory_service_installs_exact_trial_authority_before_relay_send(
+    tmp_path, monkeypatch, client, target_session,
+):
+    from core.codex_wake import CodexWakeRegistry
+    from core.relay import RelayService
+
+    storage = client.app.state.pallium_service._storage
+    relay = RelayService(storage)
+    registry = CodexWakeRegistry(relay_service=relay)
+    assert registry.initialize(old_owner_drained=True)
+    scope = {"container_ref": "git:example.test/service-trial"}
+    endpoint = relay.turn(runtime="codex", session_ref=target_session, **scope)["session"]["endpoint_id"]
+    denied = threading.Event()
+    original_warning = bridge._log.warning
+    def note_warning(message, *args, **kwargs):
+        if message == "codex_trial_install outcome=denied":
+            denied.set()
+        original_warning(message, *args, **kwargs)
+    monkeypatch.setattr(bridge._log, "warning", note_warning)
+    with inventory_running(
+        tmp_path, monkeypatch, trial_relay=relay, trial_registry=registry,
+    ) as (service, native_client, directory, desktop):
+        assert native_client.register(INVENTORY_CALLER)["status"] == "registered"
+        request = {
+            "version": 1, "action": "codex-unloaded-payload-trial", "service_epoch": service.epoch,
+            "revision": service.policy.revision, "source_thread_ref": INVENTORY_CALLER["thread_ref"],
+            "endpoint_id": endpoint, "session_ref": target_session, "container_ref": scope["container_ref"],
+            "trial_id": "fixed-trial",
+        }
+        bridge._create_phase(service.w, directory / "trial-request.json", service.sid, encode(request))
+        if target_session == "source-chat":
+            wait_until(lambda: denied.is_set() or (directory / "trial-installed.json").exists())
+            assert denied.is_set()
+            assert not (directory / "trial-installed.json").exists()
+            assert not relay.codex_trial_native_suppressed(endpoint)
+        else:
+            wait_until(lambda: (directory / "trial-installed.json").exists())
+            assert relay.codex_trial_native_suppressed(endpoint)
+        assert registry.snapshot(endpoint) is None
+        assert desktop.requests == [{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}]
+
+
+@pytest.mark.parametrize("change,accepted", [
+    ("valid", True), ("missing", False), ("wrong-namespace", False),
+    ("wrong-name", False), ("extra-required", False), ("wrong-type", False),
+    ("duplicate", False), ("ambiguous-required", False),
+])
+def test_inventory_owner_tool_descriptor_requires_exact_reviewed_shape(change, accepted):
+    descriptor = {"namespace": "codex_app", "name": "send_message_to_thread", "inputSchema": {
+        "type": "object", "properties": {"threadId": {"type": "string"}, "prompt": {"type": "string"}},
+        "required": ["threadId", "prompt"],
+    }}
+    tools = [descriptor]
+    if change == "missing":
+        tools = []
+    elif change == "wrong-namespace":
+        descriptor["namespace"] = "other"
+    elif change == "wrong-name":
+        descriptor["name"] = "other"
+    elif change == "extra-required":
+        descriptor["inputSchema"]["required"].append("hostId")
+    elif change == "wrong-type":
+        descriptor["inputSchema"]["properties"]["threadId"]["type"] = "integer"
+    elif change == "duplicate":
+        tools.append(dict(descriptor))
+    elif change == "ambiguous-required":
+        descriptor["inputSchema"]["required"] = ["threadId", "threadId", "prompt"]
+    assert bridge._owner_tool_schema_valid(tools) is accepted
+
+
+@native
+@pytest.mark.parametrize("owner_reply, expected_status", [
+    ("success", "submitted"),
+    ("error", "inconclusive"),
+    ("tool-error", "inconclusive"),
+    ("wrong-id", "inconclusive"),
+    ("after-descriptor-drift", "denied"),
+    ("spend-denied", "denied"),
+    ("write-after-send-failure", "inconclusive"),
+])
+def test_exclusive_trial_uses_one_retained_desktop_owner_call_after_source_exit(
+    tmp_path, monkeypatch, client, owner_reply, expected_status,
+):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from app.dependencies import build_router
+    from core.codex_wake import CodexWakeRegistry
+    from core.relay import RelayService
+
+    storage = client.app.state.pallium_service._storage
+    relay = RelayService(storage)
+    registry = CodexWakeRegistry(relay_service=relay)
+    assert registry.initialize(old_owner_drained=True)
+    scope = {"container_ref": "git:example.test/owner-action"}
+    relay.turn(runtime="codex", session_ref="sender", **scope)
+    endpoint = relay.turn(runtime="codex", session_ref="target", **scope)["session"]["endpoint_id"]
+    app = FastAPI()
+    app.include_router(build_router(client.app.state.pallium_service, relay_storage=storage,
+                                    codex_wake_registry=registry))
+    route = TestClient(app)
+    schema = {"type": "object", "properties": {
+        "threadId": {"type": "string"}, "prompt": {"type": "string"},
+    }, "required": ["threadId", "prompt"]}
+
+    def desktop_response(request, value):
+        if request["method"] == "tools/list":
+            value["result"]["tools"] = ([] if owner_reply == "after-descriptor-drift" and request["id"] == 2
+                else [{"namespace": "codex_app", "name": "send_message_to_thread",
+                       "inputSchema": schema}])
+        elif owner_reply == "error":
+            value = {"jsonrpc": "2.0", "id": request["id"], "error": {
+                "code": -32000, "message": "private native error"}}
+        elif owner_reply == "tool-error":
+            value["result"] = {"isError": True, "content": [{"type": "text", "text": "private native error"}]}
+        elif owner_reply == "wrong-id":
+            value["id"] = request["id"] + 1
+        return value
+
+    directory = bridge.prepare_inventory_service(tmp_path / "owner-home")
+    desktop = FakeDesktop(desktop_response, allow_call=True)
+    service = bridge.InventoryService(directory, trial_relay=relay, trial_registry=registry)
+    child = None
+    assert service.start() is service
+    try:
+        wait_until(lambda: (directory / "active.json").exists())
+        child_home = tmp_path / "child-home"
+        child_home.mkdir()
+        env = os.environ.copy()
+        env.update({"CODEX_APP_TOOLS_PIPE_PATH": desktop.endpoint, "USERPROFILE": str(child_home)})
+        code = """import json,sys,threading
+from pathlib import Path
+from app.codex_bridge_pipe import NativeInventoryClient
+c=NativeInventoryClient(Path(sys.argv[1]),threading.Event())
+print(json.dumps(c.ready()),flush=True)
+sys.stdin.readline()
+print(json.dumps(c.register({"thread_ref":"source-chat","turn_ref":"source-turn"})),flush=True)
+sys.stdin.readline()
+c.dispose()
+"""
+        child = subprocess.Popen([sys.executable, "-c", code, str(directory / "active.json")],
+            cwd=Path(__file__).resolve().parents[1], env=env, stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8")
+        assert json.loads(child.stdout.readline())["status"] == "ready"
+        arm_inventory(directory, inventory_policy(service, service.source))
+        child.stdin.write("register\n")
+        child.stdin.flush()
+        assert json.loads(child.stdout.readline())["status"] == "registered"
+        assert service.owner_tool_before
+        bridge._create_phase(service.w, directory / "trial-request.json", service.sid, encode({
+            "version": 1, "action": "codex-unloaded-payload-trial", "service_epoch": service.epoch,
+            "revision": service.policy.revision, "source_thread_ref": "source-chat",
+            "endpoint_id": endpoint, "session_ref": "target", "container_ref": scope["container_ref"],
+            "trial_id": "owner-trial",
+        }))
+        wait_until(lambda: (directory / "trial-installed.json").exists())
+        with monkeypatch.context() as guard:
+            guard.setattr("app.dependencies.schedule_codex_relay_wake",
+                          lambda *_a, **_k: pytest.fail("trial reached native wake launcher"))
+            sent = route.post("/relay/messages", json={
+                "sender_runtime": "codex", "sender_session_ref": "sender",
+                "recipient": endpoint, "payload": "private payload never sent to Desktop", **scope,
+            })
+        assert sent.status_code == 200
+        delivery_id = sent.json()["deliveries"][0]["delivery_id"]
+        bridge._create_phase(service.w, directory / "trial-action.json", service.sid, encode({
+            "version": 1, "action": "codex-unloaded-payload-owner-call", "service_epoch": service.epoch,
+            "revision": service.policy.revision, "source_thread_ref": "source-chat",
+            "endpoint_id": endpoint, "trial_id": "owner-trial", "delivery_id": delivery_id,
+            "expires_at": (datetime.now(timezone.utc) + timedelta(seconds=180)).isoformat(),
+        }))
+        wait_until(lambda: (directory / "trial-bound.json").exists())
+        if owner_reply == "spend-denied":
+            monkeypatch.setattr(relay, "spend_codex_trial", lambda **_kwargs: False)
+        if owner_reply == "write-after-send-failure":
+            original_write = service.custody.write
+            def write_then_fail(value, deadline):
+                original_write(value, deadline)
+                if value.get("method") == "tools/call":
+                    raise bridge.ShadowUnavailable("transport-failed")
+            monkeypatch.setattr(service.custody, "write", write_then_fail)
+        child.stdin.write("exit\n")
+        child.stdin.flush()
+        assert child.wait(timeout=3) == 0
+        wait_until(lambda: (directory / "trial-outcome.json").exists(), timeout=3)
+        outcome = json.loads((directory / "trial-outcome.json").read_text(encoding="utf-8"))
+        assert set(outcome) == {"version", "service_epoch", "revision", "status"}
+        assert "private native error" not in repr(outcome)
+        assert outcome["status"] == expected_status
+        assert relay.codex_trial_native_suppressed(endpoint)
+        assert relay.codex_trial_action_ready(endpoint_id=endpoint, trial_id="owner-trial",
+                                             delivery_id=delivery_id) is (expected_status not in ("denied",))
+        assert desktop.connections == 1 and len(desktop.requests) == (
+            2 if expected_status == "denied" else 3)
+        service._maybe_execute_trial()
+        assert len(desktop.requests) == (2 if expected_status == "denied" else 3)
+        if expected_status == "denied":
+            return
+        request = desktop.requests[2]
+        assert request["method"] == "tools/call" and request["id"] == 3
+        params = request["params"]
+        assert set(params) == {"namespace", "tool", "arguments", "callerSource", "callId", "threadId", "turnId"}
+        assert params["namespace"] == "codex_app" and params["tool"] == "send_message_to_thread"
+        assert params["callerSource"] == "codex" and params["threadId"] == "source-chat"
+        assert params["turnId"] == "source-turn" and isinstance(params["callId"], str) and params["callId"]
+        assert params["arguments"]["threadId"] == "target"
+        assert delivery_id in params["arguments"]["prompt"]
+        assert "private payload" not in repr(request)
+        assert route.get(f"/relay/messages/{sent.json()['message_id']}", params=scope).json()["deliveries"][0]["state"] == "pending"
+    finally:
+        if child is not None and child.poll() is None:
+            child.kill()
+            child.wait(timeout=3)
+        service.stop()
+        desktop.close()
 
 
 @native
