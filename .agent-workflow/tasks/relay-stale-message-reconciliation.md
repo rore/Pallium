@@ -66,7 +66,7 @@ Cheapest implementation candidate: replace the skill's first bullet compactly wi
 
 | Case | Observable acceptance |
 | --- | --- |
-| Different IDs, delayed old completion after authorized unfinished work | Both payloads remain accessible; all caller envelopes advise current-work reconciliation. Agent replay completes the current artifact and does not repeat the verified old side effect. |
+| Different IDs, delayed old completion after authorized unfinished work | Both payloads remain accessible; skill/docs advise current-work reconciliation (all caller envelopes only if that optional phase is selected). Agent replay completes the current artifact and does not repeat the verified old side effect. |
 | Old result contains a new blocker/finding | Payload is preserved; replay incorporates or reports the material finding instead of discarding all old results. |
 | Old timestamp alone, no completion/supersession evidence | Message remains claimable/pageable; replay does not dismiss it solely for age. |
 | Unknown previous action outcome or conflicting authority | Guidance requires target inspection before irreversible retry; replay exposes the conflict and does not guess authority. |
@@ -85,3 +85,27 @@ Agent-action evidence is separate and labeled downstream-task-effect: after auth
 Independent Sol-low review completed; source/contract verified and refinements incorporated. Manager-supplied incident evidence incorporated as a narrowed diagnosis, with receiver relevance and sender acceptance/followthrough separated. Manager now reviews the revised plan and authorizes TDD or redirects. Guidance-only scope remains Elevated; envelope scope would require High-risk API/persistence checkpoints. Either needs independent implementation review, appropriate caller coverage, roadmap honesty and manager-owned rollout. This plan neither closes the incident nor changes the wake reliability claim.
 
 Planning verification: `git diff --check` passed; repository Redline reporter plus Agent Workflow checker returned clean/exit 0 for the whole planning-only change. The PowerShell adapter could not find Python in this reused worktree; the same checker was run using the existing development `.venv/Scripts/python.exe`. No application tests were rerun and no production paths changed. One coordination send failed to connect while service health reported initializing; the tool-instructed single retry saved the update. No restart or fallback message was used.
+
+## Exact wording and measured tradeoff
+
+Recommended first phase, identical replacement of only the first Relay bullet in all three bundled skills:
+
+> - Reconcile work/state; keep late findings. Skip completed actions/routine replies; follow authorized work. Reply on completion/blocker.
+
+Normalized UTF-8 measurement against the unchanged source: 2,967 -> 3,054 bytes per skill, ceiling 3,072; eighteen bytes remain. No global instruction or hook/MCP envelope grows. Preserve every other skill rule, especially required scope, stale-copy conflicts and claims/ACK ownership. Independent followup review identified that the initial candidate omitted explicit completion/blocker reporting and a state/authorized-work cue; the replacement above is the reviewer's compact recommendation, adopted in full. The guide supplies the explicit no-repeat-checks, unknown-state, useful-blocker and authorized-reassignment examples.
+
+Proposed replacement/extension of the existing Relay guide's identity/action paragraph:
+
+> Different IDs identify separate deliveries, not necessarily separate business actions or new authority. Reconcile each message with the current authorized task known to you and verified work state. Preserve useful late findings and blockers. Do not repeat verified completed actions/checks or send routine confirmation replies unless new evidence or an authorized change requires action. When an outcome is unknown, make only the necessary state reconciliation before irreversible retry; report unresolved conflicts rather than guessing authority. Continue other accepted unfinished work unless authorized instructions change it. Age or arrival order alone does not establish supersession. Reply for substantive completion, blockers or requested decisions, not just to reconfirm historical closure. Leads track explicit acceptance and reviewed completion in the existing work source; saved/delivered/ACK does not establish acceptance, and recipients cannot act on unseen instructions.
+
+Keep the existing exact-ID, emission-uncertainty and ACK/continuation safeguards around this paragraph. Do not alter installed external collection-coordination guidance.
+
+Optional later envelope candidate, only if incident/replay demonstrates placement matters:
+
+> Check exact delivery_id in context/artifacts. Reconcile current work; keep useful late results/blockers. Skip known-completed actions/checks and routine replies; continue accepted unfinished work unless authorized changes apply. Unknown outcome: inspect target state before retry. Age alone is not supersession. Attempts do not prove emission/actions. ACK: receipt, not completion
+
+This is 380 versus 198 existing Unicode code points: +182 per delivery, up to +546 for three hook blocks, accommodated by shorter previews and unchanged continuation, never raised output ceilings. This cost is why skill/docs comes first. The optional phase must synchronize all five render/projection seams and test pre-claim overflow, reconstructed Unicode payload and emitted-only ACK through existing caller surfaces.
+
+First-phase red check: the old first bullet fails the exact replacement contract; guidance-budget tests verify identical mirrors and ceiling. Extend existing Claude/Codex skill installation lifecycle tests (`test_claude_setup_deploys_and_removes_skill`, `test_codex_setup_deploys_and_removes_skill`) to assert the new rule in the installed read path through install/reinstall/remove, using disposable profiles only. Keep behavior replay separate from installed-text evidence; reuse unchanged hook/MCP lifecycle coverage rather than pretending a text-only phase modifies those contracts. The test selector determines the required broader lane.
+
+2026-09-30 followup: Manager accepted advisory direction and requested concrete wording/budget/caller red cases after independent review. This is still planning authorization, not authorization to edit production. Exact incident pages are fully read; no further incident-team contact or progress-send retry is needed.
