@@ -862,7 +862,9 @@ async def test_inventory_register_without_runtime_turn_denies_before_private_tra
 
     async def exercise(session):
         reply = await session.call_tool("pallium_codex_bridge_inventory_register", {}, meta=meta)
-        assert json.loads(reply.content[0].text)["status"] == "unavailable"
+        result = json.loads(reply.content[0].text)
+        assert result["status"] == "unavailable"
+        assert result["reason"] == ("native-failed" if meta is None else "stopped")
 
     await _serve_protocol(server, exercise)
     assert "register" not in calls

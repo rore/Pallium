@@ -117,19 +117,15 @@ class RelayService:
     """Validated Relay boundary over the optional SQLite relay capability."""
 
     def codex_trial_native_suppressed(self, endpoint_id: str) -> bool:
-        endpoint_id = _opaque(endpoint_id, "endpoint_id", maximum=46)
-        if not _ENDPOINT_ID_RE.fullmatch(endpoint_id):
-            raise ValueError("endpoint_id must be a canonical Relay endpoint")
-        return self._store.relay_codex_trial_native_suppressed(endpoint_id)
+        return self._store.relay_codex_trial_native_suppressed(
+            self._codex_trial_endpoint(endpoint_id)
+        )
 
     def enroll_codex_trial(
         self, *, endpoint_id: str, session_ref: str, container_ref: str, trial_id: str,
     ) -> bool:
-        endpoint_id = _opaque(endpoint_id, "endpoint_id", maximum=46)
-        if not _ENDPOINT_ID_RE.fullmatch(endpoint_id):
-            raise ValueError("endpoint_id must be a canonical Relay endpoint")
         return self._store.relay_codex_trial_enroll(
-            endpoint_id=endpoint_id,
+            endpoint_id=self._codex_trial_endpoint(endpoint_id),
             session_ref=_opaque(session_ref, "session_ref"),
             container_ref=self._scope(container_ref),
             trial_id=_opaque(trial_id, "trial_id", maximum=128),
