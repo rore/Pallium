@@ -41,7 +41,7 @@ Method: MCP registration E2E proves runtime-owned exact caller thread/turn reach
 
 **Exceptions:** None
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Checkpoint: security-review
@@ -109,3 +109,11 @@ The human replied “I approve” directly to the root's paired exact decisions:
 Before: one owner action required the source child to exit and a successful after-exit `tools/list` on the retained connection. After: this finite owner action requires a legitimately Desktop-launched **still-running** source child, its RAM-bound runtime caller thread/turn pair, positive before inventory, current finite policy and verified Desktop peer; source exit or custody loss before native write denies the action. The target is separately owned, independently verified `notLoaded` immediately before arming, and distinct from the source. The durable endpoint/delivery fence, native suppression, one-action limit, exact descriptor and Relay target checks, no payload/overrides, no retry after ambiguity, and hook payload/ACK success condition remain unchanged. This action does not claim post-source-exit custody or delivery; that is a separate qualification.
 
 Independent `/root/service_handoff_security` gave conditional GO on this narrow predicate correction, requiring caller-visible red→green evidence and a final check of source liveness/custody immediately before write. Root accepted the same scoped correction. Publication remains owned by root; no live action has occurred.
+
+## Live-source implementation and verification
+
+The owner-action predicate now requires published positive before inventory and the compatible retained descriptor. It calls the existing `_authorize` and source-process check before the durable spend and again immediately before native write. The service's inventory-only admission, before/after observation and proof publication remain unchanged. Source exit before the action denies; exit after spend but before write leaves the fence spent and the outcome inconclusive with zero `tools/call` requests.
+
+The actual private-pipe/HTTP caller test failed on the original source-exit gate because no outcome appeared while the source child remained alive. After the narrow production change, the positive case passed before any source-exit or after-inventory proof. Eight focused variants passed together, including missing before descriptor, failed spend, malformed/error tool results, ambiguous write, and source exit after spend. One earlier eight-case batch had six passes and two failures; those two exact nodes passed with `--lf`, and a later eight-case run passed. The cause of that intermittent native fixture behavior remains unclassified. The affected private-pipe file had 257 passes and one existing competing-child subprocess failure; its exact `--lf` rerun passed, without a claim that the cause was fixed.
+
+The whole-change selector required the full lane. One full non-slow run under a disposable subprocess `USERPROFILE` passed: 5785 passed, 45 skipped, 2 xfailed in 332.63 seconds. This is 11 more skips and 11 fewer passes than the prior source-exit-gated full run (same 5832 total); this run did not retain per-test skip reasons, so they are unknown. The changed private-pipe caller file is marked slow and excluded by the repository's default `-m 'not slow'`; its eight-case `-m slow` run supplies that direct coverage. The live unloaded-target turn, hook payload emission, ACK and trace remain unverified and belong to root's controlled operator trial.

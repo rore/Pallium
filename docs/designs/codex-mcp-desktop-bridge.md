@@ -371,10 +371,11 @@ do not retrospectively explain an earlier failure or qualify unloaded wake.
 ### Finite exclusive unloaded-payload trial
 
 A separately armed, one-endpoint trial may use the retained inventory connection
-for one `send_message_to_thread` Desktop action. It requires an authenticated
-source child with runtime-owned caller thread/turn metadata, positive before and
-after inventory on the same connection with a positive retained-handle source exit,
-current finite policy and Desktop peer, and a distinct exclusively owned target.
+for one `send_message_to_thread` Desktop action. It requires an authenticated,
+still-running source child with runtime-owned caller thread/turn metadata,
+positive before inventory on the retained connection, current finite policy and
+Desktop peer, and a distinct exclusively owned target. Source liveness and custody
+are rechecked immediately before the native write; source exit denies this action.
 The live operator must independently verify that the exact exclusive target is
 `notLoaded` immediately before arming; source/target inequality alone does not
 prove it. This remains a controlled experiment, not ordinary wake admission or a
@@ -399,5 +400,5 @@ the endpoint remains spent and native-suppressed; no retry or fallback is allowe
 Protected outcome and service log values are fixed enums only. `submitted` means
 only that a matching non-error native result envelope was observed. A successful
 trial requires a genuine target turn with hook payload emission and ACK/Relay
-readback. It proves neither post-source-exit delivery in other circumstances nor
-general unloaded or busy-turn reliability.
+readback. Post-source-exit lifetime and general unloaded or busy-turn reliability
+remain separate, unproven claims.

@@ -1760,19 +1760,18 @@ class InventoryService:
                 or self.trial_registry is None or self.policy is None or self.caller is None
                 or self.custody is None or self.source is None or self.desktop is None
                 or self.proof is None or self.proof.get("before_inventory_ok") is not True
-                or self.proof.get("source_exited") is not True
-                or self.proof.get("after_inventory_ok") is not True
-                or "after" not in self.published_phases):
+                or "before" not in self.published_phases):
             return
         self._trial_owner_attempted = True
         action, expiry = self.trial_action
         outcome = "denied"
         try:
-            if (not self.owner_tool_before or not self.owner_tool_after
+            if (not self.owner_tool_before
                     or self.utc_clock() >= expiry or self.stop_event.is_set()
-                    or self.w.event.WaitForSingleObject(self.source.handle, 0) != self.w.event.WAIT_OBJECT_0
                     or self._load() != self.policy):
                 raise ShadowUnavailable("policy-inactive")
+            self._authorize(self.policy.revision)
+            self.source.check()
             self.current.check()
             self.desktop.verify()
             if self.w.pipe.GetNamedPipeServerProcessId(self.custody.handle) != self.desktop.pid:
@@ -1796,6 +1795,8 @@ class InventoryService:
                 if (self.stop_event.is_set() or self.utc_clock() >= expiry
                         or self._load() != self.policy):
                     raise ShadowUnavailable("policy-inactive")
+                self._authorize(self.policy.revision)
+                self.source.check()
                 self.current.check()
                 self.desktop.verify()
                 if self.w.pipe.GetNamedPipeServerProcessId(self.custody.handle) != self.desktop.pid:

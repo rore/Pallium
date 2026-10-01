@@ -1270,11 +1270,12 @@ def test_inventory_owner_tool_descriptor_requires_exact_reviewed_shape(change, a
     ("error", "inconclusive"),
     ("tool-error", "inconclusive"),
     ("wrong-id", "inconclusive"),
-    ("after-descriptor-drift", "denied"),
+    ("missing-before-descriptor", "denied"),
     ("spend-denied", "denied"),
     ("write-after-send-failure", "inconclusive"),
+    ("source-exit-before-write", "inconclusive"),
 ])
-def test_exclusive_trial_uses_one_retained_desktop_owner_call_after_source_exit(
+def test_exclusive_trial_uses_one_retained_desktop_owner_call_while_source_alive(
     tmp_path, monkeypatch, client, owner_reply, expected_status,
 ):
     from fastapi import FastAPI
@@ -1300,7 +1301,7 @@ def test_exclusive_trial_uses_one_retained_desktop_owner_call_after_source_exit(
 
     def desktop_response(request, value):
         if request["method"] == "tools/list":
-            value["result"]["tools"] = ([] if owner_reply == "after-descriptor-drift" and request["id"] == 2
+            value["result"]["tools"] = ([] if owner_reply == "missing-before-descriptor"
                 else [{"namespace": "codex_app", "name": "send_message_to_thread",
                        "inputSchema": schema}])
         elif owner_reply == "error":
@@ -1341,7 +1342,7 @@ c.dispose()
         child.stdin.write("register\n")
         child.stdin.flush()
         assert json.loads(child.stdout.readline())["status"] == "registered"
-        assert service.owner_tool_before
+        assert service.owner_tool_before is (owner_reply != "missing-before-descriptor")
         bridge._create_phase(service.w, directory / "trial-request.json", service.sid, encode({
             "version": 1, "action": "codex-unloaded-payload-trial", "service_epoch": service.epoch,
             "revision": service.policy.revision, "source_thread_ref": "source-chat",
@@ -1358,13 +1359,6 @@ c.dispose()
             })
         assert sent.status_code == 200
         delivery_id = sent.json()["deliveries"][0]["delivery_id"]
-        bridge._create_phase(service.w, directory / "trial-action.json", service.sid, encode({
-            "version": 1, "action": "codex-unloaded-payload-owner-call", "service_epoch": service.epoch,
-            "revision": service.policy.revision, "source_thread_ref": "source-chat",
-            "endpoint_id": endpoint, "trial_id": "owner-trial", "delivery_id": delivery_id,
-            "expires_at": (datetime.now(timezone.utc) + timedelta(seconds=180)).isoformat(),
-        }))
-        wait_until(lambda: (directory / "trial-bound.json").exists())
         if owner_reply == "spend-denied":
             monkeypatch.setattr(relay, "spend_codex_trial", lambda **_kwargs: False)
         if owner_reply == "write-after-send-failure":
@@ -1374,25 +1368,50 @@ c.dispose()
                 if value.get("method") == "tools/call":
                     raise bridge.ShadowUnavailable("transport-failed")
             monkeypatch.setattr(service.custody, "write", write_then_fail)
-        child.stdin.write("exit\n")
-        child.stdin.flush()
-        assert child.wait(timeout=3) == 0
+        if owner_reply == "source-exit-before-write":
+            original_ready = relay.codex_trial_action_ready
+            def source_exits_after_spend(**kwargs):
+                child.stdin.write("exit\n")
+                child.stdin.flush()
+                assert child.wait(timeout=3) == 0
+                return original_ready(**kwargs)
+            monkeypatch.setattr(relay, "codex_trial_action_ready", source_exits_after_spend)
+        bridge._create_phase(service.w, directory / "trial-action.json", service.sid, encode({
+            "version": 1, "action": "codex-unloaded-payload-owner-call", "service_epoch": service.epoch,
+            "revision": service.policy.revision, "source_thread_ref": "source-chat",
+            "endpoint_id": endpoint, "trial_id": "owner-trial", "delivery_id": delivery_id,
+            "expires_at": (datetime.now(timezone.utc) + timedelta(seconds=180)).isoformat(),
+        }))
+        wait_until(lambda: (directory / "trial-bound.json").exists())
         wait_until(lambda: (directory / "trial-outcome.json").exists(), timeout=3)
+        if owner_reply == "source-exit-before-write":
+            assert child.poll() == 0
+        else:
+            assert child.poll() is None
+            assert not (directory / "proof-exit.json").exists()
+            assert not (directory / "proof-after.json").exists()
         outcome = json.loads((directory / "trial-outcome.json").read_text(encoding="utf-8"))
+        if owner_reply == "source-exit-before-write":
+            monkeypatch.setattr(relay, "codex_trial_action_ready", original_ready)
         assert set(outcome) == {"version", "service_epoch", "revision", "status"}
         assert "private native error" not in repr(outcome)
         assert outcome["status"] == expected_status
         assert relay.codex_trial_native_suppressed(endpoint)
         assert relay.codex_trial_action_ready(endpoint_id=endpoint, trial_id="owner-trial",
                                              delivery_id=delivery_id) is (expected_status not in ("denied",))
-        assert desktop.connections == 1 and len(desktop.requests) == (
-            2 if expected_status == "denied" else 3)
+        no_call = expected_status == "denied" or owner_reply == "source-exit-before-write"
+        assert desktop.connections == 1
+        assert len([request for request in desktop.requests if request["method"] == "tools/call"]) == (
+            0 if no_call else 1)
+        if owner_reply != "source-exit-before-write":
+            assert len(desktop.requests) == (1 if no_call else 2)
         service._maybe_execute_trial()
-        assert len(desktop.requests) == (2 if expected_status == "denied" else 3)
-        if expected_status == "denied":
+        assert len([request for request in desktop.requests if request["method"] == "tools/call"]) == (
+            0 if no_call else 1)
+        if no_call:
             return
-        request = desktop.requests[2]
-        assert request["method"] == "tools/call" and request["id"] == 3
+        request = desktop.requests[1]
+        assert request["method"] == "tools/call" and request["id"] == 2
         params = request["params"]
         assert set(params) == {"namespace", "tool", "arguments", "callerSource", "callId", "threadId", "turnId"}
         assert params["namespace"] == "codex_app" and params["tool"] == "send_message_to_thread"
