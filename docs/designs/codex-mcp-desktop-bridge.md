@@ -326,6 +326,8 @@ provides no wake authority and does not qualify cold delivery, busy safety, or
 restart recovery.
 
 The proof uses at most two fixed inventory reads, not an external observation API.
+Inventory treats unrelated tools' dictionary input schemas as opaque; the
+separately armed owner action still requires its exact tool descriptor.
 After admission the service reads once while the retained source process is alive;
 that read must finish with the source still alive. Only after a positive signal
 from that retained process handle may it read once more on the same connection.
