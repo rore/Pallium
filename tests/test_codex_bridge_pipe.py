@@ -1271,6 +1271,7 @@ def test_inventory_owner_tool_descriptor_requires_exact_reviewed_shape(change, a
     ("tool-error", "inconclusive"),
     ("wrong-id", "inconclusive"),
     ("missing-before-descriptor", "denied"),
+    ("malformed-before-descriptor", "denied"),
     ("spend-denied", "denied"),
     ("write-after-send-failure", "inconclusive"),
     ("source-exit-before-write", "inconclusive"),
@@ -1303,7 +1304,7 @@ def test_exclusive_trial_uses_one_retained_desktop_owner_call_while_source_alive
         if request["method"] == "tools/list":
             value["result"]["tools"] = ([] if owner_reply == "missing-before-descriptor"
                 else [{"namespace": "codex_app", "name": "send_message_to_thread",
-                       "inputSchema": schema}])
+                       "inputSchema": {"type": "array"} if owner_reply == "malformed-before-descriptor" else schema}])
         elif owner_reply == "error":
             value = {"jsonrpc": "2.0", "id": request["id"], "error": {
                 "code": -32000, "message": "private native error"}}
@@ -1342,7 +1343,8 @@ c.dispose()
         child.stdin.write("register\n")
         child.stdin.flush()
         assert json.loads(child.stdout.readline())["status"] == "registered"
-        assert service.owner_tool_before is (owner_reply != "missing-before-descriptor")
+        assert service.owner_tool_before is (owner_reply not in (
+            "missing-before-descriptor", "malformed-before-descriptor"))
         bridge._create_phase(service.w, directory / "trial-request.json", service.sid, encode({
             "version": 1, "action": "codex-unloaded-payload-trial", "service_epoch": service.epoch,
             "revision": service.policy.revision, "source_thread_ref": "source-chat",
@@ -1574,7 +1576,6 @@ def test_inventory_transfer_stage_diagnostics_from_private_caller(
     ("tool-name", "validate-tool-name"),
     ("tool-duplicate", "validate-tool-duplicate"),
     ("schema-type", "validate-schema-type"),
-    ("schema-object", "validate-schema-object"),
 ])
 def test_inventory_validation_diagnostic_identifies_private_caller_rejection(
     tmp_path, monkeypatch, inventory_caplog, case, stage,
@@ -1609,8 +1610,6 @@ def test_inventory_validation_diagnostic_identifies_private_caller_rejection(
             value["result"]["tools"].append(tool.copy())
         elif case == "schema-type":
             tool["inputSchema"] = None
-        elif case == "schema-object":
-            tool["inputSchema"]["type"] = "array"
         return value
 
     with inventory_running(tmp_path, monkeypatch, response=response) as (service, client, directory, desktop):
@@ -1625,6 +1624,27 @@ def test_inventory_validation_diagnostic_identifies_private_caller_rejection(
         assert len(records) == 1
         assert records[0].args == (f"before-{stage}", "invalid-response", service.epoch, 1)
         assert secret not in repr(records) and secret not in repr(proof)
+
+
+@native
+@pytest.mark.parametrize("schema", [
+    {"type": "array", "items": {"type": "string"}},
+    {"anyOf": [{"type": "object"}, {"type": "array"}]},
+    {"properties": {"value": {"type": "string"}}},
+])
+def test_inventory_accepts_unrelated_dictionary_tool_schemas(
+    tmp_path, monkeypatch, inventory_caplog, schema,
+):
+    def response(_request, value):
+        value["result"]["tools"][0]["inputSchema"] = schema
+        return value
+
+    with inventory_running(tmp_path, monkeypatch, response=response) as (service, client, directory, desktop):
+        result = client.register(INVENTORY_CALLER)
+        assert result["status"] == "registered" and result["inventory_ok"]
+        assert len(desktop.requests) == 1
+        assert read_proof(directory)["before_inventory_ok"]
+        assert not inventory_failure_records(inventory_caplog)
 
 
 @native

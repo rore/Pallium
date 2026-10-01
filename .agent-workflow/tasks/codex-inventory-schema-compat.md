@@ -32,17 +32,17 @@
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
 
-Work Record and risk classification established before production or test edits. Independent reviewer gave technical GO; direct user then approved the exact behavior change and regression tests. Three actual private-pipe caller cases for unrelated array, union, and missing-type dictionary schemas failed before the production edit at `before-validate-schema-object`. Deleting only that blanket predicate made those and retained rejection cases pass (16). The owner-action caller test now includes malformed intended descriptor with zero `tools/call` (9 passed). A short adjacent design statement clarifies that unrelated dictionary schemas are opaque.
+Work Record and risk classification established before production or test edits. Independent reviewer gave technical GO; direct user then approved the exact behavior change and regression tests. Three actual private-pipe caller cases for unrelated array, union, and missing-type dictionary schemas failed before the production edit at `before-validate-schema-object`. Deleting only that blanket predicate made those and retained rejection cases pass (16). The owner-action caller test now includes malformed intended descriptor with zero `tools/call` (9 passed). A short adjacent design statement clarifies that unrelated dictionary schemas are opaque. The source/test/docs diff is ready for final review.
 
 ## Evidence
 
-Original controlled trial: `.agent-workflow/tasks/codex-unloaded-payload-trial.md`. Canonical roadmap: `roadmap/features/add-wake-first-relay-delivery.md`. Live stage was content-free; no private catalog was read.
+Original controlled trial: `.agent-workflow/tasks/codex-unloaded-payload-trial.md`. Canonical roadmap: `roadmap/features/add-wake-first-relay-delivery.md`. Live stage was content-free; no private catalog was read. Affected native bridge file: 260 passed, 1 existing wrong-ID/source-exit transport failure; the exact `--lf --lfnf=none -q -n 0 -m slow` node passed. Cause remains unclassified. The first full command accidentally overrode configured four workers with `-n 0`; it was interrupted around 20% with no reported failure. The exact selector command then passed under a disposable subprocess USERPROFILE: 5809 passed, 34 skipped, 2 xfailed in 290.86 seconds. `git diff --check` passed.
 
 ## Result review
 
-Pending implementation and verification.
+Independent /root/service_handoff_security gave interim source/test/docs ACCEPT: only the three-line blanket restriction is deleted; schema-dict, bounded list/frame, name/duplicate, envelope and authority checks remain, and the exact owner descriptor still prevents malformed owner action. Final acceptance awaits clean committed head and workflow checks. Live target receipt, hook emission and ACK remain unqualified.

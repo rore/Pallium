@@ -1604,9 +1604,6 @@ class InventoryService:
             self._failure_stage = f"{phase}-validate-schema-type"
             if not isinstance(tool["inputSchema"], dict):
                 raise ShadowUnavailable("invalid-response")
-            self._failure_stage = f"{phase}-validate-schema-object"
-            if tool["inputSchema"].get("type") != "object":
-                raise ShadowUnavailable("invalid-response")
             names.add(tool["name"])
         if not self.after_attempted:
             self.owner_tool_before = _owner_tool_schema_valid(value["result"]["tools"])
