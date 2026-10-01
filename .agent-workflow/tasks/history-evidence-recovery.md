@@ -61,6 +61,10 @@ Approved by user 2026-10-01: "So continue!" Prior authorization covers delegated
 
 2026-10-01: Resumed the umbrella after user corrected premature stopping. Shared main is clean at 542e867e; new managed checkout uses feat/history-evidence-recovery. Lead owns roadmap updates. This record tracks the continuation; it does not reopen or rewrite PR271's completed record. State denotes pending plan review, not missing user approval.
 
+2026-10-01 discovery checkpoint: bounded recovery inspected named shared/stable study directories, surviving study-named worktrees, and tracked provenance records. Method and aggregates survive, but exact exclusion manifest and ID mappings do not; no guessed reconstruction or source-content opening is allowed. The approved fallback is underway: worker-owned ignored `build/test_history_equivalent_probe.py` exercises generic caller behavior; production files remain unchanged. A second read-only worker maps original reported failure classes to existing caller tests and unresolved questions. Lead retains report/roadmap ownership.
+
+Coordination feedback: user correction exposed failure to apply collection-coordination step 6, not missing permission. Lead sent the concrete completion-boundary problem to the configured @astra-reviewer via Relay; save/admission is confirmed, receipt not yet asserted. The user has been told the cause and work has resumed. No routine progress or product bugs were forwarded.
+
 ## Evidence
 
 Reuse docs/reports/session-history-fresh-review.md and ignored shared .local/history-search-fresh-review/ artifacts; do not repeat the completed 265-lookup census.
