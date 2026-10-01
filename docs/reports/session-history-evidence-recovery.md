@@ -1,6 +1,7 @@
 # Session History evidence recovery and caller investigation
 
-Started 2026-10-01 from `542e867e`; investigation in progress.
+Investigated 2026-10-01 from `542e867e`; two supported corrections selected and
+independently reviewed. Validation and rollout evidence is in the Work Record.
 
 ## Recovery result
 
@@ -25,7 +26,7 @@ traceable, disjoint cases before grading.
 ## Work that can proceed independently
 
 Missing ranking confirmation does not block caller-contract investigation with
-anonymized fixtures. Two source-traced questions are being tested:
+anonymized fixtures. Two source-traced questions were tested:
 
 1. **Provenance after duplicate collapse.** The query layer retains merged
    evidence references, while the compact History response emits the primary
@@ -84,11 +85,10 @@ were rerun in this discovery pass.
 | Forgetting, visibility, Unicode | `test_source_only_search.py::test_vector_source_only_http_expands_then_forgets_unicode_source`; protected `test_history_forget_hides_search_and_expansion` | Preserve as regression baseline; do not add duplicate coverage absent a changed behavior. |
 | Evaluation request linkage | `test_historical_lookup_funnel_e2e.py::test_request_link_actor_is_optional_metadata`, both replay modes | PR271 closed the actor-filter defect; independent case and original-payload provenance remain a separate gate. |
 
-Next acceptance decisions are ordered: reproduce the two caller hypotheses;
-select and verify any justified small correction; review remaining equivalent
-result/source-choice questions using safe cases; only then consider a fixed-pool
-rank-only preflight. A negative probe or unavailable dataset closes that avenue,
-not automatically the umbrella assignment.
+The caller probes selected the two corrections above. The provenance path does
+not establish a missing-handle defect. Independent real-corpus source-choice
+grading and any rank-only preflight remain conditional on traceable cases, not
+required experiments to rerun until a favorable result appears.
 
 The existing public-corpus benchmark was also checked as an expansion route.
 Its committed manifests lack local materialized data, and the runner uses
@@ -133,6 +133,15 @@ development/confirmation partition before content grading. A rank-only preflight
 is warranted only if that review establishes a remaining rank-only question.
 The separate navigation/compression study remains queued, not authorized by the
 delivery of these corrections.
+
+| Feature completion criterion | Disposition |
+|---|---|
+| Wider bounded investigation | Prior studies plus the expanded census and this recovery pass cover additional measurement, identifier-equivalence, and candidate-saturation failures. Sampling/provenance limitations remain explicit. |
+| Justified improvements and regression evidence | Evaluator correction in PR271 plus the identifier/refill corrections; red-before-green caller checks. Independent held-out quality confirmation is unavailable and not claimed. |
+| Separate metrics and retrieval-is-not-use | Measurement ledger above; neither correction writes accessibility, verified use, or ranking priors. |
+| Governance and source lifecycle | Reuse scope/redaction/Unicode/disabled-derived baselines and changed lifecycle checks; require whole-change validation before delivery. |
+| Caller E2E and boundaries | HTTP identifier search/expansion/forgetting and real SQLite duplicate saturation; empty/sufficient/exhausted/capped refill checks, existing enabled-vector and exact-work caller coverage. No new MCP presentation behavior. |
+| Guidance, rollout, roadmap | No new skill/tool guidance. Canonical feature, scope, board, and directly affected follow-up must agree; installed fast-forward and supported restart/health checks remain delivery gates in the Work Record. |
 
 Owning [feature](../../roadmap/features/improve-session-history-search-quality.md)
 and [Work Record](../../.agent-workflow/tasks/history-evidence-recovery.md).

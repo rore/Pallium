@@ -18,10 +18,14 @@ work with less noise, time, and token cost?
 
 This is a separate queued representation study, not unfinished evidence-access work.
 The [evidence-access reliability feature](fix-session-history-evidence-access.md) is
-done. First complete the narrow prospective equivalent-result review in
-[`improve-session-history-search-quality`](improve-session-history-search-quality.md)
-and decide whether its candidate-availability preflight is warranted. Start this
-broader comparison afterward, reusing those cases and the shipped caller baseline.
+done. The bounded
+[`search-quality feature`](improve-session-history-search-quality.md) is complete,
+including identifier-safe equivalence and bounded broad-query refill. Its remaining
+prospective equivalent-result review is evidence-gated: recover exact exclusions or
+collect disjoint linked cases with original caller options/payloads before grading.
+This separate study remains queued. Its no-call preflight must establish suitable
+independent cases and decide whether that narrow review is needed before launching
+broader comparisons; completion of the prior feature is not evidence of case readiness.
 
 ## Time-boxed comparisons
 
@@ -31,7 +35,7 @@ do not implement it again or call the control an ungrouped legacy response.
 PR #173's candidate-study preflight did not support a comparison. Its observational
 audit suggests reviewing content-equivalent groups prospectively while retaining
 distinct provenance, dates, and source-opening paths. That narrow follow-up belongs
-first to `improve-session-history-search-quality`; coordinate cases rather than
+to the conditional follow-up retained in `improve-session-history-search-quality`; coordinate cases rather than
 launching this broader representation study in parallel with the same question.
 The tested caller-contract work in
 [`fix-session-history-evidence-access`](fix-session-history-evidence-access.md) is
@@ -94,7 +98,7 @@ cache-bounded, and is never persisted globally without later evidence.
 ## Dependencies
 
 Runs after `decouple-session-history-from-derived-packages`, the completed
-`fix-session-history-evidence-access`, and the narrow ordered work named above in
-`improve-session-history-search-quality`. It reuses rather than duplicates
+`fix-session-history-evidence-access` and `improve-session-history-search-quality`,
+and its own evidence-readiness preflight above. It reuses rather than duplicates
 `idea-raw-derived-hybrid-shadow-eval`,
 `idea-derivation-fidelity-eval`, and `investigate-lexical-retrieval-scaling`.
