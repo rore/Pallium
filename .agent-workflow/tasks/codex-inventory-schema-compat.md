@@ -45,4 +45,8 @@ Original controlled trial: `.agent-workflow/tasks/codex-unloaded-payload-trial.m
 
 ## Result review
 
-Independent /root/service_handoff_security gave interim source/test/docs ACCEPT: only the three-line blanket restriction is deleted; schema-dict, bounded list/frame, name/duplicate, envelope and authority checks remain, and the exact owner descriptor still prevents malformed owner action. Final acceptance awaits clean committed head and workflow checks. Live target receipt, hook emission and ACK remain unqualified.
+Agent technical review: /root/service_handoff_security gave final independent ACCEPT of the exact clean source/test/docs commit; this is technical review, not human authorization.
+
+Reviewed revision: 22d06a643f96266a73583cc7ebf566b2057ab3ba.
+
+Verification adequacy: Three actual caller cases failed before the compatibility edit and passed after it; non-dictionary rejection and malformed exact-owner zero-call remained. The affected-file wrong-ID transport failure is unclassified, with its exact rerun passing. The corrected selector full non-slow lane passed 5809/34 skip/2 xfail. The fresh Redline verdict is GRAY with no boundary violations. Only the three-line blanket restriction is removed; the strict owner descriptor and all outer bounds/authority checks remain. Live target receipt, hook emission and ACK remain unqualified.
