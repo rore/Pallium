@@ -1293,7 +1293,6 @@ class InventoryService:
         self.admitted = None
         self.caller = None
         self.owner_tool_before = False
-        self.owner_tool_after = False
         self.ready_deadline = 0.0
         self.ready_announced = False
         self.replace_allowed = False
@@ -1358,7 +1357,6 @@ class InventoryService:
         self.caller = None
         self.trial_action = None
         self.owner_tool_before = False
-        self.owner_tool_after = False
         if self.custody is not None:
             if self.custody.unresolved:
                 self.unresolved = True
@@ -1500,7 +1498,6 @@ class InventoryService:
                           "source_exited": False, "failure": "none"}
             self.after_attempted = False
             self.owner_tool_before = False
-            self.owner_tool_after = False
             self.published_phases = set()
             self._failure_stage = "native-open"
             handle = self.w.file.CreateFile(endpoint, self.w.con.GENERIC_READ | self.w.con.GENERIC_WRITE,
@@ -1611,11 +1608,8 @@ class InventoryService:
             if tool["inputSchema"].get("type") != "object":
                 raise ShadowUnavailable("invalid-response")
             names.add(tool["name"])
-        compatible = _owner_tool_schema_valid(value["result"]["tools"])
-        if self.after_attempted:
-            self.owner_tool_after = compatible
-        else:
-            self.owner_tool_before = compatible
+        if not self.after_attempted:
+            self.owner_tool_before = _owner_tool_schema_valid(value["result"]["tools"])
         self._maintain()
         self._failure_stage = f"{phase}-authority"
         if self.custody is None or time.monotonic() >= deadline:

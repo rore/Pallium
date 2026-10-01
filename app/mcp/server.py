@@ -1106,6 +1106,23 @@ def _codex_inventory_lifespan(server):
     return _codex_bridge_lifespan(server, inventory=True)
 
 
+def _codex_bridge_caller_pair(request) -> dict[str, str] | None:
+    meta = request.meta
+    values = meta if isinstance(meta, dict) else meta.model_dump()
+    thread_ref, error = resolve_codex_thread_ref(values)
+    nested = values.get("x-codex-turn-metadata", {})
+    turns = [values[key] for key in ("turnId",) if key in values]
+    if isinstance(nested, dict) and "turn_id" in nested:
+        turns.append(nested["turn_id"])
+    valid_turn = bool(turns) and all(
+        isinstance(value, str) and value == value.strip()
+        and 0 < len(value) <= 255 and value.isprintable() for value in turns
+    ) and len(set(turns)) == 1
+    if error or not valid_turn:
+        return None
+    return {"thread_ref": thread_ref, "turn_ref": turns[0]}
+
+
 def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None,
                   codex_shadow: bool = False, codex_inventory: bool = False) -> FastMCP:
     """Create a FastMCP server with Pallium tools registered."""
@@ -1127,21 +1144,11 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None,
             result = {"reason": "invalid-metadata"}
             try:
                 request = ctx.request_context
-                meta = request.meta
-                values = meta if isinstance(meta, dict) else meta.model_dump()
-                thread_ref, error = resolve_codex_thread_ref(values)
-                nested = values.get("x-codex-turn-metadata", {})
-                turns = [values[key] for key in ("turnId",) if key in values]
-                if isinstance(nested, dict) and "turn_id" in nested:
-                    turns.append(nested["turn_id"])
-                valid_turn = bool(turns) and all(
-                    isinstance(value, str) and value == value.strip()
-                    and 0 < len(value) <= 255 and value.isprintable() for value in turns
-                ) and len(set(turns)) == 1
-                if not error and valid_turn and os.environ.get("PALLIUM_AGENT_REF") == "codex":
+                caller = _codex_bridge_caller_pair(request)
+                if caller is not None and os.environ.get("PALLIUM_AGENT_REF") == "codex":
                     worker = request.lifespan_context.get("codex_shadow")
                     if worker is not None:
-                        result = await worker.request(operation, {"thread_ref": thread_ref, "turn_ref": turns[0]})
+                        result = await worker.request(operation, caller)
                     else:
                         result = {"reason": "stopped"}
             except Exception:
@@ -1167,20 +1174,10 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None,
             result = {"reason": "stopped"}
             try:
                 request = ctx.request_context
-                meta = request.meta
-                values = meta if isinstance(meta, dict) else meta.model_dump()
-                thread_ref, error = resolve_codex_thread_ref(values)
-                nested = values.get("x-codex-turn-metadata", {})
-                turns = [values[key] for key in ("turnId",) if key in values]
-                if isinstance(nested, dict) and "turn_id" in nested:
-                    turns.append(nested["turn_id"])
-                valid_turn = bool(turns) and all(
-                    isinstance(value, str) and value == value.strip()
-                    and 0 < len(value) <= 255 and value.isprintable() for value in turns
-                ) and len(set(turns)) == 1
+                caller = _codex_bridge_caller_pair(request)
                 worker = request.lifespan_context.get("codex_inventory")
-                if worker is not None and not error and valid_turn and os.environ.get("PALLIUM_AGENT_REF") == "codex":
-                    result = await worker.register({"thread_ref": thread_ref, "turn_ref": turns[0]})
+                if worker is not None and caller is not None and os.environ.get("PALLIUM_AGENT_REF") == "codex":
+                    result = await worker.register(caller)
             except Exception:
                 result = {"reason": "native-failed"}
             return json.dumps(inventory_status(result))
