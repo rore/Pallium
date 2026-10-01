@@ -5,11 +5,11 @@
 
 **Target:** Pallium Codex bridge, MCP bridge entrypoints, Relay boundary, and one private operator plan.
 
-**Scope:** Remove write-only `owner_tool_after` from `app/codex_bridge_pipe.py`; share the existing shadow/inventory runtime caller-metadata validator in `app/mcp/server.py`; reuse `_codex_trial_endpoint` in two `core/relay.py` methods; inline the one-use trial suppression helper in `app/dependencies.py` only if it is clearer. Root separately consolidates the ignored private `build/live-inventory-operator-plan.md` and its preserved historical copy under `build/` without publishing it.
+**Scope:** Remove write-only owner_tool_after; share shadow/inventory metadata validation; reuse endpoint validator; optionally inline single-use suppression helper; root consolidates ignored private operator plan.
 
-**Constraints:** Preserve exact invalid/conflicting metadata behavior, positive before-descriptor and post-exit inventory, source/target separation, native dispatch suppression, SQLite fence semantics, all fixed public outcomes, and privacy. No service, live gate, delivery, configuration, protected behavior contract, or schema change. Root owns publication, merge, install, and private operator edits.
+**Constraints:** No behavior relaxation, service/live actions, configuration/schema/protected-contract changes, or worker publication.
 
-**Completion criteria:** Existing MCP and private bridge caller tests show equivalent valid and invalid outcomes; one-use helper/validator code is shorter; selected application checks pass once; independent review finds no behavior relaxation; root's private plan has one current live-source sequence with historical commands retained.
+**Completion criteria:** Equivalent caller outcomes, shorter source, focused and selected validation, independent review, private plan consolidation.
 
 **Requirement baseline:** {"source":"user source item dc52fe68-8c3a-46b4-a6ec-4b2362f552a9 plus root task","outcome":"The finite Codex trial path has less duplicated and write-only code while every caller-visible admission, metadata validation, fail-closed dispatch, and durable fence behavior remains unchanged.","scope":"Remove write-only owner_tool_after; share shadow/inventory metadata validation; reuse endpoint validator; optionally inline single-use suppression helper; root consolidates ignored private operator plan.","constraints":"No behavior relaxation, service/live actions, configuration/schema/protected-contract changes, or worker publication.","completion_criteria":"Equivalent caller outcomes, shorter source, focused and selected validation, independent review, private plan consolidation."}
 
@@ -48,4 +48,6 @@ Focused MCP protocol cases: 25 passed. Focused non-slow Relay trial/fence cases:
 
 ## Result review
 
-Agent technical review: `/root/service_handoff_security` accepted the four-file source/test delta provisionally, pending final clean revision and selector result. Reviewed revision: `ac65ada8f704c8c7ad8bfe0bc639dfde4dd7cdd9` for production/test source. Verification adequacy: exact MCP invalid/conflict and missing-metadata outputs, affected native inventory/Relay trials, and the full selected lane cover the equivalent behavior claim; one first-pass file-read failure remains unclassified and passed exact rerun. Final clean-head review is pending.
+Agent technical review: `/root/service_handoff_security` final ACCEPT; the reviewed refactor preserves metadata extraction, invalid/conflict and exception/public outcomes, post-exit inventory validation, endpoint rejection, and unchanged fail-closed dispatch.
+Reviewed revision: `0d07faf4f44eb404fba464f8b32af41023bf08da` (source/test commit `ac65ada8f704c8c7ad8bfe0bc639dfde4dd7cdd9`).
+Verification adequacy: exact MCP invalid/conflict and missing-metadata outputs, affected native inventory/Relay trials, and the full selected lane cover the equivalent behavior claim. The one first-pass outcome-file `PermissionError` remains unclassified and passed exact rerun; it is not evidence of a production fix.
