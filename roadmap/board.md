@@ -2,6 +2,7 @@
 - add-wake-first-relay-delivery
 
 # Parallel · Session History
+- improve-session-history-search-quality
 - investigate-history-navigation-and-on-demand-compression
 
 # Later · Relay Documentation and Examples
@@ -44,7 +45,6 @@
 - idea-multi-vector-long-text-embedding
 
 # Done
-- improve-session-history-search-quality
 - add-global-relay-recipient-discovery
 
 - select-tests-by-change-scope

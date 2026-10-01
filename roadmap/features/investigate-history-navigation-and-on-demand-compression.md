@@ -19,7 +19,8 @@ work with less noise, time, and token cost?
 This is a separate queued representation study, not unfinished evidence-access work.
 The [evidence-access reliability feature](fix-session-history-evidence-access.md) is
 done. The bounded
-[`search-quality feature`](improve-session-history-search-quality.md) is complete,
+[`search-quality feature`](improve-session-history-search-quality.md) is implemented
+and reviewed, with closure pending verified installed delivery,
 including identifier-safe equivalence and bounded broad-query refill. Its remaining
 prospective equivalent-result review is evidence-gated: recover exact exclusions or
 collect disjoint linked cases with original caller options/payloads before grading.
@@ -98,7 +99,7 @@ cache-bounded, and is never persisted globally without later evidence.
 ## Dependencies
 
 Runs after `decouple-session-history-from-derived-packages`, the completed
-`fix-session-history-evidence-access` and `improve-session-history-search-quality`,
+`fix-session-history-evidence-access` and the verified rollout of `improve-session-history-search-quality`,
 and its own evidence-readiness preflight above. It reuses rather than duplicates
 `idea-raw-derived-hybrid-shadow-eval`,
 `idea-derivation-fidelity-eval`, and `investigate-lexical-retrieval-scaling`.

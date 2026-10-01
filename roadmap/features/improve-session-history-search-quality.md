@@ -1,7 +1,7 @@
 ---
 id: improve-session-history-search-quality
 title: Improve Session History search and agent search guidance from real usage
-status: done
+status: in-progress
 priority: high
 commitment: committed
 milestone: pallium-vnext-session-history
@@ -28,10 +28,11 @@ continuation completed bounded recovery and generic caller probes, then correcte
 identifier-unsafe equivalence and broad-search underfilling after duplicate collapse.
 The [completion ledger](../../docs/reports/session-history-evidence-recovery.md#measurement-and-completion-ledger)
 reconciles all six criteria, including the explicit independent-evidence limitation.
-This bounded feature is complete; unmeasured ranking and downstream benefit are not
+Implementation and review are complete; final delivery remains in progress until
+the merged code is installed and health verified. Unmeasured ranking and downstream benefit are not
 claimed. The Work Record carries review, validation, and installed-delivery gates.
 
-This is the completed bounded search-quality investigation and correction. It is not the caller-reliability
+This is the bounded search-quality investigation and correction awaiting installed delivery. It is not the caller-reliability
 feature and it does not commit Pallium to a reranker, generated compression, or a new
 index.
 
@@ -39,7 +40,7 @@ index.
 |---|---|---|
 | [Evidence access and retry reliability](fix-session-history-evidence-access.md) | **Done** | Shipped source/result continuation, explicit source scope, diagnostics, and bounded replay-safe guidance. It measured navigation/presentation, not ranking or downstream task effect. |
 | Request-link evaluation eligibility | **Corrected in September 30 slice** | Optional source actor filtering no longer rejects a valid linked request; caller regression covers both replay modes. This is measurement alignment, not improved ranking. |
-| Generic distinct-result correctness | **Done in October 1 correction** | Preserve identifier punctuation during equivalence checks; apply existing bounded refill to broad duplicate-saturated searches. Red-before-green caller regressions cover the corrections. See the [recovery report](../../docs/reports/session-history-evidence-recovery.md). |
+| Generic distinct-result correctness | **Implemented and reviewed; rollout pending** | Preserve identifier punctuation during equivalence checks; apply existing bounded refill to broad duplicate-saturated searches. Red-before-green caller regressions cover the corrections. See the [recovery report](../../docs/reports/session-history-evidence-recovery.md). |
 | Prospective equivalent-result review | **Conditional follow-up; evidence prerequisite open** | Recover prior exclusion manifests or collect disjoint prospective linked cases before content review. Retain provenance, dates, and source-opening paths. Decide whether there is a presentation problem worth changing. |
 | Candidate-availability and local reranking gate | **Conditional** | First run the zero-model-call fixed-candidate preflight below. Compare local scorers only if enough failures are genuinely rank-only. |
 | [Navigation and on-demand compression](investigate-history-navigation-and-on-demand-compression.md) | **Separate queued follow-up** | Reuse the shipped reliability baseline. Do not run this broader representation study in parallel with the narrow review above. |
