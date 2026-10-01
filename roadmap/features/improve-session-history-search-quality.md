@@ -243,8 +243,8 @@ without checking their distinct evidence would be unjustified. The narrow remain
 question is whether prospective review of those groups supports a presentation
 change that preserves each source's provenance, date, and expansion path.
 
-Keep this umbrella queued for that evidence-driven follow-up and other unresolved
-retrieval/guidance findings. Reuse the shipped #169 presentation and #166 runner.
+Keep this umbrella open for that evidence-driven follow-up and other unresolved
+retrieval/guidance findings; the October 1 continuation is in progress. Reuse the shipped #169 presentation and #166 runner.
 Do not restart the failed frozen-cohort studies or treat a 4,000-character budget
 as validated. This reconciliation does not authorize another paid study.
 
