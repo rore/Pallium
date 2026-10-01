@@ -295,9 +295,16 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
         claude_wake_reconciler = None
         shadow_service = None
         inventory_service = None
+        retained_service = None
         relay_service = None
 
         def cleanup() -> None:
+            if retained_service is not None:
+                try:
+                    retained_service.stop()
+                except Exception:
+                    logger.warning("Codex retained worker shutdown failed")
+            codex_wake_registry.retained_service = None
             if inventory_service is not None:
                 try:
                     inventory_service.stop()
@@ -373,6 +380,14 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
         except Exception:
             logger.warning("Codex inventory worker unavailable")
         app_instance.state._codex_inventory_service = inventory_service
+        try:
+            from app.codex_bridge_pipe import start_retained_service
+
+            retained_service = start_retained_service()
+        except Exception:
+            logger.warning("Codex retained worker unavailable")
+        codex_wake_registry.retained_service = retained_service
+        app_instance.state._codex_retained_service = retained_service
         app_instance.state._lifespan_complete = True
         try:
             if mcp_available and session_manager is not None:

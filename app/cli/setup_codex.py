@@ -131,7 +131,7 @@ def _path_for_env(path: Path) -> str:
 
 
 def _mcp_pythonpath_entries() -> list[str]:
-    """Paths needed when Codex launches MCP via `python -m app.run mcp`."""
+    """Paths needed when Codex launches MCP via `python -P -m app.run mcp`."""
     entries: list[Path] = [_pallium_repo_root()]
 
     local_site = _pallium_repo_root() / ".local" / "test-env" / "site-packages"
@@ -245,7 +245,8 @@ def _ensure_mcp_server(content: str, port: int = 19836) -> str:
     mcp_block = (
         '\n[mcp_servers.pallium]\n'
         f'command = "{_mcp_command()}"\n'
-        'args = ["-m", "app.run", "mcp"]\n'
+        'args = ["-P", "-m", "app.run", "mcp"]\n'
+        'env_vars = ["CODEX_APP_TOOLS_PIPE_PATH"]\n'
         f'env = {_mcp_env_toml(port)}\n'
         'required = true\n'
         'startup_timeout_sec = 10\n'

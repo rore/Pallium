@@ -12,6 +12,7 @@ from api.routes import create_router
 from core.claude_wake import ClaudeWakeRegistry
 from core.codex_wake import CodexWakeRegistry, CodexWakeReservation
 from core.relay_activation import current_platform, relay_activation_snapshot
+from app.codex_wake import retained_activation_snapshot
 from app.codex_wake import (
     correlate_codex_relay_wake_claim,
     get_codex_wake_registry,
@@ -796,7 +797,7 @@ def build_router(
         runtime = projection.get("runtime", projection.get("recipient_runtime"))
         claude_state = registry.state_for(recipient_endpoint_id=endpoint_id, session_ref=session_ref, container_ref=container_ref) if runtime == "claude-code" and all(isinstance(value, str) for value in (endpoint_id, session_ref, container_ref)) else None
         codex_reserved = codex_registry.usable and isinstance(endpoint_id, str) and codex_registry.snapshot(endpoint_id) is not None
-        return relay_activation_snapshot(projection, platform=current_platform(), claude_state=claude_state, codex_reserved=codex_reserved)
+        return retained_activation_snapshot(relay_activation_snapshot(projection, platform=current_platform(), claude_state=claude_state, codex_reserved=codex_reserved))
 
     def _relay_turn_snapshot(request: dict[str, Any]) -> CodexWakeReservation | None:
         if request.get("runtime") != "codex" or not codex_registry.usable:

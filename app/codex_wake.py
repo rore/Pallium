@@ -568,6 +568,26 @@ def _wake_after_debounce(
     time.sleep(_DEBOUNCE_SECONDS)
     attempt_started = time.monotonic()
 
+    from app.codex_bridge_pipe import retained_wake_enabled
+    if retained_wake_enabled():
+        service = getattr(registry, "retained_service", None)
+        try:
+            attempt = (service.dispatch(reservation, registry) if service is not None else
+                       ActivationAttemptResult("deferred", "native_unavailable", native_retry_safe=True))
+        except Exception:
+            attempt = ActivationAttemptResult("uncertain", "unexpected_error")
+        if attempt is None:
+            _clear_schedule(reservation, registry)
+            return
+        if attempt.outcome == "accepted":
+            registry.record_outcome(reservation, "accepted")
+        elif attempt.native_retry_safe and registry.release_generation(reservation):
+            _clear_schedule(reservation, registry)
+        if attempt_id is not None:
+            _emit_trace(trace_callback, attempt_id, reservation.delivery_id,
+                        reservation.recipient_endpoint_id, "completed", attempt)
+        return
+
     def start() -> _LaunchStart:
         return _start_launch(
             reservation.session_ref, _wake_prompt(reservation.delivery_id)
@@ -888,3 +908,16 @@ def _hidden_process_kwargs() -> dict[str, object]:
     if os.name == "nt":
         return {"creationflags": subprocess.CREATE_NO_WINDOW}
     return {"start_new_session": True}
+
+
+
+def retained_activation_snapshot(snapshot: dict[str, object]) -> dict[str, object]:
+    from app.codex_bridge_pipe import retained_wake_enabled
+
+    if not retained_wake_enabled() or snapshot.get("runtime") != "codex":
+        return snapshot
+    return {**snapshot, "integration": "unknown", "behavior": "idle_wake",
+            "qualification": "unqualified", "qualification_source": "documented_fallback",
+            "supported_evidence": ["submission_attempted"],
+            "availability": snapshot["availability"] if snapshot["availability"] in {
+                "closed", "attempt_inflight", "unreachable"} else "unknown"}

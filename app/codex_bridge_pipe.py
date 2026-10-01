@@ -953,6 +953,32 @@ class NativeShadowClient:
 MAX_DESKTOP_FRAME = 8 * 1024 * 1024
 
 
+def retained_wake_enabled() -> bool:
+    return sys.platform == "win32"
+
+
+def retained_directory(home: Path | None = None, *, port: int) -> Path:
+    if type(port) is not int or not 1 <= port <= 65535:
+        raise ShadowUnavailable("invalid-path")
+    return shadow_directory(home).with_name(f"codex-retained-{port}")
+
+
+def retained_bootstrap_path(base_url: str | None) -> Path:
+    from urllib.parse import urlsplit
+
+    try:
+        if not isinstance(base_url, str) or base_url != base_url.strip() or not base_url.isascii() or not base_url.isprintable():
+            raise ValueError
+        url = urlsplit(base_url)
+        if (url.scheme != "http" or url.hostname not in {"localhost", "127.0.0.1", "::1"}
+                or url.username is not None or url.password is not None
+                or url.path not in {"", "/"} or url.query or url.fragment or url.port is None):
+            raise ValueError
+        return retained_directory(port=url.port) / "active.json"
+    except (ValueError, TypeError):
+        raise ShadowUnavailable("invalid-path") from None
+
+
 def _owner_tool_schema_valid(tools: object) -> bool:
     if not isinstance(tools, list):
         return False
@@ -1277,6 +1303,7 @@ class InventoryService:
     """One serial ready/admission slot, one RAM connection, one fixed operator action."""
 
     def __init__(self, directory: Path, *, utc_clock=None, trial_relay=None, trial_registry=None):
+        self.retained = False
         self.directory = directory
         self.utc_clock = utc_clock or (lambda: datetime.now(timezone.utc))
         self.trial_relay = trial_relay
@@ -1900,6 +1927,8 @@ class InventoryService:
                         raise
                 finally:
                     self.admitted = None
+                    if self.retained:
+                        self._drop()
                     if not io.unresolved:
                         self.w.pipe.DisconnectNamedPipe(handle)
                         if (self.policy is None or self.replace_allowed) and self.custody is None and peer is self.source:
@@ -1957,8 +1986,9 @@ def start_inventory_service(*, trial_relay=None, trial_registry=None) -> Invento
 class NativeInventoryClient:
     """Only its own inherited endpoint may cross the authenticated admission channel."""
 
-    def __init__(self, bootstrap_path: Path, stop_event: threading.Event):
+    def __init__(self, bootstrap_path: Path, stop_event: threading.Event, *, retained=False):
         self.w = _native()
+        self.retained = retained
         self.bootstrap_path, self.stop_event = Path(bootstrap_path), stop_event
         self.io = self.peer = self.source = None
         self.sequence = 0
@@ -2027,6 +2057,9 @@ class NativeInventoryClient:
         if (not isinstance(metadata, dict) or set(metadata) != {"thread_ref", "turn_ref"}
                 or not all(_text(value) for value in metadata.values())):
             raise ShadowUnavailable("invalid-message")
+        if self.retained:
+            endpoint = os.environ.get("CODEX_APP_TOOLS_PIPE_PATH")
+            return self._public(self._exchange("register", endpoint=endpoint, **metadata))
         admitted = self._exchange("admit", **metadata)
         if admitted["status"] != "ready" or admitted["reason"] != "ok":
             return self._public(admitted)
@@ -2065,3 +2098,303 @@ class NativeInventoryClient:
             if peer is not None:
                 peer.close()
         self.peer = self.source = None
+
+
+
+def _parent_pids() -> dict[int, int]:
+    """Bounded Windows process snapshot; never trust a model-supplied PID."""
+    import ctypes
+    from ctypes import wintypes
+
+    class Entry(ctypes.Structure):
+        _fields_ = [("size", wintypes.DWORD), ("usage", wintypes.DWORD),
+                    ("pid", wintypes.DWORD), ("heap", ctypes.c_size_t),
+                    ("module", wintypes.DWORD), ("threads", wintypes.DWORD),
+                    ("parent", wintypes.DWORD), ("priority", wintypes.LONG),
+                    ("flags", wintypes.DWORD), ("exe", wintypes.WCHAR * 260)]
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+    kernel.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    for name in ("Process32FirstW", "Process32NextW"):
+        method = getattr(kernel, name)
+        method.argtypes = [wintypes.HANDLE, ctypes.POINTER(Entry)]
+        method.restype = wintypes.BOOL
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    snapshot = kernel.CreateToolhelp32Snapshot(2, 0)
+    if snapshot in (None, ctypes.c_void_p(-1).value):
+        raise ShadowUnavailable("peer-unavailable")
+    try:
+        entry = Entry()
+        entry.size = ctypes.sizeof(entry)
+        result = {}
+        more = kernel.Process32FirstW(snapshot, ctypes.byref(entry))
+        while more and len(result) < 32768:
+            result[entry.pid] = entry.parent
+            more = kernel.Process32NextW(snapshot, ctypes.byref(entry))
+        if more or ctypes.get_last_error() != 18:  # ERROR_NO_MORE_FILES
+            raise ShadowUnavailable("peer-unavailable")
+        return result
+    finally:
+        kernel.CloseHandle(snapshot)
+
+
+def _source_desktop(w, source, desktop_pid: int, sid: str):
+    """Pin actual source ancestors and reject unrelated same-user pipe servers."""
+    parents = _parent_pids()
+    ancestors = []
+    child = source
+    try:
+        for _ in range(32):
+            pid = parents.get(child.pid)
+            if not _integer(pid, 1) or pid in {p.pid for p in ancestors} or pid == source.pid:
+                raise ShadowUnavailable("peer-mismatch")
+            parent = _Peer(w, pid, sid)
+            ancestors.append(parent)
+            if parent.creation > child.creation:
+                raise ShadowUnavailable("peer-mismatch")
+            if pid == desktop_pid:
+                path, version = _process_image(w, parent.handle)
+                if Path(path).name.lower() not in {"codex.exe", "chatgpt.exe"}:
+                    raise ShadowUnavailable("peer-mismatch")
+                descriptor = SimpleNamespace(desktop_pid=pid, desktop_user_sid=sid,
+                    desktop_creation=parent.creation, desktop_executable=path, desktop_version=version)
+                desktop = _DesktopPeer(w, descriptor)
+                source.check()
+                return desktop, ancestors
+            child = parent
+        raise ShadowUnavailable("peer-mismatch")
+    except Exception:
+        for peer in ancestors:
+            peer.close()
+        raise
+
+
+def _read_tool_schema_valid(tools: object) -> bool:
+    if not isinstance(tools, list) or len(tools) > 512:
+        return False
+    matches = [t for t in tools if isinstance(t, dict)
+               and t.get("namespace") == "codex_app" and t.get("name") == "read_thread"]
+    if len(matches) != 1:
+        return False
+    schema = matches[0].get("inputSchema")
+    if not isinstance(schema, dict) or schema.get("type") != "object":
+        return False
+    properties, required = schema.get("properties"), schema.get("required", [])
+    supplied = {"threadId": "string", "turnLimit": "integer", "includeOutputs": "boolean",
+                "maxOutputCharsPerItem": "integer"}
+    if (not isinstance(properties, dict) or not isinstance(required, list)
+            or any(type(name) is not str or name not in supplied for name in required)):
+        return False
+    for name, kind in supplied.items():
+        field = properties.get(name)
+        variants = field.get("anyOf", [field]) if isinstance(field, dict) else []
+        if not isinstance(variants, list) or not any(isinstance(v, dict) and v.get("type") in ({"integer", "number"} if kind == "integer" else {kind}) for v in variants):
+            return False
+    return True
+
+
+class RetainedService(InventoryService):
+    """Normal source-channel custody. Trial authority and files are never consulted."""
+
+    def __init__(self, directory: Path):
+        super().__init__(directory)
+        self.retained = True
+        self._custody_lock = threading.RLock()
+        self.ancestors = []
+        self.read_tool = False
+
+    def _drop(self) -> None:
+        with self._custody_lock:
+            super()._drop()
+            self.read_tool = False
+            if not self.unresolved:
+                for peer in self.ancestors:
+                    peer.close()
+                self.ancestors = []
+
+    def _maintain(self) -> None:
+        with self._custody_lock:
+            if self.custody is None:
+                return
+            try:
+                self._check_custody()
+            except Exception:
+                self._drop()
+
+    def _check_custody(self) -> None:
+        if (self.stop_event.is_set() or self.unresolved or _native_uncertain
+                or self.custody is None or self.source is None or self.desktop is None
+                or self.custody.unresolved):
+            raise ShadowUnavailable("stopped")
+        self.current.check()
+        self.source.check()
+        for peer in self.ancestors:
+            peer.check()
+        self.desktop.verify()
+        if self.w.pipe.GetNamedPipeServerProcessId(self.custody.handle) != self.desktop.pid:
+            raise ShadowUnavailable("peer-mismatch")
+
+    def _write_call(self, tool: str, arguments: dict, deadline: float) -> int:
+        self._check_custody()
+        self.native_sequence += 1
+        request_id = self.native_sequence
+        self.custody.write({"jsonrpc": "2.0", "id": request_id, "method": "tools/call",
+            "params": {"namespace": "codex_app", "tool": tool, "arguments": arguments,
+                       "callerSource": "codex", "callId": secrets.token_hex(16),
+                       "threadId": self.caller[0], "turnId": self.caller[1]}}, deadline)
+        return request_id
+
+    def _read_call(self, request_id: int, deadline: float) -> dict:
+        value = self.custody.read(deadline)
+        self._check_custody()
+        if (set(value) != {"jsonrpc", "id", "result"} or value["jsonrpc"] != "2.0"
+                or type(value["id"]) is not int or value["id"] != request_id
+                or not isinstance(value["result"], dict)
+                or value["result"].get("success") is not True
+                or value["result"].get("isError", False) is not False):
+            raise ShadowUnavailable("invalid-response")
+        return value["result"]
+
+    def _call(self, tool: str, arguments: dict, deadline: float) -> dict:
+        return self._read_call(self._write_call(tool, arguments, deadline), deadline)
+
+    def _process(self, request, peer, sequence, deadline):
+        with self._custody_lock:
+            verb = request.get("verb")
+            fields = {"version", "verb", "epoch", "sequence"}
+            if verb == "register":
+                fields |= {"thread_ref", "turn_ref", "endpoint"}
+            if (not isinstance(verb, str) or verb not in {"ready", "register"} or set(request) != fields
+                    or type(request.get("version")) is not int or request["version"] != 1
+                    or request["epoch"] != self.epoch or not _integer(request["sequence"], 1)
+                    or request["sequence"] <= sequence or self.source is not peer):
+                raise ShadowUnavailable("invalid-message")
+            peer.check()
+            self.ready_deadline = float("inf")
+            if verb == "ready":
+                return self._result("ready", "ready")
+            caller = (request["thread_ref"], request["turn_ref"])
+            endpoint = request["endpoint"]
+            if (not all(_text(value) for value in caller) or not isinstance(endpoint, str)
+                    or not endpoint.startswith('\\\\.\\pipe\\') or len(endpoint) > 512
+                    or not endpoint.isprintable() or endpoint != endpoint.strip()
+                    or self.caller is not None and self.caller[0] != caller[0]):
+                raise ShadowUnavailable("peer-mismatch")
+            if self.custody is not None:
+                self._check_custody()
+                self.caller = caller
+                return self._result(inventory_ok=True)
+            try:
+                handle = self.w.file.CreateFile(endpoint, self.w.con.GENERIC_READ | self.w.con.GENERIC_WRITE,
+                    0, None, self.w.con.OPEN_EXISTING,
+                    self.w.con.FILE_FLAG_OVERLAPPED | self.w.con.SECURITY_SQOS_PRESENT | self.w.file.SECURITY_IDENTIFICATION, None)
+                self.custody = _DesktopIO(self.w, handle, self.stop_event)
+                desktop_pid = self.w.pipe.GetNamedPipeServerProcessId(handle)
+                self.desktop, self.ancestors = _source_desktop(self.w, peer, desktop_pid, self.sid)
+                self.caller = caller
+                self._check_custody()
+                self.native_sequence += 1
+                request_id = self.native_sequence
+                self.custody.write({"jsonrpc": "2.0", "id": request_id, "method": "tools/list"}, deadline)
+                value = self.custody.read(deadline)
+                if (set(value) != {"jsonrpc", "id", "result"} or value["jsonrpc"] != "2.0"
+                        or type(value["id"]) is not int or value["id"] != request_id
+                        or not isinstance(value["result"], dict)):
+                    raise ShadowUnavailable("invalid-response")
+                tools = value["result"].get("tools")
+                if not _owner_tool_schema_valid(tools) or not _read_tool_schema_valid(tools):
+                    raise ShadowUnavailable("invalid-response")
+                self.owner_tool_before = self.read_tool = True
+                self._check_custody()
+                _log.warning("codex_retained_registration outcome=registered")
+                return self._result(inventory_ok=True)
+            except Exception as exc:
+                _log.warning("codex_retained_registration outcome=denied category=%s", _inventory_reason(exc))
+                self._drop()
+                raise ShadowUnavailable("native-failed") from None
+
+    def dispatch(self, reservation, registry):
+        from core.relay_activation import ActivationAttemptResult
+        from app.codex_wake import _wake_prompt, _start_launch, _finish_launch, _attempt_from_launch
+
+        spent = False
+        with self._custody_lock:
+            try:
+                if not self.read_tool or not self.owner_tool_before or self.caller is None:
+                    raise ShadowUnavailable("stopped")
+                result = self._call("read_thread", {"threadId": reservation.session_ref,
+                    "turnLimit": 1, "includeOutputs": False, "maxOutputCharsPerItem": 1},
+                    time.monotonic() + EXCHANGE_SECONDS)
+                content = result.get("contentItems")
+                if (not isinstance(content, list) or len(content) != 1
+                        or not isinstance(content[0], dict) or content[0].get("type") != "inputText"
+                        or not isinstance(content[0].get("text"), str)):
+                    raise ShadowUnavailable("invalid-response")
+                body = _json(content[0]["text"].encode("utf-8"), limit=MAX_DESKTOP_FRAME)
+                thread = body.get("thread")
+                target_state = thread.get("status", {}).get("type") if isinstance(thread, dict) and isinstance(thread.get("status"), dict) else None
+                eligible = (type(body.get("schemaVersion")) is int and body["schemaVersion"] == 1
+                    and isinstance(thread, dict) and thread.get("id") == reservation.session_ref
+                    and thread.get("kind") == "codex" and thread.get("hostId") == "local"
+                    and isinstance(thread.get("status"), dict)
+                    and target_state in {"idle", "notLoaded"})
+                del body, result, content, thread
+                if not eligible:
+                    return ActivationAttemptResult("deferred", "target_not_idle", native_retry_safe=True)
+                deadline = time.monotonic() + EXCHANGE_SECONDS
+                def write():
+                    nonlocal spent
+                    self._check_custody()
+                    # A natural hook may have claimed the delivery after the state read.
+                    if registry._relay is not None:
+                        candidate = registry._relay.pending_candidate(runtime="codex",
+                            session_ref=reservation.session_ref, container_ref=reservation.container_ref,
+                            delivery_id=reservation.delivery_id)
+                        if not isinstance(candidate, dict) or candidate.get("recipient_endpoint_id") != reservation.recipient_endpoint_id:
+                            return None
+                    # Best-effort check/send: Desktop has no atomic idle-only submission.
+                    if not registry.record_outcome(reservation, "uncertain"):
+                        return None
+                    spent = True
+                    if target_state == "idle":
+                        return "queue", _start_launch(reservation.session_ref, _wake_prompt(reservation.delivery_id))
+                    return "retained", self._write_call("send_message_to_thread", {
+                        "threadId": reservation.session_ref,
+                        "prompt": _wake_prompt(reservation.delivery_id)}, deadline)
+                current, initiated = registry.run_if_current(reservation, write)
+                if not current or initiated is None:
+                    return ActivationAttemptResult("deferred", "fence_failed", native_retry_safe=True)
+                # Hook claim/ACK needs the registry lock while the owner response is pending.
+                mode, pending = initiated
+                if mode != "queue":
+                    self._read_call(pending, deadline)
+                    # Submission is fenced; a generic tool result proves no payload admission.
+                    return ActivationAttemptResult("uncertain", "native_submitted", ("submission_attempted",))
+            except Exception as exc:
+                _log.warning("codex_retained_dispatch outcome=failed category=%s", _inventory_reason(exc))
+                self._drop()
+                return ActivationAttemptResult("uncertain" if spent else "deferred",
+                    "native_unavailable", ("submission_attempted",) if spent else (), native_retry_safe=not spent)
+        # Queue completion owns no Desktop I/O; allow source calls/disconnect during this wait.
+        try:
+            outcome = _attempt_from_launch(_finish_launch(pending, delivery_id=reservation.delivery_id))
+            # Once spent, even a queue start failure never selects another transport.
+            return ActivationAttemptResult(outcome.outcome if outcome.outcome == "accepted" else "uncertain",
+                outcome.reason, outcome.evidence)
+        except Exception:
+            return ActivationAttemptResult("uncertain", "queue_response_failed", ("submission_attempted",))
+
+
+def start_retained_service() -> RetainedService | None:
+    if not retained_wake_enabled() or not native_available():
+        return None
+    try:
+        port = os.environ.get("PALLIUM_SERVICE_PORT")
+        if not isinstance(port, str) or not port.isascii() or not port.isdecimal():
+            return None
+        directory = retained_directory(port=int(port))
+        _secure_directory(_native(), directory, _self_sid(_native()))
+        return RetainedService(directory).start()
+    except Exception:
+        return None

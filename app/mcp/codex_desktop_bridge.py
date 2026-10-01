@@ -197,8 +197,10 @@ def inventory_status(value: object) -> dict:
 class InventoryWorker:
     """One finite child channel; EOF never revokes separate service custody."""
 
-    def __init__(self, bootstrap_path: Path):
+    def __init__(self, bootstrap_path: Path, *, retained=False):
         self.stop_event = threading.Event()
+        self._retained = retained
+        self._closed = False
         self._path = bootstrap_path
         self._requests = queue.Queue(maxsize=1)
         self._busy = False
@@ -206,6 +208,13 @@ class InventoryWorker:
         self._thread.start()
 
     async def register(self, metadata: dict[str, str]) -> dict:
+        if self._retained and not self._closed and self.stop_event.is_set() and not self._thread.is_alive():
+            from app.codex_bridge_pipe import native_available
+            if native_available() and os.environ.get("CODEX_APP_TOOLS_PIPE_PATH"):
+                # Only a fresh runtime request restarts resolved custody; never replay a caller.
+                self.stop_event.clear()
+                self._thread = threading.Thread(target=self._run, daemon=True)
+                self._thread.start()
         if self.stop_event.is_set() or "CODEX_APP_TOOLS_PIPE_PATH" not in os.environ:
             self.stop_event.set()
             return inventory_status({"reason": "stopped"})
@@ -228,17 +237,34 @@ class InventoryWorker:
 
     def _run(self):
         client = None
+        first_request = None
         try:
+            if self._retained:
+                # Do not occupy the private service slot before a real Relay caller exists.
+                while not self.stop_event.is_set():
+                    try:
+                        first_request = self._requests.get(timeout=0.1)
+                        loop, future, metadata = first_request
+                        break
+                    except queue.Empty:
+                        continue
+                if self.stop_event.is_set():
+                    return
             from app.codex_bridge_pipe import NativeInventoryClient
-            client = NativeInventoryClient(self._path, self.stop_event)
+            client = (NativeInventoryClient(self._path, self.stop_event, retained=True)
+                      if self._retained else NativeInventoryClient(self._path, self.stop_event))
             ready = inventory_status(client.ready())
             if ready["status"] != "ready":
                 return
             while not self.stop_event.is_set():
-                try:
-                    loop, future, metadata = self._requests.get(timeout=0.1)
-                except queue.Empty:
-                    continue
+                if first_request is not None:
+                    loop, future, metadata = first_request
+                    first_request = None
+                else:
+                    try:
+                        loop, future, metadata = self._requests.get(timeout=0.1)
+                    except queue.Empty:
+                        continue
                 result = inventory_status(client.register(metadata))
                 if result["status"] == "unavailable":
                     self.stop_event.set()
@@ -255,6 +281,12 @@ class InventoryWorker:
                     pass
         finally:
             self.stop_event.set()
+            if "future" in locals():
+                try:
+                    loop.call_soon_threadsafe(ShadowWorker._complete, future,
+                        inventory_status({"reason": "stopped"}))
+                except RuntimeError:
+                    pass
             try:
                 loop, pending, _ = self._requests.get_nowait()
                 loop.call_soon_threadsafe(ShadowWorker._complete, pending,
@@ -268,6 +300,7 @@ class InventoryWorker:
                     pass
 
     async def stop(self):
+        self._closed = True
         self.stop_event.set()
         deadline = time.monotonic() + 0.5
         while self._thread.is_alive() and time.monotonic() < deadline:
@@ -279,5 +312,16 @@ async def inventory_lifespan(_server):
     worker = InventoryWorker(Path(os.environ["PALLIUM_CODEX_INVENTORY_BOOTSTRAP_FILE"]))
     try:
         yield {"codex_inventory": worker}
+    finally:
+        await worker.stop()
+
+
+@asynccontextmanager
+async def retained_lifespan(_server):
+    from app.codex_bridge_pipe import retained_bootstrap_path
+
+    worker = InventoryWorker(retained_bootstrap_path(os.environ.get("PALLIUM_BASE_URL")), retained=True)
+    try:
+        yield {"codex_retained": worker}
     finally:
         await worker.stop()

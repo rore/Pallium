@@ -1,9 +1,54 @@
-# Optional Codex MCP Desktop bridge
+# Codex MCP Desktop bridge
 
-Status: inert, authenticated child-shadow and default-off service custody implementations shipped. Service custody is inventory-only, remains runtime-unqualified and grants no wake authority.
-No production wake implementation or activation approval.
+Status: product integration is implemented, independently reviewed and installed
+locally. Default automatic Windows Desktop delivery has live idle and unloaded
+witnesses: one claim/ACK each, payload-only marker responses, no manual target wake.
+Existing inert, shadow and finite inventory modes retain
+their separate restrictions.
 Canonical work: [wake-first Relay delivery](../../roadmap/features/add-wake-first-relay-delivery.md).
 Private experiment: `codex-desktop-bridge-spike` Work Record; its history is not publication-ready.
+
+## Approved product integration (2026-10-01)
+
+Automatic wake covers registered Codex Relay recipients across sender runtimes
+by default on supported Windows Desktop. Normal setup forwards the host capability
+name `CODEX_APP_TOOLS_PIPE_PATH`, without storing its value. Native Windows stdio,
+Codex agent identity and an actual inherited host capability remain required;
+HTTP MCP and other platforms do not start this connection. The Windows native
+service listener starts automatically at its configured local port. Existing
+explicit finite diagnostic modes retain their separate lifecycle. A legitimate local Codex MCP child supplies the retained
+connection and actual request metadata during ordinary Relay activity. Caller
+metadata is provenance; it is never taken from model-supplied sender arguments.
+Source/channel/Desktop loss or service restart invalidates connection custody.
+The private connection is scoped to the service's actual listening port. MCP
+must configure the matching loopback HTTP URL; remote services, URL credentials,
+path prefixes, queries and fragments cannot enroll a local wake connection.
+
+The existing scheduler reads the exact target's current Desktop state before
+dispatch. `idle` selects the existing queue and prompt hook; `notLoaded` selects
+retained MCP and the SessionStart hook. Working, unknown, malformed or
+unavailable state leaves the delivery pending for existing recovery. This is
+best-effort non-interruption: Desktop provides no atomic idle-only submission,
+so the target can become busy between the check and the wake.
+
+Reuse the existing durable reservation and persist uncertainty before initiating
+the selected transport. Never fall back to the other transport after an attempt
+or uncertain result. Release the registry lock before waiting for responses.
+Hook payload emission and ACK remain
+the delivery path. Normal operation requires no manual trial policy or action
+files, new message store, second scheduler, or new transport implementation.
+Historical trial fences remain intact.
+
+Retained native wake alone does not guarantee a payload hook for an already
+loaded chat. Loading through retained wake and then queueing would add a second
+action unnecessarily. Both paths passed through the normal automatic lifecycle
+on the installed build. Service restart
+requires fresh authenticated MCP request metadata to re-enroll the connection.
+
+These user-approved decisions supersede the earlier experimental requirements
+below for normal product mode, including manual finite destination grants and an
+absolute non-interruption guarantee. They do not change the restrictions of
+existing experimental modes or prove general lifetime/restart reliability.
 
 ## Decision and evidence
 

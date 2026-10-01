@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
 import subprocess
 import sys
@@ -880,6 +881,244 @@ def test_claude_session_start_delivery_includes_exact_scope(monkeypatch, capsys)
         "actor_ref": "actor", "agent_ref": "claude-code", "visibility": "private",
     }
     assert acknowledged == [[DELIVERY]]
+
+
+def test_codex_session_start_delivers_and_acks_before_orientation(monkeypatch):
+    hook = _load("codex_session_start_relay", "integrations/codex/hooks/session_start.py")
+    monkeypatch.setattr(hook, "read_hook_input", lambda: {
+        "cwd": ".", "session_id": "target-session", "source": "resume",
+    })
+    monkeypatch.setattr(hook, "derive_container_ref", lambda *_: "git:example/repo")
+    monkeypatch.setattr(hook, "derive_actor_ref", lambda *_: "actor")
+    monkeypatch.setattr(hook, "pin_container", lambda *_a, **_k: None)
+    monkeypatch.setattr(hook, "relay_request", lambda *_a, **_k: _turn_response([DELIVERY]))
+    monkeypatch.setattr(hook, "_fetch_retrieval_fallback", lambda *_: pytest.fail("Relay must precede orientation"))
+    events = []
+    monkeypatch.setattr(hook, "emit_context", lambda text, event: events.append(("emit", text, event)))
+    monkeypatch.setattr(hook, "acknowledge_relay", lambda deliveries, **scope: events.append(("ack", deliveries, scope)))
+    with pytest.raises(SystemExit) as exited:
+        hook.main()
+    assert exited.value.code == 0
+    assert [event[0] for event in events] == ["emit", "ack"]
+    assert events[0][2] == "SessionStart"
+    assert "Review the migration before editing." in events[0][1]
+    assert '"thread_ref":"target-session"' in events[0][1]
+    assert events[1] == ("ack", [DELIVERY], {"container_ref": "git:example/repo"})
+
+
+@pytest.mark.parametrize("exhausted", [False, True])
+def test_codex_session_start_allows_bounded_delayed_claim_response(client, monkeypatch, tmp_path, capsys, exhausted):
+    """A real delayed claim response fits the host budget; exhausted hooks do no I/O."""
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    import threading
+    import time
+
+    monkeypatch.setitem(sys.modules, "codex_common", sys.modules.get("codex_common"))
+    hook = _load("codex_session_start_delayed", "integrations/codex/hooks/session_start.py")
+    scope = {"container_ref": "git:example/repo"}
+    for runtime, session in (("codex", "target-session"), ("claude-code", "sender-session")):
+        assert client.post("/relay/turn", json={"runtime": runtime, "session_ref": session, **scope}).status_code == 200
+    sent = client.post("/relay/messages", json={"sender_runtime": "claude-code", "sender_session_ref": "sender-session",
+        "recipient": "codex:target-session", "payload": "delayed-response-東京", **scope}).json()
+    paths, events = [], []
+    response_finished = threading.Event()
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            paths.append(self.path)
+            body = self.rfile.read(int(self.headers["Content-Length"]))
+            response = client.request("POST", self.path, content=body, headers={"content-type": "application/json"})
+            if self.path == "/relay/turn":
+                time.sleep(3)
+            else:
+                events.append("ack")
+            try:
+                self.send_response(response.status_code)
+                self.send_header("Content-Length", str(len(response.content)))
+                self.end_headers()
+                self.wfile.write(response.content)
+            except OSError:
+                pass
+            finally:
+                response_finished.set()
+        def log_message(self, *_args):
+            pass
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    server.daemon_threads = True
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    monkeypatch.setattr(hook._common, "PALLIUM_BASE_URL", f"http://127.0.0.1:{server.server_port}")
+    monkeypatch.setattr(hook._common, "STATE_DIR", tmp_path)
+    monkeypatch.setattr(hook._common, "SESSIONS_DIR", tmp_path / "sessions")
+    monkeypatch.setattr(hook, "read_hook_input", lambda: {"cwd": str(tmp_path), "session_id": "target-session", "source": "resume"})
+    monkeypatch.setattr(hook, "derive_container_ref", lambda *_: scope["container_ref"])
+    def actor(*_args):
+        if exhausted:
+            hook._common._HOOK_DEADLINE = hook._common.HookDeadline(time.monotonic())
+        return "actor"
+    monkeypatch.setattr(hook, "derive_actor_ref", actor)
+    monkeypatch.setattr(hook, "pin_container", lambda *_a, **_k: None)
+    monkeypatch.setattr(hook, "_fetch_retrieval_fallback", lambda *_: [])
+    original_emit = hook.emit_context
+    def emit(text, event):
+        events.append("emit")
+        original_emit(text, event)
+    monkeypatch.setattr(hook, "emit_context", emit)
+    thread.start()
+    try:
+        started = time.monotonic()
+        with pytest.raises(SystemExit) as exited:
+            hook.main()
+        assert exited.value.code == 0 and time.monotonic() - started < 7
+        if not exhausted:
+            assert response_finished.wait(4)
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(2)
+    assert not thread.is_alive()
+    delivery = client.get(f"/relay/messages/{sent['message_id']}", params=scope).json()["deliveries"][0]
+    output = capsys.readouterr()
+    if exhausted:
+        assert paths == [] and "ack" not in events
+        assert delivery["state"] == "pending" and delivery["attempts"] == 0
+        assert "[Pallium Relay message" not in output.out
+    else:
+        assert paths == ["/relay/turn", "/relay/deliveries/ack"]
+        assert events == ["emit", "ack"]
+        assert delivery["state"] == "delivered" and delivery["attempts"] == 1
+        assert "delayed-response-東京" in json.loads(output.out)["hookSpecificOutput"]["additionalContext"]
+
+
+@pytest.mark.parametrize("response", [
+    None, _turn_response(),
+    _turn_response([{**DELIVERY, "payload": "x" * 5000}]),
+    {"error": "unavailable"},
+])
+def test_codex_session_start_without_rendered_delivery_does_not_ack(monkeypatch, response):
+    hook = _load("codex_session_start_empty", "integrations/codex/hooks/session_start.py")
+    monkeypatch.setattr(hook, "read_hook_input", lambda: {
+        "cwd": ".", "session_id": "target-session", "source": "startup",
+    })
+    monkeypatch.setattr(hook, "derive_container_ref", lambda *_: "git:example/repo")
+    monkeypatch.setattr(hook, "derive_actor_ref", lambda *_: "actor")
+    monkeypatch.setattr(hook, "pin_container", lambda *_a, **_k: None)
+    monkeypatch.setattr(hook, "relay_turn", lambda *_a, **_k: response)
+    monkeypatch.setattr(hook, "_fetch_retrieval_fallback", lambda *_: [])
+    monkeypatch.setattr(hook, "acknowledge_relay", lambda *_a, **_k: pytest.fail("must not ACK"))
+    outputs = []
+    monkeypatch.setattr(hook, "emit_context", lambda text, *_a: outputs.append(text))
+    with pytest.raises(SystemExit) as exited:
+        hook.main()
+    assert exited.value.code == 0
+    assert all("[Pallium Relay message" not in output for output in outputs)
+
+
+@pytest.mark.parametrize("failing_step", ["emit", "ack"])
+def test_codex_session_start_emit_precedes_ack_even_on_failure(monkeypatch, failing_step):
+    hook = _load("codex_session_start_failure", "integrations/codex/hooks/session_start.py")
+    monkeypatch.setattr(hook, "read_hook_input", lambda: {
+        "cwd": ".", "session_id": "target-session", "source": "resume",
+    })
+    monkeypatch.setattr(hook, "derive_container_ref", lambda *_: "git:example/repo")
+    monkeypatch.setattr(hook, "derive_actor_ref", lambda *_: "actor")
+    monkeypatch.setattr(hook, "pin_container", lambda *_a, **_k: None)
+    monkeypatch.setattr(hook, "relay_turn", lambda *_a, **_k: _turn_response([DELIVERY]))
+    monkeypatch.setattr(hook, "_fetch_retrieval_fallback", lambda *_: pytest.fail("must skip orientation"))
+    events = []
+    def emit(*_args):
+        events.append("emit")
+        if failing_step == "emit":
+            raise OSError("output unavailable")
+    def ack(*_args, **_kwargs):
+        events.append("ack")
+        raise OSError("ack unavailable")
+    monkeypatch.setattr(hook, "emit_context", emit)
+    monkeypatch.setattr(hook, "acknowledge_relay", ack)
+    with pytest.raises(SystemExit) as exited:
+        hook.main()
+    assert exited.value.code == 0
+    assert events == (["emit"] if failing_step == "emit" else ["emit", "ack"])
+
+
+def test_codex_session_start_actual_hook_input_output(monkeypatch, capsys):
+    hook = _load("codex_session_start_io", "integrations/codex/hooks/session_start.py")
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps({
+        "cwd": ".", "session_id": "target-session", "source": "resume",
+    })))
+    monkeypatch.setattr(hook, "derive_container_ref", lambda *_: "git:example/repo")
+    monkeypatch.setattr(hook, "derive_actor_ref", lambda *_: "actor")
+    monkeypatch.setattr(hook, "pin_container", lambda *_a, **_k: None)
+    monkeypatch.setattr(hook, "relay_turn", lambda *_a, **_k: _turn_response([DELIVERY]))
+    monkeypatch.setattr(hook, "_fetch_retrieval_fallback", lambda *_: pytest.fail("must skip orientation"))
+    acknowledged = []
+    monkeypatch.setattr(hook, "acknowledge_relay", lambda deliveries, **_k: acknowledged.extend(deliveries))
+    with pytest.raises(SystemExit) as exited:
+        hook.main()
+    assert exited.value.code == 0
+    output = json.loads(capsys.readouterr().out)
+    assert output["hookSpecificOutput"]["hookEventName"] == "SessionStart"
+    context = output["hookSpecificOutput"]["additionalContext"]
+    assert "Review the migration before editing." in context
+    assert '"thread_ref":"target-session"' in context
+    assert acknowledged == [DELIVERY]
+
+
+def test_codex_session_start_invalid_scope_never_claims(monkeypatch):
+    hook = _load("codex_session_start_invalid", "integrations/codex/hooks/session_start.py")
+    monkeypatch.setattr(hook, "read_hook_input", lambda: {
+        "cwd": ".", "session_id": "target-session", "source": "startup",
+    })
+    monkeypatch.setattr(hook, "derive_container_ref", lambda *_: "bad\nscope")
+    monkeypatch.setattr(hook, "derive_actor_ref", lambda *_: "actor")
+    monkeypatch.setattr(hook, "pin_container", lambda *_a, **_k: None)
+    monkeypatch.setattr(hook, "relay_request", lambda *_a, **_k: pytest.fail("invalid scope must not claim"))
+    monkeypatch.setattr(hook, "_fetch_retrieval_fallback", lambda *_: [])
+    with pytest.raises(SystemExit) as exited:
+        hook.main()
+    assert exited.value.code == 0
+
+
+def test_codex_session_start_clear_skips_relay(monkeypatch):
+    hook = _load("codex_session_start_clear", "integrations/codex/hooks/session_start.py")
+    monkeypatch.setattr(hook, "read_hook_input", lambda: {"source": "clear"})
+    monkeypatch.setattr(hook, "relay_turn", lambda *_a, **_k: pytest.fail("clear must skip Relay"))
+    with pytest.raises(SystemExit) as exited:
+        hook.main()
+    assert exited.value.code == 0
+
+
+def test_codex_session_start_then_prompt_does_not_emit_acked_delivery_twice(monkeypatch):
+    start = _load("codex_session_start_then_prompt", "integrations/codex/hooks/session_start.py")
+    from integrations.codex.hooks import user_prompt_submit as prompt
+    session = "target-session"
+    container = "git:example/repo"
+    monkeypatch.setattr(start, "read_hook_input", lambda: {
+        "cwd": ".", "session_id": session, "source": "startup",
+    })
+    monkeypatch.setattr(start, "derive_container_ref", lambda *_: container)
+    monkeypatch.setattr(start, "derive_actor_ref", lambda *_: "actor")
+    monkeypatch.setattr(start, "pin_container", lambda *_a, **_k: None)
+    acknowledged = []
+    outputs = []
+    monkeypatch.setattr(start, "relay_turn", lambda *_a, **_k: _turn_response([DELIVERY]))
+    monkeypatch.setattr(start, "emit_context", lambda text, *_a: outputs.append(text))
+    monkeypatch.setattr(start, "acknowledge_relay", lambda deliveries, **_k: acknowledged.extend(deliveries))
+    with pytest.raises(SystemExit):
+        start.main()
+    monkeypatch.setattr(prompt, "read_hook_input", lambda: {
+        "cwd": ".", "session_id": session, "prompt": "hi",
+    })
+    monkeypatch.setattr(prompt, "resolve_container_ref", lambda *_a: container)
+    monkeypatch.setattr(prompt, "derive_actor_ref", lambda *_a: "actor")
+    monkeypatch.setattr(prompt, "discover_work_refs", lambda *_a: None)
+    monkeypatch.setattr(prompt, "injected_work_ref", lambda *_a: None)
+    monkeypatch.setattr(prompt, "structural_work_refs_payload", lambda *_a: None)
+    monkeypatch.setattr(prompt, "check_dedup", lambda *_a: False)
+    monkeypatch.setattr(prompt, "relay_turn", lambda *_a, **_k: _turn_response() if acknowledged else pytest.fail("not ACKed"))
+    monkeypatch.setattr(prompt, "emit_context", lambda text, *_a: outputs.append(text))
+    with pytest.raises(SystemExit):
+        prompt.main()
+    assert acknowledged == [DELIVERY]
+    assert sum("[Pallium Relay message" in output for output in outputs) == 1
 
 
 def test_claude_session_start_invalid_scope_never_claims(monkeypatch):

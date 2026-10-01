@@ -20,6 +20,7 @@ from app.relay_wake_health import relay_wake_health
 from core.codex_wake import CodexWakeRegistry
 from core.filters import source_item_matches_filters
 from core.relay_activation import current_platform, relay_activation_snapshot
+from app.codex_wake import retained_activation_snapshot
 from core.relay import (
     RelayConflictError, RelayNotFoundError, RelayService, RelayUnavailableError,
     _opaque, validate_runtime,
@@ -442,7 +443,7 @@ def mount_dashboard(
         registry = getattr(app.state, "claude_wake_registry", None)
         claude_state = registry.state_for(recipient_endpoint_id=endpoint_id, session_ref=session_ref, container_ref=container_ref) if runtime == "claude-code" and registry is not None and all(isinstance(value, str) for value in (endpoint_id, session_ref, container_ref)) else None
         codex_reserved = dashboard_codex_registry.usable and isinstance(endpoint_id, str) and dashboard_codex_registry.snapshot(endpoint_id) is not None
-        return relay_activation_snapshot(projection, platform=current_platform(), claude_state=claude_state, codex_reserved=codex_reserved)
+        return retained_activation_snapshot(relay_activation_snapshot(projection, platform=current_platform(), claude_state=claude_state, codex_reserved=codex_reserved))
 
     @app.get("/dashboard", response_class=HTMLResponse)
     def dashboard_page() -> HTMLResponse:

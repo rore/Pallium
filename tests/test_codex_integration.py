@@ -131,7 +131,7 @@ env = { PALLIUM_MCP_TRANSPORT = "stdio" }
         'command = "C:/Users/me/AppData/Roaming/uv/python/'
         'cpython-3.13.14-windows-x86_64-none/python.exe"'
     ) in content
-    assert 'args = ["-m", "app.run", "mcp"]' in content
+    assert 'args = ["-P", "-m", "app.run", "mcp"]' in content
     assert 'required = true' in content
     assert 'enabled_tools' not in content
     assert 'disabled_tools' not in content
@@ -1605,3 +1605,35 @@ def test_codex_hook_execution_readiness_budget_is_independent(
 
     assert started.is_set()
     assert elapsed < 0.75
+
+def test_codex_setup_forwards_desktop_capability_by_default(monkeypatch):
+    import tomllib
+
+    monkeypatch.setenv("CODEX_APP_TOOLS_PIPE_PATH", "private-pipe-value-sentinel")
+    content = setup_codex._ensure_mcp_server("", port=19837)
+    server = tomllib.loads(content)["mcp_servers"]["pallium"]
+    assert server["env_vars"] == ["CODEX_APP_TOOLS_PIPE_PATH"]
+    assert "CODEX_APP_TOOLS_PIPE_PATH" not in server["env"]
+    assert "PALLIUM_CODEX_AUTOMATIC_WAKE" not in server["env"]
+    assert "private-pipe-value-sentinel" not in content
+    assert server["env"]["PALLIUM_BASE_URL"] == "http://localhost:19837"
+    assert setup_codex._ensure_mcp_server(content, port=19837) == content
+
+
+def test_codex_generated_mcp_launch_uses_configured_installation_from_conflicting_cwd(monkeypatch, tmp_path):
+    import os
+    import tomllib
+
+    installed = tmp_path / "configured-installation"
+    conflicting = tmp_path / "other-checkout"
+    for root, marker in ((installed, "configured-installation"), (conflicting, "other-checkout")):
+        package = root / "app"
+        package.mkdir(parents=True)
+        (package / "__init__.py").write_text("", encoding="utf-8")
+        (package / "run.py").write_text(f"print({marker!r})\n", encoding="utf-8")
+    monkeypatch.setattr(setup_codex, "_pallium_repo_root", lambda: installed)
+    config = tomllib.loads(setup_codex._ensure_mcp_server(""))["mcp_servers"]["pallium"]
+    completed = subprocess.run([config["command"], *config["args"]], cwd=conflicting,
+        env={**os.environ, **config["env"]}, capture_output=True, text=True, timeout=5)
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == "configured-installation"

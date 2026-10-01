@@ -12,6 +12,11 @@ from app.dependencies import build_router
 from core.codex_wake import CodexWakeRegistry
 from core.relay import RelayService
 from integrations.codex.hooks import user_prompt_submit as hook_module
+from app import codex_bridge_pipe
+from tests.test_codex_retained_wake import retained, register, http_wake, recover
+
+_REAL_START_LAUNCH = codex_wake._start_launch
+_RETAINED_WAKE_ENABLED = codex_bridge_pipe.retained_wake_enabled
 
 
 @pytest.fixture(autouse=True)
@@ -41,7 +46,7 @@ def isolate_codex_wake(monkeypatch):
         state.clear()
 
 def test_busy_queue_recovery_stays_single_flight_and_competing_hook_blocks_overtaken_wake(
-    client, monkeypatch, tmp_path, capsys, isolate_codex_wake,
+    client, monkeypatch, tmp_path, capsys, isolate_codex_wake, retained,
 ) -> None:
     """RW-022: accepted busy Codex wakes stay single-flight.
 
@@ -55,6 +60,11 @@ def test_busy_queue_recovery_stays_single_flight_and_competing_hook_blocks_overt
     from app.dependencies import recover_expired_relay_wakes
     from core.claude_wake import ClaudeWakeRegistry
     from integrations.codex.hooks import user_prompt_submit as hook
+
+    service, desktop = register(retained)
+    desktop.state = "idle"
+    isolate_codex_wake.retained_service = service
+    monkeypatch.setattr(codex_wake, "_start_launch", _REAL_START_LAUNCH)
 
     scope = {
         "container_ref": "git:example.test/overtaken-wake",
@@ -182,3 +192,28 @@ def test_busy_queue_recovery_stays_single_flight_and_competing_hook_blocks_overt
     assert route.post("/relay/turn", json={
         "runtime": "codex", "session_ref": "target", **scope,
     }).json()["deliveries"] == []
+
+
+
+def test_windows_default_without_custody_keeps_delivery_pending_without_transport(http_wake, monkeypatch):
+    """Authority: roadmap/features/add-wake-first-relay-delivery.md.
+
+    Regression: default Windows wake must not attempt transport without
+    authenticated retained custody; HTTP delivery stays pending before spending.
+    """
+    http, _, registry, _, desktop, send, _ = http_wake
+    monkeypatch.setattr(codex_bridge_pipe.sys, "platform", "win32")
+    monkeypatch.setattr(codex_bridge_pipe, "retained_wake_enabled", _RETAINED_WAKE_ENABLED)
+    monkeypatch.delenv("PALLIUM_CODEX_AUTOMATIC_WAKE", raising=False)
+    registry.retained_service = None
+    send()
+    for _ in range(3):
+        recover(http_wake)
+    # Reused fixture fails immediately if the CLI launcher is invoked.
+    assert desktop.owners == []
+    from tests.test_codex_retained_wake import SCOPE
+    delivery = http.get("/relay/messages/retained-journey", params=SCOPE).json()["deliveries"][0]
+    assert delivery["state"] == "pending" and delivery["attempts"] == 0
+    assert registry.reservations() == ()
+    assert not codex_wake._scheduled_session_generations
+    assert not codex_wake._scheduled_delivery_ids

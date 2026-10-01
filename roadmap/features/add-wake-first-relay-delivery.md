@@ -10,6 +10,43 @@ lane: capability
 
 ## Current execution status (reconciled 2026-10-01)
 
+One bounded Windows trial proved the full retained authenticated MCP path:
+service-owned wake of a supported `notLoaded` Codex target, hook payload emission,
+and one claim/ACK. The target returned a marker supplied only through the Relay
+payload. Cleanup restored normal service health. This establishes that the path
+works; it does not establish general connection lifetime or busy-turn safety.
+
+Local product integration is implemented and focused-tested on `feat/codex-retained-wake-product`.
+The approved behavior is default automatic wake on supported Windows Desktop
+for registered Codex recipients across sender runtimes: check fresh Desktop state, select existing queue delivery
+for loaded-idle targets or retained MCP for unloaded targets, and defer working
+or unknown targets through the existing recovery loop. Never try the other path
+after an uncertain attempt. The
+check/send race makes non-interruption best-effort. Reuse the current scheduler,
+durable reservation and hook ACK path; no new message store or scheduler.
+Final focused regressions passed 74 cases, including both actual payload hooks and ACK.
+Affected-test isolation failures were corrected and replayed; native validation had
+one isolated transport failure that passed its exact rerun.
+Normal default-on idle and unloaded paths both passed live payload-only marker
+and hook ACK checks on one attempt, at 16:03 and 16:22 UTC respectively. The
+unloaded check used ordinary authenticated source activity and a service-owned
+wake, without a manual target wake or finite trial procedure. Latest validation:
+115 retained-feature cases, 2 protected contracts, 4 setup checks, and 15 hook
+deadline/lifecycle cases passed; independent reviews accepted the changes.
+The installed local feature is complete. Changes are recorded on the local feature
+branch and remain unpublished under the user's no-PR instruction; no new full-suite
+result is claimed. New test chats use `pallium-test`.
+
+An earlier 16:06 unloaded attempt claimed without ACK and expired. Its exact
+cause remains unknown. A real delayed-response regression independently exposed
+the arbitrary two-second hook cap; removing it within the existing eight-second
+budget preserves emission/ACK reserves. The subsequent unloaded witness passed.
+This does not prove universal transport reliability or atomic busy exclusion.
+Broader platform/recovery roadmap work remains open. Earlier entries below are
+historical checkpoints, including blockers that the successful trial resolved.
+
+### Earlier shipped checkpoints
+
 [PR #273](https://github.com/rore/Pallium/pull/273) merged the separately armed
 unloaded-target trial at `9ad54da4d622030147b8e8161c92dec604f68592`. It binds
 runtime-owned caller identity, suppresses ordinary native dispatch for the enrolled
