@@ -26,6 +26,8 @@ Moderate
 **Reason:**
 Initial report, roadmap, Work Record, and generic tests are BLUE. Evidence protection and unresolved provenance raise judgment risk; any production correction gets exact-path classification and independent review before edits.
 
+Concrete normalization proposal additionally touches retrieval/common.py (GRAY, retrieval watch-list); Elevated remains the effective floor. No API/schema/security or protected-contract path is proposed.
+
 **Discovery:**
 PR271 is merged at 542e867e. Its read-only census and evaluator correction are complete, not the wider assignment. Prior manifest directory was absent from the shared checkout; repository records preserve hashes and sampling methodology, which may allow recovery or conservative reconstruction. Unknown holdout content remains closed. Generic caller-surface contract investigation does not depend on a private ranking holdout.
 
@@ -74,3 +76,9 @@ Reuse docs/reports/session-history-fresh-review.md and ignored shared .local/his
 ## Result review
 
 Pending.
+
+## Concrete normalization proposal — awaiting review
+
+The generic expansion exposed a stronger defect than missing duplicate handles: long same-context messages containing C# versus C, or v1.2 versus v1-2, receive equal nonempty fingerprints. Existing short identifier tests return no fingerprint and therefore miss this path. Independent read-only review confirmed both lexical and vector source hydration use the helper and the query layer collapses these hits. This is false equivalence/candidate loss, not a ranking-quality estimate.
+
+Proposed exact paths: retrieval/common.py, tests/test_source_only_distinct_results.py, tests/test_source_only_search.py. Preserve NFKC/casefold, whitespace, and length/token thresholds; replace blanket Unicode-punctuation removal with a conservative rule ignoring only commas/full stops at whitespace/end boundaries. Keep punctuation inside identifiers and all other punctuation. Existing benign comma/full-stop and Unicode normalization positives must remain passing; add eligible-length negatives and caller ingest → search → expand → forget coverage with both distinct IDs. Verify both retrieval backends through shared/helper and caller evidence. No protected contract changes. Independent plan approval is required before worker edits production; generic scratch probes remain authorized meanwhile.
