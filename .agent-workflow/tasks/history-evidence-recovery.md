@@ -56,7 +56,7 @@ Approved by user 2026-10-01: "So continue!" Prior authorization covers delegated
 **Exceptions:**
 —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -75,9 +75,9 @@ Reuse docs/reports/session-history-fresh-review.md and ignored shared .local/his
 
 ## Result review
 
-Agent technical review: /root/recovery_plan_review, clean-context non-implementer Sol, conditionally approved the complete code/test diff with no findings.
-Reviewed revision: 3c11e1b8.
-Verification adequacy: red-before-green helper/HTTP regressions, affected caller tests, preserved scope/lifecycle/vector coverage, and bounded refill stops are adequate. Approval remains conditional on the running full non-slow suite and workflow/PR checks. Final report/roadmap wording must reflect completed probes, all six feature criteria, and the explicit independent-evidence limitation before delivery.
+Agent technical review: /root/recovery_plan_review, clean-context non-implementer Sol, approved the complete code/test diff with no findings and reviewed the final roadmap alignment. The requested report tense corrections are addressed.
+Reviewed revision: code/tests 3c11e1b8; documentation delta through 6babea71 with subsequent requested editorial corrections only.
+Verification adequacy: red-before-green helper/HTTP regressions, affected caller tests, preserved scope/lifecycle/vector coverage, and bounded refill stops are adequate. The required full non-slow suite passed: 5784 passed, 34 skipped, 2 xfailed in 312.26 seconds, against unchanged code/tests at 3c11e1b8. Import boundaries and workflow checks passed. All six feature criteria and independent-evidence limitations are reconciled; PR checks, merge, installed rollout, and health remain delivery gates.
 
 ## Concrete normalization plan — approved before implementation
 
@@ -104,3 +104,5 @@ Expansion investigation: the finalized benign-equivalence fixture passes MCP sea
 Broad-refill implementation: HTTP saturation and broad ceiling checks failed before the one-condition correction; four other stop-boundary cases passed. All six focused cases then passed, and the affected source-only/exact-work files passed together (45 tests, serial). Shared-helper final refinements passed seven focused cases. Import boundaries pass; whole-change selection requires the full non-slow suite, now running. No protected behavior contracts changed.
 
 Completion assessment: independent reviewer confirmed the umbrella's Done When permits justified shipped improvements plus an explicit independent-evidence limitation. Reconcile all six criteria in the final report, then close only after validation, result review, merge, installed update, and health checks. Preserve conditional case collection/reranking prerequisites and the separate queued representation study; do not manufacture further synthetic work to keep the umbrella active. Current branch feat/history-evidence-recovery; rollout remains unfinished.
+
+Verification checkpoint: full non-slow suite passed (5784 passed, 34 skipped, 2 xfailed); independent code and final documentation reviews are addressed. Proposed merged roadmap state is Done; it is not a claim that the still-pending merge/install has happened. Proceed through PR checks, inline review resolution, authorized merge, matching clean shared/installed revisions, supported restart, and health verification. No further production change is selected.

@@ -1,7 +1,7 @@
 # Session History evidence recovery and caller investigation
 
 Investigated 2026-10-01 from `542e867e`; two supported corrections selected and
-independently reviewed. Validation and rollout evidence is in the Work Record.
+independently reviewed. The Work Record tracks validation and pending rollout gates.
 
 ## Recovery result
 
@@ -28,16 +28,15 @@ traceable, disjoint cases before grading.
 Missing ranking confirmation does not block caller-contract investigation with
 anonymized fixtures. Two source-traced questions were tested:
 
-1. **Provenance after duplicate collapse.** The query layer retains merged
-   evidence references, while the compact History response emits the primary
-   source handle. Compare HTTP and MCP output and expansion behavior before
-   deciding whether a caller-visible correction is needed. Identical text does
-   not imply identical surrounding conversation or date.
-2. **Duplicate-saturated candidate pools.** Broad source-only queries stop after
-   their initial bounded fetch, while exact-work queries can grow their fetch
-   after deduplication leaves result slots empty. Compare both at identical
-   requested limits, record candidate budgets and cost, and distinguish a
-   reproducible recovery failure from an unsupported ranking hypothesis.
+1. **Provenance after duplicate collapse.** The probe confirmed that the query
+   layer retains merged evidence references and compact History emits the primary
+   handle. Expansion and forgetting preserved the remaining source. No new
+   caller-visible provenance API was justified; identical text still does not
+   imply identical surrounding conversation or date.
+2. **Duplicate-saturated candidate pools.** Before this correction, broad search
+   stopped after its initial fetch while exact-work could refill after collapse.
+   Equal displayed limits exposed a reproducible recovery defect; the fix retains
+   the existing bounded candidate budget. No ranking-benefit claim follows.
 
 These are development contract probes, not private-corpus confirmation or
 downstream-task-effect estimates. The independently reviewed corrections below
@@ -79,8 +78,8 @@ were rerun in this discovery pass.
 | Reported class | Existing caller coverage | Remaining decision |
 |---|---|---|
 | Paging, continuation, retry, stale-result lineage | `test_work_history_contract.py::test_history_page_finalizes_only_subset_and_terminal_page_is_empty`; `test_history_guidance_replay_e2e.py::test_navigation_replay_compares_restart_and_ledger_over_real_mcp` | Mechanics are shipped. Source choice and answer sufficiency are not established by successful navigation. |
-| Candidate recovery and duplicate saturation | `test_source_only_search.py::test_source_only_max_page_keeps_bounded_refill_headroom`; `test_history_diagnostics_e2e.py::test_create_and_read_diagnostic_includes_bounded_trace_and_valid_empty` | Probe broad/exact-work behavior with a duplicate-heavy pool; no rank-only prevalence estimate. |
-| Equivalent-source provenance | Internal collapse tests merge evidence; compactor tests preserve primary IDs and bounded pages. | Check the actual caller's alternate source-opening paths before proposing a change. |
+| Candidate recovery and duplicate saturation | `test_source_only_search.py::test_source_only_max_page_keeps_bounded_refill_headroom`; `test_history_diagnostics_e2e.py::test_create_and_read_diagnostic_includes_bounded_trace_and_valid_empty` | Broad refill correction covered by the new saturation and stopping tests; no rank-only prevalence estimate. |
+| Equivalent-source provenance | Internal collapse tests merge evidence; compactor tests preserve primary IDs and bounded pages. | Caller probe completed without a justified presentation change. Independent real-source choice remains unmeasured. |
 | Exact-work isolation and older untagged sources | `test_exact_work_ref_search.py::test_exact_http_records_origin_and_expands_with_parent_lookup`; protected `test_history_exact_work_ref_does_not_broaden` | Untagged older sources are expected exclusions, not grounds for automatic broadening. Reuse existing scope tests. |
 | Forgetting, visibility, Unicode | `test_source_only_search.py::test_vector_source_only_http_expands_then_forgets_unicode_source`; protected `test_history_forget_hides_search_and_expansion` | Preserve as regression baseline; do not add duplicate coverage absent a changed behavior. |
 | Evaluation request linkage | `test_historical_lookup_funnel_e2e.py::test_request_link_actor_is_optional_metadata`, both replay modes | PR271 closed the actor-filter defect; independent case and original-payload provenance remain a separate gate. |
