@@ -39,9 +39,35 @@ anonymized fixtures. Two source-traced questions are being tested:
    reproducible recovery failure from an unsupported ranking hypothesis.
 
 These are development contract probes, not private-corpus confirmation or
-downstream-task-effect estimates. No production correction is selected until
-the probe evidence and concrete plan have independent review. Visibility,
+downstream-task-effect estimates. The independently reviewed corrections below
+are now selected for implementation. Visibility,
 forgetting, redaction, exact-work scope, and retrieval-is-not-use remain binding.
+
+### Confirmed generic failures
+
+- **False equivalence:** eligible-length messages differing in C#/C, v1.2/v1-2,
+  apostrophes, or slashes received identical fingerprints. Earlier short identifier
+  tests never crossed the fingerprint threshold. Four new helper cases and an
+  HTTP ingest/search/expand/forget lifecycle failed before the fix. The conservative
+  correction preserves identifier punctuation and ignores only commas/full stops
+  followed by whitespace or end-of-text, retaining Unicode/case/whitespace rules.
+- **Unfilled distinct-result slots:** with thirteen equivalent sources and two
+  distinct sources, broad HTTP/SQLite search at limit three returned one result
+  after a twelve-candidate request. Exact-work search returned three after requests
+  for twelve and twenty-four candidates. These counts measure synthetic
+  candidate-recovery, not real-corpus quality or latency. The approved correction
+  applies the existing bounded refill to broad search too, retaining its
+  200-candidate cap and full/exhausted stopping conditions. The HTTP saturation
+  and broad ceiling regressions failed before the fix; all six focused refill
+  cases passed afterward, as did 45 affected source-only/exact-work tests.
+- **Provenance:** HTTP retained both equivalent source IDs; MCP exposed the primary
+  handle, which expanded successfully without neighbors. Forgetting the primary
+  left the sibling searchable. This alone does not justify a new presentation API.
+  A transient duplicate delivery-ID error in the evolving scratch fixture did not
+  reproduce with the final benign-equivalence fixture: default-neighbor MCP
+  expansion and delivery finalization passed. Inspection found disjoint strict
+  timestamp/ID neighbor ranges. The transient cause remains unassigned; it is not
+  evidence for a production change, and the uniqueness validator remains intact.
 
 ## Coverage and remaining decisions
 
@@ -77,6 +103,36 @@ The prior slice's PR and installed rollout completed, but the umbrella assignmen
 did not. The lead stopped prematurely. The continuation now checks remaining
 feature criteria and acts on the next authorized step at each slice boundary;
 another successful PR is not itself the stopping condition.
+
+## Measurement and completion ledger
+
+This report complements, rather than reruns, the
+[fixed-candidate study](session-history-search-quality-study.md) and
+[expanded retained-data census](session-history-fresh-review.md). Those reports
+retain their sampling, exclusions, serving revisions/configuration, rejected
+alternatives, and limitations. This continuation starts at `542e867e` and uses
+isolated synthetic HTTP/SQLite fixtures and deterministic local test providers;
+it is not a replay of installed production ranking.
+
+| Measure | Evidence and limit |
+|---|---|
+| Candidate recovery | The duplicate-saturated synthetic caller returns one versus three distinct results at display limit three; requested candidate budgets are twelve versus twelve then twenty-four. This establishes a contract defect, not prevalence or general retrieval accuracy. |
+| Evidence precision/sufficiency | The earlier fixed-candidate report records partial wins and qualifier losses with incomplete reconstructed payloads. No new content grading, injection-precision estimate, or sufficiency improvement is claimed here. |
+| Scope correctness | Existing and changed caller regressions exercise exact-work isolation, container visibility, request exclusion, redaction, Unicode, expansion, and forgetting. The refill repeats the same filters; normalization changes no source state. |
+| Returned/expanded tokens | Not measured in this continuation. Display count is asserted; response character budgets and compaction are unchanged. Historical character limits are not token measurements. |
+| Latency and cost | No production or incremental latency estimate. Refill is capped at 200 candidates, with full/exhausted early stops; worst-case budgets are 12, 24, 48, 96, 192, 200 for limit three. No paid provider calls or model downloads; agent execution cost was not measured. |
+| Downstream task effect | Unmeasured here. Successful retrieval/expansion is not evidence of verified use, and must not update accessibility or ranking priors. |
+
+The feature's completion criteria permit justified shipped improvements with an
+explicit independent-evidence limitation. After validation, review, and rollout,
+the bounded search-quality work can close without pretending that conditional
+reranking or representation hypotheses were evaluated. Evidence-gated follow-up
+requires recovered exact exclusion identities or traceably disjoint prospective
+linked episodes, complete original caller options/payloads, and a frozen
+development/confirmation partition before content grading. A rank-only preflight
+is warranted only if that review establishes a remaining rank-only question.
+The separate navigation/compression study remains queued, not authorized by the
+delivery of these corrections.
 
 Owning [feature](../../roadmap/features/improve-session-history-search-quality.md)
 and [Work Record](../../.agent-workflow/tasks/history-evidence-recovery.md).

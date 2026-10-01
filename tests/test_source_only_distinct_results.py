@@ -130,6 +130,48 @@ def test_sentence_punctuation_normalizes_without_joining_identifier_parts() -> N
 
     assert [item.source_item_id for item in out] == ["a", "version", "compact"]
 
+
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        (
+            "Use the C# parser for reservation ordering and duplicate holds today.",
+            "Use the C parser for reservation ordering and duplicate holds today.",
+        ),
+        (
+            "Version v1.2 keeps reservation ordering and duplicate holds consistent today.",
+            "Version v1-2 keeps reservation ordering and duplicate holds consistent today.",
+        ),
+        (
+            "Keep don't change reservation ordering to prevent duplicate holds today.",
+            "Keep don t change reservation ordering to prevent duplicate holds today.",
+        ),
+        (
+            "Use read/write access for reservation ordering and duplicate holds today.",
+            "Use read write access for reservation ordering and duplicate holds today.",
+        ),
+        (
+            "Use 1,000 records for reservation ordering and avoid duplicate holds today.",
+            "Use 1 000 records for reservation ordering and avoid duplicate holds today.",
+        ),
+        (
+            "Use warning marker for reservation ordering and duplicate holds today!",
+            "Use warning marker for reservation ordering and duplicate holds today",
+        ),
+    ],
+)
+def test_internal_identifier_punctuation_remains_significant(
+    first: str, second: str,
+) -> None:
+    first_fingerprint = build_source_content_fingerprint(first)
+    second_fingerprint = build_source_content_fingerprint(second)
+    assert first_fingerprint is not None and second_fingerprint is not None
+    assert first_fingerprint != second_fingerprint
+    assert [item.source_item_id for item in _collapse_source_duplicates([
+        _item("first", first), _item("second", second),
+    ])] == ["first", "second"]
+
+
 def test_nfkc_case_and_whitespace_normalize() -> None:
     items = [
         _item("a", "ＡＬＰＨＡ  beta gamma delta today"),

@@ -99,8 +99,11 @@ followed by the broader access/representation investigation:
    grouping, expansion handoff, connection-error clarity, and read-only History
    tools in the generated Codex Relay profile. PR #166 shipped the independently
    accepted paired runner. PR #173 closed a candidate-study preflight without a
-   comparison; the current narrow follow-up is prospective review of equivalent
-   result groups while preserving provenance, dates, and expansion paths. After
+   comparison. The October 1 continuation is implementing two reproduced generic
+   defects: identifier-unsafe equivalence and unfilled broad-search result slots
+   after duplicate collapse. Prospective review of equivalent result groups still
+   requires recovered exclusions or disjoint cases, preserving provenance, dates,
+   and expansion paths. After
    that review, a zero-model candidate-availability preflight may earn a fixed-
    candidate comparison of current RRF against one local cross-encoder and one
    late-interaction scorer. No model, dependency, index, or search-engine migration

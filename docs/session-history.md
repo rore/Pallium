@@ -48,6 +48,16 @@ Search answers “where did we discuss this?” Expansion answers “what was th
 surrounding reasoning?” The bounds keep one match from turning into an entire
 transcript replay.
 
+Long normalized-equivalent turns in the same source context can share one search
+result without deleting raw history. Normalization preserves identifier punctuation
+such as `C#` and `v1.2`; only commas and full stops followed by whitespace or the
+end of text are ignored, alongside Unicode, case, and whitespace normalization.
+Similar wording alone is not semantic equivalence.
+Both broad and exact-work searches refill duplicate-saturated candidate batches
+until the requested distinct-result count is reached, the provider is exhausted,
+or the existing 200-candidate ceiling is reached. Search can therefore return
+fewer results than requested; the ceiling is not a completeness guarantee.
+
 When the anchor itself is larger than the expansion response budget, the response
 reports `effective_max_chars`, `content_offset`, `content_total_chars`,
 `content_revision`, `has_more`, and `next_offset`. Continue by passing the returned

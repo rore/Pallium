@@ -174,8 +174,7 @@ class QueryExecutor:
         # injectable_blocks stays empty). The P0 forgotten-source gate applies
         # via effective_filters -> matches_filters in the providers.
         if source_only:
-            # Start with bounded overfetch. Exact-work searches expand only when
-            # post-retrieval dedup still leaves slots empty.
+            # Refill the bounded overfetch only while distinct results leave slots empty.
             retrieval_limit = min(max(limit * 4, 12), 200)
             retrieved_count = 0
             request_identity_excluded_count = 0
@@ -203,8 +202,7 @@ class QueryExecutor:
                 request_identity_excluded_count = retrieved_count - len(results)
                 distinct = _collapse_source_duplicates(results)
                 if (
-                    not work_refs
-                    or len(distinct) >= limit
+                    len(distinct) >= limit
                     or len(retrieval_result.results) < retrieval_limit
                 ):
                     break

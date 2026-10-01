@@ -87,8 +87,12 @@ past records from masquerading as live state.
    `idea-raw-duplicate-ingestion-and-result-diversity`: collapse exact and
    normalization-equivalent duplicates before the visible top-K while preserving
    source provenance and without deleting raw history. "Normalization-equivalent"
-   means equal after Unicode, case, whitespace, and punctuation normalization; it
-   does not authorize fuzzy semantic matching.
+   means equal after Unicode, case, and whitespace normalization, ignoring only
+   commas and full stops followed by whitespace or end-of-text. Identifier
+   punctuation remains significant: C# is not C, and v1.2 is not v1-2. This
+   conservative correction is tracked by the active
+   [search-quality continuation](improve-session-history-search-quality.md);
+   normalization does not authorize fuzzy semantic matching.
 5. **Compact relevance and freshness cues.** Do not present the internal fusion
    score as confidence. Prefer small interpretable fields such as match channel,
    distinctive matched terms, record time, same/different source session, and a

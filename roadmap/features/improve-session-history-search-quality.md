@@ -36,12 +36,15 @@ index.
 |---|---|---|
 | [Evidence access and retry reliability](fix-session-history-evidence-access.md) | **Done** | Shipped source/result continuation, explicit source scope, diagnostics, and bounded replay-safe guidance. It measured navigation/presentation, not ranking or downstream task effect. |
 | Request-link evaluation eligibility | **Corrected in September 30 slice** | Optional source actor filtering no longer rejects a valid linked request; caller regression covers both replay modes. This is measurement alignment, not improved ranking. |
+| Generic distinct-result correctness | **In progress; fixes independently approved** | Preserve identifier punctuation during equivalence checks; apply existing bounded refill to broad duplicate-saturated searches. Red-before-green caller tests, review, and delivery remain required. See the [recovery report](../../docs/reports/session-history-evidence-recovery.md). |
 | Prospective equivalent-result review | **Next; evidence prerequisite open** | Recover prior exclusion manifests or collect disjoint prospective linked cases before content review. Retain provenance, dates, and source-opening paths. Decide whether there is a presentation problem worth changing. |
 | Candidate-availability and local reranking gate | **Conditional** | First run the zero-model-call fixed-candidate preflight below. Compare local scorers only if enough failures are genuinely rank-only. |
 | [Navigation and on-demand compression](investigate-history-navigation-and-on-demand-compression.md) | **Separate queued follow-up** | Reuse the shipped reliability baseline. Do not run this broader representation study in parallel with the narrow review above. |
 
-The next action is to establish protected, traceable cases for the prospective
-equivalent-result review. Do not repeat the completed metadata census or reopen
+The immediate action is to complete and deliver the confirmed generic correctness
+fixes, including caller regression tests. In parallel, establish protected,
+traceable cases for the prospective equivalent-result review where possible.
+Do not repeat the completed metadata census or reopen
 unknown holdouts. The candidate preflight follows only if content review leaves a
 distinct ranking question. Broader real-corpus downstream-value validation remains
 [separately gated](../ideas/idea-pull-real-corpus-validation.md).

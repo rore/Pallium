@@ -240,7 +240,8 @@ def test_exact_ref_expands_past_post_retrieval_duplicate_window(
     assert set(unique_ids) <= set(returned)
     assert len(set(returned).intersection(duplicate_ids)) == 1
 
-def test_exact_ref_dedup_refill_stops_at_candidate_ceiling() -> None:
+@pytest.mark.parametrize("work_refs", [None, ("proj-1",)])
+def test_source_only_dedup_refill_stops_at_candidate_ceiling(work_refs) -> None:
     requested_limits: list[int] = []
     duplicate = QueryResultItem(
         result_kind="source_hit",
@@ -259,7 +260,7 @@ def test_exact_ref_dedup_refill_stops_at_candidate_ceiling() -> None:
     retrieval = MagicMock(query=query)
     plugin = MagicMock(requires_visibility_context=False)
     result = QueryExecutor(MagicMock(), retrieval, {"test": plugin}, "test").query(
-        "alpha", 3, source_only=True, container_ref="test", visibility="private", work_refs=("proj-1",)
+        "alpha", 3, source_only=True, container_ref="test", visibility="private", work_refs=work_refs
     )
 
     assert len(result.results) == 1

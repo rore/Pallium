@@ -107,6 +107,69 @@ def test_source_only_returns_only_source_hits_not_starved(monkeypatch, test_db_u
         assert [r["raw_rank"] for r in results] == list(range(1, len(results) + 1))
 
 
+def test_broad_source_only_refills_after_equivalent_candidates(monkeypatch, test_db_url: str) -> None:
+    with _build_client(monkeypatch, test_db_url) as client:
+        duplicates = {
+            _ingest(client, source_id=f"duplicate-{i}", content=_PLAIN)
+            for i in range(13)
+        }
+        distinct = {
+            _ingest(client, source_id="distinct-alpha", content=_PLAIN + " Extra constraint alpha."),
+            _ingest(client, source_id="distinct-beta", content=_PLAIN + " Extra constraint beta."),
+        }
+        retrieval = client.app.state.pallium_service._query_executor._retrieval
+        original_query = retrieval.query
+        requested_limits: list[int] = []
+        candidate_counts: list[int] = []
+
+        def recording_query(*args, **kwargs):
+            requested_limits.append(kwargs["limit"])
+            result = original_query(*args, **kwargs)
+            candidate_counts.append(len(result.results))
+            return result
+
+        monkeypatch.setattr(retrieval, "query", recording_query)
+        response = _query(client, source_only=True, limit=3)
+
+        returned = {row["source_item_id"] for row in response["results"]}
+        assert len(returned) == 3
+        assert distinct <= returned
+        assert len(duplicates & returned) == 1
+        assert requested_limits == [12, 24]
+        assert candidate_counts == [12, 15]
+
+
+@pytest.mark.parametrize(
+    ("candidate_count", "expected_count"), [(12, 3), (0, 0), (2, 2)]
+)
+def test_source_only_refill_stops_when_page_suffices_or_is_underfilled(
+    candidate_count: int, expected_count: int,
+) -> None:
+    candidates = [
+        QueryResultItem(
+            result_kind="source_hit",
+            source_item_id=f"source-{index}",
+            source_type="chat",
+            source_content_fingerprint=f"content-{index}",
+            score=float(candidate_count - index),
+            evidence=[],
+        )
+        for index in range(candidate_count)
+    ]
+    retrieval = MagicMock()
+    retrieval.query.return_value = RetrievalQueryResult(results=candidates)
+    executor = QueryExecutor(
+        MagicMock(), retrieval, {"test": MagicMock(requires_visibility_context=False)}, "test"
+    )
+
+    result = executor.query(
+        "query", 3, source_only=True, container_ref="test", visibility="private"
+    )
+
+    assert len(result.results) == expected_count
+    assert retrieval.query.call_count == 1
+
+
 def test_source_only_max_page_keeps_bounded_refill_headroom(
     monkeypatch, test_db_url: str
 ) -> None:
@@ -223,6 +286,51 @@ def test_source_only_excludes_forgotten_turn(monkeypatch, test_db_url: str) -> N
         after = {r["source_item_id"] for r in _query(client, source_only=True)["results"]}
         assert keep in after
         assert drop not in after
+
+
+def test_source_only_keeps_long_identifier_variants_through_forget_lifecycle(
+    monkeypatch, test_db_url: str,
+) -> None:
+    with _build_client(monkeypatch, test_db_url) as client:
+        first_content = "Decision: use the C# parser for reservation ordering and duplicate holds today."
+        second_content = "Decision: use the C parser for reservation ordering and duplicate holds today."
+        first = _ingest(
+            client,
+            source_id="identifier-hash",
+            content=first_content,
+        )
+        second = _ingest(
+            client,
+            source_id="identifier-letter",
+            content=second_content,
+        )
+
+        before = _query(client, source_only=True, limit=2)
+        assert {row["source_item_id"] for row in before["results"]} == {first, second}
+
+        for source_id, expected_content in (
+            (first, first_content), (second, second_content),
+        ):
+            expanded = client.get(
+                f"/source/{source_id}/context", params={"container_ref": CONTAINER}
+            )
+            assert expanded.status_code == 200, expanded.text
+            payload = expanded.json()
+            assert payload["source_item_id"] == source_id
+            anchor = next(item for item in payload["items"] if item["is_anchor"])
+            assert anchor["source_item_id"] == source_id
+            assert anchor["content"] == expected_content
+
+        forgotten = client.post(
+            "/source/forget",
+            json={"source_item_id": first, "reason": "user request"},
+        )
+        assert forgotten.status_code == 200, forgotten.text
+        after = _query(client, source_only=True, limit=2)
+        assert {row["source_item_id"] for row in after["results"]} == {second}
+        assert client.get(
+            f"/source/{first}/context", params={"container_ref": CONTAINER}
+        ).status_code == 404
 
 
 # ---------------------------------------------------------------------------
