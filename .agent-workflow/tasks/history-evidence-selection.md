@@ -54,7 +54,7 @@ Approved by user 2026-10-01: "So continue." This follows the proposed fresh-task
 **Exceptions:**
 —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -67,9 +67,15 @@ Delta result: zero scoped History events in the frozen interval. This excludes n
 
 Existing evals/reliable_pair_runner.py already preserves production HTTP and exact MCP formatter responses, lookup lineage, and driver transcripts. It requires a driver and numeric token usage; native-agent invocation/accounting is not yet verified. Its substring score is not a semantic grader. The two approved public dataset cards were inspected, but their web viewers also exposed example rows. Those examples are excluded from blind case selection; no raw dataset was downloaded, and no private holdout was opened. Do not present this accidental preview as metadata-only access.
 
+Alternative request readiness returned 40 non-forgotten user rows in one thread; all were within the cap. No occurred_at or inspected original-provider creation metadata established independence, and none linked to a History lookup. Earlier same-thread sources do not establish necessary evidence or original creation. No content opening qualified. The worker's initial source-type restriction was discarded because it excluded actual Codex rows; only the corrected role=user query supports the report. The report records this bounded negative result and the concrete prospective-pack input needed next. Roadmap remains queued with completed preflight and unperformed comparisons distinguished. No production implementation is justified by this result.
+
+Skill-feedback trigger 5 dropped: the attempted roadmap/README.md lookup was a guessed local path, not a broken upstream reference. No upstream defect report is warranted.
+
 ## Evidence
 
 Base ffd46966; intended paths BLUE, import boundaries passed. Prior evidence: docs/reports/session-history-fresh-review.md and docs/reports/session-history-evidence-recovery.md. Their original-corpus exclusions remain binding. Private prior artifacts remain in the shared checkout's ignored .local/ directories.
+
+Whole-change selector (base origin/main, including dirty/untracked files) chose governance lane for exactly the three planned Markdown paths. Its selected 31 tests passed; git diff --check passed. Tested tree: 6dbf5ba7 plus report/roadmap/record changes pending this evidence commit. No application behavior changed, so no application suite rerun or new E2E is indicated. Private source-readiness counts were inspected against the read-only script; overlapping earlier-source counts are not distinct-source counts and are not used in the report. No explicit transaction was used for that initial multi-query inventory, so it is not an atomic corpus snapshot; no stronger claim depends on it. Content execution was not approved or performed because the readiness gate failed.
 
 ## Result review
 

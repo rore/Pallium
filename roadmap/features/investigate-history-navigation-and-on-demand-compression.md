@@ -24,9 +24,18 @@ with verified installed delivery in PR #272,
 including identifier-safe equivalence and bounded broad-query refill. Its remaining
 prospective equivalent-result review is evidence-gated: recover exact exclusions or
 collect disjoint linked cases with original caller options/payloads before grading.
-This separate study remains queued. Its no-call preflight must establish suitable
-independent cases and decide whether that narrow review is needed before launching
-broader comparisons; completion of the prior feature is not evidence of case readiness.
+This separate study remains queued. The
+[2026-10-01 evidence-selection preflight](../../docs/reports/history-evidence-selection.md)
+found no new lookup-linked cases in its fixed metadata window. A separate capped
+request inventory found 40 ingested user rows in one thread, but none established
+original creation provenance outside the unknown earlier protected corpus. No
+content run or representation comparison was justified; these are readiness
+counts, not quality scores. The next gate is a prospectively frozen task/source
+pack with traceable original provenance and a separate answer key, or recovered
+exact exclusions. Do not repeat the census without new evidence. Original caller
+options/payloads are also required for real-usage confirmation; a verified
+evaluator adapter and honest cost accounting are required before execution.
+Completion of the prior feature is not evidence of case readiness.
 
 ## Time-boxed comparisons
 
