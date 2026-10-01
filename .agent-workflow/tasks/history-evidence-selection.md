@@ -46,7 +46,7 @@ Fresh linked episodes may have accumulated since the prior census; inspect only 
 - Durable delivery and roadmap scope remain accurate -> whole-change checks, PR findings disposition, installed revision/health evidence, and artifact preservation.
 
 **Plan review:**
-Pending independent review; no case-content evaluation authorized yet.
+Agent technical review: /root/selection_plan_review (clean-context Sol) approved readiness steps 2–3 at 866e74043e954ead69ea46c8003022d5c8c17b65. Content execution remains gated by concrete step-4 review. Require exact retained cutoff, protection of every source/neighbor, frozen independent task groups, separate chooser/key grader, numeric budgets, and no post-inspection case replacement. Fresh lookup IDs alone do not establish untouched evidence.
 
 **Approvals:**
 Approved by user 2026-10-01: "So continue." This follows the proposed fresh-task evidence-selection assessment. Existing authorization covers budget-aware delegation and PR/merge according to guidelines, not unsupported production changes.
@@ -54,12 +54,14 @@ Approved by user 2026-10-01: "So continue." This follows the proposed fresh-task
 **Exceptions:**
 —
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
 
 Initial planning checkpoint. Blocked denotes pending independent plan review, not missing user approval. The completed search-quality feature remains closed; this is the evidence-readiness slice of roadmap/features/investigate-history-navigation-and-on-demand-compression.md. No request_source_item_id was injected for this turn; none is invented. Shared and installed checkouts are not evaluation workspaces.
+
+Readiness plan approved before metadata access. Retained aggregate.json and inventory.py agree on the prior exclusive cutoff, 2026-09-30 19:39:59.320519 UTC. Inspect only later events through the frozen upper cutoff; exclude the injected active thread. All unknown prior source/neighbor lineage remains ineligible for content opening. Exact initial scratch target: build/selection_delta.py; generated metadata-only artifact build/selection-delta.json. Existing runner feasibility is delegated read-only; lead owns this record and canonical roadmap.
 
 ## Evidence
 
