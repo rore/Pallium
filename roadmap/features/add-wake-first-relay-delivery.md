@@ -8,7 +8,22 @@ milestone: pallium-relay
 lane: capability
 ---
 
-## Current execution status (reconciled 2026-09-30)
+## Current execution status (reconciled 2026-10-01)
+
+[PR #273](https://github.com/rore/Pallium/pull/273) merged the separately armed
+unloaded-target trial at `9ad54da4d622030147b8e8161c92dec604f68592`. It binds
+runtime-owned caller identity, suppresses ordinary native dispatch for the enrolled
+endpoint, and spends a durable one-call fence before the Desktop write. The approved
+trial can retain a live source; post-source-exit lifetime remains a separate claim.
+Independent review and final-head CI passed. Both clean checkouts include the merge
+at `dc78a30368299ead3d18d6ac971681c53211f59b`; the required installed wrapper and
+health/status/queue/embedding checks passed.
+
+The first ordinary target bootstrap turn ran the identity hook, but its Relay
+address lookup returned not registered and exact discovery found no endpoint.
+Registration diagnosis is in progress. No trial authority was enabled or payload
+sent. Genuine unloaded-target payload receipt, post-exit lifetime, zero-child
+startup, and general busy-turn safety remain unproved.
 
 [PR #270](https://github.com/rore/Pallium/pull/270) merged test-helper isolation
 at `5ed3cf96342d61ff4d3740e800a86e0232f8c28b`. Claude hook tests now rebind wake
