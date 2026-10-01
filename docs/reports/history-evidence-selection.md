@@ -32,8 +32,10 @@ sources. Every request, supporting source, and accessible expansion neighbor mus
 pass that provenance gate before content assessment.
 
 That alternative found 40 non-forgotten user rows across one thread; all fit under
-the cap. None had an `occurred_at` value or inspected top-level metadata indicating
-original-provider creation, and none linked to a recorded History lookup. Earlier
+the cap. None had an `occurred_at` value or top-level metadata keys matching the
+four inspected patterns (`provider_created`, `event_created`, `origin_created`,
+`source_created`), and none linked to a recorded History lookup. This narrow check
+does not prove that no other provenance fields exist. Earlier
 same-thread rows exist, but that does not establish a task/support relationship.
 Thus zero candidates qualified for content opening under the approved gate. This
 does not mean the requests are unanswerable or that search failed.
@@ -43,6 +45,10 @@ The API accepts caller-supplied source metadata and optional event timestamps;
 or backfilled content. The initial source-type filter excluded actual Codex rows
 and was discarded; only the corrected all-source-types, `role=user` result above
 is evidence. No request or supporting-source text was read.
+The request inventory used read-only statements without an explicit multi-query
+transaction; it is not claimed as an atomic snapshot. Its earlier-source aggregate
+contains overlapping per-request matches, not a distinct-source count, and is not
+used to infer sample diversity.
 
 ## Reuse and alternative routes
 
