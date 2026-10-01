@@ -19,11 +19,13 @@ Independent review and final-head CI passed. Both clean checkouts include the me
 at `dc78a30368299ead3d18d6ac971681c53211f59b`; the required installed wrapper and
 health/status/queue/embedding checks passed.
 
-The first ordinary target bootstrap turn ran the identity hook, but its Relay
-address lookup returned not registered and exact discovery found no endpoint.
-Registration diagnosis is in progress. No trial authority was enabled or payload
-sent. Genuine unloaded-target payload receipt, post-exit lifetime, zero-child
-startup, and general busy-turn safety remain unproved.
+The delegated target bootstrap returned not registered and exact discovery found
+no endpoint. SessionStart explains its saved identity; no UserPromptSubmit marker
+update, registration intent, or prompt-hook context was observed. The host's exact
+reason is unknown. One interactive composer turn in the same disposable target is
+needed to check registration before the timed trial. No trial authority was enabled
+or payload sent. Genuine unloaded-target payload receipt, post-exit lifetime,
+zero-child startup, and general busy-turn safety remain unproved.
 
 [PR #270](https://github.com/rore/Pallium/pull/270) merged test-helper isolation
 at `5ed3cf96342d61ff4d3740e800a86e0232f8c28b`. Claude hook tests now rebind wake
