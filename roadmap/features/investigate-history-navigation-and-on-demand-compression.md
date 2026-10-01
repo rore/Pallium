@@ -19,8 +19,8 @@ work with less noise, time, and token cost?
 This is a separate queued representation study, not unfinished evidence-access work.
 The [evidence-access reliability feature](fix-session-history-evidence-access.md) is
 done. The bounded
-[`search-quality feature`](improve-session-history-search-quality.md) is implemented
-and reviewed, with closure pending verified installed delivery,
+[`search-quality feature`](improve-session-history-search-quality.md) is complete
+with verified installed delivery in PR #272,
 including identifier-safe equivalence and bounded broad-query refill. Its remaining
 prospective equivalent-result review is evidence-gated: recover exact exclusions or
 collect disjoint linked cases with original caller options/payloads before grading.
