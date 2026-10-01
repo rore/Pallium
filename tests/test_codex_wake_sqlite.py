@@ -28,6 +28,29 @@ from app.dependencies import build_router
 SCOPE = {"container_ref": "git:example.test/wake-東京"}
 
 
+def test_existing_relay_database_adds_trial_endpoint_marker_without_enrolling(tmp_path):
+    relay_db = tmp_path / "relay.db"
+    main_db = tmp_path / "main.db"
+    storage = SQLiteStorageProvider(f"sqlite:///{main_db}", f"sqlite:///{relay_db}")
+    endpoint = RelayService(storage).turn(runtime="codex", session_ref="target", **SCOPE)["session"]["endpoint_id"]
+    storage.close()
+    with sqlite3.connect(relay_db) as db:
+        db.execute("ALTER TABLE relay_sessions DROP COLUMN trial_enrolled")
+        db.execute("DROP TABLE relay_codex_trial")
+
+    reopened = SQLiteStorageProvider(f"sqlite:///{main_db}", f"sqlite:///{relay_db}")
+    try:
+        relay = RelayService(reopened)
+        assert not relay.codex_trial_native_suppressed(endpoint)
+        assert relay.enroll_codex_trial(
+            endpoint_id=endpoint, session_ref="target", container_ref=SCOPE["container_ref"],
+            trial_id="migrated-trial",
+        )
+        assert relay.codex_trial_native_suppressed(endpoint)
+    finally:
+        reopened.close()
+
+
 def test_app_uses_sqlite_authority_and_does_not_implicitly_import(tmp_path, monkeypatch):
     monkeypatch.delenv("PALLIUM_CODEX_WAKE_DIR", raising=False)
     config = AppConfig(

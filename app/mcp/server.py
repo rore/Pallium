@@ -1166,9 +1166,21 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None,
             from app.mcp.codex_desktop_bridge import inventory_status
             result = {"reason": "stopped"}
             try:
-                worker = ctx.request_context.lifespan_context.get("codex_inventory")
-                if worker is not None and os.environ.get("PALLIUM_AGENT_REF") == "codex":
-                    result = await worker.register()
+                request = ctx.request_context
+                meta = request.meta
+                values = meta if isinstance(meta, dict) else meta.model_dump()
+                thread_ref, error = resolve_codex_thread_ref(values)
+                nested = values.get("x-codex-turn-metadata", {})
+                turns = [values[key] for key in ("turnId",) if key in values]
+                if isinstance(nested, dict) and "turn_id" in nested:
+                    turns.append(nested["turn_id"])
+                valid_turn = bool(turns) and all(
+                    isinstance(value, str) and value == value.strip()
+                    and 0 < len(value) <= 255 and value.isprintable() for value in turns
+                ) and len(set(turns)) == 1
+                worker = request.lifespan_context.get("codex_inventory")
+                if worker is not None and not error and valid_turn and os.environ.get("PALLIUM_AGENT_REF") == "codex":
+                    result = await worker.register({"thread_ref": thread_ref, "turn_ref": turns[0]})
             except Exception:
                 result = {"reason": "native-failed"}
             return json.dumps(inventory_status(result))

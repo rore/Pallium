@@ -205,7 +205,7 @@ class InventoryWorker:
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
-    async def register(self) -> dict:
+    async def register(self, metadata: dict[str, str]) -> dict:
         if self.stop_event.is_set() or "CODEX_APP_TOOLS_PIPE_PATH" not in os.environ:
             self.stop_event.set()
             return inventory_status({"reason": "stopped"})
@@ -214,7 +214,7 @@ class InventoryWorker:
         self._busy = True
         loop = asyncio.get_running_loop()
         future = loop.create_future()
-        self._requests.put_nowait((loop, future))
+        self._requests.put_nowait((loop, future, metadata))
         try:
             return await asyncio.wait_for(future, timeout=3.5)
         except asyncio.TimeoutError:
@@ -236,10 +236,10 @@ class InventoryWorker:
                 return
             while not self.stop_event.is_set():
                 try:
-                    loop, future = self._requests.get(timeout=0.1)
+                    loop, future, metadata = self._requests.get(timeout=0.1)
                 except queue.Empty:
                     continue
-                result = inventory_status(client.register())
+                result = inventory_status(client.register(metadata))
                 if result["status"] == "unavailable":
                     self.stop_event.set()
                 loop.call_soon_threadsafe(ShadowWorker._complete, future, result)
@@ -256,7 +256,7 @@ class InventoryWorker:
         finally:
             self.stop_event.set()
             try:
-                loop, pending = self._requests.get_nowait()
+                loop, pending, _ = self._requests.get_nowait()
                 loop.call_soon_threadsafe(ShadowWorker._complete, pending,
                     inventory_status({"reason": "stopped"}))
             except (queue.Empty, RuntimeError):

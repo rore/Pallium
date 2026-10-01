@@ -28,6 +28,9 @@ from mcp.client.streamable_http import streamable_http_client
 
 from app.mcp import codex_desktop_bridge, server as mcp_server
 
+INVENTORY_META = {"threadId": "source-chat", "turnId": "source-turn"}
+INVENTORY_CALLER = {"thread_ref": "source-chat", "turn_ref": "source-turn"}
+
 
 class _FakeStatusClient:
     def __init__(self, _ctx):
@@ -696,7 +699,8 @@ def _inventory_native(monkeypatch, *, fault=None, block=None):
                 raise RuntimeError("private-native-sentinel")
             return {"status": "ready", "reason": "ready"}
 
-        def register(self):
+        def register(self, metadata):
+            assert metadata == INVENTORY_CALLER
             calls.append("register")
             if block is not None:
                 block.wait(5)
@@ -767,7 +771,7 @@ async def test_inventory_gate_checks_presence_without_reading_capability(monkeyp
     server = mcp_server.create_server(codex_inventory=True, lifespan=mcp_server._codex_inventory_lifespan)
 
     async def exercise(session):
-        reply = await session.call_tool("pallium_codex_bridge_inventory_register", {})
+        reply = await session.call_tool("pallium_codex_bridge_inventory_register", {}, meta=INVENTORY_META)
         assert json.loads(reply.content[0].text)["status"] == "registered"
 
     await _serve_protocol(server, exercise)
@@ -805,9 +809,9 @@ async def test_inventory_caller_catalog_ready_register_and_eof(monkeypatch):
             while "ready" not in calls:
                 await asyncio.sleep(.01)
         assert "register" not in calls
-        # Inventory authority comes from OS peers and operator policy, not fabricated turn metadata.
+        # Runtime-owned caller metadata does not grant recipient or action authority.
         for _ in range(3):
-            reply = await session.call_tool("pallium_codex_bridge_inventory_register", {})
+            reply = await session.call_tool("pallium_codex_bridge_inventory_register", {}, meta=INVENTORY_META)
             assert not reply.isError
             assert json.loads(reply.content[0].text) == {
                 "mode": "inventory", "status": "registered", "reason": "ok",
@@ -815,6 +819,53 @@ async def test_inventory_caller_catalog_ready_register_and_eof(monkeypatch):
         assert not (await session.call_tool("pallium_status", {})).isError
     await _serve_protocol(server, exercise)
     assert disposed.is_set() and calls == ["connect", "ready", "register", "register", "register", "dispose"]
+
+
+@pytest.mark.asyncio
+async def test_inventory_register_binds_runtime_owned_caller_pair(monkeypatch):
+    calls, _ = _inventory_native(monkeypatch)
+    native = sys.modules["app.codex_bridge_pipe"].NativeInventoryClient
+    captured = []
+
+    def register(self, metadata):
+        captured.append(metadata)
+        calls.append("register")
+        return {"status": "registered", "reason": "ok", "ttl_seconds": 12,
+                "connected": True}
+
+    monkeypatch.setattr(native, "register", register)
+    server = mcp_server.create_server(codex_inventory=True, lifespan=mcp_server._codex_inventory_lifespan)
+
+    async def exercise(session):
+        reply = await session.call_tool("pallium_codex_bridge_inventory_register", {},
+                                        meta={"threadId": "source-chat", "turnId": "source-turn"})
+        assert json.loads(reply.content[0].text)["status"] == "registered"
+
+    await _serve_protocol(server, exercise)
+    assert captured == [{"thread_ref": "source-chat", "turn_ref": "source-turn"}]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("meta", [None, {}, {"threadId": "source-chat"},
+    {"turnId": "source-turn"}, {"threadId": "source-chat", "turnId": ""},
+    {"threadId": "source-chat", "turnId": " source-turn"},
+    {"threadId": "source-chat", "turnId": "source-turn\n"},
+    {"threadId": "source-chat", "turnId": "x" * 256},
+    {"threadId": "source-chat", "turnId": 1},
+    {"threadId": "source-chat", "turnId": "source-turn",
+     "x-codex-turn-metadata": {"turn_id": "other-turn"}},
+    {"threadId": "source-chat", "turnId": "source-turn",
+     "x-codex-turn-metadata": {"session_id": "other-chat"}}])
+async def test_inventory_register_without_runtime_turn_denies_before_private_transfer(monkeypatch, meta):
+    calls, _ = _inventory_native(monkeypatch)
+    server = mcp_server.create_server(codex_inventory=True, lifespan=mcp_server._codex_inventory_lifespan)
+
+    async def exercise(session):
+        reply = await session.call_tool("pallium_codex_bridge_inventory_register", {}, meta=meta)
+        assert json.loads(reply.content[0].text)["status"] == "unavailable"
+
+    await _serve_protocol(server, exercise)
+    assert "register" not in calls
 
 
 @pytest.mark.asyncio
@@ -829,10 +880,10 @@ async def test_inventory_native_failure_keeps_caller_tools_live_and_no_reconnect
                     await asyncio.sleep(.01)
         normal, optional = await asyncio.gather(
             session.call_tool("pallium_status", {}),
-            session.call_tool("pallium_codex_bridge_inventory_register", {}))
+            session.call_tool("pallium_codex_bridge_inventory_register", {}, meta=INVENTORY_META))
         assert not normal.isError and json.loads(normal.content[0].text)["status"] == "healthy"
         assert json.loads(optional.content[0].text)["status"] == "unavailable"
-        again = await session.call_tool("pallium_codex_bridge_inventory_register", {})
+        again = await session.call_tool("pallium_codex_bridge_inventory_register", {}, meta=INVENTORY_META)
         assert json.loads(again.content[0].text)["reason"] == "stopped"
         assert calls.count("connect") == 1
     await _serve_protocol(server, exercise)
@@ -846,14 +897,14 @@ async def test_inventory_concurrent_caller_is_busy_without_blocking_normal_tool(
     calls, disposed = _inventory_native(monkeypatch, block=release)
     server = mcp_server.create_server(codex_inventory=True, lifespan=mcp_server._codex_inventory_lifespan)
     async def exercise(session):
-        first = asyncio.create_task(session.call_tool("pallium_codex_bridge_inventory_register", {}))
+        first = asyncio.create_task(session.call_tool("pallium_codex_bridge_inventory_register", {}, meta=INVENTORY_META))
         try:
             with anyio.fail_after(1):
                 while "register" not in calls:
                     await asyncio.sleep(.01)
             normal, second = await asyncio.gather(
                 session.call_tool("pallium_status", {}),
-                session.call_tool("pallium_codex_bridge_inventory_register", {}))
+                session.call_tool("pallium_codex_bridge_inventory_register", {}, meta=INVENTORY_META))
             assert not normal.isError
             assert json.loads(second.content[0].text)["reason"] == "busy"
             assert calls.count("register") == 1
@@ -869,7 +920,7 @@ async def test_inventory_cancellation_shutdown_and_capability_loss_are_terminal(
     release = threading.Event()
     calls, disposed = _inventory_native(monkeypatch, block=release)
     worker = codex_desktop_bridge.InventoryWorker(Path("private-bootstrap"))
-    task = asyncio.create_task(worker.register())
+    task = asyncio.create_task(worker.register(INVENTORY_CALLER))
     try:
         with anyio.fail_after(1):
             while "register" not in calls:
@@ -880,7 +931,7 @@ async def test_inventory_cancellation_shutdown_and_capability_loss_are_terminal(
         before = time.monotonic()
         await worker.stop()
         assert time.monotonic() - before < .75 and not disposed.is_set()
-        assert (await worker.register())["reason"] == "stopped"
+        assert (await worker.register(INVENTORY_CALLER))["reason"] == "stopped"
     finally:
         release.set()
         await worker.stop()
@@ -888,11 +939,11 @@ async def test_inventory_cancellation_shutdown_and_capability_loss_are_terminal(
     calls, disposed = _inventory_native(monkeypatch)
     fresh = codex_desktop_bridge.InventoryWorker(Path("private-bootstrap"))
     try:
-        assert (await fresh.register())["status"] == "registered"
+        assert (await fresh.register(INVENTORY_CALLER))["status"] == "registered"
         monkeypatch.delenv("CODEX_APP_TOOLS_PIPE_PATH")
-        assert (await fresh.register())["reason"] == "stopped"
+        assert (await fresh.register(INVENTORY_CALLER))["reason"] == "stopped"
         monkeypatch.setenv("CODEX_APP_TOOLS_PIPE_PATH", "returned-capability")
-        assert (await fresh.register())["reason"] == "stopped"
+        assert (await fresh.register(INVENTORY_CALLER))["reason"] == "stopped"
     finally:
         await fresh.stop()
     assert disposed.is_set() and calls.count("register") == 1
@@ -915,7 +966,8 @@ _INVENTORY_STDIO_CHILD = dedent(r'''
     class NativeClient:
         def __init__(self, path, stop): pass
         def ready(self): return {"status": "ready", "reason": "ready"}
-        def register(self):
+        def register(self, metadata):
+            assert metadata == {"thread_ref": "source-chat", "turn_ref": "source-turn"}
             if os.environ["TEST_BRIDGE_FAILURE"] == "register":
                 raise RuntimeError("private-native-sentinel")
             return {"status": "registered", "reason": "ok", "connected": True,
@@ -971,7 +1023,7 @@ async def test_inventory_real_stdio_caller_and_eof_do_not_leak_native_capability
                 assert optional[0].inputSchema.get("properties", {}) == {}
                 normal, registered = await asyncio.gather(
                     session.call_tool("pallium_status", {}),
-                    session.call_tool(optional[0].name, {}))
+                    session.call_tool(optional[0].name, {}, meta=INVENTORY_META))
                 assert not normal.isError and not registered.isError
                 body = json.loads(registered.content[0].text)
                 assert body["status"] == ("registered" if failure == "none" else "unavailable")
@@ -992,7 +1044,8 @@ def test_optional_inventory_service_lifecycle_keeps_normal_http_healthy(monkeypa
             if fault == "stop":
                 raise RuntimeError("private-shutdown-sentinel")
 
-    def start():
+    def start(*, trial_relay, trial_registry):
+        assert trial_relay is not None and trial_registry is not None
         calls.append("start")
         if fault == "start":
             raise RuntimeError("private-startup-sentinel")

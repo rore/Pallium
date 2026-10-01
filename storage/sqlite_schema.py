@@ -556,6 +556,18 @@ class RelayCodexWakeReservationRecord(Base):
     correlated_claim_attempts = Column(Integer, nullable=True)
 
 
+class RelayCodexTrialRecord(Base):
+    __tablename__ = "relay_codex_trial"
+
+    recipient_endpoint_id = Column(String, primary_key=True)
+    trial_id = Column(String, nullable=False, unique=True)
+    session_ref = Column(String, nullable=False)
+    container_ref = Column(String, nullable=False)
+    scope_generation = Column(Integer, nullable=False)
+    delivery_id = Column(String, nullable=True, unique=True)
+    spent = Column(Integer, nullable=False, default=0)
+
+
 class RelaySessionRecord(Base):
     __tablename__ = "relay_sessions"
 
@@ -569,6 +581,7 @@ class RelaySessionRecord(Base):
     first_seen_at = Column(DateTime(timezone=True), nullable=False)
     last_seen_at = Column(DateTime(timezone=True), nullable=False)
     closed_at = Column(DateTime(timezone=True), nullable=True)
+    trial_enrolled = Column(Integer, nullable=False, default=0)
 
     __table_args__ = (
         UniqueConstraint("container_ref", "runtime", "session_ref", name="uq_relay_session_scope"),
@@ -687,6 +700,7 @@ class RelayEndpointRepairRecord(Base):
 
 _RELAY_TABLE_NAMES = frozenset({
     RelayCodexWakeReservationRecord.__tablename__,
+    RelayCodexTrialRecord.__tablename__,
     RelayCodexWakeStateRecord.__tablename__,
     RelaySessionRecord.__tablename__,
     RelaySessionWorkRefRecord.__tablename__,
@@ -1106,6 +1120,7 @@ class SQLiteSchemaMixin:
             )
             if include_relay:
                 self._ensure_relay_delivery_columns(self._engine)
+                self._ensure_relay_trial_column(self._engine)
             self._ensure_thread_processing_lease_nullable_thread_ref()
             self._ensure_thread_processing_lease_columns()
             self._ensure_source_item_columns()
@@ -1148,14 +1163,25 @@ class SQLiteSchemaMixin:
                     RelayEndpointRepairRecord.__table__,
                     RelayCodexWakeStateRecord.__table__,
                     RelayCodexWakeReservationRecord.__table__,
+                    RelayCodexTrialRecord.__table__,
                 ],
             )
             self._ensure_relay_delivery_columns(engine)
+            self._ensure_relay_trial_column(engine)
             with engine.begin() as connection:
                 for name, create_sql in self._INDEX_MIGRATIONS.items():
                     if name.startswith("idx_relay_"):
                         connection.execute(text(create_sql))
             self._optimize_query_planner_stats(engine)
+
+    @staticmethod
+    def _ensure_relay_trial_column(engine) -> None:
+        with engine.begin() as connection:
+            columns = {row[1] for row in connection.execute(text("PRAGMA table_info(relay_sessions)"))}
+            if "trial_enrolled" not in columns:
+                connection.execute(text(
+                    "ALTER TABLE relay_sessions ADD COLUMN trial_enrolled INTEGER NOT NULL DEFAULT 0"
+                ))
 
     @staticmethod
     def _ensure_relay_delivery_columns(engine) -> None:

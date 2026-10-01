@@ -25,6 +25,7 @@ from app import codex_bridge_pipe as bridge
 
 pytestmark = pytest.mark.slow
 native = pytest.mark.skipif(sys.platform != "win32", reason="Windows kernel pipe contract")
+INVENTORY_CALLER = {"thread_ref": "source-chat", "turn_ref": "source-turn"}
 
 
 @pytest.fixture
@@ -638,13 +639,14 @@ server.main()
 class FakeDesktop:
     """Isolated kernel byte pipe using this test process, never Desktop capability."""
 
-    def __init__(self, response=None):
+    def __init__(self, response=None, *, allow_call=False):
         self.w = bridge._native()
         self.stop = threading.Event()
         self.endpoint = rf"\\.\pipe\inventory-test-{secrets.token_hex(16)}"
         self.requests = []
         self.connections = 0
         self.response = response
+        self.allow_call = allow_call
         self.io = None
         self.thread = threading.Thread(target=self.run, daemon=True)
         handle = self.w.pipe.CreateNamedPipe(self.endpoint,
@@ -674,9 +676,14 @@ class FakeDesktop:
                         continue
                     raise
                 self.requests.append(request)
-                assert request == {"jsonrpc": "2.0", "id": len(self.requests), "method": "tools/list"}
-                value = {"jsonrpc": "2.0", "id": request["id"], "result": {
-                    "tools": [{"name": "example-β", "description": "private native content", "inputSchema": {"type": "object"}}]}}
+                assert request.get("jsonrpc") == "2.0" and request.get("id") == len(self.requests)
+                if request.get("method") == "tools/list":
+                    assert set(request) == {"jsonrpc", "id", "method"}
+                    value = {"jsonrpc": "2.0", "id": request["id"], "result": {
+                        "tools": [{"name": "example-β", "description": "private native content", "inputSchema": {"type": "object"}}]}}
+                else:
+                    assert self.allow_call and request.get("method") == "tools/call"
+                    value = {"jsonrpc": "2.0", "id": request["id"], "result": {"content": []}}
                 value = self.response(request, value) if self.response else value
                 if value is None:
                     continue
@@ -783,12 +790,13 @@ def test_policy_held_reader_excludes_bounded_writer_until_handle_cleanup(tmp_pat
 
 
 @contextmanager
-def inventory_running(tmp_path, monkeypatch, *, response=None, arm=True, changes=None):
+def inventory_running(tmp_path, monkeypatch, *, response=None, arm=True, changes=None,
+                      trial_relay=None, trial_registry=None):
     home = tmp_path / "inventory-home"
     directory = bridge.prepare_inventory_service(home)
     desktop = FakeDesktop(response)
     monkeypatch.setenv("CODEX_APP_TOOLS_PIPE_PATH", desktop.endpoint)
-    service = bridge.InventoryService(directory)
+    service = bridge.InventoryService(directory, trial_relay=trial_relay, trial_registry=trial_registry)
     client = None
     assert service.start() is service
     try:
@@ -920,7 +928,7 @@ def test_inventory_old_sealed_proof_only_suppresses_its_own_failure_context(tmp_
                          ids=["string", "null", "list", "boolean", "zero", "negative", "equal", "decreasing", "missing", "over-max"])
 def test_inventory_rejected_sequence_keeps_floor_and_live_custody(tmp_path, monkeypatch, sequence):
     with inventory_running(tmp_path, monkeypatch) as (service, client, _, desktop):
-        assert client.register()["status"] == "registered"
+        assert client.register(INVENTORY_CALLER)["status"] == "registered"
         custody = service.custody
         assert custody is not None and len(desktop.requests) == 1
         malformed = {"version": 1, "verb": "ready", "epoch": service.epoch, "sequence": sequence}
@@ -942,7 +950,7 @@ def test_inventory_rejected_sequence_keeps_floor_and_live_custody(tmp_path, monk
 @native
 def test_inventory_maximum_sequence_is_accepted_then_replay_is_rejected(tmp_path, monkeypatch):
     with inventory_running(tmp_path, monkeypatch) as (service, client, _, desktop):
-        assert client.register()["status"] == "registered"
+        assert client.register(INVENTORY_CALLER)["status"] == "registered"
         custody = service.custody
         maximum = 2**31 - 1
         accepted = inventory_raw_exchange(client, {"version": 1, "verb": "ready", "epoch": service.epoch,
@@ -958,7 +966,7 @@ def test_inventory_maximum_sequence_is_accepted_then_replay_is_rejected(tmp_path
 @native
 def test_inventory_invalid_body_does_not_consume_floor_and_error_echoes_candidate(tmp_path, monkeypatch):
     with inventory_running(tmp_path, monkeypatch) as (service, client, _, desktop):
-        assert client.register()["status"] == "registered"
+        assert client.register(INVENTORY_CALLER)["status"] == "registered"
         custody = service.custody
         malformed = {"version": 1, "verb": "unsupported", "epoch": service.epoch, "sequence": 100}
         rejected = inventory_raw_exchange(client, malformed)
@@ -972,7 +980,7 @@ def test_inventory_invalid_body_does_not_consume_floor_and_error_echoes_candidat
 @native
 def test_inventory_valid_request_error_echoes_candidate_without_advancing_floor(tmp_path, monkeypatch):
     with inventory_running(tmp_path, monkeypatch) as (service, client, _, desktop):
-        assert client.register()["status"] == "registered"
+        assert client.register(INVENTORY_CALLER)["status"] == "registered"
         custody = service.custody
         failed = inventory_raw_exchange(client, {"version": 1, "verb": "transfer", "epoch": service.epoch,
             "sequence": 4, "revision": 2, "endpoint": "\\\\.\\pipe\\unused"})
@@ -1023,7 +1031,7 @@ def test_inventory_native_transfer_failure_keeps_owner_live_and_fenced(tmp_path,
 
             monkeypatch.setattr(service.w.pipe, "GetNamedPipeServerProcessId", get_server_pid)
 
-        result = client.register()
+        result = client.register(INVENTORY_CALLER)
         assert result["status"] == "unavailable" and result["reason"] == "native-failed"
         assert service.thread.is_alive() and not service.stop_event.is_set() and not service.unresolved
         assert service.fenced and service.admitted is None and service.custody is None and service.desktop is None
@@ -1058,7 +1066,7 @@ def test_inventory_native_transfer_failure_keeps_owner_live_and_fenced(tmp_path,
 
         open_count, server_pid_count = len(opened), len(server_pid_calls)
         try:
-            retry = client.register()
+            retry = client.register(INVENTORY_CALLER)
         except bridge.ShadowUnavailable as exc:
             assert exc.category in {"transport-failed", "deadline"}
         else:
@@ -1083,14 +1091,14 @@ def test_inventory_ready_without_policy_and_cas_provisioning(tmp_path, monkeypat
         assert set(manifest) == {"version", "pid", "creation", "epoch", "pipe"}
         assert ready["source_pid"] == os.getpid() and ready["service_epoch"] == service.epoch
         assert not (directory / "policy.json").exists()
-        assert client.register()["reason"] == "policy-inactive"
+        assert client.register(INVENTORY_CALLER)["reason"] == "policy-inactive"
         assert desktop.connections == 0 and desktop.requests == []
         source = tmp_path / "inventory-policy.json"
         source.write_bytes(encode(inventory_policy(service)))
         bridge.provision_inventory_policy(source, directory.parent.parent)
         with pytest.raises(bridge.ShadowUnavailable, match="revision-conflict"):
             bridge.provision_inventory_policy(source, directory.parent.parent)
-        assert client.register()["status"] == "registered"
+        assert client.register(INVENTORY_CALLER)["status"] == "registered"
         assert len(desktop.requests) == 1
 
 
@@ -1117,7 +1125,7 @@ def test_inventory_invalid_authority_denies_before_endpoint_read_or_open(tmp_pat
             return original(name, *args)
 
         monkeypatch.setattr(os.environ, "get", env_get)
-        result = client.register()
+        result = client.register(INVENTORY_CALLER)
         assert result["status"] == "unavailable"
         assert reads == [] and desktop.connections == 0 and desktop.requests == []
 
@@ -1126,10 +1134,10 @@ def test_inventory_invalid_authority_denies_before_endpoint_read_or_open(tmp_pat
 def test_inventory_registration_idempotent_eof_preserves_service_custody(tmp_path, monkeypatch, inventory_caplog):
     with inventory_running(tmp_path, monkeypatch) as (service, client, directory, desktop):
         assert not inventory_failure_records(inventory_caplog)
-        assert client.register()["status"] == "registered"
+        assert client.register(INVENTORY_CALLER)["status"] == "registered"
         wait_until(lambda: desktop.connections == 1)
         handle = service.custody.handle
-        assert client.register()["status"] == "registered"
+        assert client.register(INVENTORY_CALLER)["status"] == "registered"
         assert desktop.connections == 1 and len(desktop.requests) == 1
         assert not inventory_failure_records(inventory_caplog)
         before = read_proof(directory)
@@ -1154,9 +1162,283 @@ def test_inventory_list_request_matches_desktop_optional_params_schema(tmp_path,
         return value
 
     with inventory_running(tmp_path, monkeypatch, response=current_desktop_schema) as (_, client, directory, desktop):
-        assert client.register()["status"] == "registered"
+        assert client.register(INVENTORY_CALLER)["status"] == "registered"
         assert desktop.requests == [{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}]
         assert read_proof(directory)["before_inventory_ok"]
+
+
+@native
+def test_inventory_private_admission_binds_caller_turn_to_retained_custody(tmp_path, monkeypatch):
+    with inventory_running(tmp_path, monkeypatch) as (service, client, _, desktop):
+        metadata = {"thread_ref": "source-chat", "turn_ref": "source-turn"}
+        assert client.register(metadata)["status"] == "registered"
+        assert service.caller == ("source-chat", "source-turn")
+        assert service.custody is not None
+        assert desktop.requests == [{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}]
+
+
+@native
+@pytest.mark.parametrize("changed", [
+    {"thread_ref": "other-chat", "turn_ref": "other-turn"},
+    {"thread_ref": "source-chat", "turn_ref": "other-turn"},
+])
+def test_inventory_changed_caller_pair_cannot_rebind_retained_custody(tmp_path, monkeypatch, changed):
+    with inventory_running(tmp_path, monkeypatch) as (service, client, _, desktop):
+        assert client.register(INVENTORY_CALLER)["status"] == "registered"
+        custody = service.custody
+        result = client.register(changed)
+        assert result["status"] == "unavailable" and result["reason"] == "peer-mismatch"
+        assert service.caller == ("source-chat", "source-turn")
+        assert service.custody is custody and len(desktop.requests) == 1
+
+
+@native
+@pytest.mark.parametrize("target_session", ["target", "source-chat"])
+def test_inventory_service_installs_exact_trial_authority_before_relay_send(
+    tmp_path, monkeypatch, client, target_session,
+):
+    from core.codex_wake import CodexWakeRegistry
+    from core.relay import RelayService
+
+    storage = client.app.state.pallium_service._storage
+    relay = RelayService(storage)
+    registry = CodexWakeRegistry(relay_service=relay)
+    assert registry.initialize(old_owner_drained=True)
+    scope = {"container_ref": "git:example.test/service-trial"}
+    endpoint = relay.turn(runtime="codex", session_ref=target_session, **scope)["session"]["endpoint_id"]
+    denied = threading.Event()
+    original_warning = bridge._log.warning
+    def note_warning(message, *args, **kwargs):
+        if message == "codex_trial_install outcome=denied":
+            denied.set()
+        original_warning(message, *args, **kwargs)
+    monkeypatch.setattr(bridge._log, "warning", note_warning)
+    with inventory_running(
+        tmp_path, monkeypatch, trial_relay=relay, trial_registry=registry,
+    ) as (service, native_client, directory, desktop):
+        assert native_client.register(INVENTORY_CALLER)["status"] == "registered"
+        request = {
+            "version": 1, "action": "codex-unloaded-payload-trial", "service_epoch": service.epoch,
+            "revision": service.policy.revision, "source_thread_ref": INVENTORY_CALLER["thread_ref"],
+            "endpoint_id": endpoint, "session_ref": target_session, "container_ref": scope["container_ref"],
+            "trial_id": "fixed-trial",
+        }
+        bridge._create_phase(service.w, directory / "trial-request.json", service.sid, encode(request))
+        if target_session == "source-chat":
+            wait_until(lambda: denied.is_set() or (directory / "trial-installed.json").exists())
+            assert denied.is_set()
+            assert not (directory / "trial-installed.json").exists()
+            assert not relay.codex_trial_native_suppressed(endpoint)
+        else:
+            wait_until(lambda: (directory / "trial-installed.json").exists())
+            assert relay.codex_trial_native_suppressed(endpoint)
+        assert registry.snapshot(endpoint) is None
+        assert desktop.requests == [{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}]
+
+
+@pytest.mark.parametrize("change,accepted", [
+    ("valid", True), ("missing", False), ("wrong-namespace", False),
+    ("wrong-name", False), ("extra-required", False), ("wrong-type", False),
+    ("duplicate", False), ("ambiguous-required", False),
+])
+def test_inventory_owner_tool_descriptor_requires_exact_reviewed_shape(change, accepted):
+    descriptor = {"namespace": "codex_app", "name": "send_message_to_thread", "inputSchema": {
+        "type": "object", "properties": {"threadId": {"type": "string"}, "prompt": {"type": "string"}},
+        "required": ["threadId", "prompt"],
+    }}
+    tools = [descriptor]
+    if change == "missing":
+        tools = []
+    elif change == "wrong-namespace":
+        descriptor["namespace"] = "other"
+    elif change == "wrong-name":
+        descriptor["name"] = "other"
+    elif change == "extra-required":
+        descriptor["inputSchema"]["required"].append("hostId")
+    elif change == "wrong-type":
+        descriptor["inputSchema"]["properties"]["threadId"]["type"] = "integer"
+    elif change == "duplicate":
+        tools.append(dict(descriptor))
+    elif change == "ambiguous-required":
+        descriptor["inputSchema"]["required"] = ["threadId", "threadId", "prompt"]
+    assert bridge._owner_tool_schema_valid(tools) is accepted
+
+
+@native
+@pytest.mark.parametrize("owner_reply, expected_status", [
+    ("success", "submitted"),
+    ("error", "inconclusive"),
+    ("tool-error", "inconclusive"),
+    ("wrong-id", "inconclusive"),
+    ("missing-before-descriptor", "denied"),
+    ("spend-denied", "denied"),
+    ("write-after-send-failure", "inconclusive"),
+    ("source-exit-before-write", "inconclusive"),
+])
+def test_exclusive_trial_uses_one_retained_desktop_owner_call_while_source_alive(
+    tmp_path, monkeypatch, client, owner_reply, expected_status,
+):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from app.dependencies import build_router
+    from core.codex_wake import CodexWakeRegistry
+    from core.relay import RelayService
+
+    storage = client.app.state.pallium_service._storage
+    relay = RelayService(storage)
+    registry = CodexWakeRegistry(relay_service=relay)
+    assert registry.initialize(old_owner_drained=True)
+    scope = {"container_ref": "git:example.test/owner-action"}
+    relay.turn(runtime="codex", session_ref="sender", **scope)
+    endpoint = relay.turn(runtime="codex", session_ref="target", **scope)["session"]["endpoint_id"]
+    app = FastAPI()
+    app.include_router(build_router(client.app.state.pallium_service, relay_storage=storage,
+                                    codex_wake_registry=registry))
+    route = TestClient(app)
+    schema = {"type": "object", "properties": {
+        "threadId": {"type": "string"}, "prompt": {"type": "string"},
+    }, "required": ["threadId", "prompt"]}
+
+    def desktop_response(request, value):
+        if request["method"] == "tools/list":
+            value["result"]["tools"] = ([] if owner_reply == "missing-before-descriptor"
+                else [{"namespace": "codex_app", "name": "send_message_to_thread",
+                       "inputSchema": schema}])
+        elif owner_reply == "error":
+            value = {"jsonrpc": "2.0", "id": request["id"], "error": {
+                "code": -32000, "message": "private native error"}}
+        elif owner_reply == "tool-error":
+            value["result"] = {"isError": True, "content": [{"type": "text", "text": "private native error"}]}
+        elif owner_reply == "wrong-id":
+            value["id"] = request["id"] + 1
+        return value
+
+    directory = bridge.prepare_inventory_service(tmp_path / "owner-home")
+    desktop = FakeDesktop(desktop_response, allow_call=True)
+    service = bridge.InventoryService(directory, trial_relay=relay, trial_registry=registry)
+    child = None
+    assert service.start() is service
+    try:
+        wait_until(lambda: (directory / "active.json").exists())
+        child_home = tmp_path / "child-home"
+        child_home.mkdir()
+        env = os.environ.copy()
+        env.update({"CODEX_APP_TOOLS_PIPE_PATH": desktop.endpoint, "USERPROFILE": str(child_home)})
+        code = """import json,sys,threading
+from pathlib import Path
+from app.codex_bridge_pipe import NativeInventoryClient
+c=NativeInventoryClient(Path(sys.argv[1]),threading.Event())
+print(json.dumps(c.ready()),flush=True)
+sys.stdin.readline()
+print(json.dumps(c.register({"thread_ref":"source-chat","turn_ref":"source-turn"})),flush=True)
+sys.stdin.readline()
+c.dispose()
+"""
+        child = subprocess.Popen([sys.executable, "-c", code, str(directory / "active.json")],
+            cwd=Path(__file__).resolve().parents[1], env=env, stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8")
+        assert json.loads(child.stdout.readline())["status"] == "ready"
+        arm_inventory(directory, inventory_policy(service, service.source))
+        child.stdin.write("register\n")
+        child.stdin.flush()
+        assert json.loads(child.stdout.readline())["status"] == "registered"
+        assert service.owner_tool_before is (owner_reply != "missing-before-descriptor")
+        bridge._create_phase(service.w, directory / "trial-request.json", service.sid, encode({
+            "version": 1, "action": "codex-unloaded-payload-trial", "service_epoch": service.epoch,
+            "revision": service.policy.revision, "source_thread_ref": "source-chat",
+            "endpoint_id": endpoint, "session_ref": "target", "container_ref": scope["container_ref"],
+            "trial_id": "owner-trial",
+        }))
+        wait_until(lambda: (directory / "trial-installed.json").exists())
+        with monkeypatch.context() as guard:
+            guard.setattr("app.dependencies.schedule_codex_relay_wake",
+                          lambda *_a, **_k: pytest.fail("trial reached native wake launcher"))
+            sent = route.post("/relay/messages", json={
+                "sender_runtime": "codex", "sender_session_ref": "sender",
+                "recipient": endpoint, "payload": "private payload never sent to Desktop", **scope,
+            })
+        assert sent.status_code == 200
+        delivery_id = sent.json()["deliveries"][0]["delivery_id"]
+        if owner_reply == "spend-denied":
+            monkeypatch.setattr(relay, "spend_codex_trial", lambda **_kwargs: False)
+        if owner_reply == "write-after-send-failure":
+            original_write = service.custody.write
+            def write_then_fail(value, deadline):
+                original_write(value, deadline)
+                if value.get("method") == "tools/call":
+                    raise bridge.ShadowUnavailable("transport-failed")
+            monkeypatch.setattr(service.custody, "write", write_then_fail)
+        if owner_reply == "source-exit-before-write":
+            original_ready = relay.codex_trial_action_ready
+            def source_exits_after_spend(**kwargs):
+                child.stdin.write("exit\n")
+                child.stdin.flush()
+                assert child.wait(timeout=3) == 0
+                return original_ready(**kwargs)
+            monkeypatch.setattr(relay, "codex_trial_action_ready", source_exits_after_spend)
+        bridge._create_phase(service.w, directory / "trial-action.json", service.sid, encode({
+            "version": 1, "action": "codex-unloaded-payload-owner-call", "service_epoch": service.epoch,
+            "revision": service.policy.revision, "source_thread_ref": "source-chat",
+            "endpoint_id": endpoint, "trial_id": "owner-trial", "delivery_id": delivery_id,
+            "expires_at": (datetime.now(timezone.utc) + timedelta(seconds=180)).isoformat(),
+        }))
+        wait_until(lambda: (directory / "trial-bound.json").exists())
+        wait_until(lambda: (directory / "trial-outcome.json").exists(), timeout=3)
+        if owner_reply == "source-exit-before-write":
+            assert child.poll() == 0
+        else:
+            assert child.poll() is None
+            assert not (directory / "proof-exit.json").exists()
+            assert not (directory / "proof-after.json").exists()
+        outcome = json.loads((directory / "trial-outcome.json").read_text(encoding="utf-8"))
+        if owner_reply == "source-exit-before-write":
+            monkeypatch.setattr(relay, "codex_trial_action_ready", original_ready)
+        assert set(outcome) == {"version", "service_epoch", "revision", "status"}
+        assert "private native error" not in repr(outcome)
+        assert outcome["status"] == expected_status
+        assert relay.codex_trial_native_suppressed(endpoint)
+        assert relay.codex_trial_action_ready(endpoint_id=endpoint, trial_id="owner-trial",
+                                             delivery_id=delivery_id) is (expected_status not in ("denied",))
+        no_call = expected_status == "denied" or owner_reply == "source-exit-before-write"
+        assert desktop.connections == 1
+        assert len([request for request in desktop.requests if request["method"] == "tools/call"]) == (
+            0 if no_call else 1)
+        if owner_reply != "source-exit-before-write":
+            assert len(desktop.requests) == (1 if no_call else 2)
+        service._maybe_execute_trial()
+        assert len([request for request in desktop.requests if request["method"] == "tools/call"]) == (
+            0 if no_call else 1)
+        if no_call:
+            return
+        request = desktop.requests[1]
+        assert request["method"] == "tools/call" and request["id"] == 2
+        params = request["params"]
+        assert set(params) == {"namespace", "tool", "arguments", "callerSource", "callId", "threadId", "turnId"}
+        assert params["namespace"] == "codex_app" and params["tool"] == "send_message_to_thread"
+        assert params["callerSource"] == "codex" and params["threadId"] == "source-chat"
+        assert params["turnId"] == "source-turn" and isinstance(params["callId"], str) and params["callId"]
+        assert params["arguments"]["threadId"] == "target"
+        assert delivery_id in params["arguments"]["prompt"]
+        assert "private payload" not in repr(request)
+        assert route.get(f"/relay/messages/{sent.json()['message_id']}", params=scope).json()["deliveries"][0]["state"] == "pending"
+    finally:
+        if child is not None and child.poll() is None:
+            child.kill()
+            child.wait(timeout=3)
+        service.stop()
+        desktop.close()
+
+
+@native
+@pytest.mark.parametrize("metadata", [None, {}, {"thread_ref": "source-chat"},
+    {"thread_ref": "source-chat", "turn_ref": ""},
+    {"thread_ref": "source-chat", "turn_ref": "source-turn", "extra": "x"}])
+def test_inventory_invalid_private_caller_pair_denies_before_endpoint_transfer(tmp_path, monkeypatch, metadata):
+    with inventory_running(tmp_path, monkeypatch) as (service, client, _, desktop):
+        with pytest.raises(bridge.ShadowUnavailable, match="invalid-message"):
+            client.register(metadata)
+        assert service.custody is None and service.caller is None
+        assert desktop.requests == []
 
 
 @native
@@ -1261,7 +1543,7 @@ def test_inventory_transfer_stage_diagnostics_from_private_caller(
                 return original_create(path_owner, path, sid, data)
             monkeypatch.setattr(bridge, "_create_phase", fail_before)
 
-        result = client.register()
+        result = client.register(INVENTORY_CALLER)
         assert result["status"] == "unavailable" and result["reason"] == expected_reason
         assert service.thread.is_alive() and not service.stop_event.is_set() and not service.unresolved
         assert service.fenced and service.admitted is None and service.custody is None and service.desktop is None
@@ -1332,7 +1614,7 @@ def test_inventory_validation_diagnostic_identifies_private_caller_rejection(
         return value
 
     with inventory_running(tmp_path, monkeypatch, response=response) as (service, client, directory, desktop):
-        result = client.register()
+        result = client.register(INVENTORY_CALLER)
         assert result["status"] == "unavailable" and result["reason"] == "native-failed"
         assert not result["connected"] and not result["inventory_ok"]
         assert service.fenced and service.custody is None and service.desktop is None
@@ -1348,7 +1630,7 @@ def test_inventory_validation_diagnostic_identifies_private_caller_rejection(
 @native
 def test_inventory_validation_diagnostic_valid_private_caller_response(tmp_path, monkeypatch, inventory_caplog):
     with inventory_running(tmp_path, monkeypatch) as (service, client, directory, desktop):
-        result = client.register()
+        result = client.register(INVENTORY_CALLER)
         assert result["status"] == "registered" and result["inventory_ok"]
         assert len(desktop.requests) == 1
         assert read_proof(directory)["before_inventory_ok"]
@@ -1399,7 +1681,7 @@ def test_inventory_desktop_error_envelope_classification_from_private_caller(
         return result
 
     with inventory_running(tmp_path, monkeypatch, response=response) as (service, client, directory, desktop):
-        result = client.register()
+        result = client.register(INVENTORY_CALLER)
         assert result["status"] == "unavailable" and result["reason"] == "native-failed"
         assert not result["connected"] and not result["inventory_ok"]
         assert service.fenced and service.custody is None and service.desktop is None
@@ -1437,7 +1719,7 @@ def test_inventory_diagnostic_root_handler_cannot_leak_native_exception(
         handler = logging.StreamHandler(BrokenStream())
         root.addHandler(handler)
         try:
-            result = client.register()
+            result = client.register(INVENTORY_CALLER)
             assert result["status"] == "unavailable" and result["reason"] == "native-failed"
             assert service.thread.is_alive() and service.fenced and not service.unresolved
             assert service.custody is None and service.admitted is None and service.desktop is None
@@ -1468,7 +1750,7 @@ def test_inventory_transfer_keeps_primary_failure_when_logger_raises(
 
         monkeypatch.setattr(service.w.pipe, "GetNamedPipeServerProcessId", fail_server_pid)
         monkeypatch.setattr(bridge._log, "warning", fail_logger)
-        result = client.register()
+        result = client.register(INVENTORY_CALLER)
         assert result["status"] == "unavailable" and result["reason"] == "native-failed"
         assert service._failure_diagnostic == ("native-peer", "unexpected")
         assert service.thread.is_alive() and service.fenced and not service.unresolved
@@ -1498,7 +1780,7 @@ def test_inventory_primary_diagnostic_survives_secondary_failure_proof_error(
 
         monkeypatch.setattr(service.w.pipe, "GetNamedPipeServerProcessId", fail_server_pid)
         monkeypatch.setattr(bridge, "_create_phase", fail_failure_proof)
-        result = client.register()
+        result = client.register(INVENTORY_CALLER)
         assert result["status"] == "unavailable" and result["reason"] == "native-failed"
         assert service._failure_diagnostic == ("native-peer", "unexpected")
         assert service.thread.is_alive() and service.fenced and not service.unresolved
@@ -1532,7 +1814,7 @@ def test_inventory_primary_diagnostic_survives_secondary_drop_failure(tmp_path, 
         monkeypatch.setattr(service.w.pipe, "GetNamedPipeServerProcessId", fail_server_pid)
         monkeypatch.setattr(service, "_drop", fail_first_drop)
         try:
-            result = client.register()
+            result = client.register(INVENTORY_CALLER)
         except bridge.ShadowUnavailable as exc:
             assert exc.category in {"peer-gone", "transport-failed", "deadline"}
         else:
@@ -1576,16 +1858,16 @@ def test_inventory_native_malformed_timeout_fences_custody(tmp_path, monkeypatch
     with inventory_running(tmp_path, monkeypatch, response=bad) as (service, client, _, desktop):
         if fault == "timeout":
             with pytest.raises(bridge.ShadowUnavailable):
-                client.register()
+                client.register(INVENTORY_CALLER)
             result = bridge._inventory_public("unavailable", "timeout")
             wait_until(lambda: service.custody is None)
         else:
-            result = client.register()
+            result = client.register(INVENTORY_CALLER)
         assert result["status"] == "unavailable" and not result["connected"]
         assert service.custody is None
         if fault != "timeout":
             try:
-                assert client.register()["status"] == "unavailable"
+                assert client.register(INVENTORY_CALLER)["status"] == "unavailable"
             except bridge.ShadowUnavailable as exc:
                 assert exc.category in {"transport-failed", "deadline", "stopped"}
         assert service.fenced
@@ -1597,7 +1879,7 @@ def test_inventory_native_malformed_timeout_fences_custody(tmp_path, monkeypatch
 @pytest.mark.parametrize("change", ["revoke", "expiry", "revision", "version"])
 def test_inventory_runtime_authority_loss_closes_without_replacement(tmp_path, monkeypatch, change):
     with inventory_running(tmp_path, monkeypatch) as (service, client, directory, desktop):
-        assert client.register()["status"] == "registered"
+        assert client.register(INVENTORY_CALLER)["status"] == "registered"
         policy_value = json.loads((directory / "policy.json").read_bytes())
         if change == "revoke":
             policy_value.update(revoked=True, enabled=False, revision=2)
@@ -1613,7 +1895,7 @@ def test_inventory_runtime_authority_loss_closes_without_replacement(tmp_path, m
         proof = read_proof(directory)
         assert not proof["after_inventory_ok"]
         try:
-            assert client.register()["status"] == "unavailable"
+            assert client.register(INVENTORY_CALLER)["status"] == "unavailable"
         except bridge.ShadowUnavailable:
             assert service.fenced and service.custody is None
         assert desktop.connections <= 1 and len(desktop.requests) == 1
@@ -1716,7 +1998,7 @@ def test_inventory_loss_at_first_observation_entry_never_publishes_before_witnes
             return original(deadline)
 
         monkeypatch.setattr(service, "_observe", lose_authority)
-        result = client.register()
+        result = client.register(INVENTORY_CALLER)
         assert result["status"] == "unavailable"
         proof = read_proof(directory)
         assert not proof["before_inventory_ok"] and not proof["after_inventory_ok"]
@@ -1797,7 +2079,8 @@ server.main()
                     wait_until(lambda: service.ready_announced)
                     arm_inventory(directory, inventory_policy(service, service.source))
                     registered, ordinary = await asyncio.wait_for(asyncio.gather(
-                        session.call_tool("pallium_codex_bridge_inventory_register", {}),
+                        session.call_tool("pallium_codex_bridge_inventory_register", {},
+                                          meta={"threadId": "source-chat", "turnId": "source-turn"}),
                         session.call_tool("pallium_status", {})), 5)
                     assert not registered.isError and not ordinary.isError
                     result = json.loads(registered.content[0].text)
@@ -1917,7 +2200,7 @@ from app.codex_bridge_pipe import NativeInventoryClient
 c=NativeInventoryClient(Path(sys.argv[1]),threading.Event())
 print(json.dumps(c.ready()),flush=True)
 sys.stdin.readline()
-print(json.dumps(c.register()),flush=True)
+print(json.dumps(c.register({"thread_ref":"source-chat","turn_ref":"source-turn"})),flush=True)
 sys.stdin.readline()
 c.dispose()
 """
@@ -2005,7 +2288,7 @@ c.dispose()
                     return result
 
                 monkeypatch.setattr(service, "_authorize", fail_new_final_authority)
-                result = replacement.register()
+                result = replacement.register(INVENTORY_CALLER)
                 assert result["status"] == "unavailable" and result["reason"] == "policy-changed"
                 assert len(desktop.requests) == 2 and desktop.connections == 1
                 records = inventory_failure_records(caplog)
@@ -2221,7 +2504,7 @@ def test_inventory_failed_revoke_cas_preserves_old_authority_and_reports_failure
 @native
 def test_inventory_competing_authenticated_child_cannot_replace_live_custody(tmp_path, monkeypatch):
     with inventory_running(tmp_path, monkeypatch) as (service, client, directory, desktop):
-        assert client.register()["status"] == "registered"
+        assert client.register(INVENTORY_CALLER)["status"] == "registered"
         source = (service.source.pid, service.source.creation)
         connection = service.custody.handle
         client.dispose()
@@ -2246,7 +2529,7 @@ finally: c.dispose()
 @pytest.mark.parametrize("release", ["revoked", "expiry"])
 def test_inventory_released_revision_requires_owned_phase_cleanup_before_rearm(tmp_path, monkeypatch, release):
     with inventory_running(tmp_path, monkeypatch) as (service, client, directory, desktop):
-        assert client.register()["status"] == "registered"
+        assert client.register(INVENTORY_CALLER)["status"] == "registered"
         if release == "revoked":
             previous = bridge._json(bridge._read_private(service.w, directory / "policy.json", service.sid))
             arm_inventory(directory, {**previous, "revision": 2, "revoked": True})
@@ -2266,14 +2549,14 @@ def test_inventory_released_revision_requires_owned_phase_cleanup_before_rearm(t
             replacement = bridge.NativeInventoryClient(directory / "active.json", threading.Event())
             assert replacement.ready()["status"] == "ready"
             arm_inventory(directory, inventory_policy(service, service.source, revision=revision))
-            assert replacement.register()["reason"] == "busy"
+            assert replacement.register(INVENTORY_CALLER)["reason"] == "busy"
             assert replacement_desktop.connections == 0 and replacement_desktop.requests == []
             # Explicit operator-owned cleanup, only this isolated completed trial's known evidence.
             for phase in bridge._PROOF_PHASES:
                 path = directory / f"proof-{phase}.json"
                 if path.exists():
                     path.unlink()
-            assert replacement.register()["status"] == "registered"
+            assert replacement.register(INVENTORY_CALLER)["status"] == "registered"
             assert service.policy.revision == revision and len(replacement_desktop.requests) == 1
             assert replacement_desktop.connections == 1 and desktop.connections == 1
         finally:
@@ -2312,7 +2595,7 @@ def test_inventory_prior_phase_presence_denies_before_capability_read(tmp_path, 
                 pytest.fail("capability read despite prior phase or inconclusive inspection")
             return original_get(name, *args)
         monkeypatch.setattr(os.environ, "get", env_get)
-        result = client.register()
+        result = client.register(INVENTORY_CALLER)
         assert result["status"] == "unavailable"
         if artifact in {"directory", "dangling-reparse-attributes"}:
             assert result["reason"] == "busy"
@@ -2349,7 +2632,7 @@ def exit_on_signal():
     sys.stdin.readline()
     os._exit(0)
 threading.Thread(target=exit_on_signal,daemon=True).start()
-c.register()
+c.register({"thread_ref":"source-chat","turn_ref":"source-turn"})
 """
         child = subprocess.Popen([sys.executable, "-c", code, str(directory / "active.json")],
             cwd=Path(__file__).resolve().parents[1], env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,

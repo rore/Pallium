@@ -1666,6 +1666,10 @@ def test_recovery_log_correlates_without_free_form_identifiers(
     scheduled = []
 
     class Relay:
+        def codex_trial_native_suppressed(self, endpoint_id):
+            assert endpoint_id == candidate["recipient_endpoint_id"]
+            return False
+
         def wake_candidates(self, delivery_id=None, include_coalesced=False):
             if delivery_id is None:
                 assert include_coalesced is True
@@ -3252,6 +3256,269 @@ def test_idempotent_send_schedules_one_codex_wake(client, monkeypatch) -> None:
     assert codex_wake._scheduled_delivery_ids == {
         first.json()["deliveries"][0]["delivery_id"]
     }
+
+
+@pytest.mark.parametrize("authority_state", ["valid", "missing-row", "malformed-row", "read-error"])
+def test_exclusive_trial_endpoint_suppresses_send_and_recovery_native_wake(client, monkeypatch, authority_state) -> None:
+    from app.dependencies import recover_expired_relay_wakes
+
+    storage = client.app.state.pallium_service._storage
+    registry = _sqlite_wake_registry(storage)
+    app = FastAPI()
+    app.include_router(build_router(
+        client.app.state.pallium_service,
+        relay_storage=storage,
+        codex_wake_registry=registry,
+    ))
+    route = TestClient(app)
+    scope = {"container_ref": "git:example.test/exclusive-trial"}
+    for runtime, session in (("claude-code", "sender"), ("codex", "trial"), ("codex", "ordinary")):
+        assert route.post("/relay/turn", json={
+            "runtime": runtime, "session_ref": session, **scope,
+        }).status_code == 200
+    trial_endpoint = route.post("/relay/turn", json={
+        "runtime": "codex", "session_ref": "trial", **scope,
+    }).json()["session"]["endpoint_id"]
+    relay = RelayService(storage)
+    assert relay.enroll_codex_trial(
+        endpoint_id=trial_endpoint, session_ref="trial",
+        container_ref=scope["container_ref"], trial_id="fixed-trial",
+    ) is True
+    assert relay.codex_trial_native_suppressed(trial_endpoint) is True
+    if authority_state in {"missing-row", "malformed-row"}:
+        statement = (
+            "DELETE FROM relay_codex_trial WHERE recipient_endpoint_id = :endpoint"
+            if authority_state == "missing-row" else
+            "UPDATE relay_codex_trial SET spent = 9 WHERE recipient_endpoint_id = :endpoint"
+        )
+        with storage._begin_relay_immediate() as db:
+            db.execute(text(statement), {"endpoint": trial_endpoint})
+    elif authority_state == "read-error":
+        def failed_authority_read(_self, _endpoint):
+            raise OSError("private storage detail")
+        monkeypatch.setattr(RelayService, "codex_trial_native_suppressed", failed_authority_read)
+    with patch("app.dependencies.schedule_codex_relay_wake") as schedule:
+        sent = route.post("/relay/messages", json={
+            "sender_runtime": "claude-code", "sender_session_ref": "sender",
+            "recipient": trial_endpoint, "payload": "pending trial payload", **scope,
+        })
+        assert sent.status_code == 200
+        assert sent.json()["deliveries"][0]["state"] == "pending"
+        recover_expired_relay_wakes(relay, ClaudeWakeRegistry(), registry)
+        schedule.assert_not_called()
+
+        if authority_state != "read-error":
+            ordinary = route.post("/relay/messages", json={
+                "sender_runtime": "claude-code", "sender_session_ref": "sender",
+                "recipient": "codex:ordinary", "payload": "ordinary payload", **scope,
+            })
+            assert ordinary.status_code == 200
+            schedule.assert_called_once()
+    readback = route.get(f"/relay/messages/{sent.json()['message_id']}", params=scope)
+    assert readback.status_code == 200
+    assert readback.json()["deliveries"][0]["state"] == "pending"
+
+
+def test_exclusive_trial_install_waits_for_inflight_native_reservation(client, monkeypatch) -> None:
+    storage = client.app.state.pallium_service._storage
+    relay = RelayService(storage)
+    registry = _sqlite_wake_registry(storage)
+    app = FastAPI()
+    app.include_router(build_router(client.app.state.pallium_service, relay_storage=storage,
+                                    codex_wake_registry=registry))
+    route = TestClient(app)
+    scope = {"container_ref": "git:example.test/trial-install-race"}
+    for runtime, session in (("claude-code", "sender"), ("codex", "target")):
+        assert route.post("/relay/turn", json={
+            "runtime": runtime, "session_ref": session, **scope,
+        }).status_code == 200
+    endpoint = relay.turn(runtime="codex", session_ref="target", **scope)["session"]["endpoint_id"]
+    scheduled = threading.Event()
+    release = threading.Event()
+    attempting_install = threading.Event()
+    installed = threading.Event()
+    outcome = {}
+
+    def reserve_then_hold(result, _scope, **_kwargs):
+        delivery = result["deliveries"][0]
+        assert registry.reserve(
+            recipient_endpoint_id=endpoint, delivery_id=delivery["delivery_id"],
+            session_ref="target", container_ref=scope["container_ref"],
+        ) is not None
+        scheduled.set()
+        assert release.wait(3)
+
+    monkeypatch.setattr("app.dependencies.schedule_codex_relay_wake", reserve_then_hold)
+
+    def send():
+        outcome["send"] = route.post("/relay/messages", json={
+            "sender_runtime": "claude-code", "sender_session_ref": "sender",
+            "recipient": endpoint, "payload": "pending exact payload", **scope,
+        })
+
+    def install():
+        attempting_install.set()
+        with registry._lock:
+            outcome["install"] = relay.enroll_codex_trial(
+                endpoint_id=endpoint, session_ref="target",
+                container_ref=scope["container_ref"], trial_id="single-trial",
+            )
+        installed.set()
+
+    sender = threading.Thread(target=send)
+    installer = threading.Thread(target=install)
+    try:
+        sender.start()
+        assert scheduled.wait(3)
+        installer.start()
+        assert attempting_install.wait(3)
+        assert not installed.wait(.05)
+    finally:
+        release.set()
+        sender.join(timeout=3)
+        if installer.ident is not None:
+            installer.join(timeout=3)
+    assert not sender.is_alive() and not installer.is_alive()
+    assert outcome["send"].status_code == 200
+    assert outcome["install"] is False
+    assert registry.snapshot(endpoint) is not None
+    assert not relay.codex_trial_native_suppressed(endpoint)
+
+
+@pytest.mark.parametrize("durable", [False, True])
+def test_exclusive_trial_binding_and_spend_survive_restart_and_later_delivery(client, durable) -> None:
+    storage = client.app.state.pallium_service._storage
+    registry = _sqlite_wake_registry(storage)
+    app = FastAPI()
+    app.include_router(build_router(
+        client.app.state.pallium_service, relay_storage=storage,
+        codex_wake_registry=registry,
+    ))
+    route = TestClient(app)
+    scope = {"container_ref": "git:example.test/trial-spent"}
+    for runtime, session in (("claude-code", "sender"), ("codex", "target")):
+        assert route.post("/relay/turn", json={"runtime": runtime, "session_ref": session, **scope}).status_code == 200
+    endpoint = route.post("/relay/turn", json={
+        "runtime": "codex", "session_ref": "target", **scope,
+    }).json()["session"]["endpoint_id"]
+    relay = RelayService(storage)
+    assert relay.enroll_codex_trial(
+        endpoint_id=endpoint, session_ref="target", container_ref=scope["container_ref"],
+        trial_id="one-trial",
+    )
+    with patch("app.dependencies.schedule_codex_relay_wake") as schedule:
+        sent = route.post("/relay/messages", json={
+            "sender_runtime": "claude-code", "sender_session_ref": "sender",
+            "recipient": endpoint, "payload": "pending exact payload", **scope,
+            **({"expires_in_seconds": None} if durable else {}),
+        })
+        assert sent.status_code == 200
+        schedule.assert_not_called()
+    delivery_id = sent.json()["deliveries"][0]["delivery_id"]
+    assert relay.bind_codex_trial_delivery(endpoint_id=endpoint, trial_id="one-trial", delivery_id=delivery_id)
+    assert relay.spend_codex_trial(endpoint_id=endpoint, trial_id="one-trial", delivery_id=delivery_id)
+
+    restarted = RelayService(storage)
+    assert restarted.codex_trial_native_suppressed(endpoint)
+    assert not restarted.spend_codex_trial(endpoint_id=endpoint, trial_id="one-trial", delivery_id=delivery_id)
+    later = route.post("/relay/messages", json={
+        "sender_runtime": "claude-code", "sender_session_ref": "sender",
+        "recipient": endpoint, "payload": "later payload", **scope,
+    })
+    assert later.status_code == 200
+    assert not restarted.bind_codex_trial_delivery(
+        endpoint_id=endpoint, trial_id="one-trial",
+        delivery_id=later.json()["deliveries"][0]["delivery_id"],
+    )
+
+
+@pytest.mark.parametrize("changed_before", ["bind", "spend"])
+@pytest.mark.parametrize("change", ["closed", "expired"])
+def test_exclusive_trial_rejects_stale_endpoint_or_delivery_before_native_action(
+    client, changed_before, change,
+) -> None:
+    storage = client.app.state.pallium_service._storage
+    relay = RelayService(storage)
+    app = FastAPI()
+    app.include_router(build_router(client.app.state.pallium_service, relay_storage=storage))
+    route = TestClient(app)
+    scope = {"container_ref": "git:example.test/trial-closed"}
+    for runtime, session in (("claude-code", "sender"), ("codex", "target")):
+        assert route.post("/relay/turn", json={"runtime": runtime, "session_ref": session, **scope}).status_code == 200
+    endpoint = route.post("/relay/turn", json={
+        "runtime": "codex", "session_ref": "target", **scope,
+    }).json()["session"]["endpoint_id"]
+    assert relay.enroll_codex_trial(
+        endpoint_id=endpoint, session_ref="target", container_ref=scope["container_ref"],
+        trial_id="closed-trial",
+    )
+    sent = route.post("/relay/messages", json={
+        "sender_runtime": "claude-code", "sender_session_ref": "sender",
+        "recipient": endpoint, "payload": "pending trial", **scope,
+    })
+    assert sent.status_code == 200
+    delivery_id = sent.json()["deliveries"][0]["delivery_id"]
+    if changed_before == "spend":
+        assert relay.bind_codex_trial_delivery(
+            endpoint_id=endpoint, trial_id="closed-trial", delivery_id=delivery_id,
+        )
+    if change == "closed":
+        assert route.post("/relay/sessions/close", json={
+            "runtime": "codex", "session_ref": "target", **scope,
+        }).status_code == 200
+    else:
+        from storage.sqlite_schema import RelayMessageRecord
+        with storage._begin_relay_immediate() as db:
+            db.get(RelayMessageRecord, sent.json()["message_id"]).expires_at = (
+                datetime.now(timezone.utc) - timedelta(seconds=1)
+            )
+    if changed_before == "bind":
+        assert not relay.bind_codex_trial_delivery(
+            endpoint_id=endpoint, trial_id="closed-trial", delivery_id=delivery_id,
+        )
+    else:
+        assert not relay.spend_codex_trial(
+            endpoint_id=endpoint, trial_id="closed-trial", delivery_id=delivery_id,
+        )
+
+
+def test_exclusive_trial_rejects_endpoint_scope_generation_aba_before_action(client) -> None:
+    storage = client.app.state.pallium_service._storage
+    relay = RelayService(storage)
+    app = FastAPI()
+    app.include_router(build_router(client.app.state.pallium_service, relay_storage=storage))
+    route = TestClient(app)
+    old = {"container_ref": "git:example.test/trial-aba-old"}
+    new = {"container_ref": "git:example.test/trial-aba-new"}
+    assert route.post("/relay/turn", json={"runtime": "claude-code", "session_ref": "sender", **old}).status_code == 200
+    target = route.post("/relay/turn", json={"runtime": "codex", "session_ref": "target", **old})
+    assert target.status_code == 200
+    endpoint = target.json()["session"]["endpoint_id"]
+    assert relay.enroll_codex_trial(
+        endpoint_id=endpoint, session_ref="target", container_ref=old["container_ref"], trial_id="aba-trial",
+    )
+    sent = route.post("/relay/messages", json={
+        "sender_runtime": "claude-code", "sender_session_ref": "sender",
+        "recipient": endpoint, "payload": "pending exact payload", **old,
+    })
+    assert sent.status_code == 200
+    delivery_id = sent.json()["deliveries"][0]["delivery_id"]
+    assert relay.bind_codex_trial_delivery(endpoint_id=endpoint, trial_id="aba-trial", delivery_id=delivery_id)
+    moved = route.post("/relay/turn", json={
+        "runtime": "codex", "session_ref": "target", "max_messages": 0,
+        "previous_container_ref": old["container_ref"], "previous_endpoint_id": endpoint,
+        "previous_scope_generation": 0, **new,
+    })
+    assert moved.status_code == 200
+    assert moved.json()["session"]["scope_generation"] == 1
+    returned = route.post("/relay/turn", json={
+        "runtime": "codex", "session_ref": "target", "max_messages": 0,
+        "previous_container_ref": new["container_ref"], "previous_endpoint_id": endpoint,
+        "previous_scope_generation": 1, **old,
+    })
+    assert returned.status_code == 200
+    assert returned.json()["session"]["scope_generation"] == 2
+    assert not relay.spend_codex_trial(endpoint_id=endpoint, trial_id="aba-trial", delivery_id=delivery_id)
 
 
 def test_crash_after_claim_rewakes_and_actual_codex_hook_delivers_once(

@@ -293,11 +293,11 @@ Normal MCP tools and retained Relay messages continue unchanged.
 
 ## Service-owned Desktop inventory custody
 
-This separate, default-off implementation is shipped, but not runtime-qualified. It reuses the existing
-durable Pallium service and never starts a detached helper or competing app-server.
-Its only native operation is a fixed, redacted `tools/list`; it has no `tools/call`,
-wake, claim, ACK, or payload authority. Existing current-request wake authority and
-the shipped child-shadow behavior remain unchanged.
+This separate, default-off implementation reuses the existing durable Pallium service
+and never starts a detached helper or competing app-server. Ordinary inventory
+admission performs only fixed, redacted `tools/list`; it grants no wake, claim, ACK,
+or payload authority. Existing current-request wake authority and the shipped
+child-shadow behavior remain unchanged.
 
 The operator prepares a protected private inventory directory; that creates
 readiness only, not admission. The service publishes an authenticated manifest of
@@ -367,3 +367,38 @@ change failure handling. Later cleanup cannot replace the original attribution,
 and ordinary cleanup after sealed successful proof adds no failure diagnostic.
 Public MCP fields and protected proof fields remain unchanged. These diagnostics
 do not retrospectively explain an earlier failure or qualify unloaded wake.
+
+### Finite exclusive unloaded-payload trial
+
+A separately armed, one-endpoint trial may use the retained inventory connection
+for one `send_message_to_thread` Desktop action. It requires an authenticated,
+still-running source child with runtime-owned caller thread/turn metadata,
+positive before inventory on the retained connection, current finite policy and
+Desktop peer, and a distinct exclusively owned target. Source liveness and custody
+are rechecked immediately before the native write; source exit denies this action.
+The live operator must independently verify that the exact exclusive target is
+`notLoaded` immediately before arming; source/target inequality alone does not
+prove it. This remains a controlled experiment, not ordinary wake admission or a
+busy-turn safety guarantee.
+
+Before creating the delivery, the service commits a sticky `trial_enrolled` bit on
+the target Relay endpoint and one exact SQLite trial row under the same Codex wake
+registry lock used by native send and recovery dispatch. Both dispatch paths
+suppress native wake for that enrolled endpoint. Missing or invalid trial authority
+also suppresses native dispatch; normal endpoints keep their existing behavior.
+The bit and row survive service restart and ordinary inventory-gate cleanup. A
+single protected action request then binds one still-pending delivery. Before any
+Desktop write, the service commits the irreversible spent fence, checks the exact
+pending delivery and target again, and verifies the retained live tool descriptor.
+No SQLite transaction contains a native call.
+
+The fixed Desktop request uses the Relay-verified target thread and a delivery-ID
+instruction only. The caller thread/turn comes from authenticated source metadata;
+no payload, model, effort, host override, or operator-supplied caller identity is
+sent. The source and target must differ. After a failed or ambiguous initiation,
+the endpoint remains spent and native-suppressed; no retry or fallback is allowed.
+Protected outcome and service log values are fixed enums only. `submitted` means
+only that a matching non-error native result envelope was observed. A successful
+trial requires a genuine target turn with hook payload emission and ACK/Relay
+readback. Post-source-exit lifetime and general unloaded or busy-turn reliability
+remain separate, unproven claims.
