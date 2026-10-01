@@ -46,7 +46,7 @@ Missing manifests may be recoverable from explicit prior study locations or repr
 - When a slice ships, roadmap and installed behavior shall match -> PR/CI and merge evidence, clean checkout revisions, supported restart/health checks, and explicit acted-on continuation.
 
 **Plan review:**
-Pending independent review before material implementation. Read-only discovery is permitted.
+Agent technical review: /root/recovery_plan_review (clean-context Sol) approved staged recovery and generic caller investigation at 37a8c7e8. Missing lineage stays closed; generic probes are contract checks, not independent ranking confirmation. Concrete production changes require exact-path risk classification and re-review before implementation.
 
 **Approvals:**
 Approved by user 2026-10-01: "So continue!" Prior authorization covers delegated feature work, PRs, and merge according to guidelines. No additional approval is needed merely because a prior slice shipped.
@@ -54,7 +54,7 @@ Approved by user 2026-10-01: "So continue!" Prior authorization covers delegated
 **Exceptions:**
 —
 
-**State:** Blocked or returned to planning
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -64,6 +64,8 @@ Approved by user 2026-10-01: "So continue!" Prior authorization covers delegated
 ## Evidence
 
 Reuse docs/reports/session-history-fresh-review.md and ignored shared .local/history-search-fresh-review/ artifacts; do not repeat the completed 265-lookup census.
+
+2026-10-01 plan checkpoint: initial intended paths classify BLUE with zero boundary violations; import-linter passed. Independent reviewer approved two generic probes: merged EvidenceReference versus caller source-opening handles, and duplicate-saturated broad versus exact-work candidate recovery at identical result limits. Neither selects a production fix or relaxes prior study protections. Bounded recovery continues in parallel; lead moves into caller experiments now.
 
 ## Result review
 

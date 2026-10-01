@@ -1,7 +1,7 @@
 ---
 id: improve-session-history-search-quality
 title: Improve Session History search and agent search guidance from real usage
-status: queued
+status: in-progress
 priority: high
 commitment: committed
 milestone: pallium-vnext-session-history
@@ -22,7 +22,11 @@ completed its bounded audit and identified an evaluator-only request-link correc
 The review covered 265 earlier lookup records in this container, including eight
 newer linked lookups across three related request/session groups. No independent
 content-quality comparison was possible: fresh lookups were absent and prior
-holdout lineage was unresolved. This umbrella remains queued, not completed.
+holdout lineage was unresolved. The October 1 continuation is active under
+[`history-evidence-recovery`](../../.agent-workflow/tasks/history-evidence-recovery.md):
+recover exclusion provenance and investigate generic equivalent-result caller
+contracts in parallel. Missing ranking confirmation does not block independent
+contract reproductions. This umbrella is in progress, not completed.
 
 This is the open search-quality umbrella. It is not the completed caller-reliability
 feature and it does not commit Pallium to a reranker, generated compression, or a new
