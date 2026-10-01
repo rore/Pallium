@@ -1,7 +1,7 @@
 ---
 id: improve-session-history-search-quality
 title: Improve Session History search and agent search guidance from real usage
-status: queued
+status: in-progress
 priority: high
 commitment: committed
 milestone: pallium-vnext-session-history
@@ -22,9 +22,17 @@ completed its bounded audit and identified an evaluator-only request-link correc
 The review covered 265 earlier lookup records in this container, including eight
 newer linked lookups across three related request/session groups. No independent
 content-quality comparison was possible: fresh lookups were absent and prior
-holdout lineage was unresolved. This umbrella remains queued, not completed.
+holdout lineage was unresolved. The October 1
+[`history-evidence-recovery`](../../.agent-workflow/tasks/history-evidence-recovery.md)
+continuation completed bounded recovery and generic caller probes, then corrected
+identifier-unsafe equivalence and broad-search underfilling after duplicate collapse.
+The [completion ledger](../../docs/reports/session-history-evidence-recovery.md#measurement-and-completion-ledger)
+reconciles all six criteria, including the explicit independent-evidence limitation.
+Implementation and review are complete; final delivery remains in progress until
+the merged code is installed and health verified. Unmeasured ranking and downstream benefit are not
+claimed. The Work Record carries review, validation, and installed-delivery gates.
 
-This is the open search-quality umbrella. It is not the completed caller-reliability
+This is the bounded search-quality investigation and correction awaiting installed delivery. It is not the caller-reliability
 feature and it does not commit Pallium to a reranker, generated compression, or a new
 index.
 
@@ -32,14 +40,17 @@ index.
 |---|---|---|
 | [Evidence access and retry reliability](fix-session-history-evidence-access.md) | **Done** | Shipped source/result continuation, explicit source scope, diagnostics, and bounded replay-safe guidance. It measured navigation/presentation, not ranking or downstream task effect. |
 | Request-link evaluation eligibility | **Corrected in September 30 slice** | Optional source actor filtering no longer rejects a valid linked request; caller regression covers both replay modes. This is measurement alignment, not improved ranking. |
-| Prospective equivalent-result review | **Next; evidence prerequisite open** | Recover prior exclusion manifests or collect disjoint prospective linked cases before content review. Retain provenance, dates, and source-opening paths. Decide whether there is a presentation problem worth changing. |
+| Generic distinct-result correctness | **Implemented and reviewed; rollout pending** | Preserve identifier punctuation during equivalence checks; apply existing bounded refill to broad duplicate-saturated searches. Red-before-green caller regressions cover the corrections. See the [recovery report](../../docs/reports/session-history-evidence-recovery.md). |
+| Prospective equivalent-result review | **Conditional follow-up; evidence prerequisite open** | Recover prior exclusion manifests or collect disjoint prospective linked cases before content review. Retain provenance, dates, and source-opening paths. Decide whether there is a presentation problem worth changing. |
 | Candidate-availability and local reranking gate | **Conditional** | First run the zero-model-call fixed-candidate preflight below. Compare local scorers only if enough failures are genuinely rank-only. |
 | [Navigation and on-demand compression](investigate-history-navigation-and-on-demand-compression.md) | **Separate queued follow-up** | Reuse the shipped reliability baseline. Do not run this broader representation study in parallel with the narrow review above. |
 
-The next action is to establish protected, traceable cases for the prospective
-equivalent-result review. Do not repeat the completed metadata census or reopen
-unknown holdouts. The candidate preflight follows only if content review leaves a
-distinct ranking question. Broader real-corpus downstream-value validation remains
+No further implementation is selected by this feature. Reopen its conditional
+research only after exact exclusion identities are recovered or traceably disjoint
+linked cases include original caller options and complete payloads; freeze
+development/confirmation partitions before grading. Do not repeat the completed
+metadata census or reopen unknown holdouts. A candidate preflight follows only if
+content review leaves a distinct ranking question. Broader downstream-value validation remains
 [separately gated](../ideas/idea-pull-real-corpus-validation.md).
 
 ### Shipped: response-local navigation and Relay-wake availability
@@ -239,19 +250,19 @@ without checking their distinct evidence would be unjustified. The narrow remain
 question is whether prospective review of those groups supports a presentation
 change that preserves each source's provenance, date, and expansion path.
 
-Keep this umbrella queued for that evidence-driven follow-up and other unresolved
-retrieval/guidance findings. Reuse the shipped #169 presentation and #166 runner.
+The October 1 completion retains that question as an evidence-gated follow-up,
+not unfinished implementation. Reuse the shipped #169 presentation and #166 runner.
 Do not restart the failed frozen-cohort studies or treat a 4,000-character budget
 as validated. This reconciliation does not authorize another paid study.
 
-### Next bounded work: equivalent-result review, then a candidate-preserving reranking gate
+### Conditional follow-up: equivalent-result review, then a candidate-preserving reranking gate
 
 Execution ordering changed after a 2026-09-22 extended real recap. The resulting
 [`fix-session-history-evidence-access`](fix-session-history-evidence-access.md)
 feature is complete: it shipped same-source continuation, actionable high-count
 results, explicit source-thread semantics, History diagnostics, and bounded retry
-guidance. Those caller-contract failures are closed. Resume this umbrella with the
-prospective equivalent-result review described above; only then decide whether the
+guidance. Those caller-contract failures are closed. If the evidence prerequisite
+above is met, begin prospective equivalent-result review; only then decide whether the
 fixed-candidate reranking preflight below is still warranted. The recap recovered
 every major historical fact on a first page of some targeted query and therefore
 adds packaging and navigation evidence, not a rank-only failure.

@@ -17,8 +17,11 @@ _SOURCE_DUPLICATE_MIN_TOKENS = 4
 def build_source_content_fingerprint(text: str) -> str | None:
     normalized = unicodedata.normalize("NFKC", text).casefold()
     normalized = "".join(
-        " " if unicodedata.category(char).startswith("P") else char
-        for char in normalized
+        " "
+        if char in {",", "."}
+        and (index + 1 == len(normalized) or normalized[index + 1].isspace())
+        else char
+        for index, char in enumerate(normalized)
     )
     normalized = " ".join(normalized.split())
     if (

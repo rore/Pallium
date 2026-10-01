@@ -65,7 +65,7 @@ work-reference attach/detach witness passes or an explicit blocker is recorded.
 Parallel Session History vNext work and independent activation capabilities,
 traces, work associations, and Claude/Codex validation remain allowed.
 
-Parallel focus — Session History vNext (reconciled 2026-09-12):
+Parallel focus — Session History vNext (reconciled 2026-10-01):
 
 The active milestone is **Session History vNext: historical agent work as a
 first-class context layer** (strategy: `docs/context/strategy-vnext.md`; execution plan:
@@ -79,9 +79,10 @@ primary capabilities: Agent Relay and **Session History**.
 The Session History target is now a package-independent raw record of governed
 agent work. Generated memories are optional and disabled by default.
 
-The Session History slice is ordered. The first three items are shipped; the next
-step is improving search and agent search behavior from existing usage evidence,
-followed by the broader access/representation investigation:
+The Session History slice is ordered. The first three items are complete; the
+fourth is implemented and reviewed, awaiting installed delivery with explicit
+evidence limits. The broader access/representation investigation remains
+queued behind its own no-call evidence preflight:
 
 1. `add-structural-session-work-references` — shipped: attach branch, exact Agent
    Workflow Work Record, and explicit issue/PR/ticket references without semantic
@@ -99,8 +100,11 @@ followed by the broader access/representation investigation:
    grouping, expansion handoff, connection-error clarity, and read-only History
    tools in the generated Codex Relay profile. PR #166 shipped the independently
    accepted paired runner. PR #173 closed a candidate-study preflight without a
-   comparison; the current narrow follow-up is prospective review of equivalent
-   result groups while preserving provenance, dates, and expansion paths. After
+   comparison. The October 1 continuation will close after verified rollout with two generic
+   defects: identifier-unsafe equivalence and unfilled broad-search result slots
+   after duplicate collapse. Prospective review of equivalent result groups still
+   requires recovered exclusions or disjoint cases, preserving provenance, dates,
+   and expansion paths. This is a conditional follow-up, not unfinished implementation. After
    that review, a zero-model candidate-availability preflight may earn a fixed-
    candidate comparison of current RRF against one local cross-encoder and one
    late-interaction scorer. No model, dependency, index, or search-engine migration
