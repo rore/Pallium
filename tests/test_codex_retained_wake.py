@@ -90,7 +90,7 @@ def retained(monkeypatch, tmp_path):
         event=SimpleNamespace(WaitForSingleObject=lambda h, t: 258, WAIT_OBJECT_0=0, WAIT_TIMEOUT=258))
     monkeypatch.setattr(bridge, "_Peer", Peer)
     monkeypatch.setattr(bridge, "_parent_pids", lambda: {42: 41, 41: 40})
-    monkeypatch.setattr(bridge, "_process_image", lambda *a: (r"C:\Apps\Codex.exe", "1.2.3.4"))
+    monkeypatch.setattr(bridge, "_process_image", lambda *a: (str(Path("C:/Apps") / "Codex.exe"), "1.2.3.4"))
     monkeypatch.setattr(bridge, "_DesktopPeer", lambda w, descriptor: Peer(w, descriptor.desktop_pid))
     natives = []
     def native(*args):
@@ -283,7 +283,7 @@ def test_registration_invalid_context_never_opens_desktop(retained, change):
 @pytest.mark.parametrize("image", ["Codex.exe", "ChatGPT.exe"])
 def test_registration_rejects_unrelated_same_user_desktop_and_closes(retained, monkeypatch, image):
     service, request, natives = retained
-    monkeypatch.setattr(bridge, "_process_image", lambda *args: (rf"C:\Apps\{image}", "1.2.3.4"))
+    monkeypatch.setattr(bridge, "_process_image", lambda *args: (str(Path("C:/Apps") / image), "1.2.3.4"))
     monkeypatch.setattr(bridge, "_parent_pids", lambda: {42: 41, 41: 39})
     with pytest.raises(bridge.ShadowUnavailable):
         service._process(request, service.source, 0, float("inf"))
@@ -686,7 +686,7 @@ def test_registration_accepts_supported_actual_pipe_server_ancestor_image(retain
     checked = []
     def process_image(w, handle):
         checked.append(handle)
-        return rf"C:\Apps\{image}", "1.2.3.4"
+        return str(Path("C:/Apps") / image), "1.2.3.4"
     monkeypatch.setattr(bridge, "_process_image", process_image)
     service, desktop = register(retained)
     assert service.custody is desktop and service.read_tool and service.owner_tool_before
@@ -697,7 +697,7 @@ def test_registration_accepts_supported_actual_pipe_server_ancestor_image(retain
 @pytest.mark.parametrize("image", ["Other.exe", "Codex.exe.bak", "ChatGPT.exe.bak"])
 def test_registration_rejects_wrong_or_spoofed_pipe_server_image(retained, monkeypatch, image):
     service, request, natives = retained
-    monkeypatch.setattr(bridge, "_process_image", lambda *args: (rf"C:\Apps\{image}", "1.2.3.4"))
+    monkeypatch.setattr(bridge, "_process_image", lambda *args: (str(Path("C:/Apps") / image), "1.2.3.4"))
     with pytest.raises(bridge.ShadowUnavailable):
         service._process(request, service.source, 0, float("inf"))
     assert service.custody is None and service.ancestors == []

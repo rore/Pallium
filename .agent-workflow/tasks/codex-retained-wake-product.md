@@ -3,6 +3,13 @@ This supersedes the earlier local-only/no-PR restriction below. PR #277 publishe
 the reviewed feature; merge follows required CI and review, then synchronized
 development/installed clones and installed-wrapper health verification.
 
+PR #277 validation follow-up: Linux CI exposed Windows-only fake executable path
+separators and a legacy inert harness that also entered the new retained branch.
+Corrected only test fixtures and the exact permitted inert diagnostic set; production
+code and protected behavior assertions are unchanged. The affected retained, MCP
+bridge and protected busy-wake files passed 218 tests in 59.33 seconds on 2026-10-02.
+Independent service_handoff_security review accepted the fixture delta without findings.
+
 <!-- agent-workflow:start -->
 **Outcome:** Ordinary Relay delivery uses the authenticated retained Codex MCP connection to wake its target and deliver payload through the existing hook and ACK path.
 
