@@ -196,6 +196,259 @@ def test_http_send_restart_exact_claim_ack_preserves_sqlite_fence(
     assert any(event["stage"] == "completed" for event in trace.json()["events"])
 
 
+def test_http_recovery_resumes_prepared_fence_after_restart(client, tmp_path, monkeypatch):
+    from app.dependencies import recover_expired_relay_wakes
+    from core.claude_wake import ClaudeWakeRegistry
+
+    monkeypatch.setattr("app.codex_bridge_pipe.retained_wake_enabled", lambda: False)
+    storage = client.app.state.pallium_service._storage
+    relay = RelayService(storage)
+    directory = tmp_path / "legacy"
+    first_registry = _registry(relay, directory)
+    assert first_registry.initialize(old_owner_drained=True)
+    scheduled = []
+    completed = threading.Event()
+    monkeypatch.setattr("app.dependencies.schedule_codex_relay_wake", codex_wake.schedule_codex_relay_wake)
+    monkeypatch.setattr(
+        codex_wake, "_wake_after_debounce",
+        lambda reservation, *_: (scheduled.append(reservation), completed.set()),
+    )
+
+    def route(registry):
+        app = FastAPI()
+        app.include_router(build_router(
+            client.app.state.pallium_service, relay_storage=storage,
+            codex_wake_registry=registry,
+        ))
+        return TestClient(app)
+
+    http = route(first_registry)
+    for session in ("sender", "target"):
+        assert http.post("/relay/turn", json={
+            "runtime": "codex", "session_ref": session, **SCOPE,
+        }).status_code == 200
+    first = http.post("/relay/messages", json={
+        "sender_runtime": "codex", "sender_session_ref": "sender",
+        "recipient": "codex:target", "message_id": "prepared-before-restart",
+        "payload": "first pending delivery", **SCOPE,
+    })
+    assert first.status_code == 200, first.text
+    delivery_a = first.json()["deliveries"][0]
+    assert completed.wait(2)
+    prepared = first_registry.snapshot(delivery_a["recipient_endpoint_id"])
+    assert prepared is not None
+    assert scheduled == [prepared]
+
+    scheduled.clear()
+    restarted = _registry(relay, directory)
+    http = route(restarted)
+    second = http.post("/relay/messages", json={
+        "sender_runtime": "codex", "sender_session_ref": "sender",
+        "recipient": "codex:target", "message_id": "behind-prepared-fence",
+        "payload": "second pending delivery", **SCOPE,
+    })
+    assert second.status_code == 200, second.text
+    delivery_b = second.json()["deliveries"][0]
+    recover_expired_relay_wakes(
+        relay, ClaudeWakeRegistry(), codex_registry=restarted,
+    )
+    recover_expired_relay_wakes(
+        relay, ClaudeWakeRegistry(), codex_registry=restarted,
+    )
+    assert scheduled == [restarted.snapshot(delivery_a["recipient_endpoint_id"])]
+    assert scheduled[0].delivery_id == delivery_a["delivery_id"]
+    assert scheduled[0].outcome == "prepared"
+    status = http.get(f"/relay/messages/{second.json()['message_id']}", params=SCOPE)
+    assert status.status_code == 200
+    assert status.json()["deliveries"][0]["delivery_id"] == delivery_b["delivery_id"]
+    assert status.json()["deliveries"][0]["state"] == "pending"
+    claim = http.post("/relay/turn", json={
+        "runtime": "codex", "session_ref": "target",
+        "wake_delivery_id": delivery_a["delivery_id"], **SCOPE,
+    })
+    assert claim.status_code == 200, claim.text
+    claimed = claim.json()["deliveries"][0]
+    assert claimed["delivery_id"] == delivery_a["delivery_id"]
+    recover_expired_relay_wakes(
+        relay, ClaudeWakeRegistry(), codex_registry=restarted,
+    )
+    assert len(scheduled) == 1
+    acknowledged = http.post("/relay/deliveries/ack", json={
+        "delivery_id": delivery_a["delivery_id"],
+        "claim_token": claimed["claim_token"], **SCOPE,
+    })
+    assert acknowledged.status_code == 200, acknowledged.text
+    status = http.get(f"/relay/messages/{first.json()['message_id']}", params=SCOPE)
+    assert status.json()["deliveries"][0]["state"] == "delivered"
+    status = http.get(f"/relay/messages/{second.json()['message_id']}", params=SCOPE)
+    assert status.json()["deliveries"][0]["state"] == "pending"
+    following = restarted.snapshot(delivery_a["recipient_endpoint_id"])
+    assert following is None or following.delivery_id == delivery_b["delivery_id"]
+
+
+def test_prepared_native_cas_allows_one_sqlite_registry_and_rejects_active_claim(relay_store, tmp_path):
+    relay, _, _ = relay_store
+    first_registry = _registry(relay, tmp_path / "legacy")
+    assert first_registry.initialize(old_owner_drained=True)
+    reservation = _reserve(first_registry, _send(relay))
+    second_registry = _registry(relay, tmp_path / "legacy")
+    assert second_registry.usable
+    barrier = threading.Barrier(3)
+    results = []
+
+    def spend(registry):
+        barrier.wait()
+        results.append(registry.begin_native_attempt(reservation))
+
+    threads = [threading.Thread(target=spend, args=(registry,)) for registry in (first_registry, second_registry)]
+    for thread in threads:
+        thread.start()
+    barrier.wait()
+    for thread in threads:
+        thread.join(2)
+        assert not thread.is_alive()
+    assert sum(result is not None for result in results) == 1
+    assert first_registry.snapshot(reservation.recipient_endpoint_id).outcome == "uncertain"
+
+    pending = _reserve(first_registry, _send(relay, target="other"), target="other")
+    assert pending is not None
+    relay.turn(runtime="codex", session_ref="other", **SCOPE,
+               exact_delivery_id=pending.delivery_id,
+               codex_wake_endpoint_id=pending.recipient_endpoint_id,
+               codex_wake_generation=pending.generation)
+    assert first_registry.begin_native_attempt(pending) is None
+    assert _registry(relay, tmp_path / "legacy").begin_native_attempt(pending) is None
+
+
+def test_http_restart_prepares_new_generation_after_expired_hook_claim(client, tmp_path, monkeypatch):
+    import storage.sqlite_relay as sqlite_relay
+    from app.dependencies import recover_expired_relay_wakes
+    from core.claude_wake import ClaudeWakeRegistry
+
+    clock = [datetime(2031, 2, 3, tzinfo=timezone.utc)]
+    def controlled_now(value=None):
+        current = value or clock[0]
+        return current if current.tzinfo is not None else current.replace(tzinfo=timezone.utc)
+    monkeypatch.setattr(sqlite_relay, "_now", controlled_now)
+    monkeypatch.setattr("app.codex_bridge_pipe.retained_wake_enabled", lambda: False)
+    storage = client.app.state.pallium_service._storage
+    relay = RelayService(storage)
+    directory = tmp_path / "legacy"
+    registry = _registry(relay, directory)
+    assert registry.initialize(old_owner_drained=True)
+    scheduled = []
+    completed = threading.Event()
+    monkeypatch.setattr("app.dependencies.schedule_codex_relay_wake", codex_wake.schedule_codex_relay_wake)
+    monkeypatch.setattr(codex_wake, "_wake_after_debounce",
+                        lambda reservation, *_: (scheduled.append(reservation), completed.set()))
+
+    def route(actual_registry):
+        app = FastAPI()
+        app.include_router(build_router(client.app.state.pallium_service, relay_storage=storage,
+                                       codex_wake_registry=actual_registry))
+        return TestClient(app)
+
+    http = route(registry)
+    for session in ("sender", "target"):
+        assert http.post("/relay/turn", json={"runtime": "codex", "session_ref": session, **SCOPE}).status_code == 200
+    sent = http.post("/relay/messages", json={
+        "sender_runtime": "codex", "sender_session_ref": "sender",
+        "recipient": "codex:target", "message_id": "expired-claim-restart",
+        "payload": "resumable replacement", **SCOPE,
+    })
+    assert sent.status_code == 200, sent.text
+    delivery = sent.json()["deliveries"][0]
+    assert completed.wait(2)
+    prepared = registry.snapshot(delivery["recipient_endpoint_id"])
+    assert prepared is not None and prepared.outcome == "prepared"
+    uncertain = registry.begin_native_attempt(prepared)
+    assert uncertain is not None
+    assert registry.record_outcome(uncertain, "accepted")
+
+    claim = http.post("/relay/turn", json={
+        "runtime": "codex", "session_ref": "target",
+        "wake_delivery_id": delivery["delivery_id"], **SCOPE,
+    })
+    assert claim.status_code == 200, claim.text
+    assert claim.json()["deliveries"][0]["attempts"] == 1
+    claimed = registry.snapshot(delivery["recipient_endpoint_id"])
+    assert claimed is not None and claimed.correlated_claim_attempts == 1
+    clock[0] += timedelta(seconds=RELAY_CLAIM_LEASE_SECONDS + 1)
+
+    restarted = _registry(relay, directory)
+    http = route(restarted)
+    recover_expired_relay_wakes(relay, ClaudeWakeRegistry(), codex_registry=restarted)
+    replacement = restarted.snapshot(delivery["recipient_endpoint_id"])
+    assert replacement is not None
+    assert replacement.generation > claimed.generation
+    assert replacement.outcome == "prepared" and replacement.correlated_claim_attempts is None
+    recover_expired_relay_wakes(relay, ClaudeWakeRegistry(), codex_registry=restarted)
+    assert len(scheduled) == 2
+    assert scheduled[-1] == replacement
+    assert restarted.begin_native_attempt(replacement) == replace(replacement, outcome="uncertain")
+
+
+def test_http_pre_cas_worker_exception_clears_marker_for_same_process_resume(client, tmp_path, monkeypatch):
+    from app.dependencies import recover_expired_relay_wakes
+    from core.claude_wake import ClaudeWakeRegistry
+
+    monkeypatch.setattr("app.codex_bridge_pipe.retained_wake_enabled", lambda: False)
+    monkeypatch.setattr(codex_wake, "_DEBOUNCE_SECONDS", 0)
+    monkeypatch.setattr(codex_wake.time, "sleep", lambda _: None)
+    storage = client.app.state.pallium_service._storage
+    relay = RelayService(storage)
+    registry = _registry(relay, tmp_path / "legacy")
+    assert registry.initialize(old_owner_drained=True)
+    app = FastAPI()
+    app.include_router(build_router(client.app.state.pallium_service, relay_storage=storage,
+                                   codex_wake_registry=registry))
+    http = TestClient(app)
+    for session in ("sender", "target"):
+        assert http.post("/relay/turn", json={"runtime": "codex", "session_ref": session, **SCOPE}).status_code == 200
+
+    original_begin = registry.begin_native_attempt
+    fail_once = [True]
+    def begin_with_one_pre_write_failure(reservation):
+        if fail_once[0]:
+            fail_once[0] = False
+            raise RuntimeError("before native write")
+        return original_begin(reservation)
+    monkeypatch.setattr(registry, "begin_native_attempt", begin_with_one_pre_write_failure)
+    launches = []
+    monkeypatch.setattr(codex_wake, "_start_launch",
+                        lambda *args: (launches.append(args), (None, ("queued", None, 0)))[1])
+    workers = []
+    original_schedule = codex_wake._schedule_reserved_codex_relay_wake
+    def schedule(*args, **kwargs):
+        worker = original_schedule(*args, **kwargs)
+        workers.append(worker)
+        return worker
+    monkeypatch.setattr(codex_wake, "_schedule_reserved_codex_relay_wake", schedule)
+    monkeypatch.setattr("app.dependencies.schedule_codex_relay_wake", codex_wake.schedule_codex_relay_wake)
+
+    sent = http.post("/relay/messages", json={
+        "sender_runtime": "codex", "sender_session_ref": "sender",
+        "recipient": "codex:target", "message_id": "pre-cas-exception",
+        "payload": "retry only before spend", **SCOPE,
+    })
+    assert sent.status_code == 200, sent.text
+    for worker in workers:
+        worker.join(2)
+        assert not worker.is_alive()
+    reservation = registry.snapshot(sent.json()["deliveries"][0]["recipient_endpoint_id"])
+    assert reservation is not None and reservation.outcome == "prepared"
+    assert launches == []
+
+    recover_expired_relay_wakes(relay, ClaudeWakeRegistry(), codex_registry=registry)
+    assert len(workers) == 2
+    workers[-1].join(2)
+    assert not workers[-1].is_alive()
+    current = registry.snapshot(reservation.recipient_endpoint_id)
+    assert current is not None and current.outcome == "accepted"
+    assert current.generation == reservation.generation
+    assert len(launches) == 1
+
+
 def test_draining_trace_queue_does_not_restore_sqlite_contention_drop(client):
     service = client.app.state.pallium_service
     storage = service._storage
@@ -240,6 +493,8 @@ def test_reconciliation_commits_replacement_before_worker_schedule(relay_store, 
     registry = _registry(relay, tmp_path / "legacy")
     assert registry.initialize(old_owner_drained=True)
     reservation = _reserve(registry, _send(relay))
+    reservation = registry.begin_native_attempt(reservation)
+    assert reservation is not None
     assert registry.record_outcome(reservation, "accepted")
     relay.turn(runtime="codex", session_ref="target", **SCOPE,
                exact_delivery_id=reservation.delivery_id,
@@ -441,7 +696,7 @@ def test_ambiguous_settlement_keeps_durable_authority_and_prevents_reschedule(
     monkeypatch.setattr(storage, "_begin_relay_immediate", ambiguous)
     monkeypatch.setattr(codex_wake, "_schedule_reserved_codex_relay_wake", lambda *a, **kw: pytest.fail("ambiguous settlement scheduled worker"))
     if operation == "outcome":
-        assert not registry.record_outcome(reservation, "uncertain")
+        assert registry.begin_native_attempt(reservation) is None
     elif operation == "correlate":
         assert not registry.correlate_claim(
             delivery_id=reservation.delivery_id, recipient_endpoint_id=reservation.recipient_endpoint_id,
@@ -463,10 +718,9 @@ def test_ambiguous_settlement_keeps_durable_authority_and_prevents_reschedule(
     elif operation == "correlate":
         assert current == replace(reservation, correlated_claim_attempts=1)
     else:
-        assert current.generation > reservation.generation
-        assert current.outcome == "reserved"
+        assert current == reservation
     # A committed stale generation can never initiate native I/O.
-    if committed:
+    if committed and operation != "reconcile":
         assert registry.run_if_current(reservation, lambda: pytest.fail("stale generation launch")) == (False, None)
 
 
@@ -792,13 +1046,19 @@ def test_native_initiation_runs_after_sql_commit_and_stale_generation_cannot_sub
         with sqlite3.connect(database, timeout=0) as second_writer:
             second_writer.execute("BEGIN IMMEDIATE")
             persisted = _registry(relay, tmp_path / "absent-legacy").snapshot(reservation.recipient_endpoint_id)
-            assert persisted == reservation
+            assert persisted == replace(reservation, outcome="uncertain")
             second_writer.rollback()
         calls.append(reservation.generation)
         return "initiated"
 
-    assert registry.run_if_current(reservation, fake_native_initiation) == (True, "initiated")
-    assert registry.record_outcome(reservation, "accepted")
+    spent = []
+    def fenced_native_initiation():
+        current = registry.begin_native_attempt(reservation)
+        assert current is not None
+        spent.append(current)
+        return fake_native_initiation()
+    assert registry.run_if_current(reservation, fenced_native_initiation) == (True, "initiated")
+    assert registry.record_outcome(spent[0], "accepted")
     claim = relay.turn(
         runtime="codex", session_ref=reservation.session_ref, **SCOPE,
         exact_delivery_id=reservation.delivery_id,
@@ -821,6 +1081,8 @@ def test_native_initiation_runs_after_sql_commit_and_stale_generation_cannot_sub
         current, session_ref=current.session_ref, container_ref=current.container_ref,
     )
     assert replacement is not None and replacement.generation > reservation.generation
+    assert replacement.outcome == "reserved"
+    assert registry.begin_native_attempt(replacement) is None
     assert registry.run_if_current(reservation, fake_native_initiation) == (False, None)
     assert not registry.record_outcome(reservation, "accepted")
     assert not registry.release_generation(reservation)

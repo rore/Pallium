@@ -69,7 +69,7 @@ class CodexWakeRegistry:
         return (
             cls._valid(item.recipient_endpoint_id, item.delivery_id, item.session_ref, item.container_ref)
             and type(item.generation) is int and 1 <= item.generation < 2**63
-            and item.outcome in {"reserved", "accepted", "uncertain"}
+            and item.outcome in {"prepared", "reserved", "accepted", "uncertain"}
             and (item.correlated_claim_attempts is None or
                  (type(item.correlated_claim_attempts) is int and 1 <= item.correlated_claim_attempts < 2**63))
         )
@@ -145,7 +145,7 @@ class CodexWakeRegistry:
             self._generation += 1
             item = CodexWakeReservation(
                 recipient_endpoint_id, delivery_id, session_ref, container_ref,
-                self._generation,
+                self._generation, outcome="prepared",
             )
             updated = {**self._reservations, recipient_endpoint_id: item}
             if not self._write_locked(updated):
@@ -174,7 +174,14 @@ class CodexWakeRegistry:
                 current is None
                 or current.delivery_id != reservation.delivery_id
                 or current.generation != reservation.generation
+                or current.session_ref != reservation.session_ref
+                or current.container_ref != reservation.container_ref
             ):
+                return False
+            if outcome == "accepted":
+                if current.outcome != "uncertain" or reservation.outcome != "uncertain":
+                    return False
+            elif current != reservation:
                 return False
             if self._relay is not None:
                 return self._transition("outcome", reservation=current, outcome=outcome) is not None
@@ -185,6 +192,25 @@ class CodexWakeRegistry:
                 return False
             self._reservations = updated
             return True
+
+    def begin_native_attempt(self, reservation: CodexWakeReservation) -> CodexWakeReservation | None:
+        """Spend a never-written prepared generation before native initiation."""
+        with self._lock:
+            self._refresh()
+            if not self._usable or reservation.outcome != "prepared" or reservation.correlated_claim_attempts is not None:
+                return None
+            current = self._reservations.get(reservation.recipient_endpoint_id)
+            if current != reservation:
+                return None
+            if self._relay is not None:
+                return self._transition("begin_native_attempt", reservation=reservation)
+            updated_item = replace(reservation, outcome="uncertain")
+            updated = {**self._reservations, reservation.recipient_endpoint_id: updated_item}
+            if not self._write_locked(updated):
+                self._usable = False
+                return None
+            self._reservations = updated
+            return updated_item
 
     def correlate_claim(
         self,
@@ -258,7 +284,7 @@ class CodexWakeRegistry:
                 session_ref=session_ref,
                 container_ref=container_ref,
                 generation=self._generation,
-                outcome="reserved",
+                outcome="prepared",
                 correlated_claim_attempts=None,
             )
             updated = {

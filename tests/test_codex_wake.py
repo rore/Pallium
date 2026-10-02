@@ -546,11 +546,13 @@ def test_expired_wake_reconciliation_serializes_an_ordinary_reclaim(
     replacement_written = threading.Event()
     allow_reconcile = threading.Event()
     native_gate = threading.Event()
-    outcome_recorded = threading.Event()
+    begin_checked = threading.Event()
+    begin_results = []
+    launches = []
     from contextlib import contextmanager
 
     original_begin = storage._begin_relay_immediate
-    original_record = registry.record_outcome
+    original_begin_native_attempt = registry.begin_native_attempt
     held = False
 
     @contextmanager
@@ -563,19 +565,20 @@ def test_expired_wake_reconciliation_serializes_an_ordinary_reclaim(
                 replacement_written.set()
                 assert allow_reconcile.wait(2)
 
-    def record_outcome(current, outcome):
-        result = original_record(current, outcome)
-        outcome_recorded.set()
+    def begin_native_attempt(current):
+        result = original_begin_native_attempt(current)
+        begin_results.append(result)
+        begin_checked.set()
         return result
 
     monkeypatch.setattr(storage, "_begin_relay_immediate", hold_reconciliation_commit)
-    monkeypatch.setattr(registry, "record_outcome", record_outcome)
+    monkeypatch.setattr(registry, "begin_native_attempt", begin_native_attempt)
     monkeypatch.setattr(
         codex_wake.time, "sleep", lambda _seconds: native_gate.wait(2)
     )
     monkeypatch.setattr(
         codex_wake, "_start_launch",
-        lambda *_args: (None, ("queued", None, 0)),
+        lambda *_args: (launches.append(_args), (None, ("queued", None, 0)))[1],
     )
 
     reconciled = []
@@ -613,10 +616,12 @@ def test_expired_wake_reconciliation_serializes_an_ordinary_reclaim(
     assert current.correlated_claim_attempts is None
 
     native_gate.set()
-    assert outcome_recorded.wait(2)
+    assert begin_checked.wait(2)
+    assert begin_results == [None]
+    assert launches == []
     current = registry.snapshot(endpoint_id)
     assert current is not None
-    assert current.outcome == "accepted"
+    assert current.outcome == "prepared"
     assert current.correlated_claim_attempts is None
 
 @pytest.mark.parametrize("lifecycle", ("closed", "unreachable", "moved"))
@@ -924,7 +929,10 @@ def test_http_reconciliation_prunes_full_registry_and_wakes_replacement_once(
         json.dumps(
             {
                 "version": 2,
-                "reservations": [asdict(item) for item in registry.reservations()],
+                "reservations": [
+                    asdict(replace(item, outcome="reserved") if item.outcome == "prepared" else item)
+                    for item in registry.reservations()
+                ],
             },
             separators=(",", ":"),
         ),
@@ -5195,7 +5203,9 @@ def test_exact_claim_survives_lost_callback_and_rearms_once_after_lease(
         container_ref=SCOPE["container_ref"],
     )
     assert reservation is not None
-    isolated_codex_registry.record_outcome(reservation, "accepted")
+    reservation = isolated_codex_registry.begin_native_attempt(reservation)
+    assert reservation is not None
+    assert isolated_codex_registry.record_outcome(reservation, "accepted")
     reservation = isolated_codex_registry.snapshot(delivery["recipient_endpoint_id"])
     assert reservation is not None and reservation.outcome == "accepted"
 
@@ -5308,7 +5318,9 @@ def test_ordinary_and_mismatched_claims_keep_unrelated_wake_fences(
             container_ref=SCOPE["container_ref"],
         )
         assert reservation is not None
-        isolated_codex_registry.record_outcome(reservation, "accepted")
+        reservation = isolated_codex_registry.begin_native_attempt(reservation)
+        assert reservation is not None
+        assert isolated_codex_registry.record_outcome(reservation, "accepted")
         fenced.append(isolated_codex_registry.snapshot(delivery["recipient_endpoint_id"]))
 
     ordinary_claim = route.post("/relay/turn", json={
@@ -5360,7 +5372,9 @@ def test_old_inflight_claim_generation_cannot_unlock_replacement(
                 session_ref="target", container_ref=SCOPE["container_ref"],
             )
             assert current is not None and current.generation > old.generation
-            registry.record_outcome(current, "accepted")
+            current = registry.begin_native_attempt(current)
+            assert current is not None
+            assert registry.record_outcome(current, "accepted")
             replacements.append(registry.snapshot(endpoint_id))
         return operation()
 
@@ -5389,7 +5403,9 @@ def test_old_inflight_claim_generation_cannot_unlock_replacement(
         session_ref="target", container_ref=SCOPE["container_ref"],
     )
     assert reservation is not None
-    registry.record_outcome(reservation, "accepted")
+    reservation = registry.begin_native_attempt(reservation)
+    assert reservation is not None
+    assert registry.record_outcome(reservation, "accepted")
     reservation = registry.snapshot(endpoint_id)
     assert reservation is not None
 
@@ -5444,7 +5460,9 @@ def test_file_backed_wake_generation_migration_preserves_exact_and_legacy_null(
         session_ref="target", container_ref=SCOPE["container_ref"],
     )
     assert old is not None
-    registry.record_outcome(old, "accepted")
+    old = registry.begin_native_attempt(old)
+    assert old is not None
+    assert registry.record_outcome(old, "accepted")
     old = registry.snapshot(target["endpoint_id"])
     assert old is not None
     relay.turn(runtime="codex", session_ref="target", **SCOPE)

@@ -61,6 +61,14 @@ recovery. A wake that may already have been submitted stays fenced; reconnecting
 does not resend it. Legacy abandoned reservations still require their existing
 receipt or expiry reconciliation and can delay later messages.
 
+New wake reservations start as `prepared`. Recovery can resume that exact
+generation after a restart, but either wake path must atomically change it to
+`uncertain` before submitting anything. Competing workers cannot submit the same
+generation twice. An expired correlated hook claim can create a new prepared
+generation under the existing claim-recovery policy; an active claim cannot.
+Existing `reserved` rows are never reclassified as unattempted, and a submitted
+or uncertain generation is never resumed merely because time has passed.
+
 ## Architecture
 
 ```
