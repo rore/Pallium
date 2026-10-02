@@ -357,6 +357,12 @@ def test_history_replay_procedure_is_linked_and_complete() -> None:
         "at most two query repairs",
         "two stale restarts per query window and per source",
         "historical recap is evidence about the past, not live state",
+        "omit `role` unless the user explicitly asks for one author's turns",
+        "`role=user` is not a human-authorship filter",
+        "topic anchors",
+        "proposals, qualifications, and acceptance",
+        "not proof that the source was never stored",
+        "counts toward the two query repairs",
     )
     assert all(term in procedure for term in required)
     assert all("[procedure](references/history-replay.md)" in path.read_text(encoding="utf-8")
