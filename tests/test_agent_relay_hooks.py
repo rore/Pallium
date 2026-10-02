@@ -51,10 +51,12 @@ def isolated_hook_state(monkeypatch, tmp_path):
     for module in list(sys.modules.values()):
         if module is None:
             continue
-        if hasattr(module, "SESSIONS_DIR"):
-            monkeypatch.setattr(module, "SESSIONS_DIR", sessions, raising=False)
-        if hasattr(module, "STATE_DIR"):
-            monkeypatch.setattr(module, "STATE_DIR", state, raising=False)
+        # Hook loaders replace codex_common, but existing hooks retain their own copy.
+        for state_module in (module, getattr(module, "_common", None)):
+            if hasattr(state_module, "SESSIONS_DIR"):
+                monkeypatch.setattr(state_module, "SESSIONS_DIR", sessions, raising=False)
+            if hasattr(state_module, "STATE_DIR"):
+                monkeypatch.setattr(state_module, "STATE_DIR", state, raising=False)
 
 def _load(name: str, relative: str):
     path = ROOT / relative

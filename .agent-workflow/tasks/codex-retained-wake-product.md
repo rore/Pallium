@@ -10,6 +10,12 @@ code and protected behavior assertions are unchanged. The affected retained, MCP
 bridge and protected busy-wake files passed 218 tests in 59.33 seconds on 2026-10-02.
 Independent service_handoff_security review accepted the fixture delta without findings.
 
+The next full CI run exposed hook test-state leakage: reloaded common modules
+left older hook-held copies outside sys.modules, beyond the fixture's directory
+isolation. The whole-file replay reproduced 1 failure after 56 passes; isolating
+the retained common copies restored all 103 hook tests (24.86 seconds), with no
+production or assertion changes.
+
 <!-- agent-workflow:start -->
 **Outcome:** Ordinary Relay delivery uses the authenticated retained Codex MCP connection to wake its target and deliver payload through the existing hook and ACK path.
 
