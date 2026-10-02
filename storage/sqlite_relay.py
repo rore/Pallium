@@ -383,7 +383,7 @@ class SQLiteRelayMixin:
             marker = db.get(RelayCodexWakeStateRecord, 1)
             reservations = db.scalars(select(RelayCodexWakeReservationRecord).limit(MAX_RESERVATIONS + 1)).all()
             self._validate_wake_authority(db, marker, reservations)
-            counts = {outcome: 0 for outcome in ("reserved", "accepted", "uncertain")}
+            counts = {outcome: 0 for outcome in ("prepared", "reserved", "accepted", "uncertain")}
             for row in reservations:
                 counts[row.outcome] += 1
 
@@ -517,7 +517,7 @@ class SQLiteRelayMixin:
                 if marker.generation >= 2**63 - 1:
                     return None
                 marker.generation += 1
-                result = CodexWakeReservation(**values, generation=marker.generation)
+                result = CodexWakeReservation(**values, generation=marker.generation, outcome="prepared")
                 db.add(RelayCodexWakeReservationRecord(**asdict(result)))
             elif operation == "release":
                 removed = []
@@ -530,8 +530,41 @@ class SQLiteRelayMixin:
             else:
                 expected = kwargs["reservation"]
                 row = db.get(RelayCodexWakeReservationRecord, expected.recipient_endpoint_id)
-                if row is None or self._wake_item(row) != expected:
+                if row is None:
                     return None
+                current = self._wake_item(row)
+                if operation == "outcome" and kwargs["outcome"] == "accepted":
+                    if not (
+                        expected.outcome == "uncertain"
+                        and current.outcome == "uncertain"
+                        and current.recipient_endpoint_id == expected.recipient_endpoint_id
+                        and current.delivery_id == expected.delivery_id
+                        and current.session_ref == expected.session_ref
+                        and current.container_ref == expected.container_ref
+                        and current.generation == expected.generation
+                    ):
+                        return None
+                    expected = current
+                elif current != expected:
+                    return None
+                if operation == "begin_native_attempt":
+                    if expected.outcome != "prepared" or expected.correlated_claim_attempts is not None:
+                        return None
+                    try:
+                        state = self._relay_codex_wake_reservation_state(
+                            db, delivery_id=expected.delivery_id, current=_now()
+                        )
+                    except RelayNotFoundError:
+                        return None
+                    target = {
+                        "runtime": "codex", "session_ref": expected.session_ref,
+                        "container_ref": expected.container_ref,
+                    }
+                    fresh = state["state"] == "pending" and state["stored_state"] == "pending" and state["attempts"] == 0
+                    expired_claim = state["state"] == "pending" and state["stored_state"] == "claimed" and state["attempts"] > 0
+                    if (state["recipient_endpoint_id"] != expected.recipient_endpoint_id
+                        or state["wake_target"] != target or not (fresh or expired_claim)):
+                        return None
                 if operation == "reconcile":
                     try:
                         state = self._relay_codex_wake_reservation_state(db, delivery_id=expected.delivery_id, current=_now())
@@ -544,6 +577,14 @@ class SQLiteRelayMixin:
                         if state["state"] in {"delivered", "expired", "suppressed"}:
                             db.delete(row)
                             result = ("released", expected)
+                        elif (expected.outcome == "prepared" and expected.correlated_claim_attempts is None
+                              and state["state"] == "pending" and state["wake_target"] == {
+                                  "runtime": "codex", "session_ref": expected.session_ref,
+                                  "container_ref": expected.container_ref,
+                              }
+                              and ((state["stored_state"] == "pending" and state["attempts"] == 0)
+                                   or (state["stored_state"] == "claimed" and state["attempts"] > 0))):
+                            result = ("resume", expected)
                         elif (state["state"] == "pending" and state["stored_state"] == "claimed"
                               and state["attempts"] > 0
                               and (state["attempts"] == expected.correlated_claim_attempts
@@ -552,7 +593,7 @@ class SQLiteRelayMixin:
                               and marker.generation < 2**63 - 1):
                             marker.generation += 1
                             target = state["wake_target"]
-                            replacement = replace(expected, generation=marker.generation, outcome="reserved",
+                            replacement = replace(expected, generation=marker.generation, outcome="prepared",
                                                   correlated_claim_attempts=None, session_ref=target["session_ref"], container_ref=target["container_ref"])
                             for name, value in asdict(replacement).items():
                                 setattr(row, name, value)
@@ -563,6 +604,8 @@ class SQLiteRelayMixin:
                         return None
                     marker.generation += 1
                     result = replace(expected, generation=marker.generation, outcome="reserved", correlated_claim_attempts=None, **kwargs["values"])
+                elif operation == "begin_native_attempt":
+                    result = replace(expected, outcome="uncertain")
                 elif operation == "outcome":
                     result = replace(expected, outcome=kwargs["outcome"])
                 elif operation == "correlate":

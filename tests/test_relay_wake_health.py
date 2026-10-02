@@ -29,7 +29,7 @@ def _assert_snapshot_shape(snapshot: dict) -> None:
     assert type(snapshot["eligible_pending_count"]) is int or snapshot["eligible_pending_count"] is None
     assert type(snapshot["oldest_pending_age_seconds"]) in {int, float} or snapshot["oldest_pending_age_seconds"] is None
     assert snapshot["pending_evidence"] in {"complete", "row_limit", "incomplete", "unavailable"}
-    assert snapshot["reservations"] is None or set(snapshot["reservations"]) == {"reserved", "accepted", "uncertain"}
+    assert snapshot["reservations"] is None or set(snapshot["reservations"]) == {"prepared", "reserved", "accepted", "uncertain"}
     assert type(snapshot["unresolved_uncertain_count"]) is int or snapshot["unresolved_uncertain_count"] is None
     assert snapshot["uncertainty_evidence"] in {"complete", "incomplete", "unavailable"}
     assert snapshot["uncertainty_reason"] in {None, "retry_held", "evidence_incomplete"}
@@ -139,7 +139,10 @@ def _send(world, outcome=None):
     if outcome:
         reservation = registry.reserve(recipient_endpoint_id=delivery["recipient_endpoint_id"], delivery_id=delivery["delivery_id"], session_ref="target", **SCOPE)
         assert reservation is not None
-        assert registry.record_outcome(reservation, outcome)
+        reservation = registry.begin_native_attempt(reservation)
+        assert reservation is not None
+        if outcome == "accepted":
+            assert registry.record_outcome(reservation, outcome)
     return sent.json()["message_id"], delivery
 
 
@@ -330,7 +333,7 @@ def test_reservation_authority_bound_is_observed_without_weakening_validation(wo
         db.commit()
     snapshot = _view(world, path)
     assert snapshot["authority_initialized"] is (None if count > 256 else True)
-    assert snapshot["reservations"] == (None if count > 256 else {"reserved": 0, "accepted": count, "uncertain": 0})
+    assert snapshot["reservations"] == (None if count > 256 else {"prepared": 0, "reserved": 0, "accepted": count, "uncertain": 0})
 
 
 @pytest.mark.parametrize("path", VIEWS)

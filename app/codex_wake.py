@@ -160,8 +160,9 @@ def reconcile_codex_relay_wake_reservations(
             if transition is None:
                 continue
             action, current = transition
-            _clear_schedule(reservation, registry)
-            if action == "replaced":
+            if action != "resume":
+                _clear_schedule(reservation, registry)
+            if action in {"replaced", "resume"}:
                 _schedule_reserved_codex_relay_wake(current, registry, trace_callback=trace_callback)
             reconciled += 1
         return reconciled
@@ -405,6 +406,9 @@ def _schedule_reserved_codex_relay_wake(
     wake_key = (id(registry), reservation.session_ref, reservation.container_ref)
     attempt_id = f"relay-activation-{uuid.uuid4().hex}"
     with _scheduled_lock:
+        if (_scheduled_session_generations.get(wake_key) == reservation.generation
+                and _scheduled_session_delivery_ids.get(wake_key) == reservation.delivery_id):
+            return None
         _scheduled_delivery_ids.add(reservation.delivery_id)
         _scheduled_session_delivery_ids[wake_key] = reservation.delivery_id
         _scheduled_session_generations[wake_key] = reservation.generation
@@ -580,15 +584,28 @@ def _wake_after_debounce(
             _clear_schedule(reservation, registry)
             return
         if attempt.outcome == "accepted":
-            registry.record_outcome(reservation, "accepted")
-        elif attempt.native_retry_safe and registry.release_generation(reservation):
-            _clear_schedule(reservation, registry)
+            current = registry.snapshot(reservation.recipient_endpoint_id)
+            if (current is not None and current.delivery_id == reservation.delivery_id
+                    and current.generation == reservation.generation and current.outcome == "uncertain"):
+                registry.record_outcome(current, "accepted")
+        elif attempt.native_retry_safe:
+            if registry.release_generation(reservation):
+                _clear_schedule(reservation, registry)
+        else:
+            current = registry.snapshot(reservation.recipient_endpoint_id)
+            if current == reservation:
+                _clear_schedule(reservation, registry)
         if attempt_id is not None:
             _emit_trace(trace_callback, attempt_id, reservation.delivery_id,
                         reservation.recipient_endpoint_id, "completed", attempt)
         return
 
-    def start() -> _LaunchStart:
+    uncertain = None
+    def start() -> _LaunchStart | None:
+        nonlocal uncertain
+        uncertain = registry.begin_native_attempt(reservation)
+        if uncertain is None:
+            return None
         return _start_launch(
             reservation.session_ref, _wake_prompt(reservation.delivery_id)
         )
@@ -625,10 +642,17 @@ def _wake_after_debounce(
         launch_result[2] if launch_result[2] is not None else "none",
         int((time.monotonic() - attempt_started) * 1000),
     )
-    if attempt.outcome in {"accepted", "uncertain"}:
-        registry.record_outcome(reservation, attempt.outcome)
-    elif attempt.native_retry_safe and registry.release_generation(reservation):
-        _clear_schedule(reservation, registry)
+    if attempt.outcome == "accepted":
+        if uncertain is not None:
+            registry.record_outcome(uncertain, "accepted")
+    elif attempt.outcome == "uncertain":
+        current_reservation = registry.snapshot(reservation.recipient_endpoint_id)
+        if uncertain is None and current_reservation == reservation:
+            _clear_schedule(reservation, registry)
+    elif attempt.native_retry_safe:
+        spent = uncertain or reservation
+        if registry.release_generation(spent):
+            _clear_schedule(reservation, registry)
     if attempt_id is not None:
         _emit_trace(
             trace_callback, attempt_id, reservation.delivery_id,

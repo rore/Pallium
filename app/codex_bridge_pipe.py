@@ -2440,7 +2440,7 @@ class RetainedService(InventoryService):
                         if not isinstance(candidate, dict) or candidate.get("recipient_endpoint_id") != reservation.recipient_endpoint_id:
                             return None
                     # Best-effort check/send: Desktop has no atomic idle-only submission.
-                    if not registry.record_outcome(reservation, "uncertain"):
+                    if registry.begin_native_attempt(reservation) is None:
                         return None
                     spent = True
                     if target_state == "idle":

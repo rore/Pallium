@@ -230,7 +230,7 @@ def test_write_is_fenced_across_concurrency_recovery_restart(http_wake, fault):
 
 def test_failed_spend_has_zero_owner_calls(http_wake, monkeypatch):
     _, _, registry, _, desktop, send, _ = http_wake
-    monkeypatch.setattr(registry, "record_outcome", lambda *a: False)
+    monkeypatch.setattr(registry, "begin_native_attempt", lambda *a: None)
     send()
     assert desktop.owners == [] and registry.reservations() == ()
 

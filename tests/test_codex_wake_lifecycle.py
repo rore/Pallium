@@ -210,6 +210,8 @@ def test_foreground_offline_upgrade_preserves_legacy_fences(lifecycle_config, mo
     ephemeral = CodexWakeRegistry()
     fence = ephemeral.reserve(recipient_endpoint_id=delivery["recipient_endpoint_id"], delivery_id=delivery["delivery_id"],
                               session_ref="target", **scope)
+    fence = ephemeral.begin_native_attempt(fence)
+    assert fence is not None
     assert ephemeral.record_outcome(fence, outcome)
     fence = ephemeral.snapshot(fence.recipient_endpoint_id)
     legacy = home / "codex-wake" / "reservations.json"

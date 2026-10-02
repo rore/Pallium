@@ -16,7 +16,7 @@ from core.errors import is_transient_error
 from core.relay import RelayService
 from core.relay_activation import ActivationAttemptResult
 from storage.sqlite import SQLiteStorageProvider
-from storage.sqlite_schema import RelayDeliveryRecord, RelayDeliveryTraceRecord
+from storage.sqlite_schema import RelayCodexWakeReservationRecord, RelayDeliveryRecord, RelayDeliveryTraceRecord
 
 
 @pytest.fixture(autouse=True)
@@ -897,9 +897,17 @@ def test_cleanup_retains_terminal_attempt_until_reservation_released(relay, outc
         session_ref="receiver", container_ref="git:test",
     )
     assert reservation is not None
-    if outcome != "reserved":
-        assert registry.record_outcome(reservation, outcome)
+    if outcome == "reserved":
+        with storage._relay_session_factory() as db:
+            db.get(RelayCodexWakeReservationRecord, endpoint_id).outcome = "reserved"
+            db.commit()
         reservation = registry.snapshot(endpoint_id)
+    else:
+        reservation = registry.begin_native_attempt(reservation)
+        assert reservation is not None
+        if outcome == "accepted":
+            assert registry.record_outcome(reservation, outcome)
+            reservation = registry.snapshot(endpoint_id)
     now = datetime.now(timezone.utc)
     assert storage.relay_trace_record(
         attempt_id="relay-activation-" + "9" * 32, delivery_id=delivery_id,

@@ -205,6 +205,8 @@ def test_codex_reservations_survive_restart_and_release_only_exact_delivery(tmp_
             session_ref="session-東京", container_ref="git:example/東京",
         )
         assert reservation is not None
+        reservation = registry.begin_native_attempt(reservation)
+        assert reservation is not None
         assert registry.record_outcome(reservation, "accepted")
         restarted = CodexWakeRegistry(relay_service=relay)
         assert restarted.snapshot(reservation.recipient_endpoint_id).outcome == "accepted"
