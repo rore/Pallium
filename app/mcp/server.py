@@ -1064,7 +1064,7 @@ def _bridge_diagnostic(category: str) -> None:
 
 
 @asynccontextmanager
-async def _codex_bridge_lifespan(server, *, shadow=False, inventory=False):
+async def _codex_bridge_lifespan(server, *, shadow=False, inventory=False, retained=False):
     try:
         module = importlib.import_module("app.mcp.codex_desktop_bridge")
     except asyncio.CancelledError:
@@ -1075,7 +1075,9 @@ async def _codex_bridge_lifespan(server, *, shadow=False, inventory=False):
         return
 
     try:
-        if inventory:
+        if retained:
+            manager = module.retained_lifespan(server)
+        elif inventory:
             manager = module.inventory_lifespan(server)
         else:
             manager = module.shadow_lifespan(server) if shadow else module.lifespan(server)
@@ -1106,6 +1108,17 @@ def _codex_inventory_lifespan(server):
     return _codex_bridge_lifespan(server, inventory=True)
 
 
+def _codex_retained_lifespan(server):
+    return _codex_bridge_lifespan(server, retained=True)
+
+
+def _codex_retained_enabled(transport: str) -> bool:
+    return (sys.platform == "win32" and transport == "stdio"
+            and os.environ.get("PALLIUM_CODEX_BRIDGE_MODE") not in {"inert", "shadow", "inventory"}
+            and os.environ.get("PALLIUM_AGENT_REF") == "codex"
+            and bool(os.environ.get("CODEX_APP_TOOLS_PIPE_PATH")))
+
+
 def _codex_bridge_caller_pair(request) -> dict[str, str] | None:
     meta = request.meta
     values = meta if isinstance(meta, dict) else meta.model_dump()
@@ -1124,7 +1137,8 @@ def _codex_bridge_caller_pair(request) -> dict[str, str] | None:
 
 
 def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None,
-                  codex_shadow: bool = False, codex_inventory: bool = False) -> FastMCP:
+                  codex_shadow: bool = False, codex_inventory: bool = False,
+                  codex_retained: bool = False) -> FastMCP:
     """Create a FastMCP server with Pallium tools registered."""
     from mcp.server.fastmcp import Context, FastMCP
     try:
@@ -1188,6 +1202,23 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None,
     def relay_tool(function):
         @wraps(function)
         async def wrapped(*args, **kwargs):
+            if codex_retained:
+                try:
+                    request = server.get_context().request_context
+                    caller = _codex_bridge_caller_pair(request)
+                    worker = request.lifespan_context.get("codex_retained")
+                    if caller is None:
+                        _bridge_diagnostic("retained-caller-absent")
+                    elif worker is None:
+                        _bridge_diagnostic("retained-worker-absent")
+                    elif os.environ.get("PALLIUM_AGENT_REF") != "codex":
+                        _bridge_diagnostic("retained-agent-mismatch")
+                    else:
+                        from app.mcp.codex_desktop_bridge import inventory_status
+                        outcome = inventory_status(await worker.register(caller))
+                        _bridge_diagnostic(f"retained-register-{outcome['status']}-{outcome.get('reason', 'unspecified')}")
+                except Exception:
+                    _bridge_diagnostic("retained-register-exception")
             result = await function(*args, **kwargs)
             if not isinstance(result, str):
                 return result
@@ -2466,6 +2497,13 @@ def main() -> None:
         options = {"lifespan": _codex_shadow_lifespan, "codex_shadow": True}
     if _codex_inventory_enabled(transport):
         options = {"lifespan": _codex_inventory_lifespan, "codex_inventory": True}
+    retained = _codex_retained_enabled(transport)
+    if transport == "stdio" and os.environ.get("PALLIUM_AGENT_REF") == "codex":
+        _bridge_diagnostic("retained-enabled" if retained else "retained-disabled")
+        if not retained:
+            _bridge_diagnostic("retained-no-host-pipe" if not os.environ.get("CODEX_APP_TOOLS_PIPE_PATH") else "retained-platform-disabled")
+    if retained:
+        options = {"lifespan": _codex_retained_lifespan, "codex_retained": True}
     server = create_server(host=host, port=port, **options)
     server.run(transport=transport)
 

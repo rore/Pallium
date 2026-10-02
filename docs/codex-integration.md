@@ -28,15 +28,30 @@ messages, and supports Pallium's optional derived-memory behavior.
 - inspect, flag, and write memory through MCP tools
 
 Windows and Linux exact-session wake are qualified for tasks already loaded by
-their Codex runtime. If a task is not loaded, Pallium's persisted Relay delivery
-stays pending and the installed hook retrieves it on the next supported turn;
-native unloaded-queue persistence and cold resume are not claimed. Windows
+their Codex runtime. Supported Windows Desktop also wakes unloaded tasks through
+the retained MCP path described below. Without that capability, a persisted
+delivery stays pending for the next supported turn; native unloaded-queue
+persistence is not claimed. Windows
 additionally proves overtaken-wake suppression,
 delivery-derived reply wake of an idle loaded sender, and a bounded remediation
 round trip without manual turns. Remaining interrupted/restart lifecycle and
 macOS qualification work retains next-turn delivery where active wake is not
 qualified. Correlation telemetry is deferred until existing evidence cannot
 diagnose a concrete failure.
+
+Automatic wake is enabled by default on supported Windows Desktop. Normal
+service-owned delivery has live payload/ACK witnesses for both idle and unloaded
+tasks, each with one claim and a payload-only marker response. These checks used
+ordinary authenticated MCP activity, without trial policy files or manual target
+wakes. Normal setup forwards the host capability name
+`CODEX_APP_TOOLS_PIPE_PATH` without copying its value. A real host capability and
+authenticated source connection remain required; HTTP MCP and other platforms
+retain their existing behavior. The approved policy checks fresh Desktop state: use the existing queue for
+loaded-idle tasks and retained MCP for unloaded tasks. These trigger the prompt
+and SessionStart payload hooks respectively. Working, unknown or disconnected
+tasks remain pending. One scheduler selects one path, with no fallback after an
+attempt or uncertain result. Non-interruption is
+best-effort because the task can start working between the check and the wake.
 
 ## Architecture
 

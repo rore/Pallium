@@ -108,6 +108,9 @@ _STDIO_CHILD = dedent(
     from types import SimpleNamespace
     from app.mcp import server as m
 
+    # This harness exercises the legacy inert lifecycle; retained mode has its own journeys.
+    m._codex_retained_enabled = lambda transport: False
+
     failure = os.environ["TEST_BRIDGE_FAILURE"]
     if failure == "import":
         original_import = m.importlib.import_module
@@ -295,7 +298,12 @@ async def test_real_stdio_ineligible_child_never_imports_bridge(
                 assert not result.isError and json.loads(result.content[0].text) == {"status": "healthy"}
         error_log.seek(0)
         output = error_log.read()
-        assert "Pallium Codex bridge inert:" not in output
+        diagnostics = [line for line in output.splitlines() if line.startswith("Pallium Codex bridge inert:")]
+        assert set(diagnostics) <= {
+            "Pallium Codex bridge inert: retained-disabled",
+            "Pallium Codex bridge inert: retained-no-host-pipe",
+            "Pallium Codex bridge inert: retained-platform-disabled",
+        }
         assert "inert-test-launcher-returned" in output
 
 
