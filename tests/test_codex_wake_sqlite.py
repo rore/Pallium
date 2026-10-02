@@ -449,6 +449,110 @@ def test_http_pre_cas_worker_exception_clears_marker_for_same_process_resume(cli
     assert len(launches) == 1
 
 
+@pytest.mark.parametrize("first_failure", ["thread_start", "retained_prewrite"])
+def test_http_worker_start_or_prewrite_release_failure_resumes_same_generation_to_ack(client, tmp_path, monkeypatch, first_failure):
+    from app.dependencies import recover_expired_relay_wakes
+    from core.claude_wake import ClaudeWakeRegistry
+    from core.relay_activation import ActivationAttemptResult
+    from types import SimpleNamespace
+
+    monkeypatch.setattr("app.dependencies.schedule_codex_relay_wake", codex_wake.schedule_codex_relay_wake)
+    monkeypatch.setattr(codex_wake, "_DEBOUNCE_SECONDS", 0)
+    monkeypatch.setattr("app.codex_bridge_pipe.retained_wake_enabled",
+                        lambda: first_failure == "retained_prewrite")
+    storage = client.app.state.pallium_service._storage
+    relay = RelayService(storage)
+    registry = _registry(relay, tmp_path / "legacy")
+    assert registry.initialize(old_owner_drained=True)
+    app = FastAPI()
+    app.include_router(build_router(client.app.state.pallium_service, relay_storage=storage,
+                                   codex_wake_registry=registry))
+    http = TestClient(app)
+    for session in ("sender", "target"):
+        assert http.post("/relay/turn", json={"runtime": "codex", "session_ref": session, **SCOPE}).status_code == 200
+
+    workers = []
+    original_schedule = codex_wake._schedule_reserved_codex_relay_wake
+    def capture_worker(*args, **kwargs):
+        worker = original_schedule(*args, **kwargs)
+        if worker is not None:
+            workers.append(worker)
+        return worker
+    monkeypatch.setattr(codex_wake, "_schedule_reserved_codex_relay_wake", capture_worker)
+    original_start = threading.Thread.start
+    fail_start = [first_failure == "thread_start"]
+    def start(thread, *args, **kwargs):
+        if fail_start[0] and thread._target is codex_wake._wake_after_debounce:
+            fail_start[0] = False
+            raise RuntimeError("can't start new thread")
+        return original_start(thread, *args, **kwargs)
+    monkeypatch.setattr(threading.Thread, "start", start)
+
+    original_transition = relay.codex_wake_transition
+    fail_release = [True]
+    def transition(operation, **kwargs):
+        if operation == "release" and fail_release[0]:
+            fail_release[0] = False
+            raise RuntimeError("transient release failure")
+        return original_transition(operation, **kwargs)
+    monkeypatch.setattr(relay, "codex_wake_transition", transition)
+    if first_failure == "retained_prewrite":
+        registry.retained_service = SimpleNamespace(dispatch=lambda *_: ActivationAttemptResult(
+            "deferred", "target_not_idle", native_retry_safe=True,
+        ))
+    launches = []
+    monkeypatch.setattr(codex_wake, "_start_launch",
+                        lambda *args: (launches.append(args), (None, ("queued", None, 0)))[1])
+    sent = http.post("/relay/messages", json={
+        "sender_runtime": "codex", "sender_session_ref": "sender",
+        "recipient": "codex:target", "message_id": f"worker-release-failure-{first_failure}",
+        "payload": "recover without restart", **SCOPE,
+    })
+    assert sent.status_code == 200, sent.text
+    for worker in workers:
+        worker.join(2)
+        assert not worker.is_alive()
+    monkeypatch.setattr(threading.Thread, "start", original_start)
+    monkeypatch.setattr(relay, "codex_wake_transition", original_transition)
+    assert fail_release == [False]
+
+    delivery = sent.json()["deliveries"][0]
+    reservation = registry.snapshot(delivery["recipient_endpoint_id"])
+    assert reservation is not None and reservation.outcome == "prepared"
+    assert launches == []
+
+    monkeypatch.setattr("app.codex_bridge_pipe.retained_wake_enabled", lambda: False)
+    recover_expired_relay_wakes(relay, ClaudeWakeRegistry(), codex_registry=registry)
+    expected_workers = 1 if first_failure == "thread_start" else 2
+    assert len(workers) == expected_workers
+    workers[-1].join(2)
+    assert not workers[-1].is_alive()
+    current = registry.snapshot(reservation.recipient_endpoint_id)
+    assert current is not None and current.generation == reservation.generation
+    assert current.outcome == "accepted"
+    assert len(launches) == 1
+
+    recover_expired_relay_wakes(relay, ClaudeWakeRegistry(), codex_registry=registry)
+    assert len(workers) == expected_workers and len(launches) == 1
+
+    claim = http.post("/relay/turn", json={
+        "runtime": "codex", "session_ref": "target",
+        "wake_delivery_id": delivery["delivery_id"], **SCOPE,
+    })
+    assert claim.status_code == 200, claim.text
+    claimed = claim.json()["deliveries"][0]
+    assert claimed["delivery_id"] == delivery["delivery_id"]
+    assert claimed["payload"] == "recover without restart"
+    ack = http.post("/relay/deliveries/ack", json={
+        "delivery_id": delivery["delivery_id"],
+        "claim_token": claimed["claim_token"], **SCOPE,
+    })
+    assert ack.status_code == 200, ack.text
+    observed = http.get(f"/relay/messages/{sent.json()['message_id']}", params=SCOPE).json()["deliveries"][0]
+    assert observed["state"] == "delivered" and observed["attempts"] == 1
+    assert registry.snapshot(delivery["recipient_endpoint_id"]) is None
+
+
 def test_draining_trace_queue_does_not_restore_sqlite_contention_drop(client):
     service = client.app.state.pallium_service
     storage = service._storage

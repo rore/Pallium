@@ -10,6 +10,15 @@ lane: capability
 
 ## Current execution status (reconciled 2026-10-02)
 
+A follow-up review confirmed a narrower pre-start recovery defect: when thread
+start and durable release both fail, a local schedule marker blocks the surviving
+prepared reservation. The fix covers worker-start failure and retained prewrite
+deferral. Both HTTP failure-to-ACK regressions and 324 affected tests passed;
+full validation passed 5,955 tests with 34 skipped and 2 expected failures.
+Independent review accepted the change; publication and installation are pending
+in `.agent-workflow/tasks/codex-wake-worker-start-recovery.md`. Existing submitted
+or uncertain reservations remain fenced.
+
 PR #277 merged at `d993f639`; required CI passed and the installed service was
 updated and healthy. Real dogfooding then exposed unfinished recovery behavior:
 an abandoned unclaimed wake reservation blocks later notifications, and a native
@@ -47,7 +56,7 @@ and one claim/ACK. The target returned a marker supplied only through the Relay
 payload. Cleanup restored normal service health. This establishes that the path
 works; it does not establish general connection lifetime or busy-turn safety.
 
-Local product integration is implemented and focused-tested on `feat/codex-retained-wake-product`.
+Product integration shipped in PR #277 from `feat/codex-retained-wake-product`.
 The approved behavior is default automatic wake on supported Windows Desktop
 for registered Codex recipients across sender runtimes: check fresh Desktop state, select existing queue delivery
 for loaded-idle targets or retained MCP for unloaded targets, and defer working
@@ -66,7 +75,8 @@ wake, without a manual target wake or finite trial procedure. Latest validation:
 deadline/lifecycle cases passed; independent reviews accepted the changes.
 The initial product slice shipped in PR #277. Both Linux CI versions passed
 5,902 tests with 72 skipped and 2 expected failures; Windows smoke and required
-checks passed. The recovery incidents above remain open. New test chats use `pallium-test`.
+checks passed. The subsequent recovery fixes and remaining follow-up are recorded
+above. New test chats use `pallium-test`.
 
 An earlier 16:06 unloaded attempt claimed without ACK and expired. Its exact
 cause remains unknown. A real delayed-response regression independently exposed

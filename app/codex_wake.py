@@ -425,8 +425,8 @@ def _schedule_reserved_codex_relay_wake(
     try:
         worker.start()
     except RuntimeError:
-        if registry.release_generation(reservation):
-            _clear_schedule(reservation, registry)
+        registry.release_generation(reservation)
+        _clear_schedule(reservation, registry)
         _emit_trace(
             trace_callback, attempt_id, reservation.delivery_id,
             reservation.recipient_endpoint_id, "completed",
@@ -589,8 +589,8 @@ def _wake_after_debounce(
                     and current.generation == reservation.generation and current.outcome == "uncertain"):
                 registry.record_outcome(current, "accepted")
         elif attempt.native_retry_safe:
-            if registry.release_generation(reservation):
-                _clear_schedule(reservation, registry)
+            registry.release_generation(reservation)
+            _clear_schedule(reservation, registry)
         else:
             current = registry.snapshot(reservation.recipient_endpoint_id)
             if current == reservation:
