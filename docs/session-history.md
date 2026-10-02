@@ -48,6 +48,26 @@ Search answers “where did we discuss this?” Expansion answers “what was th
 surrounding reasoning?” The bounds keep one match from turning into an entire
 transcript replay.
 
+### Recovering an agreed plan
+
+Search with topic anchors rather than only words such as "first items". Leave
+`role` unset when recovering a conversation's decision: the list may be in an
+assistant turn while a user turn accepts, qualifies, or changes it. `role=user`
+is an exact stored-role filter, not a human-authorship filter; automated prompts
+can carry that role too. Explicit caller filters are never silently relaxed.
+
+Expand a promising match with neighboring turns and distinguish a proposal from
+an accepted order. Keep the page-specific lookup lineage and bounded retry/repair
+procedure. A miss means the answer was not recovered within the checked search,
+not that it was never recorded. History does not automatically suppress reminders.
+
+Source-only lexical candidate scanning continues past excluded sources until it
+has the requested eligible candidate count or exhausts matching rows. This prevents
+other sessions or roles from filling the candidate window before exact filters
+are applied. Ranking weights and visibility rules are unchanged. Fetch batches are
+bounded; a heavily filtered query can still scan many rejected rows, so this is
+not a constant-latency guarantee. Mixed/derived retrieval is unchanged.
+
 Long normalized-equivalent turns in the same source context can share one search
 result without deleting raw history. Normalization preserves identifier punctuation
 such as `C#` and `v1.2`; only commas and full stops followed by whitespace or the
