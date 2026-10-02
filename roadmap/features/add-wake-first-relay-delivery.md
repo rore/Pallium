@@ -16,7 +16,15 @@ an abandoned unclaimed wake reservation blocks later notifications, and a native
 timeout followed by lost retained custody defers other recipients. These incidents
 affect the reliability claim despite the successful idle/unloaded witnesses below.
 Recovery work is active in `.agent-workflow/tasks/codex-wake-reservation-recovery.md`.
-The connection repair proceeds independently. Reservation recovery is blocked
+The connection repair shipped in PR #279 at `9454dd80`. Both clean clones were
+synchronized and the installed wrapper exited successfully; independent health,
+embedding and queue checks passed, and authenticated retained registration was
+observed after restart. Local validation passed 5,949 tests with 34 skipped and
+2 expected failures; CI and independent review passed. One existing hook test
+failed in the initial Python 3.13 CI run, passed locally, and passed on the single
+failed-job rerun; its cause remains unconfirmed. No speculative hook change was made.
+The workflow-manager notice remains pending behind its older reservation.
+Reservation recovery is blocked
 by automatic approval review despite approval of the exact replacement case;
 the rejected partial implementation was removed and existing fences preserved.
 Database inspection distinguishes pending/expired delivery from confirmed hook ACK;
