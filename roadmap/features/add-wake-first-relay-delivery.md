@@ -28,7 +28,7 @@ The workflow-manager notice remains pending behind its older reservation.
 The user renewed approval for reservation recovery on 2026-10-02. Independent
 plan review accepted recovery of new durable prepared generations, with an exact
 atomic fence before either native wake path writes. Implementation and regression
-validation are in progress under normal automatic review. Legacy reserved rows
+validation passed; review and merge are pending. Legacy reserved rows
 remain fenced; this change does not retroactively unblock the older reservation.
 Database inspection distinguishes pending/expired delivery from confirmed hook ACK;
 neither a native submission nor a healthy HTTP service proves message receipt.
