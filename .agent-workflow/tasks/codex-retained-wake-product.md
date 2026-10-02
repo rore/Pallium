@@ -1,3 +1,8 @@
+Publication update (2026-10-02): the user explicitly requested "So pr and merge it".
+This supersedes the earlier local-only/no-PR restriction below. PR #277 publishes
+the reviewed feature; merge follows required CI and review, then synchronized
+development/installed clones and installed-wrapper health verification.
+
 <!-- agent-workflow:start -->
 **Outcome:** Ordinary Relay delivery uses the authenticated retained Codex MCP connection to wake its target and deliver payload through the existing hook and ACK path.
 

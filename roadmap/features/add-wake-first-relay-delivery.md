@@ -33,9 +33,9 @@ unloaded check used ordinary authenticated source activity and a service-owned
 wake, without a manual target wake or finite trial procedure. Latest validation:
 115 retained-feature cases, 2 protected contracts, 4 setup checks, and 15 hook
 deadline/lifecycle cases passed; independent reviews accepted the changes.
-The installed local feature is complete. Changes are recorded on the local feature
-branch and remain unpublished under the user's no-PR instruction; no new full-suite
-result is claimed. New test chats use `pallium-test`.
+The installed local feature is complete. On 2026-10-02 the user requested publication
+and merge; PR #277 carries the reviewed changes with required CI pending.
+No new full-suite result is claimed yet. New test chats use `pallium-test`.
 
 An earlier 16:06 unloaded attempt claimed without ACK and expired. Its exact
 cause remains unknown. A real delayed-response regression independently exposed
