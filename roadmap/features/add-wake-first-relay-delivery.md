@@ -15,8 +15,10 @@ start and durable release both fail, a local schedule marker blocks the survivin
 prepared reservation. The fix covers worker-start failure and retained prewrite
 deferral. Both HTTP failure-to-ACK regressions and 324 affected tests passed;
 full validation passed 5,955 tests with 34 skipped and 2 expected failures.
-Independent review accepted the change; publication and installation are pending
-in `.agent-workflow/tasks/codex-wake-worker-start-recovery.md`. Existing submitted
+Independent review and CI passed. PR #281 merged at `8422e988`; both clean clones
+were synchronized and the installed restart wrapper exited successfully.
+Independent health, embedding and queue checks passed. The implementation record
+is `.agent-workflow/tasks/codex-wake-worker-start-recovery.md`. Existing submitted
 or uncertain reservations remain fenced.
 
 PR #277 merged at `d993f639`; required CI passed and the installed service was
