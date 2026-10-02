@@ -121,6 +121,8 @@ def test_storage_failure_logs_bounded_metadata_without_sql_values(relay_store, t
 def test_http_send_restart_exact_claim_ack_preserves_sqlite_fence(
     client, tmp_path, monkeypatch, native_outcome, persisted_outcome,
 ):
+    # This lifecycle asserts the legacy queue launcher and persisted fence.
+    monkeypatch.setattr("app.codex_bridge_pipe.retained_wake_enabled", lambda: False)
     storage = client.app.state.pallium_service._storage
     relay = RelayService(storage)
     directory = tmp_path / "legacy"

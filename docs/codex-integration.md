@@ -53,6 +53,14 @@ tasks remain pending. One scheduler selects one path, with no fallback after an
 attempt or uncertain result. Non-interruption is
 best-effort because the task can start working between the check and the wake.
 
+A conclusively cancelled native connection failure does not require another
+manual source turn: the next scheduled wake can reopen the same authenticated
+source's Desktop connection and revalidate its process identity and tool catalog.
+Source disconnect, identity or schema changes, and unresolved I/O stop this
+recovery. A wake that may already have been submitted stays fenced; reconnecting
+does not resend it. Legacy abandoned reservations still require their existing
+receipt or expiry reconciliation and can delay later messages.
+
 ## Architecture
 
 ```

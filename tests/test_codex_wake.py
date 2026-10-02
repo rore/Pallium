@@ -84,6 +84,8 @@ def _log_fp(value: str) -> str:
 
 @pytest.fixture(autouse=True)
 def isolated_codex_registry(monkeypatch: pytest.MonkeyPatch) -> CodexWakeRegistry:
+    # This module exercises the legacy queue transport; retained mode has its own suite.
+    monkeypatch.setattr("app.codex_bridge_pipe.retained_wake_enabled", lambda: False)
     registry = CodexWakeRegistry()
     process = MagicMock(returncode=0)
     process.communicate.return_value = (None, "")
