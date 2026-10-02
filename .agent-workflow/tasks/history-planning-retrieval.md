@@ -47,7 +47,7 @@ Concrete correction for review: in storage/sqlite_search.py, reuse the existing 
 - Delivery -> whole-change selector, full non-slow suite, workflow/import checks, GitHub checks, installed revision and health verification.
 
 **Plan review:**
-Pending concrete plan; no runtime or test edits authorized to workers yet.
+Agent technical review: /root/planning_fix_review (clean-context Sol) approved concrete plan at 1d931b9f. Deduplicate source targets after eligibility, preserving strongest eligible text view; cover exhaustion and stable ties. Scripted MCP replay proves evidence recovery under the procedure, not agent adoption or downstream accuracy.
 
 **Approvals:**
 Approved by user 2026-10-02: "don't stop, improve this!" Existing authorization includes PR/merge according to repository guidelines. User separately authorized read-only direct database and cross-project inspection.
@@ -55,7 +55,7 @@ Approved by user 2026-10-02: "don't stop, improve this!" Existing authorization 
 **Exceptions:**
 —
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -63,6 +63,8 @@ Approved by user 2026-10-02: "don't stop, improve this!" Existing authorization 
 Planning gate only; not awaiting renewed user approval. Branch feat/history-planning-retrieval at d993f639. Owning roadmap: roadmap/features/investigate-history-navigation-and-on-demand-compression.md; its earlier no-case preflight is now superseded for development diagnosis by a concrete authorized incident, not by recovered held-out evaluation provenance. The injected git-branch work reference concerns another task and does not identify this Work Record. No association inferred.
 
 Independent design recommendation selected two distinct changes: caller-guidance correction addresses the observed role-filter miss; source-only lexical refill fixes the separately discovered global-candidate starvation boundary. Do not claim refill alone solves the reported heartbeat dominance. Automated history remains searchable, exact requested roles remain binding, and no preference weights are introduced. docs/context/eval-from-live-failures.md excludes clear reproducible bugfixes and documentation from its numerical-tuning research loop; use red/green caller reproduction here, not a new ranking experiment. Intended paths are GRAY storage/integration guidance plus BLUE tests/docs/record/roadmap, with no API/schema/protected-test changes or new dependency edges.
+
+Concrete plan approved before implementation. Runtime/test worker owns storage/sqlite_search.py and tests/test_history_planning_retrieval.py; lead owns remaining named files and records worker evidence. Existing helpers may be imported rather than copied. Use the shared virtualenv interpreter; no provider calls or model downloads. Source scan batches are bounded, but total rejected rows scanned can reach exhaustion; do not claim constant latency.
 
 ## Evidence
 
