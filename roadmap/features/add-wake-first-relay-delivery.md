@@ -8,7 +8,19 @@ milestone: pallium-relay
 lane: capability
 ---
 
-## Current execution status (reconciled 2026-10-01)
+## Current execution status (reconciled 2026-10-02)
+
+PR #277 merged at `d993f639`; required CI passed and the installed service was
+updated and healthy. Real dogfooding then exposed unfinished recovery behavior:
+an abandoned unclaimed wake reservation blocks later notifications, and a native
+timeout followed by lost retained custody defers other recipients. These incidents
+affect the reliability claim despite the successful idle/unloaded witnesses below.
+Recovery work is active in `.agent-workflow/tasks/codex-wake-reservation-recovery.md`.
+The connection repair proceeds independently. Reservation recovery is blocked
+by automatic approval review despite approval of the exact replacement case;
+the rejected partial implementation was removed and existing fences preserved.
+Database inspection distinguishes pending/expired delivery from confirmed hook ACK;
+neither a native submission nor a healthy HTTP service proves message receipt.
 
 One bounded Windows trial proved the full retained authenticated MCP path:
 service-owned wake of a supported `notLoaded` Codex target, hook payload emission,
@@ -33,9 +45,9 @@ unloaded check used ordinary authenticated source activity and a service-owned
 wake, without a manual target wake or finite trial procedure. Latest validation:
 115 retained-feature cases, 2 protected contracts, 4 setup checks, and 15 hook
 deadline/lifecycle cases passed; independent reviews accepted the changes.
-The installed local feature is complete. On 2026-10-02 the user requested publication
-and merge; PR #277 carries the reviewed changes with required CI pending.
-No new full-suite result is claimed yet. New test chats use `pallium-test`.
+The initial product slice shipped in PR #277. Both Linux CI versions passed
+5,902 tests with 72 skipped and 2 expected failures; Windows smoke and required
+checks passed. The recovery incidents above remain open. New test chats use `pallium-test`.
 
 An earlier 16:06 unloaded attempt claimed without ACK and expired. Its exact
 cause remains unknown. A real delayed-response regression independently exposed

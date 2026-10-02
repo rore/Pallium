@@ -1874,6 +1874,8 @@ class InventoryService:
                 if (self.source is not None and (self.policy is None or self.replace_allowed)
                         and (time.monotonic() >= self.ready_deadline
                              or self.w.event.WaitForSingleObject(self.source.handle, 0) == self.w.event.WAIT_OBJECT_0)):
+                    if self.retained:
+                        self._clear_registration()
                     self.source.close()
                     self.source = None
                     self.ready_announced = False
@@ -2203,15 +2205,106 @@ class RetainedService(InventoryService):
         self._custody_lock = threading.RLock()
         self.ancestors = []
         self.read_tool = False
+        self.retained_registration = None
 
-    def _drop(self) -> None:
+    def _clear_registration(self) -> None:
         with self._custody_lock:
+            self.retained_registration = None
+
+    def _drop(self, *, preserve_registration=False) -> None:
+        with self._custody_lock:
+            if not preserve_registration or self.unresolved or self.stop_event.is_set() or _native_uncertain:
+                self._clear_registration()
             super()._drop()
             self.read_tool = False
             if not self.unresolved:
                 for peer in self.ancestors:
                     peer.close()
                 self.ancestors = []
+
+    def stop(self) -> None:
+        self.stop_event.set()
+        self._clear_registration()
+        super().stop()
+
+    def _registration_identity(self, desktop, ancestors):
+        policy = desktop.policy
+        return (desktop.pid, desktop.creation, policy.desktop_user_sid,
+                os.path.normcase(policy.desktop_executable), policy.desktop_version,
+                tuple((peer.pid, peer.creation) for peer in ancestors))
+
+    def _remember_registration(self, endpoint, caller):
+        self.retained_registration = {
+            "epoch": self.epoch, "source": self.source,
+            "source_identity": (self.source.pid, self.source.creation),
+            "endpoint": endpoint, "caller": caller,
+            "desktop_identity": self._registration_identity(self.desktop, self.ancestors),
+        }
+
+    def _registration_live(self) -> bool:
+        saved = self.retained_registration
+        try:
+            if (saved is None or self.stop_event.is_set() or self.unresolved or _native_uncertain
+                    or saved["epoch"] != self.epoch or saved["source"] is not self.source
+                    or saved["source_identity"] != (self.source.pid, self.source.creation)
+                    or self.current is None or self.desktop is None or self.custody is None
+                    or self.custody.unresolved):
+                return False
+            self.current.check()
+            self.source.check()
+            for peer in self.ancestors:
+                peer.check()
+            self.desktop.verify()
+            return (self.w.pipe.GetNamedPipeServerProcessId(self.custody.handle) == saved["desktop_identity"][0]
+                    and self._registration_identity(self.desktop, self.ancestors) == saved["desktop_identity"])
+        except Exception:
+            return False
+
+    def _open_custody(self, endpoint, deadline, expected_identity=None):
+        handle = self.w.file.CreateFile(endpoint, self.w.con.GENERIC_READ | self.w.con.GENERIC_WRITE,
+            0, None, self.w.con.OPEN_EXISTING,
+            self.w.con.FILE_FLAG_OVERLAPPED | self.w.con.SECURITY_SQOS_PRESENT | self.w.file.SECURITY_IDENTIFICATION, None)
+        try:
+            self.custody = _DesktopIO(self.w, handle, self.stop_event)
+            handle = None
+        finally:
+            _close(handle)
+        desktop_pid = self.w.pipe.GetNamedPipeServerProcessId(self.custody.handle)
+        if expected_identity is not None and desktop_pid != expected_identity[0]:
+            raise ShadowUnavailable("peer-mismatch")
+        self.desktop, self.ancestors = _source_desktop(self.w, self.source, desktop_pid, self.sid)
+        identity = self._registration_identity(self.desktop, self.ancestors)
+        if expected_identity is not None and identity != expected_identity:
+            raise ShadowUnavailable("peer-mismatch")
+        self._check_custody()
+        self.native_sequence += 1
+        request_id = self.native_sequence
+        self.custody.write({"jsonrpc": "2.0", "id": request_id, "method": "tools/list"}, deadline)
+        value = self.custody.read(deadline)
+        if (set(value) != {"jsonrpc", "id", "result"} or value["jsonrpc"] != "2.0"
+                or type(value["id"]) is not int or value["id"] != request_id
+                or not isinstance(value["result"], dict)):
+            raise ShadowUnavailable("invalid-response")
+        tools = value["result"].get("tools")
+        if not _owner_tool_schema_valid(tools) or not _read_tool_schema_valid(tools):
+            raise ShadowUnavailable("invalid-response")
+        if expected_identity is not None and self._registration_identity(self.desktop, self.ancestors) != expected_identity:
+            raise ShadowUnavailable("peer-mismatch")
+        self.owner_tool_before = self.read_tool = True
+        self._check_custody()
+        return identity
+
+    def _reopen_registration(self) -> None:
+        saved = self.retained_registration
+        if (saved is None or self.stop_event.is_set() or self.unresolved or _native_uncertain
+                or saved["epoch"] != self.epoch or saved["source"] is not self.source
+                or saved["source_identity"] != (self.source.pid, self.source.creation)):
+            raise ShadowUnavailable("peer-mismatch")
+        self.current.check()
+        self.source.check()
+        self.caller = saved["caller"]
+        self._open_custody(saved["endpoint"], time.monotonic() + EXCHANGE_SECONDS,
+                           saved["desktop_identity"])
 
     def _maintain(self) -> None:
         with self._custody_lock:
@@ -2283,30 +2376,18 @@ class RetainedService(InventoryService):
                 raise ShadowUnavailable("peer-mismatch")
             if self.custody is not None:
                 self._check_custody()
+                if (self.retained_registration is not None
+                        and endpoint != self.retained_registration["endpoint"]):
+                    self._clear_registration()
+                    raise ShadowUnavailable("peer-mismatch")
                 self.caller = caller
+                if self.retained_registration is not None:
+                    self.retained_registration["caller"] = caller
                 return self._result(inventory_ok=True)
             try:
-                handle = self.w.file.CreateFile(endpoint, self.w.con.GENERIC_READ | self.w.con.GENERIC_WRITE,
-                    0, None, self.w.con.OPEN_EXISTING,
-                    self.w.con.FILE_FLAG_OVERLAPPED | self.w.con.SECURITY_SQOS_PRESENT | self.w.file.SECURITY_IDENTIFICATION, None)
-                self.custody = _DesktopIO(self.w, handle, self.stop_event)
-                desktop_pid = self.w.pipe.GetNamedPipeServerProcessId(handle)
-                self.desktop, self.ancestors = _source_desktop(self.w, peer, desktop_pid, self.sid)
                 self.caller = caller
-                self._check_custody()
-                self.native_sequence += 1
-                request_id = self.native_sequence
-                self.custody.write({"jsonrpc": "2.0", "id": request_id, "method": "tools/list"}, deadline)
-                value = self.custody.read(deadline)
-                if (set(value) != {"jsonrpc", "id", "result"} or value["jsonrpc"] != "2.0"
-                        or type(value["id"]) is not int or value["id"] != request_id
-                        or not isinstance(value["result"], dict)):
-                    raise ShadowUnavailable("invalid-response")
-                tools = value["result"].get("tools")
-                if not _owner_tool_schema_valid(tools) or not _read_tool_schema_valid(tools):
-                    raise ShadowUnavailable("invalid-response")
-                self.owner_tool_before = self.read_tool = True
-                self._check_custody()
+                self._open_custody(endpoint, deadline)
+                self._remember_registration(endpoint, caller)
                 _log.warning("codex_retained_registration outcome=registered")
                 return self._result(inventory_ok=True)
             except Exception as exc:
@@ -2320,9 +2401,14 @@ class RetainedService(InventoryService):
 
         spent = False
         with self._custody_lock:
+            state_read_started = False
             try:
+                if self.custody is None:
+                    state_read_started = True
+                    self._reopen_registration()
                 if not self.read_tool or not self.owner_tool_before or self.caller is None:
                     raise ShadowUnavailable("stopped")
+                state_read_started = True
                 result = self._call("read_thread", {"threadId": reservation.session_ref,
                     "turnLimit": 1, "includeOutputs": False, "maxOutputCharsPerItem": 1},
                     time.monotonic() + EXCHANGE_SECONDS)
@@ -2373,7 +2459,11 @@ class RetainedService(InventoryService):
                     return ActivationAttemptResult("uncertain", "native_submitted", ("submission_attempted",))
             except Exception as exc:
                 _log.warning("codex_retained_dispatch outcome=failed category=%s", _inventory_reason(exc))
-                self._drop()
+                category = getattr(exc, "category", None)
+                preserve = (state_read_started and category in {"deadline", "transport-failed"}
+                            and self.custody is not None and not self.custody.unresolved
+                            and self._registration_live())
+                self._drop(preserve_registration=preserve)
                 return ActivationAttemptResult("uncertain" if spent else "deferred",
                     "native_unavailable", ("submission_attempted",) if spent else (), native_retry_safe=not spent)
         # Queue completion owns no Desktop I/O; allow source calls/disconnect during this wait.

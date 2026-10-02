@@ -91,7 +91,11 @@ def retained(monkeypatch, tmp_path):
     monkeypatch.setattr(bridge, "_Peer", Peer)
     monkeypatch.setattr(bridge, "_parent_pids", lambda: {42: 41, 41: 40})
     monkeypatch.setattr(bridge, "_process_image", lambda *a: (str(Path("C:/Apps") / "Codex.exe"), "1.2.3.4"))
-    monkeypatch.setattr(bridge, "_DesktopPeer", lambda w, descriptor: Peer(w, descriptor.desktop_pid))
+    def desktop_peer(w, descriptor):
+        peer = Peer(w, descriptor.desktop_pid)
+        peer.policy = descriptor
+        return peer
+    monkeypatch.setattr(bridge, "_DesktopPeer", desktop_peer)
     natives = []
     def native(*args):
         value = Desktop(*args)

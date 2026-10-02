@@ -953,10 +953,12 @@ def test_persisted_claude_d1_d2_d3_actual_hooks(
         for method, path, body in ingested
     )
 
-    transport = MagicMock(return_value=True)
+    transport_called = threading.Event()
+    transport = MagicMock(side_effect=lambda *_args, **_kwargs: transport_called.set() or True)
     monkeypatch.setattr("app.claude_wake.claude_wake_transport", transport)
     sent3 = send("D3", message_id="stable-d3")
     assert state(sent3) == "pending"
+    assert transport_called.wait(2)  # Sending schedules a worker; it does not join it.
     transport.assert_called_once()
     assert send("D3", message_id="stable-d3")["message_id"] == sent3["message_id"]
     transport.assert_called_once()
