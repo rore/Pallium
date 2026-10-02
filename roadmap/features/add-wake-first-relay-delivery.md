@@ -15,8 +15,14 @@ updated and healthy. Real dogfooding then exposed unfinished recovery behavior:
 an abandoned unclaimed wake reservation blocks later notifications, and a native
 timeout followed by lost retained custody defers other recipients. These incidents
 affect the reliability claim despite the successful idle/unloaded witnesses below.
-Reservation recovery continues in `.agent-workflow/tasks/codex-wake-reservation-recovery-v2.md`;
-the original record preserves the completed connection repair and rejection history.
+Reservation recovery shipped in PR #280 at `01213c1d`; its record is
+`.agent-workflow/tasks/codex-wake-reservation-recovery-v2.md`. Both clean clones
+were synchronized, the installed wrapper exited successfully, and independent
+health, embedding and queue checks passed. Local full validation passed 5,953
+tests with 34 skipped and 2 expected failures. Final CI and independent review
+passed. One unchanged Claude hook test encountered a busy ACK in Python 3.12 CI;
+its exact local test and the single failed-job rerun passed, with no speculative
+Claude code change. The original record preserves connection-repair history.
 The connection repair shipped in PR #279 at `9454dd80`. Both clean clones were
 synchronized and the installed wrapper exited successfully; independent health,
 embedding and queue checks passed, and authenticated retained registration was
@@ -24,12 +30,14 @@ observed after restart. Local validation passed 5,949 tests with 34 skipped and
 2 expected failures; CI and independent review passed. One existing hook test
 failed in the initial Python 3.13 CI run, passed locally, and passed on the single
 failed-job rerun; its cause remains unconfirmed. No speculative hook change was made.
-The workflow-manager notice remains pending behind its older reservation.
+The workflow-manager notice was acknowledged on its first claim at
+2026-10-02 14:22:30 UTC, after the older reservation naturally expired and before
+the PR #280 deployment. No reset or resend was used; ACK proves receipt, not action.
 The user renewed approval for reservation recovery on 2026-10-02. Independent
 plan review accepted recovery of new durable prepared generations, with an exact
 atomic fence before either native wake path writes. Implementation and regression
-validation passed; review and merge are pending. Legacy reserved rows
-remain fenced; this change does not retroactively unblock the older reservation.
+validation, review and merge passed. Legacy reserved rows remain fenced until
+their existing receipt or expiry reconciliation; this change never relabels them.
 Database inspection distinguishes pending/expired delivery from confirmed hook ACK;
 neither a native submission nor a healthy HTTP service proves message receipt.
 
