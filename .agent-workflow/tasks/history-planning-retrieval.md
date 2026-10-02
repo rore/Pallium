@@ -55,12 +55,12 @@ Approved by user 2026-10-02: "don't stop, improve this!" Existing authorization 
 **Exceptions:**
 —
 
-**State:** Ready to implement
+**State:** Blocked
 <!-- agent-workflow:end -->
 
 ## Implementation
 
-Planning gate only; not awaiting renewed user approval. Branch feat/history-planning-retrieval at d993f639. Owning roadmap: roadmap/features/investigate-history-navigation-and-on-demand-compression.md; its earlier no-case preflight is now superseded for development diagnosis by a concrete authorized incident, not by recovered held-out evaluation provenance. The injected git-branch work reference concerns another task and does not identify this Work Record. No association inferred.
+Implementation and independent review complete; validation and delivery remain. Branch feat/history-planning-retrieval at d993f639. Owning roadmap: roadmap/features/investigate-history-navigation-and-on-demand-compression.md; its earlier no-case preflight is now superseded for development diagnosis by a concrete authorized incident, not by recovered held-out evaluation provenance. The injected git-branch work reference concerns another task and does not identify this Work Record. No association inferred.
 
 Independent design recommendation selected two distinct changes: caller-guidance correction addresses the observed role-filter miss; source-only lexical refill fixes the separately discovered global-candidate starvation boundary. Do not claim refill alone solves the reported heartbeat dominance. Automated history remains searchable, exact requested roles remain binding, and no preference weights are introduced. docs/context/eval-from-live-failures.md excludes clear reproducible bugfixes and documentation from its numerical-tuning research loop; use red/green caller reproduction here, not a new ranking experiment. Intended paths are GRAY storage/integration guidance plus BLUE tests/docs/record/roadmap, with no API/schema/protected-test changes or new dependency edges.
 
@@ -76,6 +76,12 @@ Delivery coordination: another task has dirty work on feat/codex-wake-reservatio
 
 Read-only SQLite incident inspection and existing caller source code. Initial diagnosis was outside workflow; user then explicitly expanded to implementation. Private source IDs and excerpts remain in chat/Relay, not this record.
 
+Validation at 5ed64c73: affected History files passed (95 tests; one slow test excluded), and that slow real-MCP navigation replay passed separately. The selected full Windows non-slow run stopped with 1424 passed, 2 skipped, 1 xfailed and 2 failures. Both failures reproduced serially against unchanged-main wake paths: tests/test_codex_wake.py::test_expired_wake_reconciliation_serializes_an_ordinary_reclaim mocks the legacy launcher but Windows selects retained dispatch; tests/test_dashboard.py::TestDashboardSourceAndRelayProjections::test_relay_split_store_and_multi_delivery_projection_boundaries expects qualified despite Windows retained activation returning unqualified. These are not passing validation and no retry is justified without correcting the test setup/contracts. Routed to the active wake-task owner; keep this change isolated, prepare a draft PR for CI, and resume full validation after the baseline correction. No tests skipped or weakened. Import boundaries and whole-change workflow checks passed before this evidence-only update.
+
 ## Result review
 
-Pending.
+Agent technical review: /root/planning_fix_review, clean-context non-implementer.
+Reviewed revision: 5ed64c73.
+Verification adequacy: Approved conditional on selected checks and full non-slow validation. Reviewer inspected bounded cursor advancement, exhaustion, post-eligibility deduplication, stable strongest-view ordering, filter/lifecycle preservation, six HTTP regressions and actual formatted MCP recovery. No blocking findings. Scripted recovery is not evidence of agent adoption or downstream accuracy. Full validation has two unrelated-surface failures under investigation; approval does not waive them.
+
+Skill-feedback triage: rejected initial test evidence was a local implementation/review correction, not a reproducible upstream skill defect. No upstream issue warranted.
