@@ -19,7 +19,11 @@ default wait for other state writes. The new HTTP regression fails on the old
 held-lock and exhausted-budget cases remain unclaimed. This reproduces a failure
 class, not the proven cause of the separate live `native_submitted` incident.
 Independent review accepted the correction; final full validation passed 5,980
-tests with 34 skipped and two expected failures. Delivery is tracked in
+tests with 34 skipped and two expected failures. PR #283 merged at `f5dad2bd`;
+Python 3.12/3.13 CI and Windows smoke passed with no review findings. Both clean
+checkouts were synchronized, the installed restart wrapper exited successfully,
+and independent health/status/queue checks returned 200 with embedding healthy.
+The implementation and incident limits are tracked in
 `.agent-workflow/tasks/codex-hook-lock-budget.md`.
 
 On 2026-10-04, one live Relay delivery's Codex queue wake timed out at
