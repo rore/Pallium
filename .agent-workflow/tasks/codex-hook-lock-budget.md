@@ -34,8 +34,8 @@
 
 **Exceptions:** —
 
-<!-- Ready for review -->
-**State:** Ready for review
+<!-- Blocked -->
+**State:** Blocked
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -51,6 +51,16 @@ Result review found that the exact UserPromptSubmit wake callback rebuilds its o
 The independent reviewer accepted the exact-wake caller adjustment before its edit. Scope now includes `integrations/codex/hooks/user_prompt_submit.py`; its existing two-second ceiling covers both lock wait and HTTP instead of restarting in the callback. Ordinary prompts keep the 0.75-second cap. The actual-hook HTTP test now covers SessionStart and exact UserPromptSubmit, including positive held-lock waits, post-lock timeout reduction, actual ACK, and no duplicate on a second hook. Historical incident attribution remains unproved.
 
 ## Result review
+
+Agent technical review: `/root/hook_boundary_review`, final diff and callback compatibility adjustment accepted.
+
+Reviewed revision: `539b1f2b` (production, tests, and roadmap unchanged from the independently reviewed working diff).
+
+Verification adequacy: actual hook/HTTP release, contention, exhaustion, ACK and duplicate regressions plus deterministic deadline checks and the final 5,980-test green full run cover the scoped correction. Historical incident attribution and baseline readiness flakiness remain unproved and are not completion claims.
+
+Post-commit workflow validation has no blocking findings; its only advisory is that the already-written and reviewed Work Record was committed together with code in `539b1f2b`. The record and independent plan review preceded edits, as the implementation history above records.
+
+Publication blocker: automatic approval review rejected the combined metadata-commit/push command before execution because publishing this exact branch's code and Work Record to public `https://github.com/rore/Pallium.git` requires direct human authorization for that payload and destination. No push or PR exists, and no installed change occurred. Do not retry or publish indirectly. Root must obtain that exact approval, then use normal automatic review to push `feat/codex-hook-lock-budget`, create/attach the prepared PR, verify CI and review threads, merge, synchronize clean clones, and use the installed restart wrapper plus health checks. The implementation and all final tests are complete; no rerun is required absent a finding or code change.
 
 Agent result review: `/root/hook_boundary_review` accepted the corrected diff. The reviewer verified one deadline across lock and requests, existing output/ACK reserve and timeout caps, short defaults elsewhere, both actual hook paths, real ACK and duplicate prevention, and deterministic lock/bootstrap exhaustion. The exact-wake budget finding and test-output expectation finding were addressed; no concrete findings remain. Affected validation: 380 passed initially; two new negative UserPromptSubmit cases were corrected to assert the existing block output, then both passed on the exact failed-test rerun. Full-suite validation remains in progress.
 
