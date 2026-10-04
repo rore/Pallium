@@ -34,8 +34,8 @@
 
 **Exceptions:** —
 
-<!-- Blocked -->
-**State:** Blocked
+<!-- Ready for review -->
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -51,6 +51,8 @@ Result review found that the exact UserPromptSubmit wake callback rebuilds its o
 The independent reviewer accepted the exact-wake caller adjustment before its edit. Scope now includes `integrations/codex/hooks/user_prompt_submit.py`; its existing two-second ceiling covers both lock wait and HTTP instead of restarting in the callback. Ordinary prompts keep the 0.75-second cap. The actual-hook HTTP test now covers SessionStart and exact UserPromptSubmit, including positive held-lock waits, post-lock timeout reduction, actual ACK, and no duplicate on a second hook. Historical incident attribution remains unproved.
 
 ## Result review
+
+Publication approval: the human replied "Approved" directly to the exact request to publish `feat/codex-hook-lock-budget` (code, tests, roadmap and Work Record) to public `rore/Pallium` and open its PR. This resolves the publication blocker recorded below; normal automatic review still applies. Production and test contents remain at reviewed revision `539b1f2b`.
 
 Agent technical review: `/root/hook_boundary_review`, final diff and callback compatibility adjustment accepted.
 
