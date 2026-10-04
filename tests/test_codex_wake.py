@@ -9,7 +9,7 @@ import os
 import subprocess
 import threading
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
@@ -1233,6 +1233,105 @@ def test_queue_timeout_is_ambiguous(tmp_path) -> None:
         {"timeout": 30}, {"timeout": 30},
     ]
     process.wait.assert_called_once_with(timeout=30)
+
+
+@pytest.mark.parametrize(
+    ("exit_code", "stderr", "category", "private_text"),
+    (
+        (None, None, "empty", ()),
+        (0, "", "empty", ()),
+        (None, b"usage: codex " + b"x" * 3000, "cli_usage", ("x" * 100,)),
+        (7, b"x" * 2048 + b" usage: codex", "other", ("x" * 100,)),
+        (
+            0, b"\xffSECRET C:/private/" + "秘密".encode(), "other",
+            ("SECRET", "private", "秘密"),
+        ),
+        (7, "connection refused SECRET", "transport", ("connection refused", "SECRET")),
+    ),
+)
+def test_timeout_logs_pre_cleanup_exit_and_safe_partial_stderr(
+    caplog: pytest.LogCaptureFixture,
+    exit_code: int | None,
+    stderr: str | bytes,
+    category: str,
+    private_text: tuple[str, ...],
+) -> None:
+    process = MagicMock()
+    process.poll.return_value = exit_code
+    process.communicate.side_effect = [
+        subprocess.TimeoutExpired([], 30, stderr=stderr),
+        subprocess.TimeoutExpired([], 30),
+    ]
+
+    with caplog.at_level(logging.INFO, logger="app.codex_wake"):
+        result = codex_wake._finish_launch(
+            (process, None), delivery_id="relay-delivery-" + "a" * 32,
+        )
+
+    assert result == ("ambiguous", "timeout", None)
+    process.poll.assert_called_once_with()
+    process.kill.assert_called_once_with()
+    assert [item.kwargs for item in process.communicate.call_args_list] == [
+        {"timeout": 30}, {"timeout": 30},
+    ]
+    assert process.wait.call_count == 1
+    assert process.mock_calls.index(call.poll()) < process.mock_calls.index(call.kill())
+    message = next(
+        record.getMessage() for record in caplog.records
+        if record.getMessage().startswith("codex_relay_wake_stderr delivery_ref=")
+    )
+    expected_exit = exit_code if exit_code is not None else "none"
+    assert (
+        f"codex_relay_wake_stderr delivery_ref=relay-delivery-{'a' * 32} "
+        f"reason=timeout exit_code={expected_exit} category={category}"
+    ) == message
+    assert all(text not in message for text in private_text)
+
+
+@pytest.mark.parametrize("failure", ("poll", "category", "logger"))
+def test_timeout_diagnostic_failure_keeps_cleanup_and_ambiguous_result(
+    monkeypatch: pytest.MonkeyPatch, failure: str,
+) -> None:
+    process = MagicMock()
+    process.communicate.side_effect = [
+        subprocess.TimeoutExpired([], 30, stderr=b"partial"),
+        subprocess.TimeoutExpired([], 30),
+    ]
+    if failure == "poll":
+        process.poll.side_effect = RuntimeError("poll failed")
+    if failure == "category":
+        monkeypatch.setattr(codex_wake, "_stderr_category", lambda _: 1 / 0)
+    if failure == "logger":
+        monkeypatch.setattr(codex_wake.logger, "info", lambda *_: 1 / 0)
+
+    assert codex_wake._finish_launch(
+        (process, None), delivery_id="relay-delivery-" + "b" * 32,
+    ) == ("ambiguous", "timeout", None)
+    process.kill.assert_called_once_with()
+    assert process.communicate.call_count == 2
+    process.wait.assert_called_once_with(timeout=30)
+
+
+def test_timeout_fingerprints_unvalidated_delivery_reference(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    process = MagicMock()
+    process.poll.return_value = None
+    process.communicate.side_effect = [
+        subprocess.TimeoutExpired([], 30), subprocess.TimeoutExpired([], 30),
+    ]
+    delivery_id = "private-delivery-C:/secret"
+
+    with caplog.at_level(logging.INFO, logger="app.codex_wake"):
+        codex_wake._finish_launch((process, None), delivery_id=delivery_id)
+
+    message = next(
+        record.getMessage() for record in caplog.records
+        if record.getMessage().startswith("codex_relay_wake_stderr delivery_ref=")
+    )
+    assert f"delivery_ref={codex_wake._log_fingerprint(delivery_id)}" in message
+    assert delivery_id not in message
+    assert "exit_code=none" in message
 
 
 @pytest.mark.parametrize("error_type", (OSError, ValueError))

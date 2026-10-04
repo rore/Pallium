@@ -776,10 +776,13 @@ def _start_launch(session_ref: str, prompt: str) -> _LaunchStart:
     return process, None
 
 
-def _stderr_category(stderr: str | None) -> str:
+def _stderr_category(stderr: str | bytes | None) -> str:
     if not stderr:
         return "empty"
-    sample = stderr[:2048].lower()
+    sample = (
+        stderr[:2048].decode("utf-8", errors="replace").lower()
+        if isinstance(stderr, bytes) else stderr[:2048].lower()
+    )
     if "usage:" in sample or "unexpected argument" in sample:
         return "cli_usage"
     if any(term in sample for term in ("thread not found", "unknown thread", "no such thread")):
@@ -812,8 +815,33 @@ def _finish_launch(
 
     try:
         _, stderr = process.communicate(timeout=_QUEUE_TIMEOUT_SECONDS)
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as exc:
+        try:
+            exit_code = process.poll()
+        except Exception:
+            exit_code = None
+        if type(exit_code) is not int:
+            exit_code = "none"
+        try:
+            category = _stderr_category(exc.stderr)
+        except Exception:
+            category = "other"
         stop_and_reap()
+        if delivery_id is not None:
+            try:
+                delivery_ref = (
+                    delivery_id
+                    if re.fullmatch(r"relay-delivery-[0-9a-f]{32}", delivery_id)
+                    else _log_fingerprint(delivery_id)
+                )
+                logger.info(
+                    "codex_relay_wake_stderr delivery_ref=%s reason=timeout exit_code=%s category=%s",
+                    delivery_ref,
+                    exit_code,
+                    category,
+                )
+            except Exception:
+                pass
         return "ambiguous", "timeout", None
     except (OSError, ValueError):
         stop_and_reap()
