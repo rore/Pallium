@@ -4,6 +4,7 @@ import asyncio
 import json
 from pathlib import Path
 import threading
+import time
 import sys
 from types import SimpleNamespace
 
@@ -417,6 +418,138 @@ def test_selected_transport_actual_hook_emits_then_acks(http_wake, monkeypatch, 
     assert registry.reservations() == ()
     send()
     assert len(events) == 2
+
+
+@pytest.mark.parametrize("contention", ["released", "held", "exhausted"])
+@pytest.mark.parametrize("script", ["session_start", "user_prompt_submit"])
+def test_session_start_lock_budget_claims_emits_and_acks_once(
+    http_wake, monkeypatch, capsys, tmp_path, contention, script,
+):
+    http, _, _, _, desktop, send, _ = http_wake
+    desktop.state = "working"  # Enqueue without a native wake in this hook test.
+    sent = send()
+    monkeypatch.setitem(sys.modules, "codex_common", sys.modules.get("codex_common"))
+    hook = _load("lock_budget_" + script, "integrations/codex/hooks/" + script + ".py")
+    common = hook._common
+    monkeypatch.setattr(common, "SESSIONS_DIR", tmp_path / "lock-budget-sessions")
+    monkeypatch.setattr(hook, "read_hook_input", lambda: {
+        "cwd": ".", "session_id": TARGET, "source": "resume",
+        "prompt": codex_wake._wake_prompt(sent["delivery_id"])})
+    monkeypatch.setattr(hook, "derive_actor_ref", lambda *a: "actor")
+    if script == "session_start":
+        monkeypatch.setattr(hook, "derive_container_ref", lambda *a: SCOPE["container_ref"])
+        monkeypatch.setattr(hook, "pin_container", lambda *a, **k: None)
+        monkeypatch.setattr(hook, "_fetch_retrieval_fallback", lambda *a: [])
+    else:
+        monkeypatch.setattr(hook, "resolve_container_ref", lambda *a: SCOPE["container_ref"])
+        monkeypatch.setattr(hook, "discover_work_refs", lambda *a: common.WorkRefDiscovery())
+        monkeypatch.setattr(hook, "record_codex_hook_execution", lambda **k: None)
+        monkeypatch.setattr(hook, "record_codex_wake_event", lambda **k: None)
+    calls = []
+    timeouts = []
+
+    def request(method, path, body, **kwargs):
+        calls.append(path)
+        if path == "/relay/turn":
+            timeouts.append(kwargs["timeout"])
+        response = http.request(method, path, json=body)
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    monkeypatch.setattr(hook, "relay_request", request)
+    monkeypatch.setattr(common, "relay_request", request)  # Real ACK helper.
+    if contention != "released":
+        monkeypatch.setattr(hook, "start_hook_deadline", lambda *a, **k:
+            common.start_hook_deadline(1.4 if contention == "held" else 0.5))
+    lock = common._acquire_session_lock(TARGET)
+    assert lock is not None
+    release = threading.Timer(0.3, common._release_session_lock, args=(lock,))
+    if contention == "released":
+        release.start()
+    started = time.monotonic()
+    try:
+        with pytest.raises(SystemExit) as exited:
+            hook.main()
+        assert exited.value.code == 0
+    finally:
+        if contention == "released":
+            release.join(2)
+            assert not release.is_alive()
+        else:
+            common._release_session_lock(lock)
+    assert time.monotonic() - started < 2
+    if contention == "held":
+        assert time.monotonic() - started >= 0.3  # Actually waited on the held lock.
+    emitted = json.loads(capsys.readouterr().out)
+    if script == "user_prompt_submit" and contention != "released":
+        assert emitted["decision"] == "block"
+        output = ""
+    else:
+        output = emitted["hookSpecificOutput"]["additionalContext"]
+        assert SCOPE["container_ref"] in output
+    delivery = http.get("/relay/messages/retained-journey", params=SCOPE).json()["deliveries"][0]
+    if contention == "released":
+        assert "private-payload-東京" in output
+        assert calls == ["/relay/turn", "/relay/deliveries/ack"]
+        if script == "user_prompt_submit":
+            assert 0 < timeouts[0] <= 1.8  # The lock wait consumes the existing 2s cap.
+        assert delivery["state"] == "delivered" and delivery["attempts"] == 1
+        with pytest.raises(SystemExit):
+            hook.main()
+        assert "private-payload-東京" not in capsys.readouterr().out
+        assert calls == ["/relay/turn", "/relay/deliveries/ack", "/relay/turn"]
+        assert http.get("/relay/messages/retained-journey", params=SCOPE).json()["deliveries"][0]["attempts"] == 1
+    else:
+        assert calls == [] and "private-payload-東京" not in output
+        assert delivery["state"] == "pending" and delivery["attempts"] == 0
+
+
+@pytest.mark.parametrize("limit", ["timeout", "global", "provided"])
+@pytest.mark.parametrize("exhausted_at", [None, "lock", "bootstrap"])
+def test_relay_lock_and_scope_recovery_share_one_deadline(
+    monkeypatch, tmp_path, limit, exhausted_at,
+):
+    common = _load("lock_budget_common", "integrations/codex/hooks/common.py")
+    monkeypatch.setattr(common, "SESSIONS_DIR", tmp_path)
+    now = [10.0]
+    clock = lambda: now[0]
+    common.start_hook_deadline(1 if limit == "global" else 5, clock=clock)
+    deadline = common.HookDeadline(11, clock=clock) if limit == "provided" else None
+    (tmp_path / (TARGET + ".json")).write_text(json.dumps({
+        "container_ref": "git:example.test/old"}), encoding="utf-8")
+    acquire = common._acquire_session_lock
+
+    def acquire_after_wait(*args, **kwargs):
+        lock = acquire(*args, **kwargs)
+        now[0] += 1 if exhausted_at == "lock" else 0.25
+        return lock
+
+    monkeypatch.setattr(common, "_acquire_session_lock", acquire_after_wait)
+    calls = []
+
+    def request(method, path, body, *, timeout, **kwargs):
+        calls.append((body, timeout))
+        now[0] += 1 if exhausted_at == "bootstrap" else 0.25
+        return {"session": {"endpoint_id": "relay-session-budget",
+            "container_ref": body["container_ref"],
+            "scope_generation": 0 if len(calls) == 1 else 1}, "deliveries": []}
+
+    result = common.relay_turn("codex", TARGET, SCOPE["container_ref"],
+        timeout=1 if limit == "timeout" else 5, deadline=deadline, request=request)
+    assert len(calls) == (0 if exhausted_at == "lock" else 1 if exhausted_at == "bootstrap" else 2)
+    if calls:
+        assert calls[0][1] == pytest.approx(0.75)
+        assert calls[0][0]["register_session"] is False
+    if exhausted_at is None:
+        assert calls[1][1] == pytest.approx(0.5)
+        assert result["session"]["container_ref"] == SCOPE["container_ref"]
+    else:
+        assert result is None
+    # Even exhausted paths release the file lock.
+    common.start_hook_deadline(1, clock=clock)
+    lock = acquire(TARGET)
+    assert lock is not None
+    common._release_session_lock(lock)
 
 
 def test_natural_hook_overtakes_state_check_without_owner_attempt(http_wake, monkeypatch, capsys, tmp_path):
