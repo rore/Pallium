@@ -116,23 +116,13 @@ def main() -> None:
             work_refs_status = "unavailable"
             relay_outcome = "unavailable"
 
-            def measured_relay_request(method, path, body, *, timeout):
+            def measured_relay_request(method, path, body, *, timeout, deadline=None):
                 started = time.monotonic()
                 response = None
                 try:
-                    exact_wake_request = (
-                        wake_delivery_id is not None
-                        and body.get("wake_delivery_id") == wake_delivery_id
-                    )
-                    request_timeout = (
-                        min(2.0, max(0.0, _common.remaining_safe_time() - 1.0))
-                        if exact_wake_request else timeout
-                    )
-                    request_options = {"timeout": request_timeout}
-                    if exact_wake_request:
-                        request_options["deadline"] = _common.HookDeadline(
-                            time.monotonic() + request_timeout
-                        )
+                    request_options = {"timeout": timeout}
+                    if deadline is not None:
+                        request_options["deadline"] = deadline
                     response = relay_request(method, path, body, **request_options)
                     return response
                 finally:
@@ -152,6 +142,10 @@ def main() -> None:
                         )
 
             try:
+                request_timeout = (
+                    min(2.0, max(0.0, _common.remaining_safe_time() - 1.0))
+                    if wake_delivery_id else 0.75
+                )
                 relay_response = relay_turn(
                     "codex", session_id, container_ref,
                     max_chars=RELAY_TURN_BUDGET,
@@ -162,7 +156,11 @@ def main() -> None:
                         wake_match.group("delivery_id")
                         if wake_match is not None else None
                     ),
-                    timeout=0.75,
+                    timeout=request_timeout,
+                    deadline=(
+                        _common.HookDeadline(time.monotonic() + request_timeout)
+                        if wake_delivery_id else None
+                    ),
                     request=measured_relay_request if wake_delivery_id else relay_request,
                 )
                 if isinstance(relay_response, dict):

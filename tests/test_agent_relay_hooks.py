@@ -219,7 +219,10 @@ def _exercise_short_prompt(hook, monkeypatch, *, codex: bool):
     if codex:
         expected_body["wake_delivery_id"] = embedded_delivery_id
     assert turn_calls[0][2] == expected_body
-    assert turn_calls[0][3] == (2.0 if codex else 0.75)
+    if codex:
+        assert 0 < turn_calls[0][3] <= 2.0
+    else:
+        assert turn_calls[0][3] == 0.75
     assert (turn_calls[0][4] is not None) is codex
     assert output and output[0][0].startswith("[Pallium Relay message")
     relay_text, scope_line = output[0][0].rsplit("\n\n", 1)
@@ -638,7 +641,7 @@ def test_codex_noncanonical_prompt_keeps_short_relay_timeout(
 
     assert len(calls) == 1
     assert calls[0][0][:2] == ("POST", "/relay/turn")
-    assert calls[0][1]["timeout"] == 0.75
+    assert 0 < calls[0][1]["timeout"] <= 0.75  # Lock/state work consumes the same budget.
     assert "wake_delivery_id" not in calls[0][0][2]
 
 def test_codex_internal_wake_without_valid_scope_blocks(monkeypatch, capsys):

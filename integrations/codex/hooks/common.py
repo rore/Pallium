@@ -909,7 +909,9 @@ def _read_session_state(session_id: str) -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None
 
 
-def _acquire_session_lock(session_id: str):
+def _acquire_session_lock(
+    session_id: str, *, timeout: float = 0.1, deadline: HookDeadline | None = None,
+):
     try:
         SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
         lock_file = open(SESSIONS_DIR / f"{session_id}.lock", "a+b")
@@ -917,12 +919,13 @@ def _acquire_session_lock(session_id: str):
         if lock_file.tell() == 0:
             lock_file.write(b"0")
             lock_file.flush()
-        wait_budget = min(0.1, remaining_safe_time())
+        wait_budget = min(timeout, remaining_safe_time(), remaining_safe_time(deadline))
         if wait_budget <= 0:
             lock_file.close()
             return None
-        deadline = time.monotonic() + wait_budget
-        while True:
+        clock = deadline.clock if deadline is not None else time.monotonic
+        lock_deadline = clock() + wait_budget
+        while clock() < lock_deadline:
             try:
                 lock_file.seek(0)
                 if os.name == "nt":
@@ -935,10 +938,9 @@ def _acquire_session_lock(session_id: str):
                     )
                 return lock_file
             except OSError:
-                if time.monotonic() >= deadline:
-                    lock_file.close()
-                    return None
-                time.sleep(min(0.01, max(0.0, deadline - time.monotonic())))
+                time.sleep(min(0.01, max(0.0, lock_deadline - clock())))
+        lock_file.close()
+        return None
     except OSError:
         return None
 
@@ -2359,7 +2361,13 @@ def relay_turn(
         or re.fullmatch(r"relay-delivery-[0-9a-f]{32}", wake_delivery_id) is None
     ):
         return None
-    lock_file = _acquire_session_lock(sid)
+    pass_deadline = deadline is not None or request is None
+    clock = (deadline or _HOOK_DEADLINE).clock if (deadline or _HOOK_DEADLINE) else time.monotonic
+    # Waiting and all scope-recovery requests share the caller's existing budget.
+    deadline = HookDeadline(clock() + min(
+        max(0.0, timeout), remaining_safe_time(), remaining_safe_time(deadline),
+    ), clock=clock)
+    lock_file = _acquire_session_lock(sid, timeout=deadline.remaining(), deadline=deadline)
     if lock_file is None:
         return None
     try:
@@ -2428,8 +2436,11 @@ def relay_turn(
                 "max_messages": 1,
                 "register_session": False,
             }
-            request_options = {"timeout": timeout}
-            if deadline is not None:
+            remaining = deadline.remaining()
+            if remaining <= 0:
+                return None
+            request_options = {"timeout": remaining}
+            if pass_deadline:
                 request_options["deadline"] = deadline
             bootstrap = (request or relay_request)(
                 "POST", "/relay/turn", bootstrap_payload, **request_options
@@ -2520,8 +2531,11 @@ def relay_turn(
                     previous_endpoint_id=endpoint,
                     previous_scope_generation=generation,
                 )
-            request_options = {"timeout": timeout}
-            if deadline is not None:
+            remaining = deadline.remaining()
+            if remaining <= 0:
+                return None
+            request_options = {"timeout": remaining}
+            if pass_deadline:
                 request_options["deadline"] = deadline
             response = (request or relay_request)(
                 "POST", "/relay/turn", payload, **request_options

@@ -10,6 +10,18 @@ lane: capability
 
 ## Current execution status (reconciled 2026-10-04)
 
+An isolated actual-hook reproduction found that a 300 ms session-lock conflict
+can make Codex SessionStart emit scope without claiming a pending Relay message.
+The narrow correction shares the existing Relay budget across lock acquisition
+and scope-recovery requests, retaining the emission/ACK reserve and the short
+default wait for other state writes. The new HTTP regression fails on the old
+100 ms limit and passes with one payload emission and ACK after brief contention;
+held-lock and exhausted-budget cases remain unclaimed. This reproduces a failure
+class, not the proven cause of the separate live `native_submitted` incident.
+Independent review accepted the correction; final full validation passed 5,980
+tests with 34 skipped and two expected failures. Delivery is tracked in
+`.agent-workflow/tasks/codex-hook-lock-budget.md`.
+
 On 2026-10-04, one live Relay delivery's Codex queue wake timed out at
 05:59:36 UTC and the message expired at 06:09:05 with attempts=0. Later,
 same-target cold→idle and another idle probe both ACKed with attempts=1.
