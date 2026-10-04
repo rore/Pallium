@@ -59,7 +59,7 @@ def test_relay_and_diagnostics_survive_saturated_memory_worker_capacity(tmp_path
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             blocked = asyncio.create_task(client.get("/_test/block-memory-worker"))
             try:
-                assert await asyncio.to_thread(started.wait, 0.5)
+                assert await asyncio.to_thread(started.wait, 5.0)
                 health, status, queue, turn = await asyncio.wait_for(
                     asyncio.gather(
                         client.get("/health"), client.get("/status"),

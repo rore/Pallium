@@ -8,7 +8,16 @@ milestone: pallium-relay
 lane: capability
 ---
 
-## Current execution status (reconciled 2026-10-02)
+## Current execution status (reconciled 2026-10-04)
+
+On 2026-10-04, one live Relay delivery's Codex queue wake timed out at
+05:59:36 UTC and the message expired at 06:09:05 with attempts=0. Later,
+same-target cold→idle and another idle probe both ACKed with attempts=1.
+Subsequent service health, status, queue, and embedding checks were healthy. No
+resend or service/config change occurred during the investigation. The native
+timeout cause remains unproved. Timeout diagnostics improve evidence only; this
+does not establish delivery reliability. See
+`.agent-workflow/tasks/codex-queue-timeout-evidence.md`.
 
 A follow-up review confirmed a narrower pre-start recovery defect: when thread
 start and durable release both fail, a local schedule marker blocks the surviving
