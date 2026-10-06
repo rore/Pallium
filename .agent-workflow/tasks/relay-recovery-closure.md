@@ -34,7 +34,7 @@
 
 **Exceptions:** —
 
-**State:** Ready for review
+**State:** Blocked or returned to planning
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -44,6 +44,43 @@
 Canonical roadmap: roadmap/features/add-wake-first-relay-delivery.md. Prior evidence remains in .agent-workflow/tasks/relay-recovery-round.md and PR286/288. Manager coordination message relay-msg-577e17962853494fb0eab430ca683cb9 saved; receipt and ownership confirmation pending.
 
 ## Evidence
+
+### Installed release and acceptance, 2026-10-06
+
+PR290 merged at 8c4f38a0d964f097d432b74b62517b5632fd0a0c after the
+separate human result approval and green CI37499119320. Both stable main
+clones are synchronized to that revision. The installed wrapper restart and
+/health, /status and /debug/queue/health passed; embedding_provider_ok=true.
+CodeRabbit's quota skip is not an additional technical review.
+
+Six installed, automatically awakened deliveries passed with actual hooks and
+payload-specific model replies: lost claim response original/backlog
+6b283df7fe2c4c2e9eb2f8421257e9cd / b22ef53b6ebb48e19d7a904907ab8646;
+ACK precommit original/backlog 378d00d65eba4c30bb1284a872487409 /
+86be9c103ccc40468d7b043e95849f96; committed ACK response loss original/backlog
+f46ffebbe433496b994f7708dfaf7f9c / fcb38eb6e2ae40568522f65503410f24.
+All identifiers above have the relay-delivery- prefix. Claim-loss and ACK
+precommit originals reached attempts=2; committed ACK stayed attempts=1 after
+its old lease. No manual recipient turn, receive or resend counted as recovery.
+These are NO-RESTART cases. Exact private one-shot evidence/backups remain under
+C:/Users/I347041/.pallium/qualification/relay-recovery-closure-20261006.
+All temporary installed hooks were restored and installed Git status is clean.
+
+Restart case03, relay-delivery-68e3088a5d894c4ca8cc2f23f8e8d7c9, never claimed
+before its qualification window: attempts=0, so no restart acceptance is
+claimed. Initial native-unavailable became peer-mismatch at reopen. Smart
+review identified a concrete concurrency hazard: service maintenance and
+registration wait for the same custody lock that dispatch holds over multiple
+separately budgeted three-second exchanges; the registering client has one
+three-second total deadline. A timeout can dispose the source and clear saved
+custody. The 17:23 overlap supports this lead but does not establish historical
+causality. Return to planning: reproduce lock starvation and obtain a smart
+review of bounded admission before any new source edit. Preserve the lock's
+Desktop stream serialization and every identity/replay fence. Installed
+restart, scope-move, pre-hook lost-notification and eight old attempts=0
+deliveries remain unresolved. Operator-only UTC comparison mistakes were
+corrected; they are not product bugs. Manager was notified through app fallback
+because the native qualification deliberately excluded fresh sender MCP calls.
 
 No new installed qualification is claimed. Source verification below does not
 establish installed recipient consumption.
