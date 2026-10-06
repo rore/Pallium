@@ -67,6 +67,20 @@ on service restart: qualify an updated worker using a normally reloaded dedicate
 child, never by interrupting active user chats or treating service health as
 delivery evidence.
 
+For operator-owned native qualification only, the installed
+`scripts/qualify_codex_relay_faults.py` supports `install`/`restore` with explicit
+`--hooks-dir` and `--control-dir`. Provision a fresh case directory outside the
+checkout and verify user/SYSTEM/admin-only ACLs before install; the helper does
+not set ACLs. Record configured hook/helper paths, original/config hashes and
+existing hook ACLs. Installation wraps only the two named hook files, keeps the
+configuration unchanged, matches the exact recipient session and preselected
+message ID from real claim responses, and expires its one-shot fault. Restore
+both original hashes and unchanged configuration before teardown; retain each
+case's private backups/evidence and never reuse its control directory. The modes
+are `claim-response-loss`, `ack-precommit` and `ack-response-loss`; the last drops
+only a confirmed delivered ACK response. None proves a notification lost before
+the hook runs, and no manual recipient turn/receive qualifies as automatic recovery.
+
 Relay storage calls use a four-operation AnyIO capacity limiter independent of the
 default synchronous route pool, and `/health` stays on the event loop. Client
 cancellation does not cancel an already-running SQLite operation; service shutdown

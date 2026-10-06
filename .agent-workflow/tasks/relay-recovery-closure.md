@@ -34,7 +34,7 @@
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -45,7 +45,32 @@ Canonical roadmap: roadmap/features/add-wake-first-relay-delivery.md. Prior evid
 
 ## Evidence
 
-No new installed qualification or source verification claimed yet.
+No new installed qualification is claimed. Source verification below does not
+establish installed recipient consumption.
+
+Full non-slow suite on source revision 940ebe6e: 6,239 passed, 34 skipped and two
+expected failures in 412.79 seconds. Subsequent a9c38940 adds only a slow native
+test (1 passed); the isolated ACK-evidence/private-control harness review delta
+requires focused final verification and is not silently attributed to that run.
+Import boundaries passed. Whole-change selector requires the full lane.
+
+Agent technical result review: /root/closure_plan_review (gpt-6.1-sol/high).
+Reviewed production revision: 940ebe6e, native blob
+17b86575939be2bade67647d8ada7f91a0dabc2f and worker blob
+761f6c519b13173d2f123d05dd0fc97864db6843; additional genuine Windows channel
+coverage a9c38940. Verification adequacy: sufficient focused and native-channel
+evidence for the source fix, with no remaining blocking production finding.
+Installed Desktop receipt/restart/fault qualification remains unproven and does
+not follow from either simulated MCP tests or kernel pipe coverage. The test
+Desktop descriptor/catalog is a fixture, not the installed host.
+
+Reviewer-confirmed lifecycle fixes preserve idle capability revocation, exclude
+cancelled first registrations, recover a service-exit/request race without
+replaying the original future/operation, and make unresolved cleanup denial
+monotonic. Legacy adapters without continuity remain usable via fresh calls but
+never acquire automatic recovery authority. MCP protocol cancellation did not
+cancel its running server handler in the fixture; cancelled worker-Future
+exclusion is tested directly rather than asserting unsupported MCP semantics.
 
 Reconnect regression failed before the worker change through an actual FastMCP
 request: one source client remained after the service epoch changed. New native
@@ -97,4 +122,27 @@ Skill feedback trigger 3 dropped: the restart limitation belongs to this product
 
 ## Result review
 
-Planning review found a real admission decision, not a failing source implementation. Overall reliability remains open; no release or acceptance completion is claimed.
+Agent technical review: /root/closure_plan_review (gpt-6.1-sol/high).
+
+Reviewed revision: 940ebe6e production blobs 17b86575939be2bade67647d8ada7f91a0dabc2f
+and 761f6c519b13173d2f123d05dd0fc97864db6843, plus a9c38940 native-channel coverage.
+
+Verification adequacy: source fix approved with focused and real Windows pipe
+checks; full non-slow baseline passed. Final private-control harness revision
+a766ccf3 and its 41 cases (110 combined focused cases) are undergoing final review.
+Final harness technical review approved a766ccf3, helper blob
+af0537c169c3df9a91a2066b8049fc968fffa319, after the confirmed-ACK and private-control
+changes. Live preflight requires a unique user/SYSTEM/admin-only private case
+directory outside the installed checkout, recorded original/config hashes,
+unchanged configured targets/helper and target ACLs, and verified restoration of
+both original files. Retain each case's backups/evidence; do not reuse or delete
+them merely to enable another mode. This approval is for bounded source release
+and safe instrumentation, not installed receipt acceptance.
+
+The affected existing MCP/retained/recovery suites passed 266 cases. No protected
+behavior contract changed, no dependency added, and no public schema changed.
+
+Human result review and PR CI remain release gates. Installed qualification will
+follow the merged stable-checkout deployment using a fresh native MCP child;
+neither the source review nor health checks close that acceptance step. The
+umbrella roadmap remains queued and historical unexplained incidents remain open.
