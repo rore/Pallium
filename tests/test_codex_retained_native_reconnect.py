@@ -89,7 +89,7 @@ for line in sys.stdin:
         client = NativeInventoryClient(Path(request["bootstrap"]), threading.Event(),
             retained=True, previous_manifest=previous)
         previous = client.manifest
-    ready = client.ready()
+    ready = {"status": "skipped"} if request.get("register_only") else client.ready()
     if request.get("legacy"):
         response = client._exchange("register", endpoint=os.environ["CODEX_APP_TOOLS_PIPE_PATH"],
             thread_ref="source-chat", turn_ref="source-turn")
@@ -97,7 +97,7 @@ for line in sys.stdin:
     else:
         if request.get("continuity") is not None:
             client.continuity = request["continuity"]
-        result = client.register({"thread_ref": "source-chat", "turn_ref": "source-turn"})
+        result = client.register(request.get("metadata", {"thread_ref": "source-chat", "turn_ref": "source-turn"}))
     print(json.dumps({"ready": ready, "result": result,
         "continuity": client.continuity, "wire_keys": sorted(response) if request.get("legacy") else []}),
         flush=True)

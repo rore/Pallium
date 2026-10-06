@@ -2375,13 +2375,18 @@ class RetainedService(InventoryService):
                            saved["desktop_identity"])
 
     def _maintain(self) -> None:
-        with self._custody_lock:
+        # Dispatch checks custody around every exchange; never starve source reads.
+        if not self._custody_lock.acquire(blocking=False):
+            return
+        try:
             if self.custody is None:
                 return
             try:
                 self._check_custody()
             except Exception:
                 self._drop()
+        finally:
+            self._custody_lock.release()
 
     def _check_custody(self) -> None:
         if (self.stop_event.is_set() or self.unresolved or _native_uncertain
@@ -2430,7 +2435,9 @@ class RetainedService(InventoryService):
         return self._read_call(self._write_call(tool, arguments, deadline), deadline)
 
     def _process(self, request, peer, sequence, deadline):
-        with self._custody_lock:
+        if not self._custody_lock.acquire(blocking=False):
+            raise ShadowUnavailable("busy")
+        try:
             verb = request.get("verb")
             fields = {"version", "verb", "epoch", "sequence"}
             opted_in = verb == "register" and "continuity" in request
@@ -2487,6 +2494,8 @@ class RetainedService(InventoryService):
                 _log.warning("codex_retained_registration outcome=denied category=%s", _inventory_reason(exc))
                 self._drop()
                 raise ShadowUnavailable("native-failed") from None
+        finally:
+            self._custody_lock.release()
 
     def dispatch(self, reservation, registry):
         from core.relay_activation import ActivationAttemptResult

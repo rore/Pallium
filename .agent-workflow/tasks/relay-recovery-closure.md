@@ -39,6 +39,23 @@
 
 ## Implementation
 
+Post-release contention follow-up at 385a8a94: worker caller-surface regression
+failed only its positive busy-preservation case (11 negative cases passed).
+The genuine authenticated Windows source-pipe regression failed before source
+edits: registration did not return within two seconds while dispatch held the
+lock through two real kernel exchanges. It then lost the source and dispatch
+failed peer-mismatch at owner-result. Desktop descriptor/catalog/results are
+explicit fixtures, not the installed Desktop. Root applied nonblocking retained
+maintenance/admission and reused the existing checked-service recovery result
+to preserve only exact busy on unchanged admitted proof and resolved I/O.
+No stream lock, identity check, durable fence or retry budget was weakened.
+Initial focused worker/continuity/existing recovery run: 97 passed in 12.62s.
+The whole-change selector requires full validation; fixed native and independent
+smart result review are still in progress. Trigger3 dropped: the concurrency
+fault belongs to Pallium, not Agent Workflow. Manager continuation notice
+relay-msg-cc2a12bfbcfb4f8099757a384ad9a533 was saved; app-side manager response
+restated the remaining acceptance gaps, without claiming overall closure.
+
 2026-10-06: Normal workflow applies: intended app/native-hook/persistence paths are outside the documentation-only allowlist. Complete clean isolated checkout scope plus intended paths selects no exemption. Classified High/Large from the existing policy before any source change. Managed checkout: C:/Users/I347041/.codex/worktrees/relay-recovery-closure/Pallium; branch feat/relay-recovery-closure. State is returned to planning pending discovery and technical review, not awaiting another human approval. Root untracked .codex-remote-attachments/ is preserved.
 
 Canonical roadmap: roadmap/features/add-wake-first-relay-delivery.md. Prior evidence remains in .agent-workflow/tasks/relay-recovery-round.md and PR286/288. Manager coordination message relay-msg-577e17962853494fb0eab430ca683cb9 saved; receipt and ownership confirmation pending.
@@ -227,3 +244,32 @@ Installed qualification will
 follow the merged stable-checkout deployment using a fresh native MCP child;
 neither the source review nor health checks close that acceptance step. The
 umbrella roadmap remains queued and historical unexplained incidents remain open.
+
+## Contention native regression
+
+The focused Windows-only slow regression uses the actual retained service run
+loop and authenticated source child over a Win32 pipe, plus the shared FakeDesktop
+pipe with an explicitly disclosed fake app descriptor. It gates two real
+Desktop exchanges at two seconds each (each below its three-second I/O budget;
+combined dispatch lock hold above three seconds). A fresh same-child registration
+must return unavailable/busy promptly, preserve the source channel and continuity,
+leave the caller unchanged, and allow a later registration to update the caller.
+
+Before the source fix, at HEAD
+385a8a943f5eb7dd3fc757166d0dc11cdbe9b967, ran:
+`C:\Dev\rore\Pallium\.venv\Scripts\python.exe -m pytest tests/test_codex_retained_contention.py -q -n 0 -m slow`
+Result: failed in 4.63s because registration did not return within two seconds;
+the source then timed out and dispatch logged peer-mismatch at owner-result. No
+production files had been edited for that run.
+
+After the fix, HEAD remained 385a8a943f5eb7dd3fc757166d0dc11cdbe9b967 with
+working-tree source blobs app/codex_bridge_pipe.py
+e8e7b4fb8cbf03fd4020524e1e6df862c3e1402c and
+app/mcp/codex_desktop_bridge.py 77e79bd1c2e72c4fe436f68e7f55b8cfcdc82325.
+Ran:
+`C:\Dev\rore\Pallium\.venv\Scripts\python.exe -m pytest tests/test_codex_retained_contention.py tests/test_codex_retained_native_reconnect.py -q -n 0 -m slow`
+Result: 2 passed in 5.90s. Test-source blobs were
+tests/test_codex_retained_contention.py
+55c3cdf098b4159a8c1e5d7131d38f076d5c5758 and
+tests/test_codex_retained_native_reconnect.py
+820f2baa2ecc7737e05a9af59722d4f73b119e37.

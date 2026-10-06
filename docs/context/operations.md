@@ -67,6 +67,11 @@ on service restart: qualify an updated worker using a normally reloaded dedicate
 child, never by interrupting active user chats or treating service health as
 delivery evidence.
 
+A slow native delivery may cause another registration to return authenticated
+`busy`. An already admitted, unchanged live source keeps its checked connection
+and previous caller, without retrying the registration. Busy does not enroll a
+new source or qualify restart recovery; other failures still fail closed.
+
 For operator-owned native qualification only, the installed
 `scripts/qualify_codex_relay_faults.py` supports `install`/`restore` with explicit
 `--hooks-dir` and `--control-dir`. Provision a fresh case directory outside the

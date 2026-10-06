@@ -18,8 +18,16 @@ the original source/Desktop/ancestor identity and capability, retains durable
 fences, retries verified startup gaps only (12 attempts/five minutes), and never
 replays application operations. Independent smart source/harness review approved;
 the full non-slow source baseline passed 6,239 cases, and the real Windows channel
-cross-epoch fixture passed. PR release checks and installed qualification are still
-pending; this is not a claim that the remaining native journeys passed.
+cross-epoch fixture passed. PR #290 merged at `8c4f38a0` after green CI and
+separate human result approval. Both stable clones are synchronized; the installed
+wrapper restart and health/embedding/queue checks passed. Six installed
+no-restart original/backlog journeys passed through real hooks with payload-only
+recipient responses: lost claim response, ACK precommit failure and committed
+ACK response loss. Their exact evidence is in the closure Work Record.
+Restart qualification did not reach its first claim and is not a passing
+witness. Review found registration can exceed its three-second deadline while
+dispatch holds custody across multiple native exchanges. A narrow follow-up is
+being reproduced under the same Work Record; historical causality is unproven.
 The Dictation 13:32 hook did deliver and ACK one 1,125-character payload. The next
 1,101-character payload plus headers did not fit its 2,400-character output cap;
 that turn is not evidence of a missed hook. The earlier idle 12:54–13:32 interval
@@ -63,8 +71,8 @@ Full paginated traces had no gaps. No manual recipient turn, receive, payload
 lookup, resend or Relay reply was used; markers existed only in delivered payloads.
 Independent smart result review accepted this limited installed witness.
 
-Still unqualified on the installed host: actual lost notification, unloaded
-claim-response loss, failed/lost ACK, and scope-move recovery. Real hook/HTTP/SQLite
+Still unqualified on the installed host: actual pre-hook lost notification,
+unattended restart and scope-move recovery. Real hook/HTTP/SQLite
 regressions with simulated native transport cover those failure boundaries, but
 do not replace their installed witnesses. New diagnostics identify native-tool-failed
 at owner-result and peer-mismatch at reopen; they do not prove historical root

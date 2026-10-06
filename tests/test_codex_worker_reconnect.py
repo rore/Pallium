@@ -167,7 +167,7 @@ async def test_retained_protocol_does_not_enroll_before_a_real_request(monkeypat
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("reply", ["unavailable", "missing-proof"])
+@pytest.mark.parametrize("reply", ["unavailable", "busy", "missing-proof"])
 async def test_unsuccessful_or_unproven_registration_never_enables_reconnect(monkeypatch, reply):
     epochs, clients = [1], []
 
@@ -182,8 +182,9 @@ async def test_unsuccessful_or_unproven_registration_never_enables_reconnect(mon
             return {"status": "ready"}
 
         def register(self, _metadata):
-            if reply == "unavailable":
-                return {"status": "unavailable", "reason": "closed"}
+            if reply in {"unavailable", "busy"}:
+                reason = "busy" if reply == "busy" else "closed"
+                return {"status": "unavailable", "reason": reason}
             return {"status": "registered", "reason": "ok"}
 
         def service_current(self):
@@ -375,6 +376,209 @@ async def test_capability_change_stops_auto_recovery_but_fresh_request_can_regis
 
     await _serve_protocol(server, exercise)
     assert [item.capability for item in clients] == ["original-capability", "changed-capability"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("busy_reply", [
+    ({"status": "unavailable", "reason": "busy"}, True),
+    ({"status": "unavailable", "reason": "closed"}, False),
+])
+# FastMCP caller surface is real; Native replies are simulated, not Win32 pipe coverage.
+async def test_retained_worker_preserves_admission_after_busy_reregister(monkeypatch, busy_reply):
+    busy_reply, preserves = busy_reply
+    epochs, clients, calls = [1], [], []
+    proof = "9" * 64
+
+    class Native:
+        def __init__(self, *args, **kwargs):
+            self.epoch = epochs[0]
+            self.continuity = None
+            self.unresolved = False
+            self.disposals = 0
+            clients.append(self)
+
+        def ready(self):
+            return {"status": "ready"}
+
+        def register(self, metadata):
+            calls.append((self, dict(metadata)))
+            if len(calls) == 1:
+                self.continuity = proof
+                return {"status": "registered", "reason": "ok"}
+            if len(calls) == 2:
+                return dict(busy_reply)
+            self.continuity = proof
+            return {"status": "registered", "reason": "ok"}
+
+        def service_current(self):
+            return self.epoch == epochs[0]
+
+        def dispose(self):
+            self.disposals += 1
+
+    monkeypatch.setattr(bridge, "native_available", lambda: True)
+    server = _protocol_server(monkeypatch, Native)
+
+    async def exercise(session):
+        assert not (await _actual_status(session, "admitted")).isError
+        busy = await _actual_status(session, "busy")
+        assert not busy.isError
+        await asyncio.sleep(.03)
+        assert len(clients) == 1
+        assert clients[0].continuity == proof
+        assert clients[0].service_current() and not clients[0].unresolved
+        assert len(calls) == 2
+        assert clients[0].disposals == (0 if preserves else 1)
+        assert calls[0][1] == {"thread_ref": "actual-runtime", "turn_ref": "admitted"}
+        assert calls[1][1] == {"thread_ref": "actual-runtime", "turn_ref": "busy"}
+        if preserves:
+            epochs[0] = 2
+            for _ in range(200):
+                if len(calls) == 3:
+                    break
+                await asyncio.sleep(.005)
+            assert len(clients) == 2
+            assert calls[2][0] is clients[1]
+            assert calls[2][1] == calls[0][1]
+        assert not (await _actual_status(session, "fresh")).isError
+
+    await _serve_protocol(server, exercise)
+    assert len(clients) == 2
+    assert clients[-1].continuity == proof
+    assert calls[-1][0] is clients[-1]
+    assert calls[-1][1] == {"thread_ref": "actual-runtime", "turn_ref": "fresh"}
+    turns = [metadata["turn_ref"] for _, metadata in calls]
+    assert turns == (["admitted", "busy", "admitted", "fresh"] if preserves
+                     else ["admitted", "busy", "fresh"])
+
+
+@pytest.mark.asyncio
+async def test_busy_auto_reconnect_is_not_retried_before_a_fresh_call(monkeypatch):
+    epochs, clients, calls = [1], [], []
+    proof = "8" * 64
+
+    class Native:
+        def __init__(self, *args, **kwargs):
+            self.epoch = epochs[0]
+            self.continuity = None
+            self.unresolved = False
+            self.disposals = 0
+            clients.append(self)
+
+        def ready(self):
+            return {"status": "ready"}
+
+        def register(self, metadata):
+            calls.append((self, dict(metadata)))
+            if len(calls) == 2:
+                return {"status": "unavailable", "reason": "busy"}
+            self.continuity = proof
+            return {"status": "registered", "reason": "ok"}
+
+        def service_current(self):
+            return self.epoch == epochs[0]
+
+        def dispose(self):
+            self.disposals += 1
+
+    monkeypatch.setattr(bridge, "native_available", lambda: True)
+    server = _protocol_server(monkeypatch, Native)
+
+    async def exercise(session):
+        assert not (await _actual_status(session, "admitted")).isError
+        epochs[0] = 2
+        for _ in range(200):
+            if len(calls) == 2:
+                break
+            await asyncio.sleep(.005)
+        assert len(clients) == 2
+        assert len(calls) == 2
+        assert clients[1].disposals == 1
+        assert not (await _actual_status(session, "fresh")).isError
+
+    await _serve_protocol(server, exercise)
+    assert len(clients) == 3
+    assert len(calls) == 3
+    assert calls[0][1]["turn_ref"] == "admitted"
+    assert calls[1][1]["turn_ref"] == "admitted"
+    assert calls[2][0] is clients[2]
+    assert calls[2][1]["turn_ref"] == "fresh"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("denial", [
+    "proof", "unresolved", "service-gone", "service-error", "capability", "thread",
+])
+async def test_busy_response_does_not_preserve_changed_or_unresolved_admission(monkeypatch, denial):
+    clients, calls = [], []
+    proof = "7" * 64
+
+    class Native:
+        def __init__(self, _path, stop, *, retained):
+            assert retained
+            self.stop = stop
+            self.continuity = None
+            self.unresolved = False
+            self.fail_current = False
+            self.current = True
+            self.disposals = 0
+            clients.append(self)
+
+        def ready(self):
+            return {"status": "ready"}
+
+        def register(self, metadata):
+            calls.append(dict(metadata))
+            if len(calls) == 1:
+                self.continuity = proof
+                return {"status": "registered", "reason": "ok"}
+            if denial == "proof":
+                self.continuity = "6" * 64
+            elif denial == "unresolved":
+                self.unresolved = True
+            elif denial == "service-gone":
+                self.current = False
+            elif denial == "service-error":
+                self.fail_current = True
+            return {"status": "unavailable", "reason": "busy"}
+
+        def service_current(self):
+            if self.fail_current:
+                raise RuntimeError("service state unresolved")
+            return self.current
+
+        def dispose(self):
+            self.disposals += 1
+
+    server = _protocol_server(monkeypatch, Native)
+
+    async def exercise(session):
+        assert not (await _actual_status(session, "admitted")).isError
+        if denial == "capability":
+            os.environ["CODEX_APP_TOOLS_PIPE_PATH"] = "changed-capability"
+            result = await _actual_status(session, "changed-capability")
+        elif denial == "thread":
+            result = await session.call_tool("pallium_relay_status", {"message_id": "message"},
+                meta={"threadId": "changed-runtime", "turnId": "changed-thread"})
+        else:
+            result = await _actual_status(session, "busy")
+        assert not result.isError
+        await asyncio.sleep(.03)
+
+    await _serve_protocol(server, exercise)
+    if denial == "service-gone":
+        assert len(clients) == 2
+        assert len(calls) == 3
+        assert calls[2] == {"thread_ref": "actual-runtime", "turn_ref": "admitted"}
+        assert [client.disposals for client in clients] == [1, 1]
+    else:
+        assert len(clients) == 1
+        assert len(calls) == (1 if denial in {"capability", "thread"} else 2)
+        assert clients[0].disposals == 1
+    if denial == "proof":
+        assert clients[0].continuity != proof
+    if denial == "unresolved":
+        assert clients[0].unresolved
 
 
 @pytest.mark.asyncio
