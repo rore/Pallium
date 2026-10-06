@@ -43,3 +43,6 @@ Final layout independently approved by /root/relay_wait_review: keep every exist
 Final focused verification: 13 passed (guidance-budget checks and both existing complete skill install/remove lifecycle tests). Mirrored SKILL.md and wait.md bytes match across all three runtimes; installed Codex and Claude copies match. Workflow checker CLEAN exit0; Redline GRAY with no boundary violations. Final full validation: 6141 passed, 34 skipped, 2 xfailed in 345.13 seconds (build/validation-final.log).
 
 Completion: independent final-layout result review /root/relay_wait_review approved, conditional on the full suite; that condition is now satisfied. Ready for PR review. Worktree remains owned by this task for its open PR; no service or shared-clone changes.
+
+## PR review correction
+CodeRabbit4197862898 identified that OpenCode has durable next-turn delivery but no active wake (docs/agent-relay.md). Independent plan review /root/relay_wait_review approved qualifying idle wake as supported-path behavior and directing a normal recipient turn after current work finishes when wake is unsupported/deferred. Mirrored wait.md only; no runtime/test changes. Reuse the full6141 passing runtime baseline and rerun focused guidance/install checks plus fresh PR CI.
