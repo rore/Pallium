@@ -59,6 +59,8 @@ Proposed: a previously admitted, still-live MCP child may recreate registration 
 
 Standing implementation/PR permission does not substitute for this exact changed admission requirement. No admission source edits will occur before the human decision. A safe host/MCP reload plan is also required before installed worker qualification; do not interrupt active user chats.
 
+Manager notification relay-msg-2c33245d0a5e4e778c162f7d4946050f / relay-delivery-bbc99d3d8dde447b975081cefee39a19 was ACKed at 15:52:02.624520 UTC. Manager's model response explicitly restated the admission decision and confirmed isolated fault-test preparation can continue. Notification is receipt-confirmed, not merely queued.
+
 ## Recovery handoff
 
 Owner: relaydev. Branch feat/relay-recovery-closure; last source base 525df5bb, initial record commit 72774457. Retain this managed worktree for the concrete reviewed fault harness and admission decision; do not install from it. Next action: obtain the exact admission-lifetime decision, then write the narrow approved implementation/harness plan, review it and run isolation tests before any installed instrumentation. Prior PR286/288 evidence is reusable; no source change or new PR is claimed. Root and stable installation remain unchanged.
