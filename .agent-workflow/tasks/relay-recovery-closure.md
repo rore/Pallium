@@ -34,7 +34,7 @@
 
 **Exceptions:** —
 
-**State:** Blocked or returned to planning
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -136,6 +136,41 @@ Standing implementation/PR permission did not substitute for this exact changed 
 2026-10-06 human decision received: "yes, of course, that's the desired state". The admission decision is resolved; planning now defines the smallest implementation under the unchanged safety constraints. No Task Context or protected-contract requirement is weakened.
 
 ## Resumed implementation plan
+
+### Post-release contention plan
+
+2026-10-06: Invoke agent-workflow before the follow-up source edit (completed).
+High/Large remains unchanged. app/codex_bridge_pipe.py and
+app/mcp/codex_desktop_bridge.py are policy-gray/watch but security-sensitive by
+judgment; tests/docs/record are blue. No dependency boundary or public schema
+change, and no protected behavior-contract edits. Standing user approval
+"so take ownership of this and fix", "i approve what is needed" and
+"always apporve such things" covers the same authorized reliability outcome.
+The same-child admission authority approved for PR290 is not expanded.
+
+Keep the custody lock around Desktop I/O. Retained maintenance skips a held
+lock; retained registration rejects contention immediately using the existing
+authenticated unavailable/busy response. It must not update any caller,
+continuity or custody. The worker may keep only its already admitted channel
+after that exact response, unchanged thread/capability, unchanged proof,
+verified current service and resolved I/O. No resend, caller update or initial
+admission follows busy. Cleanup and every other failure remain fenced.
+
+Target files: the two production files above, existing worker/native regression
+fixtures or focused test_codex_retained_contention.py, design/operations docs
+and canonical roadmap. First add a failing genuine Win32 contention regression;
+then the minimum source fix. Required coverage includes bounded busy response,
+preserved old channel/provenance, later fresh successful caller update,
+first-enrollment rejection, cancellation/shutdown/unresolved I/O,
+changed identity/capability and malformed responses. Reuse existing dispatch
+generation and active-claim fence coverage without weakening it. Run focused,
+affected, whole-change selected/full checks, smart result review and new PR.
+Installed host recovery still needs separate qualification after stable merge.
+
+Agent technical plan review: /root/closure_plan_review (gpt-6.1-sol/high),
+read-only at 9ea12eba and merged production8c4f38a0, approved this narrow
+existing-busy design subject to failing-before/fixed-after real Windows pipe
+coverage. No unlocked native I/O or broad retry expansion was approved.
 
 First invoke /agent-workflow to resume this Work Record and classify risk before code edits (completed; High/Large unchanged, normal workflow applies).
 
