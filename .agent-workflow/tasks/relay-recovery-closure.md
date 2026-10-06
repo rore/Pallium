@@ -34,7 +34,7 @@
 
 **Exceptions:** —
 
-**State:** Blocked or returned to planning
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -56,11 +56,44 @@ fault belongs to Pallium, not Agent Workflow. Manager continuation notice
 relay-msg-cc2a12bfbcfb4f8099757a384ad9a533 was saved; app-side manager response
 restated the remaining acceptance gaps, without claiming overall closure.
 
+PR291 Python 3.12 CI exposed a raw-HTTP fixture caller that asserted one-shot
+success despite the route's structured retryable SQLite `relay_busy` response;
+the exact node passed locally once. This follow-up is limited to
+`tests/test_codex_retained_wake.py` and this record: retry the same message body
+only for that exact response within fixed bounds, preserving the existing
+concurrency, owner, recovery and restart assertions. No production or protected
+behavior-contract change is planned.
+
+Implemented the fixture's direct HTTP retry for one matching 503 only, bounded
+by two attempts and a two-second retry-initiation budget; malformed responses,
+other errors and out-of-budget Retry-After values stop. Existing worker and
+outer-thread joins remain unchanged. Added real-route busy-once, exhaustion,
+nonbusy, malformed-response and retry-after-budget checks.
+
 2026-10-06: Normal workflow applies: intended app/native-hook/persistence paths are outside the documentation-only allowlist. Complete clean isolated checkout scope plus intended paths selects no exemption. Classified High/Large from the existing policy before any source change. Managed checkout: C:/Users/I347041/.codex/worktrees/relay-recovery-closure/Pallium; branch feat/relay-recovery-closure. State is returned to planning pending discovery and technical review, not awaiting another human approval. Root untracked .codex-remote-attachments/ is preserved.
 
 Canonical roadmap: roadmap/features/add-wake-first-relay-delivery.md. Prior evidence remains in .agent-workflow/tasks/relay-recovery-round.md and PR286/288. Manager coordination message relay-msg-577e17962853494fb0eab430ca683cb9 saved; receipt and ownership confirmation pending.
 
 ## Evidence
+
+Continuation check, 2026-10-06 18:13-18:20 UTC: both stable main clones remain
+at 8c4f38a0; installed hooks and actual global hooks.json match their recorded
+restored hashes. Health/embedding/ingestion and the live queue read remain ready.
+Restart case03 is now expired with attempts=0 and an incomplete retained trace;
+it remains a failed qualification, never a recovery witness. Manager notice
+relay-msg-6a0280409dd54d14b7f9c8dd9033be42 was claimed and ACKed at
+18:13:41.850723 UTC (attempts=1, no trace gap). This proves transport receipt of
+the PR291/CI/open-acceptance update, not completion of the remaining work.
+
+### PR291 retained-wake HTTP retry
+
+Before helper correction, the deterministic actual-route busy-once node failed
+on the expected `503 {code: relay_busy, retryable: true}`. After correction,
+`tests/test_codex_retained_wake.py -k test_http_`: 8 passed, 147 deselected;
+the full retained-wake file: 155 passed in 45.17s. The existing same-ID API
+idempotency node passed (1 passed in 0.78s). The regression retains one delivery,
+one native owner and the uncertain reservation fence; exhaustion creates no
+delivery or owner. Test blob: `8cdfcbe66a622fcca305db76b1ee0aaa7673679e`.
 
 ### Installed release and acceptance, 2026-10-06
 
@@ -171,6 +204,9 @@ Agent technical plan review: /root/closure_plan_review approved this test-only
 correction under the existing caller contract. Scope stays High/Large; source
 review remains valid. No production timeout, protected contract or requirement
 change. Return to planning for this failing gate, not a speculative product fix.
+Read-only diagnosis confirmed bounded SQLite pre-BEGIN acquisition, and the
+independent smart plan review approved the exact correction. Resume implementation
+in this single test file; preserve the original concurrent and native deadlines.
 
 2026-10-06: Invoke agent-workflow before the follow-up source edit (completed).
 High/Large remains unchanged. app/codex_bridge_pipe.py and
@@ -225,14 +261,29 @@ Owner: relaydev. Branch feat/relay-recovery-closure; last coherent source revisi
 c8700aef, based on merged PR290 at 8c4f38a0. Retain this managed checkout for
 the reviewed contention follow-up and remaining installed acceptance; never
 install from it. Stable main/service remain at 8c4f38a0, with verified restored
-hooks/configuration. Next: finish whole-change validation, new PR and separate
-human result review/green CI, then stable sync and installed recovery
+hooks/configuration. PR291 is open; its production fix and bounded CI test-only
+correction are independently reviewed. Next: finish full local validation and
+fresh PR CI; separate human PR291 result approval remains pending (the latest
+UI answer approves PR290 only). Then stable sync and installed recovery
 qualification. Prior reviewed evidence is reusable, but six no-restart installed
 successes do not close restart/scope-move/pre-hook loss or historical incidents.
 
 Skill feedback trigger 3 dropped: the restart limitation belongs to this product's approved native admission contract, not an Agent Workflow upstream defect.
 
 ## Result review
+
+### PR291 CI caller correction
+
+Agent technical review: /root/closure_plan_review (gpt-6.1-sol/high).
+Reviewed test blob: 8cdfcbe66a622fcca305db76b1ee0aaa7673679e; unchanged production
+review below remains valid. Verification adequacy: the deterministic pre-fix
+503 failure, eight focused cases, 155 retained-wake cases and existing same-ID
+HTTP retry case adequately cover the test-only delta. One retry follows only
+the exact supported busy response with identical body/ID; original concurrent
+callers, worker/thread joins and custody/recovery/restart assertions remain.
+Two seconds bounds retry initiation, not completion of a blocking POST.
+Fresh full local and CI validation remain gates; no installed acceptance or
+separate human PR291 result approval is inferred from this agent review.
 
 ### Post-release contention result
 

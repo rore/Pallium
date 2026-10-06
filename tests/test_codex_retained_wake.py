@@ -1,5 +1,5 @@
 """Retained wake HTTP/MCP journeys using a local fake Desktop transport."""
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 import asyncio
 import json
 from pathlib import Path
@@ -8,6 +8,7 @@ import time
 import sys
 from types import SimpleNamespace
 
+import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -17,6 +18,7 @@ from app.mcp import server as mcp_server
 from app.cli import setup_codex
 from core.codex_wake import CodexWakeRegistry
 from core.claude_wake import ClaudeWakeRegistry
+from core.errors import ImmediateTransactionBusyError
 from core.relay import RelayService
 from tests.test_codex_mcp_desktop_bridge import _serve_protocol
 from tests.test_agent_relay_hooks import _load
@@ -149,7 +151,24 @@ def http_wake(client, retained, monkeypatch):
     body = {"sender_runtime": "claude-code", "sender_session_ref": "sender", "recipient": f"codex:{TARGET}",
             "message_id": "retained-journey", "payload": "private-payload-東京", **SCOPE}
     def send():
+        deadline = time.monotonic() + 2.0
         response = http.post("/relay/messages", json=body)
+        try:
+            response_body = response.json()
+        except ValueError:
+            response_body = None
+        detail = response_body.get("detail") if isinstance(response_body, dict) else None
+        if (response.status_code == 503 and isinstance(detail, dict)
+                and detail.get("code") == "relay_busy" and detail.get("retryable") is True):
+            try:
+                delay = int(response.headers["Retry-After"])
+            except (KeyError, ValueError):
+                delay = -1
+            remaining = deadline - time.monotonic()
+            if 0 <= delay <= remaining:
+                time.sleep(delay)
+                if time.monotonic() < deadline:
+                    response = http.post("/relay/messages", json=body)
         assert response.status_code == 200, response.text
         for worker in workers:
             worker.join(2)
@@ -232,6 +251,94 @@ def test_write_is_fenced_across_concurrency_recovery_restart(http_wake, fault):
     owner = desktop.owners[0]
     assert owner["params"]["threadId"] == "source-α" and owner["params"]["turnId"] == "turn-β"
     assert set(owner["params"]["arguments"]) == {"threadId", "prompt"}
+
+def test_http_retryable_busy_once_keeps_one_delivery_and_owner(http_wake, monkeypatch):
+    http, relay, registry, _, desktop, send, _ = http_wake
+    storage = relay._store
+    original = storage._begin_relay_immediate
+    attempts = 0
+
+    @contextmanager
+    def busy_once():
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise ImmediateTransactionBusyError("database is locked")
+        with original() as db:
+            yield db
+
+    monkeypatch.setattr(storage, "_begin_relay_immediate", busy_once)
+    delivery = send()
+
+    status = http.get("/relay/messages/retained-journey", params=SCOPE)
+    assert status.status_code == 200
+    assert attempts >= 2
+    assert len(status.json()["deliveries"]) == 1
+    assert status.json()["deliveries"][0]["delivery_id"] == delivery["delivery_id"]
+    assert len(desktop.owners) == 1
+    reservations = registry.reservations()
+    assert len(reservations) == 1 and reservations[0].outcome == "uncertain"
+
+def test_http_retryable_busy_exhaustion_stays_closed(http_wake, monkeypatch):
+    http, relay, registry, _, desktop, send, _ = http_wake
+    original = relay._store._begin_relay_immediate
+    attempts = 0
+
+    @contextmanager
+    def always_busy():
+        nonlocal attempts
+        attempts += 1
+        raise ImmediateTransactionBusyError("database is locked")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(relay._store, "_begin_relay_immediate", always_busy)
+    with pytest.raises(AssertionError, match="relay_busy"):
+        send()
+
+    assert attempts == 2
+    monkeypatch.setattr(relay._store, "_begin_relay_immediate", original)
+    assert http.get("/relay/messages/retained-journey", params=SCOPE).status_code == 404
+    assert desktop.owners == [] and registry.reservations() == ()
+
+def test_http_nonbusy_error_is_not_retried(http_wake, monkeypatch):
+    http, relay, registry, _, desktop, send, _ = http_wake
+    attempts = 0
+
+    @contextmanager
+    def invalid_request():
+        nonlocal attempts
+        attempts += 1
+        raise ValueError("invalid request")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(relay._store, "_begin_relay_immediate", invalid_request)
+    with pytest.raises(AssertionError, match="422"):
+        send()
+
+    assert attempts == 1
+    assert desktop.owners == [] and registry.reservations() == ()
+
+@pytest.mark.parametrize("body, retry_after", [
+    (b"not-json", "1"),
+    (b'{"detail":"malformed"}', "1"),
+    (b'{"detail":{"code":"other","retryable":true}}', "1"),
+    (b'{"detail":{"code":"relay_busy","retryable":false}}', "1"),
+    (b'{"detail":{"code":"relay_busy","retryable":true}}', "3"),
+])
+def test_http_send_rejects_malformed_or_out_of_budget_busy(http_wake, monkeypatch, body, retry_after):
+    _, _, registry, _, desktop, send, _ = http_wake
+    requests = []
+
+    def post(*args, **kwargs):
+        requests.append(kwargs["json"])
+        return httpx.Response(503, headers={"Retry-After": retry_after}, content=body)
+
+    monkeypatch.setattr(http_wake[0], "post", post)
+    with pytest.raises(AssertionError, match="503"):
+        send()
+
+    assert len(requests) == 1
+    assert desktop.owners == [] and registry.reservations() == ()
 
 def test_failed_spend_has_zero_owner_calls(http_wake, monkeypatch):
     _, _, registry, _, desktop, send, _ = http_wake

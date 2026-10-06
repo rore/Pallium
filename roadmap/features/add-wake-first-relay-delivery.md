@@ -26,8 +26,14 @@ recipient responses: lost claim response, ACK precommit failure and committed
 ACK response loss. Their exact evidence is in the closure Work Record.
 Restart qualification did not reach its first claim and is not a passing
 witness. Review found registration can exceed its three-second deadline while
-dispatch holds custody across multiple native exchanges. A narrow follow-up is
-being reproduced under the same Work Record; historical causality is unproven.
+dispatch holds custody across multiple native exchanges. PR #291 reproduces and
+fixes that contention without dropping previously authenticated custody or
+weakening identity, unresolved-I/O or replay fences. Independent smart review,
+the genuine Windows pipe regression and 6,261 local non-slow tests passed.
+Release remains pending: its Python 3.12 CI exposed a raw-HTTP test caller that
+ignores explicit retryable SQLite backpressure; a bounded same-ID fixture
+correction is being verified. Historical causality remains unproven, and none
+of this source evidence qualifies installed unattended restart recovery.
 The Dictation 13:32 hook did deliver and ACK one 1,125-character payload. The next
 1,101-character payload plus headers did not fit its 2,400-character output cap;
 that turn is not evidence of a missed hook. The earlier idle 12:54–13:32 interval
