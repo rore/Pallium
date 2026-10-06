@@ -142,7 +142,16 @@ and safe instrumentation, not installed receipt acceptance.
 The affected existing MCP/retained/recovery suites passed 266 cases. No protected
 behavior contract changed, no dependency added, and no public schema changed.
 
-Human result review and PR CI remain release gates. Installed qualification will
+Human result review received on 2026-10-06: the user selected "Approve reviewed
+result after green CI" in response to the exact PR290 result summary (same
+previously authenticated still-live child reconnects, changed identities and
+unresolved I/O denied, no calls/messages replayed, installed qualification not
+yet complete). This is separate from plan approval. PR CI remains a release gate.
+CodeRabbit reported its review quota exhausted, so its green status is not
+claimed as an additional completed review; independent smart review above is
+the technical result review.
+
+Installed qualification will
 follow the merged stable-checkout deployment using a fresh native MCP child;
 neither the source review nor health checks close that acceptance step. The
 umbrella roadmap remains queued and historical unexplained incidents remain open.
