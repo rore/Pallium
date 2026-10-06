@@ -48,22 +48,25 @@ def isolate_codex_wake(monkeypatch):
 def test_busy_queue_recovery_stays_single_flight_and_competing_hook_blocks_overtaken_wake(
     client, monkeypatch, tmp_path, capsys, isolate_codex_wake, retained,
 ) -> None:
-    """RW-022: accepted busy Codex wakes stay single-flight.
+    """RW-022: accepted busy Codex wakes retry only after durable cooldown.
 
     Source: roadmap/features/add-wake-first-relay-delivery.md. Original incident:
     at least fourteen accepted native submissions and thirty empty task starts.
-    This HTTP send/status and Codex hook regression observes one queue submission
-    plus one emitted/ACKed delivery. Releasing the reservation after submission
-    reproduces six calls and fails the test. It does not promise wake for unloaded
-    tasks or native admission of a queued turn.
+    This HTTP send/status and Codex hook regression observes one initial queue
+    submission, spaced eligible retries after persisted cooldowns, and one
+    emitted/ACKed delivery. ACK suppresses the overtaken notification. It does
+    not promise native admission of a queued turn.
     """
     from app.dependencies import recover_expired_relay_wakes
     from core.claude_wake import ClaudeWakeRegistry
     from integrations.codex.hooks import user_prompt_submit as hook
+    from tests.test_codex_wake import _sqlite_wake_registry
 
     service, desktop = register(retained)
     desktop.state = "idle"
+    isolate_codex_wake = _sqlite_wake_registry(client.app.state.pallium_service._storage)
     isolate_codex_wake.retained_service = service
+    monkeypatch.setattr(codex_wake, "get_codex_wake_registry", lambda *_args, **_kwargs: isolate_codex_wake)
     monkeypatch.setattr(codex_wake, "_start_launch", _REAL_START_LAUNCH)
 
     scope = {
@@ -84,6 +87,13 @@ def test_busy_queue_recovery_stays_single_flight_and_competing_hook_blocks_overt
         codex_wake_registry=isolate_codex_wake,
     ))
     route = TestClient(app)
+    from datetime import datetime, timedelta, timezone
+    import storage.sqlite_relay as sqlite_relay
+    wall_clock = [datetime(2030, 9, 5, tzinfo=timezone.utc)]
+    def controlled_now(value=None):
+        current = value or wall_clock[0]
+        return current if current.tzinfo is not None else current.replace(tzinfo=timezone.utc)
+    monkeypatch.setattr(sqlite_relay, "_now", controlled_now)
     for runtime, session in (("claude-code", "sender"), ("codex", "target")):
         assert route.post("/relay/turn", json={
             "runtime": runtime, "session_ref": session, **scope,
@@ -126,12 +136,14 @@ def test_busy_queue_recovery_stays_single_flight_and_competing_hook_blocks_overt
                     codex_wake._wake_after_debounce(*workers[processed])
                     processed += 1
                 clock[0] += 31
+                wall_clock[0] += timedelta(seconds=31)
                 recover_expired_relay_wakes(
                     relay, ClaudeWakeRegistry(), codex_registry=isolate_codex_wake,
                 )
 
     queue_calls = [call for call in native_calls if call[0][1] == "queue"]
-    assert len(queue_calls) == 1
+    assert len(queue_calls) == 3
+    assert len(workers) == 4  # The fourth cooldown elapsed but its wake has not run.
     queue_command, queue_kwargs = queue_calls[0]
     assert queue_kwargs["cwd"] == str(codex_home)
     queued_prompt = queue_command[queue_command.index("--message") + 1]

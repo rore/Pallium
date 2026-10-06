@@ -8,7 +8,27 @@ milestone: pallium-relay
 lane: capability
 ---
 
-## Current execution status (reconciled 2026-10-04)
+## Current execution status (reconciled 2026-10-06)
+
+An October 6 incident confirmed that a
+September 15 uncertain, unclaimed wake reservation blocked later messages to the
+same Codex endpoint. A manual target turn recovered the backlog, but is not the
+product fix. The isolated HTTP regression reproduces the permanent fence after
+restart. The user approved spaced automatic re-notification, including the risk
+of an extra empty turn from a delayed original wake. The correction in
+`.agent-workflow/tasks/codex-wake-recovery.md` reuses the recovery sweep, persists a
+60-second cooldown, requires fresh authenticated idle/unloaded eligibility, and
+preserves claim/ACK exclusion and exact generation/scope checks. Combined affected
+validation passed 596 tests; the full suite passed 6,014 tests with 34 skipped and
+two expected failures. Independent technical review accepted the correction.
+Human result review and publication were approved on October 6. Publication and
+CI are in progress; the correction has not been deployed or qualified live.
+
+Separate Claude qualification found a conditional stale-registration defect when
+socket credentials disappear. Its reviewed exact-scope revocation fix is included
+in the same integration branch and combined validation. The installed Claude 2.1.278 does not
+qualify the reported 2.1.290/2.1.291 behavior. Neither source review nor passing
+existing tests establishes that live lifecycle witness.
 
 An isolated actual-hook reproduction found that a 300 ms session-lock conflict
 can make Codex SessionStart emit scope without claiming a pending Relay message.

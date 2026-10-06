@@ -2399,6 +2399,13 @@ class RetainedService(InventoryService):
         from core.relay_activation import ActivationAttemptResult
         from app.codex_wake import _wake_prompt, _start_launch, _finish_launch, _attempt_from_launch
 
+        retrying = reservation.outcome in {"reserved", "accepted", "uncertain"}
+        retry_target = None
+        if retrying:
+            retry_target = registry.retry_target(reservation)
+            if not isinstance(retry_target, dict):
+                return ActivationAttemptResult("deferred", "retry_not_due", native_retry_safe=False), reservation
+
         spent = False
         with self._custody_lock:
             state_read_started = False
@@ -2409,7 +2416,9 @@ class RetainedService(InventoryService):
                 if not self.read_tool or not self.owner_tool_before or self.caller is None:
                     raise ShadowUnavailable("stopped")
                 state_read_started = True
-                result = self._call("read_thread", {"threadId": reservation.session_ref,
+                target_session = retry_target["session_ref"] if retry_target else reservation.session_ref
+                target_container = retry_target["container_ref"] if retry_target else reservation.container_ref
+                result = self._call("read_thread", {"threadId": target_session,
                     "turnLimit": 1, "includeOutputs": False, "maxOutputCharsPerItem": 1},
                     time.monotonic() + EXCHANGE_SECONDS)
                 content = result.get("contentItems")
@@ -2421,13 +2430,25 @@ class RetainedService(InventoryService):
                 thread = body.get("thread")
                 target_state = thread.get("status", {}).get("type") if isinstance(thread, dict) and isinstance(thread.get("status"), dict) else None
                 eligible = (type(body.get("schemaVersion")) is int and body["schemaVersion"] == 1
-                    and isinstance(thread, dict) and thread.get("id") == reservation.session_ref
+                    and isinstance(thread, dict) and thread.get("id") == target_session
                     and thread.get("kind") == "codex" and thread.get("hostId") == "local"
                     and isinstance(thread.get("status"), dict)
                     and target_state in {"idle", "notLoaded"})
                 del body, result, content, thread
                 if not eligible:
-                    return ActivationAttemptResult("deferred", "target_not_idle", native_retry_safe=True)
+                    return ActivationAttemptResult(
+                        "deferred", "target_not_idle", native_retry_safe=not retrying
+                    ), reservation
+                if retrying:
+                    rearmed = registry.rearm_for_retry(
+                        reservation, session_ref=target_session,
+                        container_ref=target_container,
+                    )
+                    if rearmed is None:
+                        return ActivationAttemptResult(
+                            "deferred", "fence_failed", native_retry_safe=False
+                        ), reservation
+                    reservation = rearmed
                 deadline = time.monotonic() + EXCHANGE_SECONDS
                 def write():
                     nonlocal spent
@@ -2450,13 +2471,18 @@ class RetainedService(InventoryService):
                         "prompt": _wake_prompt(reservation.delivery_id)}, deadline)
                 current, initiated = registry.run_if_current(reservation, write)
                 if not current or initiated is None:
-                    return ActivationAttemptResult("deferred", "fence_failed", native_retry_safe=True)
+                    return ActivationAttemptResult(
+                        "deferred", "fence_failed",
+                        native_retry_safe=not retrying and reservation.retry_not_before is None,
+                    ), reservation
                 # Hook claim/ACK needs the registry lock while the owner response is pending.
                 mode, pending = initiated
                 if mode != "queue":
                     self._read_call(pending, deadline)
                     # Submission is fenced; a generic tool result proves no payload admission.
-                    return ActivationAttemptResult("uncertain", "native_submitted", ("submission_attempted",))
+                    return ActivationAttemptResult(
+                        "uncertain", "native_submitted", ("submission_attempted",)
+                    ), reservation
             except Exception as exc:
                 _log.warning("codex_retained_dispatch outcome=failed category=%s", _inventory_reason(exc))
                 category = getattr(exc, "category", None)
@@ -2464,16 +2490,23 @@ class RetainedService(InventoryService):
                             and self.custody is not None and not self.custody.unresolved
                             and self._registration_live())
                 self._drop(preserve_registration=preserve)
-                return ActivationAttemptResult("uncertain" if spent else "deferred",
-                    "native_unavailable", ("submission_attempted",) if spent else (), native_retry_safe=not spent)
+                return ActivationAttemptResult(
+                    "uncertain" if spent else "deferred", "native_unavailable",
+                    ("submission_attempted",) if spent else (),
+                    native_retry_safe=not spent and not retrying,
+                ), reservation
         # Queue completion owns no Desktop I/O; allow source calls/disconnect during this wait.
         try:
             outcome = _attempt_from_launch(_finish_launch(pending, delivery_id=reservation.delivery_id))
             # Once spent, even a queue start failure never selects another transport.
-            return ActivationAttemptResult(outcome.outcome if outcome.outcome == "accepted" else "uncertain",
-                outcome.reason, outcome.evidence)
+            return ActivationAttemptResult(
+                outcome.outcome if outcome.outcome == "accepted" else "uncertain",
+                outcome.reason, outcome.evidence,
+            ), reservation
         except Exception:
-            return ActivationAttemptResult("uncertain", "queue_response_failed", ("submission_attempted",))
+            return ActivationAttemptResult(
+                "uncertain", "queue_response_failed", ("submission_attempted",)
+            ), reservation
 
 
 def start_retained_service() -> RetainedService | None:

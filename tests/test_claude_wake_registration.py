@@ -572,6 +572,228 @@ def test_hook_helpers_use_persistent_loopback_register_and_close_routes(
     assert all(response.content == b"" and token not in response.text for response in responses)
 
 
+@pytest.mark.parametrize(
+    "unusable",
+    ["missing_socket", "missing_token", "empty_socket", "empty_token", "control_socket", "control_token", "long_socket", "long_token", "encoded_overflow"],
+)
+def test_unusable_claude_credentials_revoke_exact_wake(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, unusable: str,
+) -> None:
+    common = _load_claude_hook("common", monkeypatch)
+    registry = client.app.state.claude_wake_registry
+    wake_dir = registry._state_dir
+    assert wake_dir is not None
+    monkeypatch.setattr(common, "CLAUDE_WAKE_DIR", wake_dir)
+    monkeypatch.setattr(common, "CLAUDE_WAKE_INTENTS_DIR", wake_dir / "intents")
+    monkeypatch.setattr(common, "_wake_binding_matches_service", lambda: True)
+    monkeypatch.setattr(common, "PALLIUM_BASE_URL", "http://testserver")
+    monkeypatch.setenv("CLAUDE_CODE_MESSAGING_SOCKET", r"\\.\pipe\claude")
+    monkeypatch.setenv("CLAUDE_CODE_MESSAGING_TOKEN", "token")
+
+    wake_http = TestClient(client.app, client=("127.0.0.1", 50000))
+    statuses = []
+
+    def open_request(request, **_kwargs):
+        response = wake_http.request(request.get_method(), urlsplit(request.full_url).path, content=request.data)
+        statuses.append((urlsplit(request.full_url).path, response.status_code))
+        return nullcontext(response)
+
+    monkeypatch.setattr(common.urllib.request, "build_opener", lambda *_: SimpleNamespace(open=open_request))
+    session_ref, container_ref = "restricted-✓", "git:example/π"
+    other_container = "git:example/other"
+    assert client.post("/relay/turn", json={"runtime": "claude-code", "session_ref": session_ref, "container_ref": container_ref}).status_code == 200
+    assert common.register_claude_wake(session_ref, container_ref, idle=True), statuses
+    assert statuses[-1][1] == 204, statuses
+    assert common.register_claude_wake(session_ref, other_container, idle=True)
+    assert statuses[-1][1] == 204, statuses
+
+    def activation() -> dict:
+        rows = client.get("/relay/sessions", params={"container_ref": container_ref, "include_inactive": "true"}).json()
+        return next(row for row in rows if row["session_ref"] == session_ref)
+
+    row = activation()
+    assert registry.state_for(recipient_endpoint_id=row["endpoint_id"], session_ref=session_ref, container_ref=container_ref) == "idle", row
+    assert row["activation"]["availability"] == "ready", row
+    if unusable == "missing_socket":
+        monkeypatch.delenv("CLAUDE_CODE_MESSAGING_SOCKET")
+    elif unusable == "missing_token":
+        monkeypatch.delenv("CLAUDE_CODE_MESSAGING_TOKEN")
+    elif unusable == "empty_socket":
+        monkeypatch.setenv("CLAUDE_CODE_MESSAGING_SOCKET", "")
+    elif unusable == "empty_token":
+        monkeypatch.setenv("CLAUDE_CODE_MESSAGING_TOKEN", "")
+    elif unusable == "control_socket":
+        monkeypatch.setenv("CLAUDE_CODE_MESSAGING_SOCKET", "bad\nvalue")
+    elif unusable == "control_token":
+        monkeypatch.setenv("CLAUDE_CODE_MESSAGING_TOKEN", "bad\nvalue")
+    elif unusable == "long_socket":
+        monkeypatch.setenv("CLAUDE_CODE_MESSAGING_SOCKET", "s" * (MAX_SOCKET_CHARS + 1))
+    elif unusable == "long_token":
+        monkeypatch.setenv("CLAUDE_CODE_MESSAGING_TOKEN", "t" * (MAX_TOKEN_CHARS + 1))
+    else:
+        monkeypatch.setenv("CLAUDE_CODE_MESSAGING_TOKEN", "é" * MAX_TOKEN_CHARS)
+
+    assert not common.register_claude_wake(session_ref, container_ref, idle=False)
+    assert activation()["activation"]["availability"] == "unknown", activation()
+    assert registry.state_for(recipient_endpoint_id="relay-session-" + "a" * 32, session_ref=session_ref, container_ref=other_container) == "idle"
+    assert not registry.probe(runtime="claude-code", session_ref=session_ref, container_ref=container_ref, transport=lambda *_: pytest.fail("stale native wake"))
+
+
+@pytest.mark.parametrize("session_ref,container_ref", [
+    (None, "git:example/repo"), ("", "git:example/repo"), ("bad\nsession", "git:example/repo"),
+    ("s" * (MAX_SESSION_CHARS + 1), "git:example/repo"),
+    ("session", None), ("session", "bad\ncontainer"),
+    ("session", "c" * (MAX_CONTAINER_CHARS + 1)),
+])
+def test_unusable_identity_never_publishes_wake_close(
+    monkeypatch: pytest.MonkeyPatch, session_ref: object, container_ref: object,
+) -> None:
+    common = _load_claude_hook("common", monkeypatch)
+    monkeypatch.delenv("CLAUDE_CODE_MESSAGING_TOKEN", raising=False)
+    monkeypatch.setattr(common, "close_claude_wake", lambda *_: pytest.fail("invalid identity must not close"))
+    assert not common.register_claude_wake(session_ref, container_ref)
+
+
+def test_missing_credentials_leave_exact_close_intent_for_recovery_after_http_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    common = _load_claude_hook("common", monkeypatch)
+    wake_dir = tmp_path / "wake"
+    registry = ClaudeWakeRegistry(state_dir=wake_dir)
+    http = _client(registry)
+    monkeypatch.setattr(common, "CLAUDE_WAKE_DIR", wake_dir)
+    monkeypatch.setattr(common, "CLAUDE_WAKE_INTENTS_DIR", wake_dir / "intents")
+    monkeypatch.setenv("CLAUDE_CODE_MESSAGING_SOCKET", "socket")
+    monkeypatch.setenv("CLAUDE_CODE_MESSAGING_TOKEN", "token")
+
+    def open_request(request, **_kwargs):
+        response = http.request(request.get_method(), urlsplit(request.full_url).path, content=request.data)
+        assert response.status_code == 204
+        return nullcontext(response)
+
+    monkeypatch.setattr(common.urllib.request, "build_opener", lambda *_: SimpleNamespace(open=open_request))
+    session_ref, container_ref, other_container = "session-✓", "git:example/π", "git:example/other"
+    assert common.register_claude_wake(session_ref, container_ref, idle=True)
+    assert common.register_claude_wake(session_ref, other_container, idle=True)
+    monkeypatch.delenv("CLAUDE_CODE_MESSAGING_TOKEN")
+
+    def unavailable_open(*_args, **_kwargs):
+        raise OSError("offline")
+
+    monkeypatch.setattr(common.urllib.request, "build_opener", lambda *_: SimpleNamespace(open=unavailable_open))
+    assert not common.register_claude_wake(session_ref, container_ref)
+    intent = common._wake_intent_path("claude-code", session_ref, container_ref)
+    assert json.loads(intent.read_text(encoding="utf-8"))["closed"] is True
+    assert registry.state_for(recipient_endpoint_id="relay-session-" + "a" * 32, session_ref=session_ref, container_ref=container_ref) == "idle"
+
+    registry.recover_intents()
+    assert not intent.exists()
+    assert registry.state_for(recipient_endpoint_id="relay-session-" + "a" * 32, session_ref=session_ref, container_ref=container_ref) is None
+    assert registry.state_for(recipient_endpoint_id="relay-session-" + "a" * 32, session_ref=session_ref, container_ref=other_container) == "idle"
+
+
+def test_missing_credentials_retry_close_after_intent_publication_failure(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    common = _load_claude_hook("common", monkeypatch)
+    registry = client.app.state.claude_wake_registry
+    wake_dir = registry._state_dir
+    assert wake_dir is not None
+    monkeypatch.setattr(common, "CLAUDE_WAKE_DIR", wake_dir)
+    monkeypatch.setattr(common, "CLAUDE_WAKE_INTENTS_DIR", wake_dir / "intents")
+    monkeypatch.setattr(common, "_wake_binding_matches_service", lambda: True)
+    monkeypatch.setattr(common, "PALLIUM_BASE_URL", "http://testserver")
+    monkeypatch.setenv("CLAUDE_CODE_MESSAGING_SOCKET", "socket")
+    monkeypatch.setenv("CLAUDE_CODE_MESSAGING_TOKEN", "token")
+    wake_http = TestClient(client.app, client=("127.0.0.1", 50000))
+    requests = []
+
+    def open_request(request, **_kwargs):
+        path = urlsplit(request.full_url).path
+        requests.append(path)
+        response = wake_http.request(request.get_method(), path, content=request.data)
+        assert response.status_code == 204
+        return nullcontext(response)
+
+    monkeypatch.setattr(common.urllib.request, "build_opener", lambda *_: SimpleNamespace(open=open_request))
+    session_ref, container_ref, other_container = "session", "git:example/repo", "git:example/other"
+    assert client.post("/relay/turn", json={"runtime": "claude-code", "session_ref": session_ref, "container_ref": container_ref}).status_code == 200
+    assert common.register_claude_wake(session_ref, container_ref, idle=True)
+    assert common.register_claude_wake(session_ref, other_container, idle=True)
+    monkeypatch.delenv("CLAUDE_CODE_MESSAGING_TOKEN")
+
+    def availability() -> str:
+        rows = client.get("/relay/sessions", params={"container_ref": container_ref, "include_inactive": "true"}).json()
+        return next(row["activation"]["availability"] for row in rows if row["session_ref"] == session_ref)
+
+    assert availability() == "ready"
+    before = len(requests)
+    with monkeypatch.context() as failure:
+        failure.setattr(common, "_write_wake_intent", lambda *_: False)
+        assert not common.register_claude_wake(session_ref, container_ref)
+    assert len(requests) == before
+    assert availability() == "ready"
+
+    assert not common.register_claude_wake(session_ref, container_ref)
+    assert requests[-1] == "/internal/claude-wake/close"
+    assert availability() == "unknown"
+    assert registry.state_for(recipient_endpoint_id="relay-session-" + "a" * 32, session_ref=session_ref, container_ref=other_container) == "idle"
+
+
+def test_restricted_claude_prompt_still_delivers_and_acks_pending_relay(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+) -> None:
+    prompt = _load_claude_hook("user_prompt_submit", monkeypatch)
+    common = sys.modules[prompt.register_claude_wake.__module__]
+    wake_dir = client.app.state.claude_wake_registry._state_dir
+    assert wake_dir is not None
+    monkeypatch.setattr(common, "CLAUDE_WAKE_DIR", wake_dir)
+    monkeypatch.setattr(common, "CLAUDE_WAKE_INTENTS_DIR", wake_dir / "intents")
+    monkeypatch.setattr(common, "PALLIUM_BASE_URL", "http://testserver")
+    wake_http = TestClient(client.app, client=("127.0.0.1", 50000))
+
+    def open_wake(request, **_kwargs):
+        response = wake_http.request(request.get_method(), urlsplit(request.full_url).path, content=request.data)
+        assert response.status_code == 204
+        return nullcontext(response)
+
+    monkeypatch.setattr(common.urllib.request, "build_opener", lambda *_: SimpleNamespace(open=open_wake))
+    scope = {"container_ref": "git:example/repo"}
+    session_ref = "restricted-target"
+    assert client.post("/relay/turn", json={"runtime": "codex", "session_ref": "sender", **scope}).status_code == 200
+    assert client.post("/relay/turn", json={"runtime": "claude-code", "session_ref": session_ref, **scope}).status_code == 200
+    monkeypatch.setenv("CLAUDE_CODE_MESSAGING_SOCKET", "socket")
+    monkeypatch.setenv("CLAUDE_CODE_MESSAGING_TOKEN", "token")
+    assert common.register_claude_wake(session_ref, scope["container_ref"], idle=True)
+    monkeypatch.delenv("CLAUDE_CODE_MESSAGING_SOCKET")
+    assert not common.register_claude_wake(session_ref, scope["container_ref"])
+    sent = client.post("/relay/messages", json={
+        "sender_runtime": "codex", "sender_session_ref": "sender",
+        "recipient": "claude-code:" + session_ref, "payload": "A pending peer task.", **scope,
+    })
+    assert sent.status_code == 200
+
+    def relay(method, path, body, **_kwargs):
+        response = client.request(method, path, json=body)
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    monkeypatch.setattr(prompt, "relay_request", relay)
+    monkeypatch.setattr(common, "relay_request", relay)
+    monkeypatch.setattr(prompt, "read_hook_input", lambda: {"session_id": session_ref, "cwd": ".", "prompt": "hi"})
+    monkeypatch.setattr(prompt, "resolve_container_ref", lambda *_: scope["container_ref"])
+    monkeypatch.setattr(prompt, "derive_actor_ref", lambda *_: "actor")
+    monkeypatch.setattr(prompt, "check_dedup", lambda *_: False)
+    monkeypatch.setattr(prompt, "get_pending_relay_close_batch", lambda *_: ([], 0))
+    monkeypatch.setattr(prompt, "pallium_request", lambda *_a, **_k: pytest.fail("short prompt should not query memory"))
+    with pytest.raises(SystemExit) as exit_info:
+        prompt.main()
+    assert exit_info.value.code == 0
+    assert "A pending peer task." in capsys.readouterr().out
+    status = client.get(f"/relay/messages/{sent.json()['message_id']}", params=scope).json()
+    assert status["deliveries"][0]["state"] == "delivered"
+
+
 def test_hook_enforces_encoded_body_limit_before_open(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     common = _load_claude_hook("common", monkeypatch)
     wake_dir = tmp_path / "wake"
@@ -579,14 +801,21 @@ def test_hook_enforces_encoded_body_limit_before_open(tmp_path: Path, monkeypatc
     monkeypatch.setattr(common, "CLAUDE_WAKE_INTENTS_DIR", wake_dir / "intents")
     monkeypatch.setenv("CLAUDE_CODE_MESSAGING_SOCKET", "socket")
     monkeypatch.setenv("CLAUDE_CODE_MESSAGING_TOKEN", "é" * MAX_TOKEN_CHARS)
-    opener_calls: list[bool] = []
+    requested_paths: list[str] = []
+
+    def unavailable_open(request, **_kwargs):
+        requested_paths.append(urlsplit(request.full_url).path)
+        raise OSError("offline")
+
     monkeypatch.setattr(
         common.urllib.request,
         "build_opener",
-        lambda *_args: opener_calls.append(True) or pytest.fail("oversized encoded body must not open"),
+        lambda *_args: SimpleNamespace(open=unavailable_open),
     )
     assert not common.register_claude_wake("session", "git:example/repo")
-    assert opener_calls == [] and not common._wake_intent_path("claude-code", "session", "git:example/repo").exists()
+    assert requested_paths == ["/internal/claude-wake/close"]
+    close_intent = common._wake_intent_path("claude-code", "session", "git:example/repo")
+    assert json.loads(close_intent.read_text(encoding="utf-8"))["closed"] is True
     assert list((wake_dir / "intents").glob("*.tmp")) == []
     restarted = ClaudeWakeRegistry(state_dir=wake_dir)
     restarted.recover_intents()

@@ -420,6 +420,268 @@ def test_selected_transport_actual_hook_emits_then_acks(http_wake, monkeypatch, 
     assert len(events) == 2
 
 
+@pytest.mark.parametrize("first_outcome", ["accepted", "uncertain"])
+@pytest.mark.parametrize("restart", [False, True])
+def test_spent_wake_retries_after_cooldown_and_real_hook_acks_backlog(
+    client, http_wake, monkeypatch, capsys, tmp_path, first_outcome, restart,
+):
+    from datetime import datetime, timedelta, timezone
+
+    import storage.sqlite_relay as sqlite_relay
+
+    http, relay, registry, service, desktop, send, workers = http_wake
+    now = [datetime(2030, 9, 5, tzinfo=timezone.utc)]
+
+    def controlled_now(value=None):
+        current = value or now[0]
+        return current if current.tzinfo is not None else current.replace(tzinfo=timezone.utc)
+
+    monkeypatch.setattr(sqlite_relay, "_now", controlled_now)
+    desktop.state = "idle"
+    events, prompts = [], []
+    hook = _hook_runner(http, monkeypatch, "idle", events, tmp_path)
+
+    class Process:
+        returncode = 0
+
+        def communicate(self, **kwargs):
+            hook(prompts[-1])
+            return None, ""
+
+    def launch(session, prompt):
+        prompts.append(prompt)
+        if len(prompts) == 1 and first_outcome == "uncertain":
+            return None, ("ambiguous", "timeout", None)
+        if len(prompts) == 1:
+            process = type("Accepted", (), {
+                "returncode": 0,
+                "communicate": lambda self, **kwargs: (None, ""),
+            })()
+            return process, None
+        return Process(), None
+
+    monkeypatch.setattr(codex_wake, "_start_launch", launch)
+    first = send()
+    first_fence = registry.snapshot(first["recipient_endpoint_id"])
+    assert first_fence is not None and first_fence.outcome == first_outcome
+    assert http.get("/relay/messages/retained-journey", params=SCOPE).json()["deliveries"][0]["state"] == "pending"
+
+    response = http.post("/relay/messages", json={
+        "sender_runtime": "claude-code", "sender_session_ref": "sender",
+        "recipient": f"codex:{TARGET}", "message_id": "retained-followup",
+        "payload": "later-payload-東京", **SCOPE,
+    })
+    assert response.status_code == 200, response.text
+    later = response.json()
+    now[0] += timedelta(seconds=59)
+
+    restarted = registry
+    if restart:
+        restarted = CodexWakeRegistry(relay_service=relay)
+        assert restarted.initialize(old_owner_drained=True)
+        restarted.retained_service = service
+        app = FastAPI()
+        app.include_router(build_router(
+            client.app.state.pallium_service,
+            relay_storage=client.app.state.pallium_service._storage,
+            codex_wake_registry=restarted,
+        ))
+        http.close()
+        http = TestClient(app)
+        events.clear()
+        hook = _hook_runner(http, monkeypatch, "idle", events, tmp_path)
+
+    recover_expired_relay_wakes(relay, ClaudeWakeRegistry(), codex_registry=restarted)
+    for worker in workers:
+        worker.join(2)
+        assert not worker.is_alive()
+    assert len(prompts) == 1
+    now[0] += timedelta(seconds=2)
+    recover_expired_relay_wakes(relay, ClaudeWakeRegistry(), codex_registry=restarted)
+    for worker in workers:
+        worker.join(2)
+        assert not worker.is_alive()
+
+    assert len(prompts) == 3  # Initial wake, recovered wake, then the next hook batch.
+    assert [event[0] for event in events] == ["emit", "ack", "emit", "ack"]
+    assert "private-payload-東京" in events[0][2]
+    assert "later-payload-東京" in events[2][2]
+    assert http.get("/relay/messages/retained-journey", params=SCOPE).json()["deliveries"][0]["state"] == "delivered"
+    assert http.get(f"/relay/messages/{later['message_id']}", params=SCOPE).json()["deliveries"][0]["state"] == "delivered"
+    assert restarted.reservations() == ()
+    assert not codex_wake._scheduled_delivery_ids
+    assert not codex_wake._scheduled_session_generations
+    assert not codex_wake._scheduled_session_delivery_ids
+    assert not codex_wake._scheduled_session_attempt_ids
+    capsys.readouterr()
+
+
+def test_busy_target_does_not_slide_due_retry_deadline(http_wake, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    import storage.sqlite_relay as sqlite_relay
+
+    http, relay, registry, _, desktop, send, workers = http_wake
+    now = [datetime(2030, 9, 5, tzinfo=timezone.utc)]
+
+    def controlled_now(value=None):
+        current = value or now[0]
+        return current if current.tzinfo is not None else current.replace(tzinfo=timezone.utc)
+
+    monkeypatch.setattr(sqlite_relay, "_now", controlled_now)
+    launches = []
+    def launch(*args):
+        launches.append(args)
+        return SimpleNamespace(returncode=0, communicate=lambda **_kwargs: (None, "")), None
+    monkeypatch.setattr(codex_wake, "_start_launch", launch)
+    desktop.state = "idle"
+    delivery = send()
+    for worker in workers:
+        worker.join(2)
+        assert not worker.is_alive()
+    initial = registry.snapshot(delivery["recipient_endpoint_id"])
+    assert initial is not None and initial.outcome == "accepted"
+    original_deadline = initial.retry_not_before
+    assert original_deadline is not None
+    assert len(launches) == 1
+
+    now[0] += timedelta(seconds=61)
+    desktop.state = "working"
+    recover(http_wake)
+    assert len(launches) == 1
+    busy = registry.snapshot(delivery["recipient_endpoint_id"])
+    assert busy is not None and busy.generation == initial.generation
+    assert busy.outcome == "accepted" and busy.retry_not_before == original_deadline
+
+    desktop.state = "idle"
+    recover(http_wake)
+    recovered = registry.snapshot(delivery["recipient_endpoint_id"])
+    assert recovered is not None and recovered.generation > initial.generation
+    assert recovered.outcome == "accepted" and recovered.retry_not_before > original_deadline
+    assert len(launches) == 2
+
+    now[0] += timedelta(seconds=61)
+    claim = http.post("/relay/turn", json={
+        "runtime": "codex", "session_ref": TARGET, **SCOPE,
+    })
+    assert claim.status_code == 200, claim.text
+    assert claim.json()["deliveries"][0]["delivery_id"] == delivery["delivery_id"]
+    recover(http_wake)
+    active = registry.snapshot(delivery["recipient_endpoint_id"])
+    assert active == recovered and len(launches) == 2
+
+
+@pytest.mark.parametrize("claim_mode", ["active", "acked"])
+def test_retry_cas_loses_to_hook_claim_after_fresh_native_read(http_wake, monkeypatch, claim_mode):
+    from datetime import datetime, timedelta, timezone
+
+    import storage.sqlite_relay as sqlite_relay
+
+    http, _, registry, _, desktop, send, workers = http_wake
+    now = [datetime(2030, 9, 5, tzinfo=timezone.utc)]
+
+    def controlled_now(value=None):
+        current = value or now[0]
+        return current if current.tzinfo is not None else current.replace(tzinfo=timezone.utc)
+
+    monkeypatch.setattr(sqlite_relay, "_now", controlled_now)
+    launches = []
+    monkeypatch.setattr(codex_wake, "_start_launch", lambda *args: (
+        launches.append(args) or SimpleNamespace(
+            returncode=0, communicate=lambda **_kwargs: (None, ""),
+        ), None,
+    ))
+    desktop.state = "idle"
+    delivery = send()
+    for worker in workers:
+        worker.join(2)
+        assert not worker.is_alive()
+    spent = registry.snapshot(delivery["recipient_endpoint_id"])
+    assert spent is not None and spent.outcome == "accepted"
+    now[0] += timedelta(seconds=61)
+
+    def claim_before_rearm():
+        desktop.on_state = None
+        response = http.post("/relay/turn", json={
+            "runtime": "codex", "session_ref": TARGET, **SCOPE,
+        })
+        assert response.status_code == 200, response.text
+        claimed = response.json()["deliveries"][0]
+        assert claimed["delivery_id"] == delivery["delivery_id"]
+        if claim_mode == "acked":
+            ack = http.post("/relay/deliveries/ack", json={
+                "delivery_id": claimed["delivery_id"],
+                "claim_token": claimed["claim_token"], **SCOPE,
+            })
+            assert ack.status_code == 200, ack.text
+
+    desktop.on_state = claim_before_rearm
+    recover(http_wake)
+    assert len(launches) == 1
+    if claim_mode == "active":
+        current = registry.snapshot(delivery["recipient_endpoint_id"])
+        assert current == spent
+        assert http.get("/relay/messages/retained-journey", params=SCOPE).json()["deliveries"][0]["state"] == "claimed"
+    else:
+        assert registry.snapshot(delivery["recipient_endpoint_id"]) is None
+        assert http.get("/relay/messages/retained-journey", params=SCOPE).json()["deliveries"][0]["state"] == "delivered"
+
+
+def test_concurrent_spent_retry_rearm_spends_one_new_generation(http_wake, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    from core.claude_wake import ClaudeWakeRegistry
+    import storage.sqlite_relay as sqlite_relay
+
+    _, relay, registry, _, desktop, send, workers = http_wake
+    now = [datetime(2030, 9, 5, tzinfo=timezone.utc)]
+
+    def controlled_now(value=None):
+        current = value or now[0]
+        return current if current.tzinfo is not None else current.replace(tzinfo=timezone.utc)
+
+    monkeypatch.setattr(sqlite_relay, "_now", controlled_now)
+    launches = []
+    def launch(*args):
+        launches.append(args)
+        return SimpleNamespace(returncode=0, communicate=lambda **_kwargs: (None, "")), None
+    monkeypatch.setattr(codex_wake, "_start_launch", launch)
+    desktop.state = "idle"
+    delivery = send()
+    for worker in workers:
+        worker.join(2)
+        assert not worker.is_alive()
+    spent = registry.snapshot(delivery["recipient_endpoint_id"])
+    assert spent is not None and spent.outcome == "accepted"
+    now[0] += timedelta(seconds=61)
+    start = threading.Barrier(3)
+    errors = []
+    def recover_concurrently():
+        start.wait(timeout=2)
+        try:
+            recover_expired_relay_wakes(relay, ClaudeWakeRegistry(), codex_registry=registry)
+        except Exception as exc:
+            errors.append(exc)
+    threads = [threading.Thread(target=recover_concurrently) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    start.wait(timeout=2)
+    for thread in threads:
+        thread.join(2)
+        assert not thread.is_alive()
+    for worker in workers:
+        worker.join(2)
+        assert not worker.is_alive()
+
+    assert errors == []
+    assert len(launches) == 2  # One initial notification and exactly one concurrent recovery write.
+    replacement = registry.snapshot(delivery["recipient_endpoint_id"])
+    assert replacement is not None and replacement.generation > spent.generation
+    assert replacement.outcome == "accepted"
+    assert registry.begin_native_attempt(spent) is None
+    assert registry.run_if_current(spent, lambda: pytest.fail("stale spent generation submitted")) == (False, None)
+
+
 @pytest.mark.parametrize("contention", ["released", "held", "exhausted"])
 @pytest.mark.parametrize("script", ["session_start", "user_prompt_submit"])
 def test_session_start_lock_budget_claims_emits_and_acks_once(
@@ -465,7 +727,12 @@ def test_session_start_lock_budget_claims_emits_and_acks_once(
     assert lock is not None
     release = threading.Timer(0.3, common._release_session_lock, args=(lock,))
     if contention == "released":
-        release.start()
+        acquire = common._acquire_session_lock
+        def start_release_on_wait(*args, **kwargs):
+            if kwargs.get("deadline") is not None and release.ident is None:
+                release.start()
+            return acquire(*args, **kwargs)
+        monkeypatch.setattr(common, "_acquire_session_lock", start_release_on_wait)
     started = time.monotonic()
     try:
         with pytest.raises(SystemExit) as exited:

@@ -6,10 +6,13 @@ import os
 import subprocess
 import sys
 import threading
+from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.parse import urlsplit
 
 import pytest
+from fastapi.testclient import TestClient
 
 from core.claude_wake import ClaudeWakeRegistry
 from core.relay_activation import ActivationAttemptResult
@@ -323,6 +326,94 @@ def test_accepted_inflight_rehydrates_without_elapsed_time_release(tmp_path: Pat
     assert not restarted.rearm_inflight(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], delivery_id="delivery", grace_seconds=1)
     wall[0] = 101.0
     assert not restarted.rearm_inflight(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], delivery_id="delivery", grace_seconds=1)
+
+
+@pytest.mark.parametrize("native_outcome", ["accepted", "uncertain"])
+def test_restricted_resume_fences_inflight_until_normal_turn_ack(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture, native_outcome: str,
+) -> None:
+    from tests.test_claude_code_integration import _load_claude_hook
+
+    common = _load_claude_hook("common", monkeypatch)
+    registry = client.app.state.claude_wake_registry
+    wake_dir = registry._state_dir
+    assert wake_dir is not None
+    monkeypatch.setattr(common, "CLAUDE_WAKE_DIR", wake_dir)
+    monkeypatch.setattr(common, "CLAUDE_WAKE_INTENTS_DIR", wake_dir / "intents")
+    monkeypatch.setattr(common, "PALLIUM_BASE_URL", "http://testserver")
+    wake_http = TestClient(client.app, client=("127.0.0.1", 50000))
+
+    def open_wake(request, **_kwargs):
+        response = wake_http.request(request.get_method(), urlsplit(request.full_url).path, content=request.data)
+        assert response.status_code == 204
+        return nullcontext(response)
+
+    monkeypatch.setattr(common.urllib.request, "build_opener", lambda *_: SimpleNamespace(open=open_wake))
+    scope = {"container_ref": "git:example/repo"}
+    session_ref = "restricted-inflight"
+    assert client.post("/relay/turn", json={"runtime": "codex", "session_ref": "sender", **scope}).status_code == 200
+    assert client.post("/relay/turn", json={"runtime": "claude-code", "session_ref": session_ref, **scope}).status_code == 200
+    sent = client.post("/relay/messages", json={
+        "sender_runtime": "codex", "sender_session_ref": "sender",
+        "recipient": "claude-code:" + session_ref, "payload": "Pending in-flight work.", **scope,
+    })
+    assert sent.status_code == 200
+    delivery = sent.json()["deliveries"][0]
+    monkeypatch.setenv("CLAUDE_CODE_MESSAGING_SOCKET", "socket")
+    monkeypatch.setenv("CLAUDE_CODE_MESSAGING_TOKEN", "token")
+    assert common.register_claude_wake(session_ref, scope["container_ref"], idle=True)
+    native_calls = []
+    attempt = registry.attempt(
+        runtime="claude-code", session_ref=session_ref, container_ref=scope["container_ref"],
+        delivery_id=delivery["delivery_id"], recipient_endpoint_id=delivery["recipient_endpoint_id"],
+        transport=lambda *_: native_calls.append(True) or (native_outcome == "accepted"),
+    )
+    assert attempt.outcome == native_outcome and native_calls == [True]
+    monkeypatch.delenv("CLAUDE_CODE_MESSAGING_TOKEN")
+    assert not common.register_claude_wake(session_ref, scope["container_ref"])
+    restarted = ClaudeWakeRegistry(state_dir=wake_dir)
+    restarted.recover_intents()
+    assert restarted.state_for(
+        recipient_endpoint_id=delivery["recipient_endpoint_id"], session_ref=session_ref,
+        container_ref=scope["container_ref"],
+    ) == "wake_inflight"
+    assert restarted.attempt(
+        runtime="claude-code", session_ref=session_ref, container_ref=scope["container_ref"],
+        delivery_id=delivery["delivery_id"], recipient_endpoint_id=delivery["recipient_endpoint_id"],
+        transport=lambda *_: pytest.fail("second native attempt"),
+    ).outcome == "deferred"
+
+    prompt = _load_claude_hook("user_prompt_submit", monkeypatch)
+    hook_common = sys.modules[prompt.register_claude_wake.__module__]
+    monkeypatch.setattr(hook_common, "CLAUDE_WAKE_DIR", wake_dir)
+    monkeypatch.setattr(hook_common, "CLAUDE_WAKE_INTENTS_DIR", wake_dir / "intents")
+    monkeypatch.setattr(hook_common.urllib.request, "build_opener", lambda *_: SimpleNamespace(open=open_wake))
+
+    def relay(method, path, body, **_kwargs):
+        response = client.request(method, path, json=body)
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    monkeypatch.setattr(prompt, "relay_request", relay)
+    monkeypatch.setattr(hook_common, "relay_request", relay)
+    monkeypatch.setattr(prompt, "read_hook_input", lambda: {"session_id": session_ref, "cwd": ".", "prompt": "hi"})
+    monkeypatch.setattr(prompt, "resolve_container_ref", lambda *_: scope["container_ref"])
+    monkeypatch.setattr(prompt, "derive_actor_ref", lambda *_: "actor")
+    monkeypatch.setattr(prompt, "check_dedup", lambda *_: False)
+    monkeypatch.setattr(prompt, "get_pending_relay_close_batch", lambda *_: ([], 0))
+    monkeypatch.setattr(prompt, "pallium_request", lambda *_a, **_k: pytest.fail("short prompt should not query memory"))
+    with pytest.raises(SystemExit) as exit_info:
+        prompt.main()
+    assert exit_info.value.code == 0
+    assert "Pending in-flight work." in capsys.readouterr().out
+    status = client.get(f"/relay/messages/{sent.json()['message_id']}", params=scope).json()
+    assert status["deliveries"][0]["state"] == "delivered"
+    after_ack = ClaudeWakeRegistry(state_dir=wake_dir)
+    assert after_ack.state_for(
+        recipient_endpoint_id=delivery["recipient_endpoint_id"], session_ref=session_ref,
+        container_ref=scope["container_ref"],
+    ) == "busy"
+    assert native_calls == [True]
 
 
 def test_wall_clock_rollback_never_releases_inflight(tmp_path: Path) -> None:

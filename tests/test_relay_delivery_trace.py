@@ -600,6 +600,7 @@ def test_worker_start_failure_emits_deferred_without_native_attempt(relay, monke
     events = []
     reservation = SimpleNamespace(
         generation=1,
+        outcome="prepared",
         delivery_id=delivery["delivery_id"],
         recipient_endpoint_id=delivery["recipient_endpoint_id"],
         session_ref="receiver",
