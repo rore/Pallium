@@ -30,7 +30,7 @@
 
 **Plan review:** Agent technical review: /root/closure_plan_review (gpt-6.1-sol/high), revision 7277445737efb58a0afd3c6195adfb8058aacb4a on 525df5bb. Blocked saved-caller automatic re-enrollment: approved admission authority ends at the service epoch, and source-process continuity does not create a fresh host request. Existing MCP children also do not hot-reload a worker fix after service restart. Accepted preparing bounded native qualification with a concrete reviewed exact-session/delivery one-shot hook shim, no config changes, no fabricated native response, preserved nonmatching hooks, backup/atomic restore/hash verification. No implementation or installed qualification performed.
 
-**Approvals:** Approved by user 2026-10-06: "so can you complete the cycle so we don't leave open ends?". Standing authority: "you can push pr and merge if all is ok" and "i approve what is needed". Scope-limited approval, not permission to weaken fencing or interfere with active recipients.
+**Approvals:** Approved by user 2026-10-06: "yes, of course, that's the desired state" after the exact question allowing the same still-live previously authenticated MCP child to reconnect automatically after service restart, preserving identity checks and no resends. Prior scope approval: "so can you complete the cycle so we don't leave open ends?". Standing authority: "you can push pr and merge if all is ok" and "i approve what is needed". This authorizes the stated child-lifetime admission only, not new-child takeover, changed host identity, unresolved-I/O replay or active-chat interruption.
 
 **Exceptions:** —
 
@@ -58,6 +58,20 @@ Current: service restart discards registration; a fresh actual authenticated MCP
 Proposed: a previously admitted, still-live MCP child may recreate registration in a new service epoch using its captured actual caller pair, without another host request. This extends authorization lifetime from the service epoch to that admitted child's lifetime; all source/Desktop/capability identity, native schema, unresolved-I/O, shutdown and durable wake fences must remain enforced. It does not permit replay of Relay operations or owner submissions, a new child, changed capability or arbitrary historical session takeover.
 
 Standing implementation/PR permission does not substitute for this exact changed admission requirement. No admission source edits will occur before the human decision. A safe host/MCP reload plan is also required before installed worker qualification; do not interrupt active user chats.
+
+2026-10-06 human decision received: "yes, of course, that's the desired state". The admission decision is resolved; planning now defines the smallest implementation under the unchanged safety constraints. No Task Context or protected-contract requirement is weakened.
+
+## Resumed implementation plan
+
+First invoke /agent-workflow to resume this Work Record and classify risk before code edits (completed; High/Large unchanged, normal workflow applies).
+
+Target source files: app/mcp/codex_desktop_bridge.py (single retained worker lifecycle) and app/codex_bridge_pipe.py (private continuity handshake). Target regression files: existing retained lifecycle/native fixtures plus a focused reconnect test file; docs/designs/codex-mcp-desktop-bridge.md, docs/context/operations.md and the canonical roadmap document must reconcile the newly approved product-mode lifetime, leaving finite experimental modes unchanged. No public MCP/HTTP schema, persistence schema, scheduler or dependency changes.
+
+New retained clients opt into a private register response containing only a validated SHA-256 continuity fingerprint of the original source and existing Desktop identity/ancestor tuple. This is an equality constraint, not an authentication credential. Legacy clients and finite modes keep their exact original wire fields. Each new epoch repeats all existing actual source/Desktop/capability/catalog checks and compares the fingerprint before retaining custody. No executable paths, native capabilities or proof fields enter public MCP output/logs.
+
+The same sole worker retains only successfully observed actual caller provenance, the original capability string and fingerprint in RAM. On a bounded idle poll it checks the old service's real process lifetime, source identity and secure bootstrap. Only conclusive resolved old-channel disposal allows reconnection. Existing unresolved-I/O retention, explicit stop, malformed trust, capability or source/Desktop changes deny retry. Retry startup outages with capped backoff and no busy loop; do not acquire any slot before the first actual runtime request. Never replay a Relay operation, pending future or owner action. Fresh actual calls remain supported and update provenance normally.
+
+Dedicated installed fault qualification uses a separately reviewed temporary exact-session/message one-shot wrapper around real installed hooks, unchanged configuration/commands, bounded expiry, atomic consumption, nonmatching byte-behavior preservation and finally restoration/hash verification. It discards real committed responses rather than fabricating success. Real native-host and simulation results remain separate. Installed child reload is a distinct qualification dependency, not something a service restart proves.
 
 Manager notification relay-msg-2c33245d0a5e4e778c162f7d4946050f / relay-delivery-bbc99d3d8dde447b975081cefee39a19 was ACKed at 15:52:02.624520 UTC. Manager's model response explicitly restated the admission decision and confirmed isolated fault-test preparation can continue. Notification is receipt-confirmed, not merely queued.
 
