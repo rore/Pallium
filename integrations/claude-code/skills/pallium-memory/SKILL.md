@@ -1,10 +1,11 @@
 ---
 name: pallium-memory
-description: Use Pallium Relay, Session History, or optional derived memory.
+description: Relay, Session History, optional derived memory.
 ---
 
 # Pallium
 ## Relay
+- [Waiting](references/wait.md).
 
 - Reconcile work/state; keep late findings. Skip completed actions/routine replies; follow authorized work. Reply on completion/blocker.
 - Send=saved, not started; pending unconfirmed. `busy_queue`=capability, not observed busyness. Urgent: open task, let work finish, ordinary turn if needed; do not resend.
