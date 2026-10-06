@@ -141,7 +141,12 @@ def wrap_hook(module: Any, manifest_path: str | Path,
                         return None
                     return old_request(method, path, body, **options)
                 response = old_request(method, path, body, **options)
-                return None if _record(evidence_file, "response_dropped", m["mode"], target) else response
+                if (isinstance(response, dict) and response.get("delivery_id") == target
+                        and response.get("state") == "delivered"
+                        and type(response.get("already_delivered")) is bool
+                        and _record(evidence_file, "response_dropped", m["mode"], target)):
+                    return None
+                return response
             return old_request(method, path, body, **options)
 
         common.relay_request = request
@@ -239,31 +244,43 @@ def _validate_install_root(root: Path, helper: Path) -> None:
         raise ValueError("supply the absolute stable installed integrations/codex/hooks directory")
 
 
-def install_hooks(hooks_dir: str | Path, helper_path: str | Path, *,
+def _validate_control_dir(path: str | Path) -> Path:
+    control = Path(path)
+    if not control.is_absolute() or not control.is_dir() or control.is_symlink():
+        raise ValueError("control-dir must be an existing absolute operator-provisioned private directory")
+    info = control.stat()
+    if getattr(info, "st_file_attributes", 0) & 0x400 or control.resolve() != control.absolute():
+        raise ValueError("control-dir must not be a symlink or reparse point")
+    return control.resolve()
+
+
+def install_hooks(hooks_dir: str | Path, control_dir: str | Path,
+                  helper_path: str | Path, *,
                   mode: str, session_id: str, message_id: str,
                   expires_in: int, config_path: str | Path) -> None:
     root, helper, config = Path(hooks_dir).resolve(), Path(helper_path).resolve(), Path(config_path).resolve()
+    control = _validate_control_dir(control_dir)
     _validate_install_root(root, helper)
     if mode not in MODES or not _bounded_identity(session_id) or not _bounded_identity(message_id):
         raise ValueError("invalid mode or exact recipient/message identity")
     if type(expires_in) is not int or not 1 <= expires_in <= 1800:
         raise ValueError("fault expiry must be 1..1800 seconds")
     targets = [root / name for name in HOOK_NAMES]
-    record_path = root / INSTALL_RECORD
-    manifest_path, evidence_path = root / FAULT_MANIFEST, root / EVIDENCE_FILE
+    record_path = control / INSTALL_RECORD
+    manifest_path, evidence_path = control / FAULT_MANIFEST, control / EVIDENCE_FILE
     if any(path.exists() for path in (record_path, manifest_path, evidence_path,
-                                      root / "fault-state", root / "fault-state.used",
-                                      root / "fault-state.binding")):
+                                      control / "fault-state", control / "fault-state.used",
+                                      control / "fault-state.binding")):
         raise FileExistsError("fault harness files already exist; inspect and restore explicitly")
     for target in targets:
         if target.is_symlink() or not target.is_file():
             raise ValueError("both named installed hook files must be regular files")
-    backups = [target.with_name(target.name + ".relay-fault-backup") for target in targets]
+    backups = [control / (target.name + ".relay-fault-backup") for target in targets]
     if any(path.exists() for path in backups):
         raise FileExistsError("a retained hook backup already exists")
     fault = {"version": 1, "mode": mode, "session_id": session_id,
              "message_id": message_id, "expires_at": time.time() + expires_in,
-             "state_path": str((root / "fault-state").resolve())}
+             "state_path": str((control / "fault-state").resolve())}
     record = {"version": 1, "config_path": str(config), "helper": str(helper),
               "config_sha256": _config_hash(config), "targets": []}
     originals = [target.read_bytes() for target in targets]
@@ -293,12 +310,15 @@ def install_hooks(hooks_dir: str | Path, helper_path: str | Path, *,
         raise
 
 
-def restore_hooks(hooks_dir: str | Path) -> None:
+def restore_hooks(hooks_dir: str | Path, control_dir: str | Path) -> None:
     root = Path(hooks_dir).resolve()
+    control = _validate_control_dir(control_dir)
     if root.name != "hooks" or root.parent.name != "codex" or root.parent.parent.name != "integrations":
         raise ValueError("restore requires the exact installed integrations/codex/hooks directory")
-    record_path = root / INSTALL_RECORD
+    record_path = control / INSTALL_RECORD
     record = json.loads(record_path.read_text(encoding="utf-8"))
+    helper = Path(record["helper"]).resolve()
+    _validate_install_root(root, helper)
     config = Path(record["config_path"])
     if _config_hash(config) != record["config_sha256"]:
         raise RuntimeError("Codex hooks configuration changed; no target restored")
@@ -307,7 +327,8 @@ def restore_hooks(hooks_dir: str | Path) -> None:
         raise ValueError("invalid two-hook install record")
     for entry in entries:
         target, backup = Path(entry["target"]), Path(entry["backup"])
-        if (target.parent != root or backup.parent != root
+        if (target.parent != root or backup.parent != control
+                or backup.name != target.name + ".relay-fault-backup"
                 or sha256(target) not in {entry["shim_sha256"], entry["original_sha256"]}
                 or sha256(backup) != entry["original_sha256"]):
             raise RuntimeError("hook or backup changed; no target restored")
@@ -325,23 +346,27 @@ def main() -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     install = sub.add_parser("install", help="install exact-session temporary wrappers; never changes hooks.json")
     install.add_argument("--hooks-dir", required=True)
+    install.add_argument("--control-dir", required=True,
+                         help="existing private-ACL directory; ACL is an operator precondition")
     install.add_argument("--mode", choices=sorted(MODES), required=True)
     install.add_argument("--session-id", required=True)
     install.add_argument("--message-id", required=True)
     install.add_argument("--expires-in", type=int, required=True)
     restore = sub.add_parser("restore", help="restore only untouched generated wrappers")
     restore.add_argument("--hooks-dir", required=True)
+    restore.add_argument("--control-dir", required=True,
+                         help="same existing private-ACL directory used for install")
     args = parser.parse_args()
     try:
         if args.command == "install":
             helper = Path(__file__).resolve()
             root = Path(args.hooks_dir).resolve()
             config = Path.home() / ".codex" / "hooks.json"
-            install_hooks(root, helper, mode=args.mode, session_id=args.session_id,
+            install_hooks(root, args.control_dir, helper, mode=args.mode, session_id=args.session_id,
                           message_id=args.message_id, expires_in=args.expires_in,
                           config_path=config)
         else:
-            restore_hooks(args.hooks_dir)
+            restore_hooks(args.hooks_dir, args.control_dir)
     except (OSError, ValueError, RuntimeError) as exc:
         print(f"relay fault harness: {type(exc).__name__}", file=sys.stderr)
         return 2

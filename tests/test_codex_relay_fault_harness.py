@@ -149,6 +149,27 @@ def test_ack_for_wrong_session_or_unbound_delivery_is_original(module, tmp_path)
     assert not evidence.exists()
 
 
+@pytest.mark.parametrize("response", [
+    None, {}, {"error": "unavailable"},
+    {"delivery_id": "other", "state": "delivered", "already_delivered": False},
+    {"delivery_id": DELIVERY, "state": "claimed", "already_delivered": False},
+    {"delivery_id": DELIVERY, "state": "delivered", "already_delivered": 0},
+])
+def test_failed_ack_never_counts_as_injected_postcommit_response_loss(module, tmp_path, response):
+    manifest, evidence, _ = setup_manifest(tmp_path, "ack-response-loss")
+    install_fake_turn(module, response=claimed())
+    forwarded = []
+    module._common.relay_request = lambda *args, **kwargs: forwarded.append(args) or response
+    undo = harness.wrap_hook(module, manifest, evidence)
+    try:
+        module.relay_turn("codex", SID, request=lambda *args, **kwargs: None)
+        assert module.acknowledge_relay(claimed()["deliveries"], container_ref="scope") == []
+    finally:
+        undo()
+    assert len(forwarded) == 1
+    assert not evidence.exists()
+
+
 def test_existing_reservation_and_session_lock_do_not_deadlock_or_repeat_fault(module, tmp_path):
     manifest, evidence, value = setup_manifest(tmp_path, "claim-response-loss")
     Path(value["state_path"] + ".used").write_text("reserved", encoding="utf-8")
@@ -217,42 +238,50 @@ def make_install_tree(tmp_path: Path):
     config = tmp_path / "user" / ".codex" / "hooks.json"
     config.parent.mkdir(parents=True)
     config.write_text("{}", encoding="utf-8")
-    return stable, root, helper, config
+    control = tmp_path / "operator-private"
+    control.mkdir()
+    return stable, root, helper, config, control
 
 
 def test_install_creates_two_named_shims_and_restore_hashes(tmp_path):
-    _, root, helper, config = make_install_tree(tmp_path)
+    _, root, helper, config, control = make_install_tree(tmp_path)
     originals = {name: harness.sha256(root / name) for name in harness.HOOK_NAMES}
-    harness.install_hooks(root, helper, mode="claim-response-loss", session_id=SID,
+    harness.install_hooks(root, control, helper, mode="claim-response-loss", session_id=SID,
                           message_id=MESSAGE, expires_in=60, config_path=config)
     assert all(harness.sha256(root / name) != originals[name] for name in harness.HOOK_NAMES)
+    assert (control / harness.INSTALL_RECORD).is_file()
+    assert (control / harness.FAULT_MANIFEST).is_file()
+    assert all((control / (name + ".relay-fault-backup")).is_file() for name in harness.HOOK_NAMES)
+    assert not (root / harness.INSTALL_RECORD).exists()
+    assert not (root / harness.FAULT_MANIFEST).exists()
+    assert not any((root / (name + ".relay-fault-backup")).exists() for name in harness.HOOK_NAMES)
     assert config.read_text(encoding="utf-8") == "{}"
-    harness.restore_hooks(root)
+    harness.restore_hooks(root, control)
     assert {name: harness.sha256(root / name) for name in harness.HOOK_NAMES} == originals
 
 
 def test_restore_refuses_any_changed_hook_or_config_without_partial_restore(tmp_path):
-    _, root, helper, config = make_install_tree(tmp_path)
+    _, root, helper, config, control = make_install_tree(tmp_path)
     originals = {name: harness.sha256(root / name) for name in harness.HOOK_NAMES}
-    harness.install_hooks(root, helper, mode="ack-response-loss", session_id=SID,
+    harness.install_hooks(root, control, helper, mode="ack-response-loss", session_id=SID,
                           message_id=MESSAGE, expires_in=60, config_path=config)
     (root / "user_prompt_submit.py").write_text("concurrent work", encoding="utf-8")
     before_other = (root / "session_start.py").read_bytes()
     with pytest.raises(RuntimeError, match="changed"):
-        harness.restore_hooks(root)
+        harness.restore_hooks(root, control)
     assert (root / "session_start.py").read_bytes() == before_other
     assert (root / "user_prompt_submit.py").read_text(encoding="utf-8") == "concurrent work"
     assert originals["session_start.py"] != harness.sha256(root / "session_start.py")
 
 
 def test_restore_refuses_changed_global_hooks_config(tmp_path):
-    _, root, helper, config = make_install_tree(tmp_path)
-    harness.install_hooks(root, helper, mode="ack-precommit", session_id=SID,
+    _, root, helper, config, control = make_install_tree(tmp_path)
+    harness.install_hooks(root, control, helper, mode="ack-precommit", session_id=SID,
                           message_id=MESSAGE, expires_in=60, config_path=config)
     config.write_text('{"changed":true}', encoding="utf-8")
     before = {name: (root / name).read_bytes() for name in harness.HOOK_NAMES}
     with pytest.raises(RuntimeError, match="configuration changed"):
-        harness.restore_hooks(root)
+        harness.restore_hooks(root, control)
     assert {name: (root / name).read_bytes() for name in harness.HOOK_NAMES} == before
 
 
@@ -272,10 +301,10 @@ def test_runner_finally_undoes_wrapper_on_hook_exception(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("which", ["session_start.py", "user_prompt_submit.py"])
 def test_installed_shim_subprocess_passes_through_byte_exact_backup(tmp_path, which):
-    _, root, helper, config = make_install_tree(tmp_path)
-    harness.install_hooks(root, helper, mode="ack-precommit", session_id=SID,
+    _, root, helper, config, control = make_install_tree(tmp_path)
+    harness.install_hooks(root, control, helper, mode="ack-precommit", session_id=SID,
                           message_id=MESSAGE, expires_in=60, config_path=config)
-    backup = root / (which + ".relay-fault-backup")
+    backup = control / (which + ".relay-fault-backup")
     expected = b"original stdin\x00bytes\r\n"
     baseline = subprocess.run([sys.executable, str(backup)], input=expected,
                               capture_output=True, timeout=5)
