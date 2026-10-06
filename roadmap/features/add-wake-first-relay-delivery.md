@@ -21,8 +21,8 @@ of an extra empty turn from a delayed original wake. The correction in
 preserves claim/ACK exclusion and exact generation/scope checks. Combined affected
 validation passed 596 tests; the full suite passed 6,014 tests with 34 skipped and
 two expected failures. Independent technical review accepted the correction.
-Publication and human result review remain; the correction has not been deployed
-or qualified live.
+Human result review and publication were approved on October 6. Publication and
+CI are in progress; the correction has not been deployed or qualified live.
 
 Separate Claude qualification found a conditional stale-registration defect when
 socket credentials disappear. Its reviewed exact-scope revocation fix is included
