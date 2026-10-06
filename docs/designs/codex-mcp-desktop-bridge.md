@@ -42,8 +42,21 @@ Historical trial fences remain intact.
 Retained native wake alone does not guarantee a payload hook for an already
 loaded chat. Loading through retained wake and then queueing would add a second
 action unnecessarily. Both paths passed through the normal automatic lifecycle
-on the installed build. Service restart
-requires fresh authenticated MCP request metadata to re-enroll the connection.
+on the installed build.
+
+The October 6 user-approved product-mode lifetime permits a still-live,
+previously authenticated MCP child to reconnect after service restart without a
+new request. The worker retains only its observed successful caller pair,
+inherited capability and a private identity fingerprint in RAM. Replacement
+requires conclusive old-service exit and resolved channel disposal, then repeats
+source/Desktop/ancestor identity, capability and native catalog checks. A changed
+identity, unsafe bootstrap, unresolved I/O or shutdown stops automatic recovery.
+Only verified startup absence/contention is retried, for at most 12 attempts or
+five minutes with backoff capped at 30 seconds. No prior tool request, Relay send
+or owner submission is replayed. New children still need a fresh actual request;
+finite experimental modes retain their original lifetime. Old MCP children must
+reload normally to run this worker code; restarting the service does not reload
+them. Installed-host restart qualification remains separate from simulated tests.
 
 These user-approved decisions supersede the earlier experimental requirements
 below for normal product mode, including manual finite destination grants and an

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 import queue
+import re
 import sys
 import threading
 import time
@@ -194,6 +195,13 @@ def inventory_status(value: object) -> dict:
     return result
 
 
+RECONNECT_IDLE_POLL_SECONDS = 1.0
+RECONNECT_MAX_ATTEMPTS = 12
+RECONNECT_WINDOW_SECONDS = 300.0
+RECONNECT_INITIAL_BACKOFF_SECONDS = 1.0
+RECONNECT_MAX_BACKOFF_SECONDS = 30.0
+
+
 class InventoryWorker:
     """One finite child channel; EOF never revokes separate service custody."""
 
@@ -204,13 +212,14 @@ class InventoryWorker:
         self._path = bootstrap_path
         self._requests = queue.Queue(maxsize=1)
         self._busy = False
+        self._restart_allowed = True
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
     async def register(self, metadata: dict[str, str]) -> dict:
         if self._retained and not self._closed and self.stop_event.is_set() and not self._thread.is_alive():
             from app.codex_bridge_pipe import native_available
-            if native_available() and os.environ.get("CODEX_APP_TOOLS_PIPE_PATH"):
+            if self._restart_allowed and native_available() and os.environ.get("CODEX_APP_TOOLS_PIPE_PATH"):
                 # Only a fresh runtime request restarts resolved custody; never replay a caller.
                 self.stop_event.clear()
                 self._thread = threading.Thread(target=self._run, daemon=True)
@@ -223,27 +232,123 @@ class InventoryWorker:
         self._busy = True
         loop = asyncio.get_running_loop()
         future = loop.create_future()
-        self._requests.put_nowait((loop, future, metadata))
+        try:
+            self._requests.put_nowait((loop, future, metadata))
+        except queue.Full:
+            self._busy = False
+            return inventory_status({"reason": "busy"})
         try:
             return await asyncio.wait_for(future, timeout=3.5)
         except asyncio.TimeoutError:
-            self.stop_event.set()
+            if not self._retained:
+                self.stop_event.set()
             return inventory_status({"reason": "timeout"})
         except asyncio.CancelledError:
-            self.stop_event.set()
+            if not self._retained:
+                self.stop_event.set()
             raise
         finally:
             self._busy = False
 
+    @staticmethod
+    def _valid_continuity(value):
+        return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None
+
+    def _finish(self, client):
+        restart_allowed = self._restart_allowed
+        unresolved = bool(client is not None and getattr(client, "unresolved", False))
+        if client is not None:
+            try:
+                client.dispose()
+            except Exception:
+                unresolved = True
+            unresolved = unresolved or bool(getattr(client, "unresolved", False))
+        self._restart_allowed = restart_allowed and not unresolved
+
+    def _recover_if_gone(self, client, native_type, original_pipe, metadata, continuity):
+        if not hasattr(client, "service_current") or not self._restart_allowed:
+            return None, False
+        try:
+            if client.service_current():
+                return client, False
+        except Exception:
+            self._restart_allowed = False
+            return None, False
+        if getattr(client, "unresolved", False):
+            self._restart_allowed = False
+            return None, False
+        previous_manifest = getattr(client, "manifest", None)
+        self._finish(client)
+        if not self._restart_allowed:
+            return None, True
+        return (self._auto_reconnect(
+            native_type, original_pipe, metadata, continuity, previous_manifest), True)
+
+    def _auto_reconnect(self, native_type, original_pipe, metadata, continuity, previous_manifest=None):
+        started, delay = time.monotonic(), RECONNECT_INITIAL_BACKOFF_SECONDS
+        from app.codex_bridge_pipe import ShadowUnavailable
+        for attempt in range(RECONNECT_MAX_ATTEMPTS):
+            if (self.stop_event.is_set() or time.monotonic() - started >= RECONNECT_WINDOW_SECONDS
+                    or os.environ.get("CODEX_APP_TOOLS_PIPE_PATH") != original_pipe
+                    or not self._valid_continuity(continuity)):
+                return None
+            try:
+                if previous_manifest is None:
+                    client = native_type(self._path, self.stop_event, retained=True)
+                else:
+                    client = native_type(self._path, self.stop_event, retained=True,
+                                         previous_manifest=previous_manifest)
+            except ShadowUnavailable as exc:
+                if exc.category != "startup-unavailable":
+                    return None
+            except Exception:
+                return None
+            else:
+                client.continuity = continuity
+                try:
+                    if time.monotonic() - started >= RECONNECT_WINDOW_SECONDS:
+                        self._finish(client)
+                        return None
+                    if inventory_status(client.ready())["status"] != "ready":
+                        self._finish(client)
+                        return None
+                    if (self.stop_event.is_set()
+                            or time.monotonic() - started >= RECONNECT_WINDOW_SECONDS
+                            or os.environ.get("CODEX_APP_TOOLS_PIPE_PATH") != original_pipe):
+                        self._finish(client)
+                        return None
+                    result = inventory_status(client.register(metadata))
+                    if (result["status"] == "registered" and client.continuity == continuity
+                            and not self.stop_event.is_set()
+                            and time.monotonic() - started < RECONNECT_WINDOW_SECONDS
+                            and os.environ.get("CODEX_APP_TOOLS_PIPE_PATH") == original_pipe):
+                        return client
+                    self._finish(client)
+                except Exception:
+                    self._finish(client)
+                return None
+            if attempt + 1 == RECONNECT_MAX_ATTEMPTS:
+                break
+            remaining = RECONNECT_WINDOW_SECONDS - (time.monotonic() - started)
+            if remaining <= 0 or self.stop_event.wait(min(delay, remaining)):
+                break
+            delay = min(delay * 2, RECONNECT_MAX_BACKOFF_SECONDS)
+        return None
+
     def _run(self):
         client = None
         first_request = None
+        admitted_metadata = continuity = original_pipe = None
+        registered = False
         try:
             if self._retained:
                 # Do not occupy the private service slot before a real Relay caller exists.
                 while not self.stop_event.is_set():
                     try:
                         first_request = self._requests.get(timeout=0.1)
+                        if first_request[1].cancelled():
+                            first_request = None
+                            continue
                         loop, future, metadata = first_request
                         break
                     except queue.Empty:
@@ -262,14 +367,82 @@ class InventoryWorker:
                     first_request = None
                 else:
                     try:
-                        loop, future, metadata = self._requests.get(timeout=0.1)
+                        loop, future, metadata = self._requests.get(timeout=(
+                            RECONNECT_IDLE_POLL_SECONDS if registered else 0.1))
                     except queue.Empty:
+                        if registered and self._retained:
+                            if os.environ.get("CODEX_APP_TOOLS_PIPE_PATH") != original_pipe:
+                                self.stop_event.set()
+                                break
+                            replacement, disposed = self._recover_if_gone(
+                                client, NativeInventoryClient, original_pipe, admitted_metadata, continuity)
+                            if disposed:
+                                client = replacement
+                            if replacement is None:
+                                self.stop_event.set()
+                                break
+                            client = replacement
                         continue
-                result = inventory_status(client.register(metadata))
-                if result["status"] == "unavailable":
+                if future.cancelled():
+                    continue
+                if (registered and self._retained
+                        and metadata.get("thread_ref") != admitted_metadata.get("thread_ref")):
                     self.stop_event.set()
+                    loop.call_soon_threadsafe(ShadowWorker._complete, future,
+                        inventory_status({"reason": "peer-mismatch"}))
+                    break
+                if future.cancelled():
+                    continue
+                request_pipe = os.environ.get("CODEX_APP_TOOLS_PIPE_PATH") if self._retained else None
+                if registered and self._retained and request_pipe != original_pipe:
+                    self.stop_event.set()
+                    loop.call_soon_threadsafe(ShadowWorker._complete, future,
+                        inventory_status({"reason": "peer-mismatch"}))
+                    break
+                was_registered = registered
+                try:
+                    result = inventory_status(client.register(metadata))
+                except Exception:
+                    result = inventory_status({"reason": "native-failed"})
+                if future.cancelled():
+                    if self._retained and not was_registered:
+                        self.stop_event.set()
+                        break
+                    continue
+                if self._retained and request_pipe != os.environ.get("CODEX_APP_TOOLS_PIPE_PATH"):
+                    self.stop_event.set()
+                    loop.call_soon_threadsafe(ShadowWorker._complete, future,
+                        inventory_status({"reason": "peer-mismatch"}))
+                    break
+                if self._retained and result["status"] == "registered":
+                    if not hasattr(client, "continuity") or not hasattr(client, "service_current"):
+                        # Older fake clients remain usable but cannot authorize continuity.
+                        pass
+                    else:
+                        proof = getattr(client, "continuity", None)
+                        if (not self._valid_continuity(proof)
+                                or (was_registered and proof != continuity)):
+                            result = inventory_status({"reason": "peer-mismatch"})
+                            self.stop_event.set()
+                            self._restart_allowed = False
+                        else:
+                            registered = True
+                            admitted_metadata = dict(metadata)
+                            continuity = proof
+                            if not was_registered:
+                                original_pipe = request_pipe
                 loop.call_soon_threadsafe(ShadowWorker._complete, future, result)
-                if result["status"] == "unavailable":
+                if was_registered and self._retained and result["status"] != "registered":
+                    replacement, disposed = self._recover_if_gone(
+                        client, NativeInventoryClient, original_pipe, admitted_metadata, continuity)
+                    if disposed:
+                        client = replacement
+                    if disposed and replacement is not None:
+                        continue
+                    self.stop_event.set()
+                    break
+                if result["status"] == "unavailable" and not was_registered:
+                    self.stop_event.set()
                     break
         except Exception:
             self.stop_event.set()
@@ -294,10 +467,7 @@ class InventoryWorker:
             except (queue.Empty, RuntimeError):
                 pass
             if client is not None:
-                try:
-                    client.dispose()
-                except Exception:
-                    pass
+                self._finish(client)
 
     async def stop(self):
         self._closed = True
