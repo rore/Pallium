@@ -1441,7 +1441,10 @@ def register_claude_wake(
     socket_path = os.environ.get("CLAUDE_CODE_MESSAGING_SOCKET")
     token = os.environ.get("CLAUDE_CODE_MESSAGING_TOKEN")
     values = ("claude-code", session_ref, container_ref, socket_path, token)
-    if not all(_credential_value(value, maximum) for value, maximum in zip(values, _CREDENTIAL_LIMITS, strict=True)):
+    if not all(_credential_value(value, maximum) for value, maximum in zip(values[:3], _CREDENTIAL_LIMITS[:3], strict=True)):
+        return False
+    if not all(_credential_value(value, maximum) for value, maximum in zip(values[3:], _CREDENTIAL_LIMITS[3:], strict=True)):
+        close_claude_wake(session_ref, container_ref)
         return False
     body_data: dict[str, object] = {
         "runtime": "claude-code",
@@ -1454,6 +1457,7 @@ def register_claude_wake(
     }
     body = json.dumps(body_data).encode("utf-8")
     if len(body) > _CREDENTIAL_BODY_MAX_BYTES:
+        close_claude_wake(session_ref, container_ref)
         return False
     if not _write_wake_intent(body_data):
         return False
