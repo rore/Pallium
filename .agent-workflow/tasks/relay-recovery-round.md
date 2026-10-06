@@ -32,20 +32,40 @@ When retained native response/custody fails -> bounded sanitized error category 
 When combined changes are ready -> independent smart plan/result reviews, whole-change test selector, required full non-slow suite, import boundaries, Redline, workflow, fresh PR CI/review and installed health/status/queue/embedding verification.
 When dedicated installed test recipient receives a recovered payload -> same delivery ID linked to native attempt/retry, real hook emission/ACK and a payload-specific model response; no manual-turn/receive substitute.
 
-**Plan review:** Pending clean-context technical review after manager evidence and scope reconciliation.
+**Plan review:** Approved 2026-10-06 by independent clean-context /root/recovery_round_plan_review (gpt-6.1-sol/high), after inspecting baseline d03c487f and all relevant storage/registry/dispatch/hook/MCP callers and tests. No blocking findings. Agreed ordering, exact stale-snapshot CAS, strict native-failure shape and local trace guard refinements below are required. Acceptance includes exact expired lease, repeated lost notifications across more than two generations, scope move/restart, separate claim/ACK failure boundaries, custody denial, and simulated/installed evidence separation. No protected behavior contract is changed.
 
 **Approvals:** Approved by user 2026-10-06: "then own this round". Standing authorization: "you can push pr and merge if all is ok", "i approve for you what you need", and "i approve what is needed". User also authorized budget-conscious delegated implementation and smart reviews; no repeated confirmation for the already-authorized round.
 
 **Exceptions:** —
 
-**State:** Blocked or returned to planning
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
 
 Invoked Agent Workflow before any implementation edit. Normal workflow applies: intended hook, storage, MCP and transport application paths are outside the documentation allowlist and include red-zone persisted/API behavior; no exemption is claimed. This isolated managed checkout is on feat/relay-recovery-round. Initial source remains unchanged. Manager coordination request relay-msg-3d3d1b345cd84e0ebf8fec06851c646c is saved but unclaimed with native_unavailable; authorized app fallback requested current work/evidence and shared-roadmap handoff without model/effort overrides. The state is planning pending that reconciliation and independent technical review, not an approval request.
 
-Canonical feature reference: roadmap/features/add-wake-first-relay-delivery.md. Shared roadmap owner/checkout transfer is pending manager confirmation; do not change shared roadmap yet.
+Canonical feature reference: roadmap/features/add-wake-first-relay-delivery.md. Manager transferred round ownership; make roadmap changes in this isolated branch, not the shared checkout.
+
+Manager accepted the handoff through an authorized app message on 2026-10-06 and relinquished implementation/deployment/round-roadmap ownership. Baseline is d03c487f93109f1de677466ecd0c22e9ad5e4c03 after PR285; this worktree is based on that revision. Canonical shared roadmap checkout is C:/Dev/rore/Pallium, whose unrelated untracked .codex-remote-attachments/ must be preserved. No manager production edits or active worktree overlap remain. Its scope-less trace reproduction and retained-registration loss evidence are adopted; original historical native error category is unproved. Separate History test flakes are outside this production round.
+
+## Proposed implementation decisions (before source edits)
+
+1. Claim recovery: preserve current generation/endpoint CAS, correlated expired-claim replacement, active-claim exclusion and terminal ACK release. Reuse the existing 60-second notification retry for an effectively pending delivery whose stored claim lease expired, even when SessionStart supplied no wake correlation. Extend retry eligibility consistently across reconcile, retry_target, retry rearm and begin_native_attempt in storage/sqlite_relay.py. Do not merely correlate one claim: if its replacement notification is lost, the stored expired claim would otherwise exclude the next never-claimed retry again. Require repeated lost retry notifications followed by recovered original/backlog receipt to cover the chain. Prefer a small shared eligibility predicate over new persistence, scheduler or inferred runtime identity. Plan review must verify this admits only expired claims under the exact current fence and never unresolved native I/O. No hook API addition is expected.
+2. Trace: app/mcp/server.py pallium_relay_trace uses its normal configured/explicit scope validation whenever either is present. Only when both are absent, resolve the existing context and require the existing local service/MCP-bind trust guard. Preserve ID and cursor checks, not-configured result, remote denial, malformed/conflicting configured scope denial and read-only behavior. Exercise actual registered FastMCP tool plus HTTP trace/read state in tests/test_relay_mcp_tools.py.
+3. Retained failures: completed cheaper-agent diagnosis identifies a narrow reproducible distinction. Only an exact correlated native JSON-RPC envelope with literal success:false and valid native contentItems may receive a fixed internal native-tool-failed category. Public content/isError responses, wrong IDs, missing/nonboolean success and malformed content remain fail-closed. Preserve registration only through the existing live authenticated custody check, then reopen the same identity and perform a fresh eligibility read. Never resend an uncertain owner submission. Add fixed dispatch-only category/stage plus opaque delivery ID/generation to existing timestamped logs; leave inventory proof schemas and global reason allowlists unchanged. Split the existing non-protected failed-result test from malformed results and cover reconnect, identity denial, unresolved custody and post-owner fencing in the existing connection-recovery tests. This reproduces a failure class, not the unknown historical first fault.
+
+Expected source/test targets: storage/sqlite_relay.py and tests/test_codex_wake_retry_edges.py; app/mcp/server.py and tests/test_relay_mcp_tools.py; app/codex_bridge_pipe.py, tests/test_codex_retained_connection_recovery.py and the existing malformed-result parametrization in tests/test_codex_retained_wake.py. Work Record and directly affected Relay roadmap/design/operations docs are in scope. Do not edit protected behavior-contract tests, schema, governance, CI or global host configuration as a shortcut.
+
+Independent plan-review refinements: preserve reconciliation ordering terminal release -> existing prepared resume -> existing correlated expired-claim replacement -> clock clamp -> generic bounded retry. Use one effective-pending predicate; direct retry_target/retry decline current-generation stored claims still awaiting correlated replacement. Add current==expected SQL check to retry_target to prevent stale advisory reads. Native failure classification requires the exact correlated envelope, literal false, no public content/isError fields, and exactly one native inputText/string item. The existing 8 MiB wire-frame cap applies; opaque failure text is never parsed or logged. Preserve the spent submission fence, with no immediate retry/fallback or unresolved-RPC retry; later bounded notification recovery remains a different operation.
+
+## Checkpoints
+
+Persistence-review: behavior-only conditional transitions, no schema/data migration. Expired unacknowledged claims are permitted into the existing bounded fresh-eligibility retry; rollback would restore the old availability defect, not change stored schema. Verify active lease, committed ACK, exact scope move, stale generation, concurrency, restart, clock rollback, repeated missed notification and backlog caller-surface journeys.
+
+API-review: trace signature unchanged; missing scope becomes usable only in the supported trusted local context. Configured/explicit scope validation and remote denial remain. Registered-tool/HTTP coverage includes valid/invalid IDs and cursor, missing/not-configured/remote context, conflicting/malformed scope, unchanged read-only state.
+
+Security-review: no planned custody authentication loosening. Retained error classification and any safe reopen must preserve SID/process/ancestor/image/epoch/service binding and fail-closed malformed authority; the independent reviewer checks the precise delta before it is accepted.
 
 ## Evidence
 
@@ -54,4 +74,3 @@ Prior read-only temporary-database diagnostic on installed dbb699f4: six cases (
 ## Result review
 
 Pending.
-
