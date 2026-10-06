@@ -31,9 +31,75 @@ commitment: committed
 
 ## Summary
 
-The outdated-history guard is shipped. Pallium now records the exact user request
-that initiated each deliberate history lookup; the evaluator rejects legacy or
-invalid links instead of guessing from nearby timestamps. Let normal use accumulate
+### October 6 readiness reconciliation
+
+The gate remains in-progress, not merely waiting for more lookup rows. The
+[readiness reconciliation](../../docs/reports/history-evaluation-readiness-2026-10-06.md)
+distinguishes shipped source-ID delivery telemetry and the qualified paired runner
+from missing exact-page evidence, historical corpus/config and durable test-case
+provenance. Earlier exact-replay wording is stronger than the approved IDs/roles
+implementation contract; do not count component completion as whole-gate readiness.
+The approved implementation slice is a synthetic-qualified, evaluation-only selected-transcript
+exporter reusing existing parsing/runner seams. No production capture, derived
+memory, private export or paid run is authorized by that proposal. Independent
+plan review and human approval were received on October 6; private retention/deletion and
+real-agent adapter qualification remain separate explicit gates.
+The exporter is now implemented with 70 passing synthetic CLI tests and accepted
+independent code review. Delivery remains blocked by two integration failures in
+the latest required full validation, handed to pallium-manager; no search
+quality claim follows from these tests. The readiness report and Work Record carry
+the exact remaining validation and human-result-review gates.
+User subsequently approved local-only real-case preparation. Privacy rules and a
+restricted outside-Git pilot directory were established; bounded metadata/window
+qualification produced zero eligible search episodes and no raw export. Recent-file
+sampling found subagents, and four targeted large-chat tails contained no History
+calls. This is not evidence that the corpus lacks cases. Next selection should use
+recorded lookup identities; large native files need bounded original-byte-window
+support before export. The subsequent lookup-led continuation located three
+request groups; one was rejected because referenced sources were missing. One
+reviewed partial observation (five raw records,9,033bytes) is preserved privately
+with exact identity/hash checks and protected raw-file access. Other calls influenced
+its answer; it has no frozen full context/corpus or grade and is not replay-ready.
+Actual custom-call/text-block wrappers exposed a synthetic exporter compatibility
+gap now corrected as opaque preservation without private-mode or JavaScript interpretation. Do not
+count this preparation as benchmark readiness.
+
+User-approved current-corpus freeze now contains6,429 source rows/about9.3MB text.
+Four independently authored development questions from four threads were frozen
+before outputs. Provider-free source-only lexical baseline recovered predefined
+evidence in4/4 top10, at ranks1/4/1/1; repeated queries returned identical IDs.
+This measures known-evidence candidate recovery only, not hybrid performance,
+precision, downstream effect or the dict-manager acceptance gate. No retrieval
+change was tested. Keep this item in-progress; retain the fixed cases for future
+bounded comparisons, without inflating four authored successes into generalization.
+
+Subsequent lifecycle validation made that corpus non-reusable: eleven rows were
+missing, plausibly ordinary retention but without proven cause. One reviewed
+derivative retains6,418 original rows and unchanged cases; fresh paired lexical
+and complete-index production-CLS hybrid runs each recovered5/8 predefined
+positive evidence groups (original4/4, harder1/4). Two exact-label absence controls
+returned related hits, which do not establish the requested facts. The only
+recovered hard-case handle per arm exposed its frozen span on bounded expansion.
+This is candidate recovery and answer-aware delivery capacity, not three graded
+answer failures, blind navigation or downstream improvement. Frozen artifacts,
+identities, privacy/lifecycle checks and independent review are in the readiness
+report; neither the original incident nor this product gate is declared passed.
+The final documented-mean-pooling hybrid comparator also recovered5/8, with the
+same misses; better ranks did not add evidence groups. This bounded research
+cycle is finished with no generic ranking deployment recommended. Keep the
+pooling contract concern separate from incident recovery and the broader product
+gate; no more speculative variants or derived memories are implied. Subsequent
+delivery was accepted by the user; current full validation passed6,084 tests
+(34 skipped,2 xfailed) and independent review accepted the evaluation-only diff.
+The earlier integration failures above are dated evidence, not current failing
+results. PR CI/review governs merge; the broader product gate remains in-progress.
+
+### Existing product question
+
+The outdated-history guard is shipped. Pallium can record the exact user request
+that initiated a deliberate history lookup when the caller supplies its link;
+the evaluator rejects missing, legacy or invalid links instead of guessing from
+nearby timestamps. Let normal use accumulate
 linked, answerable cases, then run a small no-judge pilot before expanding to the
 larger real-corpus study. Measure whether the guard reduces harm from replaced
 decisions without removing the benefit of relevant history, and whether historical
