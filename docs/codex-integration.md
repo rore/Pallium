@@ -69,6 +69,19 @@ generation under the existing claim-recovery policy; an active claim cannot.
 Existing `reserved` rows are never reclassified as unattempted, and a submitted
 or uncertain generation is never resumed merely because time has passed.
 
+Retained Codex recovery can issue a new notification for the same still-pending,
+unclaimed delivery after its persisted 60-second cooldown. Before rearming, the
+retained service reads the current server-owned endpoint target through its
+authenticated Desktop connection and requires exact idle or notLoaded state;
+the SQLite generation compare-and-swap then rechecks the active target, pending
+state, and zero attempts. This is a new notification after fresh eligibility,
+not a retry of native transport I/O. Busy, unavailable, stale, or claimed
+targets remain fenced for a later sweep. A large backward wall-clock correction
+clamps the persisted deadline once to one new cooldown. A delayed original
+notification can cause an extra empty wake; ACKed payloads are not re-emitted,
+and crash-before-ACK behavior still follows the existing claim lease rather
+than promising exactly-once execution.
+
 ## Architecture
 
 ```

@@ -160,9 +160,13 @@ def reconcile_codex_relay_wake_reservations(
             if transition is None:
                 continue
             action, current = transition
-            if action != "resume":
+            if action not in {"resume", "retry"}:
                 _clear_schedule(reservation, registry)
-            if action in {"replaced", "resume"}:
+            retry_allowed = False
+            if action == "retry" and getattr(registry, "retained_service", None) is not None:
+                from app.codex_bridge_pipe import retained_wake_enabled
+                retry_allowed = retained_wake_enabled()
+            if action in {"replaced", "resume"} or retry_allowed:
                 _schedule_reserved_codex_relay_wake(current, registry, trace_callback=trace_callback)
             reconciled += 1
         return reconciled
@@ -425,13 +429,15 @@ def _schedule_reserved_codex_relay_wake(
     try:
         worker.start()
     except RuntimeError:
-        registry.release_generation(reservation)
+        if reservation.outcome == "prepared":
+            registry.release_generation(reservation)
         _clear_schedule(reservation, registry)
         _emit_trace(
             trace_callback, attempt_id, reservation.delivery_id,
             reservation.recipient_endpoint_id, "completed",
             ActivationAttemptResult(
-                "deferred", "worker_start_failed", native_retry_safe=True
+                "deferred", "worker_start_failed",
+                native_retry_safe=reservation.outcome == "prepared",
             ),
         )
         return None
@@ -563,6 +569,33 @@ def _clear_schedule(reservation: CodexWakeReservation, registry: CodexWakeRegist
         _scheduled_delivery_ids.discard(reservation.delivery_id)
 
 
+def _retarget_schedule(
+    previous: CodexWakeReservation,
+    current: CodexWakeReservation,
+    registry: CodexWakeRegistry,
+    attempt_id: str | None,
+) -> None:
+    old_key = (id(registry), previous.session_ref, previous.container_ref)
+    new_key = (id(registry), current.session_ref, current.container_ref)
+    with registry._lock:
+        live = registry.snapshot(current.recipient_endpoint_id)
+        current_is_live = (live is not None and live.delivery_id == current.delivery_id
+                           and live.generation == current.generation)
+        with _scheduled_lock:
+            if (_scheduled_session_generations.get(old_key) == previous.generation
+                    and _scheduled_session_delivery_ids.get(old_key) == previous.delivery_id):
+                _scheduled_session_generations.pop(old_key, None)
+                _scheduled_session_delivery_ids.pop(old_key, None)
+                _scheduled_session_attempt_ids.pop(old_key, None)
+            if (current_is_live
+                    and _scheduled_session_generations.get(new_key) in (None, current.generation)
+                    and _scheduled_session_delivery_ids.get(new_key) in (None, current.delivery_id)):
+                _scheduled_session_generations[new_key] = current.generation
+                _scheduled_session_delivery_ids[new_key] = current.delivery_id
+                if attempt_id is not None:
+                    _scheduled_session_attempt_ids[new_key] = attempt_id
+
+
 def _wake_after_debounce(
     reservation: CodexWakeReservation,
     registry: CodexWakeRegistry,
@@ -576,10 +609,17 @@ def _wake_after_debounce(
     if retained_wake_enabled():
         service = getattr(registry, "retained_service", None)
         try:
-            attempt = (service.dispatch(reservation, registry) if service is not None else
-                       ActivationAttemptResult("deferred", "native_unavailable", native_retry_safe=True))
+            dispatched = (service.dispatch(reservation, registry) if service is not None else
+                          (ActivationAttemptResult(
+                              "deferred", "native_unavailable",
+                              native_retry_safe=reservation.outcome == "prepared",
+                          ), reservation))
         except Exception:
-            attempt = ActivationAttemptResult("uncertain", "unexpected_error")
+            dispatched = (ActivationAttemptResult("uncertain", "unexpected_error"), reservation)
+        attempt, dispatched_reservation = dispatched
+        if dispatched_reservation != reservation:
+            _retarget_schedule(reservation, dispatched_reservation, registry, attempt_id)
+            reservation = dispatched_reservation
         if attempt is None:
             _clear_schedule(reservation, registry)
             return
@@ -598,6 +638,8 @@ def _wake_after_debounce(
         if attempt_id is not None:
             _emit_trace(trace_callback, attempt_id, reservation.delivery_id,
                         reservation.recipient_endpoint_id, "completed", attempt)
+        # Keep the durable spent fence, but let a later recovery sweep schedule a fresh eligibility read.
+        _clear_schedule(reservation, registry)
         return
 
     uncertain = None

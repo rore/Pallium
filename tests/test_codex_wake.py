@@ -925,13 +925,16 @@ def test_http_reconciliation_prunes_full_registry_and_wakes_replacement_once(
 
     state_dir = tmp_path / "persisted-capacity"
     state_dir.mkdir()
+    def legacy_row(item):
+        row = asdict(replace(item, outcome="reserved") if item.outcome == "prepared" else item)
+        row.pop("retry_not_before", None)
+        return row
     (state_dir / "reservations.json").write_text(
         json.dumps(
             {
                 "version": 2,
                 "reservations": [
-                    asdict(replace(item, outcome="reserved") if item.outcome == "prepared" else item)
-                    for item in registry.reservations()
+                    legacy_row(item) for item in registry.reservations()
                 ],
             },
             separators=(",", ":"),

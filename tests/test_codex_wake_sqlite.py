@@ -385,7 +385,9 @@ def test_http_restart_prepares_new_generation_after_expired_hook_claim(client, t
     recover_expired_relay_wakes(relay, ClaudeWakeRegistry(), codex_registry=restarted)
     assert len(scheduled) == 2
     assert scheduled[-1] == replacement
-    assert restarted.begin_native_attempt(replacement) == replace(replacement, outcome="uncertain")
+    spent = restarted.begin_native_attempt(replacement)
+    assert spent == replace(replacement, outcome="uncertain", retry_not_before=spent.retry_not_before)
+    assert spent.retry_not_before is not None
 
 
 def test_http_pre_cas_worker_exception_clears_marker_for_same_process_resume(client, tmp_path, monkeypatch):
@@ -497,8 +499,9 @@ def test_http_worker_start_or_prewrite_release_failure_resumes_same_generation_t
         return original_transition(operation, **kwargs)
     monkeypatch.setattr(relay, "codex_wake_transition", transition)
     if first_failure == "retained_prewrite":
-        registry.retained_service = SimpleNamespace(dispatch=lambda *_: ActivationAttemptResult(
-            "deferred", "target_not_idle", native_retry_safe=True,
+        registry.retained_service = SimpleNamespace(dispatch=lambda reservation, _registry: (
+            ActivationAttemptResult("deferred", "target_not_idle", native_retry_safe=True),
+            reservation,
         ))
     launches = []
     monkeypatch.setattr(codex_wake, "_start_launch",
@@ -818,7 +821,8 @@ def test_ambiguous_settlement_keeps_durable_authority_and_prevents_reschedule(
     elif operation == "release":
         assert current is None
     elif operation == "outcome":
-        assert current == replace(reservation, outcome="uncertain")
+        assert current == replace(reservation, outcome="uncertain", retry_not_before=current.retry_not_before)
+        assert current.retry_not_before is not None
     elif operation == "correlate":
         assert current == replace(reservation, correlated_claim_attempts=1)
     else:
@@ -881,9 +885,15 @@ def _item(delivery, *, target="target", generation=1, outcome="reserved"):
     )
 
 
+def _legacy_row(item):
+    row = asdict(item)
+    row.pop("retry_not_before", None)
+    return row
+
+
 def _legacy(directory, items, *, version=2):
     directory.mkdir(parents=True, exist_ok=True)
-    rows = [asdict(item) for item in items]
+    rows = [_legacy_row(item) for item in items]
     if version == 1:
         for row in rows:
             row.pop("correlated_claim_attempts")
@@ -911,7 +921,8 @@ def _stored_items(database):
             CodexWakeReservation(**dict(row))
             for row in connection.execute(
                 "SELECT recipient_endpoint_id, delivery_id, session_ref, container_ref, "
-                "generation, outcome, correlated_claim_attempts FROM relay_codex_wake_reservations"
+                "generation, outcome, correlated_claim_attempts, retry_not_before "
+                "FROM relay_codex_wake_reservations"
             )
         }
 
@@ -1010,12 +1021,12 @@ def test_invalid_legacy_import_leaves_no_marker_or_partial_rows(relay_store, tmp
             data["version"] = 3
         elif bad_input == "over_capacity":
             data["reservations"] = [
-                {**asdict(item), "recipient_endpoint_id": f"relay-session-{index:032x}",
+                {**_legacy_row(item), "recipient_endpoint_id": f"relay-session-{index:032x}",
                  "delivery_id": f"relay-delivery-{index:032x}"}
                 for index in range(257)
             ]
         else:
-            duplicate = {**asdict(item)}
+            duplicate = _legacy_row(item)
             duplicate["delivery_id" if bad_input == "duplicate_endpoint" else "recipient_endpoint_id"] = (
                 "relay-delivery-" + "e" * 32 if bad_input == "duplicate_endpoint" else "relay-session-" + "e" * 32
             )
@@ -1150,7 +1161,7 @@ def test_native_initiation_runs_after_sql_commit_and_stale_generation_cannot_sub
         with sqlite3.connect(database, timeout=0) as second_writer:
             second_writer.execute("BEGIN IMMEDIATE")
             persisted = _registry(relay, tmp_path / "absent-legacy").snapshot(reservation.recipient_endpoint_id)
-            assert persisted == replace(reservation, outcome="uncertain")
+            assert persisted == spent[-1]
             second_writer.rollback()
         calls.append(reservation.generation)
         return "initiated"

@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import sqlite3
 from argparse import Namespace
-from dataclasses import asdict
+from dataclasses import asdict, replace
 import json
 import os
 from unittest.mock import patch
@@ -216,7 +216,9 @@ def test_foreground_offline_upgrade_preserves_legacy_fences(lifecycle_config, mo
     fence = ephemeral.snapshot(fence.recipient_endpoint_id)
     legacy = home / "codex-wake" / "reservations.json"
     legacy.parent.mkdir(parents=True)
-    legacy.write_text(json.dumps({"version": 2, "reservations": [asdict(fence)]}), encoding="utf-8")
+    legacy_row = asdict(fence)
+    legacy_row.pop("retry_not_before", None)
+    legacy.write_text(json.dumps({"version": 2, "reservations": [legacy_row]}), encoding="utf-8")
     source = legacy.read_bytes()
     storage.close()
     monkeypatch.setattr(service, "assert_service_stopped", lambda *a: pytest.fail("foreground operator requested installed-unit proof"))
@@ -224,7 +226,7 @@ def test_foreground_offline_upgrade_preserves_legacy_fences(lifecycle_config, mo
     reopened = SQLiteStorageProvider(config.sqlite_url, config.resolved_relay_sqlite_url)
     try:
         registry = CodexWakeRegistry(relay_service=RelayService(reopened), legacy_state_dir=legacy.parent)
-        assert registry.reservations() == (fence,)
+        assert registry.reservations() == (replace(fence, retry_not_before=None),)
         assert legacy.read_bytes() == source
     finally:
         reopened.close()

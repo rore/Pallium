@@ -71,9 +71,14 @@ Claude Code and Codex hooks persist each exact Relay scope-transition intent bef
 The service reconciliation loop scans eligible never-claimed pending deliveries and
 expired claims at startup and every 30 seconds, then dispatches through the existing
 runtime adapter without claiming early. Codex confirmed or ambiguous native wake
-submission retains the oldest per-session
-trigger without blind retry because native queue writes are not idempotent. Exact
-ACK, MCP ACK, or atomic reply releases that delivery's durable ownership. Startup
+submission keeps the oldest per-session trigger behind a durable fence; native
+queue writes are never retried blindly. Retained Codex recovery may issue a new
+notification for a still-pending, unclaimed delivery after its persisted
+60-second cooldown when a fresh authenticated Desktop read reports the current
+exact target idle or notLoaded and the database generation check still sees zero
+claim attempts. Busy or unavailable targets stay pending for a later sweep. A
+large backward wall-clock correction clamps the deadline once to one cooldown.
+Exact ACK, MCP ACK, or atomic reply releases that delivery's durable ownership. Startup
 and send-time reconciliation remove only missing deliveries or exact
 endpoint-matching terminal reservations; pending, active claims, endpoint
 mismatches, and uncertain reads keep their fences. Service restart reloads those

@@ -24,7 +24,10 @@ from core.relay import (
     RelayNotFoundError,
 )
 from redaction import redact_sensitive
-from core.codex_wake import CodexWakeRegistry, CodexWakeReservation, MAX_RESERVATIONS
+from core.codex_wake import (
+    CodexWakeRegistry, CodexWakeReservation, MAX_RESERVATIONS,
+    WAKE_RETRY_COOLDOWN_SECONDS, retry_cooldown_elapsed,
+)
 from storage.sqlite_schema import (
     RelayAliasRecord,
     RelayDeliveryRecord,
@@ -533,6 +536,25 @@ class SQLiteRelayMixin:
                 if row is None:
                     return None
                 current = self._wake_item(row)
+                if operation == "retry_target":
+                    if expected.outcome not in {"reserved", "accepted", "uncertain"} or expected.correlated_claim_attempts is not None:
+                        return None
+                    current_time = _now()
+                    if not retry_cooldown_elapsed(expected.retry_not_before, current_time.timestamp()):
+                        return None
+                    try:
+                        state = self._relay_codex_wake_reservation_state(
+                            db, delivery_id=expected.delivery_id, current=current_time
+                        )
+                    except RelayNotFoundError:
+                        return None
+                    target = state.get("wake_target")
+                    if (state["state"] != "pending" or state["stored_state"] != "pending"
+                        or state["attempts"] != 0
+                        or state["recipient_endpoint_id"] != expected.recipient_endpoint_id
+                        or not isinstance(target, dict)):
+                        return None
+                    return target
                 if operation == "outcome" and kwargs["outcome"] == "accepted":
                     if not (
                         expected.outcome == "uncertain"
@@ -550,9 +572,13 @@ class SQLiteRelayMixin:
                 if operation == "begin_native_attempt":
                     if expected.outcome != "prepared" or expected.correlated_claim_attempts is not None:
                         return None
+                    current_time = _now()
+                    now_epoch = current_time.timestamp()
+                    if not retry_cooldown_elapsed(expected.retry_not_before, now_epoch):
+                        return None
                     try:
                         state = self._relay_codex_wake_reservation_state(
-                            db, delivery_id=expected.delivery_id, current=_now()
+                            db, delivery_id=expected.delivery_id, current=current_time
                         )
                     except RelayNotFoundError:
                         return None
@@ -561,13 +587,45 @@ class SQLiteRelayMixin:
                         "container_ref": expected.container_ref,
                     }
                     fresh = state["state"] == "pending" and state["stored_state"] == "pending" and state["attempts"] == 0
-                    expired_claim = state["state"] == "pending" and state["stored_state"] == "claimed" and state["attempts"] > 0
+                    expired_claim = (expected.retry_not_before is None
+                        and state["state"] == "pending" and state["stored_state"] == "claimed" and state["attempts"] > 0)
                     if (state["recipient_endpoint_id"] != expected.recipient_endpoint_id
                         or state["wake_target"] != target or not (fresh or expired_claim)):
                         return None
-                if operation == "reconcile":
+                if operation == "retry":
+                    if expected.outcome not in {"reserved", "accepted", "uncertain"} or expected.correlated_claim_attempts is not None:
+                        return None
+                    current_time = _now()
+                    now_epoch = current_time.timestamp()
+                    if not retry_cooldown_elapsed(expected.retry_not_before, now_epoch):
+                        return None
                     try:
-                        state = self._relay_codex_wake_reservation_state(db, delivery_id=expected.delivery_id, current=_now())
+                        state = self._relay_codex_wake_reservation_state(
+                            db, delivery_id=expected.delivery_id, current=current_time
+                        )
+                    except RelayNotFoundError:
+                        return None
+                    target = kwargs["target"]
+                    if (state["state"] != "pending" or state["stored_state"] != "pending"
+                        or state["attempts"] != 0
+                        or state["recipient_endpoint_id"] != expected.recipient_endpoint_id
+                        or state["wake_target"] != target
+                        or marker.generation >= 2**63 - 1):
+                        return None
+                    marker.generation += 1
+                    retry_marker = min(
+                        now_epoch,
+                        expected.retry_not_before if expected.retry_not_before is not None else now_epoch,
+                    )
+                    result = replace(
+                        expected, generation=marker.generation, outcome="prepared",
+                        correlated_claim_attempts=None, retry_not_before=retry_marker,
+                        session_ref=target["session_ref"], container_ref=target["container_ref"],
+                    )
+                elif operation == "reconcile":
+                    try:
+                        current_time = _now()
+                        state = self._relay_codex_wake_reservation_state(db, delivery_id=expected.delivery_id, current=current_time)
                     except RelayNotFoundError:
                         db.delete(row)
                         result = ("released", expected)
@@ -577,6 +635,28 @@ class SQLiteRelayMixin:
                         if state["state"] in {"delivered", "expired", "suppressed"}:
                             db.delete(row)
                             result = ("released", expected)
+                        elif (expected.outcome in {"reserved", "accepted", "uncertain"}
+                              and expected.correlated_claim_attempts is None
+                              and expected.retry_not_before is not None
+                              and expected.retry_not_before - current_time.timestamp() > 2 * WAKE_RETRY_COOLDOWN_SECONDS
+                              and state["state"] == "pending"
+                              and state["stored_state"] == "pending"
+                              and state["attempts"] == 0):
+                            # A large wall-clock rollback must not defer recovery by the rollback duration.
+                            # Clamp once; ordinary sweeps do not move a deadline within one cooldown.
+                            retry_not_before = current_time.timestamp() + WAKE_RETRY_COOLDOWN_SECONDS
+                            row.retry_not_before = retry_not_before
+                            result = ("cooldown_clamped", replace(expected, retry_not_before=retry_not_before))
+                        elif (expected.outcome in {"reserved", "accepted", "uncertain"}
+                              and expected.correlated_claim_attempts is None
+                              and retry_cooldown_elapsed(
+                                  expected.retry_not_before, current_time.timestamp()
+                              )
+                              and state["state"] == "pending"
+                              and state["stored_state"] == "pending"
+                              and state["attempts"] == 0
+                              and isinstance(state["wake_target"], dict)):
+                            result = ("retry", expected)
                         elif (expected.outcome == "prepared" and expected.correlated_claim_attempts is None
                               and state["state"] == "pending" and state["wake_target"] == {
                                   "runtime": "codex", "session_ref": expected.session_ref,
@@ -594,7 +674,8 @@ class SQLiteRelayMixin:
                             marker.generation += 1
                             target = state["wake_target"]
                             replacement = replace(expected, generation=marker.generation, outcome="prepared",
-                                                  correlated_claim_attempts=None, session_ref=target["session_ref"], container_ref=target["container_ref"])
+                                                  correlated_claim_attempts=None, retry_not_before=None,
+                                                  session_ref=target["session_ref"], container_ref=target["container_ref"])
                             for name, value in asdict(replacement).items():
                                 setattr(row, name, value)
                             result = ("replaced", replacement)
@@ -603,9 +684,10 @@ class SQLiteRelayMixin:
                     if marker.generation >= 2**63 - 1:
                         return None
                     marker.generation += 1
-                    result = replace(expected, generation=marker.generation, outcome="reserved", correlated_claim_attempts=None, **kwargs["values"])
+                    result = replace(expected, generation=marker.generation, outcome="reserved", correlated_claim_attempts=None, retry_not_before=None, **kwargs["values"])
                 elif operation == "begin_native_attempt":
-                    result = replace(expected, outcome="uncertain")
+                    result = replace(expected, outcome="uncertain",
+                                     retry_not_before=_now().timestamp() + WAKE_RETRY_COOLDOWN_SECONDS)
                 elif operation == "outcome":
                     result = replace(expected, outcome=kwargs["outcome"])
                 elif operation == "correlate":

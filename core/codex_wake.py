@@ -5,18 +5,25 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 import json
 import logging
+import math
 from pathlib import Path
 import re
 import threading
+import time
 from typing import Callable, TypeVar
 
 MAX_RESERVATIONS = 256
+WAKE_RETRY_COOLDOWN_SECONDS = 60
 # The old writer escaped each astral character as two six-character escapes.
 # 256 rows * (128 + 512 + 512) field characters * 12 plus JSON overhead fits.
 MAX_LEGACY_JSON_CHARACTERS = 4 * 1024 * 1024
 _ENDPOINT_RE = re.compile(r"^relay-session-[0-9a-f]{32}$")
 _T = TypeVar("_T")
 logger = logging.getLogger(__name__)
+
+
+def retry_cooldown_elapsed(retry_not_before: float | None, now: float) -> bool:
+    return retry_not_before is None or retry_not_before <= now
 
 
 @dataclass(frozen=True)
@@ -28,6 +35,7 @@ class CodexWakeReservation:
     generation: int
     outcome: str = "reserved"
     correlated_claim_attempts: int | None = None
+    retry_not_before: float | None = None
 
 
 class CodexWakeRegistry:
@@ -72,6 +80,9 @@ class CodexWakeRegistry:
             and item.outcome in {"prepared", "reserved", "accepted", "uncertain"}
             and (item.correlated_claim_attempts is None or
                  (type(item.correlated_claim_attempts) is int and 1 <= item.correlated_claim_attempts < 2**63))
+            and (item.retry_not_before is None or
+                 type(item.retry_not_before) in (int, float)
+                 and math.isfinite(item.retry_not_before) and item.retry_not_before >= 0)
         )
 
     def initialize(self, *, old_owner_drained: bool) -> bool:
@@ -204,7 +215,10 @@ class CodexWakeRegistry:
                 return None
             if self._relay is not None:
                 return self._transition("begin_native_attempt", reservation=reservation)
-            updated_item = replace(reservation, outcome="uncertain")
+            updated_item = replace(
+                reservation, outcome="uncertain",
+                retry_not_before=time.time() + WAKE_RETRY_COOLDOWN_SECONDS,
+            )
             updated = {**self._reservations, reservation.recipient_endpoint_id: updated_item}
             if not self._write_locked(updated):
                 self._usable = False
@@ -286,6 +300,7 @@ class CodexWakeRegistry:
                 generation=self._generation,
                 outcome="prepared",
                 correlated_claim_attempts=None,
+                retry_not_before=None,
             )
             updated = {
                 **self._reservations,
@@ -296,6 +311,39 @@ class CodexWakeRegistry:
                 return None
             self._reservations = updated
             return replacement
+
+    def rearm_for_retry(
+        self,
+        reservation: CodexWakeReservation,
+        *,
+        session_ref: str,
+        container_ref: str,
+    ) -> CodexWakeReservation | None:
+        """CAS a spent fence to a prepared retry after retained eligibility checks."""
+        if not self._valid(
+            reservation.recipient_endpoint_id, reservation.delivery_id,
+            session_ref, container_ref,
+        ):
+            return None
+        with self._lock:
+            self._refresh()
+            if self._reservations.get(reservation.recipient_endpoint_id) != reservation:
+                return None
+            if self._relay is not None:
+                return self._transition("retry", reservation=reservation, target={
+                    "runtime": "codex", "session_ref": session_ref,
+                    "container_ref": container_ref,
+                })
+            return None
+
+    def retry_target(self, reservation: CodexWakeReservation) -> dict[str, str] | None:
+        with self._lock:
+            self._refresh()
+            if self._reservations.get(reservation.recipient_endpoint_id) != reservation:
+                return None
+            if self._relay is not None:
+                return self._transition("retry_target", reservation=reservation)
+            return None
 
     def release_generation(self, reservation: CodexWakeReservation) -> bool:
         return bool(self.release_generations((reservation,)))
@@ -397,6 +445,7 @@ class CodexWakeRegistry:
                 item = CodexWakeReservation(
                     **value,
                     **({"correlated_claim_attempts": None} if version == 1 else {}),
+                    retry_not_before=None,
                 )
                 if (
                     not self._valid_item(item)
