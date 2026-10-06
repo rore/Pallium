@@ -22,10 +22,53 @@ authenticated reconnect after a well-formed native tool failure, bounded dispatc
 diagnostics, and trusted-local trace when no scope was injected/configured.
 Independent plan and result review approved these boundaries. Whole-change
 validation passed 6,071 tests with 34 skips and two expected failures; existing
-legacy and protected behavior contracts remain unchanged. PR/platform CI,
-deployment, and installed native-host qualification remain pending.
+legacy and protected behavior contracts remain unchanged. PR #286 merged at
+`6b49ff75` after Python 3.12/3.13 full CI, Windows smoke, workflow and CodeRabbit
+passed. Both stable main checkouts were synchronized; the installed restart
+wrapper and independent health/status/queue checks passed with embeddings healthy.
 The historical native-unavailable incident's first fault remains unexplained;
 simulated failure recovery does not establish its cause or installed recovery.
+
+Installed October 6 qualification used the existing dedicated receipt-only
+Codex thread `01a10580-ac6e-74d2-8a1e-5bc79cf327f1`. An unloaded fresh send,
+`relay-delivery-f5ce8226f1344e84973282bda67fedb5`, ACKed at 14:49:27.977578 UTC
+and produced payload-only `RECOVERY_ROUND_NATIVE_6B49_91D4_OK` despite an uncertain
+owner response. This is receipt evidence, not notification-loss recovery.
+Next, a 45-second lock on only that test session prevented its first hook claim.
+The same `relay-delivery-bbc66ebc9dc34ad8aa024ebd2ddb0b00` remained pending with
+attempts=0 after its accepted wake. The service restarted with this original and
+later `relay-delivery-07966b9f1ebe4a79bff08c894522a60d` still pending. A fresh
+sender-side Relay read restored native custody; this is an explicit dependency,
+not proof of unattended restart recovery without registration. Automatic recovery
+re-notified the original at 14:53:53.194225 UTC; its hook ACKed at
+14:54:01.831817 and the recipient emitted `MISSED_HOOK_RECOVERY_6B49_E271_OK`.
+The backlog first respected target-not-idle, then queued at 14:54:22.901170,
+ACKed at 14:54:32.150285 and produced `BACKLOG_RECOVERY_6B49_A87C_OK`.
+Full paginated traces had no gaps. No manual recipient turn, receive, payload
+lookup, resend or Relay reply was used; markers existed only in delivered payloads.
+Independent smart result review accepted this limited installed witness.
+
+Still unqualified on the installed host: actual lost notification, unloaded
+claim-response loss, failed/lost ACK, and scope-move recovery. Real hook/HTTP/SQLite
+regressions with simulated native transport cover those failure boundaries, but
+do not replace their installed witnesses. New diagnostics identify native-tool-failed
+at owner-result and peer-mismatch at reopen; they do not prove historical root
+causes. Historical stranded-message incidents remain open; the umbrella stays queued.
+
+New incident handed over by the manager: `relay-delivery-ba9b0b8b256140049f91095ea76af1e1`
+remains pending, attempts=0, with no claim/ACK or endpoint wake reservation after
+deployment. Its surviving pre-deployment trace records native_unavailable;
+pagination is exhausted but trace truncation/gaps prevent a current causal claim.
+The exact recipient is in a continuing active turn begun at 13:32:20 UTC, before
+this delivery's 14:38:42 send. Idle-only activation must defer that active turn;
+there is no expired-claim fence here. Older pending messages predate that turn,
+so their missing original hook admission remains unexplained. Matching persisted
+hook scope/endpoint and bounded payload sizes do not establish historical emission.
+No resend, manual recipient turn, receive or ACK was used. Keep this incident open
+until its specific hook/activation journey is explained; the dedicated success
+does not close it. Already-running MCP children also retain the old scope-required
+trace implementation until host/MCP reload; the installed source update alone
+does not hot-reload them.
 
 An October 6 incident confirmed that a
 September 15 uncertain, unclaimed wake reservation blocked later messages to the
