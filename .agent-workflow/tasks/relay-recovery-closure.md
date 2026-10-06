@@ -34,7 +34,7 @@
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -86,6 +86,14 @@ relay-msg-6a0280409dd54d14b7f9c8dd9033be42 was claimed and ACKed at
 the PR291/CI/open-acceptance update, not completion of the remaining work.
 
 ### PR291 retained-wake HTTP retry
+
+Final local whole-change validation at 563b0f3f (same frozen test and production
+blobs as the running working-tree start): `python -m pytest tests/ -x -q`
+passed 6,269 cases, with 34 skips and two expected failures in 333.58s. Fresh
+selection requires the full lane; import boundaries, Redline, workflow and
+diff checks passed. Ready for review applies to the bounded PR291 release,
+not the unresolved umbrella installed-acceptance criteria. Fresh CI and the
+separate human PR291 result approval remain release gates.
 
 Before helper correction, the deterministic actual-route busy-once node failed
 on the expected `503 {code: relay_busy, retryable: true}`. After correction,
@@ -257,12 +265,12 @@ Manager notification relay-msg-2c33245d0a5e4e778c162f7d4946050f / relay-delivery
 
 ## Recovery handoff
 
-Owner: relaydev. Branch feat/relay-recovery-closure; last coherent source revision
-c8700aef, based on merged PR290 at 8c4f38a0. Retain this managed checkout for
+Owner: relaydev. Branch feat/relay-recovery-closure; last verified coherent revision
+563b0f3f, based on merged PR290 at 8c4f38a0. Retain this managed checkout for
 the reviewed contention follow-up and remaining installed acceptance; never
 install from it. Stable main/service remain at 8c4f38a0, with verified restored
 hooks/configuration. PR291 is open; its production fix and bounded CI test-only
-correction are independently reviewed. Next: finish full local validation and
+correction are independently reviewed; full local validation passed. Next:
 fresh PR CI; separate human PR291 result approval remains pending (the latest
 UI answer approves PR290 only). Then stable sync and installed recovery
 qualification. Prior reviewed evidence is reusable, but six no-restart installed

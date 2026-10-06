@@ -29,10 +29,11 @@ witness. Review found registration can exceed its three-second deadline while
 dispatch holds custody across multiple native exchanges. PR #291 reproduces and
 fixes that contention without dropping previously authenticated custody or
 weakening identity, unresolved-I/O or replay fences. Independent smart review,
-the genuine Windows pipe regression and 6,261 local non-slow tests passed.
-Release remains pending: its Python 3.12 CI exposed a raw-HTTP test caller that
-ignores explicit retryable SQLite backpressure; a bounded same-ID fixture
-correction is being verified. Historical causality remains unproven, and none
+the genuine Windows pipe regression and 6,269 local non-slow tests passed.
+Initial Python 3.12 CI exposed a raw-HTTP test caller that ignores explicit
+retryable SQLite backpressure; its bounded same-ID fixture correction passed
+155 retained-wake cases and independent review. Fresh CI and separate human
+result approval remain release gates. Historical causality is unproven, and none
 of this source evidence qualifies installed unattended restart recovery.
 The Dictation 13:32 hook did deliver and ACK one 1,125-character payload. The next
 1,101-character payload plus headers did not fit its 2,400-character output cap;
