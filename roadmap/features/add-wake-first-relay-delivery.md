@@ -10,6 +10,19 @@ lane: capability
 
 ## Current execution status (reconciled 2026-10-06)
 
+The closure follow-up is owned by relaydev in
+`.agent-workflow/tasks/relay-recovery-closure.md`. On October 6 the user explicitly
+approved automatic re-enrollment by the same surviving previously authenticated
+MCP child after service restart. The reviewed implementation binds reconnect to
+the original source/Desktop/ancestor identity and capability, retains durable
+fences, retries verified startup gaps only (12 attempts/five minutes), and never
+replays application operations. Independent review and installed qualification
+are still pending; this is not a claim that the remaining native journeys passed.
+The Dictation 13:32 hook did deliver and ACK one 1,125-character payload. The next
+1,101-character payload plus headers did not fit its 2,400-character output cap;
+that turn is not evidence of a missed hook. The earlier idle 12:54–13:32 interval
+and historical incidents with incomplete traces remain unexplained.
+
 The user assigned the follow-up recovery round to relaydev after an independent
 acceptance critique. `.agent-workflow/tasks/relay-recovery-round.md` owns the
 round, including the manager handoff. An actual SessionStart/HTTP regression

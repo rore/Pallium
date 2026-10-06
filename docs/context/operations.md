@@ -56,6 +56,17 @@ Only the current Relay schema is supported. Keep the main and Relay SQLite files
 
 ## Relay control-plane resilience
 
+An enrolled Codex Desktop MCP child may reconnect automatically after the service
+restarts while that same child and Desktop identity remain alive. Recovery repeats
+the native identity/catalog checks and keeps every durable delivery fence; it does
+not replay tool calls or messages. Startup-only retries stop after 12 attempts or
+five minutes. Changed capability/identity, unsafe bootstrap, unresolved I/O and
+explicit shutdown stop automatic reconnection. A new child still needs an actual
+authenticated request to enroll. Existing MCP children do not reload Python code
+on service restart: qualify an updated worker using a normally reloaded dedicated
+child, never by interrupting active user chats or treating service health as
+delivery evidence.
+
 Relay storage calls use a four-operation AnyIO capacity limiter independent of the
 default synchronous route pool, and `/health` stays on the event loop. Client
 cancellation does not cancel an already-running SQLite operation; service shutdown

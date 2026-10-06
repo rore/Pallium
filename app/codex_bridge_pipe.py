@@ -6,6 +6,7 @@ import json
 import hashlib
 import logging
 import os
+import re
 import secrets
 import sys
 import threading
@@ -1988,31 +1989,58 @@ def start_inventory_service(*, trial_relay=None, trial_registry=None) -> Invento
 class NativeInventoryClient:
     """Only its own inherited endpoint may cross the authenticated admission channel."""
 
-    def __init__(self, bootstrap_path: Path, stop_event: threading.Event, *, retained=False):
+    def __init__(self, bootstrap_path: Path, stop_event: threading.Event, *, retained=False,
+                 previous_manifest=None):
         self.w = _native()
         self.retained = retained
         self.bootstrap_path, self.stop_event = Path(bootstrap_path), stop_event
         self.io = self.peer = self.source = None
         self.sequence = 0
         self.unresolved = False
+        self.continuity = None
         try:
             self.sid = _self_sid(self.w)
-            self.manifest = _json(_read_private(self.w, self.bootstrap_path, self.sid))
+            try:
+                self.manifest = _json(_read_private(self.w, self.bootstrap_path, self.sid))
+            except ShadowUnavailable as exc:
+                if retained and exc.category in {"path-unavailable", "file-unavailable"}:
+                    # Missing startup files are retryable only after checking their private parent.
+                    _check_private_parent(self.w, self.bootstrap_path, self.sid)
+                    try:
+                        self.w.file.GetFileAttributes(str(self.bootstrap_path))
+                    except Exception as missing:
+                        if getattr(missing, "winerror", None) in {2, 3}:
+                            raise ShadowUnavailable("startup-unavailable") from None
+                raise
             m = self.manifest
             if (set(m) != {"version", "pid", "creation", "epoch", "pipe"}
                     or type(m["version"]) is not int or m["version"] != 1
                     or not _integer(m["pid"], 1) or not _text(m["creation"]) or not _text(m["epoch"])
                     or m["pipe"] != rf"\\.\pipe\pallium-inventory-{m['epoch']}"):
                 raise ShadowUnavailable("invalid-bootstrap")
-            handle = self.w.file.CreateFile(m["pipe"], self.w.con.GENERIC_READ | self.w.con.GENERIC_WRITE,
-                0, None, self.w.con.OPEN_EXISTING,
-                self.w.con.FILE_FLAG_OVERLAPPED | self.w.con.SECURITY_SQOS_PRESENT | self.w.file.SECURITY_IDENTIFICATION, None)
+            if retained and previous_manifest is not None and m == previous_manifest:
+                source = _Peer(self.w, os.getpid(), self.sid)
+                source.close()
+                raise ShadowUnavailable("startup-unavailable")
+            self.peer = _Peer(self.w, m["pid"], self.sid, m["creation"])
+            self.source = _Peer(self.w, os.getpid(), self.sid)
+            try:
+                handle = self.w.file.CreateFile(m["pipe"], self.w.con.GENERIC_READ | self.w.con.GENERIC_WRITE,
+                    0, None, self.w.con.OPEN_EXISTING,
+                    self.w.con.FILE_FLAG_OVERLAPPED | self.w.con.SECURITY_SQOS_PRESENT | self.w.file.SECURITY_IDENTIFICATION, None)
+            except Exception as exc:
+                if retained and getattr(exc, "winerror", None) in {2, 3, 231}:
+                    raise ShadowUnavailable("startup-unavailable") from None
+                raise
             self.io = _PipeIO(self.w, handle, stop_event)
             self.w.pipe.SetNamedPipeHandleState(handle, self.w.pipe.PIPE_READMODE_MESSAGE, None, None)
             if self.w.pipe.GetNamedPipeServerProcessId(handle) != m["pid"]:
                 raise ShadowUnavailable("peer-mismatch")
-            self.peer = _Peer(self.w, m["pid"], self.sid, m["creation"])
-            self.source = _Peer(self.w, os.getpid(), self.sid)
+        except ShadowUnavailable:
+            self.dispose()
+            if retained:
+                raise
+            raise ShadowUnavailable("channel-unavailable") from None
         except Exception:
             self.dispose()
             raise ShadowUnavailable("channel-unavailable") from None
@@ -2033,6 +2061,8 @@ class NativeInventoryClient:
                   "version", "epoch", "sequence"}
         if verb == "admit" and response.get("status") == "ready":
             fields.add("revision")
+        if verb == "register" and "continuity" in extra and response.get("status") == "registered":
+            fields.add("continuity")
         if (set(response) != fields or response.get("mode") != "inventory"
                 or type(response.get("version")) is not int or response["version"] != 1
                 or type(response.get("sequence")) is not int or response["sequence"] != self.sequence
@@ -2046,6 +2076,14 @@ class NativeInventoryClient:
                 or any(type(response.get(k)) is not bool for k in ("connected", "inventory_ok", "source_exited"))
                 or ("revision" in fields and not _integer(response.get("revision"), 1))):
             raise ShadowUnavailable("invalid-response")
+        if "continuity" in fields:
+            proof = response.get("continuity")
+            if (not isinstance(proof, str) or re.fullmatch(r"[0-9a-f]{64}", proof) is None
+                    or response["reason"] != "ok" or not response["connected"]
+                    or not response["inventory_ok"] or response["source_exited"]):
+                raise ShadowUnavailable("invalid-response")
+            if extra["continuity"] is not None and proof != extra["continuity"]:
+                raise ShadowUnavailable("peer-mismatch")
         return response
 
     @staticmethod
@@ -2061,7 +2099,13 @@ class NativeInventoryClient:
             raise ShadowUnavailable("invalid-message")
         if self.retained:
             endpoint = os.environ.get("CODEX_APP_TOOLS_PIPE_PATH")
-            return self._public(self._exchange("register", endpoint=endpoint, **metadata))
+            if (self.continuity is not None and (not isinstance(self.continuity, str)
+                    or re.fullmatch(r"[0-9a-f]{64}", self.continuity) is None)):
+                raise ShadowUnavailable("invalid-message")
+            response = self._exchange("register", endpoint=endpoint, continuity=self.continuity, **metadata)
+            if response["status"] == "registered":
+                self.continuity = response["continuity"]
+            return self._public(response)
         admitted = self._exchange("admit", **metadata)
         if admitted["status"] != "ready" or admitted["reason"] != "ok":
             return self._public(admitted)
@@ -2086,6 +2130,20 @@ class NativeInventoryClient:
             return self._public(self._exchange("transfer", revision=policy.revision, endpoint=endpoint))
         finally:
             desktop.close()
+
+    def service_current(self) -> bool:
+        """Only a conclusively exited service permits automatic replacement."""
+        if self.stop_event.is_set() or self.io is None or self.unresolved or self.io.unresolved:
+            raise ShadowUnavailable("stopped")
+        self.source.check()
+        state = self.w.event.WaitForSingleObject(self.peer.handle, 0)
+        if state == self.w.event.WAIT_OBJECT_0:
+            return False
+        if state != self.w.event.WAIT_TIMEOUT:
+            raise ShadowUnavailable("peer-unavailable")
+        if _json(_read_private(self.w, self.bootstrap_path, self.sid)) != self.manifest:
+            raise ShadowUnavailable("peer-mismatch")
+        return True
 
     def dispose(self) -> None:
         """EOF closes the private source channel; service custody remains authorized."""
@@ -2241,6 +2299,12 @@ class RetainedService(InventoryService):
             "desktop_identity": self._registration_identity(self.desktop, self.ancestors),
         }
 
+    def _continuity_fingerprint(self):
+        identity = (self.source.pid, self.source.creation,
+                    self._registration_identity(self.desktop, self.ancestors))
+        return hashlib.sha256(json.dumps(identity, ensure_ascii=False,
+            separators=(",", ":")).encode("utf-8")).hexdigest()
+
     def _registration_live(self) -> bool:
         saved = self.retained_registration
         try:
@@ -2260,7 +2324,7 @@ class RetainedService(InventoryService):
         except Exception:
             return False
 
-    def _open_custody(self, endpoint, deadline, expected_identity=None):
+    def _open_custody(self, endpoint, deadline, expected_identity=None, *, continuity=None):
         handle = self.w.file.CreateFile(endpoint, self.w.con.GENERIC_READ | self.w.con.GENERIC_WRITE,
             0, None, self.w.con.OPEN_EXISTING,
             self.w.con.FILE_FLAG_OVERLAPPED | self.w.con.SECURITY_SQOS_PRESENT | self.w.file.SECURITY_IDENTIFICATION, None)
@@ -2275,6 +2339,8 @@ class RetainedService(InventoryService):
         self.desktop, self.ancestors = _source_desktop(self.w, self.source, desktop_pid, self.sid)
         identity = self._registration_identity(self.desktop, self.ancestors)
         if expected_identity is not None and identity != expected_identity:
+            raise ShadowUnavailable("peer-mismatch")
+        if continuity is not None and self._continuity_fingerprint() != continuity:
             raise ShadowUnavailable("peer-mismatch")
         self._check_custody()
         self.native_sequence += 1
@@ -2292,6 +2358,8 @@ class RetainedService(InventoryService):
             raise ShadowUnavailable("peer-mismatch")
         self.owner_tool_before = self.read_tool = True
         self._check_custody()
+        if continuity is not None and self._continuity_fingerprint() != continuity:
+            raise ShadowUnavailable("peer-mismatch")
         return identity
 
     def _reopen_registration(self) -> None:
@@ -2365,12 +2433,19 @@ class RetainedService(InventoryService):
         with self._custody_lock:
             verb = request.get("verb")
             fields = {"version", "verb", "epoch", "sequence"}
+            opted_in = verb == "register" and "continuity" in request
             if verb == "register":
                 fields |= {"thread_ref", "turn_ref", "endpoint"}
+                if opted_in:
+                    fields.add("continuity")
             if (not isinstance(verb, str) or verb not in {"ready", "register"} or set(request) != fields
                     or type(request.get("version")) is not int or request["version"] != 1
                     or request["epoch"] != self.epoch or not _integer(request["sequence"], 1)
                     or request["sequence"] <= sequence or self.source is not peer):
+                raise ShadowUnavailable("invalid-message")
+            continuity = request.get("continuity")
+            if (opted_in and continuity is not None and (not isinstance(continuity, str)
+                    or re.fullmatch(r"[0-9a-f]{64}", continuity) is None)):
                 raise ShadowUnavailable("invalid-message")
             peer.check()
             self.ready_deadline = float("inf")
@@ -2385,6 +2460,9 @@ class RetainedService(InventoryService):
                 raise ShadowUnavailable("peer-mismatch")
             if self.custody is not None:
                 self._check_custody()
+                if continuity is not None and self._continuity_fingerprint() != continuity:
+                    self._drop()
+                    raise ShadowUnavailable("peer-mismatch")
                 if (self.retained_registration is not None
                         and endpoint != self.retained_registration["endpoint"]):
                     self._clear_registration()
@@ -2392,13 +2470,19 @@ class RetainedService(InventoryService):
                 self.caller = caller
                 if self.retained_registration is not None:
                     self.retained_registration["caller"] = caller
-                return self._result(inventory_ok=True)
+                result = self._result(inventory_ok=True)
+                if opted_in:
+                    result["continuity"] = self._continuity_fingerprint()
+                return result
             try:
                 self.caller = caller
-                self._open_custody(endpoint, deadline)
+                self._open_custody(endpoint, deadline, continuity=continuity)
                 self._remember_registration(endpoint, caller)
                 _log.warning("codex_retained_registration outcome=registered")
-                return self._result(inventory_ok=True)
+                result = self._result(inventory_ok=True)
+                if opted_in:
+                    result["continuity"] = self._continuity_fingerprint()
+                return result
             except Exception as exc:
                 _log.warning("codex_retained_registration outcome=denied category=%s", _inventory_reason(exc))
                 self._drop()
