@@ -21,8 +21,11 @@ of an extra empty turn from a delayed original wake. The correction in
 preserves claim/ACK exclusion and exact generation/scope checks. Combined affected
 validation passed 596 tests; the full suite passed 6,014 tests with 34 skipped and
 two expected failures. Independent technical review accepted the correction.
-Human result review and publication were approved on October 6. Publication and
-CI are in progress; the correction has not been deployed or qualified live.
+Human result review was approved on October 6. PR #284 merged at `bd1c39f6` after
+Python 3.12/3.13 CI and Windows smoke passed. Both clean clones were synchronized;
+the installed restart wrapper exited successfully, and independent health,
+embedding and queue checks passed. Automatic recovery is covered through the
+HTTP/hook caller surface; a new installed lost-notification witness is not claimed.
 
 Separate Claude qualification found a conditional stale-registration defect when
 socket credentials disappear. Its reviewed exact-scope revocation fix is included
