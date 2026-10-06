@@ -34,7 +34,7 @@
 
 **Exceptions:** —
 
-**State:** Ready for review
+**State:** Blocked or returned to planning
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -155,6 +155,22 @@ Standing implementation/PR permission did not substitute for this exact changed 
 ## Resumed implementation plan
 
 ### Post-release contention plan
+
+CI follow-up at 5da9b377: PR291 Python3.12 failed the existing concurrent
+HTTP-send fence test on two explicit retryable relay_busy503 responses. Windows
+smoke passed; other CI is still running. This fixture bypasses the production
+MCP busy retry and asserts every first raw HTTP response is200. The error is
+bounded pre-transaction SQLite backpressure, not registration contention.
+Target the single tests/test_codex_retained_wake.py fixture caller: bounded
+attempt/time retry only exact503/code relay_busy/retryable true, identical body
+and stable messageID. No retry after ambiguous failures. Keep native/worker and
+outer thread deadlines and every one-owner/uncertain/recovery/restart assertion.
+Add deterministic actual-HTTP busy-once→sameID/single delivery coverage plus
+negative nonretryable/exhausted cases. Existing same-ID busy-send E2E is reusable.
+Agent technical plan review: /root/closure_plan_review approved this test-only
+correction under the existing caller contract. Scope stays High/Large; source
+review remains valid. No production timeout, protected contract or requirement
+change. Return to planning for this failing gate, not a speculative product fix.
 
 2026-10-06: Invoke agent-workflow before the follow-up source edit (completed).
 High/Large remains unchanged. app/codex_bridge_pipe.py and
