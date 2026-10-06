@@ -28,13 +28,13 @@
 
 **Verification plan:** Same-child reconnect and unchanged security/legacy behavior → test_codex_worker_reconnect.py, test_codex_retained_continuity.py, genuine Windows cross-epoch channel test and existing retained/native/MCP suites. Fault recovery → dedicated installed-host exact delivery traces, actual hook emission/ACK and payload-specific recipient responses, separately from simulated test_codex_wake_retry_edges.py. Historical backlog → read-only exact delivery traces and native rollout metadata, with unrecoverable gaps left explicit. Release readiness → whole-change scripts/test-plan.py, full non-slow suite, workflow/Redline/import checks, smart result review and PR CI. Installed sync → stable commit equality and wrapper restart followed by /health, /status, /debug/queue/health and embedding_provider_ok.
 
-**Plan review:** Agent technical review: /root/closure_plan_review (gpt-6.1-sol/high). Initial 72774457 review correctly blocked admission-lifetime expansion. After the exact human approval, resumed review of 320cc9d5 approved same-live-child continuity, opt-in legacy compatibility, comparisons before catalog/caller updates, conclusive disposal, startup-only retries capped at 12 attempts/five minutes, and preserved cancellation/fences. A concrete native fault harness still needs independent review and isolation tests before installation; source changes do not hot-reload existing MCP children.
+**Plan review:** Agent technical review: /root/closure_plan_review (gpt-6.1-sol/high). Initial 72774457 review correctly blocked admission-lifetime expansion. After the exact human approval, review at 320cc9d5 approved same-live-child continuity; final source/harness review approved PR290. Post-release review at 9ea12eba approved the bounded existing-busy contention plan recorded at 385a8a94: preserve Desktop serialization, grant no new authority, never replay or update caller on busy, keep all identity/unresolved/stop fences. Source changes do not hot-reload existing MCP children.
 
 **Approvals:** Approved by user 2026-10-06: "yes, of course, that's the desired state" after the exact question allowing the same still-live previously authenticated MCP child to reconnect automatically after service restart, preserving identity checks and no resends. Prior scope approval: "so can you complete the cycle so we don't leave open ends?". Standing authority: "you can push pr and merge if all is ok" and "i approve what is needed". This authorizes the stated child-lifetime admission only, not new-child takeover, changed host identity, unresolved-I/O replay or active-chat interruption.
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -205,11 +205,39 @@ Manager notification relay-msg-2c33245d0a5e4e778c162f7d4946050f / relay-delivery
 
 ## Recovery handoff
 
-Owner: relaydev. Branch feat/relay-recovery-closure; source base 525df5bb, initial record 72774457 and approved plan 320cc9d5. Retain this managed worktree for the reviewed reconnect implementation and fault harness; do not install from it. Next: focused regressions, smart result/harness review, whole-change checks and PR. Prior PR286/288 evidence is reusable; no new installed acceptance is claimed. Root and stable installation remain unchanged.
+Owner: relaydev. Branch feat/relay-recovery-closure; last coherent source revision
+c8700aef, based on merged PR290 at 8c4f38a0. Retain this managed checkout for
+the reviewed contention follow-up and remaining installed acceptance; never
+install from it. Stable main/service remain at 8c4f38a0, with verified restored
+hooks/configuration. Next: finish whole-change validation, new PR and separate
+human result review/green CI, then stable sync and installed recovery
+qualification. Prior reviewed evidence is reusable, but six no-restart installed
+successes do not close restart/scope-move/pre-hook loss or historical incidents.
 
 Skill feedback trigger 3 dropped: the restart limitation belongs to this product's approved native admission contract, not an Agent Workflow upstream defect.
 
 ## Result review
+
+### Post-release contention result
+
+Agent technical review: /root/closure_plan_review (gpt-6.1-sol/high).
+Reviewed revision: c8700aef2bb435d71bda16b7ed503f840e7b0e8e.
+Verification adequacy: approved the 19-line production fix with no correctness
+or security blocker. Real Windows source/service channels and the disclosed
+fixture Desktop prove prompt busy, preserved source/proof/caller, serialized
+dispatch and later fresh caller update. Worker/provenance/identity negative
+coverage passed. Fixed native contention plus existing reconnect: 2 passed in
+5.90s. Full non-slow validation at c8700aef passed: 6,261 passed, 34 skipped and
+two expected failures in 331.17s. Import boundaries and fresh whole-change
+Redline/workflow checks passed. CI and separate human result review remain
+gates. Installed restart, scope-move, pre-hook notification loss and exact
+historical causal attribution remain open, not weakened completion criteria.
+Manager continuation relay-delivery-ec7d77128e6e42608633bdfc83262c44 ACKed at
+17:44:01.781607 UTC with attempts=1 and no trace gap; its model response restated
+the remaining gaps. Hook ACK and that response establish this handoff's receipt,
+not any additional feature acceptance.
+
+### PR290 source and harness result
 
 Agent technical review: /root/closure_plan_review (gpt-6.1-sol/high).
 
