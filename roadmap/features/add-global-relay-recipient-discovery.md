@@ -31,12 +31,18 @@ keeps global exact lookup indexed.
 
 ## Exact scoped lookup follow-up (2026-10-06)
 
-The scoped address book currently hides dormant, closed and unreachable matches
-even when the caller supplies an exact runtime/session identity. The approved
-correction returns that session with its existing lifecycle, health and
-last-active metadata, while preserving the sender's container boundary and
-broad recent-only listings. Implementation and validation are tracked in
-`.agent-workflow/tasks/relay-discovery-lifecycle.md`; it is not yet released.
+Shipped in [PR #285](https://github.com/rore/Pallium/pull/285), merge `d773f621`.
+Exact scoped runtime/session lookup returns dormant, closed and unreachable
+matches with existing lifecycle, health and last-active metadata. Container
+boundaries, broad recent-only listing defaults and send eligibility are unchanged.
+Validation: 6,014 local tests passed; Python 3.12/3.13 and Windows smoke CI passed.
+The Python 3.13 lane passed on one retry after an unchanged Claude hook test failed
+before calling Relay; the exact test also passed locally, with no assertion weakened.
+Installed-service verification changed an existing dormant session's exact result
+from empty to one matching row with unchanged last-active time. Health, status,
+queue and embedding checks passed. Review evidence is in
+`.agent-workflow/tasks/relay-discovery-lifecycle.md`. This fixes discovery; the
+separately observed delayed native wake attempts remain a distinct investigation.
 
 ## Validation
 
