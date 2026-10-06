@@ -26,11 +26,11 @@ Optional exact `session_ref` filter on the existing list path is the chosen smal
 
 ## Security result
 
-Exact lookup exposes only a row already available through the same scoped paged listing, so it adds no membership information or cross-container discovery capability.
+Exact lookup exposes only a row already available through the same scoped paged listing with `include_inactive=true`, so it adds no membership information or cross-container discovery capability.
 
 ## Validation
 
-Caller-surface test: exact `session_ref` returns the single matching row; absent match returns empty; the filter respects `container_ref` scope and `include_inactive`; unfiltered listing behavior is unchanged; container-local discovery still holds (no reaching a session outside the authorized scope).
+Caller-surface tests: exact runtime/session lookup returns an existing match with lifecycle, health and last-active metadata, including dormant, closed and unreachable sessions; absent matches and wrong scopes remain empty. `include_inactive` controls broad listing only. Unfiltered listing and send eligibility remain unchanged; lookup does not update session state.
 
 ## Outcome
 

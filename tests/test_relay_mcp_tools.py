@@ -1684,6 +1684,7 @@ async def test_recipient_address_book_pages_selectors_filters_and_lifecycle(
     outside_only = "outside-only"
     cutoff_ref = "at-cutoff"
     before_cutoff_ref = "before-cutoff"
+    dormant_active_ref = "dormant-active"
     closed_ref = "closed-exact"
     long_ref = "界" * 255
     other_scope = {"container_ref": "git:example.test/other"}
@@ -1694,6 +1695,7 @@ async def test_recipient_address_book_pages_selectors_filters_and_lifecycle(
         ("codex", outside_only, other_scope),
         ("codex", cutoff_ref, _SCOPE),
         ("codex", before_cutoff_ref, _SCOPE),
+        ("codex", dormant_active_ref, _SCOPE),
         ("codex", closed_ref, _SCOPE),
         ("codex", long_ref, _SCOPE),
     ):
@@ -1718,6 +1720,9 @@ async def test_recipient_address_book_pages_selectors_filters_and_lifecycle(
             (before_cutoff_ref, timedelta(
                 seconds=RELAY_RECENT_SECONDS, microseconds=1,
             )),
+            (dormant_active_ref, timedelta(
+                seconds=RELAY_RECENT_SECONDS, microseconds=1,
+            )),
         ):
             row = db.execute(select(RelaySessionRecord).where(
                 RelaySessionRecord.container_ref == _SCOPE["container_ref"],
@@ -1725,12 +1730,37 @@ async def test_recipient_address_book_pages_selectors_filters_and_lifecycle(
                 RelaySessionRecord.session_ref == session_ref,
             )).scalar_one()
             row.last_seen_at = fixed_now - delta
+    assert storage.relay_mark_unreachable(
+        runtime="codex", session_ref=shared_ref,
+        container_ref=_SCOPE["container_ref"],
+        attempt_started_at=fixed_now + timedelta(seconds=1),
+    )
+    assert storage.relay_mark_unreachable(
+        runtime="codex", session_ref=before_cutoff_ref,
+        container_ref=_SCOPE["container_ref"],
+        attempt_started_at=fixed_now + timedelta(seconds=1),
+    )
     real_now = sqlite_relay._now
     monkeypatch.setattr(
         sqlite_relay,
         "_now",
         lambda value=None: fixed_now if value is None else real_now(value),
     )
+
+    watched_refs = (
+        shared_ref, cutoff_ref, before_cutoff_ref, dormant_active_ref, closed_ref,
+    )
+    with storage._relay_session_factory() as db:
+        before_reads = db.execute(select(
+            RelaySessionRecord.session_ref,
+            RelaySessionRecord.state,
+            RelaySessionRecord.last_seen_at,
+            RelaySessionRecord.closed_at,
+        ).where(
+            RelaySessionRecord.container_ref == _SCOPE["container_ref"],
+            RelaySessionRecord.runtime == "codex",
+            RelaySessionRecord.session_ref.in_(watched_refs),
+        ).order_by(RelaySessionRecord.session_ref)).all()
 
     exact = await page(runtime="codex", session_ref=shared_ref)
     assert [(row["runtime"], row["session_ref"]) for row in exact["recipients"]] == [
@@ -1755,21 +1785,68 @@ async def test_recipient_address_book_pages_selectors_filters_and_lifecycle(
     assert (await page(
         runtime="codex", session_ref=cutoff_ref,
     ))["recipients"][0]["session_ref"] == cutoff_ref
-    assert (await page(
-        runtime="codex", session_ref=before_cutoff_ref,
-    ))["recipients"] == []
-    assert (await page(
+    before_cutoff = await page(runtime="codex", session_ref=before_cutoff_ref)
+    before_cutoff_inactive = await page(
         runtime="codex", session_ref=before_cutoff_ref, include_inactive=True,
-    ))["recipients"][0]["state"] == "dormant"
-    assert (await page(
-        runtime="codex", session_ref=closed_ref,
-    ))["recipients"] == []
-    assert (await page(
+    )
+    assert before_cutoff == before_cutoff_inactive
+    dormant_unreachable = before_cutoff["recipients"][0]
+    assert dormant_unreachable["state"] == "dormant"
+    assert dormant_unreachable["destination_health"] == "unreachable"
+    dormant_active = await page(runtime="codex", session_ref=dormant_active_ref)
+    dormant_active_inactive = await page(
+        runtime="codex", session_ref=dormant_active_ref, include_inactive=True,
+    )
+    assert dormant_active == dormant_active_inactive
+    assert dormant_active["recipients"][0]["state"] == "dormant"
+    assert dormant_active["recipients"][0]["destination_health"] == "active"
+    recent_unreachable = (await page(
+        runtime="codex", session_ref=shared_ref,
+    ))["recipients"][0]
+    assert recent_unreachable["state"] == "recent"
+    assert recent_unreachable["destination_health"] == "unreachable"
+    closed = await page(runtime="codex", session_ref=closed_ref)
+    closed_inactive = await page(
         runtime="codex", session_ref=closed_ref, include_inactive=True,
-    ))["recipients"][0]["state"] == "closed"
+    )
+    assert closed == closed_inactive
+    assert closed["recipients"][0]["state"] == "closed"
+    assert closed["recipients"][0]["destination_health"] is None
+    last_seen_by_ref = {
+        row.session_ref: row.last_seen_at.isoformat() for row in before_reads
+    }
+    assert dormant_unreachable["last_seen_at"] == last_seen_by_ref[before_cutoff_ref]
+    assert dormant_active["recipients"][0]["last_seen_at"] == last_seen_by_ref[dormant_active_ref]
+    assert recent_unreachable["last_seen_at"] == last_seen_by_ref[shared_ref]
+    assert closed["recipients"][0]["last_seen_at"] == last_seen_by_ref[closed_ref]
     assert (await page(
         runtime="codex", session_ref=long_ref,
     ))["recipients"][0]["session_ref"] == long_ref
+
+    recent_refs: list[str] = []
+    offset = 0
+    while True:
+        current = await page(runtime="codex", offset=offset)
+        recent_refs.extend(item["session_ref"] for item in current["recipients"])
+        if not current["has_more"]:
+            break
+        offset = current["next_offset"]
+    assert cutoff_ref in recent_refs
+    assert before_cutoff_ref not in recent_refs
+    assert dormant_active_ref not in recent_refs
+    assert shared_ref not in recent_refs
+    with storage._relay_session_factory() as db:
+        after_reads = db.execute(select(
+            RelaySessionRecord.session_ref,
+            RelaySessionRecord.state,
+            RelaySessionRecord.last_seen_at,
+            RelaySessionRecord.closed_at,
+        ).where(
+            RelaySessionRecord.container_ref == _SCOPE["container_ref"],
+            RelaySessionRecord.runtime == "codex",
+            RelaySessionRecord.session_ref.in_(watched_refs),
+        ).order_by(RelaySessionRecord.session_ref)).all()
+    assert after_reads == before_reads
 
     invalid_exact = (
         ({"session_ref": shared_ref}, "runtime is required"),

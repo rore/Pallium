@@ -29,6 +29,15 @@ using a task-message fallback. The existing Dashboard listing is reused with
 an exact filter and compact projection; a runtime/session-reference index
 keeps global exact lookup indexed.
 
+## Exact scoped lookup follow-up (2026-10-06)
+
+The scoped address book currently hides dormant, closed and unreachable matches
+even when the caller supplies an exact runtime/session identity. The approved
+correction returns that session with its existing lifecycle, health and
+last-active metadata, while preserving the sender's container boundary and
+broad recent-only listings. Implementation and validation are tracked in
+`.agent-workflow/tasks/relay-discovery-lifecycle.md`; it is not yet released.
+
 ## Validation
 
 HTTP and MCP caller tests cover cross-container duplicate native references,

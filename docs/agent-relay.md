@@ -100,7 +100,7 @@ ambiguous, or malformed identity fails closed.
 
 ## Select a recipient
 
-`pallium_relay_recipients` returns a bounded envelope of recent sessions. Each item includes a canonical `exact_selector` and, when named, `alias_selector` (the internal wire-field name for its `@name`); when `has_more` is true, call it again with `next_offset`. When the session reference is known, pass both runtime and session_ref to return zero or one matching session without paging; pass include_inactive=true when a dormant or closed match is needed. The HTTP session-list response remains container-local and exposes each endpoint ID.
+`pallium_relay_recipients` returns a bounded envelope of recent sessions. Each item includes a canonical `exact_selector` and, when named, `alias_selector` (the internal wire-field name for its `@name`); when `has_more` is true, call it again with `next_offset`. When the session reference is known, pass both runtime and session_ref to return zero or one matching session in any lifecycle state without paging. `include_inactive` affects broad listings only. The HTTP session-list response remains container-local and exposes each endpoint ID.
 
 When the target container is unknown, use the read-only
 `pallium_relay_discover_recipients` MCP tool on the trusted local service.
