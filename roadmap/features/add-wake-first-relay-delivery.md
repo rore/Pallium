@@ -10,6 +10,23 @@ lane: capability
 
 ## Current execution status (reconciled 2026-10-06)
 
+The user assigned the follow-up recovery round to relaydev after an independent
+acceptance critique. `.agent-workflow/tasks/relay-recovery-round.md` owns the
+round, including the manager handoff. An actual SessionStart/HTTP regression
+reproduced committed uncorrelated claims with lost response or failed ACK
+stranding the wake fence after lease expiry, including scope move and restart.
+The narrow implementation reuses bounded retained notification retry, preserves
+active claims/committed ACKs and correlated replacement, and covers repeated
+missed retry notifications followed by original/backlog receipt. Also in scope:
+authenticated reconnect after a well-formed native tool failure, bounded dispatch
+diagnostics, and trusted-local trace when no scope was injected/configured.
+Independent plan and result review approved these boundaries. Whole-change
+validation passed 6,071 tests with 34 skips and two expected failures; existing
+legacy and protected behavior contracts remain unchanged. PR/platform CI,
+deployment, and installed native-host qualification remain pending.
+The historical native-unavailable incident's first fault remains unexplained;
+simulated failure recovery does not establish its cause or installed recovery.
+
 An October 6 incident confirmed that a
 September 15 uncertain, unclaimed wake reservation blocked later messages to the
 same Codex endpoint. A manual target turn recovered the backlog, but is not the

@@ -166,6 +166,8 @@ def reconcile_codex_relay_wake_reservations(
             if action == "retry" and getattr(registry, "retained_service", None) is not None:
                 from app.codex_bridge_pipe import retained_wake_enabled
                 retry_allowed = retained_wake_enabled()
+            if action == "retry" and not retry_allowed:
+                continue
             if action in {"replaced", "resume"} or retry_allowed:
                 _schedule_reserved_codex_relay_wake(current, registry, trace_callback=trace_callback)
             reconciled += 1

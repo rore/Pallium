@@ -73,10 +73,12 @@ expired claims at startup and every 30 seconds, then dispatches through the exis
 runtime adapter without claiming early. Codex confirmed or ambiguous native wake
 submission keeps the oldest per-session trigger behind a durable fence; native
 queue writes are never retried blindly. Retained Codex recovery may issue a new
-notification for a still-pending, unclaimed delivery after its persisted
+notification for a never-claimed pending delivery or an expired unacknowledged
+claim after its persisted
 60-second cooldown when a fresh authenticated Desktop read reports the current
-exact target idle or notLoaded and the database generation check still sees zero
-claim attempts. Busy or unavailable targets stay pending for a later sweep. A
+exact target idle or notLoaded and the database generation check still sees no
+active claim. Uncorrelated SessionStart claims qualify only after lease expiry;
+committed ACKs remain terminal even when their response is lost. Busy or unavailable targets stay pending for a later sweep. A
 large backward wall-clock correction clamps the deadline once to one cooldown.
 Exact ACK, MCP ACK, or atomic reply releases that delivery's durable ownership. Startup
 and send-time reconciliation remove only missing deliveries or exact

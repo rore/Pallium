@@ -2151,11 +2151,19 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None,
                 {"error": "cursor must be the exact next_cursor from a prior trace page"}
             )
         after_sequence, as_of_sequence = parsed
-        ctx, scope_error = resolve_relay_context(container_ref=container_ref)
-        if scope_error:
-            return scope_error
+        unscoped = container_ref is None and os.environ.get("PALLIUM_CONTAINER_REF") is None
+        if unscoped:
+            ctx = resolve_context()
+        else:
+            ctx, scope_error = resolve_relay_context(container_ref=container_ref)
+            if scope_error:
+                return scope_error
         if not ctx.is_configured:
             return NOT_CONFIGURED_MSG
+        if unscoped and not _relay_global_discovery_local(ctx.base_url, host):
+            return _relay_error_text(
+                {"error": "service-global Relay trace requires a trusted local service and MCP bind"}
+            )
         result = await PalliumMcpClient(ctx).relay_trace(
             message_id,
             after_sequence=after_sequence,
