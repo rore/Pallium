@@ -2343,11 +2343,20 @@ class RetainedService(InventoryService):
         self._check_custody()
         if (set(value) != {"jsonrpc", "id", "result"} or value["jsonrpc"] != "2.0"
                 or type(value["id"]) is not int or value["id"] != request_id
-                or not isinstance(value["result"], dict)
-                or value["result"].get("success") is not True
-                or value["result"].get("isError", False) is not False):
+                or not isinstance(value["result"], dict)):
             raise ShadowUnavailable("invalid-response")
-        return value["result"]
+        result = value["result"]
+        if result.get("success") is False:
+            content = result.get("contentItems")
+            if ("content" in result or "isError" in result
+                    or not isinstance(content, list) or len(content) != 1
+                    or not isinstance(content[0], dict) or content[0].get("type") != "inputText"
+                    or not isinstance(content[0].get("text"), str)):
+                raise ShadowUnavailable("invalid-response")
+            raise ShadowUnavailable("native-tool-failed")
+        if result.get("success") is not True or result.get("isError", False) is not False:
+            raise ShadowUnavailable("invalid-response")
+        return result
 
     def _call(self, tool: str, arguments: dict, deadline: float) -> dict:
         return self._read_call(self._write_call(tool, arguments, deadline), deadline)
@@ -2398,6 +2407,7 @@ class RetainedService(InventoryService):
     def dispatch(self, reservation, registry):
         from core.relay_activation import ActivationAttemptResult
         from app.codex_wake import _wake_prompt, _start_launch, _finish_launch, _attempt_from_launch
+        from app.codex_wake import relay_wake_log_refs
 
         retrying = reservation.outcome in {"reserved", "accepted", "uncertain"}
         retry_target = None
@@ -2407,15 +2417,18 @@ class RetainedService(InventoryService):
                 return ActivationAttemptResult("deferred", "retry_not_due", native_retry_safe=False), reservation
 
         spent = False
+        stage = "state-read"
         with self._custody_lock:
             state_read_started = False
             try:
                 if self.custody is None:
                     state_read_started = True
+                    stage = "reopen"
                     self._reopen_registration()
                 if not self.read_tool or not self.owner_tool_before or self.caller is None:
                     raise ShadowUnavailable("stopped")
                 state_read_started = True
+                stage = "state-read"
                 target_session = retry_target["session_ref"] if retry_target else reservation.session_ref
                 target_container = retry_target["container_ref"] if retry_target else reservation.container_ref
                 result = self._call("read_thread", {"threadId": target_session,
@@ -2451,7 +2464,7 @@ class RetainedService(InventoryService):
                     reservation = rearmed
                 deadline = time.monotonic() + EXCHANGE_SECONDS
                 def write():
-                    nonlocal spent
+                    nonlocal spent, stage
                     self._check_custody()
                     # A natural hook may have claimed the delivery after the state read.
                     if registry._relay is not None:
@@ -2464,6 +2477,7 @@ class RetainedService(InventoryService):
                     if registry.begin_native_attempt(reservation) is None:
                         return None
                     spent = True
+                    stage = "owner-result"
                     if target_state == "idle":
                         return "queue", _start_launch(reservation.session_ref, _wake_prompt(reservation.delivery_id))
                     return "retained", self._write_call("send_message_to_thread", {
@@ -2478,15 +2492,29 @@ class RetainedService(InventoryService):
                 # Hook claim/ACK needs the registry lock while the owner response is pending.
                 mode, pending = initiated
                 if mode != "queue":
+                    stage = "owner-result"
                     self._read_call(pending, deadline)
                     # Submission is fenced; a generic tool result proves no payload admission.
                     return ActivationAttemptResult(
                         "uncertain", "native_submitted", ("submission_attempted",)
                     ), reservation
             except Exception as exc:
-                _log.warning("codex_retained_dispatch outcome=failed category=%s", _inventory_reason(exc))
                 category = getattr(exc, "category", None)
-                preserve = (state_read_started and category in {"deadline", "transport-failed"}
+                diagnostic_category = ("native-tool-failed" if category == "native-tool-failed"
+                                       else _inventory_reason(exc))
+                delivery_ref, _, _ = relay_wake_log_refs(
+                    reservation.delivery_id, reservation.session_ref, reservation.container_ref,
+                )
+                generation = (reservation.generation if type(reservation.generation) is int
+                              and 0 < reservation.generation <= (1 << 63) - 1 else "invalid")
+                _log.warning(
+                    "codex_retained_dispatch timestamp=%s outcome=failed category=%s stage=%s "
+                    "delivery_ref=%s generation=%s",
+                    datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+                    diagnostic_category, stage, delivery_ref, generation,
+                )
+                preserve = (state_read_started and category in {
+                    "deadline", "transport-failed", "native-tool-failed"}
                             and self.custody is not None and not self.custody.unresolved
                             and self._registration_live())
                 self._drop(preserve_registration=preserve)

@@ -421,6 +421,203 @@ async def test_registered_trace_preserves_opaque_message_id_as_one_path_segment(
         {"message_id": sent["deliveries"][0]["delivery_id"]},
     )
     assert json.loads(content[0].text)["message_id"] == message_id
+
+
+@pytest.mark.asyncio
+async def test_registered_trace_without_configured_scope_is_local_read_only(
+    monkeypatch, relay_app, asgi_post, asgi_get,
+):
+    bind_asgi_work_refs(monkeypatch, asgi_post, asgi_get)
+    monkeypatch.delenv("PALLIUM_CONTAINER_REF", raising=False)
+    monkeypatch.setenv("PALLIUM_BASE_URL", "http://127.0.0.1:19836")
+    await asgi_post(
+        "/relay/turn",
+        {"runtime": "codex", "session_ref": "trace-sender", **_SCOPE},
+    )
+    await asgi_post(
+        "/relay/turn",
+        {"runtime": _RUNTIME, "session_ref": _SESSION, **_SCOPE},
+    )
+    sent = await asgi_post(
+        "/relay/messages",
+        {
+            "sender_runtime": "codex",
+            "sender_session_ref": "trace-sender",
+            "recipient": f"{_RUNTIME}:{_SESSION}",
+            "payload": "scope-less local trace",
+            **_SCOPE,
+        },
+    )
+    delivery_id = sent["deliveries"][0]["delivery_id"]
+    before = await asgi_get(f"/relay/messages/{sent['message_id']}", _SCOPE)
+
+    content, _ = await create_server().call_tool(
+        "pallium_relay_trace", {"message_id": delivery_id}
+    )
+
+    trace = json.loads(content[0].text)
+    after = await asgi_get(f"/relay/messages/{sent['message_id']}", _SCOPE)
+    assert trace["message_id"] == sent["message_id"]
+    assert before == after
+
+    unknown = await assert_tool_error(
+        create_server(),
+        "pallium_relay_trace",
+        {"message_id": "relay-delivery-" + "0" * 32},
+    )
+    assert tool_error_payload(unknown)["status_code"] == 404
+    assert await asgi_get(f"/relay/messages/{sent['message_id']}", _SCOPE) == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("base_url", "host"),
+    [
+        ("https://relay.example.test", "127.0.0.1"),
+        ("http://127.0.0.1:19836", "0.0.0.0"),
+        ("https://relay.example.test", "0.0.0.0"),
+        ("ftp://127.0.0.1:19836", "127.0.0.1"),
+        ("http://user:pass@127.0.0.1:19836", "127.0.0.1"),
+    ],
+)
+async def test_registered_trace_without_scope_denies_remote_service_or_bind(
+    monkeypatch, base_url, host,
+):
+    monkeypatch.delenv("PALLIUM_CONTAINER_REF", raising=False)
+    monkeypatch.setenv("PALLIUM_BASE_URL", base_url)
+    request = AsyncMock(return_value={})
+    with patch.object(PalliumMcpClient, "relay_trace", new=request):
+        text = await assert_tool_error(
+            create_server(host=host), "pallium_relay_trace", {"message_id": "m"}
+        )
+    assert "trusted local service and MCP bind" in text
+    request.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("base_url", "host"),
+    [
+        ("http://localhost:19836", "localhost"),
+        ("https://[::1]:19836", "::1"),
+    ],
+)
+async def test_registered_trace_without_scope_allows_local_alias_and_ipv6(
+    monkeypatch, base_url, host,
+):
+    monkeypatch.delenv("PALLIUM_CONTAINER_REF", raising=False)
+    monkeypatch.setenv("PALLIUM_BASE_URL", base_url)
+    response = {
+        "contract": "relay-delivery-trace/v1",
+        "message_id": "m",
+        "events": [],
+        "delivery_snapshots": [],
+        "as_of_sequence": 0,
+        "has_more": False,
+    }
+    request = AsyncMock(return_value=response)
+    with patch.object(PalliumMcpClient, "relay_trace", new=request):
+        content, _ = await create_server(host=host).call_tool(
+            "pallium_relay_trace", {"message_id": "m"}
+        )
+    assert json.loads(content[0].text)["message_id"] == "m"
+    request.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_registered_trace_without_scope_is_not_configured_without_http(monkeypatch):
+    monkeypatch.delenv("PALLIUM_CONTAINER_REF", raising=False)
+    monkeypatch.delenv("PALLIUM_BASE_URL", raising=False)
+    request = AsyncMock(return_value={})
+    with patch.object(PalliumMcpClient, "relay_trace", new=request):
+        text = await assert_tool_error(
+            create_server(), "pallium_relay_trace", {"message_id": "m"}
+        )
+    assert "not configured" in text.lower()
+    request.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("configured", "arguments", "expected"),
+    [
+        ("", {}, "Error: Configured Relay scope is invalid."),
+        (" ", {}, "Error: Configured Relay scope is invalid."),
+        ("x" * 513, {}, "Error: Configured Relay scope is invalid."),
+        ("git:example.test/relay-tools", {"container_ref": ""}, "non-blank container_ref"),
+        ("git:example.test/relay-tools", {"container_ref": "git:example.test/\nbad"}, "non-blank container_ref"),
+        (
+            "git:example.test/relay-tools",
+            {"container_ref": "git:example.test/other"},
+            "conflicts with configured trusted scope",
+        ),
+    ],
+)
+async def test_registered_trace_preserves_present_scope_validation(
+    monkeypatch, configured, arguments, expected,
+):
+    monkeypatch.setenv("PALLIUM_CONTAINER_REF", configured)
+    request = AsyncMock(return_value={})
+    with patch.object(PalliumMcpClient, "relay_trace", new=request):
+        text = await assert_tool_error(
+            create_server(),
+            "pallium_relay_trace",
+            {"message_id": "m", **arguments},
+        )
+    assert expected in text
+    request.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_registered_trace_validates_cursor_before_scope_fallback(monkeypatch):
+    monkeypatch.delenv("PALLIUM_CONTAINER_REF", raising=False)
+    request = AsyncMock(return_value={})
+    with patch.object(PalliumMcpClient, "relay_trace", new=request):
+        text = await assert_tool_error(
+            create_server(), "pallium_relay_trace", {"message_id": "m", "cursor": "bad"}
+        )
+    assert "cursor must be the exact next_cursor" in text
+    request.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_registered_trace_consumes_paged_cursor_without_scope(monkeypatch):
+    monkeypatch.delenv("PALLIUM_CONTAINER_REF", raising=False)
+    monkeypatch.setenv("PALLIUM_BASE_URL", "http://127.0.0.1:19836")
+    request = AsyncMock(side_effect=[
+        {
+            "contract": "relay-delivery-trace/v1",
+            "events": [{"sequence": 1}],
+            "delivery_snapshots": [],
+            "as_of_sequence": 2,
+            "has_more": True,
+        },
+        {
+            "contract": "relay-delivery-trace/v1",
+            "events": [{"sequence": 2}],
+            "delivery_snapshots": [],
+            "as_of_sequence": 2,
+            "has_more": False,
+        },
+    ])
+    with patch.object(PalliumMcpClient, "relay_trace", new=request):
+        server = create_server()
+        first, _ = await server.call_tool(
+            "pallium_relay_trace", {"message_id": "m"}
+        )
+        first_page = json.loads(first[0].text)
+        assert first_page["next_cursor"] == "2:1"
+        second, _ = await server.call_tool(
+            "pallium_relay_trace",
+            {"message_id": "m", "cursor": first_page["next_cursor"]},
+        )
+    assert json.loads(second[0].text)["has_more"] is False
+    assert request.await_args_list[0].kwargs["after_sequence"] == 0
+    assert request.await_args_list[0].kwargs["as_of_sequence"] is None
+    assert request.await_args_list[1].kwargs["after_sequence"] == 1
+    assert request.await_args_list[1].kwargs["as_of_sequence"] == 2
+
+
 @pytest.mark.asyncio
 async def test_registered_delivery_alias_trace_is_nonmutating_across_lifecycle(
     monkeypatch: pytest.MonkeyPatch,

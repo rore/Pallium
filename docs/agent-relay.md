@@ -258,10 +258,12 @@ Claude Code and Codex keep one bounded current reservation per stable Relay
 endpoint. An accepted or uncertain native submission remains the durable delivery
 fence across worker completion, restart, registration, close, and delivery-status
 reads. Successful ACK, MCP ACK, or atomic reply for that exact delivery releases
-it. Retained Codex recovery may replace an unclaimed pending fence after its
+it. Retained Codex recovery may replace a never-claimed pending fence or an
+expired unacknowledged claim's fence after its
 persisted 60-second cooldown only when a fresh authenticated Desktop read shows
 the current exact target idle or notLoaded and a SQLite generation compare-and-
-swap still sees the same active target with zero claim attempts. This permits a
+swap still sees the same active target and no active claim. SessionStart claims
+need not carry wake correlation to qualify after lease expiry. This permits a
 new notification; it never retries unresolved native I/O. A large backward
 wall-clock correction is clamped once to one cooldown. A delivery-specific Codex
 wake also adds the existing claim recovery case: when
@@ -271,17 +273,24 @@ write boundary as Relay claims after the lease expires. Only a currently active
 Codex recipient remains eligible; recovery derives its current session and
 container from that boundary, atomically replaces the reservation with a fresh
 uncorrelated generation, clears old-scope scheduling keys, and schedules one
-replacement before claims resume. Normal turns, mismatches, active claims, and
-legacy uncorrelated reservations remain fenced. A delivery-specific turn selects only its exact delivery, while `has_more` and `remaining_count` still describe all unclaimed inbox work. A positively pre-submit failure becomes retryable
+replacement before claims resume. Mismatches and active claims remain fenced;
+uncorrelated expired claims use the bounded retained recovery path above. A delivery-specific turn selects only its exact delivery, while `has_more` and `remaining_count` still describe all unclaimed inbox work. A positively pre-submit failure becomes retryable
 only after the safe reset durably commits. A never-claimed legacy reservation
-can recover only after cooldown and fresh authenticated idle/notLoaded
+or expired unacknowledged claim can recover only after cooldown and fresh authenticated idle/notLoaded
 eligibility; legacy uncorrelated active claims remain fenced. If a reservation
 cannot be resolved, later messages still arrive on the next natural hook turn;
 Pallium does not blindly resubmit. The Relay claim and trusted-local reservation update are
-separate commits, so a service crash or callback failure between them remains
-conservatively fenced. SQLite authority assumes one Pallium service process;
+separate commits; a crash or callback failure between them preserves the active
+lease, then permits bounded retained recovery after expiry. SQLite authority assumes one Pallium service process;
 short transactions persist reservations and generation fences. Native
 submission remains outside database transactions under the ownership guard.
+
+A well-formed native tool failure can retain the authenticated registration for
+same-identity reconnect and a fresh eligibility read. Malformed responses or
+changed identity, epoch, catalog, or unresolved I/O do not gain this authority.
+An owner-call failure still keeps its spent fence; reconnect is not submission
+replay. Dispatch logs contain fixed category/stage and bounded delivery/generation
+references, never native failure text or credentials.
 
 ## Inspecting a delivery trace
 
@@ -290,6 +299,9 @@ wake result was uncertain. Pass either the original message ID or the exact
 `relay-delivery-<32 lowercase hex>` ID from a delivery-specific Codex wake.
 The same nonmutating `relay-delivery-trace/v1` projection is available in the
 message detail dashboard and at `GET /relay/messages/{message_id}/trace`.
+If both explicit and configured Relay scope are absent, the MCP trace still works
+when the service URL and MCP bind are trusted local addresses. Present invalid or
+conflicting scopes remain errors; no scope is inferred.
 
 A Codex wake turn accompanied by a `[Pallium Relay message ...]` block is normal.
 If the delivery-specific wake appears without that block, inspect its exact

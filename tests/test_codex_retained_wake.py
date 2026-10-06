@@ -80,6 +80,10 @@ class Desktop:
 
 @pytest.fixture
 def retained(monkeypatch, tmp_path):
+    monkeypatch.setattr(codex_wake, "_scheduled_delivery_ids", set())
+    monkeypatch.setattr(codex_wake, "_scheduled_session_generations", {})
+    monkeypatch.setattr(codex_wake, "_scheduled_session_delivery_ids", {})
+    monkeypatch.setattr(codex_wake, "_scheduled_session_attempt_ids", {})
     monkeypatch.setattr(bridge, "retained_wake_enabled", lambda: True)
     monkeypatch.setattr(bridge, "_native_uncertain", False)
     monkeypatch.setattr(codex_wake, "_DEBOUNCE_SECONDS", 0)
@@ -1108,10 +1112,13 @@ def test_registration_rejects_wrong_or_spoofed_pipe_server_image(retained, monke
     assert natives[0].closed and natives[0].owners == []
 
 
-@pytest.mark.parametrize("fault", ["failed", "success-int", "missing-success", "old-mcp", "empty-items",
+@pytest.mark.parametrize("fault", ["success-int", "missing-success", "old-mcp", "old-mcp-error",
+    "failed-missing-items", "failed-empty-items", "failed-extra-items", "failed-wrong-item",
+    "failed-nonstring-text", "failed-public-content", "failed-public-iserror-false",
+    "failed-wrong-id", "failed-wrong-version", "empty-items",
     "extra-items", "wrong-item", "nonstring-text", "rpc-error", "wrong-id", "wrong-version"])
 def test_native_state_read_contract_failure_releases_without_transport(http_wake, monkeypatch, fault):
-    http, _, registry, _, desktop, send, _ = http_wake
+    http, _, registry, service, desktop, send, _ = http_wake
     original_read = desktop.read
     def read(deadline):
         envelope = original_read(deadline)
@@ -1120,16 +1127,32 @@ def test_native_state_read_contract_failure_releases_without_transport(http_wake
         result = envelope["result"]
         item = result["contentItems"][0]
         results = {
-            "failed": {**result, "success": False},
             "success-int": {**result, "success": 1},
             "missing-success": {"contentItems": [item]},
             "old-mcp": {"success": True, "content": [{"type": "text", "text": item["text"]}]},
+            "old-mcp-error": {"success": False, "isError": True,
+                              "content": [{"type": "text", "text": "private native failure"}]},
+            "failed-missing-items": {"success": False},
+            "failed-empty-items": {"success": False, "contentItems": []},
+            "failed-extra-items": {"success": False, "contentItems": [item, item]},
+            "failed-wrong-item": {"success": False, "contentItems": [{**item, "type": "text"}]},
+            "failed-nonstring-text": {"success": False, "contentItems": [{**item, "text": {}}]},
+            "failed-public-content": {"success": False, "contentItems": [item], "content": []},
+            "failed-public-iserror-false": {"success": False, "contentItems": [item], "isError": False},
             "empty-items": {"success": True, "contentItems": []},
             "extra-items": {"success": True, "contentItems": [item, item]},
             "wrong-item": {"success": True, "contentItems": [{**item, "type": "text"}]},
             "nonstring-text": {"success": True, "contentItems": [{**item, "text": {}}]},
         }
-        if fault in results:
+        if fault in {"wrong-id", "failed-wrong-id"}:
+            if fault == "failed-wrong-id":
+                envelope["result"] = {**result, "success": False}
+            envelope["id"] += 1
+        elif fault in {"wrong-version", "failed-wrong-version"}:
+            if fault == "failed-wrong-version":
+                envelope["result"] = {**result, "success": False}
+            envelope["jsonrpc"] = "1.0"
+        elif fault in results:
             envelope["result"] = results[fault]
         elif fault == "rpc-error":
             envelope["error"] = {"code": -1}
@@ -1141,5 +1164,6 @@ def test_native_state_read_contract_failure_releases_without_transport(http_wake
     monkeypatch.setattr(desktop, "read", read)
     send()
     assert desktop.owners == [] and registry.reservations() == ()
+    assert service.retained_registration is None
     delivery = http.get("/relay/messages/retained-journey", params=SCOPE).json()["deliveries"][0]
     assert delivery["state"] == "pending" and delivery["attempts"] == 0

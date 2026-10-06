@@ -63,6 +63,14 @@ def _iso(value: datetime | None) -> str | None:
     return value.isoformat() if value is not None else None
 
 
+def _wake_retry_pending(state: dict[str, Any]) -> bool:
+    # Effective pending includes a stored claim only once its lease has expired.
+    return state["state"] == "pending" and (
+        (state["stored_state"] == "pending" and state["attempts"] == 0)
+        or (state["stored_state"] == "claimed" and state["attempts"] > 0)
+    )
+
+
 # ponytail: NOT NULL sentinel avoids a SQLite table rebuild; migrate only if year-9999 storage stops being portable.
 _DURABLE_EXPIRY = datetime.max.replace(tzinfo=timezone.utc)
 _MAX_EXPLICIT_WORK_REFS = 3
@@ -537,6 +545,8 @@ class SQLiteRelayMixin:
                     return None
                 current = self._wake_item(row)
                 if operation == "retry_target":
+                    if current != expected:
+                        return None
                     if expected.outcome not in {"reserved", "accepted", "uncertain"} or expected.correlated_claim_attempts is not None:
                         return None
                     current_time = _now()
@@ -549,8 +559,8 @@ class SQLiteRelayMixin:
                     except RelayNotFoundError:
                         return None
                     target = state.get("wake_target")
-                    if (state["state"] != "pending" or state["stored_state"] != "pending"
-                        or state["attempts"] != 0
+                    if (not _wake_retry_pending(state)
+                        or (state["stored_state"] == "claimed" and state["codex_wake_generation"] == expected.generation)
                         or state["recipient_endpoint_id"] != expected.recipient_endpoint_id
                         or not isinstance(target, dict)):
                         return None
@@ -586,11 +596,8 @@ class SQLiteRelayMixin:
                         "runtime": "codex", "session_ref": expected.session_ref,
                         "container_ref": expected.container_ref,
                     }
-                    fresh = state["state"] == "pending" and state["stored_state"] == "pending" and state["attempts"] == 0
-                    expired_claim = (expected.retry_not_before is None
-                        and state["state"] == "pending" and state["stored_state"] == "claimed" and state["attempts"] > 0)
                     if (state["recipient_endpoint_id"] != expected.recipient_endpoint_id
-                        or state["wake_target"] != target or not (fresh or expired_claim)):
+                        or state["wake_target"] != target or not _wake_retry_pending(state)):
                         return None
                 if operation == "retry":
                     if expected.outcome not in {"reserved", "accepted", "uncertain"} or expected.correlated_claim_attempts is not None:
@@ -606,8 +613,8 @@ class SQLiteRelayMixin:
                     except RelayNotFoundError:
                         return None
                     target = kwargs["target"]
-                    if (state["state"] != "pending" or state["stored_state"] != "pending"
-                        or state["attempts"] != 0
+                    if (not _wake_retry_pending(state)
+                        or (state["stored_state"] == "claimed" and state["codex_wake_generation"] == expected.generation)
                         or state["recipient_endpoint_id"] != expected.recipient_endpoint_id
                         or state["wake_target"] != target
                         or marker.generation >= 2**63 - 1):
@@ -635,35 +642,11 @@ class SQLiteRelayMixin:
                         if state["state"] in {"delivered", "expired", "suppressed"}:
                             db.delete(row)
                             result = ("released", expected)
-                        elif (expected.outcome in {"reserved", "accepted", "uncertain"}
-                              and expected.correlated_claim_attempts is None
-                              and expected.retry_not_before is not None
-                              and expected.retry_not_before - current_time.timestamp() > 2 * WAKE_RETRY_COOLDOWN_SECONDS
-                              and state["state"] == "pending"
-                              and state["stored_state"] == "pending"
-                              and state["attempts"] == 0):
-                            # A large wall-clock rollback must not defer recovery by the rollback duration.
-                            # Clamp once; ordinary sweeps do not move a deadline within one cooldown.
-                            retry_not_before = current_time.timestamp() + WAKE_RETRY_COOLDOWN_SECONDS
-                            row.retry_not_before = retry_not_before
-                            result = ("cooldown_clamped", replace(expected, retry_not_before=retry_not_before))
-                        elif (expected.outcome in {"reserved", "accepted", "uncertain"}
-                              and expected.correlated_claim_attempts is None
-                              and retry_cooldown_elapsed(
-                                  expected.retry_not_before, current_time.timestamp()
-                              )
-                              and state["state"] == "pending"
-                              and state["stored_state"] == "pending"
-                              and state["attempts"] == 0
-                              and isinstance(state["wake_target"], dict)):
-                            result = ("retry", expected)
                         elif (expected.outcome == "prepared" and expected.correlated_claim_attempts is None
-                              and state["state"] == "pending" and state["wake_target"] == {
+                              and _wake_retry_pending(state) and state["wake_target"] == {
                                   "runtime": "codex", "session_ref": expected.session_ref,
                                   "container_ref": expected.container_ref,
-                              }
-                              and ((state["stored_state"] == "pending" and state["attempts"] == 0)
-                                   or (state["stored_state"] == "claimed" and state["attempts"] > 0))):
+                              }):
                             result = ("resume", expected)
                         elif (state["state"] == "pending" and state["stored_state"] == "claimed"
                               and state["attempts"] > 0
@@ -679,6 +662,24 @@ class SQLiteRelayMixin:
                             for name, value in asdict(replacement).items():
                                 setattr(row, name, value)
                             result = ("replaced", replacement)
+                        elif (expected.outcome in {"reserved", "accepted", "uncertain"}
+                              and expected.correlated_claim_attempts is None
+                              and expected.retry_not_before is not None
+                              and expected.retry_not_before - current_time.timestamp() > 2 * WAKE_RETRY_COOLDOWN_SECONDS
+                              and _wake_retry_pending(state)):
+                            # A large wall-clock rollback must not defer recovery by the rollback duration.
+                            # Clamp once; ordinary sweeps do not move a deadline within one cooldown.
+                            retry_not_before = current_time.timestamp() + WAKE_RETRY_COOLDOWN_SECONDS
+                            row.retry_not_before = retry_not_before
+                            result = ("cooldown_clamped", replace(expected, retry_not_before=retry_not_before))
+                        elif (expected.outcome in {"reserved", "accepted", "uncertain"}
+                              and expected.correlated_claim_attempts is None
+                              and retry_cooldown_elapsed(
+                                  expected.retry_not_before, current_time.timestamp()
+                              )
+                              and _wake_retry_pending(state)
+                              and isinstance(state["wake_target"], dict)):
+                            result = ("retry", expected)
                     # Return only after the enclosing transaction commits.
                 elif operation == "replace":
                     if marker.generation >= 2**63 - 1:
