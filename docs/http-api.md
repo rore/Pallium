@@ -28,7 +28,7 @@ shape.
 |---|---|
 | `POST /relay/turn` | Register or update a session and claim eligible deliveries. |
 | `POST /relay/sessions/close` | Close a session and release its alias. |
-| `GET /relay/sessions` | List addressable sessions. |
+| `GET /relay/sessions` | List recent sessions, or resolve an exact runtime/session identity regardless of activity, with lifecycle, health and last-active metadata. |
 | `POST /relay/sessions/name` | Assign or transfer an alias. |
 | `POST /relay/messages` | Persist and send a new message. |
 | `POST /relay/replies` | Reply to one received delivery. |

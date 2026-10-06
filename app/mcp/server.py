@@ -1848,7 +1848,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None,
         container_ref: str | None = None,
         offset: int = 0,
     ) -> str:
-        """Return a bounded Relay address-book page. For exact session_ref lookup, runtime is required. Each item includes canonical exact_selector (relay-session-...) and optional service-global alias_selector (`@name`; internal wire-field name). Continue with next_offset; use pallium_relay_receive for inbox delivery."""
+        """Return a bounded Relay address-book page. For exact session_ref lookup, runtime is required and any lifecycle state is returned; include_inactive filters only broad listings. Each item includes canonical exact_selector (relay-session-...) and optional service-global alias_selector (`@name`; internal wire-field name). Continue with next_offset; use pallium_relay_receive for inbox delivery."""
         if offset < 0:
             return _relay_recipients_text([], offset)
         ctx, scope_error = resolve_relay_context(container_ref=container_ref)

@@ -1740,10 +1740,7 @@ class SQLiteRelayMixin:
                     runtime=runtime,
                     session_ref=session_ref,
                 )
-                if row is None or (
-                    not include_inactive
-                    and (row.state != "active" or _now(row.last_seen_at) < cutoff)
-                ):
+                if row is None:
                     return []
                 return [self._relay_session_view(db, row, current, recent_seconds)]
             statement = select(RelaySessionRecord).where(

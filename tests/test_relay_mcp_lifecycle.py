@@ -257,6 +257,14 @@ def test_same_scope_turn_recovers_unreachable_endpoint_with_fenced_identity(clie
         **scope,
         attempt_started_at=datetime.now(timezone.utc) + timedelta(seconds=1),
     ) is True
+    exact_unreachable = client.get("/relay/sessions", params={
+        **scope, "runtime": "codex", "session_ref": "unreachable-recovery",
+    })
+    assert exact_unreachable.status_code == 200
+    assert len(exact_unreachable.json()) == 1
+    assert exact_unreachable.json()[0]["destination_health"] == "unreachable"
+    assert exact_unreachable.json()[0]["last_seen_at"]
+    assert client.get("/relay/sessions", params=scope).json() == []
 
     stale = client.post("/relay/turn", json={
         "runtime": "codex", "session_ref": "unreachable-recovery", **scope,
@@ -281,6 +289,14 @@ def test_same_scope_turn_recovers_unreachable_endpoint_with_fenced_identity(clie
     assert client.post("/relay/sessions/close", json={
         "runtime": "codex", "session_ref": "unreachable-recovery", **scope,
     }).status_code == 200
+    exact_closed = client.get("/relay/sessions", params={
+        **scope, "runtime": "codex", "session_ref": "unreachable-recovery",
+    })
+    assert exact_closed.status_code == 200
+    assert exact_closed.json()[0]["state"] == "closed"
+    assert exact_closed.json()[0]["destination_health"] is None
+    assert exact_closed.json()[0]["last_seen_at"]
+    assert client.get("/relay/sessions", params=scope).json() == []
     closed = client.post("/relay/turn", json={
         "runtime": "codex", "session_ref": "unreachable-recovery", **scope,
         "previous_container_ref": scope["container_ref"],
