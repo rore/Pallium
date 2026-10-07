@@ -54,7 +54,7 @@ When the complete isolated patch is reviewed, all required checks shall pass →
 
 ## Recovery state
 
-Branch feat/relay-wake-output-failure, exact base 658affdd8c1af9ad2cefc3d10368f32811c50bd8. Only this pre-edit record exists. Next: independent plan review, then implement only its approved scope. Do not overlap pytest with the diagnostic worktree's running full suite.
+Branch feat/relay-wake-output-failure, exact base 658affdd8c1af9ad2cefc3d10368f32811c50bd8. Implementation and focused/affected tests are complete; the independent source review approved full validation after documentation clarification. Next: commit the coherent reviewed candidate, run whole-change checks and full serial validation, then obtain final result review and exact-head PR CI. The diagnostic full run finished before this task's tests began. No live operation or installed acceptance is complete.
 
 ## Pre-edit review repair
 
@@ -86,3 +86,56 @@ for accurate scope/evidence. The redelivery-envelope path is an existing caller
 fixture identified by review, not a new feature or protected requirement change.
 Do not change shared conftest, production common.py or diagnostic worktree files.
 No pytest runs until root releases the currently running full-suite lane.
+
+Implementation progress: exact generic and delivery-ID wake recognition occurs
+immediately after prompt validation, before scope/actor resolution. A hook-local
+blocking exit handles recognized pre-emission exceptions and failed block output;
+the successful payload-emission latch is set immediately after the existing
+emitter returns and before event recording or ACK. The prior implementation draft
+also changed exact-delivery mismatch routing; that unapproved change was removed.
+Whether existing exact-ID/rendered-batch mismatch behavior needs separate work is
+an unresolved question, not a confirmed defect, and is outside this repair.
+
+Validation evidence: after the isolated output-failure lane was released, syntax
+compilation passed. Focused caller/subprocess/HTTP-recovery nodes passed with
+`python -m pytest tests/test_agent_relay_hooks.py::test_codex_wake_records_only_proven_emit_and_ack_stages tests/test_agent_relay_hooks.py::test_codex_recognized_wake_exceptions_before_emission_block tests/test_agent_relay_hooks.py::test_codex_ordinary_prompt_exception_remains_fail_open tests/test_agent_relay_hooks.py::test_codex_wake_post_emission_exceptions_do_not_retroactively_block tests/test_agent_relay_hooks.py::test_codex_unreadable_hook_input_is_not_classified_as_wake tests/test_agent_relay_hooks.py::test_codex_recognized_wake_output_failures_exit_two_in_subprocess tests/test_relay_redelivery_envelope.py::test_hook_redelivery_after_emit_or_ack_gap_preserves_exact_id_and_receipt -q -n 0`
+(11 passed). The four affected files passed serially with
+`python -m pytest tests/test_agent_relay_hooks.py tests/test_hook_deadline_safety.py tests/test_codex_relay_fault_harness.py tests/test_relay_redelivery_envelope.py -q -n 0`
+(227 passed). Subprocess cases use the actual common output helper for payload
+write/flush failures and deterministic deadline expiry, and assert real exit 2.
+The first focused run had one new-test assertion failure: the test
+guessed an arbitrary partial-output length; it was corrected to assert the exact
+configured prefix and the rerun passed. The repaired coverage now includes actual
+payload write/flush failures, deterministic deadline expiry, stderr write/flush
+failures, success controls, pre-emission exceptions, post-emission diagnostic/ACK
+exceptions, ordinary and unreadable input controls, and HTTP lease recovery.
+Malformed response and near-match controls remain covered by existing tests. No
+full suite, live host qualification, or environment operation was run. Next:
+parent source review, independent result review, then the required selector and
+full validation under parent coordination.
+
+Content hashes recorded for this review (Work Record itself excluded): hook
+`integrations/codex/hooks/user_prompt_submit.py`:
+`684626e8404a1c74f8cf78b01940bc906d9b07e5`; caller/subprocess tests
+`tests/test_agent_relay_hooks.py`:
+`2465e9e5eab5e24cc7aac680f33ef7cad377f4c3`; HTTP recovery test
+`tests/test_relay_redelivery_envelope.py`:
+`6be128119cde32c09436fdb4db588401f5707d63`; operations
+`docs/context/operations.md`:
+`e3e596a58116fcdeaffcc906064e8f361ca75a6c`; roadmap
+`roadmap/features/add-wake-first-relay-delivery.md`:
+`639ac8c7dd671211bb7caf61bdff42a58c6759a2`.
+
+## Source review before full validation
+
+Independent gpt-6.1-sol/high review by /root/wake_output_plan_review approved the
+4368e120 plus frozen six-file candidate for full validation. No code/test blockers
+remain; original render/ACK routing and shared helpers are unchanged. Root fixed
+the two documentation findings: model-visible empty wakes are qualified for hooks
+that cannot recognize/complete the wake, and stderr errors do not alter exit two
+though blocked pipes/host termination can prevent completion. Recovery state now
+reflects implementation rather than pre-edit planning. Full and CI remain gates;
+the original invocation, installed outage and parent recovery stay unresolved.
+
+Skill feedback trigger 2 dropped: these are consumer implementation/documentation
+corrections, not defects in the upstream agent-workflow instructions.
