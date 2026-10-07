@@ -34,7 +34,7 @@
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -152,10 +152,26 @@ test-state leakage remains under read-only investigation, not a proven cause.
 Run the complete suite serially without weakening deadlines or assertions.
 These failed runs are not passing validation or installed incident attribution.
 
+The complete serial lane passed: `python -m pytest tests/ -x -q -n 0`
+reported 6,316 passed, 34 skipped, 479 deselected and two expected failures in
+1,534.43s. It started at 616af2a5; only record-only d6787df2 was committed during
+the run. Helper/test blobs above remained frozen. Both parallel failures stay
+unexplained: three legacy HTTP calls share a 0.75-second budget, while the later
+claimed delivery could lose emission at state-write, response validation or
+formatting. No exact failing stage was captured. Serial success does not resolve
+those causes; any CI recurrence requires investigation, not isolated-rerun closure.
+Ready for review applies only to this bounded observer release, not the original
+umbrella completion criteria. No observer, fault or service operation is armed.
+Skill feedback trigger 1 dropped: these application-test failures are not an
+Agent Workflow instruction or implementation failure.
+
 Manager reply relay-reply-d4ef666f95cb93deb63e1a615f58b9201eb843f5124916555e41c2b26a42bab9
 reported the exact existing-diagnostic limit and passive implementation scope.
 Its trace confirms hook ACK at 09:23:02.762694 UTC, attempts=1 and no reported gap;
 this establishes receipt at that boundary, not manager acceptance or completion.
+Manager progress message relay-msg-aaeeec489615487f9722c028a6500dc3 was also
+hook-ACKed at 09:51:43.074505 UTC, attempts=1 with no reported trace gap;
+this is receipt evidence only.
 
 Post-release contention follow-up at 385a8a94: worker caller-surface regression
 failed only its positive busy-preservation case (11 negative cases passed).
@@ -508,6 +524,21 @@ diagnostics; its successful second claim/ACK after app fallback is not closure.
 Skill feedback trigger 3 dropped: the restart limitation belongs to this product's approved native admission contract, not an Agent Workflow upstream defect.
 
 ## Result review
+
+### Passive exact-session observer release
+
+Agent technical review: /root/deployment_evidence_review (gpt-6.1-sol/high).
+Reviewed revision: d6787df294487987a15dc9157a2f308f7df1fc74, with helper blob
+8dded7ffa65c765a34afeec035e71f62df25c543 and test blob
+6890d79f2978726dd0ab7be7e04b18c563e5ef12.
+Verification adequacy: approved the bounded observer source and evidence after
+88 focused cases, the affected-suite evidence plus four teardown cases, and the
+complete passing serial lane. Documentation deltas 616af2a5 and d6787df2 accurately
+retain evidence limits and both failed parallel runs. No remaining technical
+finding or unintended scope expansion; original High/Large risk remains.
+Historical causality, native ownership and installed recovery criteria are not
+satisfied. Required PR CI and separate human result review remain gates; earlier
+PR290/291 approvals do not approve this result. No installed acceptance is inferred.
 
 ### PR291 CI caller correction
 
