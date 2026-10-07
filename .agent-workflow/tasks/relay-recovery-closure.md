@@ -130,6 +130,16 @@ contract, service, hook configuration or consumer settings changed. Full-suite
 result, final adequacy review, separate human result review and PR CI remain
 gates. PR297 stays separately owned and unmerged pending this correction.
 
+Separate human result review received on 2026-10-07: the user selected
+"Approve result after all gates pass" for request
+call_8e4f89bb47254a48be1569627dff647a. The presented result states that observer
+tests await the real ledger writer, HTTP tests preserve deadline/delivery-state/
+no-emission checks without requiring server writes after cancellation, partial
+body deadline coverage is strengthened, no production/settings change occurs,
+smart source review and 216 affected tests passed, and full validation is still
+running. Merge is conditional on full validation, final review and green CI.
+The broader installed Relay recovery acceptance explicitly remains open.
+
 ### Passive exact-session diagnostic plan, 2026-10-07
 
 First invoke /agent-workflow and classify risk before code edits (completed).
