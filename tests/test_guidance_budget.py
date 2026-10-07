@@ -224,16 +224,16 @@ def test_work_association_guidance_is_lazy_aligned_and_safe() -> None:
     assert references[1:] == references[:-1]
     for path in skill_paths:
         skill = path.read_text(encoding="utf-8")
-        assert "For exact work or link correction, load [work associations](references/work-associations.md)." in skill
-        assert "For an explicit Minimap implementation or substantive-review assignment" in skill
-        assert "passive browsing, inspection, and clerical edits do not qualify for Minimap participation" in skill
+        assert "For exact work/link correction, load [work associations](references/work-associations.md)." in skill
+        assert "For explicitly assigned Minimap implementation, investigation, testing, or substantive review" in skill
+        assert "casual browsing, passive inspection, and clerical edits do not qualify" in skill
         assert (path.parent / "references" / "work-associations.md").is_file()
 
     detail = reference_paths[0].read_text(encoding="utf-8")
     generic, minimap = detail.split("## Explicit Minimap workflow", 1)
     assert "## Generic exact-work workflow" in generic
-    assert "explicit Minimap implementation or substantive-review assignment" in minimap
-    assert "passive browsing, inspection, and clerical edits do not qualify for Minimap participation" in minimap
+    assert "explicitly assigned Minimap implementation, investigation, testing, or substantive review" in minimap
+    assert "Casual browsing, passive inspection, and clerical edits do not qualify" in minimap
     assert "node <skill>/runtime/cli.js roadmap item-ref <item-id> --repo <absolute-repo-path> --json" in detail
     assert "returned exact `scope_ref` and `local_ref`" in detail
     assert detail.index("If the exact pair is absent") < detail.index("attach the exact CLI-returned pair")

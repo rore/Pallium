@@ -12,9 +12,9 @@ In the dashboard, open Relay, select a session, then use Associated work referen
 
 ## Explicit Minimap workflow
 
-passive browsing, inspection, and clerical edits do not qualify for Minimap participation.
+Casual browsing, passive inspection, and clerical edits do not qualify for Minimap participation.
 
-For an explicit Minimap implementation or substantive-review assignment where exact association or History continuity would help, run the authoritative command, then follow the generic workflow above for callable-tool, successful-result, fallback, and capacity semantics:
+For explicitly assigned Minimap implementation, investigation, testing, or substantive review where exact association or History continuity would help, run the authoritative command and follow the generic workflow above:
 
 
 `node <skill>/runtime/cli.js roadmap item-ref <item-id> --repo <absolute-repo-path> --json`
