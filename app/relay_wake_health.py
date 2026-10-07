@@ -2,11 +2,79 @@
 from datetime import datetime, timezone
 from threading import Event, Thread
 
+from app.codex_bridge_pipe import RetainedService
 from app.claude_wake import ClaudeWakeReconciler
 from core.relay import RelayService
 
+_ENROLLMENT_FAILURE_STAGES = {"register", "maintenance", "reopen", "state-read", "owner-result"}
+_ENROLLMENT_FAILURE_REASONS = {
+    "busy", "deadline", "file-unavailable", "file-write-failed", "invalid-message", "invalid-path",
+    "invalid-policy", "invalid-policy-lock", "invalid-response", "message-limit", "native-failed",
+    "native-tool-failed", "path-unavailable", "peer-gone", "peer-mismatch", "peer-unavailable",
+    "policy-busy", "policy-changed", "policy-inactive", "stopped", "timeout", "transport-failed",
+    "unsafe-acl", "unsafe-owner", "unsafe-path", "unsupported-acl",
+}
 
-def relay_wake_health(relay_service: RelayService | None, reconciler: object) -> dict:
+
+def _native_enrollment_health(retained_service: object) -> dict:
+    unavailable = {
+        "state": "unavailable", "evidence": "unavailable", "observed_at": None,
+        "accepted": None, "registration_remembered": None, "custody_present": None,
+        "unresolved_handles": None, "continuity_opted_in": None,
+        "last_failure_stage": None, "last_failure_reason": None,
+    }
+    if retained_service is None:
+        unavailable["reason"] = "service_missing"
+        return unavailable
+    if type(retained_service) is not RetainedService:
+        unavailable["reason"] = "snapshot_unavailable"
+        return unavailable
+    try:
+        value = RetainedService.enrollment_diagnostics(retained_service)
+        keys = {
+            "observed_at", "accepted", "registration_remembered", "custody_present",
+            "unresolved_handles", "continuity_opted_in", "last_failure_stage", "last_failure_reason",
+        }
+        if type(value) is not dict or set(value) != keys:
+            raise ValueError
+        observed_at = value["observed_at"]
+        if type(observed_at) is not str or len(observed_at) > 64:
+            raise ValueError
+        datetime.fromisoformat(observed_at)
+        booleans = ("accepted", "registration_remembered", "custody_present",
+                    "unresolved_handles", "continuity_opted_in")
+        if any(type(value[name]) is not bool for name in booleans):
+            raise ValueError
+        stage, reason = value["last_failure_stage"], value["last_failure_reason"]
+        if ((stage is None) != (reason is None) or
+                (stage is not None and (type(stage) is not str or type(reason) is not str
+                 or len(stage) > 24 or len(reason) > 32
+                 or stage not in _ENROLLMENT_FAILURE_STAGES
+                 or reason not in _ENROLLMENT_FAILURE_REASONS))):
+            raise ValueError
+        accepted = value["accepted"]
+        remembered = value["registration_remembered"]
+        custody = value["custody_present"]
+        unresolved = value["unresolved_handles"]
+        if remembered and not accepted:
+            raise ValueError
+        state = ("unresolved_handles" if unresolved else
+                 "never_registered" if not accepted else
+                 "registered" if remembered and custody else
+                 "retained_disconnected" if remembered else
+                 "authority_cleared" if custody else "released")
+        return {
+            "state": state, "evidence": "cached_lifecycle_observation", "observed_at": observed_at,
+            **{name: value[name] for name in booleans},
+            "last_failure_stage": stage, "last_failure_reason": reason,
+        }
+    except Exception:
+        unavailable["reason"] = "snapshot_unavailable"
+        return unavailable
+
+
+def relay_wake_health(relay_service: RelayService | None, reconciler: object,
+                      retained_service: object = None) -> dict:
     observed_at = datetime.now(timezone.utc)
     running = None
     if isinstance(reconciler, ClaudeWakeReconciler):
@@ -39,4 +107,5 @@ def relay_wake_health(relay_service: RelayService | None, reconciler: object) ->
         **snapshot,
         "last_recovery_progress_at": None, "recovery_progress_evidence": "not_recorded",
         "trace_loss_count": None, "trace_loss_evidence": "not_recorded",
+        "native_enrollment": _native_enrollment_health(retained_service),
     }
