@@ -24,7 +24,7 @@ User authorization: "so open a feature with this list of bugs and full descripti
 **Plan review:** Agent technical review: /root/opencode_disposal_plan_review, reviewed revision cd60d1096dbee627132ed88df07d5bd24757e5bf; approved with no remaining technical findings. See Plan review below. Separate human plan approval is recorded below.
 **Approvals:** Approved by user 2026-10-07 16:20:20 UTC: "approved". Direct human reply in manager chat 01a0d7ce-83c6-77e2-90f7-d413894059e1, approval turn 01a1172a-7295-71f0-bcdb-543b61544c84; verified by read_thread and forwarded by manager. Scope: technically reviewed cd60d109 OC-2 plus OC-5 concrete plan; isolated code/tests only, no installed changes or restarts. No injected request_source_item_id supplied or fabricated.
 **Exceptions:** —
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -34,7 +34,7 @@ User authorization: "so open a feature with this list of bugs and full descripti
 - Bounded workers own only v2-plugin.test.mjs (synchronized caller regressions) and test_opencode_native_wake_e2e.py/ignored native evidence (real native cleanup prerequisite). Parent owns plugin/common helpers/docs and review. No live operations or paid models.
 
 - 2026-10-07: Isolated managed checkout/branch `feat/opencode-disposal-reliability` created at f31ac141; no application/test code edited. First-slice assignment accepted from manager.
-- Fresh intended-scope boundary report passed; Redline GRAY floor raised to High by authority/receipt judgment. Required technical and human plan reviews remain pending.
+- At planning: intended-scope boundary report passed; Redline GRAY floor raised to High by authority/receipt judgment. Required technical and human plan reviews subsequently passed as recorded above.
 - Independent plan review found sequential ACK authority must stop inside the helper on per-session retirement, not merely at outer plugin-lifetime checks. Plan corrected with per-entry cancellation and a two-delivery deletion-during-ACK regression; technical re-review pending. Existing backend owner lease is 15 seconds; delivery claim lease is 60 seconds. Preserve both.
 - Retained original review scripts/results remain privately in the existing PR297 evidence checkout at `build/opencode-plugin-review-20261007/`; custody belongs to @pal-dev1, no cleanup before verified transfer.
 
@@ -42,20 +42,48 @@ User authorization: "so open a feature with this list of bugs and full descripti
 
 Agent technical review: /root/opencode_disposal_plan_review (clean-context non-implementer, gpt-6.1-sol/medium). Initial 8a0326cd review requested entry cancellation inside sequential ACK loops. Corrected in afd7aed9 and cd60d109: per-entry cancellation checked before each ACK; deletion-during-ACK1/successor regression; pre-await authority capture; same-object endpoint/scope generation fences; Node >=18 AbortController/listener compatibility.
 
-Reviewed revision: cd60d1096dbee627132ed88df07d5bd24757e5bf. Final disposition: "Approve the technical plan"; "No remaining technical plan findings." Reviewer assessed source callers, retained original repro evidence, cancellation/commit uncertainty and verification coverage without rerunning tests or editing files. High remains justified by durable receipt authority. Native disposal/subscription behavior is still unverified and remains a prerequisite/stop condition; hard process termination does not qualify it. Human plan approval is separate and pending.
+Reviewed revision: cd60d1096dbee627132ed88df07d5bd24757e5bf. Final disposition: "Approve the technical plan"; "No remaining technical plan findings." Reviewer assessed source callers, retained original repro evidence, cancellation/commit uncertainty and verification coverage without rerunning tests or editing files. High remains justified by durable receipt authority. Native disposal/subscription behavior was a prerequisite at planning; the real source-watch reload witness below discharged it. Human plan approval subsequently arrived and is recorded in Approvals; human result approval remains separate.
 
 ## Evidence
 
 - Native primitive/source-watch prerequisite passed on isolated copied official 2.0.24: hooks/events retired while HTTP body, native prompt and native wait remained pending; see build/native-disposal-qualification-1791390425543428100.
 - Real native caller regression uses frozen pre-fix source 73417f97: late ACK assertion failed (8.66s). Production fix passed on 2.0.24 (42.22s) and 2.0.22 (42.46s), including successor claim-lease recovery and existing lifecycle journeys; source hashes/fixtures in build/native-retirement-evidence.json and build/native-retirement-2022-evidence.json. Normal-path evidence will be reviewed for reuse after focused reentrant/error cleanup corrections.
-- Affected helper/caller suite: 66 passed / 6 platform skips. Independent result review found reentrant disposal and synchronous hook-disposal failure; both corrected, with focused shared-promise/all-hook-attempt/async-error regressions passing. Final validation and final independent result/verification-adequacy review remain pending.
+- Earlier affected helper/caller suite: 66 passed / 6 platform skips. Independent result review found reentrant disposal and synchronous hook-disposal failure; both corrected, with focused shared-promise/all-hook-attempt/async-error regressions passing.
+- Separate verification review found missing assertions for successors established during detach/close and successful draining of all queued sessions. Added three synchronized caller cases plus per-request hook/event retirement assertions and exact initial-slot checks; focused six cases passed. Test-only commit 947ec03ee73fb7ee9f523ac561d96e6a98ac14ae leaves production and Python/native tests unchanged from af2591e2bb763c9c34904007f78716c9024a5511.
+- Final package: `npm --prefix integrations/opencode test`, 96 passed / 7 existing Windows structural-discovery skips / 0 failed (103 tests, 21.450s), on 947ec03e. Temporary HOME/USERPROFILE/XDG/npm cache; log `build/final-validation-af2591e2/opencode-package-947ec03e.log`.
+- Required full non-slow lane: `C:/Dev/rore/Pallium/.venv/Scripts/python.exe -m pytest tests/ -x -q`, 6332 passed / 45 skipped / 2 xfailed / 0 failed (443.92s), on unchanged af2591e2 production/Python content. Process-local profile isolated; log `build/final-validation-af2591e2/python-full-nonslow.log`. The quiet summary does not enumerate skip/xfail reasons; targeted native qualification is separately recorded above.
+- Fresh selector on 947ec03e: `python scripts/test-plan.py --base origin/main`, full lane, seven intended paths; `build/final-validation-af2591e2/test-plan-947ec03e.json`. Actual import-boundary report passes; whole-change Redline GRAY, no API/schema/runtime-configuration/security changes or required checkpoints, judgment High retained. Final workflow and diff checks pass; reports retained under `build/`.
 
-Pre-edit reports: `build/import-linter-report.json`, `build/opencode-disposal-intended.z`, `build/opencode-disposal-redline.json`. No implementation validation claimed.
+| Acceptance contract | Observable verification |
+|---|---|
+| Retired callbacks cannot attach, ACK, enroll, capture, prompt, wait or settle | Synchronized caller regressions pause ownership, headers/body, discovery/enrollment and native continuations; actual native source-watch reload proves no stale ACK/provider payload |
+| Retired or replaced entry cannot damage successor authority | Two-delivery ACK1 retirement, same-entry scope-generation replacement, and successor creation during detach/close assert request counts, pins and cached context |
+| Local retirement precedes remote cleanup; one 500 ms window, at most four in flight | Zero/one/nine stalled-session controlled deadlines plus successful nine-session exact-once draining; per-request hook/event retirement assertions |
+| Disposal has one result and does not hide hook errors | Reentrant abort listener shares exact promise; sync/async hook failures attempt all registrations, wait for remaining retirement and return AggregateError |
+| Claim uncertainty and supported caller compatibility preserved | Frozen native baseline fails late ACK; native 2.0.22/2.0.24 hot reload and successor lease recovery pass; full V1/package and Python lanes pass |
+
+Pre-edit reports: `build/opencode-disposal-intended.z`, `build/opencode-disposal-redline.json`. Final reports: `build/import-linter-report.json`, `build/opencode-disposal-final.z`, `build/opencode-disposal-final.numstat`, `build/opencode-disposal-final.diff`, `build/redline-verdict.json`, `build/opencode-disposal-final-redline.md`.
+
+## Result review
+
+Agent technical review: /root/disposal_result_review, clean-context non-implementer.
+
+Reviewed revision: 947ec03ee73fb7ee9f523ac561d96e6a98ac14ae.
+
+Final disposition: "Technical and verification approval"; "No remaining findings." Both original P2 findings resolved with synchronized regressions. Reviewer inspected final test-only diff, package/full validation logs, baseline failure, native pass logs/lifecycle and source snapshots, and approved reuse of 2.0.24 normal-path evidence after cleanup reentrancy/error changes. The 2.0.22 snapshot differs from final refined source only in indentation.
+
+Verification adequacy: /root/disposal_verification_adequacy, separate clean-context review. Initial findings required successor-during-deletion assertions and successful nine-session draining. Both resolved in 947ec03e; final disposition: "Acceptance coverage is adequate for OC-2/OC-5 within the previously stated native/version limits. No remaining verification findings." Final package/full validation is recorded above and approved by the result reviewer. No arbitrary-version, OC-1/3/4/6/7/8, merged, installed or live-qualification claim follows.
+
+Human result review: pending; manager owns the single concrete result-review request, publication, CI/review-thread reconciliation and combined acceptance. Existing human plan approval does not satisfy this separate gate and authorizes no live environment changes.
+
+Roadmap reconciliation: manager was notified to move the canonical PR299 feature from queued to active and replace obsolete "implementation not started" text with first-slice source/verification completion, leaving the rest open. Canonical edits remain manager-owned; no roadmap scope expansion in this branch.
+
+Skill feedback trigger 3 dropped: machine-local command creation failure is environment-owned, not an upstream Agent Workflow defect. Initial wrong checkpoint path was a caller mistake, not a broken upstream reference.
 
 ## Recovery
 
-Next action: failing synchronized caller regressions and isolated native cleanup qualification, then the approved minimal correction. Required plan reviews and human approval have passed. Canonical roadmap is manager-owned; PR299 publication does not authorize live changes.
+Next action: deliver reviewed revision 947ec03e plus this evidence record to manager for publication and separate human result approval. Local verification has passed. Keep the canonical feature active with remaining findings open. No source merge, deployment, installed restart/reload or profile migration is authorized by these tests or the plan approval.
 
-- Technical plan review approved cd60d109 after all findings were addressed; only human plan approval remains before implementation. No application/test code changed.
+- Historical planning checkpoint: technical plan review approved cd60d109 before application edits; human approval subsequently arrived below.
 
 - 2026-10-07 16:20:20 UTC: Manager forwarded exact human plan approval; verified source turn and advanced Ready to implement. No live changes authorized.
