@@ -24,7 +24,7 @@ Native multi-step/tool-plus-text and reload -> released isolated binary with loc
 **Plan review:** Agent technical review: /root/capture_contract_discovery, approved exact recorded plan at `3f367ef2a8a86fe78dd4e146bfb23d8d089c63d5` within existing best-effort latest-user capture semantics; see Technical plan review below. Elevated/Moderate appropriate. No historical backfill or guarantee every completed native turn is retained. Native prerequisite evidence alone does not approve implementation results.
 **Approvals:** Separate human plan approval not required at Elevated risk; user authorized the remediation. No live deployment authorization in this record.
 **Exceptions:** —
-**State:** Ready to implement
+**State:** Blocked or returned to planning
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -42,7 +42,7 @@ Native multi-step/tool-plus-text and reload -> released isolated binary with loc
 
 ## Recovery
 
-Source implemented and independently approved at 69fe4eab; verification remains incomplete. Both released-native versions passed, but independent adequacy withheld approval for scope, boundaries, tool-trace and lifecycle stored-state/readback gaps. Bounded delegates are expanding the two existing HTTP/native tests without source changes; parent reviews final diff and obtains a separate nonimplementer adequacy review. Full non-slow parallel validation stopped on an unchanged Claude wake one-second synchronization barrier; exact --lf serial rerun passed, full serial rerun is active. Keep OC-1 compaction investigation separate and canonical item active. No deployment/restart, historical backfill guarantee or OC-3 completion claim.
+Frozen behavioral revision 34b7e0d2 is source-approved and separately adequate after addressing all named coverage gaps. Full validation remains blocked: parallel failure, serial failure/hang and passing focused reruns are recorded below without a clean full-lane claim. Manager coordinates existing Claude/Codex owners and authoritative exact-head CI disposition. Next action is that validation disposition, then final record/check/roadmap reconciliation and manager publication/merge. Keep OC-1 compaction investigation separate and canonical item active. No deployment/restart, historical backfill guarantee or OC-3 completion claim.
 
 ## Verification in progress
 
@@ -50,6 +50,17 @@ Source implemented and independently approved at 69fe4eab; verification remains 
 - Exact 69fe4eab released-native tests passed official 2.0.24 in 50.13s and 2.0.22 in 50.14s; manifests in build/native-capture-released-2024 and build/native-capture-released-2022. They prove completion markers/default compaction/source uniqueness; 1..2 forwarded attempts permit reservation overlap, so they do not independently prove a native retry occurred. Real HTTP lost-response/reload proof is separate.
 - /root/capture_verification_adequacy withheld approval: distinct-scope payload-only checks, missing HTTP empty/max/over-max/eligibility/lifecycle coverage, and native History choosing the first text-only capture. The reviewer is now implementing the bounded HTTP test expansion, so a different nonimplementer must provide final adequacy review. /root/disposal_native_qualification expands exact native tool-turn identity/readback; a first enhanced run exposed Windows cp1252 log decoding of newly logged Unicode, corrected explicitly to UTF-8 without weakening behavior.
 - Full non-slow parallel run: 1 failed, 1232 passed, 2 skipped, 1 xfailed in 261.37s. Unchanged test_new_publisher_waits_for_registry_compare_delete's one-second lock hold expired during child process startup; failure and thread warning retained in build/capture-validation-69fe4eab/python-full-nonslow.log. Exact --lf --lfnf=none -q -n 0 -m 'not slow' passed 1 in 0.80s; full serial lane is running, not yet passing. No unrelated test changes or exclusions.
+
+- Frozen behavioral revision 34b7e0d2f8c3d38a69b220e9cf5232f61d7e35b9: expanded HTTP passed 47.47s; final released-native 2.0.24 passed 51.23s and 2.0.22 passed 63.28s. Both actually observed two committed-response-loss attempts sharing one underlying receipt/source ID and exact multi-assistant final-ID scoped History. Current test SHA256 3361D279936B837A9D97C3B699958349C19508754D39AC7522A22EF5B7B71043 matches both manifests. HTTP proves stored scope separation/denial, Unicode UTF-16 boundaries, completion retry, >2-step aggregation and disposal/delete/rebind successor reservation. Native execute return1 yields no recognized work trace under unchanged extraction; recognized Read trace is asserted on real HTTP payload plus exact History text. Public History omits raw metadata; no API expansion or raw stored-trace claim.
+- Source/result reviewer /root/capture_result_review retains approval at frozen 34b7e0d2. Separate fresh nonimplementer /root/capture_final_adequacy found behavioral verification adequate, no additional targeted check; overall acceptance remains withheld for full-lane disposition. Fresh final selector requires full lane; Redline GRAY, four nonexempt files/664 lines, boundary passes/no API; workflow check clean exit0 with explicit process-local PYTHON. Evidence build/capture-final-34b7e0d2.
+- Serial full run was interrupted after it stopped progressing for over five minutes at 1349 completed node results, around test_codex_retained_wake lock-budget parameters. It contains an F at the unchanged Claude publisher's collection position; interruption yielded no final failure report or full counts, so neither cause nor full-lane success is claimed. Exact six retained lock-budget parameters then passed 9.76s under a 35s external timeout (build/capture-validation-69fe4eab/retained-lock-focused.log). Manager received concrete coordination request for existing Codex/Claude owners and clean exact-head CI validation; no test exclusions/weakening or unrelated fixes. Only our isolated test exec session was interrupted; no installed application/service operation.
+- Skill feedback triggers dropped: reviewer-requested coverage is consumer verification work; missing default Python is a machine runtime prerequisite resolved by process-local executable selection. Neither is an upstream-owned Agent Workflow defect.
+
+## Result review
+
+Agent technical review: /root/capture_result_review, clean-context nonimplementer; source/result approved, no actionable findings.
+Reviewed revision: 34b7e0d2f8c3d38a69b220e9cf5232f61d7e35b9.
+Verification adequacy: /root/capture_final_adequacy, separate clean-context nonimplementer, inspected complete diff/callers/extraction/transport/backend uniqueness, HTTP assertions, native manifests and actual capture artifacts. Behavioral evidence adequate; overall result remains blocked solely on full-suite failure/hang disposition and final manager-owned roadmap reconciliation. Qualified only isolated Windows 2.0.22/2.0.24, best-effort latest-user capture/no historical backfill, already-issued writes may commit after retirement. No source completion/merge/deployment claim.
 
 ## Concrete completed-assistant contract
 
