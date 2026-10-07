@@ -67,6 +67,17 @@ on service restart: qualify an updated worker using a normally reloaded dedicate
 child, never by interrupting active user chats or treating service health as
 delivery evidence.
 
+`/status` and the Relay summary expose `relay_wake.native_enrollment` as cached
+lifecycle evidence from this service instance. `never_registered` means no
+registration was accepted in this instance; `registered`, `retained_disconnected`,
+`authority_cleared`, `unresolved_handles`, and `released` describe the last
+observed lifecycle state. `unavailable` means the service snapshot is missing,
+malformed, or its cached evidence was lost while an outcome remained unresolved;
+it does not imply that registration was never accepted. These fields do not probe native handles, prove reachability, identify
+the live owner, or establish the loaded worker version. Continuity opt-in records
+the registration protocol used. The last failure stage and reason are fixed
+categories and may describe an older event after cleanup.
+
 A slow native delivery may cause another registration to return authenticated
 `busy`. An already admitted, unchanged live source keeps its checked connection
 and previous caller, without retrying the registration. Busy does not enroll a
