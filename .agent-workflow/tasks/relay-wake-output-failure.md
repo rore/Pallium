@@ -24,17 +24,18 @@
 
 **Material assumptions:** Supported Codex hosts honor the documented exit-two blocking contract; installed behavior remains to be separately qualified. Input must be successfully read and parsed to identify a wake; malformed/unreadable input and external host termination cannot be classified or repaired by this hook. A stderr error must not turn the intended exit two into exit one; a blocked stderr pipe or host hard timeout can still prevent completion. Unexpected additional exact-wake routing defects return to planning rather than silently expanding this fix.
 
-**Plan:** Invoke /agent-workflow and classify before code edits (completed). First obtain clean-context smart plan review. Move existing exact wake recognition immediately after validating the prompt, before scope/actor resolution, without broadening its grammar. Track successful payload emission using a local boolean. Reuse the existing JSON block for ordinary suppression. On failed block emission or a caught exception before a recognized wake payload has successfully emitted, write a fixed best-effort stderr blocking reason and exit two even if that write raises. Keep ordinary prompts fail-open and emitted-payload/failed-ACK behavior unchanged. Do not change common.emit_utf8 or create generic output machinery. Extend existing deadline/hook fixtures with deterministic expiry and write failures, exception-before-scope and normal/success controls, including real hook plus HTTP lease/state evidence. A cheap implementer owns the bounded patch; root and an independent smart reviewer verify it. Stop if changes require authority, shared deadline semantics, protected requirement changes or live environment mutation. Final selector, full serial non-slow suite and exact-head CI gate the PR. Deployment requires an exact separately approved change/impact/backup/rollback plan.
+**Plan:** Invoke /agent-workflow and classify before code edits (completed). First obtain clean-context smart plan review. Initialize recognition/emission flags before the outer try. Move existing exact wake recognition immediately after validating the prompt, before scope/actor resolution, without broadening its grammar. Set the emitted flag immediately after emit_context returns, before diagnostics or ACK; partial output never sets it. Reuse the existing JSON block for ordinary suppression. On failed block emission or a caught exception before a recognized wake payload has successfully emitted, use one hook-local failure exit: write and flush a fixed best-effort stderr blocking reason, then os._exit(2) in finally. This avoids Python cleanup changing the blocking signal to exit 120 after buffered-stream errors; do not flush or replay uncertain stdout. Existing scope and relay_turn calls unwind their original lock/HTTP cleanup before this exit; timed-out daemon I/O can be terminated with the hook, without replay or rollback. Keep ordinary prompts fail-open and emitted-payload/failed-ACK behavior unchanged, including no retroactive block or undo of committed ACK. Do not change common.emit_utf8 or create generic output machinery. Extend existing deadline/hook fixtures with deterministic expiry and write failures, exception-before-scope and normal/success controls, including real hook plus HTTP lease/state evidence and actual subprocess return codes. A cheap implementer owns the bounded patch; root and an independent smart reviewer verify it. Stop if cleanup inspection disproves safe hook-only exit or changes require authority, shared deadline semantics, protected requirement changes or live environment mutation. Final selector, full serial non-slow suite and exact-head CI gate the PR. Deployment requires an exact separately approved change/impact/backup/rollback plan.
 
 **Verification plan:**
 When suppression output expires or fails, the recognized wake shall exit two without memory/ACK work → existing hook caller tests with deterministic clock, write/flush failures, Unicode input and absent payload assertions.
+When stdout partially writes or fails to flush, or stderr writing/flushing fails, the hook shall preserve its actual blocking process signal without claiming rollback or receipt → isolated subprocess tests asserting return code two, captured output and no ACK/memory side effects, plus successful-stream controls. In-process SystemExit assertions alone are insufficient.
 When verified payload output fails after claim, the wake shall exit two without ACK and retain its recoverable lease → existing real hook/HTTP fault fixtures and the normal delivery read path.
 When scope/discovery/formatting fails after recognition, the wake shall block without ordinary ingestion → injected exception caller-surface cases before and after scope resolution.
 When payload output succeeds, the hook shall ACK only afterwards and preserve failure/recovery states → existing emitted-payload/ACK-loss lifecycle tests, including later lease recovery.
 When suppression output succeeds or a prompt is ordinary/near-match/unreadable, existing documented behavior shall remain → existing block JSON, normal ingestion and malformed-input controls.
 When the complete isolated patch is reviewed, all required checks shall pass → whole-change selector, full non-slow serial suite, workflow/Redline/import checks, smart result review and required platform CI.
 
-**Plan review:** Pending clean-context technical review of this exact plan. No production or test edit permitted yet.
+**Plan review:** Initial clean-context review by /root/wake_output_plan_review confirms Elevated/Moderate, but requires actual subprocess exit coverage and failed-stream finalization handling. Repaired plan now uses hook-local os._exit only on recognized pre-emission failure and sets the emitted latch before diagnostics/ACK. Confirmation pending; no production or test edit permitted yet.
 
 **Approvals:** Existing user authorization covers isolated implementation. No new live environment approval is implied. Technical review must confirm classification; a High-risk reassessment requires a separately presented human plan decision.
 
@@ -54,3 +55,16 @@ When the complete isolated patch is reviewed, all required checks shall pass →
 ## Recovery state
 
 Branch feat/relay-wake-output-failure, exact base 658affdd8c1af9ad2cefc3d10368f32811c50bd8. Only this pre-edit record exists. Next: independent plan review, then implement only its approved scope. Do not overlap pytest with the diagnostic worktree's running full suite.
+
+## Pre-edit review repair
+
+The initial independent review found Python standard-stream finalization can
+override SystemExit with exit 120. [Python exit documentation](https://docs.python.org/3.13/library/sys.html#sys.exit).
+The revised plan uses the smallest direct child-hook failure exit, not stream
+replacement or a generic output subsystem. os._exit skips cleanup and buffered
+flushes, so its use is limited to this standalone hook's recognized failed-output
+path after synchronous request/lock unwinding; successful output, ACK and normal
+prompt exits remain untouched. [Python process exit documentation](https://docs.python.org/3.13/library/os.html#os._exit).
+Real subprocess cases are required for zero/partial output, stdout and stderr
+write/flush failures. Blocked pipes and external host kill remain unqualified.
+Pre-edit intended-path Redline is GRAY with no checkpoints or boundary violations.
