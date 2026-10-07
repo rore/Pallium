@@ -203,8 +203,9 @@ gpt-6.1-sol/high, approved exact revision
 The hook/test/roadmap blobs match the independently reviewed candidate and the
 operations corrections survived integration of actual merged base ae110a51.
 
-Reviewed revision: 4c62845f37ed075253cfc9d372de31a980da981e. Only the review
-record and its required field labels changed afterwards; source/tests are unchanged.
+Reviewed revision: e67dcb6e82909336a0cf83ba07507981e72203ca. The same independent
+reviewer approved its bounded documentation delta after original source/result
+approval at 4c62845f. Hook and test blobs remain unchanged from full-tested b950ac70.
 
 Verification adequacy: approved after 11 focused, 227 affected and 6376 full
 serial passes, plus import, Redline and workflow checks. Only this Work Record
@@ -226,3 +227,9 @@ corrected; production and test blobs are unchanged from the full-tested tree.
 Final smart review of this documentation-only delta and fresh exact-head CI
 remain gates. No docstring generator, setting change or review-limit override
 was used. Installed acceptance and the broader incident remain open.
+
+Independent /root/wake_output_plan_review approved exact e67dcb6e: both corrected
+statements match the source, with no scope expansion or qualification upgrade.
+Prior source review and full-suite evidence remain valid because hook/test blobs
+are unchanged. Only this approval record changes afterwards. Fresh exact-head CI
+and resolution of both addressed review threads remain merge gates.
