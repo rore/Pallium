@@ -12,7 +12,7 @@ description: Relay, Session History, optional derived memory.
 - Self: injected `agent_ref`/`thread_ref`; never infer.
 - Role target: current `@name`; rediscover before endpoint reuse. Check returned admission session/container if scope matters. Aliases/endpoints move; neither proves scope. No broadcast/bare runtime; takeover by request; ignore ACK-only.
 - Cross-project: `pallium_relay_recipients` is container-local. For unknown containers, load [global discovery](references/global-relay-discovery.md) before sending.
-- For exact work or link correction, load [work associations](references/work-associations.md). For an explicit Minimap implementation or substantive-review assignment, use it when continuity helps; passive browsing, inspection, and clerical edits do not qualify for Minimap participation.
+- For exact work/link correction, load [work associations](references/work-associations.md). For explicitly assigned Minimap implementation, investigation, testing, or substantive review, use it when continuity helps; casual browsing, passive inspection, and clerical edits do not qualify.
 - MCP: reply/ACK before source TTL or 60s lease ends; ACK permits later reply. Use `pallium_relay_reply`; page to `next_offset=null`. On `already_delivered=true` or conflict, only that delivery copy is stale: do not retry/reply/use its payload, but continue the surrounding user task and independently established work.
 
 ## History
