@@ -26,7 +26,12 @@
 
 **Plan:** Invoke agent-workflow, establish immutable requirements and classify before production edits (completed; classification corrected before implementation). Reuse the clean managed diagnostics checkout on feat/relay-empty-work-ref-discovery from e9eb3956; prior diagnostic/fixture publication branches and ignored evidence remain preserved. Obtain independent technical review of this expanded record before edits. Add caller regression using the existing configured-actor hook/TestClient journey and unchanged lifecycle assertions; model slow repository qualification with a private logical clock, retaining budget 8 and reserve 1. Prove pre-fix missing registration. Add the minimal empty discovery guard before repository_scope_ref in both duplicated helpers, not at individual callers. Add parity controls forbidding repository/roadmap lookup for empty discovery, and reuse existing nonempty/identity coverage. Root owns record/evidence; a bounded cheap worker may implement the exact allowlist after approval. No new framework, real sleep, native transport replay, global environment change or independent broad suite.
 
-**Verification plan:** Focus the new caller node and empty parity controls with python -m pytest <node> -q -n 0. Run the affected hook/parity/identity files after a coherent change, then the whole-change selector and fresh governance. Source/test changes require full non-slow and exact-head CI before completion, but the manager has explicitly held new full runs until combined candidate sequencing is settled. Focused passes, simulated transport or this deterministic susceptibility witness do not qualify installed recovery or explain previous failures. Preserve active claim and successful ACK behavior; never weaken protected assertions. Native mutation prevention is not claimed for these integration paths; no installation or evaluator outcome substitutes for a denied native operation.
+**Verification plan:**
+Empty discovery skips optional qualification -> focused caller and parity nodes with python -m pytest <node> -q -n 0; preserve original registration/send/emission/ACK assertions and budgets.
+Nonempty and identity behavior remains unchanged -> affected hook/parity/identity files after a coherent change.
+Whole-change compliance -> selector, import checks, redline and workflow on the frozen candidate.
+Publication acceptance -> full non-slow and exact-head CI before completion; the manager holds new full runs until combined candidate sequencing is settled.
+manual: Focused passes, simulated transport and deterministic susceptibility do not qualify installed recovery or explain previous failures. Preserve active claim and successful ACK behavior; never weaken protected assertions. Native mutation prevention is not claimed for these integration paths; no installation or evaluator outcome substitutes for a denied native operation.
 
 **Plan review:** Agent technical review: /root/wake_output_plan_review (gpt-6.1-sol/high) approved corrected exact plan 81a5cdcbef1571963ce9f67296cf795cbf6eceb3 as Elevated/Simple. Case-sensitive comparison confirmed all immutable requirements and baseline fields unchanged. Direct supported-empty guard and proposed caller/parity coverage are technically sound; hook-private clock and original lifecycle assertions/budgets must remain. Review rejected 231a485ea9316c640bc6deda7de1139bda6a064a for its Routine/compact classification; no implementation followed it and it is not retroactively approved. This is plan approval, not result/full/CI or installed acceptance.
 
@@ -34,7 +39,7 @@
 
 **Exceptions:** —
 
-**State:** Implemented; independent result review, whole-change governance and manager-sequenced full validation/CI pending. Not accepted or installed.
+**State:** Blocked
 <!-- agent-workflow:end -->
 
 ## Discovery and ownership
@@ -127,3 +132,35 @@ not a historical cause, full-suite pass or installed-host recovery acceptance.
 Nonempty optional starvation and the earlier probe/closed-intent incidents
 remain unresolved. Publication is held for independent review, required gates
 and the manager's combined validation sequencing.
+
+## Validation hold
+
+Blocked here means the manager has explicitly held new full runs until the
+combined candidate is settled. It does not indicate a source implementation
+blocker or request for additional human approval. The whole-change selector
+requires the full lane. Fresh import checks found no violations; redline remains
+GRAY/Elevated with no boundary/API/schema/security/configuration changes.
+The initial workflow check rejected the free-form State value at f49ffa0a;
+this record-only correction uses an allowed state and maps verification criteria
+to methods without changing the immutable requirement baseline or tests.
+No full/CI/installed acceptance has occurred.
+
+## Result review
+
+Agent technical review: /root/wake_output_plan_review (gpt-6.1-sol/high).
+Reviewed revision: f49ffa0ab44af42ae716b1637dbd707ad7d1cabe.
+Outcome: Technical source/focused-evidence approval, subject to the records-only
+State correction and all remaining gates. The reviewer inspected the full
+five-file diff, private clock and deadline restoration, preserved lifecycle
+assertions, parity and nonempty controls, and exact four source/test blob hashes.
+No source/test adequacy blocker or smaller correct implementation was found.
+One blocking metadata issue was the unsupported State value; it is corrected
+to Blocked, explicitly for the manager's validation sequencing hold.
+Verification adequacy: Partial. Six intended pre-fix failures, six post-fix
+passes and 273 affected passes demonstrate this narrow slice. Required full
+non-slow and exact-head CI remain pending, as do installed-host qualification
+and parent acceptance. No historical attribution or native prevention claim.
+Requirement compliance: Immutable requirements and output-preserving scope
+remain intact; no nonempty, identity, deadline, claim/emission/ACK, protocol or
+live-environment change. Nonempty optional starvation and unexplained historical
+failures are not closed by this result review.
