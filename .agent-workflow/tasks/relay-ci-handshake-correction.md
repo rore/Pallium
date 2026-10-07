@@ -24,7 +24,7 @@
 
 **Verification:** Delayed startup with the old gate fails at missing contention; both startup cases pass after the correction through a real child/native lock and unchanged registry readback. Run the exact node with -q -n 0, then the affected file and whole-change selector. Application/test changes require one full non-slow run, coordinated with outage/OC3 validation at an explicitly recorded combined revision, per-test faulthandler and a behavior-preserving observer limited to the unexplained hook probe. Fresh workflow/Redline and exact-head CI remain required. Preserved failure/hang logs and isolated passing retries do not establish historical causes.
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Discovery and ownership
@@ -93,3 +93,23 @@ candidate. Required combined full validation and eventual exact-head CI/review
 remain gates; parent recovery and historical probe/hang causes remain open.
 The stale implementation text and tool-result/file-log distinction were already
 corrected while this review was running; no reviewed test bytes changed.
+
+## Combined validation and publication checkpoint — 2026-10-08
+
+The reviewed combined candidate `dbddfcf18bf344b27bb8700666b413bf771c8273`
+(tree `7b206859a21f03ca5f3ec4cf0fe74a4e1701ab62`) passed the coordinated full
+serial suite: 6,410 passed, 34 skipped, 483 deselected, and 2 xfailed in
+2,367.34 seconds. Log SHA-256:
+`F180C5057A4EC9DF34ADA6D3495AD63180B78DF45DD04F7C8CC9A738F525D673`.
+The combined candidate includes the earlier `0589470e` work and the empty-ref
+slice, with outage, fixture, and OC3 source/test blobs frozen. This slice's
+source/test identities match the combined tree, so full evidence is reused by
+blob/tree identity; the publication branch was not independently full-tested.
+
+Independent non-implementer review `/root/wake_output_plan_review`
+(`gpt-6.1-sol/high`) reviewed the combined candidate and found no evidence
+blocker. Normal reviewed PR publication is authorized. Exact-head CI,
+automated PR review, and manager merge checks remain pending. No live sync or
+restart occurred. Parent High/Large historical and native-installed
+acceptance remains open. Three diagnostic 30-second stacks occurred in passed
+tests; they are neither waivers nor causal attribution.
