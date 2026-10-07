@@ -182,13 +182,15 @@ f3268a7dd5c683d7a32cd3b8942a07fe92bb8d09.
 Agent technical review: /root/ci_fixture_plan_review, independent
 gpt-6.1-sol/high source review and final test-correction confirmation.
 
-Reviewed revision: cbf36b26, incorporated unchanged into combined tree
-7adc6ddb79369c9f31623764bfcef92dd0fd1c84 with the exact merged PR298 dependency.
+Reviewed revision: a07f1e34e62ecd39d7e20fb4dcf4f8fbb00463ed, containing the unchanged
+combined application/test tree 7adc6ddb79369c9f31623764bfcef92dd0fd1c84 and the
+exact merged PR298 dependency.
 
-Verification adequacy: Source and affected caller-surface evidence are adequate
-to proceed to whole-change validation. The 270 affected passes are not full-suite
-or installed-host acceptance. Full non-slow validation and final result
-assessment remain pending. Diagnostic reads add no native probes, admission or
+Verification adequacy: Independent final result review approved opening the
+diagnostic PR after 270 affected, 7 focused and 6369 full non-slow serial passes,
+plus selector, import, Redline and workflow checks. No source/result blockers
+remain. Native transport remains simulated; exact-head PR CI and review-thread
+resolution still gate merge. Diagnostic reads add no native probes, admission or
 delivery changes; original incidents and suppression-output-expiry remain open.
 
 ## Whole-change validation
@@ -201,7 +203,7 @@ in 1410.51s, exit zero. The whole-change selector selected the full lane.
 Import-linter reported zero violations; final-path Redline was GRAY with no
 required checkpoints, boundary violations or protected contract changes.
 Workflow compliance passed with the actual Redline artifact and source-review
-record. Final result adequacy and exact-head PR CI remain gates.
+record. Final result adequacy passed at a07f1e34; exact-head PR CI remains a gate.
 
 Skill feedback trigger 2 dropped: the corrected source/test judgments concern
 the consumer implementation, not an agent-workflow defect. The workflow's state
