@@ -34,7 +34,7 @@
 
 **Exceptions:** —
 
-**State:** Blocked or returned to planning
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -86,7 +86,22 @@ hot-reload acceptance, and the required safe-window installed wrapper restart
 with health checks. Installed recovery qualification remains separately open.
 
 Current isolated base: f31ac14186943cdc60ce10dbb37e26c42a3496bc on
-feat/relay-recovery-closure. Smart plan review is pending; no test source changed.
+feat/relay-recovery-closure. Agent technical plan review:
+/root/ci_fixture_plan_review (gpt-6.1-sol/high), approved narrowly at
+29a27485a0a62382b28370652a869abe7f21b859. No requirement change or new
+authority is introduced; the existing approved diagnostic/test scope applies.
+Use a finite completion Event around the real append for every observer reader
+requiring complete evidence; retain independent blocked/failed logger checks.
+The controlled delayed writer must prove bounded undo and restored references
+before release, then exactly one response and complete terminal evidence.
+Remove only unsupported canceled-client server-write completion assumptions;
+retain every hook elapsed/state/trace/no-emission assertion. Extend the existing
+response fixture with controlled partial-byte progress followed by an incomplete
+blocked body, asserting progress before return, unfinished reader, unchanged
+1.5-second outer join and unavailable result. Release and join in finally.
+This deterministic model complements, not replaces, real HTTP coverage.
+No test source changed before review. Native ownership/recovery acceptance
+and earlier unexplained incidents remain open outside this resumed CI slice.
 
 ### Passive exact-session diagnostic plan, 2026-10-07
 
