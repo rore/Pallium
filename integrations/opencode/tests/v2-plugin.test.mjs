@@ -159,6 +159,7 @@ async function callerFixture(options = {}) {
   const retired = [];
   const events = [];
   let eventReady;
+  let eventRetired = false;
   let interval;
   let listed = 0;
   globalThis.setInterval = (fn) => { interval = fn; return { unref() {} }; };
@@ -201,19 +202,21 @@ async function callerFixture(options = {}) {
       interrupt: async () => { native.interrupt++; },
     },
     event: { subscribe: async function* ({ signal }) {
+      try {
       while (!signal.aborted) {
-        if (events.length) { yield events.shift(); continue; }
+        if (events.length) { const event = events.shift(); yield event; options.afterEvent?.(event); continue; }
         await new Promise((resolve) => {
           eventReady = resolve;
           signal.addEventListener("abort", resolve, { once: true });
         });
       }
+      } finally { eventRetired = true; }
     } },
   };
   const dispose = await v2.setup(ctx);
   await pause();
   return {
-    calls, native, hooks, history, retired, dispose, listed: () => listed,
+    calls, native, hooks, history, retired, dispose, listed: () => listed, eventRetired: () => eventRetired,
     emit: async (event) => { events.push(event); eventReady?.(); await pause(); },
     tick: async () => { interval(); await pause(); },
     close: async () => {
@@ -641,6 +644,65 @@ test("replaced scope generation fences an older response inside the same entry",
   } finally { gate.release(); await running; await f.close(); }
 });
 
+for (const blocked of ["detach", "close"]) {
+  test(`deletion waiting for ${blocked} preserves a replacement entry and pin`, async () => {
+    const gate = barrier();
+    let completed;
+    const eventDone = new Promise((resolve) => { completed = resolve; });
+    let block = true;
+    const f = await callerFixture({ afterEvent: completed, fetch: async (route, body) => {
+      if (block && (blocked === "detach" ? body.operation === "detach" : route === "/relay/sessions/close")) {
+        await gate.wait();
+        return jsonResponse({});
+      }
+    } });
+    try {
+      await f.emit({ type: "session.deleted", location: { directory: location }, data: { sessionID } });
+      await gate.entered;
+      await f.hooks.prompt({ sessionID, messageID: "msg_replacement_pin", prompt: { text: "ordinary work" } });
+      const successor = natural("msg_replacement_context");
+      await f.hooks.context({ sessionID, messages: [successor] });
+      const before = structuredClone(successor);
+      const pin = getPinnedContainer(sessionID);
+      assert.equal(pin, container);
+      block = false;
+      gate.release();
+      await eventDone;
+      assert.equal(f.calls.filter((c) => c.path === "/relay/sessions/close").length, blocked === "close" ? 1 : 0);
+      assert.equal(getPinnedContainer(sessionID), pin);
+      assert.deepEqual(successor, before);
+      const turns = f.calls.filter((c) => c.path === "/relay/turn").length;
+      await f.hooks.context({ sessionID, messages: [natural("msg_replacement_context")] });
+      assert.equal(f.calls.filter((c) => c.path === "/relay/turn").length, turns, "replacement claim survives old deletion cleanup");
+    } finally { block = false; gate.release(); await f.close(); }
+  });
+}
+
+test("successful bounded cleanup detaches every session once after local retirement", async () => {
+  const entries = Array.from({ length: 9 }, (_, n) => ({ ...relaySession, session_ref: `ses_drain_${n}` }));
+  const detached = [];
+  let inflight = 0, maximum = 0;
+  const f = await callerFixture({ list: [entries], fetch: async (_route, body) => {
+    if (body.operation !== "detach") return;
+    assert.deepEqual([...f.retired].sort(), ["compaction", "context", "prompt"]);
+    assert.equal(f.eventRetired(), true, "event registration retires before every remote request");
+    detached.push(body.session_ref);
+    maximum = Math.max(maximum, ++inflight);
+    await new Promise(setImmediate);
+    inflight--;
+    return jsonResponse({});
+  } });
+  try {
+    const cleanup = f.dispose();
+    assert.equal(f.dispose(), cleanup);
+    await cleanup;
+    assert.deepEqual(detached.sort(), entries.map((entry) => entry.session_ref).sort());
+    assert.equal(maximum, 4);
+    await f.dispose();
+    assert.equal(detached.length, entries.length);
+  } finally { await f.close(); }
+});
+
 test("cleanup attempts all hooks and reports failures after pending retirement finishes", async () => {
   const gate = barrier();
   const f = await callerFixture({ dispose: (name) => {
@@ -689,6 +751,8 @@ for (const count of [0, 1, 9]) {
     let inflight = 0, maximum = 0;
     const f = await callerFixture({ list: [entries], fetch: async (_route, body, init) => {
       if (body.operation !== "detach") return;
+      assert.deepEqual([...f.retired].sort(), ["compaction", "context", "prompt"]);
+      assert.equal(f.eventRetired(), true, "event registration retires before every remote request");
       const gate = barrier();
       requests.push({ gate, signal: init.signal });
       maximum = Math.max(maximum, ++inflight);
@@ -717,6 +781,7 @@ for (const count of [0, 1, 9]) {
     try {
       await new Promise(setImmediate);
       assert.deepEqual(f.retired.sort(), ["compaction", "context", "prompt"], "local registrations retire before remote responses");
+      assert.equal(requests.length, Math.min(4, count), "start every available cleanup slot after local retirement");
       assert.ok(maximum <= 4, "at most four remote detach requests may be in flight");
       if (count) assert.equal(finished, false, "shutdown must wait for cleanup or its deadline");
       // Advance exactly the existing 500 ms deadlines once. A serial per-session
