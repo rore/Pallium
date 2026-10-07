@@ -27,7 +27,13 @@ export function normalizeFilterMap(filters) {
 
 export function itemMatchesFilters(item, ctx = {}) {
   if (!item) return false;
-  const { searchQuery = "", activeFilters = {} } = ctx;
+  const { searchQuery = "", activeFilters = {}, inPlay = false, participantCounts } = ctx;
+  if (inPlay) {
+    const inProgress = normalizeFilterValues(item.metadata?.status ?? item.status)
+      .some((status) => ["active", "in-progress"].includes(status.toLowerCase()));
+    const count = participantCounts?.get(item.id)?.participantCount;
+    if (!inProgress && !(Number.isSafeInteger(count) && count > 0)) return false;
+  }
   if (searchQuery && !String(item.searchText || "").includes(searchQuery)) return false;
   for (const [key, selectedValues] of Object.entries(activeFilters)) {
     const itemValues = normalizeFilterValues(item.metadata?.[key]);
@@ -41,7 +47,7 @@ export function filterBoardItemIds(workspace, ctx = {}) {
   const orderedIds = workspace.boardGroups.flatMap((group) =>
     group.items.filter((item) => !item.missing).map((item) => item.id),
   );
-  const searchActive = Boolean(ctx.searchQuery) || (ctx.activeFilters && Object.keys(ctx.activeFilters).length > 0);
+  const searchActive = Boolean(ctx.inPlay || ctx.searchQuery) || (ctx.activeFilters && Object.keys(ctx.activeFilters).length > 0);
   if (!searchActive) return orderedIds;
   return orderedIds.filter((itemId) => itemMatchesFilters(workspace.items?.[itemId], ctx));
 }
@@ -56,7 +62,8 @@ export function getItemLensGroupValue(item, lensKey, opts) {
 }
 
 export function buildDerivedVisibleGroups(workspace, lens, opts) {
-  const { defaultLensKey, unassignedKey, unassignedLabel, searchQuery, activeFilters, showEmptyGroups = false } = opts || {};
+  const { defaultLensKey, unassignedKey, unassignedLabel, searchQuery, activeFilters, inPlay, participantCounts, showEmptyGroups = false } = opts || {};
+  const keepEmptyGroups = showEmptyGroups && !inPlay;
   const groups = new Map();
   const preferredValues = Array.isArray(lens?.values) ? lens.values : [];
 
@@ -65,7 +72,7 @@ export function buildDerivedVisibleGroups(workspace, lens, opts) {
   });
 
   const unassignedItems = [];
-  for (const itemId of filterBoardItemIds(workspace, { searchQuery, activeFilters })) {
+  for (const itemId of filterBoardItemIds(workspace, { searchQuery, activeFilters, inPlay, participantCounts })) {
     const item = workspace.items?.[itemId];
     if (!item) continue;
     const groupValue = getItemLensGroupValue(item, lens.key, { defaultLensKey, unassignedKey });
@@ -86,7 +93,7 @@ export function buildDerivedVisibleGroups(workspace, lens, opts) {
   }
 
   const visibleGroups = Array.from(groups.values())
-    .filter((group) => group.items.length > 0 || showEmptyGroups)
+    .filter((group) => group.items.length > 0 || keepEmptyGroups)
     .sort((left, right) => {
       if (left.originalIndex !== right.originalIndex) return left.originalIndex - right.originalIndex;
       return left.name.localeCompare(right.name, undefined, { numeric: true, sensitivity: "base" });
@@ -99,7 +106,7 @@ export function buildDerivedVisibleGroups(workspace, lens, opts) {
     }));
 
   const canClear = Boolean(lens.draggable && !NON_CLEARABLE_LENS_KEYS.has(lens.key));
-  if (unassignedItems.length > 0 || (showEmptyGroups && canClear)) {
+  if (unassignedItems.length > 0 || (keepEmptyGroups && canClear)) {
     visibleGroups.push({
       name: unassignedLabel,
       groupKey: unassignedKey,

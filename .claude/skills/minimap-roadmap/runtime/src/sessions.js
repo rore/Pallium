@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
 import { AppError } from "./roadmap.js";
+import { assertSourceWriteGuard, assertSourceWritePath } from "./source-write-guard.js";
 
 const SESSION_INDEX_FILE = "session-index.json";
 const SESSION_INDEX_VERSION = 1;
@@ -617,10 +618,19 @@ async function readJson(filePath, fallback) {
 //
 // Same pattern as writeAllOrNothing for the multi-file case, kept inline so
 // any single-file write goes through it without callers having to think.
+async function renameWithRetry(from, to) {
+  for (let attempt = 0; ; attempt += 1) {
+    try { await assertSourceWriteGuard(); return await fs.rename(from, to); }
+    catch (error) {
+      if (process.platform !== "win32" || !["EPERM", "EACCES"].includes(error?.code) || attempt === 4) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  }
+}
 async function writeFileAtomic(filePath, content) {
   const tmp = `${filePath}.tmp-${process.pid}`;
   await fs.writeFile(tmp, content, "utf8");
-  await fs.rename(tmp, filePath);
+  await renameWithRetry(tmp, filePath);
 }
 
 async function writeJson(filePath, value) {
@@ -642,6 +652,7 @@ async function readJsonLines(filePath) {
 }
 
 async function appendJsonLine(filePath, value) {
+  await assertSourceWriteGuard();
   await fs.appendFile(filePath, `${JSON.stringify(value)}\n`, "utf8");
 }
 
@@ -658,20 +669,178 @@ function serializeJson(value) {
   return `${JSON.stringify(value, null, 2)}\n`;
 }
 
-// Multi-file transactional write. Each entry is { path, content }. Strategy:
-// write all to .tmp-<pid> paths first, then rename in sequence. Failure in
-// the temp-write phase commits nothing; failure during rename commits a
-// prefix and leaves the .tmp- files alongside, which a human can inspect.
-// This is "atomic-ish" — strong enough to keep the session store consistent
-// across the metadata triple-write, while staying portable on Windows where
-// fs.rename of a file in the same directory is reliable.
+// Stage each entry before sequential same-directory renames. This is NOT
+// multi-file atomic: a rename failure can commit a prefix. Suggestion
+// apply/rollback use a journal to recover that prefix on the next session read.
 async function writeAllOrNothing(entries) {
   const tmps = entries.map((e) => ({ ...e, tmp: `${e.path}.tmp-${process.pid}` }));
   for (const e of tmps) {
     await fs.writeFile(e.tmp, e.content, "utf8");
   }
   for (const e of tmps) {
-    await fs.rename(e.tmp, e.path);
+    await renameWithRetry(e.tmp, e.path);
+  }
+}
+
+const SUGGESTION_JOURNAL = "suggestion-transaction.json";
+const SESSION_LOCK = "session-mutation.lock";
+
+// Cross-process lock for CLI and server mutations. A dead owner can be
+// reclaimed; a recycled PID is deliberately treated as busy, not stolen.
+// ponytail: PID reuse, malformed locks, or a crash during reclaim need manual lock cleanup.
+async function staleSessionLock(lockPath) {
+  const raw = await fs.readFile(lockPath, "utf8").catch(() => null);
+  if (raw === null) return false;
+  let owner;
+  try { owner = JSON.parse(raw); } catch {}
+  if (!Number.isSafeInteger(owner?.pid) || owner.pid <= 0) return false;
+  // Signal 0 only checks process existence; it does not stop the server.
+  try { process.kill(owner.pid, 0); return false; }
+  catch (error) { return error?.code === "ESRCH"; }
+}
+
+async function withSessionMutationLock(paths, work) {
+  const lockPath = path.join(paths.sessionDir, SESSION_LOCK);
+  const reclaimPath = lockPath + ".reclaim";
+  const token = crypto.randomUUID();
+  const deadline = Date.now() + 10_000;
+  while (true) {
+    try {
+      await fs.writeFile(lockPath, JSON.stringify({ pid: process.pid, token }), { flag: "wx" });
+      if (!(await pathExists(reclaimPath))) break;
+      await fs.unlink(lockPath);
+    } catch (error) {
+      if (!["EEXIST", "EPERM", "EACCES"].includes(error?.code)) throw error;
+      if (error?.code === "EEXIST" && await staleSessionLock(lockPath)) {
+        try {
+          await fs.mkdir(reclaimPath);
+          try {
+            if (await staleSessionLock(lockPath)) {
+              await fs.unlink(lockPath).catch((unlinkError) => {
+                if (unlinkError?.code !== "ENOENT") throw unlinkError;
+              });
+            }
+          } finally {
+            await fs.rmdir(reclaimPath);
+          }
+        } catch (reclaimError) {
+          if (reclaimError?.code !== "EEXIST") throw reclaimError;
+        }
+      }
+    }
+    if (Date.now() >= deadline) throw new AppError("Another session edit is still running.", 409, "session_busy");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  try {
+    await assertSourceWriteGuard();
+    return await work();
+  } finally {
+    try {
+      if (JSON.parse(await fs.readFile(lockPath, "utf8")).token === token) await fs.unlink(lockPath);
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+  }
+}
+
+async function recoverSuggestionTransactionUnlocked(paths) {
+  const journalPath = path.join(paths.sessionDir, SUGGESTION_JOURNAL);
+  if (!(await pathExists(journalPath))) return;
+
+  let journal;
+  try { journal = JSON.parse(await fs.readFile(journalPath, "utf8")); } catch {
+    throw new AppError("Suggestion recovery record is damaged; inspect it before editing this session.", 409, "recovery_conflict");
+  }
+  const session = await readJson(paths.sessionJson, null);
+  const allowed = new Set([paths.suggestionsJsonl, paths.commentsJsonl, paths.sessionJson, paths.eventsJsonl]);
+  const required = [paths.suggestionsJsonl, paths.sessionJson, paths.eventsJsonl];
+  const writes = Array.isArray(journal?.writes) ? journal.writes : [];
+  const writePaths = writes.map((entry) => entry?.path);
+  const validHash = (hash) => typeof hash === "string" && /^sha256:[0-9a-f]{64}$/.test(hash);
+  if (!session || journal?.version !== 1 || journal.targetPath !== path.resolve(session.targetFile)
+      || (journal.writePath !== undefined && (typeof journal.writePath !== "string" || !path.isAbsolute(journal.writePath)))
+      || !validHash(journal.beforeHash) || !validHash(journal.afterHash)
+      || writes.length < required.length || new Set(writePaths).size !== writes.length
+      || required.some((entryPath) => !writePaths.includes(entryPath))
+      || writes.some((entry) => !allowed.has(entry?.path)
+        || typeof entry.content !== "string" || !validHash(entry.beforeHash))) {
+    throw new AppError("Suggestion recovery record does not match this session.", 409, "recovery_conflict");
+  }
+  if (journal.writePath && await fs.realpath(journal.targetPath) !== journal.writePath) {
+    throw new AppError("Attached target link changed during suggestion recovery.", 409, "recovery_conflict");
+  }
+  const targetHash = hashText((await readTextTarget(journal.targetPath)).text);
+  if (targetHash !== journal.beforeHash && targetHash !== journal.afterHash) {
+    throw new AppError("Target changed during suggestion recovery; no file was overwritten.", 409, "recovery_conflict");
+  }
+  for (const entry of journal.writes) {
+    const actualHash = hashText(await fs.readFile(entry.path, "utf8"));
+    if (actualHash !== entry.beforeHash && actualHash !== hashText(entry.content)) {
+      throw new AppError("Session metadata changed during suggestion recovery; no file was overwritten.", 409, "recovery_conflict");
+    }
+    if (targetHash !== journal.afterHash && actualHash !== entry.beforeHash) {
+      throw new AppError("Target was restored after metadata changed; inspect the recovery record.", 409, "recovery_conflict");
+    }
+  }
+  if (targetHash === journal.afterHash) await writeAllOrNothing(journal.writes);
+  await fs.unlink(journalPath);
+}
+
+async function recoverSuggestionTransaction(paths) {
+  if (!(await pathExists(path.join(paths.sessionDir, SUGGESTION_JOURNAL)))) return;
+  return withSessionMutationLock(paths, () => recoverSuggestionTransactionUnlocked(paths));
+}
+
+async function withSessionMutation(filePath, options, work) {
+  const session = await getFileSession(filePath, options);
+  const home = options.minimapHome || resolveMinimapHome(options.env || process.env, options.platform || process.platform);
+  const paths = makeSessionPaths(home, session.id);
+  return withSessionMutationLock(paths, async () => {
+    await recoverSuggestionTransactionUnlocked(paths);
+    return work();
+  });
+}
+
+async function commitSuggestionTransaction(paths, targetPath, beforeText, afterText, writes, event) {
+  const journalPath = path.join(paths.sessionDir, SUGGESTION_JOURNAL);
+  await assertSourceWritePath(targetPath);
+  const writePath = await fs.realpath(targetPath);
+  await assertSourceWritePath(writePath);
+  const targetStat = await fs.stat(writePath);
+  if (targetStat.nlink > 1) throw new AppError("Cannot atomically replace a multiply linked target.", 409, "conflict");
+  const targetTmp = `${writePath}.tmp-${process.pid}-${crypto.randomUUID()}`;
+  const allWrites = [...writes, {
+    path: paths.eventsJsonl,
+    content: `${await fs.readFile(paths.eventsJsonl, "utf8")}${JSON.stringify(event)}\n`,
+  }];
+  const entries = await Promise.all(allWrites.map(async (entry) => ({
+    ...entry,
+    beforeHash: hashText(await fs.readFile(entry.path, "utf8")),
+  })));
+  const journal = {
+    version: 1,
+    targetPath,
+    writePath,
+    beforeHash: hashText(beforeText),
+    afterHash: hashText(afterText),
+    writes: entries,
+  };
+  try {
+    await fs.writeFile(targetTmp, afterText, { encoding: "utf8", flag: "wx", mode: targetStat.mode });
+    await fs.chmod(targetTmp, targetStat.mode);
+    await writeFileAtomic(journalPath, serializeJson(journal));
+    const targetUnchanged = await fs.realpath(targetPath) === writePath
+      && hashText((await readTextTarget(targetPath)).text) === journal.beforeHash;
+    const metadataUnchanged = (await Promise.all(entries.map(async (entry) =>
+      hashText(await fs.readFile(entry.path, "utf8")) === entry.beforeHash))).every(Boolean);
+    if (!targetUnchanged || !metadataUnchanged) {
+      throw new AppError("Target or session changed while applying the suggestion; no file was overwritten.", 409, "drift");
+    }
+    await renameWithRetry(targetTmp, writePath);
+    await writeAllOrNothing(entries);
+    await fs.unlink(journalPath);
+  } finally {
+    await fs.unlink(targetTmp).catch((error) => { if (error?.code !== "ENOENT") throw error; });
   }
 }
 
@@ -852,8 +1021,8 @@ async function saveSuggestionMutation(paths, session, suggestions, timestamp) {
   });
 }
 
-async function refreshSessionMetadataForTarget(session, targetPath, timestamp) {
-  const { buffer } = await readTextTarget(targetPath);
+async function refreshSessionMetadataForTarget(session, targetPath, timestamp, text) {
+  const buffer = Buffer.from(text, "utf8");
   return {
     ...session,
     lastActiveAt: timestamp,
@@ -890,6 +1059,7 @@ export async function loadSessionIndex(minimapHome = resolveMinimapHome()) {
 }
 
 async function saveSessionIndex(minimapHome, index) {
+  await assertSourceWriteGuard();
   await fs.mkdir(minimapHome, { recursive: true });
   await writeJson(path.join(minimapHome, SESSION_INDEX_FILE), {
     version: SESSION_INDEX_VERSION,
@@ -898,9 +1068,11 @@ async function saveSessionIndex(minimapHome, index) {
 }
 
 async function ensureSessionFiles(paths) {
+  await assertSourceWriteGuard();
   await fs.mkdir(paths.sessionDir, { recursive: true });
   for (const filePath of [paths.commentsJsonl, paths.suggestionsJsonl, paths.eventsJsonl]) {
     if (!(await pathExists(filePath))) {
+      await assertSourceWriteGuard();
       await fs.writeFile(filePath, EMPTY_JSONL, "utf8");
     }
   }
@@ -936,7 +1108,24 @@ async function buildTargetMetadata(targetPath, contentBuffer) {
   };
 }
 
-export async function attachFileSession(filePath, options = {}) {
+async function withSessionLifecycle(filePath, options, create, work) {
+  const cwd = options.cwd || process.cwd();
+  const platform = options.platform || process.platform;
+  const home = options.minimapHome || resolveMinimapHome(options.env || process.env, platform);
+  const targetPath = path.resolve(cwd, filePath);
+  const fileKey = normalizeFileKey(targetPath, platform);
+  const index = await loadSessionIndex(home);
+  const sessionId = index.files[fileKey] || (create ? makeSessionId(fileKey, targetPath) : null);
+  if (!sessionId) return work();
+  const paths = makeSessionPaths(home, sessionId);
+  if (create) { await assertSourceWriteGuard(); await fs.mkdir(paths.sessionDir, { recursive: true }); }
+  return withSessionMutationLock(paths, async () => {
+    await recoverSuggestionTransactionUnlocked(paths);
+    return work();
+  });
+}
+
+async function attachFileSessionUnlocked(filePath, options = {}) {
   const cwd = options.cwd || process.cwd();
   const minimapHome = options.minimapHome || resolveMinimapHome(options.env || process.env, options.platform || process.platform);
   const targetPath = path.resolve(cwd, filePath);
@@ -970,7 +1159,7 @@ export async function attachFileSession(filePath, options = {}) {
   };
 }
 
-export async function moveFileSession(fromFilePath, toFilePath, options = {}) {
+async function moveFileSessionUnlocked(fromFilePath, toFilePath, options = {}) {
   const cwd = options.cwd || process.cwd();
   const platform = options.platform || process.platform;
   const minimapHome = options.minimapHome || resolveMinimapHome(options.env || process.env, platform);
@@ -1029,6 +1218,7 @@ export async function getFileSession(filePath, options = {}) {
   }
 
   const paths = makeSessionPaths(minimapHome, sessionId);
+  await recoverSuggestionTransaction(paths);
   const session = await readJson(paths.sessionJson, null);
   if (!session) {
     throw new AppError(`Session metadata is missing for ${filePath}.`, 404, "not_found");
@@ -1037,7 +1227,7 @@ export async function getFileSession(filePath, options = {}) {
   return session;
 }
 
-export async function removeFileSession(filePath, options = {}) {
+async function removeFileSessionUnlocked(filePath, options = {}) {
   const cwd = options.cwd || process.cwd();
   const minimapHome = options.minimapHome || resolveMinimapHome(options.env || process.env, options.platform || process.platform);
   const targetPath = path.resolve(cwd, filePath);
@@ -1053,6 +1243,7 @@ export async function removeFileSession(filePath, options = {}) {
   const session = await readJson(paths.sessionJson, null);
   delete index.files[fileKey];
   await saveSessionIndex(minimapHome, index);
+  await assertSourceWriteGuard();
   await fs.rm(paths.sessionDir, { recursive: true, force: true });
 
   return {
@@ -1064,7 +1255,14 @@ export async function removeFileSession(filePath, options = {}) {
   };
 }
 
-export async function addFileSessionComment(filePath, input = {}, options = {}) {
+export const attachFileSession = (filePath, options = {}) =>
+  withSessionLifecycle(filePath, options, true, () => attachFileSessionUnlocked(filePath, options));
+export const moveFileSession = (fromFilePath, toFilePath, options = {}) =>
+  withSessionLifecycle(fromFilePath, options, false, () => moveFileSessionUnlocked(fromFilePath, toFilePath, options));
+export const removeFileSession = (filePath, options = {}) =>
+  withSessionLifecycle(filePath, options, false, () => removeFileSessionUnlocked(filePath, options));
+
+async function addFileSessionCommentUnlocked(filePath, input = {}, options = {}) {
   const { session, paths, text, comments } = await loadCommentState(filePath, options);
   const timestamp = nowIso();
   const comment = {
@@ -1091,7 +1289,7 @@ export async function addFileSessionComment(filePath, input = {}, options = {}) 
   };
 }
 
-export async function addFileSessionCommentReply(filePath, commentId, input = {}, options = {}) {
+async function addFileSessionCommentReplyUnlocked(filePath, commentId, input = {}, options = {}) {
   const { session, paths, text, comments } = await loadCommentState(filePath, options);
   const index = findCommentIndex(comments, commentId);
 
@@ -1120,7 +1318,7 @@ export async function addFileSessionCommentReply(filePath, commentId, input = {}
   };
 }
 
-export async function addFileSessionSuggestionReply(filePath, suggestionId, input = {}, options = {}) {
+async function addFileSessionSuggestionReplyUnlocked(filePath, suggestionId, input = {}, options = {}) {
   const { session, paths, text, suggestions } = await loadSuggestionState(filePath, options);
   const index = findSuggestionIndex(suggestions, suggestionId);
 
@@ -1149,7 +1347,7 @@ export async function addFileSessionSuggestionReply(filePath, suggestionId, inpu
   };
 }
 
-export async function updateFileSessionCommentStatus(filePath, commentId, status, input = {}, options = {}) {
+async function updateFileSessionCommentStatusUnlocked(filePath, commentId, status, input = {}, options = {}) {
   const { session, paths, text, comments } = await loadCommentState(filePath, options);
   const index = findCommentIndex(comments, commentId);
 
@@ -1173,7 +1371,7 @@ export async function updateFileSessionCommentStatus(filePath, commentId, status
   };
 }
 
-export async function addFileSessionSuggestion(filePath, input = {}, options = {}) {
+async function addFileSessionSuggestionUnlocked(filePath, input = {}, options = {}) {
   const { session, paths, text, suggestions } = await loadSuggestionState(filePath, options);
   const timestamp = nowIso();
   const kind = validateSuggestionKind(input.kind);
@@ -1202,7 +1400,7 @@ export async function addFileSessionSuggestion(filePath, input = {}, options = {
   };
 }
 
-export async function updateFileSessionSuggestionStatus(filePath, suggestionId, status, input = {}, options = {}) {
+async function updateFileSessionSuggestionStatusUnlocked(filePath, suggestionId, status, input = {}, options = {}) {
   const { session, paths, text, suggestions } = await loadSuggestionState(filePath, options);
   const index = findSuggestionIndex(suggestions, suggestionId);
 
@@ -1399,7 +1597,7 @@ function anchorOverlapsReplacedSpan(candidate, replacedAnchor) {
   return cQuote.length > 0 && cQuote === replacedQuote;
 }
 
-export async function applyFileSessionSuggestion(filePath, suggestionId, input = {}, options = {}) {
+async function applyFileSessionSuggestionUnlocked(filePath, suggestionId, input = {}, options = {}) {
   const { session, paths, text, suggestions } = await loadSuggestionState(filePath, options);
   const index = findSuggestionIndex(suggestions, suggestionId);
 
@@ -1421,8 +1619,6 @@ export async function applyFileSessionSuggestion(filePath, suggestionId, input =
   const targetPath = path.resolve(session.targetFile);
   const beforeHash = hashText(text);
   const afterHash = hashText(edit.nextText);
-
-  await fs.writeFile(targetPath, edit.nextText, "utf8");
 
   // Re-anchor logic for `replace`:
   //   The original quote no longer exists in the file — it's been replaced
@@ -1512,9 +1708,9 @@ export async function applyFileSessionSuggestion(filePath, suggestionId, input =
     }
   }
 
-  const refreshedSession = await refreshSessionMetadataForTarget(session, targetPath, timestamp);
-  // Single transactional write across the metadata triple so a crash
-  // mid-write can't leave suggestions.jsonl ahead of session.json.
+  const refreshedSession = await refreshSessionMetadataForTarget(session, targetPath, timestamp, edit.nextText);
+  // The journal lets the next session access finish an interrupted metadata
+  // promotion only when the target still has this operation's exact content.
   const writes = [
     { path: paths.suggestionsJsonl, content: serializeJsonLines(suggestions) },
   ];
@@ -1522,8 +1718,7 @@ export async function applyFileSessionSuggestion(filePath, suggestionId, input =
     writes.push({ path: paths.commentsJsonl, content: serializeJsonLines(comments) });
   }
   writes.push({ path: paths.sessionJson, content: serializeJson(refreshedSession) });
-  await writeAllOrNothing(writes);
-  await appendSessionEvent(paths, {
+  await commitSuggestionTransaction(paths, targetPath, text, edit.nextText, writes, {
     type: "suggestion_applied",
     suggestionId,
     by: actor,
@@ -1550,7 +1745,7 @@ export async function applyFileSessionSuggestion(filePath, suggestionId, input =
 // quote, and put the suggestion back into `pending` status. Refuses if the
 // file has drifted (something else edited it since apply) — manual cleanup
 // is safer than a guessed rollback in that case.
-export async function rollbackFileSessionSuggestion(filePath, suggestionId, input = {}, options = {}) {
+async function rollbackFileSessionSuggestionUnlocked(filePath, suggestionId, input = {}, options = {}) {
   const { session, paths, text, suggestions } = await loadSuggestionState(filePath, options);
   const index = findSuggestionIndex(suggestions, suggestionId);
 
@@ -1629,7 +1824,6 @@ export async function rollbackFileSessionSuggestion(filePath, suggestionId, inpu
   }
 
   const targetPath = path.resolve(session.targetFile);
-  await fs.writeFile(targetPath, nextText, "utf8");
   const newAfterHash = hashText(nextText);
 
   const restoredSuggestion = {
@@ -1691,9 +1885,9 @@ export async function rollbackFileSessionSuggestion(filePath, suggestionId, inpu
     }
   }
 
-  const refreshedSession = await refreshSessionMetadataForTarget(session, targetPath, timestamp);
-  // Single transactional write across the metadata triple so a crash
-  // mid-write can't leave suggestions.jsonl ahead of session.json.
+  const refreshedSession = await refreshSessionMetadataForTarget(session, targetPath, timestamp, nextText);
+  // Recover an interruption by matching the target content, not by
+  // restoring old bytes over a possible external edit.
   const writes = [
     { path: paths.suggestionsJsonl, content: serializeJsonLines(suggestions) },
   ];
@@ -1701,8 +1895,7 @@ export async function rollbackFileSessionSuggestion(filePath, suggestionId, inpu
     writes.push({ path: paths.commentsJsonl, content: serializeJsonLines(pendingComments) });
   }
   writes.push({ path: paths.sessionJson, content: serializeJson(refreshedSession) });
-  await writeAllOrNothing(writes);
-  await appendSessionEvent(paths, {
+  await commitSuggestionTransaction(paths, targetPath, text, nextText, writes, {
     type: "suggestion_rolled_back",
     suggestionId,
     by: actor,
@@ -1715,6 +1908,18 @@ export async function rollbackFileSessionSuggestion(filePath, suggestionId, inpu
     suggestion: withSuggestionAnchorStatus(restoredSuggestion, nextText),
   };
 }
+
+const guardedSessionMutation = (work, optionsIndex) => async (...args) =>
+  withSessionMutation(args[0], args[optionsIndex] || {}, () => work(...args));
+
+export const addFileSessionComment = guardedSessionMutation(addFileSessionCommentUnlocked, 2);
+export const addFileSessionCommentReply = guardedSessionMutation(addFileSessionCommentReplyUnlocked, 3);
+export const addFileSessionSuggestionReply = guardedSessionMutation(addFileSessionSuggestionReplyUnlocked, 3);
+export const updateFileSessionCommentStatus = guardedSessionMutation(updateFileSessionCommentStatusUnlocked, 4);
+export const addFileSessionSuggestion = guardedSessionMutation(addFileSessionSuggestionUnlocked, 2);
+export const updateFileSessionSuggestionStatus = guardedSessionMutation(updateFileSessionSuggestionStatusUnlocked, 4);
+export const applyFileSessionSuggestion = guardedSessionMutation(applyFileSessionSuggestionUnlocked, 3);
+export const rollbackFileSessionSuggestion = guardedSessionMutation(rollbackFileSessionSuggestionUnlocked, 3);
 
 export async function getFileSessionContext(filePath, options = {}) {
   const session = await getFileSession(filePath, options);
@@ -1754,25 +1959,31 @@ export async function listFileSessions(options = {}) {
   const index = await loadSessionIndex(minimapHome);
   const sessions = [];
 
-  for (const sessionId of Object.values(index.files)) {
+  for (const [fileKey, sessionId] of Object.entries(index.files)) {
     const paths = makeSessionPaths(minimapHome, sessionId);
-    const session = await readJson(paths.sessionJson, null);
-    if (!session) continue;
-    // Tally counts so the file list can show per-file pulse dots without
-    // having to load each session's full context. Cheap: just reads two
-    // JSONL files and counts statuses.
+    let session;
     try {
+      await recoverSuggestionTransaction(paths);
+      session = await readJson(paths.sessionJson, null);
+      if (!session) continue;
+      // Keep counts out of the full context; one bad session must not hide others.
       const comments = await readJsonLines(paths.commentsJsonl);
       const suggestions = await readJsonLines(paths.suggestionsJsonl);
       session.counts = {
         openComments: comments.filter((c) => c.status !== "resolved").length,
         pendingSuggestions: suggestions.filter((s) => s.status === "pending" || s.status === "accepted").length,
       };
-    } catch {
-      session.counts = { openComments: 0, pendingSuggestions: 0 };
+    } catch (error) {
+      session = session || await readJson(paths.sessionJson, null).catch(() => null)
+        || { id: sessionId, targetFile: normalizeDisplayPath(fileKey), title: path.basename(fileKey) };
+      delete session.counts;
+      session.availability = {
+        status: "unavailable",
+        code: error?.code || "unavailable",
+        message: error?.message || "Session data is unavailable.",
+      };
     }
     sessions.push(session);
   }
-
   return sessions.sort((left, right) => String(right.lastActiveAt || "").localeCompare(String(left.lastActiveAt || "")));
 }

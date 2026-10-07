@@ -5,6 +5,15 @@ import { resolveMinimapHome } from "./sessions.js";
 const REGISTRY_FILE = "server.json";
 const PREFERENCE_FILE = "pallium-preference.json";
 
+// Bump only when the shared server API becomes incompatible with these clients.
+export const SERVER_API_COMPATIBILITY = 1;
+
+export async function readRuntimeIdentity(serverPath) {
+  const sourcePath = await fs.realpath(serverPath);
+  const pkg = JSON.parse(await fs.readFile(path.join(path.dirname(sourcePath), "package.json"), "utf8"));
+  return { version: pkg.version || "0.0.0", apiCompatibility: SERVER_API_COMPATIBILITY, sourcePath };
+}
+
 export function registryPath(minimapHome) {
   return path.join(minimapHome, REGISTRY_FILE);
 }

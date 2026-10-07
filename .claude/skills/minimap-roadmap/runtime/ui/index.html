@@ -13,6 +13,10 @@
         <div class="title-wrap">
           <p id="mode-eyebrow" class="eyebrow"></p>
           <h1><span id="mode-title">Roadmap</span><span id="repo-name"></span></h1>
+          <div class="board-source-control">
+            <button id="board-source-toggle" class="ghost-button" type="button" aria-expanded="false" aria-controls="board-source-menu">This checkout ▾</button>
+            <div id="board-source-menu" class="board-source-menu" hidden></div>
+          </div>
         </div>
         <div class="topbar-meta">
           <div class="app-mode-switcher" role="tablist" aria-label="Workspace mode">
@@ -226,6 +230,10 @@
           <div class="panel-header">
             <div class="panel-header-main">
               <h2>Board</h2>
+              <details id="board-source-status" class="board-source-status" hidden>
+                <summary id="board-source-status-summary"></summary>
+                <div id="board-source-status-details" class="board-source-coverage"></div>
+              </details>
             </div>
             <div class="panel-actions">
               <button id="board-edit-button" class="ghost-button" type="button">Edit</button>
@@ -253,6 +261,7 @@
               <div class="board-control-actions">
                 <label class="board-focus-label" for="board-focus-milestone"><span class="visually-hidden">Focus milestone</span><select id="board-focus-milestone" aria-label="Focus milestone"><option value="">All milestones</option></select></label>
                 <button id="board-focus-unfinished" class="ghost-button board-focus-unfinished" type="button" aria-pressed="false" title="Hide done, shipped, superseded, and canceled items">Unfinished</button>
+                <button id="board-focus-in-play" class="ghost-button board-focus-unfinished" type="button" aria-pressed="false" title="Show active or in-progress items, or items with attached non-closed sessions, including dormant sessions. Association does not mean work is happening now.">In play</button>
                 <button id="board-filter-toggle" class="ghost-button board-filter-toggle" type="button" aria-expanded="false">Filters</button>
                 <button id="board-clear-filters" class="ghost-button board-clear-button" type="button">Clear</button>
                 <span id="board-participant-status" class="board-participant-status" role="status" hidden></span>
@@ -270,6 +279,10 @@
             <div class="editor-heading">
               <div class="editor-heading-top">
                 <h2 id="editor-title">Item</h2>
+                <details id="editor-source-label" class="editor-source-label" hidden>
+                  <summary id="editor-source-summary">Versions</summary>
+                  <div id="editor-source-select" class="editor-source-options"></div>
+                </details>
               </div>
               <p id="editor-subtitle" class="muted">Choose an item from the board.</p>
             </div>
@@ -422,4 +435,3 @@
     <script type="module" src="/app.js"></script>
   </body>
 </html>
-

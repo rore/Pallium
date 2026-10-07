@@ -1,6 +1,6 @@
 ---
 name: minimap-roadmap
-description: Use when showing or updating roadmap state in a repo with the minimap roadmap convention (board.md, scope.md, features/, ideas/). Not for arbitrary spec review.
+description: Use when showing or updating roadmap state, or picking up, resuming, investigating, testing, reviewing, or completing assigned roadmap work in a repo with the minimap roadmap convention (board.md, scope.md, features/, ideas/). Not for arbitrary spec review.
 ---
 
 # Minimap Roadmap
@@ -8,6 +8,8 @@ description: Use when showing or updating roadmap state in a repo with the minim
 Roadmap files are the source of truth. The UI is a lens; agents and humans operate on the same files.
 
 ## Quick Workflow
+
+For assigned roadmap work, follow [Agent Handoffs](#agent-handoffs) on pickup, resume, pause, handoff, and completion. Assigned implementation, investigation, testing, and substantive review qualify for optional [Pallium participation](references/pallium-participants.md) when its MCP work-reference tools are available; passive browsing and clerical edits do not. Assignment alone does not require starting the server.
 
 When the user asks to **see** the roadmap, give them a URL. When they ask to **edit** roadmap state, edit the files directly. Both paths share step 1.
 
@@ -20,6 +22,8 @@ node <path-to-this-skill>/scripts/start-server.mjs
 The launcher prints one line: `Minimap running at http://localhost:<port>` (just started) or `Minimap already running at http://localhost:<port>` (reused). Capture the port — default 4312, but the launcher falls forward if busy.
 
 For status / stop / restart, see [references/server.md](references/server.md).
+
+Compatible APIs can reuse different releases. A refused start/restart is not permission to stop the shared server: inspect running/source identity and coordinate before explicitly replacing it with `restart-server.mjs --replace-runtime`.
 
 ### 2a. Showing the roadmap
 
@@ -44,7 +48,7 @@ For metadata-first roadmaps, keep classification in item metadata and the single
 
 For ownership rules, item shape, board rules, and edit constraints, read [references/roadmap-contract.md](references/roadmap-contract.md).
 
-When explicitly implementing or substantively reviewing a known roadmap item, and only when Pallium MCP work-reference tools are available, follow [references/pallium-participants.md](references/pallium-participants.md). Pallium is optional: never install it, shell out to it, or block ordinary Minimap work when those tools are absent.
+Pallium is optional: never install it, use shell/HTTP substitutes, or block ordinary Minimap work when its MCP work-reference tools are absent or unavailable.
 
 ## Agent Handoffs
 

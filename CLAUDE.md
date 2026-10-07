@@ -19,7 +19,7 @@ Read on demand:
 
 - `tools/pallium-architect-review/SKILL.md` — when reviewing, shaping, or coordinating work
 - `agent-policy.yaml` + `AGENTS.md` "agent-redline" section — when classifying a change before editing (red/blue/gray + watch); see `docs/agent/` for per-checkpoint guidance
-- `minimap-roadmap` skill — when touching `roadmap/` files; invoke via the Skill tool, lives at `.claude/skills/minimap-roadmap/`
+- `minimap-roadmap` skill — when touching `roadmap/` files or picking up, resuming, investigating, testing, substantively reviewing, or completing assigned roadmap work; invoke via the Skill tool, lives at `.claude/skills/minimap-roadmap/`
 
 ## Context Sources
 
