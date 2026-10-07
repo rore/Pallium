@@ -114,14 +114,15 @@ worker controls passed 27 cases in 7.54 seconds and the slow bootstrap helper
 passed separately in 0.63 seconds. These are isolated Windows and simulated
 caller results, not installed-host acceptance.
 
-Final review still requires a terminal fence for idle capability mismatch after
+Interim review required a terminal fence for idle capability mismatch after
 a canceled replacement, separation of ordinary stop from trust failures, and
 real FastMCP cancellation/release/fresh-call coverage plus an already-admitted
 cancellation control. The shared simulated-native fixture must enable native
 availability explicitly so Linux does not pass negative cases through its OS
 gate. Existing native results cover unchanged exercised branches, not these
 remaining guards. Whole-change selection includes all eight dirty files and
-requires the full lane; the full suite will run only after final source freeze
+requires the full lane. Those source/test corrections are resolved in the final
+focused evidence below; the full suite will run only after final source freeze
 and accounting for origin/main e9eb3956.
 
 Independent source technical review by /root/wake_output_plan_review
