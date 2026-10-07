@@ -26,6 +26,8 @@ pytestmark = pytest.mark.slow
 
 
 def test_released_native_idle_busy_and_reload(client, tmp_path, test_db_url, monkeypatch):
+    import hashlib
+
     binary = os.environ.get("PALLIUM_OPENCODE_V2_BINARY")
     if not binary or not Path(binary).is_file():
         pytest.skip("set PALLIUM_OPENCODE_V2_BINARY to the released 2.0.22 executable")
@@ -54,6 +56,7 @@ def test_released_native_idle_busy_and_reload(client, tmp_path, test_db_url, mon
     retirement_release = threading.Event()
     retirement_resumed = threading.Event()
     retirement_acks = []
+    capture_evidence = {}
 
     class RelayHTTP(BaseHTTPRequestHandler):
         def log_message(self, *_):
@@ -184,10 +187,17 @@ def test_released_native_idle_busy_and_reload(client, tmp_path, test_db_url, mon
     wrapper = plugin / "index.js"
     wrapper.write_text("""import production from './pallium-v2.mjs';
 import {appendFileSync} from 'node:fs';
-const log=kind=>appendFileSync(process.env.PALLIUM_NATIVE_LIFECYCLE,JSON.stringify({kind,time:Date.now()})+'\\n');
+import {extractV2AssistantTurn,buildWorkTraceMetadata} from './pallium-common.mjs';
+const log=(kind,detail={})=>appendFileSync(process.env.PALLIUM_NATIVE_LIFECYCLE,JSON.stringify({kind,time:Date.now(),...detail})+'\\n');
 export default {...production,setup:async ctx=>{
  log('setup');
- const session={...ctx.session,hook:(name,callback)=>ctx.session.hook(name,async event=>{
+ const session={...ctx.session,context:async args=>{
+  const result=await ctx.session.context(args);
+  const messages=Array.isArray(result)?result:result.data;
+  const turn=extractV2AssistantTurn(messages);
+  log('capture.context',{messages,turn,workTrace:turn?buildWorkTraceMetadata(turn):null});
+  return result;
+ },hook:(name,callback)=>ctx.session.hook(name,async event=>{
   try{return await callback(event)}finally{log(name+'.done')}
  })};
  const cleanup=await production.setup({...ctx,session});
@@ -296,6 +306,12 @@ export default {...production,setup:async ctx=>{
         assert {receipt["source_item_id"] for _, receipt in native_retries} == {original_receipt["source_item_id"]}
         assert {body["source_id"] for body, _ in native_retries} == {original_capture["source_id"]}
         assert original_capture["source_id"].startswith("oc-assistant-")
+        capture_evidence["lost_response_compaction"] = {
+            "forwarded_attempts": len(native_retries),
+            "observed_path": "stable_id_retry" if len(native_retries) == 2 else "reservation_overlap_or_success_marker",
+            "source_id": original_capture["source_id"],
+            "source_item_id": original_receipt["source_item_id"],
+        }
         listed = eventually(lambda: client.get("/relay/sessions", params={"runtime": "opencode", "session_ref": session, **scope}).json())
         container = listed[0]["container_ref"]
         scope = {"container_ref": container}
@@ -320,6 +336,43 @@ export default {...production,setup:async ctx=>{
         idle_requests = [body for body in requests if "IDLE_PAYLOAD_שלום" in json.dumps(body, ensure_ascii=False)]
         assert len(idle_requests) == 2, "Relay context must survive the second native provider/tool step"
         assert restored_client, "Pallium must restart between ACK and continuation"
+        multi_history = api("GET", prefix + "/context")["data"]
+        last_user = max(i for i, message in enumerate(multi_history) if message.get("type") == "user")
+        multi_assistants = [message for message in multi_history[last_user + 1:] if message.get("type") == "assistant"]
+        assert len(multi_assistants) == 2
+        assert all(isinstance(message.get("time", {}).get("completed"), (int, float)) for message in multi_assistants)
+        assert any(part.get("type") == "tool" for message in multi_assistants for part in message.get("content", []))
+        multi_ids = [message["id"] for message in multi_assistants]
+
+        def multi_capture():
+            observations = [json.loads(line) for line in lifecycle.read_text(encoding="utf-8").splitlines()]
+            for observation in reversed(observations):
+                if observation["kind"] != "capture.context":
+                    continue
+                messages = observation["messages"]
+                user = max((i for i, message in enumerate(messages) if message.get("type") == "user"), default=-1)
+                selected = [message for message in messages[user + 1:] if message.get("type") == "assistant"]
+                if selected != multi_assistants:
+                    continue
+                turn = observation["turn"]
+                for body, receipt in ingested:
+                    identity = ["opencode-assistant/v1", body.get("agent_ref"), body.get("actor_ref"),
+                                body.get("container_ref"), session, multi_ids[-1]]
+                    source_id = "oc-assistant-" + hashlib.sha256(json.dumps(identity, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
+                    if body.get("role") == "assistant" and body.get("source_id") == source_id:
+                        assert body["content"] == turn["assistant_text"]
+                        assert body.get("metadata", {}).get("agent_work_trace_turn") == observation["workTrace"]
+                        return body, receipt, observation
+
+        multi_body, multi_receipt, multi_observation = eventually(multi_capture)
+        expanded = client.get("/source/" + multi_receipt["source_item_id"] + "/context", params={**scope,
+            "query_actor_ref": multi_body["actor_ref"], "before": 0, "after": 0})
+        assert expanded.status_code == 200, expanded.text
+        assert [item["content"] for item in expanded.json()["items"]] == [multi_observation["turn"]["assistant_text"]]
+        assert expanded.json()["items"][0]["source_id"] == multi_body["source_id"]
+        capture_evidence["multi_step"] = {"public_history": multi_history, "selected_ids": multi_ids,
+            "production_turn": multi_observation["turn"], "work_trace": multi_observation["workTrace"],
+            "capture": multi_body, "receipt": multi_receipt, "history_readback": expanded.json()}
         for body in idle_requests:
             provider_text = json.dumps(body, ensure_ascii=False)
             assert container in provider_text and session in provider_text and "actor_ref" in provider_text
@@ -330,13 +383,13 @@ export default {...production,setup:async ctx=>{
         retirement_armed.set()
         api("POST", prefix + "/prompt", {"id": "msg_retirement_pending", "text": "NATIVE_RETIREMENT", "delivery": "queue"})
         assert retirement_blocked.wait(15), "production context never entered the blocked response body"
-        before_events = [json.loads(line) for line in lifecycle.read_text().splitlines()]
+        before_events = [json.loads(line) for line in lifecycle.read_text(encoding="utf-8").splitlines()]
         before_setup = sum(e["kind"] == "setup" for e in before_events)
         before_context_done = sum(e["kind"] == "context.done" for e in before_events)
         with wrapper.open("a", encoding="utf-8") as stream:
             stream.write("\n// supported native source reload\n")
-        eventually(lambda: sum(json.loads(line)["kind"] == "setup" for line in lifecycle.read_text().splitlines()) == before_setup + 1)
-        lifecycle_events = [json.loads(line) for line in lifecycle.read_text().splitlines()]
+        eventually(lambda: sum(json.loads(line)["kind"] == "setup" for line in lifecycle.read_text(encoding="utf-8").splitlines()) == before_setup + 1)
+        lifecycle_events = [json.loads(line) for line in lifecycle.read_text(encoding="utf-8").splitlines()]
         cleanup = next(e for e in lifecycle_events if e["kind"] == "cleanup.done")
         cleanup_enter = next(e for e in lifecycle_events if e["kind"] == "cleanup.enter")
         assert 0 <= cleanup["time"] - cleanup_enter["time"] < 2000
@@ -344,7 +397,7 @@ export default {...production,setup:async ctx=>{
         assert not retirement_acks
         retirement_release.set()
         assert retirement_resumed.wait(5)
-        eventually(lambda: sum(json.loads(line)["kind"] == "context.done" for line in lifecycle.read_text().splitlines()) > before_context_done)
+        eventually(lambda: sum(json.loads(line)["kind"] == "context.done" for line in lifecycle.read_text(encoding="utf-8").splitlines()) > before_context_done)
         api("POST", "/api/experimental/session/" + session + "/wait")
         assert not retirement_acks, "retired callback initiated ACK after native cleanup"
         assert all("RETIRED_BODY_שלום" not in json.dumps(body, ensure_ascii=False) for body in requests)
@@ -397,13 +450,14 @@ export default {...production,setup:async ctx=>{
         time.sleep(3)
         service_unavailable.clear()
         eventually(lambda: delivered(reload_message))
-        assert any("RELOAD_PAYLOAD" in json.dumps(body) for body in requests)
+        eventually(lambda: any("RELOAD_PAYLOAD" in json.dumps(body) for body in requests))
         api("DELETE", prefix)
         eventually(lambda: client.get("/relay/sessions", params={"runtime": "opencode", **scope, "include_inactive": True}).json()[0]["state"] == "closed")
     finally:
         release.set()
         retirement_release.set()
         (tmp_path / "native.log").write_text("".join(logs), encoding="utf-8")
+        (tmp_path / "capture-evidence.json").write_text(json.dumps(capture_evidence, ensure_ascii=False, indent=2), encoding="utf-8")
         for process in processes:
             stop(process)
         for server in (relay, provider):
@@ -419,7 +473,11 @@ def test_capture_callbacks_retry_through_real_http_and_history(client, tmp_path)
     if not node:
         pytest.skip("Node is required for the production OpenCode caller")
     attempts, ingested = {}, []
-    held, release = threading.Event(), threading.Event()
+    gates = {(marker, attempt): (threading.Event(), threading.Event())
+             for marker, count in (("CONCURRENT_שלום", 1), ("DISPOSE_שלום", 2),
+                                   ("DELETE_שלום", 2), ("REBIND_שלום", 2))
+             for attempt in range(1, count + 1)}
+    generation = [0]
 
     class CaptureHTTP(BaseHTTPRequestHandler):
         def log_message(self, *_):
@@ -435,9 +493,14 @@ def test_capture_callbacks_retry_through_real_http_and_history(client, tmp_path)
 
         def forward(self):
             raw = self.rfile.read(int(self.headers.get("Content-Length", 0)))
-            if self.path == "/fixture/held":
-                return self.reply(200, held.is_set())
-            if self.path == "/fixture/release":
+            if self.path.startswith("/fixture/"):
+                control = json.loads(raw)
+                if self.path == "/fixture/rebind":
+                    generation[0] += 1
+                    return self.reply(200, True)
+                held, release = gates[(control["marker"], control["attempt"])]
+                if self.path == "/fixture/held":
+                    return self.reply(200, held.is_set())
                 release.set()
                 return self.reply(200, True)
             body = json.loads(raw) if self.path == "/items" else None
@@ -449,9 +512,15 @@ def test_capture_callbacks_retry_through_real_http_and_history(client, tmp_path)
                     return self.reply(503, {"detail": "isolated precommit rejection"})
             response = client.request(self.command, self.path, content=raw or None,
                                       headers={"Content-Type": "application/json"})
+            result = response.json()
+            # Exercise the existing rebind envelope while source writes/readback
+            # still cross production HTTP. This is not native host qualification.
+            if self.path in ("/relay/turn", "/relay/opencode/wake") and result.get("session"):
+                result["session"]["scope_generation"] = generation[0]
             if body and response.is_success:
-                ingested.extend(zip(body, response.json()))
-                if marker == "CONCURRENT_שלום" and attempt == 1:
+                ingested.extend(zip(body, result))
+                if (marker, attempt) in gates:
+                    held, release = gates[(marker, attempt)]
                     held.set()
                     assert release.wait(15), "capture reply was not released"
                 if marker == "LOST_שלום" and attempt == 1:
@@ -459,7 +528,10 @@ def test_capture_callbacks_retry_through_real_http_and_history(client, tmp_path)
                     return
                 if marker == "MALFORMED_שלום" and attempt == 1:
                     return self.reply(200, {})
-            self.reply(response.status_code, response.json())
+            try:
+                self.reply(response.status_code, result)
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                pass  # retired caller; the source is already committed
 
         do_GET = do_POST = forward
 
@@ -471,27 +543,40 @@ def test_capture_callbacks_retry_through_real_http_and_history(client, tmp_path)
     program = tmp_path / "capture-caller.mjs"
     program.write_text("""import assert from 'node:assert/strict';
 const {default:production}=await import(process.env.CAPTURE_PLUGIN);
-const cwd=process.env.CAPTURE_DIRECTORY, sessionID='ses_capture_http';
-let history=[], hooks={}, cleanup;
+const {pinContainer,removeSessionPin}=await import(new URL('./pallium-common.mjs',process.env.CAPTURE_PLUGIN));
+const cwd=process.env.CAPTURE_DIRECTORY;
+let sessionID='ses_capture_http',history=[],hooks={},cleanup,eventReady,events=[];
 const ctx={location:{directory:cwd},app:{log(){}},session:{
  hook:async(name,callback)=>{hooks[name]=callback;return{dispose:async()=>{}}},
  get:async()=>({location:{directory:cwd}}),context:async()=>({data:history}),
 },event:{subscribe:async function*({signal}){
- if(!signal.aborted)await new Promise(resolve=>signal.addEventListener('abort',resolve,{once:true}));
+ while(!signal.aborted){
+  if(events.length){const [event,done]=events.shift();yield event;done();continue}
+  await new Promise(resolve=>{eventReady=resolve;signal.addEventListener('abort',resolve,{once:true})});
+ }
 }}};
 const capture=()=>hooks.compaction({sessionID});
-const rows=(name,id='msg_'+name)=>history=[
+const assistant=(id,text)=>({type:'assistant',id,time:{created:0,completed:1},content:[{type:'text',text}]});
+const rows=(name,id='msg_'+name,text=name+'_שלום')=>history=[
  {type:'user',id:'msg_user_'+name,text:'generic fixture'},
- {type:'assistant',id,time:{created:0,completed:1},content:[{type:'text',text:name+'_שלום'}]},
+ assistant(id,text),
 ];
-const control=async(path)=>(await fetch('http://localhost:'+process.env.PALLIUM_PORT+'/fixture/'+path)).json();
-try{
- cleanup=await production.setup(ctx);
- rows('CONCURRENT');const first=capture();
- const until=Date.now()+5000;while(!await control('held')){
+const control=async(path,marker='CONCURRENT_שלום',attempt=1)=>(await fetch(
+ 'http://localhost:'+process.env.PALLIUM_PORT+'/fixture/'+path,
+ {method:'POST',body:JSON.stringify({marker,attempt})})).json();
+const waitHeld=async(marker='CONCURRENT_שלום',attempt=1)=>{
+ const until=Date.now()+5000;while(!await control('held',marker,attempt)){
   assert.ok(Date.now()<until,'capture request did not reach the HTTP barrier');
   await new Promise(resolve=>setTimeout(resolve,5));
  }
+};
+const context=async(id)=>hooks.context({sessionID,messages:[
+ {id,role:'user',content:[{type:'text',text:'generic rebind fixture'}]},
+]});
+try{
+ cleanup=await production.setup(ctx);
+ rows('CONCURRENT');const first=capture();
+ await waitHeld();
  await capture();await control('release');await first;await capture();
  rows('REJECT');await capture();await capture();await capture();
  rows('MALFORMED');await capture();await capture();await capture();
@@ -499,7 +584,43 @@ try{
  await capture();await capture();
  rows('SAME_TEXT','msg_same_a');await capture();
  rows('SAME_TEXT','msg_same_b');await capture();
-}finally{await control('release');await cleanup?.()}
+ rows('SCOPE');await capture();await cleanup();cleanup=await production.setup(ctx);await capture();
+ process.env.PALLIUM_HOOK_ACTOR_REF='other-actor';await capture();
+ process.env.PALLIUM_HOOK_ACTOR_REF='fixture-actor';
+ pinContainer(sessionID,'path:other:123',undefined,'fixture-actor');await capture();
+ removeSessionPin(sessionID);sessionID='ses_capture_sibling';await capture();
+ sessionID='ses_capture_http';
+ rows('EMPTY',undefined,'');await capture();
+ rows('EMPTY',undefined,'   ');await capture();
+ const tool={type:'tool',name:'read',state:{status:'completed',input:{filePath:'/tmp/fixture-שלום.txt'},
+  content:[{type:'text',text:'read result'}]}};
+ rows('TOOL_ONLY');history[1].content=[tool];await capture();
+ rows('MAX',undefined,'😀'.repeat(10000));await capture();await capture();
+ rows('OVERMAX',undefined,'😀'.repeat(10000)+'x');await capture();
+ rows('ELIGIBLE');delete history[1].time.completed;await capture();
+ history[1].time.completed=0;await capture();await capture();
+ rows('MULTISTEP');history.unshift(assistant('invalid','previous turn'));
+ history[2].content=[tool];history.push(assistant('msg_middle','first'),
+  assistant('msg_next','middle'),assistant('msg_final','last 😀'));
+ await capture();await capture();
+ for(const mode of ['DISPOSE','DELETE','REBIND']){
+  rows(mode);
+  if(mode==='REBIND')await context('msg_bind_initial');
+  const retired=capture();await waitHeld(mode+'_שלום',1);
+  if(mode==='DISPOSE'){await cleanup();cleanup=await production.setup(ctx)}
+  else if(mode==='DELETE')await new Promise(resolve=>{
+   events.push([{type:'session.deleted',data:{sessionID}},resolve]);eventReady?.();
+  });
+  else{await control('rebind');await context('msg_bind_successor')}
+  const successor=capture();await waitHeld(mode+'_שלום',2);
+  await control('release',mode+'_שלום',1);await retired;await capture();
+  await control('release',mode+'_שלום',2);await successor;await capture();
+ }
+}finally{
+ for(const [marker,count] of [['CONCURRENT_שלום',1],['DISPOSE_שלום',2],['DELETE_שלום',2],['REBIND_שלום',2]])
+  for(let attempt=1;attempt<=count;attempt++)await control('release',marker,attempt);
+ await cleanup?.();removeSessionPin(sessionID);removeSessionPin('ses_capture_sibling');
+}
 """, encoding="utf-8")
     env = {key: value for key, value in os.environ.items() if not (
         key.startswith(("PALLIUM_", "OPENCODE_")) or key.endswith("API_KEY"))}
@@ -513,24 +634,40 @@ try{
                 "CAPTURE_DIRECTORY": str(tmp_path)})
     try:
         result = subprocess.run([node, str(program)], env=env, cwd=tmp_path,
-                                capture_output=True, text=True, timeout=40)
+                                capture_output=True, text=True, encoding="utf-8", timeout=60)
         (tmp_path / "capture-caller.log").write_text(result.stdout + result.stderr, encoding="utf-8")
         assert result.returncode == 0, result.stdout + result.stderr
-        assert attempts == {"CONCURRENT_שלום": 1, "REJECT_שלום": 2, "MALFORMED_שלום": 2,
-                            "LOST_שלום": 2, "SAME_TEXT_שלום": 2}
-        for marker in ("CONCURRENT", "REJECT", "MALFORMED", "LOST", "SAME_TEXT"):
-            receipts = [(body, reply) for body, reply in ingested if body["content"] == marker + "_שלום"]
+        counts = {"CONCURRENT_שלום": 1, "REJECT_שלום": 2, "MALFORMED_שלום": 2,
+                  "LOST_שלום": 2, "SAME_TEXT_שלום": 2, "SCOPE_שלום": 5, "😀" * 10000: 1,
+                  "ELIGIBLE_שלום": 1, "first\nmiddle\nlast 😀": 1,
+                  "DISPOSE_שלום": 2, "DELETE_שלום": 2, "REBIND_שלום": 2}
+        assert attempts == counts  # no empty/tool-only/over-max/unfinished write
+        assert len(ingested) == sum(counts.values()) - 1  # precommit rejection
+        for text in counts:
+            receipts = [(body, reply) for body, reply in ingested if body["content"] == text]
             unique = {reply["source_item_id"] for _, reply in receipts}
-            assert len(unique) == (2 if marker == "SAME_TEXT" else 1)
+            assert len(unique) == (2 if text == "SAME_TEXT_שלום" else 4 if text == "SCOPE_שלום" else 1)
             for receipt in unique:
                 body = next(body for body, reply in receipts if reply["source_item_id"] == receipt)
                 expanded = client.get("/source/" + receipt + "/context", params={
                     "container_ref": body["container_ref"], "query_actor_ref": body["actor_ref"],
                     "before": 0, "after": 0})
                 assert expanded.status_code == 200
-                assert [item["content"] for item in expanded.json()["items"]] == [marker + "_שלום"]
-                assert expanded.json()["items"][0]["source_id"] == body["source_id"]
+                item, = expanded.json()["items"]
+                assert item["content"] == text
+                assert item["source_id"] == body["source_id"]
+                assert item["actor_ref"] == body["actor_ref"]
+                assert item["thread_ref"] == body["thread_ref"]
+                for wrong in ({"container_ref": "path:unrelated:456"}, {"query_actor_ref": "unrelated-actor"}):
+                    denied = client.get("/source/" + receipt + "/context", params={
+                        "container_ref": body["container_ref"], "query_actor_ref": body["actor_ref"], **wrong})
+                    assert denied.status_code == 404
+                if text == "first\nmiddle\nlast 😀":
+                    # History's public response omits raw metadata; assert the
+                    # recognized trace at the actual production HTTP boundary.
+                    assert body["metadata"]["agent_work_trace_turn"]["files_read"] == ["/tmp/fixture-שלום.txt"]
     finally:
-        release.set()
+        for _, release in gates.values():
+            release.set()
         server.shutdown()
         server.server_close()
