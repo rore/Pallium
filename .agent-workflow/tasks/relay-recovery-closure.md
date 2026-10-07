@@ -67,6 +67,27 @@ The existing managed checkout is reused on that component's fresh branch at
 989f2c26; prior branch/evidence are preserved. No production/test edit or live
 operation has begun; independent plan/risk review is the next gate.
 
+### Never-admitted channel implementation, 2026-10-07
+
+The later never-admitted channel component is independently planned at
+adbcc474cf7274df434d1d86d9868e54d7845832 and approved by
+/root/wake_output_plan_review (gpt-6.1-sol/high), Elevated/Moderate. The initial
+pre-edit plan was returned for an asynchronous EOF race; corrected before code.
+Implementation now preserves queued callers, retires only an idle never-used
+resolved channel, and fences fresh constructor acquisition to the retired trusted
+identity without replay. Separate-source actual Windows regression and bounded
+caller/native tests are delegated in disjoint files. Parent High/Large and all
+installed/historical acceptance gaps remain open. No live deployment occurred.
+
+The final component source is independently approved at worker blob 42250295
+and native blob 0555068e. Final focused caller validation passed 32 cases,
+including real FastMCP protocol cancellation, queued fresh requests before and
+during cleanup, rejected trust lineage, and preserved already-admitted custody.
+The earlier 265-case actual Windows/native run covers unchanged exercised paths,
+not the subsequent small guard delta. Whole-change full validation, final result
+review and exact-head PR gates remain pending; this does not qualify the
+installed source, unattended delivery, historical incidents or watchdog cause.
+
 ### CI diagnostic fixture correction plan, 2026-10-07
 
 Invoke /agent-workflow before edits (completed). Resume this record and retain

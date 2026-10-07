@@ -2145,6 +2145,10 @@ class NativeInventoryClient:
             raise ShadowUnavailable("peer-mismatch")
         return True
 
+    def bootstrap_unchanged(self) -> bool:
+        """Compare the trusted private bootstrap even after this channel is disposed."""
+        return _json(_read_private(self.w, self.bootstrap_path, self.sid)) == self.manifest
+
     def dispose(self) -> None:
         """EOF closes the private source channel; service custody remains authorized."""
         self.unresolved = self.io is not None and self.io.unresolved

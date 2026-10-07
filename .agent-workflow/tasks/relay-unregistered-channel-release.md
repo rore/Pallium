@@ -62,6 +62,111 @@ process Windows release regression in disjoint files. Root owns records,
 scope, integration, validation scheduling and independent result acceptance.
 No live service, host, configuration, databases or Relay custody are changed.
 
+Pre-fix caller cases (queued during disposal false/true) failed at the expected
+missing idle disposal, 2 failed in 3.45 seconds. The separate-source actual
+Windows regression at aa096be8 with test blob
+ffce2866268e0d276be0313e983e944fc58ba9be failed in 3.38 seconds: real initial
+readiness succeeded, cancellation completed, and the second OS source's real
+NativeInventoryClient readiness returned startup-unavailable while the first
+worker remained alive with its resolved channel open. The assertion observed
+the caller surface rather than only an internal cleanup flag. Fixture cleanup
+stopped both source and service and verified no random scratch subtree remained.
+The native helper pre-fix check failed at its absent method after actual source
+EOF, in 1.11 seconds. Production sources were untouched for these runs.
+Commands use the isolated checkout and shared interpreter with -B, serial -n 0;
+the separate-source node additionally selects -m slow. These are isolated Win32
+lifecycle findings, not installed or historical causality.
+
+The actual separate-source release regression passed after the initial patch,
+one passed in 2.63 seconds at native test blob
+7fb4cea8e79e027fe4349b518be89d6db6dd9507, with no registration/custody and verified
+teardown. Three bounded caller cases passed in 2.07 seconds and the actual
+disposed-client bootstrap check passed in 1.46 seconds. These do not discharge
+the subsequent new acquisition guards. Root's provisional review corrected an
+invalid completion callback and prevented cancellation from replacing the trusted
+retired identity. Independent source review then found a capability change during
+replacement readiness; the retired capability must remain fenced through the
+existing pre-registration capture/check. Gated changed/removed-capability cases
+and the remaining negative matrix are being verified before whole-change freeze.
+Ordinary startup and admitted recovery are not redesigned.
+
+Independent review also required terminal fencing of a rejected retired identity:
+otherwise register() could restart the same worker and discard its witness.
+This is limited to the new cleanup lineage's capability/bootstrap/manifest,
+non-startup constructor and confirmed/unknown trust failures during replacement
+readiness. Known readiness stop/deadline/transport availability and generic
+non-ready results retain fresh-caller behavior; readiness is never replayed.
+Timeout and cancellation remain eligible for a fresh actual request. The caller
+subsystem run before the readiness-category delta passed 302 cases in 138.65
+seconds without concurrent source changes. Final changed-node controls, native
+subsystem and full final-revision validation remain gates; that interim run is
+not claimed as final whole-change evidence.
+
+The affected native subsystem passed 265 cases in 112.42 seconds, serial with
+`-m slow`, across tests/test_codex_bridge_pipe.py,
+tests/test_codex_retained_native_reconnect.py and
+tests/test_codex_retained_contention.py. Frozen worker blob
+fc7f5e863c6dc09f7edeb75f3b8d44008d5ca20e, native helper blob
+0555068e29169eccb43fb41c516f70d058690260 and native regression blob
+7fb4cea8e79e027fe4349b518be89d6db6dd9507 matched before and after the run;
+no source edits or regression scratch remained. At that revision the focused
+worker controls passed 27 cases in 7.54 seconds and the slow bootstrap helper
+passed separately in 0.63 seconds. These are isolated Windows and simulated
+caller results, not installed-host acceptance.
+
+Final review still requires a terminal fence for idle capability mismatch after
+a canceled replacement, separation of ordinary stop from trust failures, and
+real FastMCP cancellation/release/fresh-call coverage plus an already-admitted
+cancellation control. The shared simulated-native fixture must enable native
+availability explicitly so Linux does not pass negative cases through its OS
+gate. Existing native results cover unchanged exercised branches, not these
+remaining guards. Whole-change selection includes all eight dirty files and
+requires the full lane; the full suite will run only after final source freeze
+and accounting for origin/main e9eb3956.
+
+Independent source technical review by /root/wake_output_plan_review
+(gpt-6.1-sol/high) approved frozen worker blob
+422502954c021660121b49be1292aab606c17f1c and native blob
+0555068e29169eccb43fb41c516f70d058690260 at HEAD
+aa096be8ab178038cc4f6b7bb33a7b27f8861cd9 plus the named dirty sources.
+Reviewed revision: those exact blobs, compared with approved plan adbcc474.
+Verification adequacy: source-only approval; caller E2E, final whole-change
+validation, result review and CI remain required. No source blocker remains.
+The idle terminal fence is restricted to a retired lineage; observing ordinary
+stop does not itself reject identity. Unknown trust failures cannot reset that
+lineage, and known readiness availability failures retain fresh-caller behavior.
+The source and native helper are frozen while caller tests are completed.
+
+The real MCP cancellation check must send notifications/cancelled with the
+observed tools/call request ID. Installed SDK inspection showed that canceling
+only the client's asyncio task closes its response stream without notifying
+the server. No SDK or protocol changes are required; using that client-only
+shortcut would not qualify the server cancellation boundary.
+
+Final focused caller validation passed 32 cases in 8.42 seconds, using the
+shared interpreter with `-B -m pytest`, exact worker nodes, `-q -n 0`.
+The 18 selected nodes include the existing readiness/acquisition/error matrix,
+test_cancelled_replacement_ready_keeps_retired_capability_fence_at_idle,
+test_mcp_cancellation_releases_unused_channel_for_fresh_request (queued before
+cleanup, queued during cleanup, rejected retired bootstrap), and
+test_mcp_cancellation_after_retained_admission_does_not_replay. Genuine MCP
+notifications/cancelled reached the server with the observed outgoing request
+ID; the SDK returned its cancellation error. No canceled tool operation ran.
+Fresh callers provided only their own thread/turn metadata. Rejected native
+identity did not block ordinary Relay reads or permit another native admission.
+The admitted control preserved its checked live channel and continuity, without
+replay, before final disposal. All captured worker threads were stopped.
+The separate slow bootstrap helper passed in 0.68 seconds.
+
+Frozen worker test blob: 7375eec32113970b3375d25b43e16b0d5e37ea31.
+Frozen pipe test blob: 0b7343a607bba96dce08983b5dabdd88f51a391f.
+The final source blobs remain 422502954c021660121b49be1292aab606c17f1c
+and 0555068e29169eccb43fb41c516f70d058690260. The earlier native 265-case
+run used fc7f5e86, not the final worker: it is reused only for unchanged
+exercised paths; final focused controls cover the later guard changes and the
+upcoming full serial suite will verify the final revision. No installed result
+or historical explanation is inferred.
+
 ## Pre-edit review correction
 
 The first plan was not approved. Local handle closure does not prove that the

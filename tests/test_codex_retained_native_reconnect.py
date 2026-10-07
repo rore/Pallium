@@ -18,7 +18,7 @@ pytestmark = pytest.mark.slow
 native = pytest.mark.skipif(sys.platform != "win32", reason="Windows kernel pipe contract")
 
 _SERVICE = r"""
-import os, sys, time
+import json, os, sys, time
 from pathlib import Path
 import app.codex_bridge_pipe as bridge
 
@@ -58,11 +58,19 @@ try:
     else:
         raise RuntimeError("service failed to publish bootstrap")
     print(service.epoch, flush=True)
-    if sys.stdin.readline().strip() != "stop":
-        raise RuntimeError("missing bounded stop command")
-    service.stop()
-    if service.thread.is_alive() or service.unresolved:
-        raise RuntimeError("service did not stop cleanly")
+    for command in sys.stdin:
+        command = command.strip()
+        if command == "status":
+            diagnostics = service.enrollment_diagnostics()
+            print(json.dumps({"registered": service.retained_registration is not None,
+                "custody": service.custody is not None, "diagnostics": diagnostics}), flush=True)
+        elif command == "stop":
+            service.stop()
+            if service.thread.is_alive() or service.unresolved:
+                raise RuntimeError("service did not stop cleanly")
+            break
+        else:
+            raise RuntimeError("unknown bounded service command")
 finally:
     if service.thread is not None and service.thread.is_alive():
         service.stop()
@@ -116,6 +124,93 @@ try:
     print(json.dumps(client.register({"thread_ref":"source-chat", "turn_ref":"source-turn"})), flush=True)
 finally:
     client.dispose()
+"""
+
+_CANCELLED_WORKER_SOURCE = r"""
+import asyncio, json, sys, threading
+from pathlib import Path
+from app.codex_bridge_pipe import NativeInventoryClient
+from app.mcp.codex_desktop_bridge import InventoryWorker
+
+ready_gate, disposed, clients = threading.Event(), threading.Event(), []
+original_init = NativeInventoryClient.__init__
+original_ready = NativeInventoryClient.ready
+original_dispose = NativeInventoryClient.dispose
+
+def track_init(self, *args, **kwargs):
+    original_init(self, *args, **kwargs)
+    clients.append(self)
+
+def gated_ready(self):
+    result = original_ready(self)
+    print(json.dumps({"event": "ready", "result": result}), flush=True)
+    if not ready_gate.wait(8):
+        raise RuntimeError("ready gate was not released")
+    return result
+
+def tracked_dispose(self):
+    original_dispose(self)
+    if self.io is None and not self.unresolved:
+        disposed.set()
+
+NativeInventoryClient.__init__ = track_init
+NativeInventoryClient.ready = gated_ready
+NativeInventoryClient.dispose = tracked_dispose
+
+async def run():
+    worker = InventoryWorker(Path(sys.argv[1]), retained=True)
+    task = asyncio.create_task(worker.register({"thread_ref": "source-first", "turn_ref": "cancelled"}))
+    try:
+        if (await asyncio.to_thread(sys.stdin.readline)).strip() != "cancel":
+            raise RuntimeError("missing cancel command")
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            print(json.dumps({"event": "cancelled"}), flush=True)
+        if (await asyncio.to_thread(sys.stdin.readline)).strip() != "release":
+            raise RuntimeError("missing ready release command")
+        ready_gate.set()
+        did_dispose = await asyncio.to_thread(disposed.wait, 2)
+        client = clients[0]
+        print(json.dumps({"event": "status", "worker_alive": worker._thread.is_alive(),
+            "stopped": worker.stop_event.is_set(), "client_count": len(clients),
+            "client_closed": client.io is None, "disposed": did_dispose,
+            "unresolved": client.unresolved}), flush=True)
+        if (await asyncio.to_thread(sys.stdin.readline)).strip() != "stop":
+            raise RuntimeError("missing bounded worker stop command")
+    finally:
+        ready_gate.set()
+        worker.stop_event.set()
+        worker._thread.join(3)
+    print(json.dumps({"event": "stopped", "worker_alive": worker._thread.is_alive(),
+        "client_closed": clients[0].io is None, "unresolved": clients[0].unresolved}), flush=True)
+
+asyncio.run(run())
+"""
+
+_READY_SOURCE = r"""
+import json, sys, threading, time
+from pathlib import Path
+from app.codex_bridge_pipe import NativeInventoryClient, ShadowUnavailable
+
+client = None
+try:
+    deadline = time.monotonic() + 2
+    while True:
+        try:
+            client = NativeInventoryClient(Path(sys.argv[1]), threading.Event(), retained=True)
+        except ShadowUnavailable as exc:
+            if exc.category != "startup-unavailable" or time.monotonic() >= deadline:
+                print(json.dumps({"error": exc.category}), flush=True)
+                break
+            time.sleep(.01)
+        else:
+            print(json.dumps({"ready": client.ready()}), flush=True)
+            break
+finally:
+    if client is not None:
+        client.dispose()
 """
 
 
@@ -187,6 +282,21 @@ def _source_call(process, request):
     details = process.stderr.read() if result and not result[0] and process.poll() is not None else ""
     assert not reader.is_alive() and result and result[0], f"source client did not answer: {details}"
     return json.loads(result[0])
+
+
+def _process_json_line(process, timeout, label):
+    output = []
+    reader = threading.Thread(target=lambda: output.append(process.stdout.readline()), daemon=True)
+    reader.start()
+    reader.join(timeout)
+    assert not reader.is_alive() and output and output[0], f"{label} did not answer within {timeout}s"
+    return json.loads(output[0])
+
+
+def _service_status(process):
+    process.stdin.write("status\n")
+    process.stdin.flush()
+    return _process_json_line(process, 2, "retained service status")
 
 
 @native
@@ -288,3 +398,108 @@ def test_retained_registration_continues_across_real_service_epoch(monkeypatch):
         assert test_root.name.startswith("native-retained-reconnect-")
         if test_root.exists():
             shutil.rmtree(test_root)
+
+
+@native
+def test_cancelled_initial_ready_releases_unused_source_channel(monkeypatch):
+    repo = Path(__file__).resolve().parents[1]
+    temp_parent = repo / "tmp"
+    temp_parent.mkdir(exist_ok=True)
+    test_root = temp_parent / f"native-ready-cancel-{secrets.token_hex(16)}"
+    assert not test_root.exists()
+    service = source = None
+    try:
+        bridge._secure_directory(bridge._native(), test_root, bridge._self_sid(bridge._native()))
+        directory = bridge.prepare_inventory_service(test_root / "home")
+        endpoint = rf"\\.\pipe\inventory-unused-{secrets.token_hex(16)}"
+        monkeypatch.setenv("CODEX_APP_TOOLS_PIPE_PATH", endpoint)
+        service, _epoch = _start_service(directory, test_root / "service.log")
+        source = subprocess.Popen(
+            [sys.executable, "-c", _CANCELLED_WORKER_SOURCE, str(directory / "active.json")],
+            cwd=repo, env=os.environ.copy(), stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8",
+        )
+
+        ready = _process_json_line(source, 8, "actual source readiness")
+        assert ready == {"event": "ready", "result": {
+            "mode": "inventory", "status": "ready", "reason": "ready",
+            "ttl_seconds": 0, "connected": False, "inventory_ok": False,
+            "source_exited": False,
+        }}
+        source.stdin.write("cancel\n")
+        source.stdin.flush()
+        assert _process_json_line(source, 2, "canceled initial caller") == {"event": "cancelled"}
+        source.stdin.write("release\n")
+        source.stdin.flush()
+        status = _process_json_line(source, 3, "post-cancellation worker status")
+        assert status == {"event": "status", "worker_alive": True, "stopped": False,
+            "client_count": 1, "client_closed": True, "disposed": True, "unresolved": False}
+
+        fresh = subprocess.run(
+            [sys.executable, "-c", _READY_SOURCE, str(directory / "active.json")],
+            cwd=repo, env=os.environ.copy(), capture_output=True, text=True,
+            encoding="utf-8", timeout=8,
+        )
+        assert fresh.returncode == 0, fresh.stderr
+        fresh_result = json.loads(fresh.stdout)
+        assert fresh_result == {"ready": ready["result"]}, (
+            f"replacement source did not reach readiness: {fresh_result}"
+        )
+        assert status["client_closed"] is True
+        diagnostics = _service_status(service)
+        assert diagnostics["registered"] is False and diagnostics["custody"] is False
+        assert diagnostics["diagnostics"]["accepted"] is False
+        assert diagnostics["diagnostics"]["registration_remembered"] is False
+        assert diagnostics["diagnostics"]["last_failure_stage"] is None
+        source.stdin.write("stop\n")
+        source.stdin.flush()
+        stopped = _process_json_line(source, 3, "source worker cleanup")
+        assert stopped == {"event": "stopped", "worker_alive": False,
+            "client_closed": True, "unresolved": False}
+        source.wait(timeout=3)
+        assert source.returncode == 0
+    finally:
+        test_error = sys.exception()
+        cleanup_errors = []
+        if source is not None and source.poll() is None:
+            try:
+                source.stdin.write("stop\n")
+                source.stdin.flush()
+                source.wait(timeout=3)
+            except Exception as exc:
+                try:
+                    source.terminate()
+                    source.wait(timeout=5)
+                except Exception as terminate_error:
+                    cleanup_errors.extend((exc, terminate_error))
+        if source is not None:
+            for stream in (source.stdin, source.stdout, source.stderr):
+                if stream:
+                    try:
+                        stream.close()
+                    except Exception as exc:
+                        cleanup_errors.append(exc)
+        if service is not None and service.poll() is None:
+            try:
+                _stop(service)
+            except Exception as exc:
+                cleanup_errors.append(exc)
+                try:
+                    service.terminate()
+                    service.wait(timeout=5)
+                except Exception as terminate_error:
+                    cleanup_errors.append(terminate_error)
+        assert test_root.resolve().parent == temp_parent.resolve()
+        assert test_root.resolve().is_relative_to(repo.resolve())
+        assert test_root.name.startswith("native-ready-cancel-")
+        if test_root.exists():
+            try:
+                shutil.rmtree(test_root)
+            except Exception as exc:
+                cleanup_errors.append(exc)
+        if cleanup_errors:
+            note = "bounded test cleanup errors: " + "; ".join(map(str, cleanup_errors))
+            if test_error is not None:
+                test_error.add_note(note)
+            else:
+                raise AssertionError(note) from cleanup_errors[0]
