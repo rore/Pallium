@@ -58,6 +58,16 @@ finite experimental modes retain their original lifetime. Old MCP children must
 reload normally to run this worker code; restarting the service does not reload
 them. Installed-host restart qualification remains separate from simulated tests.
 
+Registration and dispatch share the custody lock so Desktop frames, caller
+updates and cleanup cannot interleave. A dispatch can span multiple separately
+budgeted exchanges; source maintenance must not block reading registration behind
+that lock. Contended registration returns the existing authenticated
+`unavailable / busy` response promptly. Busy grants nothing: only a previously
+admitted, unchanged, resolved channel whose service is still verified alive may
+remain open, with its old caller and fingerprint. No request is replayed or
+provenance updated. First enrollment and automatic reconnect still reject busy;
+all other failures retain their existing teardown and identity fences.
+
 These user-approved decisions supersede the earlier experimental requirements
 below for normal product mode, including manual finite destination grants and an
 absolute non-interruption guarantee. They do not change the restrictions of

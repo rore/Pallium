@@ -439,6 +439,12 @@ class InventoryWorker:
                         client = replacement
                     if disposed and replacement is not None:
                         continue
+                    # Busy admits nothing: keep only the checked live channel and old caller.
+                    if (not disposed and replacement is client
+                            and result["status"] == "unavailable" and result.get("reason") == "busy"
+                            and not self.stop_event.is_set() and not getattr(client, "unresolved", False)
+                            and getattr(client, "continuity", None) == continuity):
+                        continue
                     self.stop_event.set()
                     break
                 if result["status"] == "unavailable" and not was_registered:

@@ -28,7 +28,7 @@
 
 **Verification plan:** Same-child reconnect and unchanged security/legacy behavior → test_codex_worker_reconnect.py, test_codex_retained_continuity.py, genuine Windows cross-epoch channel test and existing retained/native/MCP suites. Fault recovery → dedicated installed-host exact delivery traces, actual hook emission/ACK and payload-specific recipient responses, separately from simulated test_codex_wake_retry_edges.py. Historical backlog → read-only exact delivery traces and native rollout metadata, with unrecoverable gaps left explicit. Release readiness → whole-change scripts/test-plan.py, full non-slow suite, workflow/Redline/import checks, smart result review and PR CI. Installed sync → stable commit equality and wrapper restart followed by /health, /status, /debug/queue/health and embedding_provider_ok.
 
-**Plan review:** Agent technical review: /root/closure_plan_review (gpt-6.1-sol/high). Initial 72774457 review correctly blocked admission-lifetime expansion. After the exact human approval, resumed review of 320cc9d5 approved same-live-child continuity, opt-in legacy compatibility, comparisons before catalog/caller updates, conclusive disposal, startup-only retries capped at 12 attempts/five minutes, and preserved cancellation/fences. A concrete native fault harness still needs independent review and isolation tests before installation; source changes do not hot-reload existing MCP children.
+**Plan review:** Agent technical review: /root/closure_plan_review (gpt-6.1-sol/high). Initial 72774457 review correctly blocked admission-lifetime expansion. After the exact human approval, review at 320cc9d5 approved same-live-child continuity; final source/harness review approved PR290. Post-release review at 9ea12eba approved the bounded existing-busy contention plan recorded at 385a8a94: preserve Desktop serialization, grant no new authority, never replay or update caller on busy, keep all identity/unresolved/stop fences. Source changes do not hot-reload existing MCP children.
 
 **Approvals:** Approved by user 2026-10-06: "yes, of course, that's the desired state" after the exact question allowing the same still-live previously authenticated MCP child to reconnect automatically after service restart, preserving identity checks and no resends. Prior scope approval: "so can you complete the cycle so we don't leave open ends?". Standing authority: "you can push pr and merge if all is ok" and "i approve what is needed". This authorizes the stated child-lifetime admission only, not new-child takeover, changed host identity, unresolved-I/O replay or active-chat interruption.
 
@@ -39,11 +39,106 @@
 
 ## Implementation
 
+Post-release contention follow-up at 385a8a94: worker caller-surface regression
+failed only its positive busy-preservation case (11 negative cases passed).
+The genuine authenticated Windows source-pipe regression failed before source
+edits: registration did not return within two seconds while dispatch held the
+lock through two real kernel exchanges. It then lost the source and dispatch
+failed peer-mismatch at owner-result. Desktop descriptor/catalog/results are
+explicit fixtures, not the installed Desktop. Root applied nonblocking retained
+maintenance/admission and reused the existing checked-service recovery result
+to preserve only exact busy on unchanged admitted proof and resolved I/O.
+No stream lock, identity check, durable fence or retry budget was weakened.
+Initial focused worker/continuity/existing recovery run: 97 passed in 12.62s.
+The whole-change selector requires full validation; fixed native and independent
+smart result review are still in progress. Trigger3 dropped: the concurrency
+fault belongs to Pallium, not Agent Workflow. Manager continuation notice
+relay-msg-cc2a12bfbcfb4f8099757a384ad9a533 was saved; app-side manager response
+restated the remaining acceptance gaps, without claiming overall closure.
+
+PR291 Python 3.12 CI exposed a raw-HTTP fixture caller that asserted one-shot
+success despite the route's structured retryable SQLite `relay_busy` response;
+the exact node passed locally once. This follow-up is limited to
+`tests/test_codex_retained_wake.py` and this record: retry the same message body
+only for that exact response within fixed bounds, preserving the existing
+concurrency, owner, recovery and restart assertions. No production or protected
+behavior-contract change is planned.
+
+Implemented the fixture's direct HTTP retry for one matching 503 only, bounded
+by two attempts and a two-second retry-initiation budget; malformed responses,
+other errors and out-of-budget Retry-After values stop. Existing worker and
+outer-thread joins remain unchanged. Added real-route busy-once, exhaustion,
+nonbusy, malformed-response and retry-after-budget checks.
+
 2026-10-06: Normal workflow applies: intended app/native-hook/persistence paths are outside the documentation-only allowlist. Complete clean isolated checkout scope plus intended paths selects no exemption. Classified High/Large from the existing policy before any source change. Managed checkout: C:/Users/I347041/.codex/worktrees/relay-recovery-closure/Pallium; branch feat/relay-recovery-closure. State is returned to planning pending discovery and technical review, not awaiting another human approval. Root untracked .codex-remote-attachments/ is preserved.
 
 Canonical roadmap: roadmap/features/add-wake-first-relay-delivery.md. Prior evidence remains in .agent-workflow/tasks/relay-recovery-round.md and PR286/288. Manager coordination message relay-msg-577e17962853494fb0eab430ca683cb9 saved; receipt and ownership confirmation pending.
 
 ## Evidence
+
+Continuation check, 2026-10-06 18:13-18:20 UTC: both stable main clones remain
+at 8c4f38a0; installed hooks and actual global hooks.json match their recorded
+restored hashes. Health/embedding/ingestion and the live queue read remain ready.
+Restart case03 is now expired with attempts=0 and an incomplete retained trace;
+it remains a failed qualification, never a recovery witness. Manager notice
+relay-msg-6a0280409dd54d14b7f9c8dd9033be42 was claimed and ACKed at
+18:13:41.850723 UTC (attempts=1, no trace gap). This proves transport receipt of
+the PR291/CI/open-acceptance update, not completion of the remaining work.
+
+### PR291 retained-wake HTTP retry
+
+Final local whole-change validation at 563b0f3f (same frozen test and production
+blobs as the running working-tree start): `python -m pytest tests/ -x -q`
+passed 6,269 cases, with 34 skips and two expected failures in 333.58s. Fresh
+selection requires the full lane; import boundaries, Redline, workflow and
+diff checks passed. Ready for review applies to the bounded PR291 release,
+not the unresolved umbrella installed-acceptance criteria. Fresh CI and the
+separate human PR291 result approval remain release gates.
+
+Before helper correction, the deterministic actual-route busy-once node failed
+on the expected `503 {code: relay_busy, retryable: true}`. After correction,
+`tests/test_codex_retained_wake.py -k test_http_`: 8 passed, 147 deselected;
+the full retained-wake file: 155 passed in 45.17s. The existing same-ID API
+idempotency node passed (1 passed in 0.78s). The regression retains one delivery,
+one native owner and the uncertain reservation fence; exhaustion creates no
+delivery or owner. Test blob: `8cdfcbe66a622fcca305db76b1ee0aaa7673679e`.
+
+### Installed release and acceptance, 2026-10-06
+
+PR290 merged at 8c4f38a0d964f097d432b74b62517b5632fd0a0c after the
+separate human result approval and green CI37499119320. Both stable main
+clones are synchronized to that revision. The installed wrapper restart and
+/health, /status and /debug/queue/health passed; embedding_provider_ok=true.
+CodeRabbit's quota skip is not an additional technical review.
+
+Six installed, automatically awakened deliveries passed with actual hooks and
+payload-specific model replies: lost claim response original/backlog
+6b283df7fe2c4c2e9eb2f8421257e9cd / b22ef53b6ebb48e19d7a904907ab8646;
+ACK precommit original/backlog 378d00d65eba4c30bb1284a872487409 /
+86be9c103ccc40468d7b043e95849f96; committed ACK response loss original/backlog
+f46ffebbe433496b994f7708dfaf7f9c / fcb38eb6e2ae40568522f65503410f24.
+All identifiers above have the relay-delivery- prefix. Claim-loss and ACK
+precommit originals reached attempts=2; committed ACK stayed attempts=1 after
+its old lease. No manual recipient turn, receive or resend counted as recovery.
+These are NO-RESTART cases. Exact private one-shot evidence/backups remain under
+C:/Users/I347041/.pallium/qualification/relay-recovery-closure-20261006.
+All temporary installed hooks were restored and installed Git status is clean.
+
+Restart case03, relay-delivery-68e3088a5d894c4ca8cc2f23f8e8d7c9, never claimed
+before its qualification window: attempts=0, so no restart acceptance is
+claimed. Initial native-unavailable became peer-mismatch at reopen. Smart
+review identified a concrete concurrency hazard: service maintenance and
+registration wait for the same custody lock that dispatch holds over multiple
+separately budgeted three-second exchanges; the registering client has one
+three-second total deadline. A timeout can dispose the source and clear saved
+custody. The 17:23 overlap supports this lead but does not establish historical
+causality. Return to planning: reproduce lock starvation and obtain a smart
+review of bounded admission before any new source edit. Preserve the lock's
+Desktop stream serialization and every identity/replay fence. Installed
+restart, scope-move, pre-hook lost-notification and eight old attempts=0
+deliveries remain unresolved. Operator-only UTC comparison mistakes were
+corrected; they are not product bugs. Manager was notified through app fallback
+because the native qualification deliberately excluded fresh sender MCP calls.
 
 No new installed qualification is claimed. Source verification below does not
 establish installed recipient consumption.
@@ -100,6 +195,60 @@ Standing implementation/PR permission did not substitute for this exact changed 
 
 ## Resumed implementation plan
 
+### Post-release contention plan
+
+CI follow-up at 5da9b377: PR291 Python3.12 failed the existing concurrent
+HTTP-send fence test on two explicit retryable relay_busy503 responses. Windows
+smoke passed; other CI is still running. This fixture bypasses the production
+MCP busy retry and asserts every first raw HTTP response is200. The error is
+bounded pre-transaction SQLite backpressure, not registration contention.
+Target the single tests/test_codex_retained_wake.py fixture caller: bounded
+attempt/time retry only exact503/code relay_busy/retryable true, identical body
+and stable messageID. No retry after ambiguous failures. Keep native/worker and
+outer thread deadlines and every one-owner/uncertain/recovery/restart assertion.
+Add deterministic actual-HTTP busy-once→sameID/single delivery coverage plus
+negative nonretryable/exhausted cases. Existing same-ID busy-send E2E is reusable.
+Agent technical plan review: /root/closure_plan_review approved this test-only
+correction under the existing caller contract. Scope stays High/Large; source
+review remains valid. No production timeout, protected contract or requirement
+change. Return to planning for this failing gate, not a speculative product fix.
+Read-only diagnosis confirmed bounded SQLite pre-BEGIN acquisition, and the
+independent smart plan review approved the exact correction. Resume implementation
+in this single test file; preserve the original concurrent and native deadlines.
+
+2026-10-06: Invoke agent-workflow before the follow-up source edit (completed).
+High/Large remains unchanged. app/codex_bridge_pipe.py and
+app/mcp/codex_desktop_bridge.py are policy-gray/watch but security-sensitive by
+judgment; tests/docs/record are blue. No dependency boundary or public schema
+change, and no protected behavior-contract edits. Standing user approval
+"so take ownership of this and fix", "i approve what is needed" and
+"always apporve such things" covers the same authorized reliability outcome.
+The same-child admission authority approved for PR290 is not expanded.
+
+Keep the custody lock around Desktop I/O. Retained maintenance skips a held
+lock; retained registration rejects contention immediately using the existing
+authenticated unavailable/busy response. It must not update any caller,
+continuity or custody. The worker may keep only its already admitted channel
+after that exact response, unchanged thread/capability, unchanged proof,
+verified current service and resolved I/O. No resend, caller update or initial
+admission follows busy. Cleanup and every other failure remain fenced.
+
+Target files: the two production files above, existing worker/native regression
+fixtures or focused test_codex_retained_contention.py, design/operations docs
+and canonical roadmap. First add a failing genuine Win32 contention regression;
+then the minimum source fix. Required coverage includes bounded busy response,
+preserved old channel/provenance, later fresh successful caller update,
+first-enrollment rejection, cancellation/shutdown/unresolved I/O,
+changed identity/capability and malformed responses. Reuse existing dispatch
+generation and active-claim fence coverage without weakening it. Run focused,
+affected, whole-change selected/full checks, smart result review and new PR.
+Installed host recovery still needs separate qualification after stable merge.
+
+Agent technical plan review: /root/closure_plan_review (gpt-6.1-sol/high),
+read-only at 9ea12eba and merged production8c4f38a0, approved this narrow
+existing-busy design subject to failing-before/fixed-after real Windows pipe
+coverage. No unlocked native I/O or broad retry expansion was approved.
+
 First invoke /agent-workflow to resume this Work Record and classify risk before code edits (completed; High/Large unchanged, normal workflow applies).
 
 Target source files: app/mcp/codex_desktop_bridge.py (single retained worker lifecycle) and app/codex_bridge_pipe.py (private continuity handshake). Target regression files: existing retained lifecycle/native fixtures plus a focused reconnect test file; docs/designs/codex-mcp-desktop-bridge.md, docs/context/operations.md and the canonical roadmap document must reconcile the newly approved product-mode lifetime, leaving finite experimental modes unchanged. No public MCP/HTTP schema, persistence schema, scheduler or dependency changes.
@@ -116,11 +265,54 @@ Manager notification relay-msg-2c33245d0a5e4e778c162f7d4946050f / relay-delivery
 
 ## Recovery handoff
 
-Owner: relaydev. Branch feat/relay-recovery-closure; source base 525df5bb, initial record 72774457 and approved plan 320cc9d5. Retain this managed worktree for the reviewed reconnect implementation and fault harness; do not install from it. Next: focused regressions, smart result/harness review, whole-change checks and PR. Prior PR286/288 evidence is reusable; no new installed acceptance is claimed. Root and stable installation remain unchanged.
+Owner: relaydev. Branch feat/relay-recovery-closure; last verified coherent revision
+563b0f3f, based on merged PR290 at 8c4f38a0. Retain this managed checkout for
+the reviewed contention follow-up and remaining installed acceptance; never
+install from it. Stable main/service remain at 8c4f38a0, with verified restored
+hooks/configuration. PR291 is open; its production fix and bounded CI test-only
+correction are independently reviewed; full local validation passed. Next:
+fresh PR CI; separate human PR291 result approval remains pending (the latest
+UI answer approves PR290 only). Then stable sync and installed recovery
+qualification. Prior reviewed evidence is reusable, but six no-restart installed
+successes do not close restart/scope-move/pre-hook loss or historical incidents.
 
 Skill feedback trigger 3 dropped: the restart limitation belongs to this product's approved native admission contract, not an Agent Workflow upstream defect.
 
 ## Result review
+
+### PR291 CI caller correction
+
+Agent technical review: /root/closure_plan_review (gpt-6.1-sol/high).
+Reviewed test blob: 8cdfcbe66a622fcca305db76b1ee0aaa7673679e; unchanged production
+review below remains valid. Verification adequacy: the deterministic pre-fix
+503 failure, eight focused cases, 155 retained-wake cases and existing same-ID
+HTTP retry case adequately cover the test-only delta. One retry follows only
+the exact supported busy response with identical body/ID; original concurrent
+callers, worker/thread joins and custody/recovery/restart assertions remain.
+Two seconds bounds retry initiation, not completion of a blocking POST.
+Fresh full local and CI validation remain gates; no installed acceptance or
+separate human PR291 result approval is inferred from this agent review.
+
+### Post-release contention result
+
+Agent technical review: /root/closure_plan_review (gpt-6.1-sol/high).
+Reviewed revision: c8700aef2bb435d71bda16b7ed503f840e7b0e8e.
+Verification adequacy: approved the 19-line production fix with no correctness
+or security blocker. Real Windows source/service channels and the disclosed
+fixture Desktop prove prompt busy, preserved source/proof/caller, serialized
+dispatch and later fresh caller update. Worker/provenance/identity negative
+coverage passed. Fixed native contention plus existing reconnect: 2 passed in
+5.90s. Full non-slow validation at c8700aef passed: 6,261 passed, 34 skipped and
+two expected failures in 331.17s. Import boundaries and fresh whole-change
+Redline/workflow checks passed. CI and separate human result review remain
+gates. Installed restart, scope-move, pre-hook notification loss and exact
+historical causal attribution remain open, not weakened completion criteria.
+Manager continuation relay-delivery-ec7d77128e6e42608633bdfc83262c44 ACKed at
+17:44:01.781607 UTC with attempts=1 and no trace gap; its model response restated
+the remaining gaps. Hook ACK and that response establish this handoff's receipt,
+not any additional feature acceptance.
+
+### PR290 source and harness result
 
 Agent technical review: /root/closure_plan_review (gpt-6.1-sol/high).
 
@@ -155,3 +347,32 @@ Installed qualification will
 follow the merged stable-checkout deployment using a fresh native MCP child;
 neither the source review nor health checks close that acceptance step. The
 umbrella roadmap remains queued and historical unexplained incidents remain open.
+
+## Contention native regression
+
+The focused Windows-only slow regression uses the actual retained service run
+loop and authenticated source child over a Win32 pipe, plus the shared FakeDesktop
+pipe with an explicitly disclosed fake app descriptor. It gates two real
+Desktop exchanges at two seconds each (each below its three-second I/O budget;
+combined dispatch lock hold above three seconds). A fresh same-child registration
+must return unavailable/busy promptly, preserve the source channel and continuity,
+leave the caller unchanged, and allow a later registration to update the caller.
+
+Before the source fix, at HEAD
+385a8a943f5eb7dd3fc757166d0dc11cdbe9b967, ran:
+`C:\Dev\rore\Pallium\.venv\Scripts\python.exe -m pytest tests/test_codex_retained_contention.py -q -n 0 -m slow`
+Result: failed in 4.63s because registration did not return within two seconds;
+the source then timed out and dispatch logged peer-mismatch at owner-result. No
+production files had been edited for that run.
+
+After the fix, HEAD remained 385a8a943f5eb7dd3fc757166d0dc11cdbe9b967 with
+working-tree source blobs app/codex_bridge_pipe.py
+e8e7b4fb8cbf03fd4020524e1e6df862c3e1402c and
+app/mcp/codex_desktop_bridge.py 77e79bd1c2e72c4fe436f68e7f55b8cfcdc82325.
+Ran:
+`C:\Dev\rore\Pallium\.venv\Scripts\python.exe -m pytest tests/test_codex_retained_contention.py tests/test_codex_retained_native_reconnect.py -q -n 0 -m slow`
+Result: 2 passed in 5.90s. Test-source blobs were
+tests/test_codex_retained_contention.py
+55c3cdf098b4159a8c1e5d7131d38f076d5c5758 and
+tests/test_codex_retained_native_reconnect.py
+820f2baa2ecc7737e05a9af59722d4f73b119e37.
