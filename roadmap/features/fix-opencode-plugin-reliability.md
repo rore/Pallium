@@ -1,7 +1,7 @@
 ---
 id: fix-opencode-plugin-reliability
 title: Fix OpenCode plugin lifecycle, wake liveness and responsiveness
-status: queued
+status: active
 priority: high
 commitment: committed
 milestone: pallium-relay
@@ -302,8 +302,13 @@ bug or discard it without evidence.
 - The Pallium manager accepted management and owns canonical queue/order,
   cross-task assignments, independent acceptance review and completion.
   @pal-dev1 accepted implementation ownership; no overlapping developers are
-  assigned. Implementation has not started: the first concrete slice still
-  requires the applicable plan/risk reviews.
+  assigned. The human-approved OC-2/OC-5 disposal slice is implemented at
+  `af2591e2bb763c9c34904007f78716c9024a5511` and independent technical source
+  review approved it. Package checks passed 93 tests with seven Windows skips;
+  isolated native before/after checks passed on 2.0.24 and 2.0.22. Full Python
+  validation and separate verification-adequacy review remain pending. This is
+  not human result approval, merge or deployment. OC-1/3/4/6/8 remain unresolved;
+  OC-7 remains the separate PR297 dependency.
 - Authorize repository fixes and isolated tests under the user's request; use
   Agent Workflow before any implementation edits. Classify the actual combined
   change and trigger architecture/API/persistence review for any wake-authority
@@ -320,13 +325,12 @@ bug or discard it without evidence.
 - Before merge/result approval, reviewers assess the changed code AND whether
   verification could have missed the same failure classes as the prior review.
   Show unresolved limitations and exact deployment impact to the human.
-- Status stays queued while the first concrete implementation slice is being
-  prepared and reviewed; move to active when its owner begins authorized work.
+- Status is active because authorized implementation has begun.
   Do not mark fixed merely because the feature, a patch, a test or a review exists.
 - Canonical feature identity: `roadmap/features/fix-opencode-plugin-reliability.md`.
   The manager reviews the combined documentation before publication; temporary
   checkout and branch coordination stays in the private handoff.
-- First bounded planning slice: OC-2 plus OC-5, which share disposal/lifecycle
+- First bounded implementation slice: OC-2 plus OC-5, which share disposal/lifecycle
   callers. OC-1 safe anchor retirement gets a separate contract review, concurrently
   at planning only; no guessed completion or ACK-only retirement. OC-3 capture
   idempotence follows; then OC-4 and OC-6 optional I/O and event-loop latency.
