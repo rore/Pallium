@@ -126,6 +126,20 @@ The whole-change selector requires the full non-slow lane, now running. Final
 independent evidence review, separate human result review and PR CI remain gates.
 No observer is installed or armed; no service or ownership operation occurred.
 
+Final evidence review requested the planned teardown-failure check. The test-only
+delta preserves result/exception identity, forbids replay and diagnostic output,
+and requires an incomplete terminal observation on rejected restoration. Four
+new cases passed; all 88 focused cases passed in 10.21s at test blob
+6890d79f2978726dd0ab7be7e04b18c563e5ef12. An identical shadowed test definition
+was removed. The helper remains unchanged at 8dded7ffa65c765a34afeec035e71f62df25c543.
+The first full run at 5ac63de7 stopped: 2,307 passed, two skipped, one expected
+failure and one failure in the unchanged legacy-pin Codex hook test (263.54s).
+Its exact serial last-failure rerun passed in 1.86s. No deadline or assertion is
+weakened; rerun the full lane with two workers on the final frozen change.
+Import boundaries passed (eight kept, zero broken). Fresh Redline is Blue;
+workflow has no blocking findings and retains the known 9dfe4839 commit-order
+advisory, which concerns the earlier documentation reconciliation.
+
 Manager reply relay-reply-d4ef666f95cb93deb63e1a615f58b9201eb843f5124916555e41c2b26a42bab9
 reported the exact existing-diagnostic limit and passive implementation scope.
 Its trace confirms hook ACK at 09:23:02.762694 UTC, attempts=1 and no reported gap;

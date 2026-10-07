@@ -658,6 +658,75 @@ def test_observer_partial_setup_failure_restores_and_calls_original(module, tmp_
     assert "private setup failure" not in evidence.read_text(encoding="utf-8")
 
 
+@pytest.mark.parametrize("outcome", ["return", "raise"])
+def test_observer_teardown_failure_is_incomplete_and_preserves_caller_result(
+    module, tmp_path, outcome, capsys, monkeypatch
+):
+    manifest, evidence, _ = setup_manifest(tmp_path, "observe")
+    response = claimed()
+    operation_error = RuntimeError("private operation failure")
+    call_count = []
+
+    def original_turn(*args, **kwargs):
+        call_count.append("once")
+        if outcome == "raise":
+            raise operation_error
+        return kwargs["request"]("POST", "/relay/turn", {}, timeout=0.1)
+
+    originals = dict(module.__dict__)
+    class RejectOneRestore:
+        def __init__(self):
+            self.__dict__.update(originals)
+            self.fail_restore = False
+            self.restore_failed_once = False
+
+        def __setattr__(self, name, value):
+            if (name == "format_relay" and self.fail_restore
+                    and value is originals["format_relay"]
+                    and not self.restore_failed_once):
+                object.__setattr__(self, "restore_failed_once", True)
+                raise RuntimeError("private restore failure")
+            object.__setattr__(self, name, value)
+
+    proxy = RejectOneRestore()
+    proxy.relay_turn = original_turn
+    original_format = proxy.format_relay
+    undo = harness.wrap_hook(proxy, manifest, evidence)
+    proxy.fail_restore = True
+    thread_errors = []
+    monkeypatch.setattr(threading, "excepthook", lambda args: thread_errors.append(args.exc_value))
+    try:
+        if outcome == "raise":
+            with pytest.raises(RuntimeError) as caught:
+                proxy.relay_turn(
+                    "codex", SID, request=lambda *a, **k: response
+                )
+            assert caught.value is operation_error
+        else:
+            result = proxy.relay_turn(
+                "codex", SID, request=lambda *a, **k: response
+            )
+            assert result is response
+    finally:
+        undo()
+        # Undo intentionally reports incomplete evidence but the test removes its
+        # one injected restore failure so this synthetic module cannot leak a patch.
+        proxy.fail_restore = False
+        proxy.format_relay = original_format
+
+    assert call_count == ["once"]
+    assert proxy.relay_turn is original_turn
+    assert proxy.format_relay is original_format
+    rows = [json.loads(line) for line in evidence.read_text(encoding="utf-8").splitlines()]
+    assert rows[-1]["stage"] == "observer_finished"
+    assert rows[-1]["outcome"] == "incomplete"
+    assert "private operation failure" not in evidence.read_text(encoding="utf-8")
+    assert "private restore failure" not in evidence.read_text(encoding="utf-8")
+    assert thread_errors == []
+    captured = capsys.readouterr()
+    assert captured.out == captured.err == ""
+
+
 @pytest.mark.parametrize("bad_control", ["expired", "malformed", "used"])
 def test_observer_bad_or_consumed_control_is_original_noop(module, tmp_path, bad_control):
     manifest, evidence, value = setup_manifest(tmp_path, "observe")
@@ -756,29 +825,6 @@ def test_observer_preserves_original_exception_identity(module, tmp_path):
         undo()
     assert caught.value is original_error
     assert "private operation exception" not in evidence.read_text(encoding="utf-8")
-
-
-def test_observer_blocked_logger_wait_is_bounded(module, tmp_path, monkeypatch):
-    manifest, evidence, _ = setup_manifest(tmp_path, "observe")
-    _configure_observation_hook(module, tmp_path)
-    entered, release = threading.Event(), threading.Event()
-
-    def blocked_append(*args):
-        entered.set()
-        release.wait(1)
-        return True
-
-    monkeypatch.setattr(harness, "_append_observation", blocked_append)
-    undo = harness.wrap_hook(module, manifest, evidence)
-    with pytest.raises(SystemExit):
-        module.main()
-    started = time.monotonic()
-    try:
-        undo()
-        assert time.monotonic() - started < 0.5
-        assert entered.wait(1)
-    finally:
-        release.set()
 
 
 @pytest.mark.parametrize("state", ["notLoaded", "idle"])
