@@ -35,13 +35,13 @@ When payload output succeeds, the hook shall ACK only afterwards and preserve fa
 When suppression output succeeds or a prompt is ordinary/near-match/unreadable, existing documented behavior shall remain → existing block JSON, normal ingestion and malformed-input controls.
 When the complete isolated patch is reviewed, all required checks shall pass → whole-change selector, full non-slow serial suite, workflow/Redline/import checks, smart result review and required platform CI.
 
-**Plan review:** Initial clean-context review by /root/wake_output_plan_review confirms Elevated/Moderate, but requires actual subprocess exit coverage and failed-stream finalization handling. Repaired plan now uses hook-local os._exit only on recognized pre-emission failure and sets the emitted latch before diagnostics/ACK. Confirmation pending; no production or test edit permitted yet.
+**Plan review:** Agent technical review: /root/wake_output_plan_review, independent gpt-6.1-sol/high, approved repaired plan f7a1a286bc9df7f447dc176476a1ea1d223e34e7 at Elevated/Moderate. The finalization/subprocess blocker is resolved. Original scope/Relay state calls unwind before the failure-only process exit; timed-out daemon claims remain recoverable rather than rolled back. In-process failure tests must intercept the exit without substituting for actual subprocess proof. No additional High-risk plan decision or live authorization is inferred.
 
 **Approvals:** Existing user authorization covers isolated implementation. No new live environment approval is implied. Technical review must confirm classification; a High-risk reassessment requires a separately presented human plan decision.
 
 **Exceptions:** —
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Source evidence and limits
@@ -68,3 +68,9 @@ prompt exits remain untouched. [Python process exit documentation](https://docs.
 Real subprocess cases are required for zero/partial output, stdout and stderr
 write/flush failures. Blocked pipes and external host kill remain unqualified.
 Pre-edit intended-path Redline is GRAY with no checkpoints or boundary violations.
+
+Independent review approved the repaired plan and verified synchronous cleanup
+seams. Before implementation, intercept the new failure-exit seam in existing
+in-process failing-emission tests, including redelivery-envelope and observer
+tests. Only separate subprocess assertions qualify the real exit status. The
+diagnostic full suite is still running; queue pytest until it completes.
