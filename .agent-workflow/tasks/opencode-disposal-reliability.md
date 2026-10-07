@@ -74,7 +74,7 @@ Final disposition: "Technical and verification approval"; "No remaining findings
 
 Verification adequacy: /root/disposal_verification_adequacy, separate clean-context review. Initial findings required successor-during-deletion assertions and successful nine-session draining. Both resolved in 947ec03e; final disposition: "Acceptance coverage is adequate for OC-2/OC-5 within the previously stated native/version limits. No remaining verification findings." Final package/full validation is recorded above and approved by the result reviewer. No arbitrary-version, OC-1/3/4/6/7/8, merged, installed or live-qualification claim follows.
 
-Human result review: pending; manager owns the single concrete result-review request, publication, CI/review-thread reconciliation and combined acceptance. Existing human plan approval does not satisfy this separate gate and authorizes no live environment changes.
+Human result review: approved by user, "I approve." Direct reply in owner chat 01a1156c-e388-7850-9c42-cc2fcb5dbd51; recorded 2026-10-07 18:14:12 UTC (observation time). Approval covers the concrete result at fa6a7f652bdac4789e1d32296514890b10c2eec8, publication of feat/opencode-disposal-reliability to public rore/Pallium, and merge after exact-head CI passes and review findings are resolved. No injected request_source_item_id was supplied or fabricated. Manager owns publication, CI/review-thread reconciliation and combined acceptance. This result approval authorizes no installed changes, restart/reload, deployment, profile or database migration. Approval forwarded immediately through Relay message relay-msg-fd8a4cbc52f349a590cc0ab627f495d3; send is admission evidence, not receipt.
 
 Roadmap reconciliation: manager was notified to move the canonical PR299 feature from queued to active and replace obsolete "implementation not started" text with first-slice source/verification completion, leaving the rest open. Canonical edits remain manager-owned; no roadmap scope expansion in this branch.
 
@@ -82,7 +82,7 @@ Skill feedback trigger 3 dropped: machine-local command creation failure is envi
 
 ## Recovery
 
-Next action: deliver reviewed revision 947ec03e plus this evidence record to manager for publication and separate human result approval. Local verification has passed. Keep the canonical feature active with remaining findings open. No source merge, deployment, installed restart/reload or profile migration is authorized by these tests or the plan approval.
+Next action: manager publishes the approved first slice and completes exact-head CI/review reconciliation before merge; no duplicate human result request for this scope. Local verification and separate human result review have passed. Keep the canonical feature active with remaining findings open. No deployment, installed restart/reload, sync or profile migration is authorized. Retain this isolated checkout and ignored qualification artifacts until publication/CI completion and verified evidence custody transfer; owner @pal-dev1.
 
 - Historical planning checkpoint: technical plan review approved cd60d109 before application edits; human approval subsequently arrived below.
 
