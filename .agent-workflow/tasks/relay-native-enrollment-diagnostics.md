@@ -34,7 +34,7 @@
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Intended paths
@@ -190,3 +190,21 @@ to proceed to whole-change validation. The 270 affected passes are not full-suit
 or installed-host acceptance. Full non-slow validation and final result
 assessment remain pending. Diagnostic reads add no native probes, admission or
 delivery changes; original incidents and suppression-output-expiry remain open.
+
+## Whole-change validation
+
+Application/test content at 7adc6ddb79369c9f31623764bfcef92dd0fd1c84 remained
+unchanged through record-only revision 04ad4e4d7043932359fe1c54b8a6d6a655e6e6e6.
+The full non-slow serial command, using the existing shared Python executable in
+this isolated checkout, passed: 6369 tests, 34 skipped, 480 deselected, 2 xfailed
+in 1410.51s, exit zero. The whole-change selector selected the full lane.
+Import-linter reported zero violations; final-path Redline was GRAY with no
+required checkpoints, boundary violations or protected contract changes.
+Workflow compliance passed with the actual Redline artifact and source-review
+record. Final result adequacy and exact-head PR CI remain gates.
+
+Skill feedback trigger 2 dropped: the corrected source/test judgments concern
+the consumer implementation, not an agent-workflow defect. The workflow's state
+correction was my own premature transition, not an upstream defect. Existing
+canonical wake roadmap still leaves broader recovery open; this passive slice
+does not change that feature's claimed acceptance or require a status promotion.
