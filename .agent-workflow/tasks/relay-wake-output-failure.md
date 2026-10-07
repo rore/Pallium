@@ -54,7 +54,7 @@ When the complete isolated patch is reviewed, all required checks shall pass →
 
 ## Recovery state
 
-Branch feat/relay-wake-output-failure, original base 658affdd8c1af9ad2cefc3d10368f32811c50bd8. Reviewed implementation is committed at 9208294a0c7e29d98abeb23efb65f3f1a07b3689. The actual merged diagnostic dependency ae110a511cadd8e52c3da14c5b5961cf1ff01552 is integrated at 236e4e14; hook, caller-test, redelivery-test and roadmap blobs remain exactly as source-reviewed. Focused/affected tests are complete. Next: full serial validation of this combined tree, final result review and exact-head PR CI. No live operation or installed acceptance is complete.
+Branch feat/relay-wake-output-failure, original base 658affdd8c1af9ad2cefc3d10368f32811c50bd8. Reviewed implementation is committed at 9208294a0c7e29d98abeb23efb65f3f1a07b3689. The actual merged diagnostic dependency ae110a511cadd8e52c3da14c5b5961cf1ff01552 is integrated at 236e4e14; hook, caller-test, redelivery-test and roadmap blobs remain exactly as source-reviewed. Focused/affected and combined full serial validation are complete. Next: final result review and exact-head PR CI. No live operation or installed acceptance is complete.
 
 ## Pre-edit review repair
 
@@ -161,3 +161,36 @@ PowerShell adapter could not locate Python in this isolated checkout; no PATH or
 persistent environment setting was changed. The combined full serial run remains
 pending, not passed. Everyday and installed clones/service remain unchanged;
 their sync/restart scope has been presented for explicit approval separately.
+
+## Completed full validation
+
+Root ran the whole non-slow suite once on frozen combined revision
+b950ac708f79e4d3c3dbecf61b4479962f29a103 using the existing shared interpreter,
+with this isolated checkout as the working directory:
+`python -m pytest tests/ -x -q -n 0 --durations=20`.
+The owning root process completed at 2026-10-07T17:43:09Z with exit zero:
+6376 passed, 34 skipped, 480 deselected, 2 xfailed in 1392.79s (23m12s).
+No source or test changed during the run. Simulated native fixtures and actual
+hook subprocesses are not installed native-host recovery qualification.
+
+The bounded cheap worker regenerated all Git-native changed-path/numstat/U0
+artifacts on this exact revision. Import-linter exited zero with no violations;
+Redline returned the expected GRAY advisory with no checkpoints, boundaries or
+protected-contract changes; workflow compliance exited zero and was clean.
+Root inspected the artifacts before accepting the report. The worker could not
+poll root's process because tool sessions are agent-scoped; it did not start a
+duplicate suite. Final result adequacy review and exact-head PR CI remain gates.
+
+Separate operational observations remain open: the installed service's queue
+diagnostic timed out at five seconds while subsequent health and status reads
+succeeded. Existing logs show automatic supervisor API-child restarts after
+failed probes, most recently startup at 15:33:12Z, not a root deployment. The
+logged WinError 64 is the existing accept patch's handled transient path; no
+causal accept defect is established. A worker's standalone injected-future plus
+real ephemeral Proactor round-trip passed, but is not a genuine kernel-error or
+installed-service witness. It used the everyday checkout contrary to the
+requested isolated directory; ordinary ignored bytecode-cache writes are possible.
+No intentional source/settings/service change occurred, and that execution-scope
+deviation was disclosed to the human and routed by the manager to Astra reviewer.
+The 0.003s measured only its async scenario/cleanup, not process startup. These
+observations neither expand this patch nor close the original native incident.
