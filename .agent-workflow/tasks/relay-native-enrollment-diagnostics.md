@@ -34,7 +34,7 @@
 
 **Exceptions:** —
 
-**State:** Blocked
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Intended paths
@@ -156,3 +156,23 @@ PR298 merged at 2026-10-07T16:07:22Z as
 coordination-hold release. Its actual merge/deployment separation is recorded at
 https://github.com/rore/Pallium/pull/298#issuecomment-6041847000.
 Both stable clones and the installed service are still unchanged.
+
+## Coherent affected validation
+
+The first inherited shutdown join now waits for the publisher's existing
+capture signal before applying its unchanged real .5-second timeout. Cleanup
+joins remain unchanged. The reviewed exhausted-request fixture uses the existing
+injected clock; it retains every original delivery, suppression and elapsed-time
+assertion. Root's race plus six contention cases passed: 7 in 8.63s.
+
+The coherent candidate passed both affected files with 270 tests in 129.06s,
+exit zero. This clears the affected-validation hold, not the separate confirmed
+suppression-output-expiry product gap or the unattributed original invocation.
+Final source review, combined-tree whole-change checks, full non-slow validation
+and PR CI remain required. No installed or everyday environment changed.
+
+Independent smart review by /root/ci_fixture_plan_review approved the final
+production hashes and root test corrections with no new blocking findings.
+Approval permits combined-tree validation only; full checks, final result
+review and exact-head PR CI remain gates. The retained test blob is
+f3268a7dd5c683d7a32cd3b8942a07fe92bb8d09.
