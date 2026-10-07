@@ -39,6 +39,34 @@
 
 ## Implementation
 
+### Continued native outage diagnosis, 2026-10-07
+
+Manager confirmed relaydev is the sole Codex outage/watchdog investigator; no
+second investigator is assigned. PR298, PR300 and PR301 are merged reviewed
+source components, not an installed outage fix. The user directly approved one
+combined clean-clone sync, installed wrapper restart and health/unattended
+delivery verification only after all fixes and the manager's combined release
+(manager user item 01a11798-62e5-7680-a26d-45e67b97dd5a). No repeat approval is
+needed for that exact conditional scope. It excludes host restart/upgrades,
+launcher/config changes and fault/observer installation. The live hold remains.
+
+Read-only watchdog analysis found no confirmed source fault. A bounded isolated
+real Proactor discriminator passed: during a 397 ms loop block both TCP probes
+still connected while HTTP timed out and heartbeat lagged; explicitly closing
+the listener made TCP fail while heartbeat continued. This validates the
+discriminator, not a genuine WinError64 incident, backlog-pressure case or
+historical watchdog cause. No speculative watchdog patch is proposed.
+
+A new independent source review and isolated actual Windows pipe discovery
+confirmed a canceled first request can leave a ready-only unregistered channel
+holding the sole admission slot indefinitely. Another connection remained busy
+until explicit worker shutdown. Historical causality remains unproven. The
+bounded repair plan is .agent-workflow/tasks/relay-unregistered-channel-release.md;
+parent ownership, High/Large classification and original criteria are unchanged.
+The existing managed checkout is reused on that component's fresh branch at
+989f2c26; prior branch/evidence are preserved. No production/test edit or live
+operation has begun; independent plan/risk review is the next gate.
+
 ### CI diagnostic fixture correction plan, 2026-10-07
 
 Invoke /agent-workflow before edits (completed). Resume this record and retain
