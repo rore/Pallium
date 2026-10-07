@@ -2213,13 +2213,52 @@ def test_relay_formatter_redelivery_envelope_respects_budget_without_acknowledgi
         ("codex", "integrations/codex/hooks/user_prompt_submit.py", True),
     ],
 )
+@pytest.mark.parametrize(
+    "advance_empty_optional_lookup",
+    [False, True],
+    ids=["normal-deadline", "empty-discovery-optional-lookup"],
+)
 def test_configured_actor_hook_registers_and_delivers_across_git_containers(
     client, monkeypatch, tmp_path: Path, runtime: str, relative: str, codex: bool,
+    advance_empty_optional_lookup: bool,
 ):
     """Relay delivery crosses containers and configured actor metadata."""
     # This test drives an ordinary turn; native wake/trace workers have separate coverage.
     monkeypatch.setattr("app.dependencies.schedule_claude_relay_wake", lambda *_args, **_kwargs: None)
     hook = _load(f"stable_actor_{runtime}", relative)
+    lookup_calls = []
+    discoveries = []
+    if advance_empty_optional_lookup:
+        common_namespace = hook.structural_work_refs_payload.__globals__
+        monkeypatch.setitem(common_namespace, "_HOOK_DEADLINE", common_namespace["_HOOK_DEADLINE"])
+        logical_now = [0.0]
+        original_start_deadline = hook.start_hook_deadline
+
+        def start_private_deadline(seconds, *, host_reserve=0.0):
+            return original_start_deadline(
+                seconds, host_reserve=host_reserve, clock=lambda: logical_now[0]
+            )
+
+        monkeypatch.setattr(hook, "start_hook_deadline", start_private_deadline)
+        original_repository_scope_ref = common_namespace["repository_scope_ref"]
+
+        def delayed_repository_scope_ref(cwd):
+            lookup_calls.append(cwd)
+            result = original_repository_scope_ref(cwd)
+            logical_now[0] += 7.01
+            return result
+
+        monkeypatch.setitem(
+            common_namespace, "repository_scope_ref", delayed_repository_scope_ref
+        )
+        original_discover_work_refs = hook.discover_work_refs
+
+        def observe_discovery(cwd):
+            discovery = original_discover_work_refs(cwd)
+            discoveries.append(discovery)
+            return discovery
+
+        monkeypatch.setattr(hook, "discover_work_refs", observe_discovery)
     repos = []
     for name, git_name in (("source", "Source Git Name"), ("target", "Target Git Name")):
         repo = tmp_path / name
@@ -2284,3 +2323,6 @@ def test_configured_actor_hook_registers_and_delivers_across_git_containers(
         hook.main()
     assert any("cross-container delivery" in text for text in emitted)
     assert client.get(f"/relay/messages/{sent.json()['message_id']}", params={"container_ref": target_container}).json()["deliveries"][0]["state"] == "delivered"
+    if advance_empty_optional_lookup:
+        assert discoveries and all(not discovery.structural_refs for discovery in discoveries)
+        assert lookup_calls == []

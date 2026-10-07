@@ -34,7 +34,7 @@
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Implemented; independent result review, whole-change governance and manager-sequenced full validation/CI pending. Not accepted or installed.
 <!-- agent-workflow:end -->
 
 ## Discovery and ownership
@@ -78,3 +78,52 @@ and separate stages 9DF52367B21550A6E83DC54D32DFA39FFE27C913401F2255F94DBFF698FC
 The narrow guard leaves nonempty optional discovery starvation unresolved.
 The direct no-request probe and separate closed-intent recovery failure remain
 unexplained. No live change or additional broad run has been performed.
+
+## Implementation and focused evidence
+
+The bounded worker changed only the four approved source/test paths after
+approval record 3e981fcdc863fbdb4f85cde04e0b866c2b87ea54. Each helper now returns
+the existing [] immediately when discovery.structural_refs is empty, before
+repository qualification. Nonempty behavior and all deadlines are unchanged.
+The existing configured-actor caller journey retains registration, exact
+cross-container send, emitted payload and delivered-state readback assertions.
+Its added variant uses only a private logical clock; a repository lookup would
+advance it by 7.01 seconds after the original lookup returns. Monkeypatch
+restores the common module's previous _HOOK_DEADLINE as well as wrapped functions.
+Empty discoveries and zero lookup calls are asserted. Helper parity covers both
+modules with absent/provided cwd and prohibits both repository and roadmap lookup.
+
+Exact interpreter: C:/Dev/rore/Pallium/.venv/Scripts/python.exe -B.
+New-node command: -m pytest
+tests/test_agent_relay_hooks.py::test_configured_actor_hook_registers_and_delivers_across_git_containers
+tests/test_hook_common_parity.py::test_empty_structural_work_refs_skip_scope_lookups
+-k "empty-discovery-optional-lookup or empty_structural_work_refs_skip_scope_lookups"
+-q -n 0. Before the source guards, six intended failures and two deselected in
+10.76 seconds: both existing caller registration assertions failed, and the
+parity sentinels detected scope lookup. After the guards: six passed, two
+deselected in 9.74 seconds.
+
+Affected command: -m pytest tests/test_agent_relay_hooks.py
+tests/test_hook_common_parity.py tests/test_relay_work_ref_identity.py -q -n 0.
+Result: 273 passed in 50.95 seconds. No concurrent root pytest, full run or native
+qualification was performed. git diff --check passed.
+
+Ignored logs in this checkout and SHA256:
+- build/relay-empty-work-refs-prefixed.log:
+  A7D8E1CB3319856E7E0A8F8A60B3891379D0EE2A0F44B9A8444D93D25255A505
+- build/relay-empty-work-refs-postfix.log:
+  495E2380B4738546F6FE7750D04202D6F7B086503D0C9ABA0DC7E1D0ACA4BE3F
+- build/relay-empty-work-refs-affected-files.log:
+  66C999D8B3451E06A2EC0EC06DDE04039D196F0A75974594AD08571DB09EABB6
+
+Frozen implementation blob hashes:
+- integrations/claude-code/hooks/common.py: ce251a53eca537e7be35054c1f0942228e0b4cb0
+- integrations/codex/hooks/common.py: 202451b15f2af2e1f37e0135942c20c322f25bb1
+- tests/test_agent_relay_hooks.py: 48cee097ad6dcab29972a5b618386d7fb4b99cc3
+- tests/test_hook_common_parity.py: d1c78bc8f7a5e10de69308b519b40a0ea93dc04a
+
+These simulated caller checks establish the narrow output-preserving repair,
+not a historical cause, full-suite pass or installed-host recovery acceptance.
+Nonempty optional starvation and the earlier probe/closed-intent incidents
+remain unresolved. Publication is held for independent review, required gates
+and the manager's combined validation sequencing.
