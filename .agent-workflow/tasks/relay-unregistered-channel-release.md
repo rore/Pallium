@@ -35,13 +35,13 @@ When startup/ready fails or finite inventory mode is used, existing bounded beha
 When a post-retirement constructor finds asynchronous EOF still pending, only same-service acquisition may wait within one second; cancellation, stop, changed/lost capability, changed/missing/invalid/inaccessible trusted bootstrap and other error categories shall stop without admission -> gated worker caller cases and native bootstrap helper cases after resolved disposal, ordinary startup one-attempt control and actual Windows source journeys.
 When the reviewed change is ready for release, its full observable contract and whole-change gates shall pass -> selected affected checks, full serial non-slow suite, focused slow Windows kernel test, import/Redline/workflow, smart result review and exact-head CI.
 
-**Plan review:** Review of 6b522387436db13d862427221c50aa599af359b6 by /root/wake_output_plan_review required correction for asynchronous server EOF. The reviewer supports the revised mechanism and Elevated/Moderate classification, but approval of this revised immutable record is still pending. No production/test edits have begun.
+**Plan review:** Agent technical review: /root/wake_output_plan_review, independent non-implementer gpt-6.1-sol/high, approved adbcc474cf7274df434d1d86d9868e54d7845832 on 2026-10-07. Reviewed exact clean checkout, full child record, worker and native identity/disposal paths; independently confirmed Elevated/Moderate and verification adequacy. The asynchronous EOF race raised on 6b522387 was corrected before edits. Result review must verify cancellation-aware acquisition-window bounds and unresolved mismatch cleanup. No blocker remains before the named edits; this is not result or installed acceptance.
 
 **Approvals:** Existing user reliability implementation/PR authority covers this narrow component. No new authority or live operation is inferred; required separate human plan approval will be requested if risk is raised to High.
 
 **Exceptions:** —
 
-**State:** Blocked or returned to planning
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Recovery state
@@ -51,7 +51,16 @@ Owner relaydev; branch feat/relay-unregistered-channel-release, base
 checkout; prior feat/relay-recovery-closure and db3e8fb9 evidence are preserved.
 This is one narrow repair component, not a new owner or replacement for the
 parent .agent-workflow/tasks/relay-recovery-closure.md. No production/test edit
-has begun; first next action is independent review of the corrected plan.
+has begun at plan approval; next action is bounded implementation and regression coverage.
+
+## Implementation
+
+Approved target files are the two native worker/client sources, the three named
+existing caller/native test files, operations evidence, and the two Work Records.
+Bounded cheap workers will handle source/caller tests and the isolated separate-
+process Windows release regression in disjoint files. Root owns records,
+scope, integration, validation scheduling and independent result acceptance.
+No live service, host, configuration, databases or Relay custody are changed.
 
 ## Pre-edit review correction
 
