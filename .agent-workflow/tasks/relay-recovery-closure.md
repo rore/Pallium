@@ -34,7 +34,7 @@
 
 **Exceptions:** —
 
-**State:** Ready for review
+**State:** Blocked or returned to planning
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -508,11 +508,14 @@ Manager notification relay-msg-2c33245d0a5e4e778c162f7d4946050f / relay-delivery
 ## Recovery handoff
 
 Owner: relaydev. Branch feat/relay-recovery-closure; last verified release
-17f9304b, merged PR291. Retain this managed checkout for remaining installed
+f062cc72, including merged PR294 and separately owned PR292. Retain this managed checkout for remaining installed
 acceptance and evidence reconciliation; never install from it. Both stable main
 clones and the installed service are synchronized to that release, with restored
-hooks/configuration and passing health checks. PR291 review, human approval,
-CI and deployment are complete. First resolve verifiable dedicated-source
+hooks/configuration and passing health checks. PR294 review, separate human
+result approval, CI and deployment are complete. The real unloaded-host passive
+observer case below passed; it is not recovery acceptance. The umbrella is returned
+to planning because supported evidence does not identify the current admitted
+native source owner. First resolve verifiable dedicated-source
 admission/ownership through trusted host evidence or an explicitly reviewed
 supported diagnostic; never take over an unidentified child. Then run a fresh
 bounded installed recovery case. No fault is armed and no quiet window remains.
@@ -524,6 +527,43 @@ diagnostics; its successful second claim/ACK after app fallback is not closure.
 Skill feedback trigger 3 dropped: the restart limitation belongs to this product's approved native admission contract, not an Agent Workflow upstream defect.
 
 ## Result review
+
+### PR294 release and installed passive observation, 2026-10-07
+
+The user separately approved PR294's diagnostic result after green CI. The exact
+approval is recorded before merge at
+https://github.com/rore/Pallium/pull/294#issuecomment-6035903908.
+PR294 merged at 0311aa61. The authoritative deployment and installed-case evidence
+is https://github.com/rore/Pallium/pull/294#issuecomment-6036653957.
+Both stable main clones subsequently reached f062cc72 before observation; no
+deployment or restart occurred during the observation window.
+
+The passive window began 10:54:38 UTC and was released at 10:59:48 UTC. The exact
+delivery relay-delivery-6385945398ba41e59f6d9b964da73a4f was claimed and ACKed once.
+The real SessionStart observer recorded response, state writes, formatting,
+emission, confirmed ACK and reference restoration. The recipient's native final
+response contained the exact payload-specific marker, without tool calls or a
+manual turn. Both installed hook files were restored at 10:58:20.464145 UTC;
+original hook/config hashes and ACLs were independently verified unchanged.
+No fault remains armed. The manager handoff relay-msg-f610bf6561874b319ea189fdaca4f253
+was ACKed at 10:59:53.132339 UTC; this confirms receipt, not manager action.
+
+Agent technical review: /root/deployment_evidence_review (gpt-6.1-sol/high).
+Reviewed revision: installed f062cc72, unchanged helper blob
+8dded7ffa65c765a34afeec035e71f62df25c543, and the retained private observation ledger.
+Verification adequacy: no findings; the twelve ordered real hook events,
+payload-specific native final and verified restoration qualify one ordinary
+no-fault unloaded-recipient observer case only. The new operator HTTP send does
+not establish authenticated MCP transport or unattended restart recovery.
+Installed restart, scope-move and pre-hook lost-notification recovery, historical
+causality and both unexplained parallel failures remain open. A new supported
+source-owner diagnostic needs its own bounded plan and required reviews; this
+release approval does not authorize opaque capability inspection or takeover.
+
+The two-file post-release evidence reconciliation was independently reviewed by
+/root/deployment_evidence_review with no findings. It changes no source or
+requirement baseline. The fresh whole-change selector chose the governance lane:
+31 checks passed in 45.60s; fresh Redline is Blue and the workflow check is clean.
 
 ### Passive exact-session observer release
 

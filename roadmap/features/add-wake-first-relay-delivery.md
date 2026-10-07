@@ -46,9 +46,17 @@ deployment evidence qualifies installed unattended restart recovery.
 An October 7 Minimap incident reached a second hook emission/ACK only after app
 fallback. The first native owner-result timeout and missing first emission are
 distinct observations; existing host logs do not identify that hook's failing
-stage. A reviewed passive exact-session observer is being added to the existing
-qualification helper, not the production delivery path. It remains undeployed;
-historical attribution and native-source ownership stay separate open gaps.
+stage. PR #294's reviewed passive exact-session observer merged at `0311aa61`
+after separate human result approval and green CI. Both stable clones and the
+installed service reached `f062cc72` before a bounded real-host observation.
+One unloaded recipient's real SessionStart claim, emission and confirmed ACK
+produced its exact payload-specific native response without a manual turn.
+Hooks/configuration were restored and verified unchanged; the window is released.
+This qualifies the observer, not automatic recovery or authenticated MCP transport.
+Installed restart, scope-move and pre-hook lost-notification recovery, both
+unexplained parallel test failures, historical attribution and native-source
+ownership remain open. Exact evidence and the blocked next step are retained in
+the closure Work Record; the umbrella remains queued.
 The Dictation 13:32 hook did deliver and ACK one 1,125-character payload. The next
 1,101-character payload plus headers did not fit its 2,400-character output cap;
 that turn is not evidence of a missed hook. The earlier idle 12:54–13:32 interval
