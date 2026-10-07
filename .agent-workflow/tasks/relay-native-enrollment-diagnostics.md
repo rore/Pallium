@@ -28,13 +28,13 @@
 
 **Verification plan:** When status/summary is read, native enrollment state is observed without enrollment, native I/O, durable writes or queue progress → existing HTTP read-surface lifecycle tests with before/after state and transport-call assertions. When enrollment is accepted or rejected, metadata records the actual protocol and fixed outcome without changing the response → existing retained registration fixtures and redaction sentinels. When custody is dropped or preserved, metadata distinguishes released from retained-disconnected authority without changing fences → retained wake/continuity tests. When diagnostics fail or concurrent transitions occur, callers retain original results and snapshots have bounded coherent shape → failure/concurrency tests. Whole-change selector, affected serial subsystem and full non-slow suite, workflow/Redline/import checks and independent result review precede PR release.
 
-**Plan review:** Agent technical review: /root/ci_fixture_plan_review (gpt-6.1-sol/high), reviewed f31ac141 plus the complete original record. Elevated/Moderate and existing isolated-work authority are appropriate. Blocked on concrete snapshot semantics, lifecycle/noninterference coverage and record repairs, now specified above; confirmation of the repaired plan remains pending. No production code edited.
+**Plan review:** Agent technical review: /root/ci_fixture_plan_review (gpt-6.1-sol/high), approved repaired plan at 5152a99aa87af872112a5a886c08c8472c9e68d5. All five findings are resolved; Elevated/Moderate and existing isolated-work authorization suffice for this exact passive scope. No additional High-risk human decision is required. Source/result review and validation remain gates; admission, identity, delivery or live-environment expansion returns to planning. No production code edited before approval.
 
 **Approvals:** Existing human incident/implementation authorization applies to isolated repository changes. No new authority or working-environment mutation is requested; Elevated requires technical review. Parent High-risk recovery approvals are not substituted for any later changed requirement or live operation approval.
 
 **Exceptions:** —
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Intended paths
@@ -63,4 +63,4 @@ authority-cleared with custody present, unresolved cleanup, maintenance/source
 disconnect, repeated shutdown/replacement, missing/malformed evidence,
 concurrent read while custody lock is held, redaction and defensive-copy mutation.
 Original caller results/native call counts/durable Relay state remain unchanged.
-Blocked is the pending repaired-plan confirmation, not missing live permissions.
+Repaired-plan confirmation approved 5152a99a; implementation may now begin.
