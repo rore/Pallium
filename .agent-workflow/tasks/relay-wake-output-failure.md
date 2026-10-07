@@ -208,8 +208,9 @@ reviewer approved its bounded documentation delta after original source/result
 approval at 4c62845f. Hook and test blobs remain unchanged from full-tested b950ac70.
 
 Verification adequacy: approved after 11 focused, 227 affected and 6376 full
-serial passes, plus import, Redline and workflow checks. Only this Work Record
-changed after tested b950ac70. Process-signal and HTTP lease-recovery coverage
+serial passes, plus import, Redline and workflow checks. Application and test
+blobs are unchanged from tested b950ac70; subsequent documentation corrections
+received the independent review recorded below. Process-signal and HTTP lease-recovery coverage
 repair the accepted blocking obligation without counting partial output, exit
 two or ACK as action completion. No source or verification blockers remain.
 Exact-head PR CI and review-thread resolution still gate merge. Installed
