@@ -44,6 +44,8 @@ Native multi-step/tool-plus-text and reload -> released isolated binary with loc
 
 Frozen behavioral revision 34b7e0d2 is source-approved and separately adequate after addressing all named coverage gaps. Full validation remains blocked: parallel failure, serial failure/hang and passing focused reruns are recorded below without a clean full-lane claim. Manager coordinates existing Claude/Codex owners and authoritative exact-head CI disposition. Next action is that validation disposition, then final record/check/roadmap reconciliation and manager publication/merge. Keep OC-1 compaction investigation separate and canonical item active. No deployment/restart, historical backfill guarantee or OC-3 completion claim.
 
+Supersession, 2026-10-08: the historical full-test hold above is superseded by the manager's independently accepted combined local full run below. This branch is not independently full-suite-qualified: publication-head CI, normal PR review, dependency sequencing and manager-owned roadmap reconciliation remain pending. State remains blocked pending those release gates; installation and overall OC1..OC8 acceptance remain held. No application or test blobs changed for this update.
+
 ## Verification in progress
 
 - Source review: /root/capture_result_review approved exact 69fe4eabe9489609490d5fce5587dd6446e9e87e, no actionable correctness finding; entire five-file diff, both capture callers, existing extraction/transport/pins and backend uniqueness inspected. Elevated/Moderate retained. This is source approval, not final evidence acceptance.
@@ -62,7 +64,21 @@ Agent technical review: /root/capture_result_review, clean-context nonimplemente
 Reviewed revision: 34b7e0d2f8c3d38a69b220e9cf5232f61d7e35b9.
 Verification adequacy: /root/capture_final_adequacy, separate clean-context nonimplementer, inspected complete diff/callers/extraction/transport/backend uniqueness, HTTP assertions, native manifests and actual capture artifacts. Behavioral evidence adequate; overall result remains blocked solely on full-suite failure/hang disposition and final manager-owned roadmap reconciliation. Qualified only isolated Windows 2.0.22/2.0.24, best-effort latest-user capture/no historical backfill, already-issued writes may commit after retirement. No source completion/merge/deployment claim.
 
-## Concrete completed-assistant contract
+## Accepted combined local full validation
+
+Manager accepted the independent result review of candidate `dbddfcf18bf344b27bb8700666b413bf771c8273`, tree `7b206859a21f03ca5f3ec4cf0fe74a4e1701ab62`: 6,410 passed, 34 skipped, 483 slow tests deselected and 2 expected failures in 2367.34 seconds, exit 0. The three retained 30-second diagnostic stack samples were in tests that subsequently passed. This qualifies the exact composed local candidate; it does not explain earlier failures/hangs or prove native installed recovery.
+
+Composition: base PR302 merge `e9eb3956ce4990f9dc15d0a24520f40d67246883`; reviewed outage `427317c3184e3de50a90382f1071454894f15b21`; publisher fixture `070a8d21a562c4a61a96549e6c12a2ca375f5912`; OC3 behavior `34b7e0d2f8c3d38a69b220e9cf5232f61d7e35b9` / records `4d75db8d7e319de9b07292aa8f4570b1acc36728`; empty structural-reference guards `e836e404cd6fb9e360f495f0d4c09bbe120d53da`. The qualification branch is not a publication branch. Coordinate the verified constituent PR heads and merge order; source/test changes require new applicable review and validation.
+
+Exact OC3 Git blob mapping, independently reconciled and checked again before this record update: `integrations/opencode/.opencode/plugins/pallium-v2.mjs` = `766a515870df338091ae58c499e21b63d1f1c16f`; `integrations/opencode/tests/v2-plugin.test.mjs` = `4350a60d7ba5e5f51bc55e161152720a9e3fdf5c`; `tests/test_opencode_native_wake_e2e.py` = `f3c064695ec1ef9a3e2b33bdf0bb19832c93b2a9`. They are unchanged in this slice and the accepted combined candidate.
+
+Retained in the relay-recovery-closure checkout: `build/relay-combined-empty-refs-manifest.json`, SHA-256 `1A6072564E173827635370483C32121369483B2721B2225C59E944D4129922AC`; `build/relay-combined-empty-refs-full.log`, SHA-256 `F180C5057A4EC9DF34ADA6D3495AD63180B78DF45DD04F7C8CC9A738F525D673`. Independent nonimplementer `/root/wake_output_plan_review` reconciled all constituent blobs, passthrough observers and full selection (6929 collected = 483 deselected + 6446 selected), with no blocking finding. Evidence-only continuation `c0f8836697c6890b0eaafa9b447c24044982e12e` preserves app/tests/integrations subtrees.
+
+PR297's initial assistant directory-ownership guard was absent from this combined run and remains a separate open dependency. Existing OC3 post-history ownership validation is preserved; no PR297 or installed acceptance is inferred. OC4/6 revision `2f1ac66c` was not included. The manager retains publication, final CI/review/merge sequence and coordinated release ownership.
+
+Records-only supersession review: independent `/root/capture_publication_record_review` approved the one-file delta after verifying candidate/tree, all three OC3 blobs, manifest/log hashes, counts, unchanged continuation subtrees, retained historical evidence and pending gates. Workflow check clean, exit 0; no application tests rerun for this metadata-only update.
+
+## Concrete completed-assistant contract (unchanged)
 
 - Select assistants from the same after-latest-user range used by extractV2AssistantTurn. Never borrow an older valid assistant when the latest has an invalid ID. Require a valid native ID and finite public time.completed for every selected assistant; unfinished/malformed content stays retryable without reserving or writing. Do not compare completion timestamps with clocks or other events.
 - Preserve existing aggregate text/work-trace extraction and the 20,000 UTF-16-unit maximum. Empty text, including tool-only extraction, produces no invalid /items write under its existing nonempty content contract; no placeholder/rendering or API change. A later completed tool-plus-text aggregate remains eligible. No new streamed snapshot versions.
