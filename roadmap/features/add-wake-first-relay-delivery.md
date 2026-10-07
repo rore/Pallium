@@ -8,7 +8,7 @@ milestone: pallium-relay
 lane: capability
 ---
 
-## Current execution status (reconciled 2026-10-06)
+## Current execution status (reconciled 2026-10-07)
 
 The closure follow-up is owned by relaydev in
 `.agent-workflow/tasks/relay-recovery-closure.md`. On October 6 the user explicitly
@@ -33,8 +33,16 @@ the genuine Windows pipe regression and 6,269 local non-slow tests passed.
 Initial Python 3.12 CI exposed a raw-HTTP test caller that ignores explicit
 retryable SQLite backpressure; its bounded same-ID fixture correction passed
 155 retained-wake cases and independent review. Fresh CI and separate human
-result approval remain release gates. Historical causality is unproven, and none
-of this source evidence qualifies installed unattended restart recovery.
+result approval passed; PR #291 merged at `17f9304b`. Both stable main clones
+are synchronized, and the supported installed wrapper restart plus independent
+health/embedding/ingestion/queue checks passed. Installed restart qualification
+has not started: a plain status read did not enroll its dedicated source, and
+the corrected Relay read did not expose verifiable custody admission/ownership.
+No fault or qualification message was armed; provisioning quiet requests were
+released. Current native-source ownership is unknown, not an established busy
+rejection or product failure. The closure Work Record retains the exact gap and
+next safe step. Historical causality is unproven, and none of this source or
+deployment evidence qualifies installed unattended restart recovery.
 The Dictation 13:32 hook did deliver and ACK one 1,125-character payload. The next
 1,101-character payload plus headers did not fit its 2,400-character output cap;
 that turn is not evidence of a missed hook. The earlier idle 12:54–13:32 interval

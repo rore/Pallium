@@ -34,7 +34,7 @@
 
 **Exceptions:** —
 
-**State:** Ready for review
+**State:** Blocked
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -75,6 +75,64 @@ nonbusy, malformed-response and retry-after-budget checks.
 Canonical roadmap: roadmap/features/add-wake-first-relay-delivery.md. Prior evidence remains in .agent-workflow/tasks/relay-recovery-round.md and PR286/288. Manager coordination message relay-msg-577e17962853494fb0eab430ca683cb9 saved; receipt and ownership confirmation pending.
 
 ## Evidence
+
+### PR291 release and installed qualification preparation, 2026-10-07
+
+PR291 merged at 17f9304b0ee68081d7801075e507d97ac4909fe9 on
+2026-10-07T07:58:38Z, from reviewed head
+fdef3f0026d5efd2831f2a2097f849296a0d79f8. Fresh Python 3.12/3.13,
+Windows smoke, CI result, Redline and Agent Workflow checks passed.
+There were no unresolved inline findings. Separate human result approval was
+verified directly in manager turn 01a1155c-e376-7791-8029-c20b76e5182e,
+user message 01a1155c-f377-7483-9e50-66bed8ca6f8e ("approved"), then recorded
+before merge at https://github.com/rore/Pallium/pull/291#issuecomment-6033607770.
+The later UI approval names PR290 and is not substituted for this evidence.
+
+Both stable main clones resolve to 17f9304b. The installed clone is clean;
+the shared development clone preserves unrelated .codex-remote-attachments/.
+The supported installed scripts/restart-service.ps1 completed successfully.
+Independent /health, /status and /debug/queue/health checks passed:
+embedding_provider_ok=true, ingestion.status=ok, recent_failures=0,
+unclaimable=0. Actual global hooks.json and both installed hook hashes remain
+unchanged. Health and deployment are not installed recovery acceptance.
+
+Preparation used existing Pallium enrollment test thread
+01a0e7dc-795e-7bf1-bf83-7d3dabe78903. Its 08:05 UTC pallium_status call
+was an operator setup error: this plain tool does not enroll native custody.
+The corrected single pallium_relay_trace read at 08:18 UTC succeeded for
+terminal relay-delivery-c1de768876a64ce58392372bea16ed15, but no admission
+diagnostic was visible and no new initial-registration log appeared.
+The fresh process pair remains pinned: launcher 66028 created
+2026-10-07T08:04:45.8739930Z; child 57916 created
+2026-10-07T08:04:45.9550200Z. Process birth and successful reads do not prove
+this child owns custody. A pre-08:03 registration log proves some admission,
+not the current owner's identity or continued occupancy. Read-only source
+inspection found no supported public owner-attribution or targeted handoff.
+Do not infer a product failure, busy rejection or current owner from this gap.
+
+Installed same-child restart qualification is blocked on verifiable source
+admission/ownership. Manager records also contain no trusted current-owner
+evidence. No case04 directory, fault wrappers or qualification messages were
+created; the 15-minute window never started. All provisioning quiet requests
+were explicitly released. No unknown process was stopped, no private
+capability/handle inspected, no manual recipient turn/receive used and no
+fresh sender read counted as automatic recovery. Six prior no-restart witnesses
+remain valid; unattended restart, scope move, pre-hook notification loss and
+eight historical zero-claim causal gaps remain open.
+
+Evidence-only continuation invokes agent-workflow before edits. Exactly this
+record and the canonical roadmap are blue; normal workflow applies because
+Work Records are not exempt. Existing High/Large classification and original
+requirement baseline remain unchanged. No new product promise or source edit.
+
+Evidence-only verification: fresh whole-change selection chose the governance
+lane; tests/test_test_plan.py, tests/test_ci_workflow.py and
+tests/test_agent_workflow_ci.py passed 31 cases in 44.96s with --noconftest
+-q -n 0. Fresh exact-diff Redline and Agent Workflow checks passed, as did
+git diff --check. Independent read-only /root/deployment_evidence_review
+(gpt-6.1-sol/high) found no actionable issue in the two-file delta against
+17f9304b: original criteria are preserved, release and acceptance are distinct,
+and unknown ownership is not asserted as a reproduced product defect.
 
 Continuation check, 2026-10-06 18:13-18:20 UTC: both stable main clones remain
 at 8c4f38a0; installed hooks and actual global hooks.json match their recorded
@@ -265,16 +323,17 @@ Manager notification relay-msg-2c33245d0a5e4e778c162f7d4946050f / relay-delivery
 
 ## Recovery handoff
 
-Owner: relaydev. Branch feat/relay-recovery-closure; last verified coherent revision
-563b0f3f, based on merged PR290 at 8c4f38a0. Retain this managed checkout for
-the reviewed contention follow-up and remaining installed acceptance; never
-install from it. Stable main/service remain at 8c4f38a0, with verified restored
-hooks/configuration. PR291 is open; its production fix and bounded CI test-only
-correction are independently reviewed; full local validation passed. Next:
-fresh PR CI; separate human PR291 result approval remains pending (the latest
-UI answer approves PR290 only). Then stable sync and installed recovery
-qualification. Prior reviewed evidence is reusable, but six no-restart installed
-successes do not close restart/scope-move/pre-hook loss or historical incidents.
+Owner: relaydev. Branch feat/relay-recovery-closure; last verified release
+17f9304b, merged PR291. Retain this managed checkout for remaining installed
+acceptance and evidence reconciliation; never install from it. Both stable main
+clones and the installed service are synchronized to that release, with restored
+hooks/configuration and passing health checks. PR291 review, human approval,
+CI and deployment are complete. First resolve verifiable dedicated-source
+admission/ownership through trusted host evidence or an explicitly reviewed
+supported diagnostic; never take over an unidentified child. Then run a fresh
+bounded installed recovery case. No fault is armed and no quiet window remains.
+Prior evidence is reusable, but six no-restart installed successes do not close
+restart/scope-move/pre-hook loss or historical incidents.
 
 Skill feedback trigger 3 dropped: the restart limitation belongs to this product's approved native admission contract, not an Agent Workflow upstream defect.
 
