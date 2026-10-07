@@ -34,10 +34,73 @@
 
 **Exceptions:** —
 
-**State:** Blocked
+**State:** Blocked or returned to planning
 <!-- agent-workflow:end -->
 
 ## Implementation
+
+### Passive exact-session diagnostic plan, 2026-10-07
+
+First invoke /agent-workflow and classify risk before code edits (completed).
+Resume this record, not a new workstream. Intended paths are
+scripts/qualify_codex_relay_faults.py, tests/test_codex_relay_fault_harness.py,
+this record and the canonical roadmap. Normal applicability applies; all these
+paths are blue, but the umbrella stays High/Large because instrumentation runs
+at an installed claim/emission boundary. Original requirements remain unchanged.
+Manager's substantive delivery relay-delivery-0abc65b6472c46c08892daa49cdb7127
+continues the existing user-authorized investigation, not new takeover authority.
+
+Existing-safe-diagnostic limit is now concrete: read-only indexed host-log queries
+restricted to 08:36-08:39 UTC examined 287 Pallium/MCP rows with fixed diagnostic
+patterns and found no first-hook transport category. The single hook-runtime
+warning is an after-agent legacy-hook warning at 08:37:13.735055400, not evidence
+of SessionStart failure. No raw log bodies, payloads or tokens were printed.
+SessionStart has no claim-to-emission event recording; the existing wake recorder
+requires exact configured-script identity. Do not forge UPS events for SessionStart.
+
+Smallest proposed change: add a passive opt-in observe mode to the reviewed
+qualification helper, reusing its exact session/message manifest, finite expiry,
+private case directory, two named hook targets, atomic one-shot reservation,
+unchanged configuration and checked finally-safe restore. No new public API,
+production hook behavior, dependency, registry, source grant or fault is added.
+Only the first eligible exact-session relay_turn reserves observation; nonmatching,
+expired, malformed and already-used cases call the original unchanged. Record
+whether the expected message was actually observed; never label unrelated context
+as a payload emission. The private manifest supplies planned message identity;
+delivery identity is recorded only when observed in the real response.
+
+Observe actual relay_turn and its POST /relay/turn callback, actual common
+session-state write result, module.format_relay (the hooks use imported aliases),
+module.emit_context/common.emit_utf8 and module.acknowledge_relay. Save/restore
+every patched reference and preserve original arguments, object identity,
+exceptions, stdout bytes, requests and ACK membership. Record only fixed stage,
+hook kind, result class/target-presence, bounded elapsed time, timestamp and
+validated actual delivery ID. Never record args, raw results, text, paths,
+exception messages, claim tokens or private capabilities. No receive/resend.
+
+Buffer at most 64 fixed-schema events / 16 KiB in RAM. No diagnostic filesystem
+I/O in claim/render/emit/ACK stages. After restoring wrappers in finally, perform
+one best-effort private-ledger append on a daemon thread with at most 50 ms wait;
+failure, blocked storage or incomplete evidence never changes processing and
+must not be treated as proof. Reuse existing case files and fail-open behavior;
+do not introduce a background service or durable delivery ledger. Review may
+choose a smaller safe bound or an existing equivalent facility.
+
+Verification before live use: actual backed-up SessionStart and UserPromptSubmit
+through HTTP/hook caller-surface fixtures, original stdout/HTTP operations equal
+with and without observer; claim response unavailable, malformed/post-response
+state write rejection, render skip, actual write/flush failure, failed ACK and
+success each produce correct stage metadata. Prove no payload/token leakage,
+exact-session/message targeting, expiry and already-used exclusion, concurrent
+one-shot admission, bounded/blocked/failed logging and complete restoration on
+normal exit, SystemExit and exceptions. Preserve all existing fault modes.
+Run exact file first, affected files, whole-change selected checks/full lane,
+independent smart result review and normal PR/CI/deployment before installed use.
+Then coordinate shared service operations and one fresh dedicated native-host
+observational case. No fault is armed now. Success is not historical attribution;
+native ownership and restart qualification remain separate open requirements.
+
+Clean-context smart plan review is pending before any helper or test edit.
 
 Post-release contention follow-up at 385a8a94: worker caller-surface regression
 failed only its positive busy-preservation case (11 negative cases passed).
