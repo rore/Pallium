@@ -46,6 +46,9 @@ def test_released_native_idle_busy_and_reload(client, tmp_path, test_db_url, mon
     fail_context = threading.Event()
     failed_contexts = []
     ingested = []
+    capture_reply_lost = threading.Event()
+    capture_reply_lost.set()
+    lost_captures = []
     retirement_armed = threading.Event()
     retirement_blocked = threading.Event()
     retirement_release = threading.Event()
@@ -76,6 +79,11 @@ def test_released_native_idle_busy_and_reload(client, tmp_path, test_db_url, mon
                 body = json.loads(raw)
                 result = response.json()
                 ingested.extend(zip(body if isinstance(body, list) else [body], result if isinstance(result, list) else [result]))
+                if self.path == "/items" and capture_reply_lost.is_set() and body[0].get("role") == "assistant":
+                    capture_reply_lost.clear()
+                    lost_captures.append((body[0], result[0]))
+                    self.close_connection = True
+                    return  # native capture committed; its caller receives no receipt
             self.send_response(response.status_code)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(response.content)))
@@ -116,6 +124,27 @@ def test_released_native_idle_busy_and_reload(client, tmp_path, test_db_url, mon
                     vector_index=VectorIndexConfig(enabled=False))))
                 restored_client.append(restarted)
                 relay_client[0] = restarted
+            compacting = "<template>" in json.dumps(body)
+            summary = """## Objective
+- Continue the generic fixture.
+## Requirements
+- (none)
+## Decisions
+- (none)
+## Work State
+### Completed
+- Initial fixture response.
+### Active
+- (none)
+### Blocked
+- (none)
+## Next Move
+1. Continue the fixture.
+## Relevant Files
+- (none)
+## Important Context
+- (none)
+"""
             chunks = [
                 {"id": "local", "object": "chat.completion.chunk", "created": 1,
                  "model": "mock-model", "choices": [{"index": 0, "delta": {"role": "assistant", "tool_calls": [
@@ -127,7 +156,7 @@ def test_released_native_idle_busy_and_reload(client, tmp_path, test_db_url, mon
             ] if tool else [
                 {"id": "local", "object": "chat.completion.chunk", "created": 1,
                  "model": "mock-model", "choices": [{"index": 0, "delta": {
-                     "role": "assistant", "content": "NATIVE_ASSISTANT_שלום"}, "finish_reason": None}]},
+                     "role": "assistant", "content": summary if compacting else "NATIVE_ASSISTANT_שלום"}, "finish_reason": None}]},
                 {"id": "local", "object": "chat.completion.chunk", "created": 1,
                  "model": "mock-model", "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
                  "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}},
@@ -247,6 +276,24 @@ export default {...production,setup:async ctx=>{
         prefix = "/api/session/" + session
         api("POST", prefix + "/prompt", {"id": "msg_natural_first", "text": "NATIVE_USER_שלום", "delivery": "queue"})
         api("POST", "/api/experimental/session/" + session + "/wait")
+        eventually(lambda: lost_captures)
+        initial_history = api("GET", prefix + "/context")["data"]
+        initial_assistant = next(message for message in reversed(initial_history) if message.get("type") == "assistant")
+        assert isinstance(initial_assistant["time"]["completed"], (int, float))
+        # A normal native compaction hook retries the already-committed capture.
+        # It uses the native summary model; no result override or host mutation.
+        api("POST", prefix + "/compact", {"id": "msg_capture_compaction", "delivery": "queue"})
+        api("POST", "/api/experimental/session/" + session + "/wait")
+        compacted_history = api("GET", prefix + "/context")["data"]
+        assert any(message.get("id") == "msg_capture_compaction" and message.get("status") == "completed"
+                   for message in compacted_history)
+        original_capture, original_receipt = lost_captures[0]
+        native_retries = [(body, receipt) for body, receipt in ingested
+                          if body.get("role") == "assistant" and body["content"] == original_capture["content"]]
+        assert len(native_retries) == 2
+        assert {receipt["source_item_id"] for _, receipt in native_retries} == {original_receipt["source_item_id"]}
+        assert {body["source_id"] for body, _ in native_retries} == {original_capture["source_id"]}
+        assert original_capture["source_id"].startswith("oc-assistant-")
         listed = eventually(lambda: client.get("/relay/sessions", params={"runtime": "opencode", "session_ref": session, **scope}).json())
         container = listed[0]["container_ref"]
         scope = {"container_ref": container}
@@ -362,3 +409,126 @@ export default {...production,setup:async ctx=>{
             server.server_close()
         for restarted in restored_client:
             restarted.close()
+
+
+def test_capture_callbacks_retry_through_real_http_and_history(client, tmp_path):
+    """Production hook + HTTP writes: count persisted receipts, including lost replies."""
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node is required for the production OpenCode caller")
+    attempts, ingested = {}, []
+    held, release = threading.Event(), threading.Event()
+
+    class CaptureHTTP(BaseHTTPRequestHandler):
+        def log_message(self, *_):
+            pass
+
+        def reply(self, status, value):
+            payload = json.dumps(value).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def forward(self):
+            raw = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            if self.path == "/fixture/held":
+                return self.reply(200, held.is_set())
+            if self.path == "/fixture/release":
+                release.set()
+                return self.reply(200, True)
+            body = json.loads(raw) if self.path == "/items" else None
+            marker = body[0]["content"] if body else None
+            if marker:
+                attempts[marker] = attempts.get(marker, 0) + 1
+                attempt = attempts[marker]
+                if marker == "REJECT_שלום" and attempt == 1:
+                    return self.reply(503, {"detail": "isolated precommit rejection"})
+            response = client.request(self.command, self.path, content=raw or None,
+                                      headers={"Content-Type": "application/json"})
+            if body and response.is_success:
+                ingested.extend(zip(body, response.json()))
+                if marker == "CONCURRENT_שלום" and attempt == 1:
+                    held.set()
+                    assert release.wait(15), "capture reply was not released"
+                if marker == "LOST_שלום" and attempt == 1:
+                    self.close_connection = True  # committed source, no receipt delivered
+                    return
+                if marker == "MALFORMED_שלום" and attempt == 1:
+                    return self.reply(200, {})
+            self.reply(response.status_code, response.json())
+
+        do_GET = do_POST = forward
+
+    server = ThreadingHTTPServer(("localhost", 0), CaptureHTTP)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    root = Path(__file__).resolve().parents[1]
+    plugin_dir = Path(os.environ.get("PALLIUM_OPENCODE_NATIVE_PLUGIN_DIR",
+                                    root / "integrations/opencode/.opencode/plugins"))
+    program = tmp_path / "capture-caller.mjs"
+    program.write_text("""import assert from 'node:assert/strict';
+const {default:production}=await import(process.env.CAPTURE_PLUGIN);
+const cwd=process.env.CAPTURE_DIRECTORY, sessionID='ses_capture_http';
+let history=[], hooks={}, cleanup;
+const ctx={location:{directory:cwd},app:{log(){}},session:{
+ hook:async(name,callback)=>{hooks[name]=callback;return{dispose:async()=>{}}},
+ get:async()=>({location:{directory:cwd}}),context:async()=>({data:history}),
+},event:{subscribe:async function*({signal}){
+ if(!signal.aborted)await new Promise(resolve=>signal.addEventListener('abort',resolve,{once:true}));
+}}};
+const capture=()=>hooks.compaction({sessionID});
+const rows=(name,id='msg_'+name)=>history=[
+ {type:'user',id:'msg_user_'+name,text:'generic fixture'},
+ {type:'assistant',id,time:{created:0,completed:1},content:[{type:'text',text:name+'_שלום'}]},
+];
+const control=async(path)=>(await fetch('http://localhost:'+process.env.PALLIUM_PORT+'/fixture/'+path)).json();
+try{
+ cleanup=await production.setup(ctx);
+ rows('CONCURRENT');const first=capture();
+ const until=Date.now()+5000;while(!await control('held')){
+  assert.ok(Date.now()<until,'capture request did not reach the HTTP barrier');
+  await new Promise(resolve=>setTimeout(resolve,5));
+ }
+ await capture();await control('release');await first;await capture();
+ rows('REJECT');await capture();await capture();await capture();
+ rows('MALFORMED');await capture();await capture();await capture();
+ rows('LOST');await capture();await cleanup();cleanup=await production.setup(ctx);
+ await capture();await capture();
+ rows('SAME_TEXT','msg_same_a');await capture();
+ rows('SAME_TEXT','msg_same_b');await capture();
+}finally{await control('release');await cleanup?.()}
+""", encoding="utf-8")
+    env = {key: value for key, value in os.environ.items() if not (
+        key.startswith(("PALLIUM_", "OPENCODE_")) or key.endswith("API_KEY"))}
+    for key in ("HOME", "USERPROFILE", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME",
+                "XDG_STATE_HOME", "TEMP", "TMP"):
+        directory = tmp_path / key.lower()
+        directory.mkdir()
+        env[key] = str(directory)
+    env.update({"PALLIUM_PORT": str(server.server_port), "PALLIUM_HOOK_ACTOR_REF": "fixture-actor",
+                "CAPTURE_PLUGIN": (plugin_dir / "pallium-v2.mjs").as_uri(),
+                "CAPTURE_DIRECTORY": str(tmp_path)})
+    try:
+        result = subprocess.run([node, str(program)], env=env, cwd=tmp_path,
+                                capture_output=True, text=True, timeout=40)
+        (tmp_path / "capture-caller.log").write_text(result.stdout + result.stderr, encoding="utf-8")
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert attempts == {"CONCURRENT_שלום": 1, "REJECT_שלום": 2, "MALFORMED_שלום": 2,
+                            "LOST_שלום": 2, "SAME_TEXT_שלום": 2}
+        for marker in ("CONCURRENT", "REJECT", "MALFORMED", "LOST", "SAME_TEXT"):
+            receipts = [(body, reply) for body, reply in ingested if body["content"] == marker + "_שלום"]
+            unique = {reply["source_item_id"] for _, reply in receipts}
+            assert len(unique) == (2 if marker == "SAME_TEXT" else 1)
+            for receipt in unique:
+                body = next(body for body, reply in receipts if reply["source_item_id"] == receipt)
+                expanded = client.get("/source/" + receipt + "/context", params={
+                    "container_ref": body["container_ref"], "query_actor_ref": body["actor_ref"],
+                    "before": 0, "after": 0})
+                assert expanded.status_code == 200
+                assert [item["content"] for item in expanded.json()["items"]] == [marker + "_שלום"]
+                assert expanded.json()["items"][0]["source_id"] == body["source_id"]
+    finally:
+        release.set()
+        server.shutdown()
+        server.server_close()
