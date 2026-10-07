@@ -125,10 +125,15 @@ confirmed exit zero. A temporary in-memory one-second extension of the outer
 fence was rejected by the strengthened partial-body regression. Two earlier
 worker file runs omitted completion metadata and are not accepted as evidence.
 Root started the one required full non-slow serial lane at 65c74b37 with exactly
-these dirty test blobs; session 83768 is running. No production source, protected
-contract, service, hook configuration or consumer settings changed. Full-suite
-result, final adequacy review, separate human result review and PR CI remain
-gates. PR297 stays separately owned and unmerged pending this correction.
+these dirty test blobs. Session 83768 completed with confirmed exit zero:
+6343 passed, 34 skipped, 480 deselected, 2 xfailed in 1357.40s. The final
+independent smart adequacy review by /root/ci_fixture_plan_review approved this
+test-only correction at 368a8d3a, confirming all three test blobs are unchanged.
+No production source, protected contract, service, hook configuration or consumer
+settings changed. Fresh whole-change selector, Redline/workflow checks and PR CI
+remain gates. Release is held for the shared installed native-wake incident below;
+PR297 stays separately owned and unmerged. This evidence does not close installed
+Relay recovery acceptance.
 
 Separate human result review received on 2026-10-07: the user selected
 "Approve result after all gates pass" for request
@@ -139,6 +144,41 @@ body deadline coverage is strengthened, no production/settings change occurs,
 smart source review and 216 affected tests passed, and full validation is still
 running. Merge is conditional on full validation, final review and green CI.
 The broader installed Relay recovery acceptance explicitly remains open.
+
+### Shared installed native-wake incident, 2026-10-07
+
+Manager assigned urgent read-only diagnosis of three recipients around
+14:24–14:26 UTC and held unrelated service/deployment changes. Both stable
+checkouts remain f31ac141; the service epoch began at 12:35:50 UTC. Public health
+does not prove native custody. Current log has no retained registration after
+that restart; first post-restart dispatch failures are at 12:36:07. Earlier
+reopen failures began at 10:36:37, followed by intermittent fresh registrations.
+
+Exact deliveries relay-delivery-e4548dac72764e19a54fe97a38822c2f and
+relay-delivery-e223cd1983dd456e854b18c6c14bc9ab fail native dispatch at
+stage=reopen/category=peer-mismatch, before recipient state read or submission.
+That category also covers absent retained_registration, so it does not establish
+a changed Desktop identity. Fixed-as-of trace pagination through sequence 10072
+is exhausted: these two deliveries remain pending with attempts=0; their retained
+trace is truncated. Astra's relay-delivery-8f966328a54d4720a5c7a2a8ae437dd1 was
+claimed and ACKed once at 14:24:59 on a manager-reported human-assisted turn, not
+unattended recovery proof. Three initial MCP trace calls may have attempted
+source enrollment; subsequent pagination used only read-only HTTP trace.
+
+Native client service_current returns False immediately when the old service
+handle is signaled, before comparing the bootstrap manifest. A delegated claim
+that ordinary exited-service/changed-manifest ordering disables recovery was
+rejected against the actual source. Missing post-restart enrollment is an
+observation, not an attributed cause. Same-epoch custody drop and older loaded
+worker versions remain hypotheses requiring focused evidence, not blanket fixes.
+
+Direct human environment directive now requires exact live-change approval for
+installed versions, launchers, configuration, integrations, data or service
+operations; generic implementation/PR approval is insufficient. All current work
+is read-only diagnosis or isolated repository work. No restart, rollback, fresh
+enrollment probe, receive/ACK/resend, unknown-child termination or active-chat
+interruption was performed. Manager receives concrete findings through the app
+fallback until native autonomous wake is verified, without settings overrides.
 
 ### Passive exact-session diagnostic plan, 2026-10-07
 
