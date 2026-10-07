@@ -203,6 +203,9 @@ gpt-6.1-sol/high, approved exact revision
 The hook/test/roadmap blobs match the independently reviewed candidate and the
 operations corrections survived integration of actual merged base ae110a51.
 
+Reviewed revision: 4c62845f37ed075253cfc9d372de31a980da981e. Only the review
+record and its required field labels changed afterwards; source/tests are unchanged.
+
 Verification adequacy: approved after 11 focused, 227 affected and 6376 full
 serial passes, plus import, Redline and workflow checks. Only this Work Record
 changed after tested b950ac70. Process-signal and HTTP lease-recovery coverage
