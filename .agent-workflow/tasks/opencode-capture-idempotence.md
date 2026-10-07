@@ -42,7 +42,14 @@ Native multi-step/tool-plus-text and reload -> released isolated binary with loc
 
 ## Recovery
 
-Concrete plan independently approved; next implement scoped completed-capture identity and reservation, then prove caller/HTTP/native contracts. Keep OC-1 compaction investigation separate and canonical item active. No deployment/restart and no claim of historical backfill or that this slice already fixes OC-3.
+Source implemented and independently approved at 69fe4eab; verification remains incomplete. Both released-native versions passed, but independent adequacy withheld approval for scope, boundaries, tool-trace and lifecycle stored-state/readback gaps. Bounded delegates are expanding the two existing HTTP/native tests without source changes; parent reviews final diff and obtains a separate nonimplementer adequacy review. Full non-slow parallel validation stopped on an unchanged Claude wake one-second synchronization barrier; exact --lf serial rerun passed, full serial rerun is active. Keep OC-1 compaction investigation separate and canonical item active. No deployment/restart, historical backfill guarantee or OC-3 completion claim.
+
+## Verification in progress
+
+- Source review: /root/capture_result_review approved exact 69fe4eabe9489609490d5fce5587dd6446e9e87e, no actionable correctness finding; entire five-file diff, both capture callers, existing extraction/transport/pins and backend uniqueness inspected. Elevated/Moderate retained. This is source approval, not final evidence acceptance.
+- Exact 69fe4eab released-native tests passed official 2.0.24 in 50.13s and 2.0.22 in 50.14s; manifests in build/native-capture-released-2024 and build/native-capture-released-2022. They prove completion markers/default compaction/source uniqueness; 1..2 forwarded attempts permit reservation overlap, so they do not independently prove a native retry occurred. Real HTTP lost-response/reload proof is separate.
+- /root/capture_verification_adequacy withheld approval: distinct-scope payload-only checks, missing HTTP empty/max/over-max/eligibility/lifecycle coverage, and native History choosing the first text-only capture. The reviewer is now implementing the bounded HTTP test expansion, so a different nonimplementer must provide final adequacy review. /root/disposal_native_qualification expands exact native tool-turn identity/readback; a first enhanced run exposed Windows cp1252 log decoding of newly logged Unicode, corrected explicitly to UTF-8 without weakening behavior.
+- Full non-slow parallel run: 1 failed, 1232 passed, 2 skipped, 1 xfailed in 261.37s. Unchanged test_new_publisher_waits_for_registry_compare_delete's one-second lock hold expired during child process startup; failure and thread warning retained in build/capture-validation-69fe4eab/python-full-nonslow.log. Exact --lf --lfnf=none -q -n 0 -m 'not slow' passed 1 in 0.80s; full serial lane is running, not yet passing. No unrelated test changes or exclusions.
 
 ## Concrete completed-assistant contract
 

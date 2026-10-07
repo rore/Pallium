@@ -237,7 +237,7 @@ Per-session deduplication and container-pinning state uses
 
 ```bash
 cd integrations/opencode
-node --test tests/*.test.mjs
+npm test
 ```
 
 The suite covers container derivation, redaction parity, deduplication, session
@@ -247,7 +247,7 @@ operation when Pallium is unavailable.
 ## Known gaps
 
 - V1 remains passive. V2 automatic wake is qualified against isolated Windows
-  OpenCode 2.0.22; other releases/platforms and the global installation remain
+  OpenCode 2.0.22 and 2.0.24; other releases/platforms and the global installation remain
   unqualified. Native admission and ACK do not guarantee interrupted task completion.
 - Usage-audit population is server-owned after durable assistant ingestion.
 - Compaction records the latest assistant turn but does not run a pre-compaction
