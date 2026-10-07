@@ -769,8 +769,9 @@ pending operational evidence. Relay reliability remains first: qualify the curre
     qualification gates above; retain the installed V1 passive integration while
     qualifying V2. Isolated Windows OpenCode 2.0.22 now passes automatic idle/busy
     delivery, ACK-to-tool continuation across a Pallium restart, pre-claim retry,
-    hard restart and service startup recovery. Full validation, independent result
-    review and coordinated installed rollout remain. The V2 native inbox and one
+    hard restart and service startup recovery. Full local validation and independent
+    technical result review passed; human result review and coordinated installed
+    rollout remain. The V2 native inbox and one
     Pallium scheduling fence replace the older proposed plugin delivery ledger;
     broader Claude/Codex gates and historical qualification remain open.
 
