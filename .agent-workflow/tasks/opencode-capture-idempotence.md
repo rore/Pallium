@@ -21,7 +21,7 @@ Precommit failure and committed response loss -> controlled real HTTP forwarding
 Separate actor/container/session/native identities, same text, Unicode and extraction boundaries -> caller cases assert distinct sources, exact readback and no invalid write.
 Disposal, move and successor races -> delayed native/context/HTTP continuations cannot write under stale ownership or mutate successor capture state; retain PR302 regression coverage and reconcile PR297 separately.
 Native multi-step/tool-plus-text and reload -> released isolated binary with local provider and real Pallium verifies scoped History source receipts; package/shared V1 compatibility, selector/full lane, independent evidence adequacy.
-**Plan review:** Pending concrete capture-boundary discovery and clean-context technical plan review. No source implementation permission inferred from a candidate.
+**Plan review:** Discovery review: /root/capture_contract_discovery at `115bb85ee4aa3184a28aa1ce6cd74e5872d8cc22`; backend dedup is suitable, but capture-boundary immutability and delayed completion reading a newer active turn remain unqualified. Reviewer withdrew arbitrary content/snapshot-version hashing because it would broaden capture semantics without native evidence. Pending decisive isolated native prerequisite and concrete technical plan review; no implementation permission inferred from discovery.
 **Approvals:** Separate human plan approval not required at Elevated risk; user authorized the remediation. No live deployment authorization in this record.
 **Exceptions:** —
 **State:** Blocked or returned to planning
@@ -31,6 +31,8 @@ Native multi-step/tool-plus-text and reload -> released isolated binary with loc
 
 - Created isolated managed branch `feat/opencode-capture-idempotence` at e9eb3956, invoked Agent Workflow and classified full intent before source edits. No application/test change.
 - Source trace confirms production backend uniqueness is global over source_type/source_id, so the stable source identity must include the capture's full scope rather than assistant ID alone. No backend change proposed.
+- Independent discovery confirms completed native tool/text steps use distinct assistant IDs and timestamps before idle; it does not prove public context inside active compaction or a delayed completion read cannot select an unfinished assistant. Bounded isolated native qualification delegated to /root/disposal_native_qualification, ignored artifacts only. No speculative snapshot-version ledger/hash contract adopted.
+- Tool-only extraction currently attempts empty content rejected by /items. This is an explicit uncovered caller case; preserve nonempty API semantics and choose/record the intended skip-versus-render behavior before implementation, rather than inventing placeholder text or claiming it passes.
 
 ## Evidence
 
