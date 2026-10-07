@@ -528,17 +528,27 @@ Remaining work:
   of runtime, platform, interruption, existing evidence, and missing witness.
   Reuse passed recovery tests and live witnesses; do not repeat them without cause.
 - Qualify Claude/Codex on macOS when that platform is needed.
-- Implement and qualify OpenCode automatic activation. Its existing Relay
-  integration and claim-timeout fix do not establish automatic wake support.
-  Owner: `@pal-dev1`, assigned by the human on 2026-10-07; Work Record:
+- OpenCode V2 automatic wake has a happy-path live witness on the native Windows CLI
+  and desktop 2.0.24. The configured-model witness delivered the exact Unicode
+  payload unattended and verified its response and ACK; all 87 existing sessions
+  and settings were retained. The earlier 2.0.22 qualification is historical. PR #292
+  is merged and its consumer switch is installed. The V2 native inbox uses stable
+  native IDs, coordinated by Pallium's existing endpoint state and one scheduling
+  fence; there is no separate plugin pending-delivery ledger. PR #297's minimal
+  assistant-directory ownership guard remains a separate unmerged follow-up pending
+  relaydev's CI fixture fix. Do not treat that guard or broader
+  restart/OS qualification as complete. Reviewed wake-anchor, lifecycle,
+  capture-idempotence and latency gaps are tracked in
+  [Fix OpenCode plugin reliability](fix-opencode-plugin-reliability.md); the
+  happy-path witness does not qualify overall reliability. Owner: `@pal-dev1`; Work Record:
   [OpenCode Relay wake](../../.agent-workflow/tasks/opencode-relay-wake.md).
-  Discovery targets released V2 2.0.22 on Windows: model-bound receipt and ordinary
-  turn capture, native busy/retry/restart behavior, and an overtaken wake's no-work
-  behavior. Source capabilities are not installed qualification. Preserve Pallium
-  delivery/ACK authority and the installed V1 passive integration while qualifying
-  an isolated V2 runtime. Codex/restart ownership remains with relaydev.
+  Preserve V1 compatibility; the everyday installed integration is V2. Codex/restart ownership remains
+  with relaydev.
 
-OpenCode wake remains a dependency of Copilot expansion. These residual gates do
+OpenCode activation remains a dependency of Copilot expansion; its native Windows
+2.0.24 V2 wake has a happy-path witness, while the assistant-directory guard follow-up
+remains unmerged pending relaydev's CI fixture fix and the reviewed reliability
+gaps remain open in [Fix OpenCode plugin reliability](fix-opencode-plugin-reliability.md). These residual gates do
 not block activation capabilities, traces, work associations, or future
 Claude/Codex workflow examples. A new correctness incident takes priority if one is found.
 The milestone and incident history below preserves evidence; it is not a list of
@@ -586,7 +596,7 @@ when and whom to message, and Pallium only persists, addresses, activates, and
 reports delivery. `fix-relay-claim-before-context-emission` (`RF-005`) is a release
 prerequisite because both wake and fallback must be loss-safe.
 
-### Milestone order (user priority, 2026-08-31)
+### Historical milestone order (user priority, 2026-08-31; OpenCode sequence superseded by PR #292)
 
 1. **Codex↔Codex dogfood first — Windows-qualified:** the existing Codex architect and developer
    sessions exchange a bounded task → result → review → remediation/verdict
@@ -597,7 +607,7 @@ prerequisite because both wake and fallback must be loss-safe.
 2. **Claude↔Codex next — Claude wake qualified on Windows and Linux:** the
    cross-runtime journey is proven without a manual recipient turn. Claude macOS
    and Codex macOS qualification remain S4; neither reopens milestone 1.
-3. **OpenCode later:** add its adapter after the first two milestones.
+3. **OpenCode later (original sequence):** add its adapter after the first two milestones.
 
 Milestone 1 includes the smallest persist-first coordinator needed by Codex,
 dedupe, correlated admission, loss-safe active-writer fallback, wake/fallback claim-race protection,
@@ -637,13 +647,14 @@ retries, runtime callbacks, and hook fallback idempotent.
 ## Runtime Feasibility and Constraints
 
 Deeper source review on 2026-08-26 corrected the initial Phase 0 verdict. The
-installed versions are Claude Code 2.1.250, Codex CLI 0.149.1, and OpenCode
-1.18.19 on native Windows.
+installed versions recorded then were Claude Code 2.1.250, Codex CLI 0.149.1, and
+OpenCode 1.18.19 on native Windows; OpenCode has since moved through the historically
+qualified 2.0.22 release to the supported native CLI and desktop 2.0.24.
 
 | Runtime | Current verdict | Proven mechanism | Remaining qualification |
 |---|---|---|---|
 | Codex | **Windows and Linux exact-session wake proven for runtime-loaded tasks; Windows overtaken-wake suppression proven** | Pallium writes a generic trigger through `codex queue --thread` from a validated neutral Codex home. The cross-process watcher starts a real turn when the target is loaded; for an unloaded target, Pallium keeps the Relay delivery pending until a later supported hook turn. Native unloaded-queue persistence is not claimed. The installed UserPromptSubmit hook claims and injects only after admission, and blocks an exact internal wake without verified rendered delivery before memory or model work. An installed Ubuntu 24.04 / WSL2 witness with Codex 0.153.4 proved loaded exact-session automatic wake, hook delivery, and return to idle. | Windows and Linux loaded-task live send → wake are proven. Windows atomic reply, reply-only idle-sender wake, and a no-manual-turn remediation round trip are proven. Do not claim unattended unloaded-task resume without a supported runtime workspace API; qualify macOS and remaining interrupted/restart variants before calling the adapter cross-platform complete. |
-| OpenCode | Supported with a Pallium/OpenCode plugin coordinator | Server/plugin APIs expose stable sessions and async prompts. Agent Intercom demonstrates persist-first delivery, application metadata correlation, history verification before replay, safe busy deferral, and restart recovery. | A bare prompt_async 204 is transport acknowledgement only. Pallium needs the plugin-owned durable pending ledger and a Windows E2E proof. Deferred to after Claude Code wake is proven. |
+| OpenCode | **Native Windows CLI/desktop 2.0.24 happy-path wake witnessed** | OpenCode's native inbox admits exact sessions with stable native IDs; Pallium coordinates pending work through existing endpoint state and one scheduling fence, without a separate plugin pending-delivery ledger. The configured-model live witness verified unattended exact Unicode response and ACK; all 87 sessions and settings were retained. Shipped isolated native lifecycle E2E passed on 2.0.24; this does not qualify overall reliability. | [Fix OpenCode plugin reliability](fix-opencode-plugin-reliability.md) tracks reviewed wake-anchor, lifecycle, capture-idempotence and latency gaps. PR #297's minimal assistant-directory ownership guard remains separate and unmerged, pending relaydev's CI fixture fix. Do not count the guard as installed or qualified. |
 | Claude Code | **Windows and Linux S1A+S1B qualified** | Installed Windows and Ubuntu 24.04 / Claude Code 2.1.250 witnesses proved native peer Relay → exact restart-surviving capability → Stop claim/injection/ACK → Claude reply without another human prompt. Linux used the installed UDS path. | Installed UDS qualification on macOS remains S4. |
 
 **Claude registration foundation:** Windows and Linux S1A+S1B are live-witness qualified: trusted-local exact-session persistence, write-ahead intents, fail-closed rehydration, and event-driven idle-pending reconciliation survived the installed witnesses. The Linux witness used Ubuntu 24.04, Claude Code 2.1.250, and the installed UDS path. No DPAPI, silent time expiry, or lifetime redesign was added. Installed UDS qualification on macOS remains S4.
@@ -651,12 +662,17 @@ installed versions are Claude Code 2.1.250, Codex CLI 0.149.1, and OpenCode
 
 **Codex:** Write one generic trigger through hidden `codex queue --thread` from a validated resolved local Codex home. The owning runtime watcher starts a loaded task; for an unloaded task, Pallium keeps the Relay delivery pending until a later supported hook turn, without relying on native queue persistence. After admission, the installed UserPromptSubmit hook claims and injects the bounded backlog under the target's pinned scope, then acknowledges hook delivery. If the exact internal wake cannot render a verified delivery because the response is empty, unavailable, malformed, timed out, or invalidly scoped, the hook emits Codex's native structured block decision before memory or model work. Queue launch failure leaves the delivery pending for startup/periodic recovery or ordinary next-turn delivery. No private App Server attachment or Codex state lookup is required.
 
-**OpenCode:** the plugin persists the Relay item before broker acknowledgement,
-checks recent session history for metadata.palliumRelayId, defers submission to a
-safe boundary, calls the supported prompt API, and marks admission only when
-session messages/events contain that exact ID. On restart it replays only items
-not proven admitted. A server plugin can cover normal OpenCode sessions without
-requiring every session to be launched by a Pallium wrapper.
+**OpenCode:** the installed V2 plugin uses OpenCode's native durable inbox and
+stable native message IDs. Pallium coordinates delivery with its existing endpoint
+state and one scheduling fence; there is no separate plugin pending-delivery ledger.
+The earlier Windows 2.0.22 qualification is historical. The supported native CLI
+and desktop now run official unmodified 2.0.24; the configured-model live witness
+verified an unattended Unicode response and ACK, and shipped isolated native
+lifecycle E2E passed on 2.0.24. The assistant-directory ownership guard remains a
+separate unmerged PR #297 pending relaydev's CI fixture fix.
+Reviewed wake-anchor, lifecycle, capture-idempotence and latency gaps remain open
+in [Fix OpenCode plugin reliability](fix-opencode-plugin-reliability.md); this
+happy-path witness does not qualify overall reliability.
 
 **Claude Code:** Native peer frames start text turns but Claude 2.1.250 classifies them as internal `isMeta` events, so S0/S0.5 are misqualified for UserPromptSubmit admission. Claude reproduced S1A Stop continuation: every Stop registers idle; a non-recursive Stop makes one exact-scope `/relay/turn` with authoritative storage `max_chars=2360`, route admission marks busy, and renders the returned claimed set plus any compact backlog notice inside a fixed 2,400-character output budget, emits that exact set to stderr, then ACKs the emitted claims individually before exit 2 requests one continuation. Partial failure leaves unACKed claims lease-recoverable; all failure exits 0 and every non-continuing path re-registers idle after route admission. Storage budgets the exact emitted control template. `has_more` and `remaining_count` remain pending and are qualified under S1B rearm/continuation; the S1A witness historically proved one bounded batch. The `stop_hook_active` continuation Stop re-registers idle, ingests, and exits 0 without re-probing. No MCP/pin change belongs in S1A; durable state/reconciliation is S1B.
 
@@ -706,7 +722,7 @@ concrete wake-correlation diagnosis gap without changing delivery behavior. The
 remediation journey.
 The closed-recipient lifecycle slice subsequently shipped in PR #148 and
 first-run setup qualification completed on 2026-09-08. Retention cleanup is paused
-pending operational evidence. Relay reliability remains first: qualify the current hook-definition readiness and exact-recipient diagnostics before new wake-first activation qualification. Other activation capabilities, traces, work associations, and Claude/Codex validation may proceed independently. Wake-first retains the residual qualification listed at the top of this file; macOS is demand-driven and OpenCode activation precedes Copilot.
+pending operational evidence. Relay reliability remains first: qualify the current hook-definition readiness and exact-recipient diagnostics. Other activation capabilities, traces, work associations, and Claude/Codex validation may proceed independently. Wake-first retains the residual qualification listed at the top of this file; macOS is demand-driven. OpenCode native Windows 2.0.24 wake has a happy-path witness. Its assistant-directory guard follow-up remains open pending relaydev's CI fixture fix; [reviewed reliability gaps](fix-opencode-plugin-reliability.md) also remain open before Copilot expansion.
 
 1. **S2 contract gate — complete in PR #98.** Delivery lifecycle
    (`pending`, `claimed`, `delivered`, `expired`; `failed` only on separate
@@ -786,16 +802,21 @@ pending operational evidence. Relay reliability remains first: qualify the curre
 12. **S4 additional platforms.** Qualify installed Claude UDS and Codex wake on
    macOS. Windows/Linux Claude and Windows/Linux loaded-task Codex wake remain
    complete and must not be reopened without contrary evidence.
-13. **OpenCode active wake — implementation and review in progress.** The human assigned
-    the OpenCode slice to `@pal-dev1` on 2026-10-07. Follow the Work Record and
-    qualification gates above; retain the installed V1 passive integration while
-    qualifying V2. Isolated Windows OpenCode 2.0.22 now passes automatic idle/busy
-    delivery, ACK-to-tool continuation across a Pallium restart, pre-claim retry,
-    hard restart and service startup recovery. Full local validation and independent
-    technical result review passed; human result review and coordinated installed
-    rollout remain. The V2 native inbox and one
-    Pallium scheduling fence replace the older proposed plugin delivery ledger;
-    broader Claude/Codex gates and historical qualification remain open.
+13. **OpenCode V2 active wake — merged; happy-path witnessed, reliability remediation open.**
+    PR #292 is merged. The supported native Windows CLI and desktop run official
+    unmodified 2.0.24; 2.0.22 is the historical qualification. The configured-model
+    live witness verified an unattended exact Unicode response and ACK while
+    retaining all 87 sessions and settings. Shipped isolated native lifecycle E2E
+    also passed on 2.0.24; earlier isolated Windows validation also
+    covers automatic idle/busy delivery, ACK-to-tool continuation across a Pallium
+    restart, pre-claim retry, hard restart, and service startup recovery. The V2
+    native inbox and one Pallium scheduling fence replace the older proposed
+    plugin pending-delivery ledger. PR #297 tracks the minimal assistant-directory
+    ownership guard; it remains a separate unmerged follow-up pending relaydev's CI
+    fixture fix. Do not claim guard deployment or qualification.
+    [Fix OpenCode plugin reliability](fix-opencode-plugin-reliability.md) tracks
+    the reviewed wake-anchor, lifecycle, capture-idempotence and latency gaps.
+    Passing existing lifecycle tests or the live happy path does not close them.
 
 ### Wake dogfood defect ledger
 
@@ -877,14 +898,17 @@ release gates.
 Do not wait for a second adapter or build speculative multi-runtime machinery.
 Choose bounded limits from Codex evidence; revisit only when adding another adapter.
 
-### Implementation sequence — Codex first
+### Historical implementation sequence — Codex first
 
 **Codex (Windows/Linux loaded-task):** `codex queue --thread T` writes one generic trigger from a validated neutral Codex home. The owning Desktop watcher starts the loaded task; for an unloaded task, Pallium keeps the Relay delivery pending until an ordinary supported hook turn and does not rely on native queue persistence. The admitted UserPromptSubmit hook claims and injects the attributed batch under the target scope. Any exact internal trigger that cannot render a verified delivery is blocked before memory/model work, whether the Relay result is empty, unavailable, timed out, malformed, or invalidly scoped. MCP receive remains a separate fail-closed recovery path. Keep the adapter runtime/version-qualified until the remaining OS and lifecycle gates pass.
 
 **Claude Code:** S0/S0.5 are misqualified because Claude 2.1.250 peer frames bypass `UserPromptSubmit` as internal `isMeta` events. Claude reproduced S1A Stop continuation; Codex architect review is clean, exact-scope bounded Stop `/relay/turn`, one emit of the successfully rendered claim set followed by individual ACKs, and one exit-2 continuation—not MCP—provide peer-wake admission. Do not treat generic native notice as delivery.
 Keep Channels deferred and macOS passive until installed UDS E2E passes.
 
-**OpenCode:** Deferred until after Claude Code AND Codex are both proven.
+**OpenCode:** This was the original deferral. PR #292 superseded it; Windows V2
+automatic wake is now installed with a happy-path witness on native 2.0.24; 2.0.22 was
+the historical qualification. The separate PR #297 assistant-directory guard
+remains unmerged pending relaydev's CI fixture fix; the [reviewed reliability gaps](fix-opencode-plugin-reliability.md) remain open.
 
 ## In Scope
 
@@ -965,7 +989,7 @@ Implementation plan: [wake-first Relay delivery](../../docs/plans/2026-08-26-wak
 Phase 0 decision and installed-runtime evidence:
 [Relay wake Phase 0 decision record](../../docs/designs/017-relay-wake-phase0.md).
 
-Current result: Codex exact-session wake writes one hidden `codex queue --thread` trigger from a validated neutral Codex home. A runtime that already loaded the target starts a real turn; for an unloaded target, Pallium retains the pending Relay delivery until its next supported hook turn and claims no native queue persistence. RW-024 removed hidden `codex exec resume` because inheriting the service cwd could mutate task workspace and Relay scope. Queue launch remains best-effort with durable natural-turn fallback on failure. The adapter encodes Relay prompts as UTF-8, and the pre-fix claim-before-queue behavior reproduced a 409 `claim lease has expired` when a delivery was claimed before queueing and the queued turn executed after the lease. The installed UserPromptSubmit hook claims only at admitted-turn execution; delayed busy-target caller-surface E2E proves no stale receipt, loss, or duplicate action. A later live empty turn exposed the native accepted-prompt race: another admitted turn can consume the delivery after Codex accepts the queued trigger. The original guard blocked only the complete canonical no-work response; RW-019 strengthens it so any exact internal trigger without a verified rendered delivery stops before memory/model work. Deterministic caller-surface coverage preserves successful delivery, proves a competing real hook consumes and ACKs exactly once, and stores a safe marker when redaction expansion would otherwise exceed the render budget. An installed exact-session witness queued the trigger and recorded hook context followed by `task_complete` with `last_agent_message=null` and no user or assistant transcript item. Later sustained busy-target dogfood exposed RW-022: periodic recovery resubmitted the accepted non-idempotent prompt until admission. The scheduler now retains one confirmed or ambiguous native write per live generation without blind retry; deterministic caller-surface coverage proves recovery sweeps do not add queued turns. Hook-delivery wake and per-session burst coalescing are proven for the tested Windows paths. A Relay-wide read-only sweep now re-wakes eligible expired claims for active exact Codex and Claude sessions immediately at service startup and every 30 seconds, then the admitted hook reclaims and ACKs normally; controlled-clock real-hook E2E covers both runtimes and both full-app restarts. An installed Windows Codex witness deliberately abandoned a claimed delivery, then observed automatic hook delivery on attempt two after the 60-second lease expired, without a manual wake. Codex MCP receive and bounded automatic backlog drain are Windows-qualified. An installed Ubuntu 24.04 / WSL2 witness with Codex 0.153.4 targeted session `01a0776f-337d-7013-8170-f55b37a32f30`; parent `relay-msg-c55a51edc4a9469e81068a4f5adc4763` / delivery `relay-delivery-0dcd69097ce040d5858a6103956773d7` moved from pending attempts=0 to delivered attempts=1, produced `CODEX_LINUX_WAKE_DELIVERED_TRUSTED_20260906`, and returned idle. Explicit repository and exact-hook hash trust were used, never the trust-bypass flag. Sender-side reply admission and the bounded no-ping remediation journey were re-proven on 2026-09-08 with both original sender resumes caused solely by Relay and no manual recipient turn. Remaining interrupted/restart reliability and macOS qualification remain. Startup recovery now enumerates all eligible coalesced pending/expired candidates in oldest-first order, while default reads remain one-per-endpoint and exact rechecks remain unchanged. RW-026 now correlates each attempted Codex wake and recovery candidate with bounded identifiers and safe launch categories; it improves diagnosis only and does not claim the observed failed wake was repaired. Claude Windows and installed Linux UDS wake are complete; macOS remains S4, and OpenCode remains deferred.
+Historical Codex/Claude implementation result record (OpenCode deferral later superseded by PR #292): Codex exact-session wake writes one hidden `codex queue --thread` trigger from a validated neutral Codex home. A runtime that already loaded the target starts a real turn; for an unloaded target, Pallium retains the pending Relay delivery until its next supported hook turn and claims no native queue persistence. RW-024 removed hidden `codex exec resume` because inheriting the service cwd could mutate task workspace and Relay scope. Queue launch remains best-effort with durable natural-turn fallback on failure. The adapter encodes Relay prompts as UTF-8, and the pre-fix claim-before-queue behavior reproduced a 409 `claim lease has expired` when a delivery was claimed before queueing and the queued turn executed after the lease. The installed UserPromptSubmit hook claims only at admitted-turn execution; delayed busy-target caller-surface E2E proves no stale receipt, loss, or duplicate action. A later live empty turn exposed the native accepted-prompt race: another admitted turn can consume the delivery after Codex accepts the queued trigger. The original guard blocked only the complete canonical no-work response; RW-019 strengthens it so any exact internal trigger without a verified rendered delivery stops before memory/model work. Deterministic caller-surface coverage preserves successful delivery, proves a competing real hook consumes and ACKs exactly once, and stores a safe marker when redaction expansion would otherwise exceed the render budget. An installed exact-session witness queued the trigger and recorded hook context followed by `task_complete` with `last_agent_message=null` and no user or assistant transcript item. Later sustained busy-target dogfood exposed RW-022: periodic recovery resubmitted the accepted non-idempotent prompt until admission. The scheduler now retains one confirmed or ambiguous native write per live generation without blind retry; deterministic caller-surface coverage proves recovery sweeps do not add queued turns. Hook-delivery wake and per-session burst coalescing are proven for the tested Windows paths. A Relay-wide read-only sweep now re-wakes eligible expired claims for active exact Codex and Claude sessions immediately at service startup and every 30 seconds, then the admitted hook reclaims and ACKs normally; controlled-clock real-hook E2E covers both runtimes and both full-app restarts. An installed Windows Codex witness deliberately abandoned a claimed delivery, then observed automatic hook delivery on attempt two after the 60-second lease expired, without a manual wake. Codex MCP receive and bounded automatic backlog drain are Windows-qualified. An installed Ubuntu 24.04 / WSL2 witness with Codex 0.153.4 targeted session `01a0776f-337d-7013-8170-f55b37a32f30`; parent `relay-msg-c55a51edc4a9469e81068a4f5adc4763` / delivery `relay-delivery-0dcd69097ce040d5858a6103956773d7` moved from pending attempts=0 to delivered attempts=1, produced `CODEX_LINUX_WAKE_DELIVERED_TRUSTED_20260906`, and returned idle. Explicit repository and exact-hook hash trust were used, never the trust-bypass flag. Sender-side reply admission and the bounded no-ping remediation journey were re-proven on 2026-09-08 with both original sender resumes caused solely by Relay and no manual recipient turn. Remaining interrupted/restart reliability and macOS qualification remain. Startup recovery now enumerates all eligible coalesced pending/expired candidates in oldest-first order, while default reads remain one-per-endpoint and exact rechecks remain unchanged. RW-026 now correlates each attempted Codex wake and recovery candidate with bounded identifiers and safe launch categories; it improves diagnosis only and does not claim the observed failed wake was repaired. Claude Windows and installed Linux UDS wake are complete; macOS remains S4, and OpenCode remains deferred.
 
 ## Research References
 
