@@ -46,6 +46,10 @@ Reviewed revision: cd60d1096dbee627132ed88df07d5bd24757e5bf. Final disposition: 
 
 ## Evidence
 
+- Native primitive/source-watch prerequisite passed on isolated copied official 2.0.24: hooks/events retired while HTTP body, native prompt and native wait remained pending; see build/native-disposal-qualification-1791390425543428100.
+- Real native caller regression uses frozen pre-fix source 73417f97: late ACK assertion failed (8.66s). Production fix passed on 2.0.24 (42.22s) and 2.0.22 (42.46s), including successor claim-lease recovery and existing lifecycle journeys; source hashes/fixtures in build/native-retirement-evidence.json and build/native-retirement-2022-evidence.json. Normal-path evidence will be reviewed for reuse after focused reentrant/error cleanup corrections.
+- Affected helper/caller suite: 66 passed / 6 platform skips. Independent result review found reentrant disposal and synchronous hook-disposal failure; both corrected, with focused shared-promise/all-hook-attempt/async-error regressions passing. Final validation and final independent result/verification-adequacy review remain pending.
+
 Pre-edit reports: `build/import-linter-report.json`, `build/opencode-disposal-intended.z`, `build/opencode-disposal-redline.json`. No implementation validation claimed.
 
 ## Recovery

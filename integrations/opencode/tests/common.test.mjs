@@ -38,29 +38,29 @@ for (const [name, request] of [
 ]) test(`${name}: cancelled requests do not start and stalled bodies respect retirement`, async () => {
   const previous = globalThis.fetch;
   try {
-      let calls = 0;
-      globalThis.fetch = async () => { calls++; return { ok: true, text: async () => "{}" }; };
-      const cancelled = new AbortController();
-      cancelled.abort();
-      assert.equal(await request(cancelled.signal), null);
-      assert.equal(calls, 0, "an already-retired caller cannot issue HTTP");
+    let calls = 0;
+    globalThis.fetch = async () => { calls++; return { ok: true, text: async () => "{}" }; };
+    const cancelled = new AbortController();
+    cancelled.abort();
+    assert.equal(await request(cancelled.signal), null);
+    assert.equal(calls, 0, "an already-retired caller cannot issue HTTP");
 
-      let entered;
-      const bodyStarted = new Promise((resolve) => { entered = resolve; });
-      let observedSignal;
-      globalThis.fetch = async (_, { signal }) => {
-        observedSignal = signal;
-        return { ok: true, text: () => {
-          entered();
-          return new Promise((_, reject) => signal.addEventListener("abort", () => reject(new Error("body cancelled")), { once: true }));
-        } };
-      };
-      const owner = new AbortController();
-      const pending = request(owner.signal);
-      await bodyStarted;
-      owner.abort();
-      assert.equal(observedSignal.aborted, true);
-      assert.equal(await pending, null);
+    let entered;
+    const bodyStarted = new Promise((resolve) => { entered = resolve; });
+    let observedSignal;
+    globalThis.fetch = async (_, { signal }) => {
+      observedSignal = signal;
+      return { ok: true, text: () => {
+        entered();
+        return new Promise((_, reject) => signal.addEventListener("abort", () => reject(new Error("body cancelled")), { once: true }));
+      } };
+    };
+    const owner = new AbortController();
+    const pending = request(owner.signal);
+    await bodyStarted;
+    owner.abort();
+    assert.equal(observedSignal.aborted, true);
+    assert.equal(await pending, null);
   } finally { globalThis.fetch = previous; }
 });
 
