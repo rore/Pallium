@@ -15,10 +15,12 @@
   "main": "./.opencode/plugins/pallium.mjs",
   "exports": {
     ".": "./.opencode/plugins/pallium.mjs",
-    "./plugin": "./.opencode/plugins/pallium.mjs"
+    "./plugin": "./.opencode/plugins/pallium.mjs",
+    "./server": "./server.js"
   },
   "files": [
     "AGENTS.md",
+    "server.js",
     "skills/",
     ".opencode/",
     "README.md"

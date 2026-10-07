@@ -17,4 +17,6 @@ test("package includes the lazy field-feedback reference", () => {
   );
   const files = JSON.parse(output)[0].files.map((file) => file.path);
   assert.ok(files.includes("skills/pallium-memory/references/field-feedback.md"));
+  assert.ok(files.includes("server.js"));
+  assert.ok(files.includes(".opencode/plugins/pallium-v2.mjs"));
 });

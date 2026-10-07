@@ -443,7 +443,8 @@ def mount_dashboard(
         registry = getattr(app.state, "claude_wake_registry", None)
         claude_state = registry.state_for(recipient_endpoint_id=endpoint_id, session_ref=session_ref, container_ref=container_ref) if runtime == "claude-code" and registry is not None and all(isinstance(value, str) for value in (endpoint_id, session_ref, container_ref)) else None
         codex_reserved = dashboard_codex_registry.usable and isinstance(endpoint_id, str) and dashboard_codex_registry.snapshot(endpoint_id) is not None
-        return retained_activation_snapshot(relay_activation_snapshot(projection, platform=current_platform(), claude_state=claude_state, codex_reserved=codex_reserved))
+        opencode_registered = runtime == "opencode" and isinstance(endpoint_id, str) and relay_service is not None and relay_service.opencode_wake_active(endpoint_id)
+        return retained_activation_snapshot(relay_activation_snapshot(projection, platform=current_platform(), claude_state=claude_state, codex_reserved=codex_reserved, opencode_registered=opencode_registered))
 
     @app.get("/dashboard", response_class=HTMLResponse)
     def dashboard_page() -> HTMLResponse:

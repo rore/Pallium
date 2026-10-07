@@ -58,6 +58,7 @@ def relay_activation_snapshot(
     platform: str,
     claude_state: str | None = None,
     codex_reserved: bool = False,
+    opencode_registered: bool = False,
 ) -> dict[str, object]:
     """Project current facts without probing, claiming, or optimistic inference."""
     row = session if isinstance(session, dict) else {}
@@ -101,13 +102,15 @@ def relay_activation_snapshot(
     )
     topology = "existing_session" if identity_ok else "unknown"
     qualified = identity_ok and not closed and not stale and runtime in {"codex", "claude-code"} and platform in {"windows", "linux"}
+    if runtime == "opencode":
+        qualified = identity_ok and not closed and not stale and opencode_registered
 
     if runtime == "codex":
         integration, behavior = "codex_queue", "busy_queue" if qualified else "passive"
     elif runtime == "claude-code":
         integration, behavior = "claude_peer", "idle_wake" if qualified else "passive"
     elif runtime == "opencode":
-        integration, behavior = "hook_only", "passive"
+        integration, behavior = ("opencode_queue", "busy_queue") if qualified else ("hook_only", "passive")
     else:
         integration, behavior = "unknown", "unknown"
 
@@ -117,6 +120,8 @@ def relay_activation_snapshot(
         evidence: list[str] = []
     elif qualified:
         qualification, qualification_source = "qualified", "installed_witness"
+        if runtime == "opencode":
+            qualification_source = "runtime_registration"
         fallback = "next_natural_turn"
         evidence = ["submission_attempted", "transport_accepted", "payload_admitted"]
     else:
@@ -146,6 +151,8 @@ def relay_activation_snapshot(
             availability_source = "durable_reservation" if claude_state == "wake_inflight" else "runtime_registration"
     elif runtime == "codex" and qualified and codex_reserved:
         availability, availability_source = "attempt_inflight", "durable_reservation"
+    elif runtime == "opencode" and qualified:
+        availability, availability_source = "unknown", "runtime_registration"
     elif health == "unreachable":
         availability, availability_source = "unreachable", "endpoint_health"
     else:

@@ -797,7 +797,8 @@ def build_router(
         runtime = projection.get("runtime", projection.get("recipient_runtime"))
         claude_state = registry.state_for(recipient_endpoint_id=endpoint_id, session_ref=session_ref, container_ref=container_ref) if runtime == "claude-code" and all(isinstance(value, str) for value in (endpoint_id, session_ref, container_ref)) else None
         codex_reserved = codex_registry.usable and isinstance(endpoint_id, str) and codex_registry.snapshot(endpoint_id) is not None
-        return retained_activation_snapshot(relay_activation_snapshot(projection, platform=current_platform(), claude_state=claude_state, codex_reserved=codex_reserved))
+        opencode_registered = runtime == "opencode" and isinstance(endpoint_id, str) and relay_service is not None and relay_service.opencode_wake_active(endpoint_id)
+        return retained_activation_snapshot(relay_activation_snapshot(projection, platform=current_platform(), claude_state=claude_state, codex_reserved=codex_reserved, opencode_registered=opencode_registered))
 
     def _relay_turn_snapshot(request: dict[str, Any]) -> CodexWakeReservation | None:
         if request.get("runtime") != "codex" or not codex_registry.usable:

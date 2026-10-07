@@ -12,8 +12,10 @@ supports optional derived-memory processing.
 - receive attributed messages on the next normal OpenCode turn;
 - reply to the sender and inspect delivery status.
 
-OpenCode does not have active Relay wake today. Messages remain stored until the
-recipient's next normal turn.
+The stable V1 plugin is passive: messages remain stored until the recipient's
+next normal turn. An opt-in V2 adapter adds native queued wake delivery for
+OpenCode 2.0.22; it is a separate plugin entry and does not replace an existing
+global V1 loader automatically.
 
 > List Pallium Relay recipients, then send `codex:@review`: "The API response
 > still needs the legacy field."
@@ -70,7 +72,7 @@ From npm, once the package is published:
 }
 ```
 
-From a local checkout:
+The stable V1 local loader uses the explicit plugin file:
 
 ```jsonc
 {
@@ -86,14 +88,38 @@ From a local checkout:
 }
 ```
 
+To opt in to V2 from a local checkout, use OpenCode's plural `plugins` directory
+loader in a project configuration. This loads the package server entry exported
+by `integrations/opencode/server.js`; keep the existing global V1 `plugin` entry
+unchanged until you deliberately switch configurations. Do not load both adapters
+in one OpenCode configuration.
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugins": ["./integrations/opencode"],
+  "mcp": {
+    "pallium": {
+      "type": "remote",
+      "url": "http://localhost:19836/mcp",
+      "enabled": true
+    }
+  }
+}
+```
+
+Run V2 with the released OpenCode 2.0.22 binary. The isolated Windows E2E uses
+`PALLIUM_OPENCODE_V2_BINARY` and a local mock provider. It verifies idle and busy
+wakes, tool continuation across a Pallium restart after ACK, pre-claim retry,
+OpenCode hard restart, service startup recovery, history capture and deletion.
+
 A relative plugin path is resolved from the configuration file. For a global
 install, put the entry in `~/.config/opencode/opencode.json` and use a path that
 reaches the checked-out plugin file.
 
-The explicit `"plugin"` array is the verified loading method. Directory
-auto-loading has failed on some setups. Keep `pallium.mjs` and
-`pallium-common.mjs` together because the plugin imports its sibling by relative
-path.
+The explicit `"plugin"` file entry is the stable V1 loading method. V2 uses the
+plural `"plugins"` directory entry shown above. Keep the plugin files together
+because each adapter imports its shared helper by relative path.
 
 The `mcp` block follows OpenCode's
 [remote MCP configuration](https://opencode.ai/docs/mcp-servers/). If Pallium
@@ -110,18 +136,38 @@ The plugin automatically registers the bundled `pallium-memory` skill and
 `/pallium-memory` command. Their compatibility names remain memory-oriented, but
 their guidance covers all three Pallium uses.
 
+## V1 and V2 Relay behavior
+
+V1 uses the normal-turn `/relay/turn` path. Relay messages are included on a
+natural OpenCode turn. V2 polls its native queue in process and asks OpenCode to
+queue a native user input; the context hook adds the Relay content to the model
+request. The receipt ACK only confirms attachment to model-bound context. It
+does not mean the model completed the requested work.
+
+V2 owns a short server lease and renews it while polling. Plugin disposal detaches
+the owner; a later owner can enroll after the lease expires. A closed session or
+changed container scope invalidates the old binding. If compaction removes a
+queued native input before V2 can verify it, V2 does not guess that delivery was
+admitted or queue it again. Relay keeps the item available for a later normal
+turn after its claim lease expires. V1 remains the passive fallback when V2 is
+not configured or its native wake cannot be verified.
+
 ## How the hooks map
 
 | Pallium behavior | Claude hook | OpenCode adapter |
 |---|---|---|
 | Register and orient a session | SessionStart | `event` → `session.created` → optional orientation query |
 | Record a user message | UserPromptSubmit | `chat.message` → `POST /item-and-query` |
-| Deliver incoming Relay | UserPromptSubmit | `chat.message` claims deliveries → `experimental.chat.messages.transform` appends an attributed reminder → acknowledge |
+| Deliver incoming Relay (V1) | UserPromptSubmit | `chat.message` claims deliveries → `experimental.chat.messages.transform` appends an attributed reminder → receipt ACK |
+| Deliver incoming Relay (V2) | UserPromptSubmit | native queue poll → queued OpenCode input → model context injection → receipt ACK |
 | Record an assistant turn | Stop | `event` → `session.idle` → read the last assistant message → `POST /items` |
 | Optional failure/retry memory | PostToolUse | `tool.execute.after`, off unless `PALLIUM_POSTTOOL_TRIGGERS=1` |
 | Preserve before compaction | PreCompact | `experimental.session.compacting` → `POST /items`, best effort |
 
-Every hook is fail-safe: it catches errors and never breaks the user's turn.
+Ordinary hooks fail open. A current, verified internal wake without Relay context
+fails visibly before provider dispatch. An unproven or stale marker cannot claim
+or register a session; it may leave an empty provider turn rather than abort
+ordinary user work.
 HTTP calls use a short timeout. Incoming Relay uses the message transform
 because resumed sessions can discard system-transform additions.
 
@@ -179,8 +225,9 @@ operation when Pallium is unavailable.
 
 ## Known gaps
 
-- Active OpenCode wake is not implemented; Relay uses durable next-turn
-  delivery.
+- V1 remains passive. V2 automatic wake is qualified against isolated Windows
+  OpenCode 2.0.22; other releases/platforms and the global installation remain
+  unqualified. Native admission and ACK do not guarantee interrupted task completion.
 - Usage-audit population is server-owned after durable assistant ingestion.
 - Compaction records the latest assistant turn but does not run a pre-compaction
   query.

@@ -178,9 +178,28 @@ file-only binary against the stale leftover JSON. Verify `/health`, `/status`, a
 ## Developing integrations without leaving stale local installs
 
 Claude Code and Codex setup commands write absolute checkout and Python paths into the
-host's MCP and hook configuration. The OpenCode global loader likewise points
-at a concrete plugin file. Treat a temporary worktree as a build/test location,
+host's MCP and hook configuration. The stable OpenCode global loader likewise points
+at the explicit V1 plugin file. Treat a temporary worktree as a build/test location,
 not as the long-lived installation source.
+
+OpenCode V1 remains passive and receives Relay on a natural turn. V2 is a separate,
+opt-in adapter for OpenCode 2.0.22, loaded through the plural `plugins` directory
+entry in a project config. It queues native input in process, adds Relay context to
+the model request, and ACKs with the receipt when that context is attached; the ACK
+does not report task completion. Keep the existing global V1 loader as-is unless
+you intentionally switch the installation. Never load V1 and V2 together.
+
+V2 renews a short owner lease while polling and detaches when its plugin is disposed.
+After owner expiry, a later V2 instance can enroll again. A closed session or moved
+container scope makes the old binding stale. If native compaction leaves admission
+uncertain, V2 does not re-insert an input it cannot verify; a later normal turn
+can receive the delivery after its claim lease expires. Unproven stale marker
+inputs cannot register or claim; they may leave an empty provider turn. A live
+owner lease proves registration, not native idle/busy status, so availability
+remains unknown. Isolated Windows native V2 E2E passed with released 2.0.22 through
+`PALLIUM_OPENCODE_V2_BINARY`, including Pallium restart after ACK before tool
+continuation, native hard restart and service startup recovery. This does not
+qualify the current global V1 installation or interrupted task completion.
 
 When moving an installation from a worktree back to the primary checkout:
 
