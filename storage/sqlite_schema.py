@@ -544,6 +544,26 @@ class RelayCodexWakeStateRecord(Base):
     generation = Column(Integer, nullable=False)
 
 
+class RelayOpenCodeWakeRecord(Base):
+    """One native scheduling fence per endpoint; Relay retains delivery state."""
+
+    __tablename__ = "relay_opencode_wakes"
+
+    endpoint_id = Column(String, primary_key=True)
+    scope_generation = Column(Integer, nullable=False)
+    native_location = Column(String, nullable=False)
+    owner_id = Column(String, nullable=True)
+    owner_expires_at = Column(DateTime(timezone=True), nullable=False)
+    generation = Column(Integer, nullable=False, default=0)
+    delivery_id = Column(String, nullable=True)
+    admitted = Column(Integer, nullable=False, default=0)
+    terminal = Column(Integer, nullable=False, default=0)
+    claim_attempts = Column(Integer, nullable=True)
+    payload_chars = Column(Integer, nullable=True)
+    failures = Column(Integer, nullable=False, default=0)
+    retry_not_before = Column(DateTime(timezone=True), nullable=True)
+
+
 class RelayCodexWakeReservationRecord(Base):
     __tablename__ = "relay_codex_wake_reservations"
 
@@ -1165,6 +1185,7 @@ class SQLiteSchemaMixin:
                     RelayEndpointRepairRecord.__table__,
                     RelayCodexWakeStateRecord.__table__,
                     RelayCodexWakeReservationRecord.__table__,
+                    RelayOpenCodeWakeRecord.__table__,
                     RelayCodexTrialRecord.__table__,
                 ],
             )

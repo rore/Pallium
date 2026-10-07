@@ -253,6 +253,38 @@ test("extractAssistantTurn returns null when there is no assistant content", () 
   );
 });
 
+test("extractV2AssistantTurn reads public context messages and ignores idle records", () => {
+  const turn = P.extractV2AssistantTurn([
+    { type: "user", id: "u1", text: "prompt" },
+    { type: "assistant", id: "a1", content: [{ type: "text", text: "Done שלום" }] },
+    { type: "idle", outcome: "succeeded" },
+  ]);
+  assert.equal(turn.assistant_text, "Done שלום");
+  assert.deepEqual(turn.tool_calls, []);
+  assert.equal(P.extractV2AssistantTurn([{ type: "user", text: "only user" }, { type: "idle" }]), null);
+});
+
+test("extractV2AssistantTurn joins native tool and text steps in the current user turn", () => {
+  // V2 2.0.22 /context records a separate assistant message for the tool step.
+  const messages = [
+    { type: "user", id: "msg_old", text: "old" },
+    { type: "assistant", id: "msg_old_answer", content: [{ type: "text", text: "old answer" }] },
+    { type: "user", id: "msg_toolprobe0001", text: "Run a harmless tool call" },
+    { type: "assistant", id: "msg_tool", content: [{ type: "tool", id: "call_probe_1", name: "execute",
+      state: { status: "completed", input: { code: "return 1" }, content: [{ type: "text", text: "1" }] } }] },
+    { type: "assistant", id: "msg_final", content: [{ type: "text", text: "PROBE_ASSISTANT_שלום" }] },
+    { type: "idle", id: "msg_idle", outcome: "succeeded" },
+  ];
+  assert.equal(P.extractV2AssistantTurn(messages).assistant_text, "PROBE_ASSISTANT_שלום");
+  assert.deepEqual(P.extractV2AssistantTurn(messages).tool_calls, []); // execute has no existing work-trace semantic.
+  messages[3].content[0] = { type: "tool", name: "bash", state: { status: "completed",
+    input: { command: "pwd" }, content: [{ type: "text", text: "workspace" }] } };
+  const turn = P.extractV2AssistantTurn(messages);
+  assert.equal(turn.tool_calls[0].tool, "Bash");
+  assert.equal(turn.tool_calls[0].command, "pwd");
+  assert.equal(turn.tool_calls[0].output_tail, "workspace");
+});
+
 test("extractTextFromParts / stripIdeContext behave like the user-prompt path", () => {
   assert.equal(P.extractTextFromParts([{ type: "text", text: "hello" }, { type: "reasoning", text: "x" }]), "hello");
   assert.equal(
@@ -352,6 +384,41 @@ test("formatRelay preserves complete attributed messages and enforces budget", (
   assert.ok([...preview.text].length <= 2400);
   assert.equal(P.formatRelay([{ ...shorter, next_offset: 699 }], 2400).text, "");
   assert.match(P.formatRelay([{ ...delivery, payload: "line one\nline two\tvalue" }]).text, /line one\nline two\tvalue/);
+  const continuation = { ...delivery };
+  delete continuation.claim_token;
+  assert.match(P.formatRelayContinuation([continuation]), /handoff שלום 你好/);
+  assert.equal(P.formatRelay([continuation]).text, "");
+  assert.equal(typeof P.formatRelayContinuation([continuation]), "string");
+  assert.equal(P.formatRelayContinuation([{ ...continuation, payload: "bad\u0000value" }]), "");
+});
+
+test("acknowledgeRelay reports successful, failed, and malformed outcomes", async () => {
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (_url, options) => {
+    const deliveryId = JSON.parse(options.body).delivery_id;
+    if (deliveryId === "failed") return { ok: false, body: { cancel: async () => {} } };
+    return {
+      ok: true,
+      text: async () => JSON.stringify(deliveryId === "malformed"
+        ? { state: "delivered" }
+        : { delivery_id: deliveryId, state: "delivered", delivered_at: "now", already_delivered: false }),
+    };
+  };
+  try {
+    assert.deepEqual(await P.acknowledgeRelay([
+      { delivery_id: "good", claim_token: "token" },
+      { delivery_id: "failed", claim_token: "token" },
+      { delivery_id: "malformed", claim_token: "token" },
+      { delivery_id: "no-token" },
+    ], "container"), [
+      { delivery_id: "good", success: true },
+      { delivery_id: "failed", success: false, error: "ack_failed" },
+      { delivery_id: "malformed", success: false, error: "ack_failed" },
+      { delivery_id: "no-token", success: false, error: "invalid_delivery" },
+    ]);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
 });
 
 test("formatRelay normalizes claim attempts and retains payloads with unknown metadata", () => {

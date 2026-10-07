@@ -487,7 +487,7 @@ export async function relayRequest(method, reqPath, payload, timeoutMs) {
 }
 
 
-export function formatRelay(deliveries, budgetChars = 0, remainingCount = 0) {
+function _formatRelay(deliveries, budgetChars, remainingCount, requireClaimToken) {
   const remaining = Number.isInteger(remainingCount) && remainingCount > 0 ? remainingCount : 0;
   const count = `${Math.min(remaining, 999)}${remaining > 999 ? "+" : ""}`;
   const notice = remaining ? `[Relay: ${count} more; Pallium continues.]` : "";
@@ -501,7 +501,7 @@ export function formatRelay(deliveries, budgetChars = 0, remainingCount = 0) {
     const claimAttempt = attempts === null ? "unknown" : String(attempts);
     const possibleRedelivery = attempts === null ? "unknown" : String(attempts > 1);
     const required = [
-      "delivery_id", "claim_token", "message_id", "sender_runtime",
+      "delivery_id", ...(requireClaimToken ? ["claim_token"] : []), "message_id", "sender_runtime",
       "sender_session_ref", "payload", "created_at",
     ];
     if (required.some((key) => typeof delivery?.[key] !== "string" || !delivery[key])) continue;
@@ -560,16 +560,34 @@ export function formatRelay(deliveries, budgetChars = 0, remainingCount = 0) {
   return { text, deliveries: rendered };
 }
 
+export function formatRelay(deliveries, budgetChars = 0, remainingCount = 0) {
+  return _formatRelay(deliveries, budgetChars, remainingCount, true);
+}
+
+// Continuation context restores an already-attached envelope; it cannot ACK.
+export function formatRelayContinuation(deliveries, budgetChars = 0) {
+  return _formatRelay(deliveries, budgetChars, 0, false).text;
+}
+
 
 export async function acknowledgeRelay(deliveries, containerRef) {
+  const results = [];
   for (const delivery of deliveries || []) {
-    if (typeof delivery?.delivery_id !== "string" || typeof delivery?.claim_token !== "string") continue;
-    await relayRequest("POST", "/relay/deliveries/ack", {
+    if (typeof delivery?.delivery_id !== "string" || !delivery.delivery_id ||
+        typeof delivery?.claim_token !== "string" || !delivery.claim_token) {
+      results.push({ delivery_id: delivery?.delivery_id ?? null, success: false, error: "invalid_delivery" });
+      continue;
+    }
+    const response = await relayRequest("POST", "/relay/deliveries/ack", {
       delivery_id: delivery.delivery_id,
       claim_token: delivery.claim_token,
       container_ref: containerRef,
     }, 500);
+    const success = response?.delivery_id === delivery.delivery_id && response?.state === "delivered" &&
+      typeof response?.already_delivered === "boolean";
+    results.push({ delivery_id: delivery.delivery_id, success, ...(success ? {} : { error: "ack_failed" }) });
   }
+  return results;
 }
 
 
@@ -782,6 +800,21 @@ export function extractAssistantTurn(messages) {
     has_productive_action: hasProductive,
     files_modified: filesModified,
   };
+}
+
+// OpenCode V2 context() exposes projected messages as { type, content }.
+export function extractV2AssistantTurn(messages) {
+  if (!Array.isArray(messages)) return null;
+  const lastUser = messages.findLastIndex((message) => message?.type === "user");
+  const parts = messages.slice(lastUser + 1).filter((message) => message?.type === "assistant")
+    .flatMap((message) => Array.isArray(message.content) ? message.content : [])
+    .map((part) => part?.type === "tool" && typeof part.name === "string"
+      ? { ...part, tool: part.name, state: { ...part.state,
+        output: Array.isArray(part.state?.content)
+          ? part.state.content.filter((item) => item?.type === "text" && typeof item.text === "string").map((item) => item.text).join("\n")
+          : "" } }
+      : part);
+  return extractAssistantTurn([{ role: "assistant", parts }]);
 }
 
 export function extractTextFromParts(parts) {

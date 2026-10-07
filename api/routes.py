@@ -32,6 +32,8 @@ from api.schemas import (
     RelaySessionResponse,
     RelayTurnRequest,
     RelayTurnResponse,
+    RelayOpenCodeWakeRequest,
+    RelayOpenCodeWakeResponse,
     CorrectMemoryRequest,
     CorrectMemoryResponse,
     FlagMemoryRequest,
@@ -808,6 +810,12 @@ def create_router(
     @router.post("/relay/sessions/close", response_model=RelaySessionResponse)
     async def relay_close_session(request: RelaySessionMutationRequest):
         return _with_relay_activation(await _relay_call("close_session", lambda: _relay().close_session(**request.model_dump())))
+
+    @router.post("/relay/opencode/wake", response_model=RelayOpenCodeWakeResponse)
+    async def opencode_wake(request: RelayOpenCodeWakeRequest):
+        return _with_relay_activation(await _relay_call(
+            "opencode_wake", lambda: _relay().opencode_wake(**request.model_dump()),
+        ))
 
     @router.get("/relay/sessions", response_model=list[RelaySessionResponse])
     async def relay_sessions(

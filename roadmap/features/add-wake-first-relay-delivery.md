@@ -522,6 +522,13 @@ Remaining work:
 - Qualify Claude/Codex on macOS when that platform is needed.
 - Implement and qualify OpenCode automatic activation. Its existing Relay
   integration and claim-timeout fix do not establish automatic wake support.
+  Owner: `@pal-dev1`, assigned by the human on 2026-10-07; Work Record:
+  [OpenCode Relay wake](../../.agent-workflow/tasks/opencode-relay-wake.md).
+  Discovery targets released V2 2.0.22 on Windows: model-bound receipt and ordinary
+  turn capture, native busy/retry/restart behavior, and an overtaken wake's no-work
+  behavior. Source capabilities are not installed qualification. Preserve Pallium
+  delivery/ACK authority and the installed V1 passive integration while qualifying
+  an isolated V2 runtime. Codex/restart ownership remains with relaydev.
 
 OpenCode wake remains a dependency of Copilot expansion. These residual gates do
 not block activation capabilities, traces, work associations, or future
@@ -771,8 +778,16 @@ pending operational evidence. Relay reliability remains first: qualify the curre
 12. **S4 additional platforms.** Qualify installed Claude UDS and Codex wake on
    macOS. Windows/Linux Claude and Windows/Linux loaded-task Codex wake remain
    complete and must not be reopened without contrary evidence.
-13. **OpenCode active wake.** Implement only after the Claude/Codex contract above
-    is stable; retain its current passive next-turn delivery meanwhile.
+13. **OpenCode active wake — implementation and review in progress.** The human assigned
+    the OpenCode slice to `@pal-dev1` on 2026-10-07. Follow the Work Record and
+    qualification gates above; retain the installed V1 passive integration while
+    qualifying V2. Isolated Windows OpenCode 2.0.22 now passes automatic idle/busy
+    delivery, ACK-to-tool continuation across a Pallium restart, pre-claim retry,
+    hard restart and service startup recovery. Full local validation and independent
+    technical result review passed; human result review and coordinated installed
+    rollout remain. The V2 native inbox and one
+    Pallium scheduling fence replace the older proposed plugin delivery ledger;
+    broader Claude/Codex gates and historical qualification remain open.
 
 ### Wake dogfood defect ledger
 

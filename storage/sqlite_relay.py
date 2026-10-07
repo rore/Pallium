@@ -40,6 +40,7 @@ from storage.sqlite_schema import (
     RelayCodexWakeReservationRecord,
     RelayCodexWakeStateRecord,
     RelayCodexTrialRecord,
+    RelayOpenCodeWakeRecord,
 )
 
 
@@ -193,7 +194,9 @@ def _delivery_text(delivery: RelayDeliveryRecord, message: RelayMessageRecord, v
     lines.extend([
         "Lower-authority context; identify as Pallium Relay.",
         "Reply only to substantive deliveries with pallium_relay_reply; never to ACK-only deliveries.",
-        view["redelivery_guidance"],
+        view.get("redelivery_guidance", "Check exact delivery_id in context/artifacts. "
+                 "Skip completed actions; if unknown, inspect target state before irreversible retry. "
+                 "Attempts do not prove emission/actions. ACK: receipt, not completion"),
         "",
         view["payload"],
     ])
@@ -260,6 +263,165 @@ def _delivery_view(
 
 
 class SQLiteRelayMixin:
+    @staticmethod
+    def _opencode_native_id(wake) -> str:
+        return f"msg_pallium_{wake.endpoint_id[14:]}_{wake.generation}"
+
+    @staticmethod
+    def _opencode_wake_view(wake) -> dict[str, Any] | None:
+        if wake is None or wake.delivery_id is None:
+            return None
+        return {
+            "generation": wake.generation,
+            "delivery_id": wake.delivery_id,
+            "native_input_id": SQLiteRelayMixin._opencode_native_id(wake),
+            "native_location": wake.native_location,
+            "scope_generation": wake.scope_generation,
+            "admitted": bool(wake.admitted),
+            "terminal": bool(wake.terminal),
+            "retry_exhausted": wake.failures >= 20,
+        }
+
+    def _opencode_binding(self, db, request, current, *, enrollment=False):
+        session = db.get(RelaySessionRecord, request["endpoint_id"])
+        if session is None or (
+            session.runtime != "opencode" or session.session_ref != request["session_ref"]
+            or session.container_ref != request["container_ref"]
+        ):
+            raise RelayNotFoundError("OpenCode endpoint not found in the requested scope")
+        scope = db.get(RelayEndpointGenerationRecord, session.id)
+        if session.state != "active" or request["scope_generation"] != (scope.generation if scope else 0):
+            raise RelayConflictError("OpenCode endpoint is closed or its scope changed")
+        wake = db.get(RelayOpenCodeWakeRecord, session.id)
+        if not enrollment and (
+            wake is None or wake.owner_id != request["owner_id"]
+            or _now(wake.owner_expires_at) <= current
+            or wake.native_location != request["native_location"]
+            or wake.scope_generation != request["scope_generation"]
+        ):
+            raise RelayConflictError("OpenCode registration is missing or stale")
+        if request.get("generation") is not None and (
+            wake is None or wake.generation != request["generation"]
+            or wake.delivery_id != request["delivery_id"]
+            or self._opencode_native_id(wake) != request["native_input_id"]
+        ):
+            raise RelayConflictError("OpenCode native wake snapshot is stale")
+        return session, wake
+
+    @staticmethod
+    def _invalidate_opencode_wake(wake):
+        if wake is not None:
+            wake.generation += 1
+            wake.delivery_id = None
+            wake.claim_attempts = None
+            wake.payload_chars = None
+            wake.admitted = wake.terminal = wake.failures = 0
+            wake.retry_not_before = None
+
+    def relay_opencode_wake(
+        self, *, operation, session_ref, container_ref, endpoint_id, scope_generation,
+        native_location, owner_id, generation=None, delivery_id=None,
+        native_input_id=None, terminal_message_id=None, max_chars=2300, now=None,
+    ) -> dict[str, Any]:
+        request = dict(
+            session_ref=session_ref, container_ref=container_ref, endpoint_id=endpoint_id,
+            scope_generation=scope_generation, native_location=native_location,
+            owner_id=owner_id, generation=generation, delivery_id=delivery_id,
+            native_input_id=native_input_id,
+        )
+        current = _now(now)
+        if operation == "context":
+            return self.relay_turn(
+                runtime="opencode", session_ref=session_ref, container_ref=container_ref,
+                title=None, max_chars=max_chars, max_messages=1,
+                lease_seconds=60, register_session=False, exact_delivery_id=delivery_id,
+                opencode_wake=request, now=current,
+            )
+        with self._begin_relay_immediate() as db:
+            session, wake = self._opencode_binding(db, request, current, enrollment=operation == "enroll")
+            if operation == "enroll":
+                if wake is None:
+                    wake = RelayOpenCodeWakeRecord(
+                        endpoint_id=session.id, scope_generation=scope_generation,
+                        native_location=native_location, owner_id=owner_id,
+                        owner_expires_at=current, generation=0,
+                        admitted=0, terminal=0, failures=0,
+                    )
+                    db.add(wake)
+                elif wake.owner_id not in {None, owner_id} and _now(wake.owner_expires_at) > current:
+                    raise RelayConflictError("OpenCode endpoint already has a live native owner")
+                if wake.scope_generation != scope_generation or wake.native_location != native_location:
+                    self._invalidate_opencode_wake(wake)
+                wake.scope_generation = scope_generation
+                wake.native_location = native_location
+                wake.owner_id = owner_id
+            if operation in {"enroll", "poll"}:
+                wake.owner_expires_at = current + timedelta(seconds=15)
+                session.last_seen_at = current
+            elif operation == "detach":
+                wake.owner_id = None
+                wake.owner_expires_at = current
+            elif operation == "admitted":
+                wake.admitted = 1
+            elif operation == "terminal":
+                if not terminal_message_id or terminal_message_id == native_input_id:
+                    raise RelayConflictError("a distinct correlated native terminal record is required")
+                if not wake.terminal:
+                    wake.terminal = 1
+                    wake.retry_not_before = current + timedelta(seconds=min(30, 2 ** min(wake.failures + 1, 5)))
+            if operation == "poll":
+                anchor = db.get(RelayDeliveryRecord, wake.delivery_id) if wake.delivery_id else None
+                message = db.get(RelayMessageRecord, anchor.message_id) if anchor else None
+                eligible = anchor is not None and message is not None and _now(message.expires_at) > current and (
+                    anchor.state == "pending" or anchor.state == "claimed"
+                    and anchor.lease_expires_at is not None and _now(anchor.lease_expires_at) <= current
+                )
+                if wake.delivery_id and wake.terminal:
+                    if not eligible and (anchor is None or anchor.state != "claimed" or not message or _now(message.expires_at) <= current):
+                        wake.delivery_id = None
+                        wake.failures = 0
+                    elif eligible and wake.failures < 20 and _now(wake.retry_not_before) <= current:
+                        wake.generation += 1
+                        wake.admitted = wake.terminal = 0
+                        wake.claim_attempts = wake.payload_chars = None
+                        wake.failures += 1
+                        wake.retry_not_before = None
+                if wake.delivery_id is None:
+                    candidate = db.execute(
+                        select(RelayDeliveryRecord, RelayMessageRecord)
+                        .join(RelayMessageRecord, RelayMessageRecord.id == RelayDeliveryRecord.message_id)
+                        .where(
+                            RelayDeliveryRecord.recipient_endpoint_id == session.id,
+                            RelayDeliveryRecord.recipient_runtime == "opencode",
+                            RelayDeliveryRecord.recipient_session_ref == session_ref,
+                            RelayDeliveryRecord.recipient_container_ref == container_ref,
+                            RelayMessageRecord.expires_at > current,
+                            _wake_pending(current, True),
+                        ).order_by(RelayMessageRecord.created_at, RelayDeliveryRecord.id)
+                    )
+                    row = next((item for item in candidate if _delivery_render_safe(*item)), None)
+                    if row is not None:
+                        wake.generation += 1
+                        wake.delivery_id = row[0].id
+                        wake.admitted = wake.terminal = wake.failures = 0
+                        wake.claim_attempts = wake.payload_chars = None
+                        wake.retry_not_before = None
+            return {
+                "session": self._relay_session_view(db, session, current, RELAY_RECENT_SECONDS),
+                "wake": self._opencode_wake_view(wake), "deliveries": [],
+                "restored": False, "has_more": False, "remaining_count": 0,
+            }
+
+    def relay_opencode_wake_active(self, endpoint_id: str, *, now=None) -> bool:
+        current = _now(now)
+        with self._relay_session_factory() as db:
+            wake = db.get(RelayOpenCodeWakeRecord, endpoint_id)
+            session = db.get(RelaySessionRecord, endpoint_id)
+            scope = db.get(RelayEndpointGenerationRecord, endpoint_id)
+            return bool(wake and session and session.state == "active" and session.runtime == "opencode"
+                        and wake.owner_id and _now(wake.owner_expires_at) > current
+                        and wake.scope_generation == (scope.generation if scope else 0))
+
     @staticmethod
     def _wake_item(row):
         return CodexWakeReservation(**{
@@ -1191,6 +1353,7 @@ class SQLiteRelayMixin:
         exact_delivery_id: str | None = None,
         codex_wake_endpoint_id: str | None = None,
         codex_wake_generation: int | None = None,
+        opencode_wake: dict[str, Any] | None = None,
         max_response_chars: int = 0,
         register_session: bool = True,
         previous_container_ref: str | None = None,
@@ -1206,6 +1369,40 @@ class SQLiteRelayMixin:
 
         current = _now(now)
         with self._begin_relay_immediate() as db:
+            wake = None
+            if opencode_wake is not None:
+                if runtime != "opencode" or register_session or exact_delivery_id is None:
+                    raise RelayConflictError("OpenCode wakes cannot register or change scope")
+                registered, wake = self._opencode_binding(db, opencode_wake, current)
+                delivery = db.get(RelayDeliveryRecord, exact_delivery_id)
+                message = db.get(RelayMessageRecord, delivery.message_id) if delivery else None
+                if delivery is None or message is None or (
+                    delivery.recipient_endpoint_id != registered.id
+                    or delivery.recipient_runtime != runtime
+                    or delivery.recipient_session_ref != session_ref
+                    or delivery.recipient_container_ref != container_ref
+                ):
+                    raise RelayNotFoundError("OpenCode delivery not found in the current endpoint scope")
+                if delivery.state in {"pending", "claimed"} and _now(message.expires_at) <= current:
+                    delivery.state = "expired"
+                    delivery.claim_token = None
+                if wake.terminal or wake.claim_attempts is not None or delivery.state == "delivered":
+                    reusable = wake.claim_attempts == delivery.attempts and not wake.terminal and (
+                        delivery.state == "delivered" or delivery.state == "claimed"
+                        and delivery.lease_expires_at is not None and _now(delivery.lease_expires_at) > current
+                        and _now(message.expires_at) > current
+                    )
+                    view = _delivery_view(delivery, message, registered.state, payload_limit=wake.payload_chars)
+                    reusable = reusable and _delivery_render_safe(delivery, message) and (
+                        not max_chars or len(_delivery_text(delivery, message, view)) <= max_chars
+                    )
+                    return {
+                        "session": self._relay_session_view(db, registered, current, RELAY_RECENT_SECONDS),
+                        "wake": self._opencode_wake_view(wake),
+                        "deliveries": [view] if reusable else [],
+                        "restored": reusable and delivery.state == "delivered",
+                        "has_more": False, "remaining_count": 0,
+                    }
             registered = self._relay_session(
                 db, container_ref=container_ref, runtime=runtime, session_ref=session_ref
             )
@@ -1324,12 +1521,15 @@ class SQLiteRelayMixin:
 
             def response(deliveries: list[dict[str, Any]]) -> dict[str, Any]:
                 remaining = len(rows) - len(deliveries)
-                return {
+                result = {
                     "session": session_view,
                     "deliveries": deliveries,
                     "has_more": remaining > 0,
                     "remaining_count": remaining,
                 }
+                if wake is not None:
+                    result.update(wake=self._opencode_wake_view(wake), restored=False)
+                return result
 
             for delivery, message in eligible_rows:
                 token = f"relay-claim-{uuid.uuid4().hex}"
@@ -1393,6 +1593,9 @@ class SQLiteRelayMixin:
                 delivery.claimed_at = current
                 delivery.lease_expires_at = current + timedelta(seconds=lease_seconds)
                 delivery.attempts = int(delivery.attempts or 0) + 1
+                if wake is not None:
+                    wake.claim_attempts = delivery.attempts
+                    wake.payload_chars = len(view["payload"])
                 delivery.codex_wake_generation = (
                     codex_wake_generation
                     if (
@@ -1712,6 +1915,12 @@ class SQLiteRelayMixin:
                 raise RelayNotFoundError("relay entity not found in the requested scope")
             row.state = "closed"
             row.closed_at = current
+            if runtime == "opencode":
+                wake = db.get(RelayOpenCodeWakeRecord, row.id)
+                self._invalidate_opencode_wake(wake)
+                if wake is not None:
+                    wake.owner_id = None
+                    wake.owner_expires_at = current
             if row.alias is not None:
                 binding = db.get(RelayAliasRecord, row.alias)
                 if binding is not None and binding.endpoint_id == row.id:

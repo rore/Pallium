@@ -889,6 +889,35 @@ class RelaySessionMutationRequest(BaseModel):
     container_ref: str = Field(min_length=1, max_length=512)
 
 
+class RelayOpenCodeWakeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    operation: Literal["enroll", "poll", "admitted", "terminal", "detach", "context"]
+    session_ref: str = Field(min_length=1, max_length=255)
+    container_ref: str = Field(min_length=1, max_length=512)
+    endpoint_id: str = Field(pattern=r"^relay-session-[0-9a-f]{32}$")
+    scope_generation: int = Field(ge=0, le=2**63 - 1, strict=True)
+    native_location: str = Field(min_length=1, max_length=4096)
+    owner_id: str = Field(pattern=r"^opencode-owner-[0-9a-f]{32}$")
+    generation: int | None = Field(default=None, ge=1, le=2**63 - 1, strict=True)
+    delivery_id: str | None = Field(default=None, pattern=r"^relay-delivery-[0-9a-f]{32}$")
+    native_input_id: str | None = Field(default=None, pattern=r"^msg_[A-Za-z0-9_-]+$", max_length=128)
+    terminal_message_id: str | None = Field(default=None, pattern=r"^msg_[A-Za-z0-9_-]+$", max_length=128)
+    max_chars: int = Field(default=2300, ge=1, le=2400, strict=True)
+
+    @model_validator(mode="after")
+    def validate_wake_snapshot(self):
+        snapshot = (self.generation, self.delivery_id, self.native_input_id)
+        needed = self.operation in {"admitted", "terminal", "context"}
+        if needed and any(value is None for value in snapshot):
+            raise ValueError("this operation requires the complete native wake snapshot")
+        if not needed and any(value is not None for value in snapshot):
+            raise ValueError("this operation does not accept a native wake snapshot")
+        if (self.terminal_message_id is not None) != (self.operation == "terminal"):
+            raise ValueError("terminal_message_id is required only for terminal settlement")
+        return self
+
+
 class RelayWorkRefMutationRequest(RelaySessionMutationRequest):
     scope_ref: str
     local_ref: str
@@ -927,11 +956,11 @@ class RelayActivationResponse(BaseModel):
     contract: Literal["relay-activation/v1"]
     runtime: Literal["codex", "claude-code", "opencode", "unknown"]
     platform: Literal["windows", "linux", "macos", "other", "unknown"]
-    integration: Literal["codex_queue", "claude_peer", "hook_only", "unknown"]
+    integration: Literal["codex_queue", "claude_peer", "opencode_queue", "hook_only", "unknown"]
     topology: Literal["existing_session", "none", "unknown"]
     behavior: Literal["busy_queue", "idle_wake", "passive", "unknown"]
     qualification: Literal["qualified", "unqualified", "unknown"]
-    qualification_source: Literal["installed_witness", "documented_fallback", "none"]
+    qualification_source: Literal["installed_witness", "runtime_registration", "documented_fallback", "none"]
     availability: Literal["ready", "busy", "attempt_inflight", "unreachable", "closed", "unknown"]
     availability_source: Literal["runtime_registration", "durable_reservation", "endpoint_health", "lifecycle", "none"]
     fallback: Literal["next_natural_turn", "none", "unknown"]
@@ -1079,6 +1108,22 @@ class RelayTurnResponse(BaseModel):
     structural_work_refs_status: Literal["unchanged", "complete", "unavailable"] = "unchanged"
     structural_work_refs_error: str | None = None
     work_refs: list[RelayWorkRefResponse] | None = None
+
+
+class RelayOpenCodeWakeSnapshot(BaseModel):
+    generation: int = Field(ge=1)
+    delivery_id: str
+    native_input_id: str
+    native_location: str
+    scope_generation: int = Field(ge=0)
+    admitted: bool
+    terminal: bool
+    retry_exhausted: bool
+
+
+class RelayOpenCodeWakeResponse(RelayTurnResponse):
+    wake: RelayOpenCodeWakeSnapshot | None
+    restored: bool
 
 
 class RelayMessageResponse(BaseModel):

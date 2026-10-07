@@ -691,6 +691,39 @@ class RelayService:
             delivery_id=None if delivery_id is None else _opaque(delivery_id, "delivery_id", maximum=128),
         )
 
+    def opencode_wake(self, **request: Any) -> dict[str, Any]:
+        """Operate the enrolled native bridge; never broaden ordinary turn claims."""
+        request["container_ref"] = self._scope(request["container_ref"])
+        request["session_ref"] = _opaque(request["session_ref"], "session_ref")
+        request["native_location"] = _opaque(request["native_location"], "native_location", maximum=4096)
+        if request.get("operation") not in {"enroll", "poll", "admitted", "terminal", "detach", "context"}:
+            raise ValueError("invalid OpenCode wake operation")
+        if not _ENDPOINT_ID_RE.fullmatch(request.get("endpoint_id", "")):
+            raise ValueError("invalid OpenCode endpoint")
+        if not re.fullmatch(r"opencode-owner-[0-9a-f]{32}", request.get("owner_id", "")):
+            raise ValueError("invalid OpenCode registration owner")
+        for name, minimum in (("scope_generation", 0), ("generation", 1)):
+            value = request.get(name)
+            if (value is None and name == "scope_generation") or (
+                value is not None and (type(value) is not int or not minimum <= value <= 2**63 - 1)
+            ):
+                raise ValueError(f"invalid {name}")
+        result = self._store.relay_opencode_wake(**request)
+        if request["operation"] == "admitted" and result.get("wake", {}).get("admitted"):
+            self.record_trace_event({
+                "attempt_id": "relay-activation-" + hashlib.sha256(
+                    request["native_input_id"].encode()
+                ).hexdigest()[:32],
+                "delivery_id": request["delivery_id"], "stage": "completed",
+                "outcome": "accepted", "reason": "opencode_native_input_observed",
+                "evidence": ["submission_attempted", "transport_accepted"],
+                "native_retry_safe": True, "scope_generation": request["scope_generation"],
+            })
+        return result
+
+    def opencode_wake_active(self, endpoint_id: str) -> bool:
+        return self._store.relay_opencode_wake_active(endpoint_id)
+
     def session_scope_by_endpoint(self, endpoint_id: str) -> dict[str, str]:
         """Resolve an exact Relay endpoint's current scope."""
         endpoint_id = _opaque(endpoint_id, "endpoint_id", maximum=46)
