@@ -34,7 +34,7 @@
 
 **Exceptions:** —
 
-**State:** Blocked or returned to planning
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -100,7 +100,18 @@ Then coordinate shared service operations and one fresh dedicated native-host
 observational case. No fault is armed now. Success is not historical attribution;
 native ownership and restart qualification remain separate open requirements.
 
-Clean-context smart plan review is pending before any helper or test edit.
+Agent technical plan review: /root/deployment_evidence_review
+(gpt-6.1-sol/high), at f6d0074c, approved this narrow observer with required
+conditions: atomic reservation before original relay_turn; no observed target
+means no claim/ownership/emission proof; transactional setup and finally teardown,
+same original exceptions/objects with no replay; actual imported aliases and
+write/flush versus ACK distinguished; bounded snapshot only after restoration,
+incomplete writes never evidence of completeness. Add explicit partial-setup,
+teardown, overflow and unrelated fallback-output coverage. Existing standing
+human reliability/instrumentation approval covers these unchanged boundaries;
+this review does not claim historical causality or installed acceptance.
+Delegate helper-only implementation and test-only verification separately to
+the cheaper agents; root owns this record, integrated review and shared live ops.
 
 Post-release contention follow-up at 385a8a94: worker caller-surface regression
 failed only its positive busy-preservation case (11 negative cases passed).
