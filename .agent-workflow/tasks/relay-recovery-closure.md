@@ -143,6 +143,14 @@ Documentation alignment: the existing operator guide listed only fault modes.
 Document passive observation, admission-before-claim and incomplete evidence
 semantics in that same guide. This stays inside the original related operations
 documentation scope; no source, risk, authorization or acceptance boundary changes.
+The two-worker full run also stopped: 2,152 passed, two skipped, one expected
+failure and one failure in the unchanged moved/restarted ACK-response-loss
+recovery case (457.64s). Its later delivery was claimed but its second hook
+emitted only scope; the exact serial last-failure rerun passed in 1.98s.
+HTTP 200 does not explain the missing payload, so timing/I/O sensitivity versus
+test-state leakage remains under read-only investigation, not a proven cause.
+Run the complete suite serially without weakening deadlines or assertions.
+These failed runs are not passing validation or installed incident attribution.
 
 Manager reply relay-reply-d4ef666f95cb93deb63e1a615f58b9201eb843f5124916555e41c2b26a42bab9
 reported the exact existing-diagnostic limit and passive implementation scope.
