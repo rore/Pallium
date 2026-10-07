@@ -54,7 +54,7 @@ When the complete isolated patch is reviewed, all required checks shall pass →
 
 ## Recovery state
 
-Branch feat/relay-wake-output-failure, exact base 658affdd8c1af9ad2cefc3d10368f32811c50bd8. Implementation and focused/affected tests are complete; the independent source review approved full validation after documentation clarification. Next: commit the coherent reviewed candidate, run whole-change checks and full serial validation, then obtain final result review and exact-head PR CI. The diagnostic full run finished before this task's tests began. No live operation or installed acceptance is complete.
+Branch feat/relay-wake-output-failure, original base 658affdd8c1af9ad2cefc3d10368f32811c50bd8. Reviewed implementation is committed at 9208294a0c7e29d98abeb23efb65f3f1a07b3689. The actual merged diagnostic dependency ae110a511cadd8e52c3da14c5b5961cf1ff01552 is integrated at 236e4e14; hook, caller-test, redelivery-test and roadmap blobs remain exactly as source-reviewed. Focused/affected tests are complete. Next: full serial validation of this combined tree, final result review and exact-head PR CI. No live operation or installed acceptance is complete.
 
 ## Pre-edit review repair
 
@@ -139,3 +139,25 @@ the original invocation, installed outage and parent recovery stay unresolved.
 
 Skill feedback trigger 2 dropped: these are consumer implementation/documentation
 corrections, not defects in the upstream agent-workflow instructions.
+
+## Combined dependency and validation gate
+
+PR300 merged normally at 2026-10-07T17:18:12Z as
+ae110a511cadd8e52c3da14c5b5961cf1ff01552. GitHub's first CI attempt failed with
+an internal server error (correlation 0b9efd4e-c60d-4a28-a916-03830628a9a2);
+its aggregate job never existed. Failed-only retry was rejected. One full retry
+on unchanged reviewed head a275aea2236814298323c759d98c831ec8e50bac passed,
+including CI result, both Python matrices, Windows smoke and governance.
+Fresh fully exhausted review queries found no threads or inline comments.
+CodeRabbit was rate-limited and did not perform source review; the independent
+smart source/result review is the technical evidence. No gate was waived.
+
+The isolated output branch merged the exact actual dependency without source
+conflicts. Reviewed hook/test/roadmap blobs are unchanged. Whole-change selection
+requires full validation; import-linter reported zero violations. Fresh Redline
+was GRAY with no checkpoints, boundary violations or protected behavior changes;
+workflow compliance was clean using the known Python runtime directly. The
+PowerShell adapter could not locate Python in this isolated checkout; no PATH or
+persistent environment setting was changed. The combined full serial run remains
+pending, not passed. Everyday and installed clones/service remain unchanged;
+their sync/restart scope has been presented for explicit approval separately.
