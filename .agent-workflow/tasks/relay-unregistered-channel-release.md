@@ -12,7 +12,10 @@
 **Completion criteria:** After cancellation during first readiness with no replacement caller, a resolved unregistered channel is disposed and another source can obtain readiness without manually stopping the worker. A fresh queued request, including one arriving during disposal, survives and supplies only its own metadata. Already-admitted cancellation retains existing behavior; unresolved disposal forbids replacement. Focused caller and actual isolated Windows pipe journeys, affected/full validation, independent smart review and exact-head PR gates pass. Installed outage attribution and parent recovery acceptance remain separate.
 
 **Requirement baseline:**
-{"source":"parent:relay-recovery-closure;user:so take ownership of this and fix;pre-edit-plan-revision:trusted-bootstrap-cleanup-fence","outcome":"A canceled first Codex Relay request cannot indefinitely occupy the native admission slot without registration.","scope":"app/mcp/codex_desktop_bridge.py, one read-only trusted-bootstrap comparison in app/codex_bridge_pipe.py, existing worker/native caller tests, a focused isolated Windows pipe lifecycle regression, related operations evidence and the parent recovery record.","constraints":"Preserve queued fresh requests, authenticated admitted custody, unresolved-I/O retention, exact identity and continuity checks, finite modes, deadlines, and no replay or takeover. No service protocol, API, persistence, shared helper, dependency, protected behavior-contract or live environment change.","completion_criteria":"After cancellation during first readiness with no replacement caller, a resolved unregistered channel is disposed and another source can obtain readiness without manually stopping the worker. A fresh queued request, including one arriving during disposal, survives and supplies only its own metadata. Already-admitted cancellation retains existing behavior; unresolved disposal forbids replacement. Focused caller and actual isolated Windows pipe journeys, affected/full validation, independent smart review and exact-head PR gates pass. Installed outage attribution and parent recovery acceptance remain separate."}
+{"source":"parent:relay-recovery-closure;user:so take ownership of this and fix","outcome":"A canceled first Codex Relay request cannot indefinitely occupy the native admission slot without registration.","scope":"app/mcp/codex_desktop_bridge.py, existing worker caller tests, a focused isolated Windows pipe lifecycle regression, related operations evidence and the parent recovery record.","constraints":"Preserve queued fresh requests, authenticated admitted custody, unresolved-I/O retention, exact identity and continuity checks, finite modes, deadlines, and no replay or takeover. No service protocol, API, persistence, shared helper, dependency, protected behavior-contract or live environment change.","completion_criteria":"After cancellation during first readiness with no replacement caller, a resolved unregistered channel is disposed and another source can obtain readiness without manually stopping the worker. A fresh queued request, including one arriving during disposal, survives and supplies only its own metadata. Already-admitted cancellation retains existing behavior; unresolved disposal forbids replacement. Focused caller and actual isolated Windows pipe journeys, affected/full validation, independent smart review and exact-head PR gates pass. Installed outage attribution and parent recovery acceptance remain separate."}
+
+**Behavior changes:**
+[{"target":"task-context.scope","classification":"equivalent","before":"app/mcp/codex_desktop_bridge.py, existing worker caller tests, a focused isolated Windows pipe lifecycle regression, related operations evidence and the parent recovery record.","after":"app/mcp/codex_desktop_bridge.py, one read-only trusted-bootstrap comparison in app/codex_bridge_pipe.py, existing worker/native caller tests, a focused isolated Windows pipe lifecycle regression, related operations evidence and the parent recovery record.","reason":"The pre-edit correction independently approved at adbcc474cf7274df434d1d86d9868e54d7845832 requires the minimal native-owned read-only bootstrap comparison and existing native test homes to preserve the already-required trusted identity fence across asynchronous EOF. Required outcome, authority, constraints and completion criteria are unchanged; no new protocol or product promise. Preserve the original immutable baseline rather than rewriting it for implementation mechanics."}]
 
 **Risk:** Elevated
 
@@ -177,6 +180,40 @@ to independently owned OpenCode paths. All five production/test blob hashes
 above matched after rebase; the reviewed and pre-fix revisions remain reachable.
 No parallel work or live checkout was changed. The post-rebase whole-change
 selector reports the full lane for exactly the eight approved task files.
+
+Fresh governance discovered that the pre-edit plan correction had erroneously
+rewritten the requirement baseline's source/scope instead of recording its
+mechanics-only scope change. Restored the entire first-committed 6b522387
+baseline verbatim (rebased 277854e4) and recorded the exact equivalent scope
+chain above, without rewriting history or changing the checker. Independent
+gpt-6.1-sol/high review confirmed this classification: product outcome,
+authority, constraints and criteria are unchanged. The initially rejected plan
+is not retroactively approved. Parent baseline is untouched. Final ledger
+inspection and a fresh workflow check remain required.
+
+The first full serial non-slow run on e0efcc9d92a40bc0fb4ee34b7283b651c3d69bf7
+stopped with 1 failed, 324 passed, 482 deselected and 1 xfailed in 151.42 seconds.
+Failure: test_agent_relay_hooks.py::test_non_registering_hook_probe_omits_persisted_transition_fields
+(Claude parameter), request stub calls zero instead of one. Preserved full log:
+build/relay-unregistered-full.log. The exact known-failure rerun with
+`python -B -m pytest --lf --lfnf=none -q -n 0` passed in 0.93 seconds. That retry
+does not close the failure or count as successful full validation. Bounded
+unchanged-hook fixture/order diagnosis is assigned; no exclusion, weakened
+assertion or speculative production patch is authorized by this result.
+
+The final changed-feature native node passed on that same frozen/rebased
+revision in 4.87 seconds:
+`python -B -m pytest tests/test_codex_retained_native_reconnect.py::test_cancelled_initial_ready_releases_unused_source_channel -q -n 0 -m slow`.
+It uses separate actual Windows service/source clients, confirms the unused
+source releases without stopping its worker, and verifies isolated cleanup.
+All five reviewed source/test hashes remain unchanged. This closes the final
+isolated feature-native gate, not the failed full lane or installed acceptance.
+
+Fresh import-linter reports no boundary violations. Redline is GRAY, with the
+two reviewed private runtime files watched and no API, schema, security,
+runtime-configuration or protected-contract change detected. Elevated remains
+the declared scope classification; the parent remains High/Large. No advisory
+or exact-head gate is waived.
 
 ## Pre-edit review correction
 
