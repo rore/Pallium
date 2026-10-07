@@ -43,6 +43,12 @@ released. Current native-source ownership is unknown, not an established busy
 rejection or product failure. The closure Work Record retains the exact gap and
 next safe step. Historical causality is unproven, and none of this source or
 deployment evidence qualifies installed unattended restart recovery.
+An October 7 Minimap incident reached a second hook emission/ACK only after app
+fallback. The first native owner-result timeout and missing first emission are
+distinct observations; existing host logs do not identify that hook's failing
+stage. A reviewed passive exact-session observer is being added to the existing
+qualification helper, not the production delivery path. It remains undeployed;
+historical attribution and native-source ownership stay separate open gaps.
 The Dictation 13:32 hook did deliver and ACK one 1,125-character payload. The next
 1,101-character payload plus headers did not fit its 2,400-character output cap;
 that turn is not evidence of a missed hook. The earlier idle 12:54–13:32 interval

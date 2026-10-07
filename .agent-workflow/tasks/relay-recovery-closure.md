@@ -113,6 +113,24 @@ this review does not claim historical causality or installed acceptance.
 Delegate helper-only implementation and test-only verification separately to
 the cheaper agents; root owns this record, integrated review and shared live ops.
 
+Implementation checkpoint: helper-only and test-only work is complete in the
+isolated checkout. Root's review corrected premature logging inside ACK, wrong
+output-alias forwarding, target binding and setup/teardown fail-open handling.
+Independent source review found an unfenced daemon logger exception; its exact
+fix is conditionally approved at helper blob
+8dded7ffa65c765a34afeec035e71f62df25c543. Test blob
+03c2ee34aeda478c7f20c71b04c6f01968e1c327 passed 84 focused cases without warnings;
+the affected observer/recovery/deadline suites passed 132 cases in 28.75s.
+Real HTTP/SQLite and hook paths are covered; native transport is still simulated.
+The whole-change selector requires the full non-slow lane, now running. Final
+independent evidence review, separate human result review and PR CI remain gates.
+No observer is installed or armed; no service or ownership operation occurred.
+
+Manager reply relay-reply-d4ef666f95cb93deb63e1a615f58b9201eb843f5124916555e41c2b26a42bab9
+reported the exact existing-diagnostic limit and passive implementation scope.
+Its trace confirms hook ACK at 09:23:02.762694 UTC, attempts=1 and no reported gap;
+this establishes receipt at that boundary, not manager acceptance or completion.
+
 Post-release contention follow-up at 385a8a94: worker caller-surface regression
 failed only its positive busy-preservation case (11 negative cases passed).
 The genuine authenticated Windows source-pipe regression failed before source
