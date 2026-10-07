@@ -21,10 +21,10 @@ Precommit failure and committed response loss -> controlled real HTTP forwarding
 Separate actor/container/session/native identities, same text, Unicode and extraction boundaries -> caller cases assert distinct sources, exact readback and no invalid write.
 Disposal, move and successor races -> delayed native/context/HTTP continuations cannot write under stale ownership or mutate successor capture state; retain PR302 regression coverage and reconcile PR297 separately.
 Native multi-step/tool-plus-text and reload -> released isolated binary with local provider and real Pallium verifies scoped History source receipts; package/shared V1 compatibility, selector/full lane, independent evidence adequacy.
-**Plan review:** Discovery review: /root/capture_contract_discovery at `115bb85ee4aa3184a28aa1ce6cd74e5872d8cc22`; backend dedup suitable, arbitrary snapshot-version hashing withdrawn. Native probe now demonstrates delayed event selecting unfinished assistant and compaction hook selecting completed full text. Pending clean-context review of the exact recorded completed-assistant contract below; no implementation permission inferred from prerequisite evidence.
+**Plan review:** Agent technical review: /root/capture_contract_discovery, approved exact recorded plan at `3f367ef2a8a86fe78dd4e146bfb23d8d089c63d5` within existing best-effort latest-user capture semantics; see Technical plan review below. Elevated/Moderate appropriate. No historical backfill or guarantee every completed native turn is retained. Native prerequisite evidence alone does not approve implementation results.
 **Approvals:** Separate human plan approval not required at Elevated risk; user authorized the remediation. No live deployment authorization in this record.
 **Exceptions:** —
-**State:** Blocked or returned to planning
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -40,7 +40,7 @@ Native multi-step/tool-plus-text and reload -> released isolated binary with loc
 
 ## Recovery
 
-Planning/discovery only. Next: independent read-only discovery of exact native capture boundary, evolving snapshots and empty/tool-only cases, then concrete plan review before code. Keep OC-1 compaction investigation separate; keep canonical item active. No deployment/restart and no claim that this slice already fixes OC-3.
+Concrete plan independently approved; next implement scoped completed-capture identity and reservation, then prove caller/HTTP/native contracts. Keep OC-1 compaction investigation separate and canonical item active. No deployment/restart and no claim of historical backfill or that this slice already fixes OC-3.
 
 ## Concrete completed-assistant contract
 
@@ -53,3 +53,10 @@ Planning/discovery only. Next: independent read-only discovery of exact native c
 Acceptance: hold two actual completion/compaction callbacks at the HTTP boundary and assert one stored source/receipt; test precommit rejection, lost committed response, malformed receipt, repeated events and reload. Assert complete exact text/work trace through scoped /source/{receipt}/context, distinct receipt IDs for identical text with different native IDs and actor/container/session separation, Unicode, no/invalid/latest unfinished assistant, empty/tool-only, 20,000/20,001 units, multi-step tool-plus-text, completion-eligibility retry, disposal/delete/move/rebind/response races and no successor-reservation mutation. Do not use search dedup or merely count successful forwarder requests.
 
 Native prerequisite: `build/native-capture-boundary-1791400369984074500/manifest.json`, actual public contexts, events and production extraction qualify official 2.0.24. Steered compaction did not run until held provider completed; hook context selected full first assistant with time.completed. Delayed completion context read selected the newer assistant without time.completed; after release the same ID had full content/completed marker. Partial extraction was empty/null, so this does not prove a writable premature capture. Native compactor was not overridden; its mock response failed required summary-template validation and the probe stopped. Successful default compaction, tool/multi-step races, production stored receipts and 2.0.22 remain validation gaps to discharge, not facts claimed by this evidence.
+
+## Technical plan review
+
+Agent technical review: /root/capture_contract_discovery, independent non-implementer, read-only.
+Reviewed revision: `3f367ef2a8a86fe78dd4e146bfb23d8d089c63d5`.
+Disposition: approved within existing best-effort latest-user capture; Elevated/Moderate. Earlier completed turns overtaken before context read are not backfilled by the existing adapter; completion eligibility introduces no new loss in the qualified delayed-event fixture because existing extraction already returned null. Do not claim all completed turns are retained.
+Verification adequacy: scoped identity/payload resolution once; success only under current ownership/lifetime; finally releases captured Set, not successor Set; distinct persisted receipt IDs plus exact scoped History text/work trace, not successful request count. Successful default compaction, multi-step/tool-plus-text and 2.0.22 completion markers remain required validation. Stop on completed-content mutation, unsupported markers or newly requested tool-only rendering/API semantics.
