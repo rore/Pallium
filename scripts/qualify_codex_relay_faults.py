@@ -7,14 +7,20 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 import sys
+import threading
 import time
 import types
 import uuid
 from typing import Any, Callable
 
 
-MODES = {"claim-response-loss", "ack-precommit", "ack-response-loss"}
+MODES = {"claim-response-loss", "ack-precommit", "ack-response-loss", "observe"}
+OBSERVE_EVENT_LIMIT = 64
+OBSERVE_BYTES_LIMIT = 16 * 1024
+OBSERVE_APPEND_WAIT_SECONDS = 0.05
+_DELIVERY_ID = re.compile(r"relay-delivery-[0-9a-f]{32}")
 
 
 def _read_manifest(path: Path, session_id: object, now: float) -> dict[str, Any] | None:
@@ -68,9 +74,339 @@ def _record(path: Path, event: str, mode: str, delivery_id: str | None = None,
         return False
 
 
+def _append_observation(path: Path, snapshot: bytes) -> bool:
+    try:
+        with path.open("ab") as stream:
+            return stream.write(snapshot) == len(snapshot) and (stream.flush() is None)
+    except (OSError, ValueError):
+        return False
+
+
+def _result_class(value: object) -> str:
+    if value is None:
+        return "none"
+    return "dict" if isinstance(value, dict) else "other"
+
+
+class _Observation:
+    def __init__(self, module: Any, manifest: dict[str, Any], evidence: Path):
+        name = Path(str(getattr(module, "__file__", ""))).name
+        self.hook = {"session_start.py": "session_start",
+                     "user_prompt_submit.py": "user_prompt_submit"}.get(name, "unknown")
+        self.message_id = manifest["message_id"]
+        self.evidence = evidence
+        self.events: list[dict[str, Any]] = []
+        self.size = 0
+        self.overflow = False
+        self.target_seen = False
+        self.delivery_id: str | None = None
+        self.formatted = False
+        self.assignments: list[tuple[Any, str, Any, Any]] = []
+        self.finished = False
+        self.restore_failed = False
+
+    def event(self, stage: str, outcome: str, *, target: bool | None = None,
+              delivery_id: str | None = None, elapsed: int | None = None) -> None:
+        try:
+            item = {"event": "codex_relay_observation", "hook": self.hook,
+                    "stage": stage, "outcome": outcome, "target_present": target,
+                    "delivery_id": delivery_id, "elapsed_ms": elapsed,
+                    "at": time.time()}
+            size = len(json.dumps(item, separators=(",", ":")).encode("utf-8")) + 1
+            if (len(self.events) >= OBSERVE_EVENT_LIMIT
+                    or self.size + size > OBSERVE_BYTES_LIMIT):
+                self.overflow = True
+                return
+            self.events.append(item)
+            self.size += size
+        except Exception:
+            self.overflow = True
+
+    def target_in(self, value: object) -> bool:
+        try:
+            return bool(self.delivery_id) and isinstance(value, list) and any(
+                isinstance(item, dict) and item.get("message_id") == self.message_id
+                and item.get("delivery_id") == self.delivery_id for item in value
+            )
+        except Exception:
+            return False
+
+    def observed_response(self, response: object) -> bool:
+        found = False
+        try:
+            deliveries = response.get("deliveries") if isinstance(response, dict) else None
+            if isinstance(deliveries, list):
+                for item in deliveries:
+                    if isinstance(item, dict) and item.get("message_id") == self.message_id:
+                        found = True
+                        value = item.get("delivery_id")
+                        if isinstance(value, str) and _DELIVERY_ID.fullmatch(value):
+                            self.delivery_id = value
+                        break
+        except Exception:
+            return False
+        self.target_seen = self.target_seen or found
+        return found
+
+    def patch(self, obj: Any, attr: str, replacement: Any) -> None:
+        old = getattr(obj, attr)
+        self.assignments.append((obj, attr, old, replacement))
+        setattr(obj, attr, replacement)
+
+    def restore(self) -> bool:
+        ok = True
+        for obj, attr, old, _replacement in reversed(self.assignments):
+            try:
+                setattr(obj, attr, old)
+            except Exception:
+                ok = False
+        self.restore_failed = self.restore_failed or not ok
+        self.assignments.clear()
+        return ok
+
+    def finish(self) -> None:
+        if self.finished:
+            return
+        self.finished = True
+        try:
+            restored = self.restore()
+        except Exception:
+            restored = False
+        self.event("observer_finished", "captured" if restored and not self.restore_failed and not self.overflow
+                   else "incomplete", target=self.target_seen,
+                   delivery_id=self.delivery_id)
+        try:
+            snapshot = b"".join(
+                json.dumps(item, ensure_ascii=False, separators=(",", ":")).encode("utf-8") + b"\n"
+                for item in self.events
+            )
+            if len(snapshot) > OBSERVE_BYTES_LIMIT:
+                return
+            done = threading.Event()
+            def append() -> None:
+                try:
+                    _append_observation(self.evidence, snapshot)
+                except BaseException:
+                    pass
+                finally:
+                    done.set()
+            worker = threading.Thread(
+                target=append,
+                name="codex-relay-observer-ledger", daemon=True,
+            )
+            worker.start()
+            done.wait(OBSERVE_APPEND_WAIT_SECONDS)
+        except Exception:
+            pass
+
+
+def _wrap_observer(module: Any, manifest_file: Path,
+                   evidence_file: Path) -> Callable[[], None]:
+    common = module._common
+    old_turn = module.relay_turn
+    observer: _Observation | None = None
+
+    def turn(runtime: str, session_id: object, *args: Any, **kwargs: Any) -> Any:
+        nonlocal observer
+        m = _read_manifest(manifest_file, session_id, time.time())
+        if m is None or m["mode"] != "observe" or observer is not None:
+            return old_turn(runtime, session_id, *args, **kwargs)
+        used = Path(m["state_path"] + ".used")
+        if not _create_once(used, {"mode": "observe", "message_id": m["message_id"]}):
+            return old_turn(runtime, session_id, *args, **kwargs)
+
+        try:
+            obs = _Observation(module, m, evidence_file)
+        except Exception:
+            return old_turn(runtime, session_id, *args, **kwargs)
+        observer = obs
+        # The wrapper itself is also part of the transactional patch set so the
+        # original alias is restored before any evidence append is attempted.
+        obs.assignments.append((module, "relay_turn", old_turn, turn))
+        started = time.monotonic()
+        try:
+            old_request = common.relay_request
+            old_writer = common._write_session_state_locked
+            old_format = module.format_relay
+            old_emit_context = module.emit_context
+            old_ack = module.acknowledge_relay
+            old_common_emit = common.emit_utf8
+            old_module_emit = getattr(module, "emit_utf8", None)
+
+            def observe_request(original: Callable[..., Any]) -> Callable[..., Any]:
+                def request(method: str, path: str, body: Any, *a: Any, **kw: Any) -> Any:
+                    began = time.monotonic()
+                    try:
+                        response = original(method, path, body, *a, **kw)
+                    except BaseException:
+                        if method == "POST" and path == "/relay/turn":
+                            obs.event("relay_response", "exception", target=False,
+                                      elapsed=min(60000, int((time.monotonic() - began) * 1000)))
+                        raise
+                    if method == "POST" and path == "/relay/turn":
+                        target = obs.observed_response(response)
+                        obs.event("relay_response", _result_class(response), target=target,
+                                  delivery_id=obs.delivery_id if target else None,
+                                  elapsed=min(60000, int((time.monotonic() - began) * 1000)))
+                    return response
+                return request
+
+            def state_writer(session: str, state: dict[str, Any]) -> bool:
+                if session != session_id:
+                    return old_writer(session, state)
+                obs.event("state_write_before", "called", target=obs.target_seen,
+                          delivery_id=obs.delivery_id)
+                began = time.monotonic()
+                try:
+                    result = old_writer(session, state)
+                except BaseException:
+                    obs.event("state_write_after", "exception", target=obs.target_seen,
+                              delivery_id=obs.delivery_id,
+                              elapsed=min(60000, int((time.monotonic() - began) * 1000)))
+                    raise
+                obs.event("state_write_after", "true" if result is True else "false",
+                          target=obs.target_seen, delivery_id=obs.delivery_id,
+                          elapsed=min(60000, int((time.monotonic() - began) * 1000)))
+                return result
+
+            def format_relay(deliveries: Any, *a: Any, **kw: Any) -> Any:
+                target = obs.target_in(deliveries) and obs.target_seen
+                began = time.monotonic()
+                try:
+                    result = old_format(deliveries, *a, **kw)
+                except BaseException:
+                    obs.event("format_relay", "exception", target=target,
+                              delivery_id=obs.delivery_id if target else None,
+                              elapsed=min(60000, int((time.monotonic() - began) * 1000)))
+                    raise
+                try:
+                    rendered = result[1] if isinstance(result, tuple) and len(result) > 1 else None
+                    obs.formatted = obs.target_in(rendered) and obs.target_seen
+                except Exception:
+                    obs.formatted = False
+                obs.event("format_relay", _result_class(result), target=obs.formatted,
+                          delivery_id=obs.delivery_id if obs.formatted else None,
+                          elapsed=min(60000, int((time.monotonic() - began) * 1000)))
+                return result
+
+            def emit_context(text: str, event_name: str) -> Any:
+                began = time.monotonic()
+                try:
+                    result = old_emit_context(text, event_name)
+                except BaseException:
+                    obs.event("emit_context", "exception", target=obs.formatted,
+                              delivery_id=obs.delivery_id if obs.formatted else None,
+                              elapsed=min(60000, int((time.monotonic() - began) * 1000)))
+                    raise
+                obs.event("emit_context", _result_class(result), target=obs.formatted,
+                          delivery_id=obs.delivery_id if obs.formatted else None,
+                          elapsed=min(60000, int((time.monotonic() - began) * 1000)))
+                return result
+
+            def wrap_utf8(original: Callable[..., Any]) -> Callable[..., Any]:
+                def emit_utf8(*args: Any, **kwargs: Any) -> Any:
+                    began = time.monotonic()
+                    try:
+                        result = original(*args, **kwargs)
+                    except BaseException:
+                        obs.event("emit_utf8", "exception", target=obs.formatted,
+                                  delivery_id=obs.delivery_id if obs.formatted else None,
+                                  elapsed=min(60000, int((time.monotonic() - began) * 1000)))
+                        raise
+                    obs.event("emit_utf8", "true" if result is True else "false",
+                              target=obs.formatted,
+                              delivery_id=obs.delivery_id if obs.formatted else None,
+                              elapsed=min(60000, int((time.monotonic() - began) * 1000)))
+                    return result
+                return emit_utf8
+
+            def acknowledge(deliveries: list[dict], *, container_ref: str) -> Any:
+                try:
+                    target = bool(obs.delivery_id) and isinstance(deliveries, list) and any(
+                        isinstance(item, dict) and item.get("delivery_id") == obs.delivery_id
+                        and item.get("message_id") == obs.message_id for item in deliveries
+                    )
+                except Exception:
+                    target = False
+                began = time.monotonic()
+                try:
+                    result = old_ack(deliveries, container_ref=container_ref)
+                except BaseException:
+                    obs.event("acknowledge_relay", "exception", target=target,
+                              delivery_id=obs.delivery_id if target else None,
+                              elapsed=min(60000, int((time.monotonic() - began) * 1000)))
+                    raise
+                try:
+                    confirmed = target and isinstance(result, list) and any(
+                        isinstance(item, dict) and item.get("delivery_id") == obs.delivery_id
+                        and item.get("message_id") == obs.message_id for item in result
+                    )
+                except Exception:
+                    confirmed = False
+                obs.event("acknowledge_relay", "confirmed" if confirmed else "returned",
+                          target=target, delivery_id=obs.delivery_id if target else None,
+                          elapsed=min(60000, int((time.monotonic() - began) * 1000)))
+                return result
+
+            # Prepare every wrapper before the first assignment; finish() restores
+            # even a partial assignment if an unusual module rejects a patch.
+            explicit_request = kwargs.get("request")
+            request_override = observe_request(explicit_request) if callable(explicit_request) else None
+            if request_override is None:
+                obs.patch(common, "relay_request", observe_request(old_request))
+            obs.patch(common, "_write_session_state_locked", state_writer)
+            obs.patch(common, "emit_utf8", wrap_utf8(old_common_emit))
+            obs.patch(module, "format_relay", format_relay)
+            obs.patch(module, "emit_context", emit_context)
+            obs.patch(module, "acknowledge_relay", acknowledge)
+            if old_module_emit is not None:
+                obs.patch(module, "emit_utf8", wrap_utf8(old_module_emit))
+            if request_override is not None:
+                kwargs["request"] = request_override
+            obs.event("relay_turn", "started", elapsed=min(60000, int((time.monotonic() - started) * 1000)))
+        except BaseException:
+            obs.event("relay_turn", "observer_setup_failed", target=False)
+            if not obs.restore():
+                obs.restore_failed = True
+            try:
+                return old_turn(runtime, session_id, *args, **kwargs)
+            finally:
+                obs.finish()
+
+        try:
+            result = old_turn(runtime, session_id, *args, **kwargs)
+        except BaseException:
+            obs.event("relay_turn", "exception", target=obs.target_seen,
+                      delivery_id=obs.delivery_id,
+                      elapsed=min(60000, int((time.monotonic() - started) * 1000)))
+            raise
+        obs.event("relay_turn", _result_class(result),
+                  target=obs.target_seen, delivery_id=obs.delivery_id,
+                  elapsed=min(60000, int((time.monotonic() - started) * 1000)))
+        return result
+
+    module.relay_turn = turn
+
+    def undo() -> None:
+        if observer is not None:
+            observer.finish()
+        try:
+            module.relay_turn = old_turn
+        except Exception:
+            pass
+
+    return undo
+
+
 def wrap_hook(module: Any, manifest_path: str | Path,
               evidence_path: str | Path) -> Callable[[], None]:
     """Wrap module globals; return a finally-safe undo function."""
+    try:
+        raw = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        raw = None
+    if isinstance(raw, dict) and raw.get("mode") == "observe":
+        return _wrap_observer(module, Path(manifest_path), Path(evidence_path))
     old_turn, old_ack = module.relay_turn, module.acknowledge_relay
     common = module._common
     old_request = common.relay_request
