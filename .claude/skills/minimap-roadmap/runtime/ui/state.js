@@ -20,6 +20,7 @@ function makeInitial() {
     dragClickSuppressUntil: 0,
     lensesExpanded: false,
     searchQuery: "",
+    inPlay: false,
     activeFilters: {},
     filtersExpanded: false,
     collapsedGroups: new Set(),

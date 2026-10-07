@@ -283,6 +283,18 @@ function timestamp(value, optional = false) {
   return parsed;
 }
 
+function recencyMetadata(payload) {
+  const value = payload.as_of;
+  if (
+    typeof value !== "string"
+    || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|\+00:00)$/.test(value)
+    || !Number.isFinite(Date.parse(value))
+    || new Date(value).toISOString().slice(0, 19) !== value.slice(0, 19)
+    || payload.recent_seconds !== 86400
+  ) throw new LookupError("invalid-response");
+  return { asOf: value, recentSeconds: payload.recent_seconds };
+}
+
 function validateParticipant(row, reference) {
   if (!row || typeof row !== "object" || Array.isArray(row)) throw new LookupError("invalid-response");
   const endpointId = boundedString(row.endpoint_id, 128);
@@ -410,16 +422,28 @@ export async function lookupPalliumParticipantCounts(config, references, options
       || payload.contract !== "relay-work-ref-counts/v1"
       || !Array.isArray(payload.counts) || payload.counts.length !== references.length
     ) throw new LookupError("invalid-response");
+    const legacy = !Object.hasOwn(payload, "as_of") && !Object.hasOwn(payload, "recent_seconds")
+      && payload.counts.every((row) => row && !Object.hasOwn(row, "recent_participant_count") && !Object.hasOwn(row, "dormant_participant_count"));
+    const metadata = legacy ? null : recencyMetadata(payload);
     const counts = payload.counts.map((row, index) => {
       const expected = references[index];
       if (
         !row || typeof row !== "object" || Array.isArray(row)
         || row.scope_ref !== expected.scope_ref || row.local_ref !== expected.local_ref
         || !Number.isSafeInteger(row.participant_count) || row.participant_count < 0
+        || (!legacy && (
+          !Number.isSafeInteger(row.recent_participant_count) || row.recent_participant_count < 0
+          || !Number.isSafeInteger(row.dormant_participant_count) || row.dormant_participant_count < 0
+          || row.recent_participant_count + row.dormant_participant_count !== row.participant_count
+        ))
       ) throw new LookupError("invalid-response");
-      return { scope_ref: expected.scope_ref, local_ref: expected.local_ref, participant_count: row.participant_count };
+      return {
+        scope_ref: expected.scope_ref, local_ref: expected.local_ref, participant_count: row.participant_count,
+        recent_participant_count: row.recent_participant_count, dormant_participant_count: row.dormant_participant_count,
+      };
     });
-    return { status: "ok", counts, partial: false };
+    if (legacy) return unavailable("unsupported");
+    return { status: "ok", counts, partial: false, ...metadata };
   } catch (error) {
     if (externalSignal?.aborted) throw error;
     if (timedOut) return unavailable("timeout");
@@ -453,6 +477,7 @@ export async function lookupPalliumParticipants(config, reference, options = {})
   let totalBytes = 0;
   let partial = false;
   let canonicalWorkRef = null;
+  let metadata = null;
 
   try {
     for (let offset = 0; offset < MAX_PARTICIPANTS; offset += PAGE_SIZE) {
@@ -507,6 +532,9 @@ export async function lookupPalliumParticipants(config, reference, options = {})
       }
 
       canonicalWorkRef ||= page.work_ref;
+      const pageMetadata = Object.hasOwn(page, "as_of") || Object.hasOwn(page, "recent_seconds")
+        ? recencyMetadata(page) : null;
+      metadata = offset === 0 ? pageMetadata : null;
       const rows = page.participants.map((row) => {
         const participant = validateParticipant(row, reference);
         if (!config.dashboardEndpoint || !/^relay-session-[0-9a-f]{32}$/.test(participant.endpoint_id)) return participant;
@@ -524,7 +552,7 @@ export async function lookupPalliumParticipants(config, reference, options = {})
       }
       if (participants.length === MAX_PARTICIPANTS) partial = true;
     }
-    return safeResult("ok", reference, participants, partial, new Date().toISOString());
+    return { ...safeResult("ok", reference, participants, partial, new Date().toISOString()), ...metadata };
   } catch (error) {
     if (externalSignal?.aborted) throw error;
     if (timedOut) return safeResult("timeout", reference, [], false, new Date().toISOString());

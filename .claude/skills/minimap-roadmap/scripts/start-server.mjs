@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { probeRunningServer, probePort } from "./health-check.mjs";
+import { probeRunningServer, probePort, isCompatibleRuntime, replacementGuidance } from "./health-check.mjs";
 import { readPalliumPreference, writePalliumPreference, clearPalliumPreference } from "../runtime/src/server-registry.js";
 import { parsePalliumConfig, palliumConfigId } from "../runtime/src/pallium.js";
 
@@ -70,6 +70,10 @@ async function persistExplicitPreference() {
 
 const existing = await probeRunningServer();
 if (existing) {
+  if (!isCompatibleRuntime(existing)) {
+    process.stderr.write("Minimap API is incompatible or unknown; existing server left untouched.\n" + replacementGuidance(existing));
+    process.exit(1);
+  }
   if (!configMatches(existing)) rejectConfigMismatch();
   await persistExplicitPreference();
   process.stdout.write(`Minimap already running at http://localhost:${existing.port} (pid ${existing.pid ?? "?"})\n`);
@@ -88,6 +92,10 @@ try {
     // Another launcher beat us. Re-probe directly on the requested port.
     const winner = await probePort(requestedPort);
     if (winner) {
+      if (!isCompatibleRuntime(winner)) {
+        process.stderr.write("Minimap API is incompatible or unknown; existing server left untouched.\n" + replacementGuidance(winner));
+        process.exit(1);
+      }
       if (!configMatches(winner)) rejectConfigMismatch();
       await persistExplicitPreference();
       process.stdout.write(`Minimap already running at http://localhost:${requestedPort}\n`);

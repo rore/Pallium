@@ -2,6 +2,7 @@
 
 Treat `roadmap/` as the canonical repo-local roadmap workspace for humans and agents.
 Use `docs/context/` for broader design context, but keep roadmap state and queue changes in the minimap files.
+For roadmap state or assigned Minimap roadmap work (pickup, resume, investigation, testing, substantive review, or completion), use the existing [Minimap roadmap skill](.claude/skills/minimap-roadmap/SKILL.md); do not create or install a duplicate.
 
 If `AGENTS.local.md` exists at the repository root, read it as supplemental machine-local instructions; it is intentionally not versioned.
 

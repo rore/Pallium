@@ -7,6 +7,9 @@
 
 const ROADMAP_PREFIXES = [
   "/api/workspace",
+  "/api/worktree-workspace",
+  "/api/worktree-sources",
+  "/api/worktree-source-workspace",
   "/api/board",
   "/api/scope",
   "/api/items/",
@@ -29,19 +32,32 @@ export function normalizeError(response, payload) {
 
 // `getRepo` is a function (not a string) so the caller can pass a live
 // pointer at `state.repoPath`; api.js doesn't need to know about state.
-export function createApi({ fetch: fetchImpl, getRepo } = {}) {
+export function createApi({ fetch: fetchImpl, getRepo, getSource } = {}) {
   const f = fetchImpl || (typeof globalThis.fetch === "function" ? globalThis.fetch.bind(globalThis) : null);
   if (!f) throw new Error("createApi: no fetch implementation available");
   const repo = typeof getRepo === "function" ? getRepo : () => "";
+  const source = typeof getSource === "function" ? getSource : () => null;
 
-  async function request(url, init = {}) {
+  async function request(url, init = {}, { unbound = false, repoRoot = null } = {}) {
     const headers = new Headers(init.headers || {});
+    const setRepoHeader = (value) => {
+      if (/[^\x20-\x7e]/.test(value)) headers.set("X-Minimap-Repo-Encoded", encodeURIComponent(value));
+      else headers.set("X-Minimap-Repo", value);
+    };
     if (init.body && !headers.has("Content-Type")) {
       headers.set("Content-Type", "application/json; charset=utf-8");
     }
-    const repoValue = repo();
-    if (isRoadmapEndpoint(url) && repoValue) {
-      headers.set("X-Minimap-Repo", repoValue);
+    const selection = unbound ? null : source();
+    if (selection?.mode === "across") {
+      if (!selection.identity) throw new Error("Select one checkout before opening or changing an item.");
+      const { repoRoot, sourceKey, git, roadmapBinding } = selection.identity;
+      setRepoHeader(repoRoot);
+      headers.set("X-Minimap-Source-Context", JSON.stringify({ repoRoot, sourceKey, git, roadmapBinding }).replace(/[\u007f-\uffff]/g, (character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`));
+      url = url.replace(/^\/api\//, "/api/source/");
+    }
+    const repoValue = repoRoot ?? repo();
+    if (!selection && isRoadmapEndpoint(url) && repoValue) {
+      setRepoHeader(repoValue);
     }
     const response = await f(url, { ...init, headers });
     let payload = null;
@@ -60,13 +76,20 @@ export function createApi({ fetch: fetchImpl, getRepo } = {}) {
   return {
     // Roadmap
     loadWorkspace: () => request("/api/workspace"),
+    loadWorktreeWorkspace: ({ openedOnly = false } = {}) => request(`/api/worktree-workspace${openedOnly ? "?openedOnly=1" : ""}`, {}, { unbound: true }),
+    discoverWorktreeSources: () => request("/api/worktree-sources", {}, { unbound: true }),
+    loadSourceWorkspace: (identity) => request("/api/worktree-source-workspace", {
+      headers: { "X-Minimap-Source-Context": JSON.stringify(identity).replace(/[\u007f-\uffff]/g, (character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`) },
+    }, { unbound: true, repoRoot: identity.repoRoot }),
     initializeWorkspace: () => request("/api/setup/initialize", { method: "POST" }),
     saveBoard: (groups, expectedRevision) => postJson("/api/board", { groups, expectedRevision }),
     reorderMetadata: (payload) => postJson("/api/metadata-order", payload),
     reorderLensGroup: (field, payload) => postJson(`/api/lenses/${id(field)}/order`, payload),
-    saveScope: (scopeText) => postJson("/api/scope", { scopeText }),
+    saveScope: (scopeText, expectedRevision = null) => postJson("/api/scope", { scopeText, expectedRevision }),
     readItem: (itemId, options = {}) => request(`/api/items/${id(itemId)}`, options),
-    readBoardParticipantCounts: (options = {}) => request("/api/board/participant-counts", options),
+    readBoardParticipantCounts: ({ includeCompleted = false, ...options } = {}) => request(
+      `/api/board/participant-counts${includeCompleted === true ? "?includeCompleted=1" : ""}`, options,
+    ),
     readItemParticipants: (itemId, options = {}) => request(`/api/items/${id(itemId)}/participants`, options),
     saveItem: (itemId, payload) => postJson(`/api/items/${id(itemId)}`, payload),
 

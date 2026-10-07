@@ -622,6 +622,8 @@ export function renderSpecSessions() {
     const rows = group.sessions.map((session) => {
       const active = HELPERS.sameSpecUiPath(session.targetFile, STATE.spec.selectedPath);
       const summary = sessionActivitySummary(session);
+      const unavailable = session.availability?.status === "unavailable";
+      const statusText = session.availability?.code === "recovery_conflict" ? "Recovery conflict" : "Session unavailable";
       const pulseAttr = summary.pulseAttr ? ` data-pulse="${summary.pulseAttr}"` : "";
       return `
         <div class="spec-session-row-wrap${active ? " is-active" : ""}">
@@ -630,7 +632,7 @@ export function renderSpecSessions() {
             <span class="spec-session-meta">
               <span class="spec-session-name" title="${escapeHtml(session.title || session.targetFile)}">${escapeHtml(session.title || session.targetFile)}</span>
               <span class="spec-session-sub">
-                <span class="spec-session-time">${escapeHtml(formatRelativeTime(session.lastActiveAt))}</span>
+                <span class="spec-session-time${unavailable ? " is-unavailable" : ""}"${unavailable ? ` title="${escapeHtml(session.availability.message || statusText)}"` : ""}>${escapeHtml(unavailable ? statusText : formatRelativeTime(session.lastActiveAt))}</span>
                 ${summary.pulses}
               </span>
             </span>
@@ -645,6 +647,7 @@ export function renderSpecSessions() {
 }
 
 function sessionActivitySummary(session) {
+  if (session.availability?.status === "unavailable") return { pulses: "", pulseAttr: "unavailable" };
   // Counts come from two sources:
   // - For the currently-loaded session, prefer state.spec.context (live,
   //   reflects local edits before refreshSpecReviewState catches up).
@@ -690,15 +693,16 @@ export function renderSpecFile() {
   if (STATE.spec.loadError) {
     const session = STATE.spec.sessions.find((candidate) => candidate.targetFile === STATE.spec.selectedPath);
     const missingTarget = STATE.spec.loadError.code === "target_missing";
+    const recoveryConflict = STATE.spec.loadError.code === "recovery_conflict";
     DOM.specFileTitleElement.textContent = session?.title || "Missing file";
     DOM.specFileSubtitleElement.textContent = session?.relativePath || session?.targetFile || STATE.spec.selectedPath || "Attached file";
     DOM.specFileContentElement.className = "spec-body spec-body-error";
     DOM.specFileContentElement.innerHTML = `
       <div class="spec-file-error-card">
-        <p class="spec-file-error-kicker">${missingTarget ? "File no longer exists" : "Could not load file"}</p>
-        <h2>${escapeHtml(missingTarget ? "This attached file is missing." : "This session could not be loaded.")}</h2>
+        <p class="spec-file-error-kicker">${escapeHtml(recoveryConflict ? "Recovery conflict" : missingTarget ? "File no longer exists" : "Could not load file")}</p>
+        <h2>${escapeHtml(recoveryConflict ? "This session needs recovery." : missingTarget ? "This attached file is missing." : "This session could not be loaded.")}</h2>
         <p>${escapeHtml(STATE.spec.loadError.message || "The file could not be loaded.")}</p>
-        <button class="spec-toolbar-button" type="button" data-spec-missing-remove="${escapeHtml(STATE.spec.selectedPath)}">Remove session</button>
+        ${recoveryConflict ? "" : `<button class="spec-toolbar-button" type="button" data-spec-missing-remove="${escapeHtml(STATE.spec.selectedPath)}">Remove session</button>`}
       </div>
     `;
     DOM.specMarginElement.innerHTML = "";
@@ -773,9 +777,11 @@ export function renderSpecFile() {
   // anchor.quote on every render. Built once after the DOM is in place.
   rebuildSpecLineIndex();
 
-  STATE.spec.selectedQuote = "";
-  STATE.spec.selectedQuoteLineRange = null;
-  STATE.spec.selectedQuoteOffset = null;
+  if (!STATE.spec.commentComposerOpen && !STATE.spec.suggestionComposerOpen) {
+    STATE.spec.selectedQuote = "";
+    STATE.spec.selectedQuoteLineRange = null;
+    STATE.spec.selectedQuoteOffset = null;
+  }
   STATE.spec.activeAnchorCommentId = "";
   clearSpecAnchorHighlight();
   HELPERS.hideSpecContextToolbar();
