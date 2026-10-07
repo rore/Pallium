@@ -214,3 +214,15 @@ two or ACK as action completion. No source or verification blockers remain.
 Exact-head PR CI and review-thread resolution still gate merge. Installed
 qualification, historical causality, queue timeout and the parent High/Large
 recovery remain open; no live operation is authorized by this review.
+
+## PR source review documentation corrections
+
+PR301's first exact-head CI passed at 1f7585e7, including both Python matrices,
+Windows smoke, aggregate CI result and governance. CodeRabbit performed actual
+source review and posted two valid bounded documentation findings: only a
+delivery-specific wake with a parsed ID supports exact-ID trace inspection, and
+lease recovery is conditional on a claim already existing. Both statements are
+corrected; production and test blobs are unchanged from the full-tested tree.
+Final smart review of this documentation-only delta and fresh exact-head CI
+remain gates. No docstring generator, setting change or review-limit override
+was used. Installed acceptance and the broader incident remain open.

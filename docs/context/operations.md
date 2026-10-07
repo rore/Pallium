@@ -155,8 +155,9 @@ write-ahead, while an outage keeps the pinned path. Never share
 `PALLIUM_CLAUDE_WAKE_DIR` across different Relay databases. An exact
 internal Codex wake is excluded from deduplication and memory ingestion. If its hook
 cannot recognize or complete the wake, including when the host skips or terminates
-the hook, the native prompt can remain model-visible without a delivery block. It
-carries the exact delivery ID for nonmutating trace inspection. Ordinary user
+the hook, the native prompt can remain model-visible without a delivery block.
+Only a delivery-specific wake with a successfully parsed delivery ID supplies
+that ID for nonmutating trace inspection. Ordinary user
 prompts remain fail-open. Once an exact wake is recognized, any exception or failed
 payload/block write before successful emission exits with Codex's blocking signal
 (exit 2), without ACK or memory ingestion. The stderr reason is best effort;
