@@ -528,8 +528,9 @@ Skill feedback trigger 3 dropped: the restart limitation belongs to this product
 ### Passive exact-session observer release
 
 Agent technical review: /root/deployment_evidence_review (gpt-6.1-sol/high).
-Reviewed revision: d6787df294487987a15dc9157a2f308f7df1fc74, with helper blob
-8dded7ffa65c765a34afeec035e71f62df25c543 and test blob
+Reviewed revision: d6787df294487987a15dc9157a2f308f7df1fc74.
+
+Helper blob: 8dded7ffa65c765a34afeec035e71f62df25c543. Test blob:
 6890d79f2978726dd0ab7be7e04b18c563e5ef12.
 Verification adequacy: approved the bounded observer source and evidence after
 88 focused cases, the affected-suite evidence plus four teardown cases, and the
