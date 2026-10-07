@@ -80,8 +80,17 @@ def test_hook_redelivery_after_emit_or_ack_gap_preserves_exact_id_and_receipt(
     monkeypatch.setattr(hook, "relay_request", request)
     monkeypatch.setattr(hook._common, "relay_request", request)
     monkeypatch.setattr(hook, "emit_context", emit)
-    with pytest.raises(SystemExit):
+    blocked_exits = []
+
+    def blocked_exit():
+        blocked_exits.append(2)
+        raise SystemExit(2)
+
+    monkeypatch.setattr(hook, "_exit_blocked_wake", blocked_exit)
+    with pytest.raises(SystemExit) as first_exit:
         hook.main()
+    assert first_exit.value.code == (2 if failure == "emit" else 0)
+    assert blocked_exits == ([2] if failure == "emit" else [])
     first = claims[0]
     assert _status(client, sent["message_id"])["state"] == "claimed"
     assert len(outputs) == (0 if failure == "emit" else 1)
@@ -92,8 +101,9 @@ def test_hook_redelivery_after_emit_or_ack_gap_preserves_exact_id_and_receipt(
         record = db.get(RelayDeliveryRecord, delivery_id)
         record.lease_expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
     gap = False
-    with pytest.raises(SystemExit):
+    with pytest.raises(SystemExit) as retry_exit:
         hook.main()
+    assert retry_exit.value.code == 0
     current = claims[-1]
     assert current["delivery_id"] == first["delivery_id"] == delivery_id
     assert current["message_id"] == first["message_id"] == sent["message_id"]
