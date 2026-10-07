@@ -137,6 +137,7 @@ def test_slow_response_body_cannot_outlive_deadline(
     )
     common.start_hook_deadline(2.0, host_reserve=0.5, clock=lambda: 10.0)
     started = threading.Event()
+    consumed = bytearray()
     release = threading.Event()
     joined = []
     workers = []
@@ -150,9 +151,10 @@ def test_slow_response_body_cannot_outlive_deadline(
             return False
 
         def read(self):
+            consumed.extend(b"{")
             started.set()
-            release.wait(1)
-            return b'{}'
+            release.wait(2)
+            return bytes(consumed) + b"}"
 
     class DeadlineThread:
         def __init__(self, *, target, daemon):
@@ -171,14 +173,18 @@ def test_slow_response_body_cannot_outlive_deadline(
 
     monkeypatch.setattr(common.threading, "Thread", DeadlineThread)
     monkeypatch.setattr(common.urllib.request, "urlopen", lambda *_a, **_k: BlockingResponse())
-    if request_kind == "pallium":
-        result = common.pallium_request("GET", "/health")
-    else:
-        result = common.relay_request("POST", "/relay/turn", {}, timeout=3.0)
-    assert result is None
-    assert joined == [1.5]
-    release.set()
-    workers[0].join(1)
+    try:
+        if request_kind == "pallium":
+            result = common.pallium_request("GET", "/health")
+        else:
+            result = common.relay_request("POST", "/relay/turn", {}, timeout=3.0)
+        assert result is None
+        assert joined == [1.5]
+        assert consumed == b"{"
+        assert workers[0].is_alive()
+    finally:
+        release.set()
+        workers[0].join(1)
 
 
 @pytest.mark.parametrize("operation", ("register", "close"))

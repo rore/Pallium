@@ -41,6 +41,35 @@ def module(request):
     result._common.relay_request = original_request
 
 
+@pytest.fixture
+def observation_reader(monkeypatch):
+    """Wait for the real asynchronous observer append before reading its ledger."""
+    original = harness._append_observation
+    done = threading.Event()
+    pause = threading.Event()
+    opened = threading.Event()
+    release = threading.Event()
+
+    def append(path, snapshot):
+        try:
+            if pause.is_set():
+                with path.open("ab"):
+                    opened.set()
+                    if not release.wait(3):
+                        raise TimeoutError("test writer was not released")
+            return original(path, snapshot)
+        finally:
+            done.set()
+
+    monkeypatch.setattr(harness, "_append_observation", append)
+
+    def wait(path):
+        assert done.wait(2), "observer append did not complete"
+        return path.read_text(encoding="utf-8")
+
+    return {"wait": wait, "pause": pause, "opened": opened, "release": release}
+
+
 def setup_manifest(tmp_path: Path, mode: str, **overrides):
     state = tmp_path / "fault-state"
     manifest = tmp_path / "manifest.json"
@@ -391,7 +420,7 @@ def _configure_observation_hook(module, tmp_path, *, rendered=True,
     return operations, emitted, actual
 
 
-def test_observer_runs_actual_hook_main_without_changing_calls_or_output(module, tmp_path):
+def test_observer_runs_actual_hook_main_without_changing_calls_or_output(module, tmp_path, observation_reader):
     hook = module.__name__
     manifest, evidence, _ = setup_manifest(tmp_path, "observe")
     operations, emitted, actual = _configure_observation_hook(module, tmp_path)
@@ -413,7 +442,8 @@ def test_observer_runs_actual_hook_main_without_changing_calls_or_output(module,
          "SessionStart" if hook == "session_start" else "UserPromptSubmit")
     ]
     assert module._common.relay_request is before
-    rows = [json.loads(line) for line in evidence.read_text(encoding="utf-8").splitlines()]
+    ledger = observation_reader["wait"](evidence)
+    rows = [json.loads(line) for line in ledger.splitlines()]
     assert rows and all(row["hook"] == hook for row in rows)
     assert all(row["event"] == "codex_relay_observation" for row in rows)
     assert all(set(row) == {
@@ -424,13 +454,12 @@ def test_observer_runs_actual_hook_main_without_changing_calls_or_output(module,
     assert any(row["stage"] == "state_write_after" and row["outcome"] == "true" for row in rows)
     assert any(row["stage"] == "acknowledge_relay" and row["outcome"] == "confirmed" for row in rows)
     assert all(row["delivery_id"] in {None, DELIVERY} for row in rows)
-    ledger = evidence.read_text(encoding="utf-8")
     assert "secret-never-log" not in ledger and "private payload" not in ledger
     assert str(tmp_path) not in ledger
 
 
 @pytest.mark.parametrize("rendered", [False, True])
-def test_observer_distinguishes_fallback_or_emit_and_ack_results(module, tmp_path, rendered):
+def test_observer_distinguishes_fallback_or_emit_and_ack_results(module, tmp_path, rendered, observation_reader):
     hook = module.__name__
     manifest, evidence, _ = setup_manifest(tmp_path, "observe")
     operations, emitted, _ = _configure_observation_hook(
@@ -442,7 +471,7 @@ def test_observer_distinguishes_fallback_or_emit_and_ack_results(module, tmp_pat
             module.main()
     finally:
         undo()
-    rows = [json.loads(line) for line in evidence.read_text(encoding="utf-8").splitlines()]
+    rows = [json.loads(line) for line in observation_reader["wait"](evidence).splitlines()]
     if rendered:
         assert emitted
         assert any(row["stage"] == "acknowledge_relay" and row["outcome"] == "returned" for row in rows)
@@ -452,7 +481,7 @@ def test_observer_distinguishes_fallback_or_emit_and_ack_results(module, tmp_pat
         assert not any(row["stage"] == "acknowledge_relay" and row["target_present"] for row in rows)
 
 
-def test_observer_mode_is_exact_target_one_shot_and_bounded(module, tmp_path, monkeypatch):
+def test_observer_mode_is_exact_target_one_shot_and_bounded(module, tmp_path, monkeypatch, observation_reader):
     manifest, evidence, value = setup_manifest(tmp_path, "observe")
     calls = install_fake_turn(module)
     undo = harness.wrap_hook(module, manifest, evidence)
@@ -463,7 +492,8 @@ def test_observer_mode_is_exact_target_one_shot_and_bounded(module, tmp_path, mo
     finally:
         undo()
     assert calls == [("codex", "other-session"), ("codex", SID), ("codex", SID)]
-    rows = [json.loads(line) for line in evidence.read_text(encoding="utf-8").splitlines()]
+    ledger = observation_reader["wait"](evidence)
+    rows = [json.loads(line) for line in ledger.splitlines()]
     assert rows and Path(value["state_path"] + ".used").exists()
     assert all(row["hook"] in {"session_start", "user_prompt_submit"} for row in rows)
     assert not any(row["target_present"] for row in rows if row["stage"] == "relay_response")
@@ -473,7 +503,7 @@ def test_observer_mode_is_exact_target_one_shot_and_bounded(module, tmp_path, mo
 
 @pytest.mark.parametrize("response_case", ["unavailable", "malformed"])
 def test_observer_distinguishes_unavailable_from_malformed_target_response(
-    module, tmp_path, response_case
+    module, tmp_path, response_case, observation_reader
 ):
     manifest, evidence, _ = setup_manifest(tmp_path, "observe")
     _configure_observation_hook(
@@ -486,7 +516,7 @@ def test_observer_distinguishes_unavailable_from_malformed_target_response(
             module.main()
     finally:
         undo()
-    rows = [json.loads(line) for line in evidence.read_text(encoding="utf-8").splitlines()]
+    rows = [json.loads(line) for line in observation_reader["wait"](evidence).splitlines()]
     response_targets = [row["target_present"] for row in rows if row["stage"] == "relay_response"]
     assert any(response_targets) is (response_case == "malformed")
     assert not any(row["target_present"] for row in rows if row["stage"] == "format_relay")
@@ -494,7 +524,7 @@ def test_observer_distinguishes_unavailable_from_malformed_target_response(
     assert any(row["delivery_id"] == DELIVERY for row in rows) is (response_case == "malformed")
 
 
-def test_observer_rejects_post_response_state_write_and_does_not_mark_rendered(module, tmp_path):
+def test_observer_rejects_post_response_state_write_and_does_not_mark_rendered(module, tmp_path, observation_reader):
     manifest, evidence, _ = setup_manifest(tmp_path, "observe")
     _configure_observation_hook(module, tmp_path, state_writes=[True, False])
     undo = harness.wrap_hook(module, manifest, evidence)
@@ -503,7 +533,7 @@ def test_observer_rejects_post_response_state_write_and_does_not_mark_rendered(m
             module.main()
     finally:
         undo()
-    rows = [json.loads(line) for line in evidence.read_text(encoding="utf-8").splitlines()]
+    rows = [json.loads(line) for line in observation_reader["wait"](evidence).splitlines()]
     assert any(row["stage"] == "relay_response" and row["target_present"] is True for row in rows)
     assert any(row["stage"] == "state_write_after" and row["outcome"] == "false" for row in rows)
     assert not any(row["target_present"] for row in rows if row["stage"] == "format_relay")
@@ -570,7 +600,7 @@ def test_observer_blocked_logger_wait_is_bounded(module, tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("failure", ["write", "flush"])
 def test_observer_write_flush_failure_is_reported_without_claiming_emission(
-    module, tmp_path, failure
+    module, tmp_path, failure, observation_reader
 ):
     manifest, evidence, _ = setup_manifest(tmp_path, "observe")
     original_utf8 = module._common.emit_utf8
@@ -596,13 +626,13 @@ def test_observer_write_flush_failure_is_reported_without_claiming_emission(
     finally:
         sys.stdout = original_stdout
         undo()
-    rows = [json.loads(line) for line in evidence.read_text(encoding="utf-8").splitlines()]
+    rows = [json.loads(line) for line in observation_reader["wait"](evidence).splitlines()]
     assert any(row["stage"] == "emit_utf8" and row["outcome"] == "false" for row in rows)
     assert any(row["stage"] == "emit_context" and row["outcome"] == "exception" for row in rows)
     assert not any(row["stage"] == "acknowledge_relay" and row["target_present"] for row in rows)
 
 
-def test_observer_preserves_module_emit_utf8_call_arguments(tmp_path):
+def test_observer_preserves_module_emit_utf8_call_arguments(tmp_path, observation_reader):
     module = load_hook("user_prompt_submit")
     manifest, evidence, _ = setup_manifest(tmp_path, "observe")
     _configure_observation_hook(module, tmp_path, unavailable=True)
@@ -625,11 +655,11 @@ def test_observer_preserves_module_emit_utf8_call_arguments(tmp_path):
     assert len(calls) == 1
     assert len(calls[0][0]) == 1 and calls[0][1] == {}
     assert json.loads(calls[0][0][0])["decision"] == "block"
-    rows = [json.loads(line) for line in evidence.read_text(encoding="utf-8").splitlines()]
+    rows = [json.loads(line) for line in observation_reader["wait"](evidence).splitlines()]
     assert any(row["stage"] == "emit_utf8" and row["outcome"] == "true" for row in rows)
 
 
-def test_observer_partial_setup_failure_restores_and_calls_original(module, tmp_path, monkeypatch):
+def test_observer_partial_setup_failure_restores_and_calls_original(module, tmp_path, monkeypatch, observation_reader):
     manifest, evidence, _ = setup_manifest(tmp_path, "observe")
     calls = install_fake_turn(module)
     original_turn = module.relay_turn
@@ -653,14 +683,15 @@ def test_observer_partial_setup_failure_restores_and_calls_original(module, tmp_
     assert module.relay_turn is original_turn
     assert module._common._write_session_state_locked is original_writer
     assert module._common.emit_utf8 is original_emit
-    rows = [json.loads(line) for line in evidence.read_text(encoding="utf-8").splitlines()]
+    ledger = observation_reader["wait"](evidence)
+    rows = [json.loads(line) for line in ledger.splitlines()]
     assert any(row["stage"] == "relay_turn" and row["outcome"] == "observer_setup_failed" for row in rows)
-    assert "private setup failure" not in evidence.read_text(encoding="utf-8")
+    assert "private setup failure" not in ledger
 
 
 @pytest.mark.parametrize("outcome", ["return", "raise"])
 def test_observer_teardown_failure_is_incomplete_and_preserves_caller_result(
-    module, tmp_path, outcome, capsys, monkeypatch
+    module, tmp_path, outcome, capsys, monkeypatch, observation_reader
 ):
     manifest, evidence, _ = setup_manifest(tmp_path, "observe")
     response = claimed()
@@ -717,11 +748,12 @@ def test_observer_teardown_failure_is_incomplete_and_preserves_caller_result(
     assert call_count == ["once"]
     assert proxy.relay_turn is original_turn
     assert proxy.format_relay is original_format
-    rows = [json.loads(line) for line in evidence.read_text(encoding="utf-8").splitlines()]
+    ledger = observation_reader["wait"](evidence)
+    rows = [json.loads(line) for line in ledger.splitlines()]
     assert rows[-1]["stage"] == "observer_finished"
     assert rows[-1]["outcome"] == "incomplete"
-    assert "private operation failure" not in evidence.read_text(encoding="utf-8")
-    assert "private restore failure" not in evidence.read_text(encoding="utf-8")
+    assert "private operation failure" not in ledger
+    assert "private restore failure" not in ledger
     assert thread_errors == []
     captured = capsys.readouterr()
     assert captured.out == captured.err == ""
@@ -750,7 +782,7 @@ def test_observer_bad_or_consumed_control_is_original_noop(module, tmp_path, bad
     assert not evidence.exists()
 
 
-def test_observer_event_overflow_keeps_the_ledger_bounded(module, tmp_path, monkeypatch):
+def test_observer_event_overflow_keeps_the_ledger_bounded(module, tmp_path, monkeypatch, observation_reader):
     manifest, evidence, _ = setup_manifest(tmp_path, "observe")
     monkeypatch.setattr(harness, "OBSERVE_EVENT_LIMIT", 2)
     _configure_observation_hook(module, tmp_path)
@@ -760,12 +792,13 @@ def test_observer_event_overflow_keeps_the_ledger_bounded(module, tmp_path, monk
             module.main()
     finally:
         undo()
-    rows = [json.loads(line) for line in evidence.read_text(encoding="utf-8").splitlines()]
+    ledger = observation_reader["wait"](evidence)
+    rows = [json.loads(line) for line in ledger.splitlines()]
     assert len(rows) <= 2
     assert evidence.stat().st_size <= harness.OBSERVE_BYTES_LIMIT
 
 
-def test_observer_byte_overflow_keeps_the_ledger_bounded(module, tmp_path, monkeypatch):
+def test_observer_byte_overflow_keeps_the_ledger_bounded(module, tmp_path, monkeypatch, observation_reader):
     manifest, evidence, _ = setup_manifest(tmp_path, "observe")
     monkeypatch.setattr(harness, "OBSERVE_BYTES_LIMIT", 600)
     _configure_observation_hook(module, tmp_path)
@@ -775,11 +808,11 @@ def test_observer_byte_overflow_keeps_the_ledger_bounded(module, tmp_path, monke
             module.main()
     finally:
         undo()
-    if evidence.exists():
-        assert evidence.stat().st_size <= 600
+    observation_reader["wait"](evidence)
+    assert evidence.stat().st_size <= 600
 
 
-def test_observer_concurrent_admission_is_one_shot(module, tmp_path):
+def test_observer_concurrent_admission_is_one_shot(module, tmp_path, observation_reader):
     manifest, evidence, value = setup_manifest(tmp_path, "observe")
     calls = install_fake_turn(module)
     barrier = threading.Barrier(3)
@@ -805,11 +838,62 @@ def test_observer_concurrent_admission_is_one_shot(module, tmp_path):
     assert calls == [("codex", SID), ("codex", SID)]
     assert results == [claimed(), claimed()]
     assert Path(value["state_path"] + ".used").exists()
-    rows = [json.loads(line) for line in evidence.read_text(encoding="utf-8").splitlines()]
+    rows = [json.loads(line) for line in observation_reader["wait"](evidence).splitlines()]
     assert len([row for row in rows if row["stage"] == "relay_response"]) == 1
 
 
-def test_observer_preserves_original_exception_identity(module, tmp_path):
+def test_observer_concurrent_append_is_read_only_after_completion(module, tmp_path, observation_reader):
+    manifest, evidence, value = setup_manifest(tmp_path, "observe")
+    calls = install_fake_turn(module)
+    responses = [claimed(), claimed()]
+    results = []
+    barrier = threading.Barrier(3)
+    originals = (module.relay_turn, module.format_relay, module.emit_context,
+                 module.acknowledge_relay, module._common._write_session_state_locked,
+                 module._common.emit_utf8, getattr(module, "emit_utf8", None))
+    observation_reader["pause"].set()
+    undo = harness.wrap_hook(module, manifest, evidence)
+    undone = False
+
+    def invoke(response):
+        barrier.wait()
+        results.append(module.relay_turn(
+            "codex", SID, request=lambda *a, **k: response
+        ))
+
+    workers = [threading.Thread(target=invoke, args=(response,)) for response in responses]
+    try:
+        for worker in workers:
+            worker.start()
+        barrier.wait()
+        for worker in workers:
+            worker.join(timeout=2)
+            assert not worker.is_alive()
+        assert calls == [("codex", SID), ("codex", SID)]
+        assert len(results) == 2 and {id(result) for result in results} == {
+            id(response) for response in responses
+        }
+        assert Path(value["state_path"] + ".used").exists()
+        started = time.monotonic()
+        undo()
+        undone = True
+        assert time.monotonic() - started < 0.5
+        assert observation_reader["opened"].wait(1)
+        assert (module.relay_turn, module.format_relay, module.emit_context,
+                module.acknowledge_relay, module._common._write_session_state_locked,
+                module._common.emit_utf8, getattr(module, "emit_utf8", None)) == originals
+        assert evidence.read_bytes() == b""
+    finally:
+        observation_reader["release"].set()
+        if not undone:
+            undo()
+    ledger = observation_reader["wait"](evidence)
+    rows = [json.loads(line) for line in ledger.splitlines()]
+    assert len([row for row in rows if row["stage"] == "relay_response"]) == 1
+    assert rows[-1]["stage"] == "observer_finished" and rows[-1]["outcome"] == "captured"
+
+
+def test_observer_preserves_original_exception_identity(module, tmp_path, observation_reader):
     manifest, evidence, _ = setup_manifest(tmp_path, "observe")
     original_error = RuntimeError("private operation exception")
 
@@ -824,12 +908,12 @@ def test_observer_preserves_original_exception_identity(module, tmp_path):
     finally:
         undo()
     assert caught.value is original_error
-    assert "private operation exception" not in evidence.read_text(encoding="utf-8")
+    assert "private operation exception" not in observation_reader["wait"](evidence)
 
 
 @pytest.mark.parametrize("state", ["notLoaded", "idle"])
 def test_observer_preserves_real_http_hook_emission_and_ack(http_wake, monkeypatch,
-                                                            tmp_path, capsys, state):
+                                                            tmp_path, capsys, state, observation_reader):
     http = http_wake[0]
     script = "user_prompt_submit" if state == "idle" else "session_start"
     events = []
@@ -909,9 +993,10 @@ def test_observer_preserves_real_http_hook_emission_and_ack(http_wake, monkeypat
         baseline_stdout, baseline, "observer-baseline"
     )
     assert hook.relay_turn is original_turn
-    rows = [json.loads(line) for line in evidence.read_text(encoding="utf-8").splitlines()]
+    ledger = observation_reader["wait"](evidence)
+    rows = [json.loads(line) for line in ledger.splitlines()]
     assert rows and any(row["stage"] == "acknowledge_relay" and row["outcome"] == "confirmed" for row in rows)
-    assert all("observer caller-surface payload" not in line for line in evidence.read_text(encoding="utf-8").splitlines())
+    assert "observer caller-surface payload" not in ledger
     for message_id in ("observer-baseline", "observer-target"):
         state_response = http.get(f"/relay/messages/{message_id}", params=WAKE_SCOPE)
         assert state_response.status_code == 200
