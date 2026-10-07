@@ -29,6 +29,10 @@ User authorization: "so open a feature with this list of bugs and full descripti
 
 ## Implementation
 
+- Implementation files remain the approved seven-path set. Human approval recorded and planning commits rebased onto merged PR298 base 658affdd before source edits; HEAD 73417f97 retains the plan and approval.
+- Added isolated helper regressions in common.test.mjs: unchanged production helpers issue HTTP for an already-cancelled caller (both History and Relay) and issue ACK2 after retirement during ACK1. Focused node command reports 0 passed / 3 failed; cancellation during stalled bodies is part of post-fix coverage. Source is untouched while caller baseline and native cleanup prerequisite are qualified.
+- Bounded workers own only v2-plugin.test.mjs (synchronized caller regressions) and test_opencode_native_wake_e2e.py/ignored native evidence (real native cleanup prerequisite). Parent owns plugin/common helpers/docs and review. No live operations or paid models.
+
 - 2026-10-07: Isolated managed checkout/branch `feat/opencode-disposal-reliability` created at f31ac141; no application/test code edited. First-slice assignment accepted from manager.
 - Fresh intended-scope boundary report passed; Redline GRAY floor raised to High by authority/receipt judgment. Required technical and human plan reviews remain pending.
 - Independent plan review found sequential ACK authority must stop inside the helper on per-session retirement, not merely at outer plugin-lifetime checks. Plan corrected with per-entry cancellation and a two-delivery deletion-during-ACK regression; technical re-review pending. Existing backend owner lease is 15 seconds; delivery claim lease is 60 seconds. Preserve both.
