@@ -76,6 +76,56 @@ Canonical roadmap: roadmap/features/add-wake-first-relay-delivery.md. Prior evid
 
 ## Evidence
 
+### Fresh Minimap first-emission incident, 2026-10-07
+
+Manager's substantive hook delivery relay-delivery-42c826b64469415fac9ba4f152d4821b
+(message relay-msg-d6a06ec903664aebbebef6c750d12d4a) requested correlation
+within this existing investigation. The incident is message
+relay-msg-68d089abf546483a9914cfb13f005999 / delivery
+relay-delivery-37b44d69123f47248934afc17f8907ae, recipient thread
+01a0d7cf-2c64-7bb2-a87c-724dd1c405a2, provider-returned endpoint
+relay-session-0936354f39ce4b61a967de3cd6c8cb7c and container
+git:github.com/rore/minimap. Root exhausted both trace pages: first activation
+prepared 08:36:21.693881 UTC, completed 08:36:26.745396 uncertain /
+native_unavailable / submission_attempted / native_retry_safe=false.
+The installed service's exact-delivery diagnostic at 08:36:25.781 UTC reports
+timeout at owner-result, generation 6672. This establishes the native failure
+boundary, not the later first-hook emission failure or source ownership.
+
+First recipient turn 01a11581-c4a5-7d12-bc32-204c4792c664 started
+08:36:28.485 UTC and ended 08:37:13.737. Its model explicitly reported claimed
+without payload or ACK and made only a trace read, not receive/ACK/resend.
+Read-only /root/contention_native_regression checked the 25 persisted rollout
+records in that exact interval: no hook start/response/stdout/stderr, emission
+or ACK-error metadata is retained. The file is
+C:/Users/I347041/.codex/sessions/2026/09/25/rollout-2026-09-25T12-04-34-01a0d7cf-2c64-7bb2-a87c-724dd1c405a2.jsonl.
+First emission and ACK cause remain unresolved; absence of retained diagnostics
+does not establish whether stdout was written, rejected or never produced.
+
+Second activation prepared 08:37:55.164188 UTC, with no completed event in the
+bounded trace. The second recipient turn 01a11583-2ee0-7e31-af78-0e72816360f1
+began 08:38:01. An authorized app fallback for the same assignment arrived in
+that turn; the model recognized the late Relay payload and deduplicated it.
+Snapshot attempts=2: claim 08:38:03.412662, ACK 08:38:03.796175 UTC.
+Existing local hook telemetry independently records hook_started
+08:38:02.340411, response 08:38:03.742811 (1119ms), payload_emitted
+08:38:03.780806 and delivery_acked 08:38:03.892583 UTC. There are no matching
+first-turn entries. This proves second-hook receipt, not autonomous recovery
+without fallback, nor the first fault's cause. Trace completeness remains
+best_effort despite no reported gap, pruning or truncation.
+
+Original hooks/configuration hashes remain unchanged and host timeouts remain
+eight seconds. No fault, service restart, recipient interruption, receive,
+resend, ACK mutation or native-owner takeover was performed for this diagnosis.
+Next bounded diagnostic: capture SessionStart's normal claim-response,
+validation/state-write, rendering, emission and ACK outcomes through the existing
+safe hook diagnostic path in a dedicated session. Preserve process/host timing
+and exact delivery correlation without payload, tokens or private capabilities.
+Any diagnostic code change needs its own narrow plan/review under this record;
+do not replay the now-terminal incident or conflate native ownership with first
+emission. Evidence-only bookkeeping stays blue, High/Large umbrella unchanged;
+original criteria and roadmap queued state remain unchanged.
+
 ### PR291 release and installed qualification preparation, 2026-10-07
 
 PR291 merged at 17f9304b0ee68081d7801075e507d97ac4909fe9 on
@@ -334,6 +384,8 @@ supported diagnostic; never take over an unidentified child. Then run a fresh
 bounded installed recovery case. No fault is armed and no quiet window remains.
 Prior evidence is reusable, but six no-restart installed successes do not close
 restart/scope-move/pre-hook loss or historical incidents.
+Fresh Minimap incident above additionally needs first-hook claim-to-emission
+diagnostics; its successful second claim/ACK after app fallback is not closure.
 
 Skill feedback trigger 3 dropped: the restart limitation belongs to this product's approved native admission contract, not an Agent Workflow upstream defect.
 
