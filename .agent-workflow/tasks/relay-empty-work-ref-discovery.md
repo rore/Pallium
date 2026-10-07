@@ -28,13 +28,13 @@
 
 **Verification plan:** Focus the new caller node and empty parity controls with python -m pytest <node> -q -n 0. Run the affected hook/parity/identity files after a coherent change, then the whole-change selector and fresh governance. Source/test changes require full non-slow and exact-head CI before completion, but the manager has explicitly held new full runs until combined candidate sequencing is settled. Focused passes, simulated transport or this deterministic susceptibility witness do not qualify installed recovery or explain previous failures. Preserve active claim and successful ACK behavior; never weaken protected assertions. Native mutation prevention is not claimed for these integration paths; no installation or evaluator outcome substitutes for a denied native operation.
 
-**Plan review:** Pending corrected-record independent technical review. Agent technical review: /root/wake_output_plan_review (gpt-6.1-sol/high) rejected 231a485ea9316c640bc6deda7de1139bda6a064a for the Routine classification/compact shape, while finding the two guards technically sound. No code or test implementation followed that revision; it is not retroactively approved.
+**Plan review:** Agent technical review: /root/wake_output_plan_review (gpt-6.1-sol/high) approved corrected exact plan 81a5cdcbef1571963ce9f67296cf795cbf6eceb3 as Elevated/Simple. Case-sensitive comparison confirmed all immutable requirements and baseline fields unchanged. Direct supported-empty guard and proposed caller/parity coverage are technically sound; hook-private clock and original lifecycle assertions/budgets must remain. Review rejected 231a485ea9316c640bc6deda7de1139bda6a064a for its Routine/compact classification; no implementation followed it and it is not retroactively approved. This is plan approval, not result/full/CI or installed acceptance.
 
 **Approvals:** Not required at this risk level. Manager authorized the exact narrow scope; parent High/Large acceptance and all live-environment approvals remain separate.
 
 **Exceptions:** —
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Discovery and ownership
