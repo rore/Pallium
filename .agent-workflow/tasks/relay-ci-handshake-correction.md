@@ -29,6 +29,15 @@
 
 ## Discovery and ownership
 
+Independent pre-edit technical review by /root/wake_output_plan_review
+(gpt-6.1-sol/high) approved 232560cda607ad8cb447a147dcac3b1e5dcb062a as
+Routine/Simple. The marker must come only from the existing native nonblocking
+lock-failure observer; delayed startup occurs before common loads. Keep all
+production budgets unchanged, parent polling and process/thread cleanup finite,
+and publication single-shot. The review found no smaller existing helper that
+preserves actual OS contention and avoids unbounded readline. Implementation is
+delegated only in the named test file; root owns this record and acceptance.
+
 Manager assigned relaydev sole bounded shared Claude/Codex validation diagnosis
 and the separate narrow test-only correction. The retained OC3 xdist failure
 shows finish_delete.wait(1) expired before the publisher could report real lock
