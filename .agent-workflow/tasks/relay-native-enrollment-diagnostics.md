@@ -34,7 +34,7 @@
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Blocked
 <!-- agent-workflow:end -->
 
 ## Intended paths
@@ -64,3 +64,95 @@ disconnect, repeated shutdown/replacement, missing/malformed evidence,
 concurrent read while custody lock is held, redaction and defensive-copy mutation.
 Original caller results/native call counts/durable Relay state remain unchanged.
 Repaired-plan confirmation approved 5152a99a; implementation may now begin.
+
+## Implementation and review checkpoint, 2026-10-07
+
+Implementation stayed isolated and used existing lifecycle seams, cached metadata,
+both existing HTTP views and existing log emissions. No native admission, delivery,
+cleanup order, settings or installed files changed. The initial frozen seven-file
+diff passed 263 affected serial tests in 101.35s. This was affected-suite evidence,
+not whole-change validation or installed acceptance.
+
+Independent smart source/result review by /root/ci_fixture_plan_review
+(gpt-6.1-sol/high) found four blockers before full validation: lost cache history
+could reconstruct false never-registered certainty; arbitrary getter invocation
+did not establish bounded passive reads; inherited stop/source-I/O uncertainty
+could occur after the last snapshot; and actual HTTP lifecycle coverage omitted
+dispatch reopen, continuity and maintenance disconnect. Repair these without
+changing custody or fences. Once evidence is lost, unavailable stays sticky for
+that service instance. Terminal uncertainty may invalidate the cache without a
+new lock, probe or inherited cleanup reorder. Re-review the repaired frozen result
+before full validation.
+
+The earlier evolving-diff run had one failing
+test_spent_wake_retries_after_cooldown_and_real_hook_acks_backlog[False-accepted]
+case; its exact serial rerun and the initial frozen affected run passed. Its cause
+remains unattributed; neither rerun is claimed to explain it. Required final
+whole-change validation and PR CI remain open.
+
+The separate test-only correction is PR298 at db3e8fb9, with unchanged-source full
+serial and smart review evidence in the parent record. Platform CI is pending.
+Opening that PR was permitted by incident coordination; merge and all live
+operations remain held. This diagnostic does not explain the installed outage or
+close any unattended recovery criterion.
+
+## Repaired-source validation checkpoint
+
+Smart re-review approved the repaired production source and lifecycle coverage at
+d6d1633e plus the frozen diff. Monotonic evidence loss, known bounded cache reads,
+terminal invalidation and actual dispatch reopen resolve the source findings.
+One test-only scheduling gate is required before full validation; keep the real
+shutdown timeout unchanged. The repaired focused candidate passed 26 cases in
+17.29s; root independently verified its seven file hashes.
+
+The subsequent affected run exited one: 269 passed and one failed in 149.70s.
+test_session_start_lock_budget_claims_emits_and_acks_once[user_prompt_submit-exhausted]
+received empty stdout at its JSON parse after SystemExit zero and the elapsed
+bound passed. This required check is not accepted as green. Read-only triage
+found no direct diagnostic-to-hook call path. An expired emission deadline or a
+stream-write failure could explain empty output, but neither is attributed by
+the captured failure. Preserve the .5-second fixture budget, assertion and all
+delivery-state checks while reproducing and observing the output boundary.
+Do not dismiss the failure as baseline noise or a flake. Next: exact failed-test
+lane, isolated observation if needed, then explain or fix the cause under the
+existing workflow before advancing to full validation.
+
+PR298's required platform CI is green at db3e8fb9, with zero unresolved review
+threads. Its held-release record is
+https://github.com/rore/Pallium/pull/298#issuecomment-6041517901.
+No merge or live operation occurred.
+
+## Request-exhaustion fixture disposition before edit
+
+Independent smart review by /root/ci_fixture_plan_review approved a narrow
+test-only correction: for the exhausted parameter alone, use the existing
+injectable deadline clock to retain the .5-second hook budget while keeping
+output time deterministically available. The wake's one-second reservation
+still makes its Relay request allowance zero. Keep the real held lock, block
+JSON, elapsed bound under two seconds, zero Relay calls, pending delivery with
+attempts zero and no payload emission. Leave held/released cases unchanged.
+This does not approve empty output as successful suppression or change hooks.
+
+The original failure remains unattributed. Its unchanged failed-test rerun
+passed in 1.13s. In-memory observation of the same case passed with .356213s
+remaining and successful block emission. Deliberate expiry immediately before
+the same block emission reproduced the empty-JSON failure with remaining zero,
+emit_utf8 false and hook exit zero. Restoring two seconds only at that boundary
+restored block emission. These controls were isolated processes, not source or
+installed changes; the deliberate failed control is not passing validation.
+
+The separate product gap is confirmed at this simulated caller boundary:
+roadmap/features/add-wake-first-relay-delivery.md requires every unverified exact
+internal trigger to be blocked before model work, but failed suppression output
+currently exits successfully. Preserve that deterministic expiry reproduction
+and the original incident as unresolved. Hook remediation requires a separate
+product plan under relay-recovery-closure, outside this passive diagnostic slice.
+It is not evidence of the installed native reopen outage cause or native-host
+behavior. Diagnostic validation may resume after the reviewed fixture repair,
+without closing this suppression requirement or broader recovery acceptance.
+
+PR298 merged at 2026-10-07T16:07:22Z as
+658affdd8c1af9ad2cefc3d10368f32811c50bd8 after fresh green exact-head gates and
+coordination-hold release. Its actual merge/deployment separation is recorded at
+https://github.com/rore/Pallium/pull/298#issuecomment-6041847000.
+Both stable clones and the installed service are still unchanged.
