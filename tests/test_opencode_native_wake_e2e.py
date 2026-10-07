@@ -32,6 +32,13 @@ def test_released_native_idle_busy_and_reload(client, tmp_path, test_db_url):
     workspace.mkdir()
     subprocess.run(["git", "init", "-q", str(workspace)], check=True)
     subprocess.run(["git", "-C", str(workspace), "remote", "add", "origin", "https://example.test/team/relay.git"], check=True)
+    locations = [workspace / name for name in ("one", "two", "three")]
+    for directory in locations:
+        directory.mkdir()
+    foreign = tmp_path / "foreign"
+    foreign.mkdir()
+    subprocess.run(["git", "init", "-q", str(foreign)], check=True)
+    subprocess.run(["git", "-C", str(foreign), "remote", "add", "origin", "https://example.test/team/foreign.git"], check=True)
     scope = {"container_ref": "git:example.test/team/relay"}
     requests = []
     release = threading.Event()
@@ -44,6 +51,7 @@ def test_released_native_idle_busy_and_reload(client, tmp_path, test_db_url):
     fail_context = threading.Event()
     failed_contexts = []
     ingested = []
+    assistant_outputs = []
 
     class RelayHTTP(BaseHTTPRequestHandler):
         def log_message(self, *_):
@@ -85,6 +93,9 @@ def test_released_native_idle_busy_and_reload(client, tmp_path, test_db_url):
             entered.set()
             assert release.wait(40), "provider not released"
             tool = "IDLE_PAYLOAD_שלום" in json.dumps(body, ensure_ascii=False) and not tool_emitted.is_set()
+            assistant_marker = f"NATIVE_ASSISTANT_שלום_{len(requests)}"
+            if not tool:
+                assistant_outputs.append((assistant_marker, body))
             if tool:
                 tool_emitted.set()
                 # ACK already happened before this model request. Rebuild the
@@ -107,7 +118,7 @@ def test_released_native_idle_busy_and_reload(client, tmp_path, test_db_url):
             ] if tool else [
                 {"id": "local", "object": "chat.completion.chunk", "created": 1,
                  "model": "mock-model", "choices": [{"index": 0, "delta": {
-                     "role": "assistant", "content": "NATIVE_ASSISTANT_שלום"}, "finish_reason": None}]},
+                     "role": "assistant", "content": assistant_marker}, "finish_reason": None}]},
                 {"id": "local", "object": "chat.completion.chunk", "created": 1,
                  "model": "mock-model", "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
                  "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}},
@@ -171,13 +182,17 @@ def test_released_native_idle_busy_and_reload(client, tmp_path, test_db_url):
                 return process, json.loads(line)["url"]
         pytest.fail("native server did not start: " + str(logs[-15:]))
 
-    def api(method, path, body=None):
+    def api(method, path, body=None, headers=None):
         auth = base64.b64encode(b"opencode:local-test").decode()
         request = Request(url + path, method=method, data=None if body is None else json.dumps(body).encode(),
-                          headers={"Authorization": "Basic " + auth, "Content-Type": "application/json"})
+                          headers={"Authorization": "Basic " + auth, "Content-Type": "application/json", **(headers or {})})
         with urlopen(request, timeout=45) as response:
-            raw = response.read()
-            return json.loads(raw) if raw else None
+                raw = response.read()
+                return json.loads(raw) if raw else None
+
+    def activate_plugin(directory):
+        plugins = api("GET", "/api/plugin", headers={"x-opencode-directory": str(directory).replace("\\", "/")})
+        return plugins if "pallium-v2" in json.dumps(plugins).lower() else None
 
     def eventually(check):
         deadline = time.monotonic() + 25
@@ -202,7 +217,9 @@ def test_released_native_idle_busy_and_reload(client, tmp_path, test_db_url):
 
     try:
         process, url = start()
-        session = api("POST", "/api/session", {})["data"]["id"]
+        for directory in [workspace, *locations, foreign]:
+            eventually(lambda: activate_plugin(directory))
+        session = api("POST", "/api/session", {"location": {"directory": str(workspace).replace("\\", "/")}})["data"]["id"]
         prefix = "/api/session/" + session
         api("POST", prefix + "/prompt", {"id": "msg_natural_first", "text": "NATIVE_USER_שלום", "delivery": "queue"})
         api("POST", "/api/experimental/session/" + session + "/wait")
@@ -263,12 +280,39 @@ def test_released_native_idle_busy_and_reload(client, tmp_path, test_db_url):
             expanded = client.get("/source/" + result["source_item_id"] + "/context", params={**scope,
                 "query_actor_ref": body["actor_ref"], "before": 0, "after": 0})
             assert expanded.status_code == 200 and marker in expanded.text
+        assistant_sources = [body for body, _ in ingested if body.get("role") == "assistant"]
+        natural_marker = assistant_sources[0]["content"]
+        automatic_marker = next(marker for marker, model_body in assistant_outputs
+            if "IDLE_PAYLOAD_שלום" in json.dumps(model_body, ensure_ascii=False)
+            and any(body["content"] == marker for body in assistant_sources))
+        assistant_actor = assistant_sources[0]["actor_ref"]
+        history_client = relay_client[0]
+        history_client.app.state.pallium_service.drain_processing_queue(worker_id="opencode-native-history")
+        for marker in (natural_marker, automatic_marker):
+            sources = [(body, result) for body, result in ingested
+                if body.get("role") == "assistant" and body["content"] == marker]
+            assert len(sources) == 1, (marker, [body["content"] for body, _ in ingested if body.get("role") == "assistant"])
+            body, result = sources[0]
+            assert body["container_ref"] == container and body["thread_ref"] == session and body["actor_ref"] == assistant_actor
+            history = history_client.post("/query", json={"text": "NATIVE", "container_ref": container,
+                "active_session_ref": session, "thread_ref": session, "actor_ref": assistant_actor,
+                "visibility": "private", "trigger_origin": "agent_pull", "limit": 50, "source_only": True})
+            assert history.status_code == 200, history.text
+            assert result["source_item_id"] in json.dumps(history.json())
+            expanded = history_client.get("/source/" + result["source_item_id"] + "/context", params={**scope,
+                "query_actor_ref": assistant_actor, "before": 0, "after": 0})
+            assert expanded.status_code == 200 and marker in expanded.text
+        foreign_history = history_client.post("/query", json={"text": "NATIVE", "container_ref": "git:example.test/team/foreign",
+            "active_session_ref": session, "thread_ref": session, "visibility": "private",
+            "trigger_origin": "agent_pull", "limit": 50, "source_only": True})
+        assert foreign_history.status_code == 200, foreign_history.text
+        assert not any(natural_marker in json.dumps(row) for row in foreign_history.json()["results"])
         assert all(not body["content"].startswith("[Pallium Relay wake:") for body, _ in ingested)
         stop(process, graceful=False)
         reload_message = send("RELOAD_PAYLOAD")
         service_unavailable.set()
         process, url = start()
-        api("GET", "/api/plugin?directory=" + str(workspace).replace("\\", "/"))
+        eventually(lambda: activate_plugin(workspace))
         time.sleep(3)
         service_unavailable.clear()
         eventually(lambda: delivered(reload_message))

@@ -134,6 +134,67 @@ test("V2 ignores another directory and treats an uncommitted marker as ordinary 
   } finally { globalThis.fetch = oldFetch; }
 });
 
+test("assistant completion and compaction ingest only sessions owned by this directory", async () => {
+  const oldFetch = globalThis.fetch;
+  const hooks = {};
+  const eventQueue = [];
+  let wakeEvent;
+  let releaseEvent;
+  const events = new Promise((resolve) => { releaseEvent = resolve; });
+  let contextReads = 0;
+  const ingested = [];
+  const messages = [{ type: "assistant", id: "msg_assistant", content: [{ type: "text", text: "owned answer" }] }];
+  globalThis.fetch = async (url, init) => {
+    const path = new URL(url).pathname;
+    if (path === "/items") ingested.push(JSON.parse(init.body)[0]);
+    return { ok: true, text: async () => JSON.stringify(path === "/items" ? [{ source_item_id: "owned" }] : {}) };
+  };
+  const ctx = {
+    location: { directory: location }, app: { log() {} },
+    session: {
+      hook: async (name, fn) => { hooks[name] = fn; return { dispose: async () => {} }; },
+      get: async ({ sessionID: id }) => {
+        if (id === "ses_failed") throw new Error("native lookup failed");
+        return { location: { directory: id === "ses_foreign" ? "/tmp/other" : location } };
+      },
+      context: async () => { contextReads++; return { data: messages }; },
+    },
+    event: { subscribe: async function* ({ signal }) {
+      wakeEvent = () => releaseEvent();
+      while (!signal.aborted) {
+        await events;
+        const next = eventQueue.shift();
+        if (next) yield next;
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+    } },
+  };
+  try {
+    const dispose = await v2.setup(ctx);
+    const emit = async (id) => {
+      eventQueue.push({ type: "session.execution.succeeded", data: { sessionID: id } });
+      wakeEvent();
+      await pause();
+    };
+    await emit("ses_owned");
+    const ownedReads = contextReads;
+    const ownedWrites = ingested.length;
+    await emit("ses_foreign");
+    await emit("ses_failed");
+    assert.ok(ownedReads > 0);
+    assert.equal(contextReads, ownedReads);
+    assert.equal(ingested.length, ownedWrites);
+    assert.equal(ownedWrites, 1);
+    await hooks.compaction({ sessionID: "ses_foreign" });
+    await hooks.compaction({ sessionID: "ses_failed" });
+    assert.equal(contextReads, ownedReads);
+    assert.equal(ingested.length, ownedWrites);
+    await hooks.compaction({ sessionID: "ses_owned" });
+    assert.equal(ingested.length, ownedWrites);
+    await dispose();
+  } finally { globalThis.fetch = oldFetch; }
+});
+
 const pause = () => new Promise((resolve) => setTimeout(resolve, 20));
 const snapshot = (overrides = {}) => ({ generation: 1, delivery_id: deliveryID, native_input_id: nativeID,
   native_location: location, scope_generation: 0, admitted: false, terminal: false, ...overrides });

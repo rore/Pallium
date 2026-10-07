@@ -121,6 +121,7 @@ export default {
       } finally { item.busy = false; }
     };
     const ingestAssistant = async (id) => {
+      if (!await owned(id)) return;
       const item = state(id);
       try {
         const messages = rows(await ctx.session.context({ sessionID: id }));
