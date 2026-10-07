@@ -167,6 +167,16 @@ exercised paths; final focused controls cover the later guard changes and the
 upcoming full serial suite will verify the final revision. No installed result
 or historical explanation is inferred.
 
+Explicit base update: committed component 6582ee37edbfe767b1862324ce5c670ece4f9b0f
+is preserved by local branch feat/relay-unregistered-channel-release-pre-rebase.
+Rebased the four task commits onto main
+e9eb3956ce4990f9dc15d0a24520f40d67246883, yielding
+ee5e8d911e0486ed3dfac4b88c5d54d3225fee15. Main's intervening change is limited
+to independently owned OpenCode paths. All five production/test blob hashes
+above matched after rebase; the reviewed and pre-fix revisions remain reachable.
+No parallel work or live checkout was changed. The post-rebase whole-change
+selector reports the full lane for exactly the eight approved task files.
+
 ## Pre-edit review correction
 
 The first plan was not approved. Local handle closure does not prove that the
