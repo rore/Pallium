@@ -74,3 +74,15 @@ seams. Before implementation, intercept the new failure-exit seam in existing
 in-process failing-emission tests, including redelivery-envelope and observer
 tests. Only separate subprocess assertions qualify the real exit status. The
 diagnostic full suite is still running; queue pytest until it completes.
+
+## Implementation
+
+Intended implementation paths: integrations/codex/hooks/user_prompt_submit.py;
+existing tests/test_agent_relay_hooks.py, tests/test_hook_deadline_safety.py,
+tests/test_codex_relay_fault_harness.py and tests/test_relay_redelivery_envelope.py
+for changed failure-exit assertions/interception and actual subprocess/HTTP
+coverage; docs/context/operations.md, the canonical wake roadmap and this record
+for accurate scope/evidence. The redelivery-envelope path is an existing caller
+fixture identified by review, not a new feature or protected requirement change.
+Do not change shared conftest, production common.py or diagnostic worktree files.
+No pytest runs until root releases the currently running full-suite lane.
