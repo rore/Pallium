@@ -86,6 +86,17 @@ are `claim-response-loss`, `ack-precommit` and `ack-response-loss`; the last dro
 only a confirmed delivered ACK response. None proves a notification lost before
 the hook runs, and no manual recipient turn/receive qualifies as automatic recovery.
 
+The opt-in `observe` mode uses the same private case and restoration controls,
+but injects no fault. It reserves the first eligible exact-session turn before
+claiming, then records whether the preselected message was actually observed.
+Only stage outcomes/timing and a validated matching delivery ID are captured;
+no payloads, tokens, arguments or exception text enter its ledger. Capture is
+capped at 64 events/16 KiB; after restoring references it waits at most 50 ms for
+a best-effort daemon append. A `captured` terminal marker describes the bounded
+sequence and restoration, not file durability, host receipt or model consumption.
+Missing/truncated evidence or `incomplete` is not success; target absence does
+not prove the target was claimed. Use a fresh case and retain its evidence.
+
 Relay storage calls use a four-operation AnyIO capacity limiter independent of the
 default synchronous route pool, and `/health` stays on the event loop. Client
 cancellation does not cancel an already-running SQLite operation; service shutdown

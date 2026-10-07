@@ -44,7 +44,7 @@
 First invoke /agent-workflow and classify risk before code edits (completed).
 Resume this record, not a new workstream. Intended paths are
 scripts/qualify_codex_relay_faults.py, tests/test_codex_relay_fault_harness.py,
-this record and the canonical roadmap. Normal applicability applies; all these
+docs/context/operations.md, this record and the canonical roadmap. Normal applicability applies; all these
 paths are blue, but the umbrella stays High/Large because instrumentation runs
 at an installed claim/emission boundary. Original requirements remain unchanged.
 Manager's substantive delivery relay-delivery-0abc65b6472c46c08892daa49cdb7127
@@ -139,6 +139,10 @@ weakened; rerun the full lane with two workers on the final frozen change.
 Import boundaries passed (eight kept, zero broken). Fresh Redline is Blue;
 workflow has no blocking findings and retains the known 9dfe4839 commit-order
 advisory, which concerns the earlier documentation reconciliation.
+Documentation alignment: the existing operator guide listed only fault modes.
+Document passive observation, admission-before-claim and incomplete evidence
+semantics in that same guide. This stays inside the original related operations
+documentation scope; no source, risk, authorization or acceptance boundary changes.
 
 Manager reply relay-reply-d4ef666f95cb93deb63e1a615f58b9201eb843f5124916555e41c2b26a42bab9
 reported the exact existing-diagnostic limit and passive implementation scope.
