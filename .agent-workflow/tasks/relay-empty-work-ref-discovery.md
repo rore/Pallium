@@ -39,7 +39,7 @@ manual: Focused passes, simulated transport and deterministic susceptibility do 
 
 **Exceptions:** —
 
-**State:** Blocked
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Discovery and ownership
@@ -164,3 +164,25 @@ Requirement compliance: Immutable requirements and output-preserving scope
 remain intact; no nonempty, identity, deadline, claim/emission/ACK, protocol or
 live-environment change. Nonempty optional starvation and unexplained historical
 failures are not closed by this result review.
+
+## Combined validation and publication checkpoint — 2026-10-08
+
+The reviewed combined candidate `dbddfcf18bf344b27bb8700666b413bf771c8273`
+(tree `7b206859a21f03ca5f3ec4cf0fe74a4e1701ab62`) passed the coordinated full
+serial suite: 6,410 passed, 34 skipped, 483 deselected, and 2 xfailed in
+2,367.34 seconds. Log SHA-256:
+`F180C5057A4EC9DF34ADA6D3495AD63180B78DF45DD04F7C8CC9A738F525D673`.
+The candidate combines the earlier `0589470e` work and this empty-ref slice
+with frozen outage, fixture, and OC3 source/test blobs. This slice's exact
+source/test identities match the combined tree, so full evidence is reused by
+blob/tree identity; the publication branch was not independently full-tested.
+This later combined result supersedes the validation sequencing hold above;
+prior failure evidence and unresolved attribution remain preserved.
+
+Independent non-implementer review `/root/wake_output_plan_review`
+(`gpt-6.1-sol/high`) reviewed the combined candidate and found no evidence
+blocker. Normal reviewed PR publication is authorized. Exact-head CI,
+automated PR review, and manager merge checks remain pending. No live sync or
+restart occurred. Parent High/Large historical and native-installed
+acceptance remains open. Three diagnostic 30-second stacks occurred in passed
+tests; they are neither waivers nor causal attribution.
