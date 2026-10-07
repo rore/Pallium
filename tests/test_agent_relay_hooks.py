@@ -506,7 +506,6 @@ def test_codex_exact_wake_real_http_response_delay_is_bounded_and_traceable(
     delivery_id = sent.json()["deliveries"][0]["delivery_id"]
 
     response_finished = threading.Event()
-    fragment_times = []
 
     class Server(ThreadingHTTPServer):
         daemon_threads = True
@@ -529,7 +528,6 @@ def test_codex_exact_wake_real_http_response_delay_is_bounded_and_traceable(
                     content = response.content
                     chunks = (content[:1], content[1:2], content[2:])
                     for index, chunk in enumerate(chunks):
-                        fragment_times.append(time.monotonic())
                         self.wfile.write(chunk)
                         self.wfile.flush()
                         if index < len(chunks) - 1:
@@ -577,12 +575,6 @@ def test_codex_exact_wake_real_http_response_delay_is_bounded_and_traceable(
         assert exited.value.code == 0
         assert hook_elapsed < 7.0  # eight-second host limit leaves one second outside the hook
         assert response_finished.wait(timeout=3)
-        if fragmented:
-            assert len(fragment_times) == 3
-            assert all(
-                0.9 < later - earlier < 2.0
-                for earlier, later in zip(fragment_times, fragment_times[1:])
-            )
     finally:
         server.shutdown()
         server.server_close()

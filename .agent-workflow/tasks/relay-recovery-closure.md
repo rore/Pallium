@@ -85,6 +85,18 @@ logs. After green reviewed merge, coordinate both stable syncs, consumer-owned
 hot-reload acceptance, and the required safe-window installed wrapper restart
 with health checks. Installed recovery qualification remains separately open.
 
+Implementation update, 2026-10-07: tests/test_codex_relay_fault_harness.py now
+wraps the real observer append with a test completion event and waits before
+successful-ledger assertions. A controlled writer opens the evidence file and
+pauses; both concurrent calls preserve their original response objects, one
+fault admission is consumed, undo restores all references and returns within
+the bound, and an immediate read is empty until the writer is released. The
+test then waits for append completion and requires one response event plus a
+captured terminal event. Failed/blocked logger coverage and the production
+50 ms wait remain unchanged. Verification: the exact prior and new concurrency
+nodes passed, 4 passed in 5.37s; the complete
+tests/test_codex_relay_fault_harness.py file passed, 90 passed in 10.30s.
+
 Current isolated base: f31ac14186943cdc60ce10dbb37e26c42a3496bc on
 feat/relay-recovery-closure. Agent technical plan review:
 /root/ci_fixture_plan_review (gpt-6.1-sol/high), approved narrowly at
@@ -102,6 +114,21 @@ blocked body, asserting progress before return, unfinished reader, unchanged
 This deterministic model complements, not replaces, real HTTP coverage.
 No test source changed before review. Native ownership/recovery acceptance
 and earlier unexplained incidents remain open outside this resumed CI slice.
+
+Root acceptance checkpoint: the completed source diff was independently approved
+by /root/ci_fixture_plan_review with no correctness, coverage or overengineering
+finding. Frozen test blobs are ec6838b48467fe0ed76da1d02e89b0265f21b5ee
+(observer), 2c188d04e574a31a3f881d55e5613eb21bb6c05a (real HTTP), and
+10ad8d270a9bcc46d44a0763b6c5b010f7d28c7b (deadline). The observer file passed
+90 cases in 10.30 s; both deadline files passed 126 cases in 29.94 s with
+confirmed exit zero. A temporary in-memory one-second extension of the outer
+fence was rejected by the strengthened partial-body regression. Two earlier
+worker file runs omitted completion metadata and are not accepted as evidence.
+Root started the one required full non-slow serial lane at 65c74b37 with exactly
+these dirty test blobs; session 83768 is running. No production source, protected
+contract, service, hook configuration or consumer settings changed. Full-suite
+result, final adequacy review, separate human result review and PR CI remain
+gates. PR297 stays separately owned and unmerged pending this correction.
 
 ### Passive exact-session diagnostic plan, 2026-10-07
 
