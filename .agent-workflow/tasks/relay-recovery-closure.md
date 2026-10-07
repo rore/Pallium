@@ -39,6 +39,55 @@
 
 ## Implementation
 
+### CI diagnostic fixture correction plan, 2026-10-07
+
+Invoke /agent-workflow before edits (completed). Resume this record and retain
+High/Large and the unchanged requirement baseline. Intended files are this
+record, tests/test_codex_relay_fault_harness.py, tests/test_agent_relay_hooks.py,
+and, only if needed to preserve deterministic body-deadline coverage,
+tests/test_hook_deadline_safety.py. All are policy-blue; no production, protected
+behavior contract, CI, configuration, API or installed-hook changes are planned.
+PR297's independently owned OpenCode guard stays separate and held while CI is red.
+
+PR297 attempt1 failed the unchanged observer concurrent-admission ledger read:
+zero relay_response rows. A controlled delayed existing writer reproduces this
+for both hooks; after append completion each ledger contains exactly one response.
+The observer deliberately returns after at most 50 ms of daemon logging, whereas
+the fixture reads immediately. Preserve that production bound and fail-open
+behavior. Add one test-only completion-event reader around the existing append
+helper; all observer assertions needing complete evidence wait for completion
+with a finite test deadline. Keep failed/blocked logging tests independent. Add
+a controlled delayed-writer regression proving unchanged turn results, one-shot
+admission, reference restoration before append and eventual complete evidence.
+
+Attempt2 instead failed the unchanged real HTTP fragmented-response case:
+one attempted fragment versus three, with hook timeout at 2272 ms and a block
+decision. Later trace/state assertions did not execute in that failing run.
+The server calls the real TestClient endpoint before sending bytes and attempts
+three fragments across 2.2 seconds, longer than the hook's 2.0-second budget.
+Exact serial rerun passed once; endpoint delay versus runner scheduling is not
+attributed by the original log. Correct only unsupported server-completion
+assumptions after client cancellation. Retain the existing hook deadline,
+elapsed bounds, exact delivery attempts/state/trace and no-emission assertions;
+also preserve explicit nonvacuous slow-body deadline coverage using the existing
+deadline fixture. Do not merely drop the fragment check, raise production
+timeouts, skip a test, fake a successful response or treat a serial pass as cause.
+
+Verification: deterministic failing-before/fixed-after observer read; exact
+affected tests serially, then affected files; whole-change test selector and
+one full non-slow lane, unchanged behavioral contracts and workflow checks.
+Clean-context smart plan/result reviews precede implementation/release. Reuse
+standing approved diagnostic/test scope; any changed product requirement or
+new boundary returns to planning. No service restart, live fault, consumer
+configuration change or receipt fallback occurs during this test-only work.
+Before merge reconcile the original and retry CI failures and preserve their
+logs. After green reviewed merge, coordinate both stable syncs, consumer-owned
+hot-reload acceptance, and the required safe-window installed wrapper restart
+with health checks. Installed recovery qualification remains separately open.
+
+Current isolated base: f31ac14186943cdc60ce10dbb37e26c42a3496bc on
+feat/relay-recovery-closure. Smart plan review is pending; no test source changed.
+
 ### Passive exact-session diagnostic plan, 2026-10-07
 
 First invoke /agent-workflow and classify risk before code edits (completed).
