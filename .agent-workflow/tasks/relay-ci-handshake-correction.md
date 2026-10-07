@@ -48,3 +48,48 @@ non-registering hook probe failed before its request; natural-stage observation
 later passed with ~1 ms locks and valid state. Both historical causes remain open.
 No live environment changes; pal-dev1 is paused on broad tests. Preserve parent
 outage source/test blobs and keep this branch separate.
+
+## Implementation evidence
+
+The delayed pre-fix startup journey failed as required: 1 failed and 1 warning
+in 2.84 seconds, stdout True instead of contended and register-old's
+finish_delete.wait(1) expiration. The 1.2 second delay runs before common loads,
+so no spent hook deadline is manufactured. After the marker/explicit-release
+correction, both startup parameters passed in 2.94 seconds and the affected
+file passed 54 cases in 20.46 seconds at fixture blob
+36f00b9c7d468061fdb87136ea97646791a11156. An intermediate inline-script
+indentation error was corrected before those passing runs; it is not product
+failure evidence. Root review then required finally to attempt child cleanup
+even if worker join fails, and vice versa. Corrected finally to release the gate,
+attempt child kill/wait, and always join/assert the worker in its own finally.
+Both final startup parameters passed in 2.67 seconds at fixture blob
+4d1d4095a214be5b8188bf47088a085c9fc909d9; source/test diff checks passed.
+The earlier 54-case file evidence is reused for unaffected paths only, not
+represented as a final-blob file run; the combined full run will include it.
+The pre-fix output was retained in the worker's tool result, not copied to a
+filesystem log. No file path or artifact is invented for that witness.
+Independent final fixture review and full/CI gates remain pending.
+
+Root's 0.57 second isolated observer check may have overlapped the worker's
+20.46 second affected-file run; this cannot be established from retained timing.
+No broad suites overlapped and no source/test edits occurred during the passing
+file run. Do not claim exclusive scheduling for that interim evidence. The
+manager-authorized combined full run will have one owner and no overlapping
+pytest, on explicitly recorded constituent commits and tree/blob identities.
+
+## Result review
+
+Agent technical review: /root/wake_output_plan_review, independent
+gpt-6.1-sol/high, approved the exact fixture source/test adequacy.
+Reviewed revision: HEAD 952b9fb04f829c6ce9f71915c121f69b4de7f6bd plus
+test blob 4d1d4095a214be5b8188bf47088a085c9fc909d9.
+Verification adequacy: the final focused startup/control cases qualify the
+changed handshake and cleanup; prior 54-case file evidence is limited to its
+recorded earlier blob. The marker follows actual native lock failure, all
+original stdout/result/state/restart assertions remain, and no production
+deadline or caller behavior changes. Routine/Simple is independently confirmed.
+No fixture blocker remains before integration into the approved exact combined
+candidate. Required combined full validation and eventual exact-head CI/review
+remain gates; parent recovery and historical probe/hang causes remain open.
+The stale implementation text and tool-result/file-log distinction were already
+corrected while this review was running; no reviewed test bytes changed.
