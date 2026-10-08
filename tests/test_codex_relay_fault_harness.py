@@ -954,10 +954,32 @@ def test_observer_preserves_real_http_hook_emission_and_ack(http_wake, monkeypat
         return result
 
     monkeypatch.setattr(hook, "acknowledge_relay", acknowledge)
+    # Compare hook behavior independently of disk time spent on local admission.
+    from itertools import count
+
+    common = hook._common
+    native_clock = time.monotonic
+    clock = count(start=10.0, step=.001).__next__
+    original_start = hook.start_hook_deadline
+
+    def start_deadline(*args, **kwargs):
+        return original_start(*args, **kwargs, clock=clock)
+
+    monkeypatch.setattr(hook, "start_hook_deadline", start_deadline)
     hook_runner()
     baseline_events = list(events)
     baseline_stdout = capsys.readouterr().out
     baseline_requests = list(request_log)
+    assert baseline_requests == [("POST", "/relay/turn"), ("POST", "/relay/deliveries/ack")]
+    assert [event[0] for event in baseline_events] == ["emit", "ack"]
+    assert "observer caller-surface payload" in baseline_events[0][2]
+    baseline_status = original_request(
+        "GET", "/relay/messages/observer-baseline", params=WAKE_SCOPE,
+    )
+    assert baseline_status.status_code == 200, baseline_status.text
+    baseline_delivery = baseline_status.json()["deliveries"][0]
+    assert baseline_delivery["state"] == "delivered" and baseline_delivery["attempts"] == 1
+    assert common.hook_deadline().clock is clock and time.monotonic is native_clock
 
     observed = send("observer-target")
     events.clear()

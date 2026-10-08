@@ -25,6 +25,7 @@ def tmp_state(tmp_path, monkeypatch):
     """Redirect STATE_DIR + SESSIONS_DIR to a tmp path for isolation."""
     monkeypatch.setattr(common, "STATE_DIR", tmp_path)
     monkeypatch.setattr(common, "SESSIONS_DIR", tmp_path / "sessions")
+    monkeypatch.setattr(common, "_HOOK_DEADLINE", None)
     return tmp_path
 
 
@@ -33,7 +34,20 @@ def tmp_state(tmp_path, monkeypatch):
 
 class TestPinAndGet:
     def test_roundtrip(self, tmp_state):
-        common.pin_container("session-abc", "git:github.com/foo/bar")
+        assert common.pin_container("session-abc", "git:github.com/foo/bar") is True
+        assert common.get_pinned_container("session-abc") == "git:github.com/foo/bar"
+
+    def test_expired_shared_deadline_refuses_pin_until_cleared(self, tmp_state, monkeypatch):
+        pin_path = tmp_state / "sessions" / "session-abc.json"
+        monkeypatch.setattr(common, "_HOOK_DEADLINE", common.HookDeadline(0.0, clock=lambda: 1.0))
+        assert common.remaining_safe_time() == 0
+        assert common.pin_container("session-abc", "git:github.com/foo/bar") is False
+        assert not pin_path.exists()
+        assert common.get_pinned_container("session-abc") is None
+
+        monkeypatch.setattr(common, "_HOOK_DEADLINE", None)
+        assert common.pin_container("session-abc", "git:github.com/foo/bar") is True
+        assert json.loads(pin_path.read_text(encoding="utf-8"))["container_ref"] == "git:github.com/foo/bar"
         assert common.get_pinned_container("session-abc") == "git:github.com/foo/bar"
 
     def test_get_missing_returns_none(self, tmp_state):
