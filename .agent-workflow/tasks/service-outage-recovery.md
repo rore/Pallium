@@ -34,7 +34,7 @@
 
 **Exceptions:** —
 
-**State:** Blocked
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -750,3 +750,92 @@ source freeze, cleanup identity ledger and controller evidence. Root pins the cl
 records-only successor before release; no retry. A failure retains its attribution
 and failure evidence, not a waiver. Goal is classification of actual calls, not an
 additional arbitrary acceptance gate. State remains Blocked pending this result.
+
+## Attribution run and corrected findings
+
+Independent /root/outage_source_review cleared the private guard delta after closing
+sanitizer findings: missing/unsafe context remains unknown, node/frame paths require
+resolved checkout containment, dot traversal is rejected, fields/frames are bounded,
+and logging failures cannot bypass the existing denial. No hook/framework added.
+Preserved pre-delta runner54231B473BB4AE224333F6DF0E91BBD792F09AD34E067526BDA191FB003A662C;
+worker's earlier B4FA backup label was a reporting error, independently corrected.
+Executed reviewed private artifacts:
+
+- guard: 2C8068CA14DAD1D88E0E1276C57838CBBBFAB12FBDC216D3257F98D7A231235C
+- runner: B4FA2315AD16892DF7AB20252D7F248EF9E206A5A408D59E341539E963363E4C
+- capture: ED4E2B0561841148B57E459D5270E29F15737F8CE9ADFDEEEBA2DBBBAAAE8A6B
+
+ONE attribution-only run on cleanbe8e1453c4516489de11ee0321cbc77ac6d18623 passed:
+`6415 passed, 45 skipped, 482 deselected, 2 xfailed in 1376.13s (0:22:56)`.
+Same production6044/serial non-slow command/configuration/assertions/guards; no retry.
+Controller/outer launch0, inner elapsed1389254ms. Capture PID68896, controller78652,
+pytest5012; retained identities/drains. Run Temp/pallium-full-suite-run-0763cd4bd3c14875a005a7917b1a3b8b;
+capture Temp/pallium-full-suite-capture-06301cc7c5f349c7a1812c81698aecec.
+Actual basetemp sr-08ce39e5b6724cafbfc4227c63f21d02; worker's startup trailing `b`
+was a reporting typo, corrected against RUN_START rather than guessed.
+
+Independent drain81 recorded identities/0 remaining; root current CIM check found
+no matching recorded identities or unknowns. PID52696 was reused by Chrome at15:31:27,
+distinct from recorded test creation15:23:58; it was not touched. Sampling limits
+remain. Ignored build/service-recovery-evidence/attribution-full-* retains logs,
+guard detail/manifest, both drains/controller and exact diagnostic harness. Root
+independently matched stdoutE697CEBEBE0B8BFC97DE3B906CF6093777EE96E9ACE202FDD5954CDE37A9F716,
+detailA2CB0BD8C1FAC607DE7D195A0C951695E50020395C11589FE4192D049E8E06E6,
+drainF1072F7606CF455C60B71F1D61DA37A462489C0B7D0F2504349EFBA3DA4BE8B0.
+
+All21 category events have detail records. The20 installed-port attempts are
+unintended test-isolation traffic, NOT explicit negative-network assertions.
+Inherited node labels are noncausal context; repository callsite stacks and source
+inspection support the classification. Parameter IDs stripped; no parameter-level
+subdivision claimed. Exact node groups:
+
+| Count | Test node |
+| --- | --- |
+| 8 | test_structural_work_refs_e2e.py::test_all_real_callers_capture_and_ingest_exact_refs |
+| 4 | test_structural_work_refs_e2e.py::test_python_stop_hook_actual_http_items_round_trips_into_exact_history |
+| 4 | test_structural_work_refs_e2e.py::test_python_user_and_assistant_resolver_failure_ingest_explicit_only |
+| 3 | test_codex_integration.py::test_codex_hooks_import_cleanly_as_subprocess |
+| 1 | test_codex_integration.py::test_codex_stop_hook_ingests_quietly |
+
+Corrected mechanism:19 stacks end in relay_request's request_json (Codex common1380,
+Claude common1536);1 subprocess event ends in Codex pallium_request request_json1348.
+Common fetch_confirmed_work_refs directly calls common.relay_request (Codex715-735,
+Claude688-708), and stop imports/calls that helper. Structural quiet-side-effect
+stubs and Codex stop's ingest-only stub miss this internal confirmed-ref request;
+subprocess smoke tests execute real hook bodies without transport fencing. Guard
+exceptions become unavailable; assertions do not check zero incidental Relay traffic.
+
+Worker/root's initial blanket explanation that relay_turn ignores the hook alias,
+and initial all20-relay_request claim, are WITHDRAWN. Current prompt callers pass
+request=relay_request and that function honors it; the narrower stop/common path
+above is independently reviewed. Manager received the correction before handoff.
+
+The1 remote-name event labels test_mcp_integration.py::TestMcpStatelessTransport::
+test_tools_call_with_arguments_and_unknown_session_id, with EMPTY repository stack.
+Source sets base URL http://testserver; inbound TestClient does not wire ASGI transport
+to the separate outbound AsyncClient. A transport error still yields the asserted
+protocol result envelope. This is a strong source-supported false-positive hypothesis,
+not direct per-event call-stack proof. Do not upgrade inherited context to causality.
+
+Manager disposition: unrelated test-isolation defects assigned separately to Pal;
+keep service correction frozen, no further tests, no installed changes. Both full
+passes are valid guarded regression evidence, not ordinary unguarded-isolation proof,
+installed Scheduler/native Relay acceptance, or historical startup/AcceptEx diagnosis.
+
+## Final result review and handoff
+
+Agent technical review: /root/outage_source_review, independent clean-context
+gpt-6.1-sol/high. Final reviewed source6044/testedbe8e against main510; all10-path
+source approval retained and final attribution evidence independently verified.
+Verification adequacy: adequate for the service-correction repository PR handoff
+under manager disposition. No actionable defect in the correction; Elevated/
+Moderate unchanged. The earlier qualified acceptance is superseded only for this
+bounded correction, not for unrelated isolation or installed/native claims.
+Exact19 Relay/1 ingestion stacks, narrower confirmed-ref helper mechanism and
+remote-event uncertainty above are preserved. No additional test is warranted or
+authorized for unchanged source here. State Ready for review means manager-owned
+PR/CI/merge gates remain, not merged/deployed or overall Relay reliability closed.
+
+Manager owns publication, separate isolation-fix assignment, roadmap reconciliation
+and the concrete installed rollout proposal. The diagnostic three-file proposal
+remains preparation only; no instrumentation/source or installed change is included.
