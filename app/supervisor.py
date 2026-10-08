@@ -187,11 +187,14 @@ def build_snapshot_command(interval_seconds: int) -> list[str]:
     return [sys.executable, "-m", "app.snapshot", "--interval-seconds", str(interval_seconds)]
 
 
+_API_START_TIMEOUT_SECONDS = 120.0
+
+
 def _wait_for_api(
     host: str,
     port: int,
     *,
-    timeout: float = 30.0,
+    timeout: float = _API_START_TIMEOUT_SECONDS,
     sleep_fn: Callable[[float], None] = time.sleep,
     process: subprocess.Popen | None = None,
     expected_nonce: str | None = None,
@@ -339,19 +342,21 @@ def _start_api_with_retry(
             return None
         nonce = token_fn()
         env = {**os.environ, "PALLIUM_API_LAUNCH_TOKEN": nonce}
+        started = time.monotonic()
         proc = popen_factory(cmd, cwd=os.getcwd(), env=env)
-        emit_runtime_log("supervisor", f"started api pid={proc.pid} host={host} port={port} attempt={attempt}")
+        emit_runtime_log("supervisor", f"started api pid={proc.pid} host={host} port={port} attempt={attempt} budget_seconds={_API_START_TIMEOUT_SECONDS:.0f}")
         if wait_for_api_fn(
-            host, port, timeout=30.0, process=proc,
+            host, port, timeout=_API_START_TIMEOUT_SECONDS, process=proc,
             expected_nonce=nonce, run_dir=run_dir, stop=stop,
         ):
+            emit_runtime_log("supervisor", f"api startup outcome=ready pid={proc.pid} attempt={attempt} elapsed_seconds={time.monotonic() - started:.3f}")
             return proc
+        emit_runtime_log("supervisor", f"api startup outcome=unverified pid={proc.pid} attempt={attempt} elapsed_seconds={time.monotonic() - started:.3f}", stderr=True)
         # wait_for_api returned False. Two sub-cases:
         #   (a) process is alive but probe failed (timeout, foreign bind,
-        #       missing token past grace). Under self-id mode this is NOT
-        #       a "slow startup, give it a chance" scenario — it likely
-        #       means a previous-generation orphan is holding the port and
-        #       our child can never bind. Kill the proc and retry rather
+        #       missing token past grace). This may be slow startup or a
+        #       foreign bind; neither is verified readiness. Kill and retry
+        #       only after the bounded startup allowance rather
         #       than handing the supervisor a child that will never serve.
         #   (b) process exited on its own — fall through to retry log.
         if proc.poll() is None:

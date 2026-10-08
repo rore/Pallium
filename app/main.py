@@ -18,6 +18,7 @@ from sqlalchemy import func, select
 
 from app.asyncio_windows_accept import apply_patch as _apply_accept_patch
 from app.config import AppConfig
+from app.runtime_logging import startup_stage
 from app import codex_wake
 from app.dashboard import mount_dashboard
 from app.claude_wake import start_claude_wake_reconciler
@@ -175,14 +176,16 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
     metrics_store: MetricsStore | None = None
     early_storage: SQLiteStorageProvider | None = None
     try:
-        early_storage = build_storage_provider(resolved_config)
+        with startup_stage("early_storage"):
+            early_storage = build_storage_provider(resolved_config)
         if isinstance(early_storage, SQLiteStorageProvider):
             metrics_store = MetricsStore(early_storage._session_factory)
     except Exception:
         logger.warning("MetricsStore could not be initialized; metrics persistence disabled", exc_info=True)
 
     query_stats = QueryStats(metrics_store=metrics_store)
-    build_result = build_service(resolved_config, routing_overrides=routing_overrides, query_stats=query_stats, metrics_store=metrics_store)
+    with startup_stage("build_service"):
+        build_result = build_service(resolved_config, routing_overrides=routing_overrides, query_stats=query_stats, metrics_store=metrics_store)
     service = build_result.service
     relay_limiter = anyio.CapacityLimiter(4)
     diagnostic_limiter = anyio.CapacityLimiter(2)
@@ -250,6 +253,8 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
 
     @contextlib.asynccontextmanager
     async def app_lifespan(app_instance: FastAPI) -> AsyncIterator[None]:
+        lifespan_started = time.monotonic()
+        logger.info("startup stage=lifespan outcome=start pid=%s", os.getpid())
         # Write the launch token as early as possible so the supervisor's
         # readiness probe can self-identify this process before any heavy
         # startup (vector reconcile, rebuild) extends the window during which
@@ -389,6 +394,7 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
         codex_wake_registry.retained_service = retained_service
         app_instance.state._codex_retained_service = retained_service
         app_instance.state._lifespan_complete = True
+        logger.info("startup stage=lifespan outcome=complete pid=%s elapsed_seconds=%.3f", os.getpid(), time.monotonic() - lifespan_started)
         try:
             if mcp_available and session_manager is not None:
                 async with session_manager.run():

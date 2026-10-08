@@ -1,11 +1,29 @@
 from __future__ import annotations
 
 import io
+import contextlib
 import logging
+import os
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+
+@contextlib.contextmanager
+def startup_stage(stage: str):
+    """Time fixed internal startup stages; never log exception contents."""
+    logger = logging.getLogger(__name__)
+    started = time.monotonic()
+    logger.info("startup stage=%s outcome=start pid=%s", stage, os.getpid())
+    try:
+        yield
+    except BaseException:
+        logger.info("startup stage=%s outcome=failed pid=%s elapsed_seconds=%.3f", stage, os.getpid(), time.monotonic() - started)
+        raise
+    else:
+        logger.info("startup stage=%s outcome=complete pid=%s elapsed_seconds=%.3f", stage, os.getpid(), time.monotonic() - started)
 
 
 class RuntimeLogFormatter(logging.Formatter):

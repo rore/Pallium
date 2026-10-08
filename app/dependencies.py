@@ -24,6 +24,7 @@ from app.codex_wake import (
 from app.claude_wake import schedule_claude_relay_wake
 from app.claude_wake_binding import binding_for_relay_database, claim_wake_directory
 from app.config import AppConfig, EmbeddingProviderConfig, SemanticPackageConfig
+from app.runtime_logging import startup_stage
 from core.contracts import MemoryRetentionPolicy
 from core.observability import IntegrationDebugLogger, QueryStats
 from core.relay import RelayNotFoundError, RelayService, RelayUnavailableError
@@ -362,8 +363,10 @@ def build_service(
     metrics_store=None,
 ) -> BuildResult:
     resolved_config = config or AppConfig.from_env()
-    storage = build_storage_provider(resolved_config)
-    plugins = build_semantic_plugins(resolved_config, routing_overrides=routing_overrides)
+    with startup_stage("service_storage"):
+        storage = build_storage_provider(resolved_config)
+    with startup_stage("semantic_plugins"):
+        plugins = build_semantic_plugins(resolved_config, routing_overrides=routing_overrides)
 
     active_names = list(plugins.keys())
     logger.info("Active semantic packages: %s", ", ".join(active_names) if active_names else "(none)")
@@ -385,17 +388,19 @@ def build_service(
             logger.error("Vector index enabled but no embedding_provider configured. Vector disabled.")
         else:
             try:
-                embedding_provider = build_embedding_provider(
-                    resolved_config,
-                    provider_name=vector_config.embedding_provider,
-                )
+                with startup_stage("embedding_provider"):
+                    embedding_provider = build_embedding_provider(
+                        resolved_config,
+                        provider_name=vector_config.embedding_provider,
+                    )
             except Exception as exc:
                 logger.error("Vector embedding provider failed to initialize: %s. Vector disabled.", exc)
                 embedding_provider = None
 
         # 2. Load or create vector index
         if embedding_provider is not None:
-            vector_index = _load_or_create_vector_index(vector_config, embedding_provider)
+            with startup_stage("vector_index_load"):
+                vector_index = _load_or_create_vector_index(vector_config, embedding_provider)
 
         # Create holder early — rebuild coordinator will swap into it
         if vector_index is not None:
@@ -419,7 +424,9 @@ def build_service(
             and embedding_provider is not None
         ):
             from core.rebuild_coordinator import raw_source_vector_backfill_needed
-            if raw_source_vector_backfill_needed(storage):
+            with startup_stage("raw_source_backfill_check"):
+                backfill_needed = raw_source_vector_backfill_needed(storage)
+            if backfill_needed:
                 rebuild_needed = True
                 rebuild_reason = "eligible raw sources missing vector entries"
 
@@ -433,8 +440,9 @@ def build_service(
 
         # 4. Count reconciliation check — warn but continue; runtime reconciliation fills gaps
         if vector_index is not None and embedding_provider is not None:
-            sqlite_count = storage.count_index_entries_by_type("vector")
-            index_count = vector_index.entry_count()
+            with startup_stage("vector_counts"):
+                sqlite_count = storage.count_index_entries_by_type("vector")
+                index_count = vector_index.entry_count()
             if sqlite_count != index_count:
                 logger.warning(
                     "Vector index count mismatch: SQLite=%d, index=%d. "

@@ -5,7 +5,7 @@
 
 **Target:** Existing API supervisor and application startup.
 
-**Scope:** app/supervisor.py, app/main.py, tests/test_supervisor.py, existing application startup tests, and this Work Record. Isolated emergency delta from merged PR307 source bc6dda12ad78bf1ab310bca4922dc046ec3607de; no migration or installation.
+**Scope:** app/supervisor.py, app/main.py, app/runtime_logging.py, app/dependencies.py, tests/test_supervisor.py, tests/test_runtime_logging.py, and this Work Record. Isolated emergency delta from merged PR307 source bc6dda12ad78bf1ab310bca4922dc046ec3607de; no migration or installation.
 
 **Constraints:** Manager alone owns installed approval, backup, restart and health checks. Preserve nonce fencing, cancellation, retry count/backoff and cleanup. No payload/token logging, new settings, dependencies, recovery framework, schema changes or full-suite run in the emergency loop.
 
@@ -28,15 +28,25 @@
 
 **Verification plan:** Slow startup after30s succeeds without retry -> real wait helper with fake socket/token/clock. Deadline, death, cancellation and wrong token remain rejected -> existing and new supervisor tests. Pre-bind build timing includes success/failure -> private log-helper test. No exceptions swallowed or payload logged -> source review and log assertions.
 
-**Plan review:** Requested independent read-only review from Pal chat01a1156c-e388-7850-9c42-cc2fcb5dbd51 before production edits.
+**Plan review:** Agent technical review: Pal chat01a1156c-e388-7850-9c42-cc2fcb5dbd51 inspected bc6dda12 source and accepted this exact minimal plan before production edits. Preserve existing grace/foreign-token latch, cancellation/cleanup, fixed log labels and unchanged exception propagation. This is temporary availability mitigation/observability, not root-cause closure.
 
 **Approvals:** Human incident restoration direction conveyed by manager chat01a0d7ce-83c6-77e2-90f7-d413894059e1 explicitly authorizes isolated120s slice and focused checks; installed changes require separate exact approval. No High-risk human gate at this classification.
 
 **Exceptions:** —
 
-**State:** Blocked
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
 
 2026-10-08: Migration paused and its private edits preserved. Created separate branch feat/service-startup-budget at retained published source bc6dda12; no production edit yet. Manager owns emergency live restoration. Exact Relay wake trace returned transport_unavailable; authorized app fallback used. Pending independent plan review, then immediate minimal implementation and focused check.
+
+Plan refinement before added-file edits: manager conveys human correction that120s is a workaround, not a fix. Pal independently accepts moving the tiny helper into existing runtime_logging and wrapping exact dependencies calls with fixed labels service_storage, semantic_plugins, embedding_provider, vector_index_load, raw_source_backfill_check and vector_counts. Existing try/conditions and fallback/exception semantics remain. A completed stage means its call returned, not provider/index health; original error logs remain. No provider/storage changes. These narrower stages will guide root-cause work immediately after manager's installed observation. No full suite in this emergency loop; normal release gates remain for subsequent repository integration.
+
+## Verification
+
+Allocated focused invocation: existing development Python3.13, process-local PYTHONDONTWRITEBYTECODE=1, PYTHONNOUSERSITE=1, PYTEST_DISABLE_PLUGIN_AUTOLOAD=1; `python -B -m pytest tests/test_supervisor.py tests/test_runtime_logging.py -q -n 0 -p xdist.plugin -p pytest_asyncio.plugin`. Result42 passed in1.10s, exit0; retained build/startup-emergency-focused.log. Fake processes/sockets/clock, private home/config/token fixtures; no live service access, subprocess startup, installed files or database operation. New cases assert actual retry caller budget120, real wait helper readiness45, five120s timeout/foreign-token attempts, cancellation/death, fixed success/failure logs and unchanged exception identity without sensitive content. Existing identity/grace and cleanup regressions also pass. No full-suite, CI, installed health or root-cause claim.
+
+## Rollout handoff
+
+Only four production files comprise this emergency mitigation. Manager must back up exact installed originals and verify base compatibility before applying this separable delta; no main-sync/schema/launcher/task/config/dependency change is bundled. One approved restart uses existing scripts/restart-service.ps1 with separately approved ReadinessTimeoutSeconds660 and retains all health/status/queue validation and identity fences. Nominal five120s attempts plus20s backoff exclude overhead;660 is an observation allowance, not an uptime guarantee. On incompatibility/failure restore exact backed-up files and use the same approved wrapper procedure; preserve diagnostics. Stage logs should identify the expensive block for immediate causal investigation.120s remains a temporary workaround.
