@@ -632,3 +632,22 @@ allocation assumed. Manager receives exact outcome/review/limits for disposition
 a next whole-change run with ordinary short isolated paths and retained controller/
 identity evidence. Separate startup diagnosis/installed rollout/Relay acceptance
 and manager-owned publication remain open; installed environment untouched.
+
+## Next complete validation allocation — before execution
+
+Manager grants ONE complete non-slow run after independent review of fresh short
+owned --basetemp and retained controller exit/identity ledger. Fresh git fetch
+confirms origin/main and FETCH_HEAD remain5106866622deb9c011fd7538732d6b145a8ba147;
+no source integration is needed. Production source remains6044, no application/
+assertion/leaked-port changes. Pin684e or this records-only successor; no parallel
+profiler/native/full run, no installed operation/publication, stop on failure.
+
+Cheap worker prepares only the existing private harness: complete tests/ -x -q -n0,
+1800s cap, short fresh GUID pytest base verified absent before cleanup, same private
+default config/guards without global feature/identity overrides. Inspect worst-case
+derived paths, not only the passing node. Retain controller PID/exit/log and sampled
+PID/creation identities as actual artifacts; validate tracked-parent creation when
+admitting descendants, retain short-lived-parent/sampling limitations. Independent
+smart command/isolation review precedes ONE execution. Full pass then final independent
+whole-change result review; neither hypothetical path cause nor installed/native
+acceptance is inferred. State Blocked until required full result and review exist.
