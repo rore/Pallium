@@ -521,8 +521,9 @@ matched the reviewed artifact and root corrected the instruction. No mismatched 
 The same complete command failed: 1 failed, 855 passed, 2 skipped, 482 deselected,
 1 xfailed in257.69s; inner native exit1, controller exit1, runner266.666s.
 Exact node tests/test_claude_wake_instance_isolation.py::test_two_instances_real_hook_http_and_outage_recovery
-failed at line78: register_claude_wake returned False, binding check rejected and
-HTTP ledger seen=[] before a request. This result is not classified as product or
+failed at line78: register_claude_wake returned False and HTTP ledger seen=[] before
+a request. Pytest truncated the diagnostic tuple, so whether its binding check was
+False is unknown; root's initial binding-rejection wording is withdrawn. This result is not classified as product or
 harness failure pending its source/artifact chain. Original failed run is retained.
 No retry, source/test/assertion change, live operation or publication.
 
@@ -550,3 +551,35 @@ does not duplicate it. Next is one concrete cause/reproduction hypothesis and a 
 exact-node proposal, not a blind full retry or weaker binding checks. State Blocked;
 required full/final acceptance and manager-owned PR/CI remain unsatisfied. Installed
 service and separate diagnostic proposal unchanged.
+
+## Read-only failure attribution and bounded proposal
+
+Worker verified test_claude_wake_instance_isolation.py, conftest.py,
+app/claude_wake_binding.py and Claude common.py unchanged510 to tested d5f7.
+No correction caller reaches this in-process TestClient/fresh-module hook journey;
+it does not invoke supervisor, installed service, scheduler or restart wrapper.
+Fixture patches Path.home and explicitly selects first/second database. Hook loads
+fresh after bindingA is written; persisted binding/marker20101/ownerA and corresponding
+B/20102 artifacts agree. An earlier test_app_run serve test leaves service port8011
+in the process environment, explaining an extra B marker8011, not this failure:
+hook uses pinned20101. Its conflict flags were not recoverable from the truncated
+assertion; neither binding rejection nor that environment leak is proven causal.
+
+Concrete path hypothesis: retained intent base189 characters; target.json and lock
+259; temporary.json.tmp263. Digest
+efbb4ed828adb30f0d26b8d98613c4347f4fc5b5e0efea1a7f7803eee2474c34.
+Only1-byte lock survives in intents directory, no target or temporary file.
+_write_wake_intent catches OSError on temporary write/replace and returns False
+before HTTP. This fits legacy Windows MAX_PATH failure after acquiring the lock,
+but long-path awareness or another write/replace failure can produce the same state.
+This is a source/artifact hypothesis, not a reproduced product defect or historical
+Relay incident explanation. Runner defaults do not select this fixture's explicit
+app databases or patched-home binding paths.
+
+Proposed smallest discriminator sent to manager: ONE unchanged exact failed node
+with fresh short private pytest --basetemp under system Temp, retaining private
+profile/config/wakes/caches/network/native seams and independently reviewed cap/
+command. No prior-test leak fix or stronger/weaker assertion, source instrumentation,
+second node/full retry or live operation. A pass narrows path interaction; a failure
+needs captured import flags/operation errors, not guessed causality. Test allocation
+not yet granted. All required full/final/publication gates remain unsatisfied.
