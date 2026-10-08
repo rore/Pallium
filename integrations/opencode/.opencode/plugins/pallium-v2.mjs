@@ -147,6 +147,7 @@ export default {
       } finally { if (live(id, item, signal)) item.busy = false; }
     };
     const ingestAssistant = async (id) => {
+      // ponytail: global retirement can defer unrelated captures; use per-session epochs if observed.
       const started = retirement;
       if (!await owned(id) || disposed || started !== retirement) return;
       const item = state(id);
