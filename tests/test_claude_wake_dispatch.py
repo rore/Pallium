@@ -1402,10 +1402,13 @@ def test_create_app_preserves_new_intent_during_old_cleanup(
 def test_expired_claim_rewakes_once_after_real_app_restart(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str],
 ) -> None:
+    from itertools import count
+
     from fastapi.testclient import TestClient
 
     import app.main as main
     import storage.sqlite_relay as sqlite_relay
+    import core.claude_wake as wake_registry_module
     from app.config import AppConfig
     from app.main import create_app
     from core.relay import RelayService
@@ -1413,6 +1416,12 @@ def test_expired_claim_rewakes_once_after_real_app_restart(
     from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
     from tests.test_claude_code_integration import _load_claude_hook
 
+    real_time = wake_registry_module.time
+    real_monotonic = real_time.monotonic
+    # Lock admission is not this restart contract; retain native locks and real recovery clocks.
+    registry_time = SimpleNamespace(**vars(real_time))
+    registry_time.monotonic = count(step=.001).__next__
+    monkeypatch.setattr(wake_registry_module, "time", registry_time)
     clock = [datetime(2030, 9, 5, tzinfo=timezone.utc)]
 
     def controlled_now(value=None):
@@ -1439,6 +1448,9 @@ def test_expired_claim_rewakes_once_after_real_app_restart(
     monkeypatch.setattr(main, "start_claude_wake_reconciler", lambda *_args, **_kwargs: None)
     with TestClient(create_app(config), client=("127.0.0.1", 50000)) as http_a:
         common = _load_claude_hook("common", monkeypatch)
+        hook_time = SimpleNamespace(**vars(common.time))
+        hook_time.monotonic = count(step=.001).__next__
+        monkeypatch.setattr(common, "time", hook_time)
         monkeypatch.setattr(common, "CLAUDE_WAKE_DIR", tmp_path / "wake")
         monkeypatch.setattr(common, "CLAUDE_WAKE_INTENTS_DIR", tmp_path / "wake" / "intents")
         registration = {**PAYLOAD, "session_ref": "restart-target", "idle": True, "intent_id": "app-a"}
@@ -1481,6 +1493,8 @@ def test_expired_claim_rewakes_once_after_real_app_restart(
             "session_id": "restart-target", "cwd": str(tmp_path), "transcript_path": "",
         })
         registrations: list[dict[str, object]] = []
+        publication_results: list[tuple[str, bool]] = []
+        registration_responses: list[tuple[str, int]] = []
         claimed_ids: list[list[str]] = []
         states_before_ack: list[str] = []
         acknowledged_ids: list[str] = []
@@ -1491,8 +1505,12 @@ def test_expired_claim_rewakes_once_after_real_app_restart(
  "idle": idle, "intent_id": f"stop-{len(registrations)}",
             }
             registrations.append(registration)
-            assert common._write_wake_intent(registration)
-            return http_b.post("/internal/claude-wake/register", json=registration).status_code == 204
+            published = common._write_wake_intent(registration)
+            publication_results.append((registration["intent_id"], published))
+            assert published
+            response = http_b.post("/internal/claude-wake/register", json=registration)
+            registration_responses.append((registration["intent_id"], response.status_code))
+            return response.status_code == 204
 
         def relay(method: str, path: str, body: dict[str, object], *, timeout: float) -> object:
             response = http_b.request(method, path, json=body)
@@ -1531,8 +1549,16 @@ def test_expired_claim_rewakes_once_after_real_app_restart(
         assert claimed_ids == [[delivery["delivery_id"]], []]
         assert acknowledged_ids == [delivery["delivery_id"]]
         candidates = registry.recovery_candidates()
-        assert [candidate["session_ref"] for candidate in candidates] == ["restart-target"]
+        diagnostics = {
+            "publication_results": publication_results,
+            "registration_responses": registration_responses,
+        }
+        assert publication_results == [(f"stop-{index}", True) for index in range(3)], diagnostics
+        assert registration_responses == [(f"stop-{index}", 204) for index in range(3)], diagnostics
+        assert [candidate["session_ref"] for candidate in candidates] == ["restart-target"], diagnostics
         assert all(registration["idle"] is True for registration in registrations)
+        assert registry._clock is real_monotonic and reconciler._clock is real_monotonic
+        assert real_time.monotonic is real_monotonic
     assert reconciler._thread is not None and not reconciler._thread.is_alive()
 
 
