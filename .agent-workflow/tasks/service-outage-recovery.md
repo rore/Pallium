@@ -297,7 +297,7 @@ checks but blocked on absent fresh Redline evidence and exact plan-review refere
 syntax. This record now includes the actual native review reference; fresh generated
 Redline/import evidence follows. No check failure is claimed green or waived.
 
-## Proposed next diagnostic slice — not approved for implementation or rollout
+## Initial diagnostic proposal — superseded below; not approved for implementation or rollout
 
 Manager requested this exact source-free proposal after all current isolated samples
 failed to reproduce the historical delay. Keep it separate from the four-file
@@ -413,3 +413,94 @@ then ONE full run on the clean combined candidate with private prepytest environ
 and fail-closed external/model/live-service guards. Full harness safety inspection
 precedes execution; root and cheap worker have explicitly withheld old-base execution.
 Diagnostic proposal remains planning-only, not merged instrumentation or rollout.
+
+## Combined candidate and full-validation failure
+
+Ordinary conflict-free merge of exact main5106866622deb9c011fd7538732d6b145a8ba147
+produced6044ced955c50ca965b3cb0f65bc57e02a8ea369, tree763da831afb97bdbfaff199aba310be844a53ce8.
+Four production and four test files remain identical to9ab72a39. Operations docs
+auto-merged, retaining both sets of guidance. Independent /root/outage_source_review
+found no new interaction issue or extra focused node required; not final acceptance.
+Fresh selector required the complete non-slow lane. Import checks had no violations;
+Redline GRAY/advisory1, no checkpoints/boundary violations; workflow clean0.
+Ignored build evidence hashes: redline-verdict.json
+43E8247F6BB53DA65488B11D6C3DF5689E4DD68B05802F31C0974A175657FA07;
+import-linter-report.json
+341EE0AF66997863E05BA32563DACEF54980DFE6E64D7CE3E889973982B72103;
+service-recovery-evidence/workflow.stdout.json
+6D591AACDF07D3DA4339763ABA7818009531916DADD056D1646B5F072F7D8F52.
+
+Manager-allocated ONE full command on clean6044:
+`C:/Dev/rore/Pallium/.venv/Scripts/python.exe -B -m pytest tests/ -x -q -n 0`
+failed:1 failed/512 passed/482 deselected/1 xfailed in175.76s, wrapper185.238s.
+Node: tests/test_async_worker.py::test_supervisor_spawns_snapshot_worker_when_enabled.
+Harness PALLIUM_SNAPSHOT_ENABLED=false overrode the fixture enabled=true TOML:
+root's configuration-precedence mistake, not a source defect or waived failure.
+Controller also lacked Get-FileHash and left EXIT blank; native status was not
+captured. Pytest failure summary is authoritative. No guard blocks/pytest stderr.
+Owned PIDs79660/35084/43044/71808/8436/33936 and descendants confirmed drained.
+Retained ignored service-recovery-evidence logs:
+
+- full-first.stdout.log: D5D3AA550E0003917B8E8CAE9CD17AC246084B47450FE2F44E36E30EE2E10AF0
+- full-first-controller.stdout.log: B45588B248DB6A96374BFB35C5A27F8F691FBE1BE48A3C13DCBD6C75C8C7C230
+- full-first-controller.stderr.log: DDBE92130B4E14DE3A1840515C701EF19467CDCA7C296201D09BF6F7AC0A6E70
+
+## Corrected harness and exact-node outcome
+
+Removed six global semantic overrides: storage backend, main/Relay DB, snapshot
+enabled/path, vector path. Default private TOML supplies safe paths; fixture TOML
+can replace it via PALLIUM_CONFIG_FILE. Private profile/TEMP/wakes/caches, Python/
+Node network guards and private/mocked native process/service seams remain.
+These process-local guards are not a native Windows firewall guarantee. Retained
+process handle and validated integer exit capture precede Python-native hashing;
+hash errors cannot replace pytest status. Independent quick reviewer approved the
+exact node, with portable Path.read_bytes hashing corrected before execution.
+No source/assertion/installed change.
+
+Manager-allocated ONE exact failed snapshot node on clean6044 passed1 in0.17s;
+native/controller exit0, wrapper2.665s. Owned controller74484/Python21408 and
+descendants drained; empty stderr, no hash errors/guard blocks. Actual fixture
+TOML retained enabled=true and private main/derived Relay DB and snapshot files.
+Ignored service-recovery-evidence/snapshot-node.stdout.log SHA256
+8FE1A5EBE3BEF9E75708F4835E8B369440D1A5A7B0BAD4ED8A81513C7B8D4FC5.
+Corrected exact-node runner SHA256
+A18AD63E1A567ED9EDD7B9885726C61DD82B88BFCD063D5F55F2FD5845CD6D20.
+
+Manager grants ONE complete non-slow run on source-identical6044, pin records-only
+head if changed, after independent review of corrected private full scope. No retry
+on failure. State remains Blocked on incomplete full validation then final review
+and manager-owned publication/CI. Root records outcome before transition. Installed
+service untouched; scheduler/native acceptance, historical startup/AcceptEx cause
+and broader Relay reliability remain open.
+
+## Superseding three-file diagnostic proposal — planning only
+
+Smart critique and manager planning acceptance replace the earlier five-file proposal:
+only app/main.py coarse factory/build/lifespan/first-reconcile boundaries;
+app/dependencies.py actual storage/provider/index/grouped rebuild/count/build phases;
+providers/embedding/onnx_provider.py actual HF/ORT/tokenizer/probe and cache/supplied-
+dimensions outcomes. Omit supervisor/run import detail: existing PID/attempt/readiness
+logs bracket processes; no factory marker means before-factory, not a proved import
+cause. Add detail only if that region is measured slow. No source instrumentation yet.
+
+Use existing logging/helper and stdlib perf_counter, same-process durations plus PID,
+fixed stage/status values only. No cross-process clock subtraction, URLs/model names/
+revisions/paths/tokens/payloads/exception text, duplicate operations, new settings or
+framework. Enable logging before markers. Failure logging must preserve the original
+exception; finally must not imply success or mask failure. Preserve readiness,2s
+initial wait, retries/degrade and first-reconcile-only scope. Separate isolated branch/
+Work Record, exact risk/plan review, focused lifecycle/privacy checks, selector/full/
+final review/CI before any deployment. Three paths gray/watch, proposed Elevated/
+Moderate subject to final diff. Manager owns roadmap and exact human rollout request.
+
+Earlier file-only rollback proposal is withdrawn: it leaves mixed source. Installed
+scope must record actual prior commit, clean state and COMPLETE approved revision
+delta, recoverable refs/work/settings/data; fast-forward may include more than the
+three diagnostic files. Restore exact prior committed tree with an explicitly approved
+ordinary Git operation, not reset-hard. Select exact operation after installed-state
+inspection; any temporary detached HEAD must include restoring normal branch/update
+behavior and must not be called local main. No launcher/task/config/env/dependency/
+native-host/DB change silently included. ONE default180s restart wrapper observation
+briefly interrupts HTTP/Relay/processing; an optional rollback restart needs distinct
+explicit scope approval. Verify actual revision and all three health endpoints. No
+live change is authorized here; a fast future sample cannot close a historical incident.
