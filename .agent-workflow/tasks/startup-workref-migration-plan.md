@@ -47,7 +47,7 @@ Owner: Relaydev. Assignment: pallium manager, chat `01a0d7ce-83c6-77e2-90f7-d413
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Blocked
 <!-- agent-workflow:end -->
 
 ## Recovery
@@ -105,6 +105,8 @@ Rollback/recovery: failed step rolls back table/rows/header together; retry rebu
 Verification: bounded real-transaction and HTTP lifecycle cases above, unchanged protected contracts in CI test job, exact affected tests and whole-diff selector/full suite after allocation, independent technical result review and separate human result approval.
 
 ## Technical references
+
+2026-10-08 incident priority handoff: manager explicitly pauses migration while the everyday service is down. Exact human migration-plan approval remains valid; no repeat approval is needed for that scope. Production is still baseline51068666, no migration code applied. Root's private completed-reopen regression retained one real red run (two reopens yielded DELETE/SCAN/INSERT twice) in build/workref-red-retained.log; worker prepared five HTTP tests with one four-state parameterization but ran none. Dirty tests in test_exact_work_ref_search.py and test_sqlite_relay_isolation.py preserved, not staged or discarded. Last implementation records headfff3a565. Next action only after manager releases nonincident hold: resume approved atomic migration implementation, then exact red-green/private coverage; no full slot or installed operation currently allocated. Emergency work is separately retained in service-outage-recovery and exactf31 service-startup-budget-f31 checkouts; manager owns live restoration. No cleanup now.
 
 SQLite reserves user_version for the application rather than interpreting it: https://www.sqlite.org/pragma.html#pragma_user_version. Explicit BEGIN IMMEDIATE provides writer admission: https://www.sqlite.org/lang_transaction.html. Python sqlite3 legacy mode does not start transactions for DDL; SQLAlchemy documents explicit-BEGIN control: https://docs.sqlalchemy.org/en/20/dialects/sqlite.html#legacy-transaction-mode-with-the-sqlite3-driver. These justify the plan, not runtime evidence; actual rollback/header/DDL tests remain required.
 
