@@ -455,7 +455,14 @@ async def test_retained_worker_preserves_admission_after_busy_reregister(monkeyp
 @pytest.mark.asyncio
 async def test_busy_auto_reconnect_is_not_retried_before_a_fresh_call(monkeypatch):
     epochs, clients, calls = [1], [], []
+    workers = []
+    dispose_started, release_dispose = threading.Event(), threading.Event()
     proof = "8" * 64
+
+    class ObservedWorker(lifecycle.InventoryWorker):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            workers.append(self)
 
     class Native:
         def __init__(self, *args, **kwargs):
@@ -480,23 +487,40 @@ async def test_busy_auto_reconnect_is_not_retried_before_a_fresh_call(monkeypatc
 
         def dispose(self):
             self.disposals += 1
+            if len(clients) > 1 and self is clients[1]:
+                dispose_started.set()
+                release_dispose.wait()
 
     monkeypatch.setattr(bridge, "native_available", lambda: True)
+    monkeypatch.setattr(lifecycle, "InventoryWorker", ObservedWorker)
     server = _protocol_server(monkeypatch, Native)
 
     async def exercise(session):
         assert not (await _actual_status(session, "admitted")).isError
         epochs[0] = 2
-        for _ in range(200):
-            if len(calls) == 2:
-                break
+        try:
+            assert await asyncio.to_thread(dispose_started.wait, 1)
+            worker = workers[0]
+            assert len(clients) == 2
+            assert len(calls) == 2
+            assert clients[1].disposals == 1
+            assert worker._thread.is_alive()
+        finally:
+            release_dispose.set()
+        # Disposal precedes worker retirement; only a later request may restart it.
+        deadline = time.monotonic() + 1
+        while worker._thread.is_alive() and time.monotonic() < deadline:
             await asyncio.sleep(.005)
+        assert not worker._thread.is_alive()
+        assert worker.stop_event.is_set() and worker._restart_allowed
         assert len(clients) == 2
         assert len(calls) == 2
-        assert clients[1].disposals == 1
         assert not (await _actual_status(session, "fresh")).isError
 
-    await _serve_protocol(server, exercise)
+    try:
+        await _serve_protocol(server, exercise)
+    finally:
+        release_dispose.set()
     assert len(clients) == 3
     assert len(calls) == 3
     assert calls[0][1]["turn_ref"] == "admitted"
