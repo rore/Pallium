@@ -2392,13 +2392,44 @@ def test_busy_queue_claims_at_hook_execution_without_stale_receipt_or_duplicate_
         "payload": "handled once",
         "container_ref": injected_scope["container_ref"],
     }
+    # Settle diagnostics before checking reply idempotence, without skipping real writes.
+    from app import dependencies
+
+    service = client.app.state.pallium_service
+    workers = []
+    original_schedule = dependencies.schedule_claude_relay_wake
+
+    def capture_schedule(*args, **kwargs):
+        worker = original_schedule(*args, **kwargs)
+        if worker is not None:
+            workers.append(worker)
+        return worker
+
+    def settle_reply_writers():
+        for worker in workers:
+            worker.join(2)
+            assert not worker.is_alive(), "reply wake worker did not finish"
+        service._relay_trace_executor.submit(lambda: None).result(timeout=2)
+
+    monkeypatch.setattr(dependencies, "schedule_claude_relay_wake", capture_schedule)
     assert client.post(
         "/relay/replies", json={**reply_body, "container_ref": "git:example.test/other"}
     ).status_code == 200
+    settle_reply_writers()
     first = client.post("/relay/replies", json=reply_body)
+    settle_reply_writers()
+    assert first.status_code == 200, first.text
+    retained_reply = client.get(
+        f"/relay/messages/{first.json()['message_id']}", params=scope,
+    )
+    assert retained_reply.status_code == 200, retained_reply.text
+    assert retained_reply.json()["deliveries"] == first.json()["deliveries"]
+    assert retained_reply.json()["deliveries"][0]["state"] == "pending"
     duplicate = client.post("/relay/replies", json=reply_body)
     assert first.status_code == duplicate.status_code == 200
     assert first.json()["message_id"] == duplicate.json()["message_id"]
+    assert first.json()["deliveries"] == duplicate.json()["deliveries"]
+    settle_reply_writers()
     assert client.get(
         f"/relay/messages/{sent['message_id']}", params=scope
     ).json()["deliveries"][0]["state"] == "delivered"

@@ -34,7 +34,7 @@
 
 **Exceptions:** None
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -42,6 +42,8 @@
 2026-10-08: Isolated integration branch created from current origin/main. Integrated accepted startup timing/budget source 9b41eec0 and reviewed test isolation through ae2559c8. Integrated activation offload d72f59a2 after independent /root/incident_integration_review GO: all 12 sites, preserved callback order, deterministic ASGI proof and 148 affected passes. Integrated vector query source 537455d9 and independent result record 5e7d7747: deterministic content-read red/green, 16 focused passes, 69 affected passes and one existing skip. Migration and subsequent full-run correction evidence are recorded below.
 
 ## Checkpoints
+
+2026-10-09: Current-head manual Linux 3.13 CI37845470364 job113545203384 at e2ff2041 failed test_relay_wake_health.py::test_status_does_not_take_native_guard_or_mutate_delivery[/dashboard/api/relay/summary] at unchanged done.wait(2); 5659 passed, 73 skipped, 2 xfailed in371.61s. Source tracing found no native-guard acquisition in this summary path, but the historical timeout cause remains unproven. Root accepted a test-only plan: close the fixture-owned service before storage, capture reader exceptions and request phases, and capture bounded thread stacks on timeout before releasing the held native guard. Preserve the two-second deadline, actual HTTP surface, reservation/native/delivery assertions, and production behavior; no retry or deadline increase. State remains Ready to implement. Root owns isolated exact-node/file validation and review; no acceptance inferred from this failed run.
 
 Timing fixture final: root reviewed the private route-clock delta, preserving the global clock and strengthening distinct service/route error timings. Full test_codex_wake.py162 passed in51.78s; guards empty, three owned identities drained, exit0. Evidence privateba5f8f458ea34663904a244c6929f5d8 stdout SHA25635D977FF0104314C853FC46E315129E76D0F2E9676868A23D6A426C644C64F1E. No production changes; final full CI remains outstanding.
 
@@ -98,3 +100,12 @@ Combined full at dba1bb1f: 5457 passed, 36 skipped, 2 xfailed, one failure in 35
 2026-10-08: Integrated migration candidate a43a9c502f053e3a6f3c28276fe3677fc325ee76 without conflicts, production d5b0cd74. Independent component source review and child-fixture preflight accepted; final storage/isolation 50 passed, unchanged HTTP 43 passed, contract/lifecycle 96 passed, corrected owned-child cases 4 passed. No full run has started. Root source review found no additional issue. Current human through-merge approval above satisfies the source result approval requested in the earlier component record; it does not authorize unspecified live environment changes.
 
 Persistence review covers native main user_version and atomic derived projection migration. API review covers projection execution context only, preserving caller-visible output and admission ordering. Existing independent component review is reused; combined interactions require a final non-implementer review. No architecture imports or behavior-contract changes are planned.
+
+2026-10-09 follow-up verification: health fixture cleanup and bounded timeout diagnostics passed all 107 checks in 58.53s (private cdce244d5c9944188142842cddf11117, stdout SHA256 0EC148CA77FEEF8297601A18346FCC029F36E46A37908F122C239DCF9D35F9AA). Controlled real trace-write hold proved duplicate reply can return typed 503 during contention then 200 with unchanged identity after release: 1 passed in 2.25s, proof diff shared build/ci-308-reply-contention-proof.diff SHA256 5897F68C497F16265A5891E34BA905EE1946FCE7AF342EBA175DF5C21AD83172. Final fixture retains real scheduling/writes and settles owned workers/trace executor before idempotence checks. Entire Codex wake file: 162 passed in 51.73s (private 95149fcf27f74490b6dab037b6f79827, stdout SHA256 C485CEEC7968A5ED92ABF90F2ADE2E6B7755433899CE5DCCA26EB48B11E99909). All three private runs had empty network guards and three owned identities drained. Independent architecture_check accepted final test-only delta without findings. Historical timeout and competing-writer attribution remain unproven; production unchanged. Final full CI still required on amended head; no release acceptance yet.
+
+## Result review
+
+Agent technical review: /root/architecture_check, 2026-10-09, accepted final health diagnostics/cleanup and real trace-writer settling without blocking findings.
+Reviewed revision: e2ff2041320f832db1f4900c03d2416029752a31 plus the final tests/test_relay_wake_health.py and tests/test_codex_wake.py working diff.
+Verification adequacy: 107 health and 162 Codex wake checks passed; controlled real-writer contention proof passed. All original deadlines and caller assertions remain. This is focused acceptance only; final amended-head CI is required before merge. Historical timeout/writer attribution remains unproven.
+

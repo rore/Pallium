@@ -5,7 +5,10 @@ from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 import subprocess
+import sys
 import threading
+import time
+import traceback
 
 import pytest
 from fastapi.testclient import TestClient
@@ -160,8 +163,13 @@ def world(tmp_path, monkeypatch):
     try:
         yield http, storage, registry, native
     finally:
-        http.close()
-        storage.close()
+        try:
+            http.close()
+        finally:
+            try:
+                app.state.pallium_service.close()
+            finally:
+                storage.close()
 
 
 def _send(world, outcome=None):
@@ -454,16 +462,42 @@ def test_status_does_not_take_native_guard_or_mutate_delivery(world, path):
     owner.start()
     assert held.wait(1)
     # Separate caller avoids a hanging test if health accidentally takes the guard.
-    result, done = [], threading.Event()
+    result, errors, phases, done = [], [], [], threading.Event()
     def observe():
         try:
-            result.append(_view(world, path))
+            phases.append(("request_started", time.monotonic()))
+            response = http.get(path)
+            phases.append(("http_returned", time.monotonic()))
+            assert response.status_code == 200, response.text
+            snapshot = response.json()["relay_wake"]
+            _assert_snapshot_shape(snapshot)
+            result.append(snapshot)
+            phases.append(("view_validated", time.monotonic()))
+        except BaseException:
+            errors.append(traceback.format_exc(limit=12))
         finally:
             done.set()
     reader = threading.Thread(target=observe, daemon=True)
+    phases.append(("reader_start", time.monotonic()))
     reader.start()
     try:
-        assert done.wait(2), "status waited for native initiation ownership"
+        completed = done.wait(2)
+        diagnostics = None
+        if not completed:
+            frames = sys._current_frames()
+            threads = sorted(threading.enumerate(), key=lambda thread: (
+                thread not in (reader, owner),
+                not any(name in thread.name.lower() for name in ("anyio", "portal")),
+            ))[:12]
+            diagnostics = {
+                "phases": list(phases), "errors": list(errors),
+                "stacks": {
+                    f"{thread.name}:{thread.ident}": "".join(traceback.format_stack(frames[thread.ident], limit=12))[-4096:]
+                    for thread in threads if thread.ident in frames
+                },
+            }
+        assert completed, f"status waited for native initiation ownership: {diagnostics}"
+        assert not errors, errors
         assert result[0]["unresolved_uncertain_count"] == 1
     finally:
         release.set()
