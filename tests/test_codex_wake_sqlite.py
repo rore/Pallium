@@ -579,17 +579,17 @@ def test_draining_trace_queue_does_not_restore_sqlite_contention_drop(client):
             delivery["delivery_id"], delivery["recipient_endpoint_id"], "prepared",
         )
 
-    database = str(storage._relay_engine.url).removeprefix("sqlite:///")
-    with sqlite3.connect(database) as competing:
+    database_args, connect_options = storage._relay_engine.dialect.create_connect_args(storage._relay_engine.url)
+    with sqlite3.connect(*database_args, **connect_options) as competing:
         competing.execute("BEGIN IMMEDIATE")
         competing_file = competing.execute("PRAGMA database_list").fetchone()[2]
         with storage._relay_engine.connect() as observed:
             relay_file = observed.exec_driver_sql("PRAGMA database_list").fetchone()[2]
-        diagnostics = {"database": database, "engine_database": storage._relay_engine.url.database,
+        diagnostics = {"database": database_args[0], "engine_database": storage._relay_engine.url.database,
                        "competing_file": competing_file, "relay_file": relay_file}
         assert Path(competing_file).samefile(relay_file), diagnostics
         assert competing.in_transaction, diagnostics
-        with sqlite3.connect(relay_file, timeout=0) as witness:
+        with sqlite3.connect(*database_args, **{**connect_options, "timeout": 0}) as witness:
             with pytest.raises(sqlite3.OperationalError) as caught:
                 witness.execute("BEGIN IMMEDIATE")
             assert caught.value.sqlite_errorcode == sqlite3.SQLITE_BUSY, diagnostics

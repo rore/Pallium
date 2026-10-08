@@ -1052,7 +1052,7 @@ def test_busy_target_does_not_slide_due_retry_deadline(http_wake, monkeypatch):
 
 
 @pytest.mark.parametrize("claim_mode", ["active", "acked"])
-def test_retry_cas_loses_to_hook_claim_after_fresh_native_read(http_wake, monkeypatch, claim_mode):
+def test_retry_cas_loses_to_hook_claim_after_fresh_native_read(http_wake, client, monkeypatch, claim_mode):
     from datetime import datetime, timedelta, timezone
 
     import storage.sqlite_relay as sqlite_relay
@@ -1071,6 +1071,16 @@ def test_retry_cas_loses_to_hook_claim_after_fresh_native_read(http_wake, monkey
             returncode=0, communicate=lambda **_kwargs: (None, ""),
         ), None,
     ))
+    # This CAS contract does not depend on diagnostics contending with native admission.
+    service = client.app.state.pallium_service
+    original_enqueue = service.enqueue_relay_trace_event
+
+    def settled_enqueue(writer, event):
+        accepted = original_enqueue(writer, event)
+        service._relay_trace_executor.submit(lambda: None).result(timeout=2)
+        return accepted
+
+    monkeypatch.setattr(service, "enqueue_relay_trace_event", settled_enqueue)
     desktop.state = "idle"
     delivery = send()
     for worker in workers:
