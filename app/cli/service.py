@@ -329,7 +329,7 @@ def _install_windows(pallium_cmd: str, port: int, home: Path) -> None:
     vbs_path = home / "run" / "pallium_launcher.vbs"
     vbs_content = (
         'Set WshShell = CreateObject("WScript.Shell")\n'
-        f'WshShell.Run """{python_exe}"" -m app.run service run --port {port} --home ""{home}""", 0, False\n'
+        f'WScript.Quit WshShell.Run("""{python_exe}"" -m app.run service run --port {port} --home ""{home}""", 0, True)\n'
     )
     vbs_path.write_text(vbs_content, encoding="utf-16")
 
@@ -617,7 +617,7 @@ $action = @($task.Actions)[0]
 $vbsPath = [Environment]::ExpandEnvironmentVariables(([string]$action.Arguments).Trim().Trim('"'))
 $vbs = Get-Content -Raw -LiteralPath $vbsPath -ErrorAction Stop
 $homeMatch = [regex]::Match($vbs, '--home\s+""([^"\r\n]+)""', 'IgnoreCase')
-$pythonMatch = [regex]::Match($vbs, 'WshShell\.Run\s+"""([^"\r\n]+pythonw?\.exe)""', 'IgnoreCase')
+$pythonMatch = [regex]::Match($vbs, 'WshShell\.Run(?:\s+|\s*\(\s*)"""([^"\r\n]+pythonw?\.exe)""', 'IgnoreCase')
 if (-not $homeMatch.Success -or -not $pythonMatch.Success) { throw "Installed task metadata is incomplete" }
 $installedHome = [IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($homeMatch.Groups[1].Value)).TrimEnd('\')
 $pythonPath = [IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($pythonMatch.Groups[1].Value))

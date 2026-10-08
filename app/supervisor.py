@@ -196,6 +196,7 @@ def _wait_for_api(
     process: subprocess.Popen | None = None,
     expected_nonce: str | None = None,
     run_dir: Path | None = None,
+    stop: object | None = None,
     grace_period: float = 3.0,
     clock: Callable[[], float] = time.monotonic,
 ) -> bool:
@@ -223,6 +224,8 @@ def _wait_for_api(
     tcp_first_seen: float | None = None
     foreign_bind_seen = False
     while clock() < deadline:
+        if stop is not None and getattr(stop, "requested", False):
+            return False
         if process is not None and process.poll() is not None:
             return False
         try:
@@ -340,7 +343,7 @@ def _start_api_with_retry(
         emit_runtime_log("supervisor", f"started api pid={proc.pid} host={host} port={port} attempt={attempt}")
         if wait_for_api_fn(
             host, port, timeout=30.0, process=proc,
-            expected_nonce=nonce, run_dir=run_dir,
+            expected_nonce=nonce, run_dir=run_dir, stop=stop,
         ):
             return proc
         # wait_for_api returned False. Two sub-cases:
@@ -367,6 +370,8 @@ def _start_api_with_retry(
                 f"api startup failed attempt={attempt}/{_API_START_MAX_ATTEMPTS} code={proc.returncode}",
                 stderr=True,
             )
+        if stop is not None and getattr(stop, "requested", False):
+            return None
         if attempt < _API_START_MAX_ATTEMPTS:
             sleep_fn(_API_START_BACKOFF_SECONDS * attempt)
     return None
@@ -458,6 +463,8 @@ def run_supervisor(
                 stop=stop,
             )
             if server is None:
+                if stop.requested:
+                    return 0
                 emit_runtime_log("supervisor", "api failed to start after retries, giving up", stderr=True)
                 return 1
             slots.append(_ManagedSlot(
@@ -470,6 +477,8 @@ def run_supervisor(
             ))
 
             for index in range(1, parsed.processors + 1):
+                if stop.requested:
+                    break
                 cmd = build_processor_command(index)
                 proc = _popen_with_log(cmd, cwd=os.getcwd())
                 slots.append(_ManagedSlot(
@@ -481,6 +490,8 @@ def run_supervisor(
                 ))
                 emit_runtime_log("supervisor", f"started processor pid={proc.pid} processor_id=supervisor-processor-{index}")
             for index in range(1, parsed.cleaners + 1):
+                if stop.requested:
+                    break
                 cmd = build_cleaner_command(index)
                 proc = _popen_with_log(cmd, cwd=os.getcwd())
                 slots.append(_ManagedSlot(
@@ -492,7 +503,7 @@ def run_supervisor(
                 ))
                 emit_runtime_log("supervisor", f"started cleaner pid={proc.pid} cleaner_id=supervisor-cleaner-{index}")
 
-            if snapshot_config.enabled and snapshot_config.snapshot_path:
+            if not stop.requested and snapshot_config.enabled and snapshot_config.snapshot_path:
                 cmd = build_snapshot_command(snapshot_config.interval_seconds)
                 proc = _popen_with_log(cmd, cwd=os.getcwd())
                 slots.append(_ManagedSlot(
@@ -510,8 +521,12 @@ def run_supervisor(
             while True:
                 if should_stop is not None and should_stop():
                     stop.requested = True
+                if stop.requested:
+                    break
                 for slot in slots:
                     return_code = slot.process.poll()
+                    if stop.requested:
+                        break
                     if return_code is None:
                         continue
                     emit_runtime_log(
@@ -521,7 +536,7 @@ def run_supervisor(
                     )
                     if not slot.restartable:
                         # non-restartable slot exit is always fatal
-                        exit_code = return_code
+                        exit_code = return_code or 1
                         stop.requested = True
                         break
                     # Check restart budget
@@ -537,7 +552,7 @@ def run_supervisor(
                             f"within {_RAPID_RESTART_WINDOW_SECONDS}s, shutting down",
                             stderr=True,
                         )
-                        exit_code = return_code
+                        exit_code = return_code or 1
                         stop.requested = True
                         break
                     # Restart the child
@@ -551,7 +566,9 @@ def run_supervisor(
                             stop=stop,
                         )
                         if new_proc is None:
-                            stop.requested = True
+                            if not stop.requested:
+                                exit_code = 1
+                                stop.requested = True
                             break
                     else:
                         new_proc = _popen_with_log(slot.command, cwd=os.getcwd())
@@ -563,6 +580,8 @@ def run_supervisor(
                     if slot.use_retry_start:
                         _probe_failures = 0
                         _last_probe = clock()  # give new API a full probe interval before first check
+                    if stop.requested:
+                        break
                 if stop.requested:
                     break
                 # Periodic TCP health probe — detects the WinError 64 stuck-socket case

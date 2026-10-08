@@ -97,7 +97,7 @@ if ($homeMatch.Success) {
 }
 $pythonMatch = [regex]::Match(
     $vbs,
-    'WshShell\.Run\s+"""([^"\r\n]+pythonw?\.exe)""',
+    'WshShell\.Run(?:\s+|\s*\(\s*)"""([^"\r\n]+pythonw?\.exe)""',
     [Text.RegularExpressions.RegexOptions]::IgnoreCase
 )
 $pythonPath = if ($pythonMatch.Success) {
@@ -128,7 +128,7 @@ if (Test-Path -LiteralPath $venvConfig) {
 
 $portMatch = [regex]::Match(
     $vbs,
-    'WshShell\.Run\s+"""[^"\r\n]+pythonw?\.exe""\s+-m\s+app\.run\s+service\s+run\b[^"\r\n]*?--port\s+([^\s",]+)',
+    'WshShell\.Run(?:\s+|\s*\(\s*)"""[^"\r\n]+pythonw?\.exe""\s+-m\s+app\.run\s+service\s+run\b[^"\r\n]*?--port\s+([^\s",]+)',
     [Text.RegularExpressions.RegexOptions]::IgnoreCase
 )
 if ($portMatch.Success -and -not $homeMatch.Success) {
@@ -138,7 +138,7 @@ $portText = if ($portMatch.Success) { $portMatch.Groups[1].Value } else { "" }
 if (-not $portText) {
     $launcherMatch = [regex]::Match(
         $vbs,
-        'WshShell\.Run\s+"""[^"\r\n]+pythonw?\.exe""\s+""([^"\r\n]+\.py)""',
+        'WshShell\.Run(?:\s+|\s*\(\s*)"""[^"\r\n]+pythonw?\.exe""\s+""([^"\r\n]+\.py)""',
         [Text.RegularExpressions.RegexOptions]::IgnoreCase
     )
     if ($launcherMatch.Success) {
