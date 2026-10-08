@@ -1459,30 +1459,33 @@ class SQLiteStorageProvider(
         self, *, lexical_text_view_name: str, vector_text_view_name: str,
     ) -> bool:
         vector_entry = aliased(IndexEntryRecord)
-        statement = (
-            select(IndexEntryRecord.id)
-            .join(
-                SourceItemRecord,
-                and_(
-                    SourceItemRecord.id == IndexEntryRecord.target_id,
-                    IndexEntryRecord.target_kind == "source_item",
-                ),
-            )
-            .outerjoin(
-                vector_entry,
-                and_(
-                    vector_entry.target_kind == "source_item",
-                    vector_entry.target_id == IndexEntryRecord.target_id,
-                    vector_entry.index_type == "vector",
-                    vector_entry.text_view_name == vector_text_view_name,
-                ),
-            )
+        matching_vector = (
+            select(vector_entry.id)
             .where(
-                IndexEntryRecord.index_type == "lexical",
-                IndexEntryRecord.text_view_name == lexical_text_view_name,
+                vector_entry.target_kind == "source_item",
+                vector_entry.target_id == IndexEntryRecord.target_id,
+                vector_entry.index_type == "vector",
+                vector_entry.text_view_name == vector_text_view_name,
+            )
+            .exists()
+        )
+        eligible_source = (
+            select(SourceItemRecord.id)
+            .where(
+                SourceItemRecord.id == IndexEntryRecord.target_id,
                 SourceItemRecord.artifact_kind.in_(("message", "assistant_output")),
                 func.length(SourceItemRecord.content) >= 40,
-                vector_entry.id.is_(None),
+            )
+            .exists()
+        )
+        statement = (
+            select(IndexEntryRecord.id)
+            .where(
+                IndexEntryRecord.index_type == "lexical",
+                IndexEntryRecord.target_kind == "source_item",
+                IndexEntryRecord.text_view_name == lexical_text_view_name,
+                ~matching_vector,
+                eligible_source,
             )
             .limit(1)
         )

@@ -316,6 +316,93 @@ class TestRebuildCoordinator:
             text_view=eligible.content, text_view_name=SOURCE_ITEM_VECTOR_TEXT_VIEW,
         ))
         assert raw_source_vector_backfill_needed(storage) is False
+
+    def test_sqlite_backfill_check_skips_content_length_for_completed_vectors(self, tmp_path: Path):
+        from sqlalchemy import event
+
+        from core.indexing import SOURCE_ITEM_CONTENT_TEXT_VIEW, SOURCE_ITEM_VECTOR_TEXT_VIEW, build_index_entry
+        from storage.sqlite import SQLiteStorageProvider
+
+        storage = SQLiteStorageProvider(f"sqlite:///{tmp_path / 'completed.db'}")
+        for index in range(3):
+            source = SourceItem(
+                source_type="chat_message", source_id=f"completed-{index}",
+                content_type="text/plain", content="Unicode café 完了済み source content is long enough.",
+                artifact_kind="message", id=f"completed-{index}",
+            )
+            storage.create_source_item(source)
+            storage.create_index_entry(build_index_entry(
+                target_kind="source_item", target_id=source.id, index_type="lexical",
+                text_view=source.content, text_view_name=SOURCE_ITEM_CONTENT_TEXT_VIEW,
+            ))
+            storage.create_index_entry(build_index_entry(
+                target_kind="source_item", target_id=source.id, index_type="vector",
+                text_view=source.content, text_view_name=SOURCE_ITEM_VECTOR_TEXT_VIEW,
+            ))
+
+        length_calls = []
+        def counted_length(value):
+            length = len(value)
+            length_calls.append(length)
+            return length
+
+        storage._engine.dispose()
+        event.listen(
+            storage._engine, "connect",
+            lambda dbapi_connection, _: dbapi_connection.create_function("length", 1, counted_length),
+        )
+        try:
+            assert raw_source_vector_backfill_needed(storage) is False
+            assert length_calls == []
+        finally:
+            storage.close()
+
+    @pytest.mark.parametrize(
+        (
+            "artifact_kind", "content", "lexical_view", "lexical_target", "vector_view",
+            "vector_target", "expected", "lexical_kind", "vector_kind", "vector_index_type",
+        ),
+        [
+            ("message", "", "source_item.content", "source", None, None, False, "source_item", "source_item", "vector"),
+            ("message", "é" * 39, "source_item.content", "source", None, None, False, "source_item", "source_item", "vector"),
+            ("message", "é" * 40, "source_item.content", "source", None, None, True, "source_item", "source_item", "vector"),
+            ("assistant_output", "é" * 40, "source_item.content", "source", None, None, True, "source_item", "source_item", "vector"),
+            ("tool_use_summary", "é" * 40, "source_item.content", "source", None, None, False, "source_item", "source_item", "vector"),
+            ("message", "é" * 40, "wrong.view", "source", None, None, False, "source_item", "source_item", "vector"),
+            ("message", "é" * 40, "source_item.content", "orphan", None, None, False, "source_item", "source_item", "vector"),
+            ("message", "é" * 40, "source_item.content", "source", "wrong.embedding", "source", True, "source_item", "source_item", "vector"),
+            ("message", "é" * 40, "source_item.content", "source", "source_content.embedding", "other", True, "source_item", "source_item", "vector"),
+            ("message", "é" * 40, "source_item.content", "source", "source_content.embedding", "source", False, "source_item", "source_item", "vector"),
+            ("message", "é" * 40, "source_item.content", "source", None, None, False, "memory_object", "source_item", "vector"),
+            ("message", "é" * 40, "source_item.content", "source", "source_content.embedding", "source", True, "source_item", "memory_object", "vector"),
+            ("message", "é" * 40, "source_item.content", "source", "source_content.embedding", "source", True, "source_item", "source_item", "lexical"),
+        ],
+    )
+    def test_sqlite_backfill_check_preserves_eligibility_states(
+        self, tmp_path: Path, artifact_kind, content, lexical_view, lexical_target,
+        vector_view, vector_target, expected, lexical_kind, vector_kind, vector_index_type,
+    ):
+        from core.indexing import build_index_entry
+        from storage.sqlite import SQLiteStorageProvider
+
+        storage = SQLiteStorageProvider(f"sqlite:///{tmp_path / 'states.db'}")
+        source = SourceItem(
+            source_type="chat_message", source_id="source", content_type="text/plain",
+            content=content, artifact_kind=artifact_kind, id="source",
+        )
+        storage.create_source_item(source)
+        storage.create_index_entry(build_index_entry(
+            target_kind=lexical_kind, target_id=lexical_target, index_type="lexical",
+            text_view=content, text_view_name=lexical_view,
+        ))
+        if vector_view is not None:
+            storage.create_index_entry(build_index_entry(
+                target_kind=vector_kind, target_id=vector_target, index_type=vector_index_type,
+                text_view=content, text_view_name=vector_view,
+            ))
+        assert raw_source_vector_backfill_needed(storage) is expected
+        storage.close()
+
     def test_raw_source_backfill_needed_pages_and_handles_eligibility(self):
         sources = [
             SourceItem(

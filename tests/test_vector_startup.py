@@ -568,6 +568,73 @@ class TestLoadOrCreateVectorIndex:
 # CLI commands
 # ---------------------------------------------------------------------------
 
+@requires_usearch
+@pytest.mark.parametrize("vector_exists", [False, True])
+def test_raw_source_backfill_http_startup_and_reopen(tmp_path, monkeypatch, vector_exists):
+    from fastapi.testclient import TestClient
+
+    from app.config import EmbeddingProviderConfig
+    from app.main import create_app
+    from core.indexing import SOURCE_ITEM_VECTOR_TEXT_VIEW, build_index_entry
+    from core.rebuild_coordinator import RebuildCoordinator
+    from storage.sqlite import SQLiteStorageProvider
+
+    sqlite_url = f"sqlite:///{tmp_path / 'startup.db'}"
+    content = "é" * 40
+    with TestClient(create_app(_minimal_config(
+        sqlite_url=sqlite_url, vector_index=VectorIndexConfig(enabled=False),
+    ))) as client:
+        response = client.post("/items", json=[{
+            "source_type": "chat_message", "source_id": "startup-source",
+            "content_type": "text/plain", "content": content,
+            "artifact_kind": "message", "container_ref": "test-container",
+        }])
+        assert response.status_code == 200
+        source_id = response.json()[0]["source_item_id"]
+        assert len(response.json()[0]["index_entry_ids"]) == 1
+
+    if vector_exists:
+        storage = SQLiteStorageProvider(sqlite_url)
+        try:
+            storage.create_index_entry(build_index_entry(
+                target_kind="source_item", target_id=source_id, index_type="vector",
+                text_view=content, text_view_name=SOURCE_ITEM_VECTOR_TEXT_VIEW,
+            ))
+        finally:
+            storage.close()
+
+    monkeypatch.setattr(
+        "app.dependencies.build_embedding_provider",
+        lambda config, *, provider_name: StubEmbeddingProvider(),
+    )
+    monkeypatch.setattr(RebuildCoordinator, "start", RebuildCoordinator.run_sync)
+    config = _minimal_config(
+        sqlite_url=sqlite_url,
+        vector_index=VectorIndexConfig(
+            enabled=True, index_path=str(tmp_path / "startup.index"),
+            embedding_provider="local",
+        ),
+        embedding_providers={"local": EmbeddingProviderConfig(
+            name="local", kind="fastembed", model="test-model",
+        )},
+    )
+    for reopening in (False, True):
+        with TestClient(create_app(config)) as client:
+            response = client.get("/status")
+            assert response.status_code == 200
+            rebuild = response.json()["vector_rebuild"]
+            if vector_exists or reopening:
+                assert rebuild is None
+            else:
+                assert rebuild["status"] == "completed"
+                assert rebuild["reason"] == "eligible raw sources missing vector entries"
+            response = client.get(
+                f"/source/{source_id}/context", params={"container_ref": "test-container"},
+            )
+            assert response.status_code == 200
+            assert response.json()["items"][0]["content"] == content
+
+
 class TestCLICommands:
 
     def test_rebuild_vector_index_mode_accepted_by_parser(self) -> None:
