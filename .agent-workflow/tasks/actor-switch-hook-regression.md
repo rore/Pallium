@@ -15,12 +15,26 @@
 **Material assumptions:** Controlled clock advancement during lock setup reproduces the observable None without malformed identity or request. It establishes a failure class, not historical attribution. A module-local advancing clock models finite elapsed time while removing host IO latency; it must not mutate stdlib time globally or permit an infinite contention loop. Stop if the mechanism or clock isolation is disproved.
 **Plan:** Invoke Agent Workflow and classify before code edits; application-test paths are outside documentation-only exemption. Preserve held branch, use fix/actor-switch-hook-regression from ae2559c8, commit this record first. Use ignored, guarded one-case diagnostics to observe lock/state/request phases and inject logical setup delay without sleep. Independent plan review. If supported, change only this functional test to a module-private advancing monotonic clock and strengthen confirmation/identity-state assertions. Root owns all execution; independent result review and exact manager handoff follow. No production edit or full allocation.
 **Verification plan:** Existing lock setup deadline can reject an uncontended turn before request -> controlled private clock/setup diagnostic and state/request trace. Identity transition and actor invalidation remain correct -> both existing actor parameters plus new state assertions with unchanged original assertions. Clock patch remains private and deadlines still fail closed -> sibling provisional/pin/lock/deadline tests in existing files and explicit stdlib clock identity assertion. Whole change -> selector, boundary/Redline/workflow and independent result review; combined full and CI owned by manager remain open.
-**Plan review:** Pending independent review before functional test edits; ignored causal diagnostic only first.
+**Plan review:** Independent read-only /root/actor_hook_discovery accepted the private advancing-clock plan and causal limits at 22260b7f before functional test edits. The diagnostic must traverse the real lock implementation, and the test must assert stdlib monotonic remains unchanged. No reviewer execution or edits.
 **Approvals:** Existing human authorization to drive relevant fixes and manager's exact bounded actor assignment. No live operations or full run authorized.
 **Exceptions:** —
-**State:** Ready to implement
+**State:** Blocked
 <!-- agent-workflow:end -->
 
 ## Recovery
 
-Canonical roadmap/features/fix-opencode-plugin-reliability.md remains manager-owned and active; this supporting test work does not close it. Retained hook-test-transport-isolation record and commits remain unchanged. Root owns execution, read-only agents report without edits or tests. Latest failed log: C:/Users/I347041/AppData/Local/Temp/pallium-full-suite-run-b05d6b00b5b441f79f71bb68f493f058/pytest.stdout.log. No fix or historical cause claimed yet.
+Canonical roadmap/features/fix-opencode-plugin-reliability.md remains manager-owned and active; this supporting test work does not close it. Retained hook-test-transport-isolation record and commits remain unchanged. Root owns execution, read-only agents report without edits or tests. Latest failed log: C:/Users/I347041/AppData/Local/Temp/pallium-full-suite-run-b05d6b00b5b441f79f71bb68f493f058/pytest.stdout.log. Historical cause remains unproven.
+
+## Diagnostic evidence
+
+Original production/test source at 22260b7f, one exact Claude parameter under existing socket guard and private profile: controlled module-local monotonic advance of 0.2 s during the second lock-file setup produced the same result-is-not-None failure, 1 failed in 0.38s. Real original lock function was invoked through a pass-through observer, not replaced with a fake result. Trace: first provisional lock acquired, relay lock setup advanced clock, next lock acquisition returned false, custom request uncalled, hook deadline absent, confirmed container remained git:a and no relay_turn_intent was written. Guard logs absent. This proves the short-lock setup budget can cause this observable failure class; historical full failure has no phase trace and remains unattributed. Production correctly fails closed after its budget.
+
+## Implementation and checks
+
+Only the functional actor test now copies its common module's time namespace and uses count(step=0.001) for advancing logical monotonic time. Stdlib time remains unchanged and polling still has a finite clock. All original assertions remain, with additional persisted b/e1/generation1 confirmation and obsolete identity/provisional-field absence assertions. No production or timeout changes.
+
+Controlled setup diagnostic on candidate: 1 passed in 0.24s; real lock acquired and custom request called, b confirmed, no intent remained. Original setup-delay.json was reused by this green run; original RED trace was inspected in tool output and preserved there, while RED pytest output remains in setup-delay-red.log. Do not treat the current JSON as the original failed trace. Focused actor/provisional/deadline cases: 6 passed in 0.47s. Affected test_agent_relay_hooks.py, test_hook_deadline_safety.py, and test_claude_code_hooks/test_session_pin.py: 200 passed in 31.59s. Per-run guard files absent (zero denied traffic). Exact CLI commands and stdout retained under build/actor-switch-evidence; private HOME/config/cache and existing reviewed socket guard applied to every run. No full suite or live operations.
+
+## Qualification
+
+Pending configured selector/governance and independent result review. State Blocked denotes manager-owned combined full/CI qualification, not a passing full suite or an established historical failure cause. Manager received mechanism/candidate update through Relay relay-msg-d4282dc394764cf9bb168fe292574f78 (saved pending, receipt unconfirmed).
