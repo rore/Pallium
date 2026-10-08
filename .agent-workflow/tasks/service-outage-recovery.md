@@ -28,13 +28,13 @@
 
 **Verification plan:** When recovery is fatally exhausted, the supervisor must expose failure rather than successful shutdown while intentional stop remains successful -> isolated fake-process caller regression through run_supervisor and CLI service/run dispatch. When a generated Windows launcher owns a service run, it must preserve hidden launch and propagate child terminal status rather than detach -> isolated generated-script/launcher execution checks with only private fixtures and mocked scheduler registration. When readiness budgets interact, the documented bounded lifecycle must agree with observed outcomes -> source-derived budget accounting and deterministic injected-clock caller checks, not an arbitrary timeout increase. Existing child cleanup, retry, token/foreign-process and transient/fatal listener behavior -> affected existing suites once a slot is allocated. Whole-change release -> selector/full lane, workflow/Redline/import checks and independent review; manager owns installed qualification and roadmap reconciliation.
 
-**Plan review:** Pending discovery and exact correction selection; production edits are held until clean-context smart technical plan review.
+**Plan review:** Clean-context gpt-6.1-sol/high review approved the amended first-slice plan against source baseline f31ac141 (2026-10-08). Findings addressed before edits: fourth stop-verifier parser, PowerShell Unicode serialization, cancellation races/child ownership and retry-helper kill seam. Approval covers the four named production files and isolated regressions only; generated-host evidence is not installed scheduler acceptance. Startup optimization and AcceptEx cause remain open.
 
 **Approvals:** Existing human outage investigation/prevention request relayed by pallium manager authorizes isolated implementation only. No new installed launcher/config/restart scope is approved. Separate human plan/result gate will be required if reassessment raises Risk to High.
 
 **Exceptions:** —
 
-**State:** Blocked
+**State:** Implementing
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -67,3 +67,51 @@ branch feat/service-outage-recovery, baseline f31ac14186943cdc60ce10dbb37e26c42a
 No source or test edit/run yet. Frozen projection branch and its evidence are
 untouched. Manager owns any canonical roadmap association/status; no exact
 new roadmap/work identity was supplied, so none is guessed or attached.
+
+## Exact first-slice plan (2026-10-08)
+
+1. Correct fatal terminal status in `app/supervisor.py`: runtime API replacement
+   exhaustion returns failure when no stop was requested; intentional cancellation
+   remains successful, including during initial startup. Skip child restart handling
+   after an intentional stop. Unexpected repeated zero-code child exits that exhaust
+   the restart budget are failures rather than successful service completion.
+   A stop requested during successful readiness must retain the API slot for
+   cleanup but not spawn helpers. Check cancellation before and after slot polling;
+   a successful replacement must become owned by its slot before cancellation cleanup.
+   Preserve existing retry counts/deadlines, launch-token fencing and tree cleanup.
+2. Change both existing VBS generators (`app/cli/service.py` and
+   `scripts/install-service.ps1`) to `WScript.Quit WshShell.Run(..., 0, True)`.
+   Waiting alone is insufficient: the returned status must become the host exit code.
+   Keep hidden windows, existing commands, paths, task identities and installation
+   behavior. Do not run either installer against a real user installation.
+   Correct the PowerShell generator's pre-existing ASCII path loss with BOM UTF-16
+   serialization, matching the existing CLI generator; qualify Unicode privately.
+3. Update the three launcher-reading regexes in `scripts/restart-service.ps1`
+   to recognize the new parenthesized Run call as well as legacy statement form.
+   Also update the statement-form parser in `app/cli/service.py`
+   `assert_service_stopped`; review found this fourth consumer before edits.
+   Preserve exact interpreter/home/port validation and fail-closed cleanup scope.
+4. Add focused regression coverage to existing supervisor/service/restart tests and
+   a small isolated launcher lifecycle test if needed: fatal initial/runtime recovery;
+   requested stop before/during recovery; successful recovery; zero-code rapid exits;
+   clean child shutdown; both generated forms preserving terminal status; Unicode
+   and space paths; legacy/new metadata parsing and malformed input exclusion.
+   Drive generated VBS through a Windows script host with a private fake `app.run`
+   or private stub child, never the real service. Any PowerShell installer test mocks
+   scheduler registration and USERPROFILE into a private tree. Snapshot/config,
+   kill-tree, network and scheduler seams must be fenced before test execution.
+   Fence both injected `kill_fn` and module `_kill_tree` used by the retry helper.
+5. Manager allocates the bounded focused-test slot; independent smart result review,
+   whole-change selector/full suite and workflow/CI/PR gates follow separately.
+   Manager owns publication and all installed qualification/rollout approval.
+
+No timeout or provider/cache change belongs to this slice. Nominal supervisor API
+retry budget is 5 x 30s + (2+4+6+8)s = 170s, excluding process termination/spawn
+overhead; CLI readiness is120s and wrapper readiness180s. These differ, and manager
+observed successful restoration after the wrapper deadline. They do not prove which
+startup stage regressed. Source spans from provider initialization to vector-count
+mismatch warning include HF file resolution, ONNX session/tokenizer creation,
+optional inference probe, vector index load and database checks. Process-level
+session cache does not survive retries. Stage attribution and regression-backed
+optimization are a later reviewed slice; no arbitrary timeout increase, live cache
+access or inferred socket cause is authorized here.
