@@ -37,4 +37,10 @@ Controlled setup diagnostic on candidate: 1 passed in 0.24s; real lock acquired 
 
 ## Qualification
 
-Pending configured selector/governance and independent result review. State Blocked denotes manager-owned combined full/CI qualification, not a passing full suite or an established historical failure cause. Manager received mechanism/candidate update through Relay relay-msg-d4282dc394764cf9bb168fe292574f78 (saved pending, receipt unconfirmed).
+Whole-change selector requests the full lane, including inherited held fixture-isolation paths; full remains unallocated here and manager-owned. Configured boundary adapter reports zero violations. First reporter invocation incorrectly used a two-dot comparison against newer accepted main, counting upstream accepted changes as branch removals; workflow blocked the false GRAY floor. Corrected origin/main...HEAD merge-base comparison reports BLUE, Redline exit 0, no API/boundary findings. Corrected workflow exit 1 is solely a nonblocking inherited commit-order advisory: this task's record 22260b7f precedes its code 3416f0d5, but earlier held branch code predates the distinct record. No rule, risk floor or baseline was waived.
+
+State Blocked denotes manager-owned combined full/CI qualification, not a passing full suite or an established historical failure cause. Manager update Relay relay-msg-d4282dc394764cf9bb168fe292574f78 remained pending, attempts 0, target_not_idle at exact trace check; saved does not prove receipt. Final handoff will use the authorized app fallback with newly completed exact evidence, without receive/resend.
+
+## Result review
+
+Agent technical result review: independent nonimplementer /root/actor_hook_discovery ACCEPT FOR MANAGER HANDOFF at exact 3416f0d52a01d109539a044ed7ae8d76519cd5eb. Inspected both commits, source patch, observer, retained RED/green/focused/affected and corrected governance logs. Real lock seam, module-private finite clock, original plus strengthened assertions and evidence limits accepted; no edits or execution. Current JSON is GREEN and must not be cited as RED. Historical attribution remains unproven; full/CI remain open. This subsequent record-only update preserves reviewed test bytes.
