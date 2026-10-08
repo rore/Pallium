@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import re
 import sys
 import time
@@ -64,12 +65,24 @@ _RELAY_WAKE_RE = re.compile(
     r"passing it as message_id\.$"
 )
 
+def _exit_blocked_wake() -> None:
+    try:
+        sys.stderr.write("pallium relay wake blocked: output was not verified.\n")
+        sys.stderr.flush()
+    except Exception:
+        pass
+    finally:
+        os._exit(2)
+
+
 def _strip_ide_context(text: str) -> str:
     return _IDE_TAG_RE.sub("", text).strip()
 
 def main() -> None:
     wake_delivery_id = None
     wake_failure_recorded = False
+    internal_wake = False
+    wake_payload_emitted = False
     try:
         start_hook_deadline(8, host_reserve=1)
         record_codex_hook_execution(script=__file__)
@@ -79,12 +92,6 @@ def main() -> None:
         prompt = payload.get("prompt", "")
 
         if not isinstance(prompt, str) or not prompt or prompt.startswith("/"):
-            return
-        has_session = isinstance(session_id, str) and bool(session_id)
-        container_ref = resolve_container_ref(cwd, session_id if has_session else None, True, False)
-        actor_ref = derive_actor_ref(cwd, session_id)
-        content = _strip_ide_context(prompt)
-        if not content:
             return
         wake_match = _RELAY_WAKE_RE.fullmatch(prompt)
         wake_delivery_id = (
@@ -97,6 +104,12 @@ def main() -> None:
                 delivery_id=wake_delivery_id,
                 stage="hook_started",
             )
+        has_session = isinstance(session_id, str) and bool(session_id)
+        container_ref = resolve_container_ref(cwd, session_id if has_session else None, True, False)
+        actor_ref = derive_actor_ref(cwd, session_id)
+        content = _strip_ide_context(prompt)
+        if not content:
+            return
 
         discovery = discover_work_refs(cwd)
         current_work_ref = injected_work_ref(discovery)
@@ -218,6 +231,8 @@ def main() -> None:
                     )
                     wake_failure_recorded = True
                 raise
+            if internal_wake:
+                wake_payload_emitted = True
             if wake_delivery_id is not None and exact_rendered:
                 record_codex_wake_event(
                     script=__file__,
@@ -276,10 +291,11 @@ def main() -> None:
                 wake_failure_recorded = True
             if relay_outcome != "empty":
                 print(f"pallium relay wake: outcome={relay_outcome}", file=sys.stderr)
-            emit_utf8(json.dumps({
+            if not emit_utf8(json.dumps({
                 "decision": "block",
                 "reason": "Pallium Relay wake suppressed: no verified pending delivery.",
-            }, separators=(",", ":")))
+            }, separators=(",", ":"))):
+                _exit_blocked_wake()
             sys.exit(0)
 
         if has_session and check_dedup(prompt, session_id):
@@ -351,6 +367,18 @@ def main() -> None:
                     rendered_deliveries, container_ref=container_ref
                 )
     except Exception as exc:
+        if internal_wake and not wake_payload_emitted:
+            if wake_delivery_id is not None and not wake_failure_recorded:
+                try:
+                    record_codex_wake_event(
+                        script=__file__,
+                        delivery_id=wake_delivery_id,
+                        stage="hook_failed",
+                        reason="unexpected_error",
+                    )
+                except Exception:
+                    pass
+            _exit_blocked_wake()
         if wake_delivery_id is not None and not wake_failure_recorded:
             record_codex_wake_event(
                 script=__file__,

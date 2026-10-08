@@ -403,6 +403,8 @@ def discover_work_refs(cwd: object) -> WorkRefDiscovery:
 def structural_work_refs_payload(
     container_ref: str, discovery: WorkRefDiscovery, cwd: str | None = None
 ) -> list[dict[str, str]]:
+    if not discovery.structural_refs:
+        return []
     repository_ref = repository_scope_ref(cwd) if cwd else None
     if cwd and not repository_ref:
         return []

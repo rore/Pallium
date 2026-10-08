@@ -623,6 +623,23 @@ def test_empty_and_failed_relay_enrichment_preserve_status(monkeypatch, module):
 
 
 @pytest.mark.parametrize("module", (cc_common, codex_common))
+@pytest.mark.parametrize("cwd", [None, "checkout"], ids=["no-cwd", "with-cwd"])
+def test_empty_structural_work_refs_skip_scope_lookups(monkeypatch, module, cwd):
+    monkeypatch.setattr(
+        module, "repository_scope_ref",
+        lambda *_args: pytest.fail("empty discovery must skip repository lookup"),
+    )
+    monkeypatch.setattr(
+        module, "roadmap_scope_ref",
+        lambda *_args: pytest.fail("empty discovery must skip roadmap lookup"),
+    )
+
+    assert module.structural_work_refs_payload(
+        "git:container", module.WorkRefDiscovery(), cwd
+    ) == []
+
+
+@pytest.mark.parametrize("module", (cc_common, codex_common))
 def test_relay_get_encodes_query_without_body(monkeypatch, module):
     observed = {}
 

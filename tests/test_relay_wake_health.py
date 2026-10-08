@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 
 from app.main import create_app
 from app.claude_wake import ClaudeWakeReconciler
+from app import codex_bridge_pipe as bridge
 from storage.sqlite_schema import RelayCodexWakeReservationRecord, RelayCodexWakeStateRecord, RelayDeliveryRecord, RelayMessageRecord, RelaySessionRecord
 from tests.test_dashboard import _test_config
 
@@ -37,6 +38,38 @@ def _assert_snapshot_shape(snapshot: dict) -> None:
     assert snapshot["last_recovery_progress_at"] is None
     assert snapshot["trace_loss_evidence"] == "not_recorded"
     assert snapshot["trace_loss_count"] is None
+    enrollment = snapshot["native_enrollment"]
+    assert enrollment["state"] in {
+        "unavailable", "never_registered", "registered", "retained_disconnected",
+        "authority_cleared", "unresolved_handles", "released",
+    }
+    assert enrollment["evidence"] in {"unavailable", "cached_lifecycle_observation"}
+    assert enrollment["accepted"] in {True, False, None}
+    assert enrollment["registration_remembered"] in {True, False, None}
+    assert enrollment["custody_present"] in {True, False, None}
+    assert enrollment["unresolved_handles"] in {True, False, None}
+    assert enrollment["continuity_opted_in"] in {True, False, None}
+    assert enrollment["last_failure_stage"] in {None, "register", "maintenance", "reopen", "state-read", "owner-result"}
+    assert enrollment["last_failure_reason"] in {
+        None, "busy", "deadline", "file-unavailable", "file-write-failed", "invalid-message",
+        "invalid-path", "invalid-policy", "invalid-policy-lock", "invalid-response",
+        "message-limit", "native-failed", "native-tool-failed", "path-unavailable",
+        "peer-gone", "peer-mismatch", "peer-unavailable", "policy-busy", "policy-changed",
+        "policy-inactive", "stopped", "timeout", "transport-failed", "unsafe-acl",
+        "unsafe-owner", "unsafe-path", "unsupported-acl",
+    } or enrollment["state"] == "unavailable"
+    fields = {
+        "state", "evidence", "observed_at", "accepted", "registration_remembered",
+        "custody_present", "unresolved_handles", "continuity_opted_in",
+        "last_failure_stage", "last_failure_reason",
+    }
+    if enrollment["state"] == "unavailable":
+        assert set(enrollment) == fields | {"reason"}
+        assert enrollment["reason"] in {"service_missing", "snapshot_unavailable"}
+    else:
+        assert set(enrollment) == fields
+        assert enrollment["evidence"] == "cached_lifecycle_observation"
+        datetime.fromisoformat(enrollment["observed_at"])
 
     expected = {
         (None, None): ("unknown", "authority_unavailable"),
@@ -152,6 +185,54 @@ def _view(world, path):
     snapshot = response.json()["relay_wake"]
     _assert_snapshot_shape(snapshot)
     return snapshot
+
+
+@pytest.mark.parametrize("path", VIEWS)
+@pytest.mark.parametrize("case,state", [
+    ("missing", "unavailable"), ("malformed", "unavailable"),
+    ("never", "never_registered"), ("registered", "registered"),
+    ("disconnected", "retained_disconnected"), ("cleared", "authority_cleared"),
+    ("unresolved", "unresolved_handles"), ("released", "released"),
+])
+def test_native_enrollment_is_cached_lifecycle_evidence(world, tmp_path, path, case, state):
+    _, _, registry, _ = world
+    if case != "missing":
+        data = {
+            "observed_at": datetime.now(timezone.utc).isoformat(),
+            "accepted": case not in {"never", "malformed"},
+            "registration_remembered": case in {"registered", "disconnected"},
+            "custody_present": case in {"registered", "cleared", "unresolved"},
+            "unresolved_handles": case == "unresolved",
+            "continuity_opted_in": case in {"registered", "disconnected", "released"},
+            "last_failure_stage": "register" if case in {"disconnected", "released"} else None,
+            "last_failure_reason": "peer-mismatch" if case in {"disconnected", "released"} else None,
+        }
+        if case == "malformed":
+            data["private-path-sentinel"] = "must not be returned"
+        service = bridge.RetainedService(tmp_path)
+        service._enrollment_diagnostics = data
+        registry.retained_service = service
+    enrollment = _view(world, path)["native_enrollment"]
+    assert enrollment["state"] == state
+    assert "private-path-sentinel" not in json.dumps(enrollment)
+    if case == "missing":
+        assert enrollment["reason"] == "service_missing"
+    elif case == "malformed":
+        assert enrollment["reason"] == "snapshot_unavailable"
+    else:
+        assert enrollment["evidence"] == "cached_lifecycle_observation"
+
+
+@pytest.mark.parametrize("path", VIEWS)
+def test_native_enrollment_never_invokes_foreign_getter(world, path):
+    class ForeignService:
+        def enrollment_diagnostics(self):
+            pytest.fail("health invoked an unknown service getter")
+
+    world[2].retained_service = ForeignService()
+    enrollment = _view(world, path)["native_enrollment"]
+    assert enrollment["state"] == "unavailable"
+    assert enrollment["reason"] == "snapshot_unavailable"
 
 
 @pytest.mark.parametrize("path", VIEWS)

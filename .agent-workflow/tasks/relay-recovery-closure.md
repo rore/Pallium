@@ -28,16 +28,206 @@
 
 **Verification plan:** Same-child reconnect and unchanged security/legacy behavior → test_codex_worker_reconnect.py, test_codex_retained_continuity.py, genuine Windows cross-epoch channel test and existing retained/native/MCP suites. Fault recovery → dedicated installed-host exact delivery traces, actual hook emission/ACK and payload-specific recipient responses, separately from simulated test_codex_wake_retry_edges.py. Historical backlog → read-only exact delivery traces and native rollout metadata, with unrecoverable gaps left explicit. Release readiness → whole-change scripts/test-plan.py, full non-slow suite, workflow/Redline/import checks, smart result review and PR CI. Installed sync → stable commit equality and wrapper restart followed by /health, /status, /debug/queue/health and embedding_provider_ok.
 
-**Plan review:** Agent technical review: /root/closure_plan_review (gpt-6.1-sol/high). Initial 72774457 review correctly blocked admission-lifetime expansion. After the exact human approval, review at 320cc9d5 approved same-live-child continuity; final source/harness review approved PR290. Post-release review at 9ea12eba approved the bounded existing-busy contention plan recorded at 385a8a94: preserve Desktop serialization, grant no new authority, never replay or update caller on busy, keep all identity/unresolved/stop fences. Source changes do not hot-reload existing MCP children.
+**Plan review:** Agent technical review: /root/ci_fixture_plan_review (gpt-6.1-sol/high), approved the unchanged-scope test-only correction at 29a27485 before source edits; details and preserved requirements are in the CI diagnostic fixture correction plan below. Earlier reviews remain valid for unchanged released source: /root/closure_plan_review at 320cc9d5 approved the human-authorized same-live-child continuity, and at 9ea12eba approved existing-busy contention with no replay or custody changes. Source changes do not hot-reload existing MCP children.
 
 **Approvals:** Approved by user 2026-10-06: "yes, of course, that's the desired state" after the exact question allowing the same still-live previously authenticated MCP child to reconnect automatically after service restart, preserving identity checks and no resends. Prior scope approval: "so can you complete the cycle so we don't leave open ends?". Standing authority: "you can push pr and merge if all is ok" and "i approve what is needed". This authorizes the stated child-lifetime admission only, not new-child takeover, changed host identity, unresolved-I/O replay or active-chat interruption.
 
 **Exceptions:** —
 
-**State:** Blocked or returned to planning
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
+
+### Continued native outage diagnosis, 2026-10-07
+
+Manager confirmed relaydev is the sole Codex outage/watchdog investigator; no
+second investigator is assigned. PR298, PR300 and PR301 are merged reviewed
+source components, not an installed outage fix. The user directly approved one
+combined clean-clone sync, installed wrapper restart and health/unattended
+delivery verification only after all fixes and the manager's combined release
+(manager user item 01a11798-62e5-7680-a26d-45e67b97dd5a). No repeat approval is
+needed for that exact conditional scope. It excludes host restart/upgrades,
+launcher/config changes and fault/observer installation. The live hold remains.
+
+Read-only watchdog analysis found no confirmed source fault. A bounded isolated
+real Proactor discriminator passed: during a 397 ms loop block both TCP probes
+still connected while HTTP timed out and heartbeat lagged; explicitly closing
+the listener made TCP fail while heartbeat continued. This validates the
+discriminator, not a genuine WinError64 incident, backlog-pressure case or
+historical watchdog cause. No speculative watchdog patch is proposed.
+
+A new independent source review and isolated actual Windows pipe discovery
+confirmed a canceled first request can leave a ready-only unregistered channel
+holding the sole admission slot indefinitely. Another connection remained busy
+until explicit worker shutdown. Historical causality remains unproven. The
+bounded repair plan is .agent-workflow/tasks/relay-unregistered-channel-release.md;
+parent ownership, High/Large classification and original criteria are unchanged.
+The existing managed checkout is reused on that component's fresh branch at
+989f2c26; prior branch/evidence are preserved. No production/test edit or live
+operation has begun; independent plan/risk review is the next gate.
+
+### Never-admitted channel implementation, 2026-10-07
+
+The later never-admitted channel component is independently planned at
+adbcc474cf7274df434d1d86d9868e54d7845832 and approved by
+/root/wake_output_plan_review (gpt-6.1-sol/high), Elevated/Moderate. The initial
+pre-edit plan was returned for an asynchronous EOF race; corrected before code.
+Implementation now preserves queued callers, retires only an idle never-used
+resolved channel, and fences fresh constructor acquisition to the retired trusted
+identity without replay. Separate-source actual Windows regression and bounded
+caller/native tests are delegated in disjoint files. Parent High/Large and all
+installed/historical acceptance gaps remain open. No live deployment occurred.
+
+The final component source is independently approved at worker blob 42250295
+and native blob 0555068e. Final focused caller validation passed 32 cases,
+including real FastMCP protocol cancellation, queued fresh requests before and
+during cleanup, rejected trust lineage, and preserved already-admitted custody.
+The earlier 265-case actual Windows/native run covers unchanged exercised paths,
+not the subsequent small guard delta. Whole-change full validation, final result
+review and exact-head PR gates remain pending; this does not qualify the
+installed source, unattended delivery, historical incidents or watchdog cause.
+
+### CI diagnostic fixture correction plan, 2026-10-07
+
+Invoke /agent-workflow before edits (completed). Resume this record and retain
+High/Large and the unchanged requirement baseline. Intended files are this
+record, tests/test_codex_relay_fault_harness.py, tests/test_agent_relay_hooks.py,
+and, only if needed to preserve deterministic body-deadline coverage,
+tests/test_hook_deadline_safety.py. All are policy-blue; no production, protected
+behavior contract, CI, configuration, API or installed-hook changes are planned.
+PR297's independently owned OpenCode guard stays separate and held while CI is red.
+
+PR297 attempt1 failed the unchanged observer concurrent-admission ledger read:
+zero relay_response rows. A controlled delayed existing writer reproduces this
+for both hooks; after append completion each ledger contains exactly one response.
+The observer deliberately returns after at most 50 ms of daemon logging, whereas
+the fixture reads immediately. Preserve that production bound and fail-open
+behavior. Add one test-only completion-event reader around the existing append
+helper; all observer assertions needing complete evidence wait for completion
+with a finite test deadline. Keep failed/blocked logging tests independent. Add
+a controlled delayed-writer regression proving unchanged turn results, one-shot
+admission, reference restoration before append and eventual complete evidence.
+
+Attempt2 instead failed the unchanged real HTTP fragmented-response case:
+one attempted fragment versus three, with hook timeout at 2272 ms and a block
+decision. Later trace/state assertions did not execute in that failing run.
+The server calls the real TestClient endpoint before sending bytes and attempts
+three fragments across 2.2 seconds, longer than the hook's 2.0-second budget.
+Exact serial rerun passed once; endpoint delay versus runner scheduling is not
+attributed by the original log. Correct only unsupported server-completion
+assumptions after client cancellation. Retain the existing hook deadline,
+elapsed bounds, exact delivery attempts/state/trace and no-emission assertions;
+also preserve explicit nonvacuous slow-body deadline coverage using the existing
+deadline fixture. Do not merely drop the fragment check, raise production
+timeouts, skip a test, fake a successful response or treat a serial pass as cause.
+
+Verification: deterministic failing-before/fixed-after observer read; exact
+affected tests serially, then affected files; whole-change test selector and
+one full non-slow lane, unchanged behavioral contracts and workflow checks.
+Clean-context smart plan/result reviews precede implementation/release. Reuse
+standing approved diagnostic/test scope; any changed product requirement or
+new boundary returns to planning. No service restart, live fault, consumer
+configuration change or receipt fallback occurs during this test-only work.
+Before merge reconcile the original and retry CI failures and preserve their
+logs. After green reviewed merge, coordinate both stable syncs, consumer-owned
+hot-reload acceptance, and the required safe-window installed wrapper restart
+with health checks. Installed recovery qualification remains separately open.
+
+Implementation update, 2026-10-07: tests/test_codex_relay_fault_harness.py now
+wraps the real observer append with a test completion event and waits before
+successful-ledger assertions. A controlled writer opens the evidence file and
+pauses; both concurrent calls preserve their original response objects, one
+fault admission is consumed, undo restores all references and returns within
+the bound, and an immediate read is empty until the writer is released. The
+test then waits for append completion and requires one response event plus a
+captured terminal event. Failed/blocked logger coverage and the production
+50 ms wait remain unchanged. Verification: the exact prior and new concurrency
+nodes passed, 4 passed in 5.37s; the complete
+tests/test_codex_relay_fault_harness.py file passed, 90 passed in 10.30s.
+
+Current isolated base: f31ac14186943cdc60ce10dbb37e26c42a3496bc on
+feat/relay-recovery-closure. Agent technical plan review:
+/root/ci_fixture_plan_review (gpt-6.1-sol/high), approved narrowly at
+29a27485a0a62382b28370652a869abe7f21b859. No requirement change or new
+authority is introduced; the existing approved diagnostic/test scope applies.
+Use a finite completion Event around the real append for every observer reader
+requiring complete evidence; retain independent blocked/failed logger checks.
+The controlled delayed writer must prove bounded undo and restored references
+before release, then exactly one response and complete terminal evidence.
+Remove only unsupported canceled-client server-write completion assumptions;
+retain every hook elapsed/state/trace/no-emission assertion. Extend the existing
+response fixture with controlled partial-byte progress followed by an incomplete
+blocked body, asserting progress before return, unfinished reader, unchanged
+1.5-second outer join and unavailable result. Release and join in finally.
+This deterministic model complements, not replaces, real HTTP coverage.
+No test source changed before review. Native ownership/recovery acceptance
+and earlier unexplained incidents remain open outside this resumed CI slice.
+
+Root acceptance checkpoint: the completed source diff was independently approved
+by /root/ci_fixture_plan_review with no correctness, coverage or overengineering
+finding. Frozen test blobs are ec6838b48467fe0ed76da1d02e89b0265f21b5ee
+(observer), 2c188d04e574a31a3f881d55e5613eb21bb6c05a (real HTTP), and
+10ad8d270a9bcc46d44a0763b6c5b010f7d28c7b (deadline). The observer file passed
+90 cases in 10.30 s; both deadline files passed 126 cases in 29.94 s with
+confirmed exit zero. A temporary in-memory one-second extension of the outer
+fence was rejected by the strengthened partial-body regression. Two earlier
+worker file runs omitted completion metadata and are not accepted as evidence.
+Root started the one required full non-slow serial lane at 65c74b37 with exactly
+these dirty test blobs. Session 83768 completed with confirmed exit zero:
+6343 passed, 34 skipped, 480 deselected, 2 xfailed in 1357.40s. The final
+independent smart adequacy review by /root/ci_fixture_plan_review approved this
+test-only correction at 368a8d3a, confirming all three test blobs are unchanged.
+No production source, protected contract, service, hook configuration or consumer
+settings changed. Fresh whole-change selector, Redline/workflow checks and PR CI
+remain gates. Release is held for the shared installed native-wake incident below;
+PR297 stays separately owned and unmerged. This evidence does not close installed
+Relay recovery acceptance.
+
+Separate human result review received on 2026-10-07: the user selected
+"Approve result after all gates pass" for request
+call_8e4f89bb47254a48be1569627dff647a. The presented result states that observer
+tests await the real ledger writer, HTTP tests preserve deadline/delivery-state/
+no-emission checks without requiring server writes after cancellation, partial
+body deadline coverage is strengthened, no production/settings change occurs,
+smart source review and 216 affected tests passed, and full validation is still
+running. Merge is conditional on full validation, final review and green CI.
+The broader installed Relay recovery acceptance explicitly remains open.
+
+### Shared installed native-wake incident, 2026-10-07
+
+Manager assigned urgent read-only diagnosis of three recipients around
+14:24–14:26 UTC and held unrelated service/deployment changes. Both stable
+checkouts remain f31ac141; the service epoch began at 12:35:50 UTC. Public health
+does not prove native custody. Current log has no retained registration after
+that restart; first post-restart dispatch failures are at 12:36:07. Earlier
+reopen failures began at 10:36:37, followed by intermittent fresh registrations.
+
+Exact deliveries relay-delivery-e4548dac72764e19a54fe97a38822c2f and
+relay-delivery-e223cd1983dd456e854b18c6c14bc9ab fail native dispatch at
+stage=reopen/category=peer-mismatch, before recipient state read or submission.
+That category also covers absent retained_registration, so it does not establish
+a changed Desktop identity. Fixed-as-of trace pagination through sequence 10072
+is exhausted: these two deliveries remain pending with attempts=0; their retained
+trace is truncated. Astra's relay-delivery-8f966328a54d4720a5c7a2a8ae437dd1 was
+claimed and ACKed once at 14:24:59 on a manager-reported human-assisted turn, not
+unattended recovery proof. Three initial MCP trace calls may have attempted
+source enrollment; subsequent pagination used only read-only HTTP trace.
+
+Native client service_current returns False immediately when the old service
+handle is signaled, before comparing the bootstrap manifest. A delegated claim
+that ordinary exited-service/changed-manifest ordering disables recovery was
+rejected against the actual source. Missing post-restart enrollment is an
+observation, not an attributed cause. Same-epoch custody drop and older loaded
+worker versions remain hypotheses requiring focused evidence, not blanket fixes.
+
+Direct human environment directive now requires exact live-change approval for
+installed versions, launchers, configuration, integrations, data or service
+operations; generic implementation/PR approval is insufficient. All current work
+is read-only diagnosis or isolated repository work. No restart, rollback, fresh
+enrollment probe, receive/ACK/resend, unknown-child termination or active-chat
+interruption was performed. Manager receives concrete findings through the app
+fallback until native autonomous wake is verified, without settings overrides.
 
 ### Passive exact-session diagnostic plan, 2026-10-07
 
@@ -527,6 +717,27 @@ diagnostics; its successful second claim/ACK after app fallback is not closure.
 Skill feedback trigger 3 dropped: the restart limitation belongs to this product's approved native admission contract, not an Agent Workflow upstream defect.
 
 ## Result review
+
+### Separate CI fixture correction verification, 2026-10-07
+
+Final clean-context smart adequacy review by /root/ci_fixture_plan_review approved
+the frozen three test blobs at code commit 9be7691a; approval pointers and incident
+notes only followed. Root-captured full serial exit zero: 6343 passed, 34 skipped,
+480 deselected, 2 xfailed in 1357.40s. Fresh whole-change selector at f37b69d4
+selects the full lane; that unchanged-source run is reused. Fresh Git NUL path,
+numstat and U0 artifacts produced a clean Redline report; workflow exited zero,
+declared High remains above detected Routine, no boundary or protected-contract
+change, and pre-edit record 29a27485 precedes source 9be7691a. Human conditional
+result approval remains "Approve result after all gates pass". PR CI and review
+resolution still gate merge; source release and all live operations are held.
+
+The urgent diagnostic slice has its own isolated narrow task record/branch
+relay-native-enrollment-diagnostics, not a duplicate recovery-round owner. Smart
+technical/risk review approved plan 5152a99a and pre-edit Ready-to-implement
+checkpoint d6d1633e. Elevated/Moderate describes only passive cached operational
+metadata; this parent remains High/Large. It cannot change native authority or
+delivery, and it does not close installed unattended recovery acceptance. No
+installed deployment or working-environment mutation is authorized by its plan.
 
 ### PR294 release and installed passive observation, 2026-10-07
 

@@ -875,7 +875,10 @@ def mount_dashboard(
             "possible_identity_collisions": collisions,
             "codex_readiness": readiness,
             "awaiting_recipient_checkin": awaiting_recipient_checkin,
-            "relay_wake": relay_wake_health(relay_service, getattr(app.state, "_claude_wake_reconciler", None)),
+            "relay_wake": relay_wake_health(
+                relay_service, getattr(app.state, "_claude_wake_reconciler", None),
+                getattr(dashboard_codex_registry, "retained_service", None),
+            ),
         })
 
     @app.get("/dashboard/api/relay/overview")

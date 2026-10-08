@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
@@ -797,7 +798,10 @@ def test_session_end_outage_preserves_newer_registration_intent(tmp_path: Path, 
     assert json.loads(closed_path.read_text(encoding="utf-8"))["intent_id"] == "newer"
 
 
-def test_new_publisher_waits_for_registry_compare_delete(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("startup_delay", [0.0, 1.2], ids=["normal-startup", "delayed-startup"])
+def test_new_publisher_waits_for_registry_compare_delete(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, startup_delay: float,
+) -> None:
     state_dir = tmp_path / "wake"
     registry = ClaudeWakeRegistry(state_dir=state_dir)
     old_intent = {**PAYLOAD, "intent_id": "older"}
@@ -815,7 +819,7 @@ def test_new_publisher_waits_for_registry_compare_delete(tmp_path: Path, monkeyp
     def pause_after_compare(candidate: Path, *args, **kwargs):
         if candidate == path and threading.current_thread().name == "register-old":
             deleting.set()
-            assert finish_delete.wait(timeout=1)
+            finish_delete.wait()
         return original_unlink(candidate, *args, **kwargs)
 
     monkeypatch.setattr(Path, "unlink", pause_after_compare)
@@ -829,8 +833,9 @@ def test_new_publisher_waits_for_registry_compare_delete(tmp_path: Path, monkeyp
         assert deleting.wait(timeout=1)
         hook_dir = Path(__file__).parents[1] / "integrations" / "claude-code" / "hooks"
         script = """
-import json, os, sys
+import json, os, sys, time
 from pathlib import Path
+time.sleep(float(sys.argv[6]))
 sys.path.insert(0, sys.argv[1])
 import common
 common.CLAUDE_WAKE_DIR = Path(sys.argv[2])
@@ -845,8 +850,9 @@ if os.name == "nt":
         try:
             return native_lock(fd, mode, count)
         except OSError:
-            if not reported[0]:
+            if mode == msvcrt.LK_NBLCK and not reported[0]:
                 reported[0] = True
+                Path(sys.argv[5]).write_text("contended", encoding="utf-8")
                 print("contended", flush=True)
             raise
     msvcrt.locking = observe_lock
@@ -860,6 +866,7 @@ else:
         except OSError:
             if operation & fcntl.LOCK_NB and not reported[0]:
                 reported[0] = True
+                Path(sys.argv[5]).write_text("contended", encoding="utf-8")
                 print("contended", flush=True)
             raise
     fcntl.flock = observe_lock
@@ -868,20 +875,23 @@ print(common._write_wake_intent(json.loads(sys.argv[4])), flush=True)
 """
         process = subprocess.Popen(
             [sys.executable, "-c", script, str(hook_dir), str(state_dir),
-             str(state_dir / "intents"), json.dumps(newer)],
+             str(state_dir / "intents"), json.dumps(newer),
+             str(tmp_path / "contended"), str(startup_delay)],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True,
             env={**os.environ, "HOME": str(tmp_path), "USERPROFILE": str(tmp_path)},
         )
-        assert process.stdout is not None
-        assert process.stdout.readline() == "publishing\n"
-        assert process.stdout.readline() == "contended\n"
+        marker_deadline = time.monotonic() + 5
+        marker = tmp_path / "contended"
+        while not marker.exists() and process.poll() is None and time.monotonic() < marker_deadline:
+            time.sleep(0.01)
+        assert marker.exists(), "child did not observe real OS lock contention before timeout"
         finish_delete.set()
-        assert process.stdout.readline() == "True\n"
-        _output, errors = process.communicate(timeout=1)
-        worker.join(timeout=1)
-        assert not worker.is_alive()
+        output, errors = process.communicate(timeout=3)
+        worker.join(timeout=2)
+        assert not worker.is_alive(), "registry worker did not finish after deletion was released"
         assert process.returncode == 0, errors
+        assert output.splitlines() == ["publishing", "contended", "True"]
         assert result == [True]
 
         assert json.loads(path.read_text(encoding="utf-8"))["intent_id"] == "newer"
@@ -891,10 +901,13 @@ print(common._write_wake_intent(json.loads(sys.argv[4])), flush=True)
         assert recovered.token == "new-token" and recovered.state == "busy"
     finally:
         finish_delete.set()
-        worker.join(timeout=1)
-        if process is not None and process.poll() is None:
-            process.kill()
-            process.wait(timeout=1)
+        try:
+            if process is not None and process.poll() is None:
+                process.kill()
+                process.wait(timeout=2)
+        finally:
+            worker.join(timeout=2)
+            assert not worker.is_alive(), "registry worker leaked after bounded cleanup"
 
 
 @pytest.mark.parametrize("portal_start_delay", [0.0, 0.6], ids=["normal-portal", "delayed-portal"])

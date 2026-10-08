@@ -125,6 +125,375 @@ def register(retained):
     assert service._process(request, service.source, 0, float("inf"))["status"] == "registered"
     return service, natives[-1]
 
+
+def test_enrollment_diagnostics_are_cached_defensive_and_survive_cleanup(retained, monkeypatch):
+    service, request, _ = retained
+    request = {**request, "continuity": None}
+    result = service._process(request, service.source, 0, float("inf"))
+    assert result["status"] == "registered" and len(result["continuity"]) == 64
+    snapshot = service.enrollment_diagnostics()
+    assert snapshot["accepted"] and snapshot["registration_remembered"]
+    assert snapshot["custody_present"] and snapshot["continuity_opted_in"]
+    snapshot["accepted"] = False
+
+    service._custody_lock.acquire()
+    observed, finished = [], threading.Event()
+    reader = threading.Thread(target=lambda: (observed.append(service.enrollment_diagnostics()), finished.set()), daemon=True)
+    reader.start()
+    try:
+        assert finished.wait(1), "cached diagnostics waited for the custody lock"
+    finally:
+        service._custody_lock.release()
+        reader.join(1)
+    assert not reader.is_alive() and observed[0]["accepted"]
+
+    service._drop()
+    monkeypatch.setattr(service, "_open_custody", lambda *a, **kw: (_ for _ in ()).throw(bridge.ShadowUnavailable("peer-mismatch")))
+    retry = {**request, "sequence": 2}
+    with pytest.raises(bridge.ShadowUnavailable):
+        service._process(retry, service.source, 1, float("inf"))
+    service._drop()
+    service._drop()
+    final = service.enrollment_diagnostics()
+    assert final["accepted"] and not final["registration_remembered"] and not final["custody_present"]
+    assert final["continuity_opted_in"]
+    assert (final["last_failure_stage"], final["last_failure_reason"]) == ("register", "peer-mismatch")
+
+
+def test_lost_enrollment_cache_stays_unavailable_after_cleanup_and_denial(client, retained, monkeypatch):
+    service, request, _ = retained
+    assert service._process(request, service.source, 0, float("inf"))["status"] == "registered"
+    client.app.state.codex_wake_registry.retained_service = service
+    service._enrollment_diagnostics = None
+    service._drop()
+    monkeypatch.setattr(service, "_open_custody", lambda *a, **kw: (_ for _ in ()).throw(bridge.ShadowUnavailable("peer-mismatch")))
+    with pytest.raises(bridge.ShadowUnavailable):
+        service._process({**request, "sequence": 2}, service.source, 1, float("inf"))
+    service._drop()
+    assert service.enrollment_diagnostics() is None
+    for path in ("/status", "/dashboard/api/relay/summary"):
+        response = client.get(path)
+        assert response.status_code == 200
+        enrollment = response.json()["relay_wake"]["native_enrollment"]
+        assert enrollment["state"] == "unavailable" and enrollment["reason"] == "snapshot_unavailable"
+
+
+def test_diagnostic_publication_failure_does_not_change_registration_result(client, retained, monkeypatch):
+    service, request, _ = retained
+    broken_clock = SimpleNamespace(now=lambda *_a, **_kw: (_ for _ in ()).throw(RuntimeError("clock unavailable")))
+    monkeypatch.setattr(bridge, "datetime", broken_clock)
+    replacement = bridge.RetainedService(service.directory)
+    assert replacement.enrollment_diagnostics()["observed_at"] is None
+    client.app.state.codex_wake_registry.retained_service = service
+    result = service._process(request, service.source, 0, float("inf"))
+    assert result["status"] == "registered" and service.retained_registration is not None
+    assert service.enrollment_diagnostics()["accepted"] is True
+    for path in ("/status", "/dashboard/api/relay/summary"):
+        response = client.get(path)
+        assert response.status_code == 200
+        assert response.json()["relay_wake"]["native_enrollment"]["state"] == "unavailable"
+
+
+def test_terminal_invalidation_wins_over_inflight_diagnostic_publication(
+    client, retained, monkeypatch,
+):
+    service, request, natives = retained
+    assert service._process(request, service.source, 0, float("inf"))["status"] == "registered"
+    client.app.state.codex_wake_registry.retained_service = service
+    service._drop(preserve_registration=True)
+    native = natives[-1]
+    native_state = (len(native.writes), len(native.owners))
+    entered, release, worker_release = threading.Event(), threading.Event(), threading.Event()
+    clear_completed, inherited_join, stop_completed = (
+        threading.Event(), threading.Event(), threading.Event(),
+    )
+    original_datetime = bridge.datetime
+    class PausingClock:
+        @staticmethod
+        def now(*_args, **_kwargs):
+            if threading.current_thread().name == "diagnostic-publisher":
+                entered.set()
+                release.wait()
+            return original_datetime.now(*_args, **_kwargs)
+    monkeypatch.setattr(bridge, "datetime", PausingClock)
+    worker_entered = threading.Event()
+    def blocked_worker():
+        worker_entered.set()
+        worker_release.wait()
+    class ObservableThread(threading.Thread):
+        def join(self, timeout=None):
+            if timeout == .5 and not inherited_join.is_set():
+                inherited_join.set()
+                assert entered.wait(2), "publisher did not pause before the shutdown timeout"
+            return super().join(timeout)
+    worker = ObservableThread(target=blocked_worker, daemon=True)
+    service.thread = worker
+    worker.start()
+    publisher = None
+    stop_thread = None
+    try:
+        assert worker_entered.wait(1)
+        original_clear = service._clear_registration
+        def clear_then_signal():
+            original_clear()
+            clear_completed.set()
+        monkeypatch.setattr(service, "_clear_registration", clear_then_signal)
+        def stop_service():
+            try:
+                service.stop()
+            finally:
+                stop_completed.set()
+        stop_thread = threading.Thread(target=stop_service, daemon=True)
+        stop_thread.start()
+        assert clear_completed.wait(1) and inherited_join.wait(1)
+        def publish():
+            with service._custody_lock:
+                service._publish_enrollment_diagnostics(failure=("register", "peer-mismatch"))
+        publisher = threading.Thread(
+            target=publish,
+            name="diagnostic-publisher",
+            daemon=True,
+        )
+        publisher.start()
+        assert entered.wait(1)
+        assert stop_completed.wait(1)
+        assert service.unresolved and service.enrollment_diagnostics() is None
+        release.set()
+        publisher.join(1)
+        assert not publisher.is_alive()
+        stop_thread.join(1)
+        assert not stop_thread.is_alive()
+        for path in ("/status", "/dashboard/api/relay/summary"):
+            enrollment = client.get(path).json()["relay_wake"]["native_enrollment"]
+            assert enrollment["state"] == "unavailable"
+        service._drop()
+        for path in ("/status", "/dashboard/api/relay/summary"):
+            enrollment = client.get(path).json()["relay_wake"]["native_enrollment"]
+            assert enrollment["state"] == "unavailable"
+        assert (len(native.writes), len(native.owners)) == native_state
+    finally:
+        release.set()
+        worker_release.set()
+        if publisher is not None:
+            publisher.join(1)
+        if stop_thread is not None:
+            stop_thread.join(1)
+        worker.join(1)
+    assert not worker.is_alive()
+
+
+def test_real_enrollment_lifecycle_is_visible_on_both_http_views(client, retained, monkeypatch):
+    service, request, natives = retained
+    registry = client.app.state.codex_wake_registry
+    registry.retained_service = service
+    paths = ("/status", "/dashboard/api/relay/summary")
+
+    def snapshots():
+        result = []
+        for path in paths:
+            response = client.get(path)
+            assert response.status_code == 200, response.text
+            result.append(response.json()["relay_wake"]["native_enrollment"])
+        return result
+
+    def assert_state(state):
+        views = snapshots()
+        assert [view["state"] for view in views] == [state, state]
+        serialized = json.dumps(views, ensure_ascii=False)
+        for secret in (request["endpoint"], request["thread_ref"], request["turn_ref"], service.sid):
+            assert secret not in serialized
+        return views
+
+    assert_state("never_registered")
+    result = service._process(request, service.source, 0, float("inf"))
+    assert result["status"] == "registered"
+    assert_state("registered")
+
+    durable_before = registry.reservations()
+    native_before = len(natives)
+    writes_before = len(natives[-1].writes)
+    owners_before = len(natives[-1].owners)
+    service._custody_lock.acquire()
+    results, finished = [], threading.Event()
+    def read_views():
+        try:
+            results.extend(snapshots())
+        finally:
+            finished.set()
+    reader = threading.Thread(target=read_views, daemon=True)
+    reader.start()
+    try:
+        assert finished.wait(2), "HTTP diagnostics waited for the native custody lock"
+    finally:
+        service._custody_lock.release()
+        reader.join(2)
+    assert not reader.is_alive() and [value["state"] for value in results] == ["registered", "registered"]
+    assert registry.reservations() == durable_before and len(natives) == native_before
+    assert len(natives[-1].writes) == writes_before and len(natives[-1].owners) == owners_before
+
+    service._drop(preserve_registration=True)
+    assert_state("retained_disconnected")
+    continuity = service._process({**request, "sequence": 2, "continuity": None},
+                                  service.source, 1, float("inf"))
+    assert continuity["status"] == "registered" and len(continuity["continuity"]) == 64
+    opted_in = assert_state("registered")
+    assert opted_in[0]["continuity_opted_in"] and opted_in[1]["continuity_opted_in"]
+
+    service.source.gone = True
+    service._maintain()
+    maintenance = assert_state("released")
+    assert [(value["last_failure_stage"], value["last_failure_reason"]) for value in maintenance] == [
+        ("maintenance", "peer-mismatch"), ("maintenance", "peer-mismatch"),
+    ]
+    service.source.gone = False
+    assert service._process({**request, "sequence": 3}, service.source, 2, float("inf"))["status"] == "registered"
+    assert_state("registered")
+    service._clear_registration()
+    assert_state("authority_cleared")
+    service._drop()
+    assert_state("released")
+
+    with monkeypatch.context() as scoped:
+        scoped.setattr(service, "_open_custody", lambda *a, **kw: (_ for _ in ()).throw(bridge.ShadowUnavailable("peer-mismatch")))
+        denied = {**request, "sequence": 4}
+        with pytest.raises(bridge.ShadowUnavailable):
+            service._process(denied, service.source, 3, float("inf"))
+    after_denial = assert_state("released")
+    assert after_denial[0]["accepted"] and after_denial[1]["accepted"]
+    assert after_denial[0]["last_failure_reason"] == after_denial[1]["last_failure_reason"] == "peer-mismatch"
+
+    fresh = bridge.RetainedService(service.directory)
+    fresh.w, fresh.sid, fresh.current, fresh.source = service.w, service.sid, service.current, service.source
+    registry.retained_service = fresh
+    assert_state("never_registered")
+    with monkeypatch.context() as scoped:
+        scoped.setattr(fresh, "_open_custody", lambda *a, **kw: (_ for _ in ()).throw(bridge.ShadowUnavailable("peer-mismatch")))
+        with pytest.raises(bridge.ShadowUnavailable):
+            fresh._process({**request, "epoch": fresh.epoch}, fresh.source, 0, float("inf"))
+    before_acceptance_denial = assert_state("never_registered")
+    assert before_acceptance_denial[0]["last_failure_reason"] == "peer-mismatch"
+
+    registry.retained_service = service
+    stopped_request = {**request, "sequence": 5}
+    assert service._process(stopped_request, service.source, 4, float("inf"))["status"] == "registered"
+    service.stop()
+    assert_state("authority_cleared")
+    service.stop()
+    assert_state("authority_cleared")
+    service._drop()
+    assert_state("released")
+    service._drop()
+    assert_state("released")
+
+    unresolved = bridge.RetainedService(service.directory)
+    unresolved.w, unresolved.sid = service.w, service.sid
+    unresolved.current, unresolved.source = service.current, service.source
+    registry.retained_service = unresolved
+    unresolved_request = {**request, "epoch": unresolved.epoch}
+    assert unresolved._process(unresolved_request, unresolved.source, 0, float("inf"))["status"] == "registered"
+    unresolved.custody.unresolved = True
+    unresolved._drop()
+    assert_state("unresolved_handles")
+
+
+def test_dispatch_reopens_retained_registration_without_http_side_effects(client, http_wake):
+    http, _, registry, service, desktop, send, _ = http_wake
+    main_registry = client.app.state.codex_wake_registry
+    main_registry.retained_service = service
+    service._drop(preserve_registration=True)
+    for path in ("/status", "/dashboard/api/relay/summary"):
+        assert client.get(path).json()["relay_wake"]["native_enrollment"]["state"] == "retained_disconnected"
+
+    before = (len(desktop.writes), len(desktop.owners))
+    delivery = send()
+    assert delivery["state"] == "pending"
+    assert service.custody is not None and service.retained_registration is not None
+    assert len(service.custody.owners) == 1
+    for path in ("/status", "/dashboard/api/relay/summary"):
+        response = client.get(path)
+        assert response.status_code == 200
+        enrollment = response.json()["relay_wake"]["native_enrollment"]
+        assert enrollment["state"] == "registered"
+        serialized = json.dumps(enrollment, ensure_ascii=False)
+        for private in (r"\\.\pipe\desktop-private", "source-α", "turn-β", service.sid, "private-payload-東京"):
+            assert private not in serialized
+    assert len(desktop.writes) == before[0] and len(desktop.owners) == before[1]
+    after_dispatch = http.get("/relay/messages/retained-journey", params=SCOPE).json()
+    writes_after_dispatch = len(service.custody.writes)
+    owners_after_dispatch = len(service.custody.owners)
+    durable_after_dispatch = after_dispatch
+    for path in ("/status", "/dashboard/api/relay/summary"):
+        assert client.get(path).status_code == 200
+    assert len(service.custody.writes) == writes_after_dispatch
+    assert len(service.custody.owners) == owners_after_dispatch
+    assert http.get("/relay/messages/retained-journey", params=SCOPE).json() == durable_after_dispatch
+
+
+def test_inherited_stop_timeout_invalidates_enrollment_evidence(client, retained):
+    service, request, _ = retained
+    assert service._process(request, service.source, 0, float("inf"))["status"] == "registered"
+    client.app.state.codex_wake_registry.retained_service = service
+    entered, release = threading.Event(), threading.Event()
+    def blocked():
+        entered.set()
+        release.wait()
+    worker = threading.Thread(target=blocked, daemon=True)
+    service.thread = worker
+    worker.start()
+    try:
+        assert entered.wait(1)
+        service.stop()
+        assert service.unresolved
+        assert service.enrollment_diagnostics() is None
+        for path in ("/status", "/dashboard/api/relay/summary"):
+            enrollment = client.get(path).json()["relay_wake"]["native_enrollment"]
+            assert enrollment["state"] == "unavailable"
+    finally:
+        release.set()
+        worker.join(1)
+    assert not worker.is_alive()
+
+
+def test_inherited_source_io_unresolved_invalidates_enrollment_evidence(
+    client, retained, monkeypatch,
+):
+    service, request, _ = retained
+    assert service._process(request, service.source, 0, float("inf"))["status"] == "registered"
+    client.app.state.codex_wake_registry.retained_service = service
+    monkeypatch.setattr(bridge, "_retained", [])
+    w = SimpleNamespace(
+        con=SimpleNamespace(FILE_FLAG_OVERLAPPED=4),
+        pipe=SimpleNamespace(
+            PIPE_ACCESS_DUPLEX=1, PIPE_TYPE_MESSAGE=2, PIPE_READMODE_MESSAGE=4,
+            PIPE_WAIT=8, PIPE_REJECT_REMOTE_CLIENTS=16,
+            CreateNamedPipe=lambda *args: 91,
+            GetNamedPipeClientProcessId=lambda handle: 40,
+            DisconnectNamedPipe=lambda handle: None,
+        ),
+        event=SimpleNamespace(WaitForSingleObject=lambda *args: 258,
+                              WAIT_OBJECT_0=0, WAIT_TIMEOUT=258),
+    )
+    class BrokenIO:
+        def __init__(self, *_args):
+            self.unresolved = False
+        def accept(self, _deadline):
+            self.unresolved = True
+            raise bridge.ShadowUnavailable("transport-failed")
+        def close(self):
+            pass
+    monkeypatch.setattr(bridge, "_native", lambda: w)
+    monkeypatch.setattr(bridge, "_self_sid", lambda _w: service.sid)
+    monkeypatch.setattr(bridge, "_check_path", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(bridge, "_lock_file", lambda *_args: 92)
+    monkeypatch.setattr(bridge, "_security_attributes", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(bridge, "_atomic_private", lambda *_args: None)
+    monkeypatch.setattr(bridge, "_PipeIO", BrokenIO)
+    service._run()
+    assert service.unresolved and service.enrollment_diagnostics() is None
+    for path in ("/status", "/dashboard/api/relay/summary"):
+        enrollment = client.get(path).json()["relay_wake"]["native_enrollment"]
+        assert enrollment["state"] == "unavailable"
+
 @pytest.fixture
 def http_wake(client, retained, monkeypatch):
     storage = client.app.state.pallium_service._storage
@@ -832,8 +1201,10 @@ def test_session_start_lock_budget_claims_emits_and_acks_once(
     monkeypatch.setattr(hook, "relay_request", request)
     monkeypatch.setattr(common, "relay_request", request)  # Real ACK helper.
     if contention != "released":
+        # Exhaust the request allowance, not the independent suppression output.
+        clock = (lambda: 10.0) if contention == "exhausted" else time.monotonic
         monkeypatch.setattr(hook, "start_hook_deadline", lambda *a, **k:
-            common.start_hook_deadline(1.4 if contention == "held" else 0.5))
+            common.start_hook_deadline(1.4 if contention == "held" else 0.5, clock=clock))
     lock = common._acquire_session_lock(TARGET)
     assert lock is not None
     release = threading.Timer(0.3, common._release_session_lock, args=(lock,))
