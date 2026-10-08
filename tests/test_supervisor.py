@@ -284,6 +284,46 @@ def test_stop_during_runtime_retry_is_success(monkeypatch):
     assert retry_kills == [popen_calls[1].pid]
 
 
+def test_stop_during_successful_runtime_replacement_cleans_owned_child(monkeypatch):
+    from types import SimpleNamespace
+
+    stop = SimpleNamespace(requested=False)
+    _use_stop(monkeypatch, stop)
+    processes = []
+    commands = []
+
+    def popen_factory(command, **_kwargs):
+        commands.append(command)
+        proc = FakePopen(poll_returns=[1]) if not processes else FakePopen()
+        processes.append(proc)
+        return proc
+
+    readiness_calls = 0
+
+    def ready_then_stop(*_args, **_kwargs):
+        nonlocal readiness_calls
+        readiness_calls += 1
+        if readiness_calls == 2:
+            stop.requested = True
+        return True
+
+    result = run_supervisor(
+        ["--processors", "1", "--cleaners", "0"],
+        popen_factory=popen_factory,
+        wait_for_api_fn=ready_then_stop,
+        sleep_fn=lambda _: None,
+        should_stop=lambda: False,
+        clock=lambda: 0.0,
+        kill_fn=_fake_kill_fn,
+    )
+
+    assert result == 0
+    assert readiness_calls == 2
+    assert len(commands) == 3  # initial API, one processor, replacement API
+    assert processes[1]._terminated
+    assert processes[2]._terminated
+
+
 def test_stop_during_slot_poll_skips_exit_restart(monkeypatch):
     from types import SimpleNamespace
 

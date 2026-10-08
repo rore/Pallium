@@ -28,7 +28,7 @@
 
 **Verification plan:** When recovery is fatally exhausted, the supervisor must expose failure rather than successful shutdown while intentional stop remains successful -> isolated fake-process caller regression through run_supervisor and CLI service/run dispatch. When a generated Windows launcher owns a service run, it must preserve hidden launch and propagate child terminal status rather than detach -> isolated generated-script/launcher execution checks with only private fixtures and mocked scheduler registration. When readiness budgets interact, the documented bounded lifecycle must agree with observed outcomes -> source-derived budget accounting and deterministic injected-clock caller checks, not an arbitrary timeout increase. Existing child cleanup, retry, token/foreign-process and transient/fatal listener behavior -> affected existing suites once a slot is allocated. Whole-change release -> selector/full lane, workflow/Redline/import checks and independent review; manager owns installed qualification and roadmap reconciliation.
 
-**Plan review:** Clean-context gpt-6.1-sol/high review approved the amended first-slice plan against source baseline f31ac141 (2026-10-08). Findings addressed before edits: fourth stop-verifier parser, PowerShell Unicode serialization, cancellation races/child ownership and retry-helper kill seam. Approval covers the four named production files and isolated regressions only; generated-host evidence is not installed scheduler acceptance. Startup optimization and AcceptEx cause remain open.
+**Plan review:** Agent technical review: native subagent /root/outage_plan_review, clean-context gpt-6.1-sol/high, approved the amended first-slice plan against source baseline f31ac141 (2026-10-08). Findings addressed before edits: fourth stop-verifier parser, PowerShell Unicode serialization, cancellation races/child ownership and retry-helper kill seam. Approval covers the four named production files and isolated regressions only; generated-host evidence is not installed scheduler acceptance. Startup optimization and AcceptEx cause remain open.
 
 **Approvals:** Existing human outage investigation/prevention request relayed by pallium manager authorizes isolated implementation only. No new installed launcher/config/restart scope is approved. Separate human plan/result gate will be required if reassessment raises Risk to High.
 
@@ -256,3 +256,141 @@ agent-workflow defect. Earlier missing guessed reference was an agent path error
 not a broken skill reference. Installed pallium-memory skill now reads completely;
 exact injected Relay sender identity is still unavailable, so authorized manager
 coordination continues by app-message fallback without guessed scope.
+
+## Source freeze, review and direct network sample
+
+Source freeze commit `835fdb0265dcebce07bb13fff4d20c551e12d7b9`, tree
+`86640e1e478979d12c0d2e4f7083e137a217510e`. Clean-context source/isolation review
+by native subagent `/root/outage_source_review` (gpt-6.1-sol/high) found no production
+correctness defect and kept Elevated/Moderate. This is NOT final result acceptance;
+the full validation slot is withheld. Reviewer independently matched all three
+focused stdout hashes. One missing plan-required regression was identified:
+cancellation during successful runtime replacement readiness. A test-only addition
+is authorized; manager granted ONE exact serial private node after safety inspection,
+not a subsystem/full run. Source/checkpoint review limits remain explicit.
+
+The authorized ONE normal HF resolution + actual constructor sample completed
+exit0 in3.38s wrapper with copied private cache and installed interpreter -B.
+Supported custom HTTP client admits only known public HTTPS HEAD URLs, rejects
+GET/unknown-host/auth/cookie; those guards were checked without network first.
+Explicit token=False, implicit-token/telemetry/Xet disabled and trust_env=False;
+asset-download entry blocked as extra defense. No retry or further sample.
+Two HEAD302 responses took0.311924s/0.183916s; normal model resolution0.431265s,
+tokenizer0.186007s; ORT0.635514s/tokenizerload0.382377s/probe0.005609s;
+constructor1.655080s/total2.585028s. Only stderr was unauthenticated-Hub warning.
+No installed/config/DB/service or source-cache write. This current sample did not
+reproduce slowness and does NOT prove absence of a performance bug or its cause.
+
+Private evidence SHA256:
+
+- `profile_network.py`: `CD6FBE3D557C47D34B7546E2CE4384200685D34D65F7AD2D621157133932B1B6`
+- `network-timing.log`: `E1453A39B3AFD1047A1559AC6F72D6F8A0233AD9B8F1E8005C066D401518D0F6`
+- `network-stderr.log`: `131D86FC090736A011859DD38722CE9D9D0840E2602BA2A8048C8A1AF465F9EC`
+
+The unused newly generated checkout-only `.venv` was verified as non-linked,
+containing only fresh uv/bootstrap artifacts with no running process reference,
+then moved recoverably to ignored `build/service-recovery-evidence/unused-uv-venv`.
+Shared and installed runtimes are untouched. This avoids accidental adapter selection.
+
+Initial workflow adapter check against frozen source passed record/baseline/order
+checks but blocked on absent fresh Redline evidence and exact plan-review reference
+syntax. This record now includes the actual native review reference; fresh generated
+Redline/import evidence follows. No check failure is claimed green or waived.
+
+## Proposed next diagnostic slice — not approved for implementation or rollout
+
+Manager requested this exact source-free proposal after all current isolated samples
+failed to reproduce the historical delay. Keep it separate from the four-file
+recovery correction. No new tracing framework, dependency, setting, timeout change
+or database operation. Proposed production files and existing boundaries:
+
+| File | Minimal observation change |
+| --- | --- |
+| `app/supervisor.py` | Extend existing API spawn/readiness logs with monotonic start/completion duration and child PID; keep retry/nonce/deadline/kill behavior unchanged. |
+| `app/run.py` | Capture an early monotonic module-entry value before heavy imports; emit module-import duration only for `serve`, through existing runtime logging once ready. |
+| `app/main.py` | Capture module-import duration; log factory/config/MCP/early-storage and complete service-build boundaries, lifespan completion, and first reconcile start/completion or failure. Preserve the existing2s initial wait and set ready only after success. |
+| `app/dependencies.py` | Fixed start/completion/failure markers around actual storage construction, embedding construction, index load/create, model/schema/backfill/pending-rebuild checks, count checks, and remaining service assembly. Do not add probes or duplicate any query. |
+| `providers/embedding/onnx_provider.py` | Fixed duration markers for each actual HF resolution, ORT session, tokenizer load and dimension probe; distinguish existing process-cache reuse and explicitly supplied dimensions from executed phases. No URL, revision, token, path, model-input or exception text in new markers. |
+
+Use existing `logging`/`emit_runtime_log` and stdlib `time.perf_counter()` only,
+with fixed stage names, elapsed seconds, completion/failure/skipped status and
+process PID where needed. Start markers identify an unfinished stage if killed;
+completion/failure markers use `try/finally` without intercepting or changing the
+existing error/degrade paths. Same-host monotonic timestamps join process-entry,
+spawn and readiness boundaries without treating wall-clock or HTTP302 output as
+network duration. Timers measure the original calls, not separate retries/probes.
+Log only startup/first reconcile, not every periodic reconcile or query.
+
+Reclassification before any edit: all five production paths are gray/watch under
+current policy, no new dependency boundary or API/schema change. Elevated/Moderate
+is proposed, subject to exact smart plan review and final diff; no policy exemption.
+Prepare a separately identifiable Work Record/isolated branch before source edits;
+do not enlarge the frozen correction silently. Manager remains roadmap/rollout owner.
+
+Focused tests would extend existing caller suites located by repository search:
+supervisor and `tests/test_app_run.py` for ordering and unchanged statuses; actual
+provider construction with fake HF/ORT/tokenizer and fake monotonic times for cache
+hit/miss, supplied/probed dimensions, each failure/degrade and no added download;
+factory/build and first-reconcile HTTP health tests for success/failure/skipped-vector,
+unchanged ready gating and exact no-extra-operation counts. Assert new marker keys
+and fixed privacy-safe values (including hostile path/token/payload sentinels), not
+machine-specific elapsed thresholds. Run private serial focused nodes first, affected
+files then selector-required full non-slow and smart result review/CI before rollout.
+
+Installed observation requires a new exact human approval, not current PR/test
+approval. Proposed scope for manager to present after review/gates:
+verify clean development/stable installed clones and exact approved revision;
+record current commit and backup only affected installed source bytes into an
+explicit recoverable private directory, with hashes and current launcher/task/config
+identities retained. Fast-forward stable installed source only to the approved
+diagnostic revision; no dependency update, launcher regeneration, task/config/env
+change, DB copy/migration or native host change. Use exactly
+`C:/Dev/rore/Pallium-installed/scripts/restart-service.ps1` ONCE with existing default
+180s readiness deadline. This stops the current Pallium tree and briefly interrupts
+HTTP/Relay/processing; its existing supervisor may make up to5 bounded API attempts.
+No second restart, manual receive or automatic rollback restart is authorized by
+that one-run scope. Retain stage logs/result and verify `/health`, `/status`,
+`/debug/queue/health` on19836 plus actual running revision independently of wrapper
+result. A timeout is a failed observation, not permission for another operation.
+
+Rollback plan: preserve exact prior source/hash bundle and task/launcher/config;
+if needed manager requests or reuses an explicitly included rollback allowance to
+restore only those source files from the bundle and invoke the same restart wrapper,
+then verify the three health endpoints and prior revision. Never destructive Git
+reset, dependency downgrade, data/schema restore or host updater override. Present
+the optional rollback restart separately from the ONE observation restart so the
+human can approve its precise impact. Without approved rollout, deliver the diagnostic
+PR only and leave installed attribution open. Even a fast installed observation
+does not resolve a historical slow-start or AcceptEx incident.
+
+## Review finding closed; handoff gates still open
+
+Added only `tests/test_supervisor.py::test_stop_during_successful_runtime_replacement_cleans_owned_child`:
+initial API healthy, API exits, replacement readiness requests stop and succeeds.
+The observed contract is status0, two readiness checks, exactly initial API/helper/
+replacement spawns, and termination of the helper and owned replacement. The same
+clean-context smart reviewer inspected the exact40-line test-only delta and confirmed
+the gap is closed in source, with no weakened assertions or lost isolation; prior
+production review remains valid. Production source is identical to835fdb02.
+
+Manager-allocated ONE node command
+`C:/Dev/rore/Pallium/.venv/Scripts/python.exe -B -m pytest tests/test_supervisor.py::test_stop_during_successful_runtime_replacement_cleans_owned_child -q -n 0`
+passed1 in0.10s, exit0, private harness2.581s. Test-ownedPID46220 and direct children
+confirmed drained. Retained stdout copied to ignored
+`build/service-recovery-evidence/cancellation-node.stdout.log`, SHA256
+`564910381F636777F7FBAC7471EDC5A637523F2C34AC9FF9A43C5A156097A6E8`;
+stderr empty. No subsystem/full suite was rerun.
+
+Local source checks: import-linter produced no violations; generated Redline on
+baseline-to-frozen diff isGRAY/advisory1 with no checkpoints/boundary violations,
+and workflow adapter then returned clean0 after the exact plan-review reference
+repair. Final fresh report must include the test-only delta and record before handoff.
+These are local governance checks, not application/full/CI or installed acceptance.
+
+Next owner: pallium manager must coordinate the held full non-slow qualification
+slot and current-origin selector; then clean-context final result review, PR/review
+threads/CI/merge, and separately approved installed launcher rollout/qualification.
+Keep this managed checkout because source/tests and ignored proof assets remain
+needed by that open work. Historical startup/AcceptEx and broader Relay recovery
+acceptance remain unresolved; the diagnostic proposal is not an implementation or
+live-change approval. No worktree retirement or model-evidence deletion is safe yet.
