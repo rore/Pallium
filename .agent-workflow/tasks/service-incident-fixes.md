@@ -39,8 +39,10 @@
 
 ## Implementation
 
-2026-10-08: Isolated integration branch created from current origin/main. No production changes integrated yet. Worker-owned migration, vector query and activation projection changes are in progress; full validation has not started.
+2026-10-08: Isolated integration branch created from current origin/main. Integrated accepted startup timing/budget source 9b41eec0 and reviewed test isolation through ae2559c8. Integrated activation offload d72f59a2 after independent /root/incident_integration_review GO: all 12 sites, preserved callback order, deterministic ASGI proof and 148 affected passes. Integrated vector query source 537455d9 and independent result record 5e7d7747: deterministic content-read red/green, 16 focused passes, 69 affected passes and one existing skip. Migration result remains pending. Full validation has not started.
 
 ## Checkpoints
+
+2026-10-08: Integrated migration candidate a43a9c502f053e3a6f3c28276fe3677fc325ee76 without conflicts, production d5b0cd74. Independent component source review and child-fixture preflight accepted; final storage/isolation 50 passed, unchanged HTTP 43 passed, contract/lifecycle 96 passed, corrected owned-child cases 4 passed. No full run has started. Root source review found no additional issue. Current human through-merge approval above satisfies the source result approval requested in the earlier component record; it does not authorize unspecified live environment changes.
 
 Persistence review covers native main user_version and atomic derived projection migration. API review covers projection execution context only, preserving caller-visible output and admission ordering. Existing independent component review is reused; combined interactions require a final non-implementer review. No architecture imports or behavior-contract changes are planned.
