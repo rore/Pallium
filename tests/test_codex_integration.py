@@ -385,6 +385,7 @@ def test_codex_stop_hook_ingests_quietly(
     monkeypatch.setattr(stop, "build_work_refs_metadata", lambda *_, **_kwargs: {})
     monkeypatch.setattr(stop, "resolve_container_ref", lambda _cwd, _session_id: "git:github.com/rore/pallium")
     monkeypatch.setattr(stop, "derive_actor_ref", lambda *_: "Rotem")
+    monkeypatch.setattr(stop._common, "relay_request", lambda *_a, **_k: None)
 
     def fake_request(method: str, path: str, payload: object, *, quiet: bool = False) -> None:
         calls.append({"method": method, "path": path, "payload": payload, "quiet": quiet})
@@ -666,7 +667,7 @@ def test_codex_hooks_import_cleanly_as_subprocess(
     bootstrap.mkdir()
     ledger_path = tmp_path / "network-attempts.jsonl"
     (bootstrap / "sitecustomize.py").write_text(
-        "import json, os, socket\n"
+        "import io, json, os, socket, urllib.parse, urllib.request\n"
         "_ledger = os.environ['PALLIUM_TEST_NETWORK_LEDGER']\n"
         "open(os.environ['PALLIUM_TEST_BOOTSTRAP_MARKER'], 'w', encoding='utf-8').write('active')\n"
         "def _deny(name):\n"
@@ -675,13 +676,21 @@ def test_codex_hooks_import_cleanly_as_subprocess(
         "  raise OSError('network disabled in hook test')\n"
         " return blocked\n"
         "socket.socket.connect = _deny('socket.connect')\n"
-        "socket.getaddrinfo = _deny('socket.getaddrinfo')\n",
+        "socket.getaddrinfo = _deny('socket.getaddrinfo')\n"
+        "def _urlopen(request, *args, **kwargs):\n"
+        " url = request.full_url if hasattr(request, 'full_url') else str(request)\n"
+        " parsed = urllib.parse.urlsplit(url)\n"
+        " if parsed.scheme != 'http' or parsed.hostname != 'localhost' or parsed.path not in {'/relay/turn', '/query', '/item-and-query'}:\n"
+        "  return _deny('urlopen ' + url)(request, *args, **kwargs)\n"
+        " return io.BytesIO(b'{}')\n"
+        "urllib.request.urlopen = _urlopen\n",
         encoding="utf-8",
     )
     child_env = {
         **os.environ,
         "HOME": str(private_home),
         "USERPROFILE": str(private_home),
+        "PALLIUM_BASE_URL": "http://localhost:19836",
         "PALLIUM_TEST_NETWORK_LEDGER": str(ledger_path),
         "PALLIUM_TEST_BOOTSTRAP_MARKER": str(tmp_path / "bootstrap-active"),
         "PYTHONPATH": os.pathsep.join(

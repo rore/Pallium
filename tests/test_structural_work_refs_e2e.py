@@ -69,6 +69,11 @@ def _quiet_common_side_effects(module, monkeypatch: pytest.MonkeyPatch) -> None:
     ):
         if hasattr(module, name):
             monkeypatch.setattr(module, name, replacement)
+    fetch_confirmed = getattr(module, "fetch_confirmed_work_refs", None)
+    if fetch_confirmed is not None:
+        monkeypatch.setitem(
+            fetch_confirmed.__globals__, "relay_request", lambda *_a, **_k: None
+        )
 
 
 def _python_payloads(

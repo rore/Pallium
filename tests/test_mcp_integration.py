@@ -310,6 +310,18 @@ class TestMcpStatelessTransport:
         # the in-process REST app handles the request — no real network call.
         monkeypatch.setenv("PALLIUM_BASE_URL", "http://testserver")
         app = self._make_app(test_db_url)
+        real_async_client = httpx.AsyncClient
+        requests = []
+
+        async def observe_query(request):
+            requests.append((request.url.path, json.loads(request.content)))
+
+        def asgi_client(*args, **kwargs):
+            kwargs["transport"] = httpx.ASGITransport(app=app)
+            kwargs["event_hooks"] = {"request": [observe_query]}
+            return real_async_client(*args, **kwargs)
+
+        monkeypatch.setattr("app.mcp.client.httpx.AsyncClient", asgi_client)
         with TestClient(app, headers={"host": "127.0.0.1:8000"}) as client:
             response = client.post("/mcp", json={
                 "jsonrpc": "2.0",
@@ -345,6 +357,12 @@ class TestMcpStatelessTransport:
             assert "error" not in tool_payload, tool_payload
             assert isinstance(tool_payload["results"], list)
             assert "decision_reason" in tool_payload
+            assert requests == [("/query", {
+                "text": "what was decided about caching",
+                "limit": 5,
+                "container_ref": "test-container",
+                "visibility": "public",
+            })]
 
 @pytest.mark.asyncio
 async def test_identity_free_mcp_forget_single_and_bulk_lifecycle(pallium_asgi_app) -> None:
