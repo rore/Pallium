@@ -1325,35 +1325,37 @@ def test_natural_hook_overtakes_state_check_without_owner_attempt(http_wake, mon
 def test_queue_wait_allows_fresh_registration_and_disconnect(http_wake, retained, monkeypatch):
     _, _, registry, service, desktop, send, _ = http_wake
     desktop.state = "idle"
-    entered, release = threading.Event(), threading.Event()
-    queues = []
+    queues, checks, callback_errors = [], [], []
     class Process:
         returncode = 0
         def communicate(self, **kwargs):
-            entered.set()
-            assert release.wait(2)
+            # Exercise registration while queue completion is still pending.
+            try:
+                request = {**retained[1], "sequence": 2, "turn_ref": "fresh-turn"}
+                registered = []
+                check = threading.Thread(target=lambda: registered.append(service._process(request, service.source, 1, float("inf"))))
+                checks.append(check)
+                check.start()
+                check.join(.5)
+                assert not check.is_alive() and registered[0]["status"] == "registered"
+                service._drop()
+                assert service.custody is None
+                assert registry.reservations()[0].outcome == "uncertain"
+            except Exception as exc:
+                callback_errors.append(exc)
             return None, ""
     def launch(*args):
         queues.append(args)
         return Process(), None
     monkeypatch.setattr(codex_wake, "_start_launch", launch)
-    thread = threading.Thread(target=send)
-    thread.start()
     try:
-        assert entered.wait(1)
-        request = {**retained[1], "sequence": 2, "turn_ref": "fresh-turn"}
-        registered = []
-        check = threading.Thread(target=lambda: registered.append(service._process(request, service.source, 1, float("inf"))))
-        check.start()
-        check.join(.5)
-        assert not check.is_alive() and registered[0]["status"] == "registered"
-        service._drop()
-        assert service.custody is None
-        assert registry.reservations()[0].outcome == "uncertain"
+        send()
     finally:
-        release.set()
-        thread.join(3)
-    assert not thread.is_alive() and len(queues) == 1 and desktop.owners == []
+        for check in checks:
+            check.join(3)
+    assert not callback_errors, callback_errors
+    assert len(checks) == 1 and not checks[0].is_alive()
+    assert len(queues) == 1 and desktop.owners == []
 
 
 @pytest.mark.parametrize("result", [("ambiguous", "timeout", None), ("failed", "os_error", None)])
