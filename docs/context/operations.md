@@ -54,6 +54,32 @@ Persistent `auto_vacuum` and WAL modes are initialized once under the schema loc
 
 Only the current Relay schema is supported. Keep the main and Relay SQLite files together, back up and restore them as a paired snapshot generation, and verify /health, /status, and /debug/queue/health after service restart. A partial live pair or a database missing required current Relay columns fails closed without being rewritten.
 
+### Main database work-reference projection
+
+The main database owns `PRAGMA user_version`: legacy/fresh version0 migrates to1
+with one atomic rebuild of `source_item_work_refs` from authoritative metadata.
+The projection table/index, rows and completion mark commit together. Failure
+rolls back that step; other schema initialization steps are not globally atomic.
+Unknown versions and incompatible source/projection schemas fail closed.
+
+Completed version1 startup skips the metadata scan and projection rewrite.
+A missing projection table is rebuilt atomically without resetting the version;
+a missing lookup index alone is restored without rebuilding rows. Supported
+metadata updates and retention still maintain the projection incrementally.
+Out-of-band metadata/row edits no longer receive automatic repair on reopen.
+The existing private `_backfill_source_item_work_refs()` repair remains explicit,
+unconditional and version-preserving; this introduces no public repair command.
+
+Separate Relay database versions/rows are not migrated by this main step. A
+same-file deployment shares the changed header: prior offline repair manifests
+become stale and must be regenerated through the existing stopped procedure.
+Do not bypass their identity fence. Earlier binaries retain schema compatibility
+but resume their old unconditional rebuild; they do not reset version1. This
+release rejects unknown future versions rather than promising arbitrary downgrade.
+Installed rollout separately requires approved paired backup, version provenance
+and compatibility checks, qualified restart, and an exact rollback path. A repo
+merge or passing private test does not authorize an installed database migration.
+
 ## Relay control-plane resilience
 
 An enrolled Codex Desktop MCP child may reconnect automatically after the service
