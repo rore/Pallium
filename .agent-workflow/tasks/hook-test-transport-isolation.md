@@ -20,7 +20,7 @@ Owner: `@pal-dev1`. Branch `fix/hook-test-transport-isolation`, isolated from he
 **Plan review:** Self-review of BLUE scope complete. Independent /root/fixture_isolation_plan_review accepted the exact shared confirmed-ref seam, denial-ledger requirement, direct subprocess import preservation and actual MCP ASGI/tool-result plan before test edits; no execution or edits by reviewer. MCP remote-DNS attribution is contextual only; the transport defect is independently source-supported.
 **Approvals:** Existing user authorization to fix reviewed bugs and coordinate with manager; no additional human approval required for isolated test-only BLUE work. Manager controls execution sequencing; no full allocated.
 **Exceptions:** —
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Recovery state
@@ -42,3 +42,11 @@ The one released RED run at clean `aa4ef861da84cf74fbd985c32e4f5c04eba67756` (tr
 GREEN repairs only the defining common relay_request used by confirmed-work-ref helpers; the subprocess private bootstrap supplies empty JSON for three known localhost routes while retaining socket denial; MCP uses the real AsyncClient with ASGITransport, observes the exact /query body and asserts decoded query success. Existing capture/history assertions and direct subprocess invocation remain. The guard helper is unchanged from RED. Independent read-only /root/worker_prototype_correction accepted the exact candidate and actual RED sensitivity before GREEN execution; no edits or tests by reviewer and no static blocker. Reviewed SHA-256: helper `58E372A668F4CEC20BA45D74672200957D0EE697B2CD34AF8A1EB5BBBDFD34F6`, structural test `C3F0143B43F4DB164396474924BA3864856D72774F8B6F1D2618A1ECB99182B8`, Codex test `2E5B99A7E9CA3DE8B3861366B1CFB7DB12D2D68A36C25713CDCB8F83C4643743`. Final frozen files/HEAD/tree are recorded by the runner manifest.
 
 GREEN has not run yet. Manager released the serial focused 13 cases only; no full slot, PR, merge or installed-operation authority is inferred. Subprocess coverage proves private native import/main and empty/error fallback, not real HTTP success. The held composition full-suite failure remains unresolved and is not waived.
+
+## Focused GREEN result and remaining gates
+
+The one released GREEN run froze clean `9f74fad2fdbb9727b7d35b2a1939a9c9007230d4`, tree `c6547d318257081329afc3eff1a0bfd3a393c041`. Actual result: 13 passed in 14.14 seconds, exit 0; wrapper elapsed 17.6995405 seconds. Custody: `build/green-fixture-isolation-1791464705814055900/{manifest.json,result.json,pytest.log}`. Log SHA-256 `FAEF349CFA6377978BAD6C19E324055DC134CDFC57B805ECBA5875D43DB03895`. Outer guard recorded zero denials, all three subprocess bootstrap activation markers are present and no child network-attempt ledger was created. In-process denial-ledger teardown assertions passed. Source was clean after execution. Pytest PID 51740 and its immediate children were absent on readback; this is bounded process evidence, not a universal descendant claim.
+
+Independent read-only /root/worker_prototype_correction accepted actual focused result adequacy: manifest source/guard hashes and retained log match, no drift or isolation blocker, and no tests or edits by reviewer. MCP test SHA-256 is `BA2B79543DCFAFEB3AF01A6D405C06202B77CC00EDD8EA34681FD72D0E630696`; other reviewed hashes are unchanged. This result proves the 13 fixture-isolation cases only, not live/native HTTP success, historical outage cause, unrelated production qualification or a fix for the held composition failure.
+
+Fresh whole-change selection against origin/main requires the full non-slow suite because test files changed; output retained in `build/test-plan.txt`. BLUE risk/boundary classification and pre-GREEN workflow passed. Affected whole-file and full validation remain pending manager allocation. No PR, push, merge, publication, service operation, installed configuration or user-application change was performed. Supporting fixture work is ready for review/handoff with those explicit validation gates open; the OpenCode reliability feature remains active with manager-owned roadmap status.
