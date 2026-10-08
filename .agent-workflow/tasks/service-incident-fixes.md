@@ -28,7 +28,7 @@
 
 **Verification plan:** Migration legacy/complete/missing-table/repair/rollback/crash/concurrency/unknown-version/Relay-isolation tests; vector eligibility boundaries plus deterministic content-read avoidance and caller HTTP behavior; ASGI event-loop responsiveness, existing runner tracking and post-admission order; supervisor cancellation/recovery/timing checks. Test isolation guards and full selector checks cover interactions. Root verifies actual installed health/status/queue/embedding and startup measurements after separately approved rollout.
 
-**Plan review:** Pending independent integration review; component reviews retained in their own records.
+**Plan review:** Agent technical review: /root/incident_integration_review, clean-context GO on 2026-10-08 for this exact plan at 91232443. Component acceptance remains required; live rollout stays separately scoped.
 
 **Approvals:** Approved by user 2026-10-08: "i might be gone later so you have my approval to drive this fix till merge and done"
 
