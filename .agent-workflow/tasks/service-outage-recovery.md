@@ -651,3 +651,102 @@ admitting descendants, retain short-lived-parent/sampling limitations. Independe
 smart command/isolation review precedes ONE execution. Full pass then final independent
 whole-change result review; neither hypothetical path cause nor installed/native
 acceptance is inferred. State Blocked until required full result and review exist.
+
+## Complete non-slow validation — passed, final review pending
+
+ONE authorized run on clean1dd6d3c63dde378d54303d310cd6d8fdacafb883 completed:
+`6415 passed, 45 skipped, 482 deselected, 2 xfailed in 1389.00s (0:23:09)`.
+Command: existing development Python `-B -m pytest tests/ -x -q -n 0 --basetemp`
+with newly owned absent-before-launch short Temp directory
+`sr-30b56aa97e31454f8c4da21272b8bf10`; pyproject's non-slow selection retained.
+Pytest, runner and capture exited0. Test process elapsed1399903ms; controller1403691ms.
+No retry, additional test, profiler, source/assertion change or installed operation.
+
+Run artifacts: Temp/pallium-full-suite-run-1d93ca6afd7744ceb6ac8d613f5729e6.
+Capture artifacts: Temp/pallium-full-suite-capture-b3534fb3e2844772b7be0a5f5ceb4ad5.
+Controller79532, collector60924, pytest18360; actual creation/executable records
+retained. Runner and independent collector record76 owned identities drained,
+0 remaining and0 unknown. Root independently checked current CIM inventory:
+none of these76 PIDs, controller or collector present. Five-second sampling can
+miss short-lived descendants; this is recorded-identity drain, not complete
+historical process-tree proof or global network isolation.
+
+Python guard recorded21 denied resolutions:20 installed-service port19836,
+1 remote DNS/name lookup. Node guard log absent/empty. Denials remain explicit;
+this pass does not qualify unguarded installed/native integrations. Stderr empty.
+Copies under ignored build/service-recovery-evidence/full-final-* retain the
+full summary, controller identity, guard, ledger, runner/independent drain and
+hash manifest. Root independently matched:
+
+- stdout: 2C6CC59E3866FE4A8CC2AA02DD023D937E8A1D2FB7392BC7E89820DEFCFC3189
+- Python guard: B77F20F859F98B4517E2958A9EC9E2E92AC16B6B6E5234E3BAACA46D24D22AEE
+- independent drain: 79F81AF14143288D0690C22A4AD11C6CFA3A735F1ECCA709991D7152202057FC
+- capture summary: 87DDB371201BEC0CDC65170680AB54228253F5A217DEABA085FF238B5447E1CD
+
+Earlier failed fulls remain recorded, not waived or erased. Short paths plus
+complete-suite pass narrow the earlier fixture failure; without a captured
+OSError they do not prove MAX_PATH causality or explain historical Relay incidents.
+Independent whole-change result review requested from /root/outage_source_review.
+State remains Blocked until that review is complete. CI/publication/merge, installed
+launcher qualification, outage causal diagnosis and broader Relay acceptance remain
+manager-owned/open. The user's everyday installation is unchanged.
+
+## Result review
+
+Agent technical review: native subagent /root/outage_source_review,
+clean-context gpt-6.1-sol/high, independent whole-change source/result review.
+Reviewed source6044ced955c50ca965b3cb0f65bc57e02a8ea369 and tested records-only
+head1dd6d3c63dde378d54303d310cd6d8fdacafb883 against main5106866622deb9c011fd7538732d6b145a8ba147.
+All10 changed paths inspected; no actionable production/test/documentation defect.
+Technical source review approved; Elevated/Moderate unchanged. Review covers fatal
+versus requested-stop status, readiness/poll cancellation and replacement ownership,
+helper cleanup, generated hidden/waiting VBS exit propagation, Unicode serialization,
+all four legacy/new metadata parsers, lifecycle regressions and rollout documentation.
+Full summary/controller/drain/manifest and primary hashes independently verified.
+
+Verification adequacy: qualified, NOT unqualified whole-change acceptance.
+Manager required guard-event attribution before acceptance. Cheap read-only trace
+establishes retained21 category-only entries lack timestamp, PID, hostname, stack
+or pytest node; quiet pytest stdout has no event correlation. No exact test mapping
+or intended-negative classification can be recovered. Guard blocks remote names
+before underlying resolution; literal-loopback resolution can precede port19836
+rejection. No successful installed-service HTTP is demonstrated by these entries.
+
+Candidate input inspection does not establish causality: global discovery invalid/
+untrusted destination tests parse URLs and assert requests unawaited; registered
+trace paths and representative retained-wake/reconnect clients are mocked. The
+two-instance Claude outage test uses an in-process opener/offline adapter. Default
+Claude hooks catch request exceptions, so an unintended real-service dependency
+could be hidden by a denial; no event is attributed to that path from available logs.
+
+State remains Blocked pending manager disposition of this attribution gap. Smallest
+proposed closure is a separately allocated private run correlating each guard denial
+with PID, current pytest node and bounded sanitized stack/callsite, preserving all
+guards/assertions. No further test, instrumentation or production change is approved
+or performed here. Green alone does not waive missing attribution; existing evidence
+cannot be retrospectively backfilled. Source correction, installed Task Scheduler
+acceptance and historical causal diagnosis remain distinct. Manager received exact
+pass, source review, gap and proposed next discriminator; publication is not authorized.
+
+Skill feedback considered: runner/runtime mistakes are consumer/environment-owned,
+not a demonstrated upstream agent-workflow defect. No upstream report or mutation.
+
+## Attribution-only allocation — before execution
+
+Manager subsequently allocates ONE attribution-only complete run on the same
+production source/private harness/guards/assertions with fresh short basetemp.
+Earlier6415-pass evidence remains preserved. No production code change, native
+qualification, parallel full/profiler, installed mutation or publication authorized.
+
+Before execution, cheap worker prepares only minimal private guard logging delta;
+independent smart review must approve exact command/isolation and logging semantics.
+Each denial records PID, monotonic timestamp, sanitized current pytest node when
+available, fixed category and bounded repo-relative file/function/line stack.
+No locals, arguments, parameter IDs, payloads, URLs, query text, tokens or absolute
+home paths. Unknown/inherited child context stays explicit; add a minimal node
+timeline only if needed. Record before raise; logging failure cannot bypass the
+guard or replace the original denial. Preserve existing network policy/configuration,
+source freeze, cleanup identity ledger and controller evidence. Root pins the clean
+records-only successor before release; no retry. A failure retains its attribution
+and failure evidence, not a waiver. Goal is classification of actual calls, not an
+additional arbitrary acceptance gate. State remains Blocked pending this result.
