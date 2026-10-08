@@ -736,6 +736,7 @@ _RELAY_TABLE_NAMES = frozenset({
 
 class SQLiteSchemaMixin:
     _SOURCE_ITEM_MIGRATIONS = {
+        "metadata_json": "ALTER TABLE source_items ADD COLUMN metadata_json TEXT",
         "occurred_at": "ALTER TABLE source_items ADD COLUMN occurred_at DATETIME",
         "actor_ref": "ALTER TABLE source_items ADD COLUMN actor_ref VARCHAR",
         "role": "ALTER TABLE source_items ADD COLUMN role VARCHAR",
@@ -1133,7 +1134,7 @@ class SQLiteSchemaMixin:
     def _initialize_schema(self, *, include_relay: bool = True) -> None:
         with self._schema_initialization_lock():
             with self._engine.connect() as connection:
-                self._validate_main_work_ref_state(connection.exec_driver_sql)
+                self._validate_main_work_ref_state(connection.exec_driver_sql, allow_legacy_columns=True)
             Base.metadata.create_all(
                 self._engine,
                 tables=[
@@ -1365,13 +1366,20 @@ class SQLiteSchemaMixin:
                     connection.execute(text(migration_sql))
 
     @staticmethod
-    def _validate_main_work_ref_state(execute):
+    def _validate_main_work_ref_state(execute, *, allow_legacy_columns: bool = False):
         """Read admission state through either SQLite or SQLAlchemy execution."""
         version = execute("PRAGMA main.user_version").fetchone()[0]
         if version not in (0, 1):
             raise RuntimeError(f"Unsupported main database user_version: {version}")
         source_columns = {row[1] for row in execute("PRAGMA main.table_info(source_items)")}
-        if source_columns and not {"id", "metadata_json"} <= source_columns:
+        required = {"id", "metadata_json"}
+        # Supported pre-versioned snapshots omitted nullable metadata. Only
+        # pre-upgrade admission may defer it to the existing column ensure.
+        if allow_legacy_columns and version == 0 and {
+            "id", "source_type", "source_id", "content_type", "content", "created_at",
+        } <= source_columns:
+            required = {"id"}
+        if source_columns and not required <= source_columns:
             raise RuntimeError("Incompatible source_items schema: id and metadata_json required")
         columns = list(execute("PRAGMA main.table_info(source_item_work_refs)"))
         if columns:

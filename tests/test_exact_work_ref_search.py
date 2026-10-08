@@ -1354,3 +1354,117 @@ def test_secrets_purge_lifecycle_preserves_http_work_refs_and_version_one(
             assert _indexed_work_refs(client, source_id) == expected_index
         with closing(sqlite3.connect(db_path)) as connection:
             assert connection.execute("PRAGMA user_version").fetchone()[0] == 1
+
+
+@pytest.mark.parametrize("projection_state", ["missing", "stale"])
+def test_legacy_v0_source_without_metadata_json_upgrades_through_http(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, drain_queue, projection_state: str
+) -> None:
+    from app.config import AppConfig
+    from fastapi.testclient import TestClient
+
+    db_path = tmp_path / f"legacy-source-v0-{projection_state}.db"
+    db_url = f"sqlite:///{db_path}"
+    relay_url = AppConfig(sqlite_url=db_url).resolved_relay_sqlite_url
+    relay_seed = SQLiteStorageProvider(
+        f"sqlite:///{tmp_path / 'relay-seed-main.db'}", relay_database_url=relay_url,
+    )
+    relay_seed.close()
+
+    with closing(sqlite3.connect(db_path)) as connection, connection:
+        connection.execute(
+            "CREATE TABLE source_items ("
+            "id TEXT PRIMARY KEY, source_type TEXT, source_id TEXT, "
+            "content_type TEXT, content TEXT, created_at DATETIME)"
+        )
+        connection.execute(
+            "INSERT INTO source_items VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                "legacy-v0-source", "chat", "legacy-v0", "text/plain",
+                "preserved snapshot payload", "2026-01-01T00:00:00+00:00",
+            ),
+        )
+        if projection_state == "stale":
+            connection.execute(
+                "CREATE TABLE source_item_work_refs ("
+                "source_item_id TEXT NOT NULL, work_ref TEXT NOT NULL, "
+                "PRIMARY KEY (source_item_id, work_ref))"
+            )
+            connection.execute(
+                "INSERT INTO source_item_work_refs VALUES (?, ?)",
+                ("legacy-v0-source", "stale-ref"),
+            )
+
+    rebuilds: list[str] = []
+
+    def observe_full_rebuild(connection, _cursor, statement, _parameters, _context, _many):
+        if connection.engine.url.database != str(db_path):
+            return
+        sql = " ".join(statement.upper().split())
+        if sql == "DELETE FROM SOURCE_ITEM_WORK_REFS":
+            rebuilds.append("DELETE")
+        elif sql == "SELECT ID, METADATA_JSON FROM SOURCE_ITEMS":
+            rebuilds.append("SCAN")
+
+    from sqlalchemy.engine import Engine
+
+    event.listen(Engine, "before_cursor_execute", observe_full_rebuild)
+    try:
+        with TestClient(_http_app_for_sqlite(db_url, monkeypatch)) as client:
+            expansion = client.get(
+                "/source/legacy-v0-source/context",
+                params={"query_visibility": "private"},
+            )
+            assert expansion.status_code == 200, expansion.text
+            assert [item["content"] for item in expansion.json()["items"]] == [
+                "preserved snapshot payload"
+            ]
+            with closing(sqlite3.connect(db_path)) as connection:
+                columns = {
+                    row[1] for row in connection.execute("PRAGMA table_info(source_items)")
+                }
+                assert "metadata_json" in columns
+                assert connection.execute(
+                    "SELECT metadata_json, visibility FROM source_items WHERE id=?",
+                    ("legacy-v0-source",),
+                ).fetchone() == (None, "private")
+                assert connection.execute(
+                    "SELECT work_ref FROM source_item_work_refs WHERE source_item_id=?",
+                    ("legacy-v0-source",),
+                ).fetchall() == []
+                assert connection.execute("PRAGMA user_version").fetchone()[0] == 1
+
+            new_source_id = _add(
+                client,
+                "post-legacy-upgrade",
+                ["Tâche/東京", "Tâche/東京"],
+                content="alpha after legacy upgrade",
+            )
+            drain_queue(client)
+            rows = _exact(client, "alpha", "Tâche/東京")
+            assert [row["source_item_id"] for row in rows] == [new_source_id]
+            assert rows[0]["work_refs"] == ["tâche/東京"]
+            assert [row["source_item_id"] for row in _exact(client, "", "Tâche/東京")] == [
+                new_source_id
+            ]
+        assert rebuilds.count("DELETE") == 1
+        assert rebuilds.count("SCAN") == 1
+
+        rebuilds.clear()
+        for _ in range(2):
+            with TestClient(_http_app_for_sqlite(db_url, monkeypatch)) as client:
+                assert [row["source_item_id"] for row in _exact(client, "alpha", "Tâche/東京")] == [
+                    new_source_id
+                ]
+                assert [row["source_item_id"] for row in _exact(client, "", "Tâche/東京")] == [
+                    new_source_id
+                ]
+                expansion = client.get(
+                    "/source/legacy-v0-source/context",
+                    params={"query_visibility": "private"},
+                )
+                assert expansion.status_code == 200, expansion.text
+                assert expansion.json()["items"][0]["content"] == "preserved snapshot payload"
+        assert rebuilds == []
+    finally:
+        event.remove(Engine, "before_cursor_execute", observe_full_rebuild)

@@ -290,7 +290,7 @@ class SQLiteStorageProvider(
             return
         connection = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
         try:
-            self._validate_main_work_ref_state(connection.execute)
+            self._validate_main_work_ref_state(connection.execute, allow_legacy_columns=True)
         finally:
             connection.close()
 
@@ -302,7 +302,7 @@ class SQLiteStorageProvider(
                 isolation_level="AUTOCOMMIT"
             ) as connection:
                 if engine is self._engine:
-                    self._validate_main_work_ref_state(connection.exec_driver_sql)
+                    self._validate_main_work_ref_state(connection.exec_driver_sql, allow_legacy_columns=True)
                 # auto_vacuum must precede WAL on a new database.
                 connection.exec_driver_sql("PRAGMA auto_vacuum=INCREMENTAL")
                 connection.exec_driver_sql("PRAGMA journal_mode=WAL")

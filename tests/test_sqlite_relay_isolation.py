@@ -823,14 +823,20 @@ def test_completed_main_reopen_does_not_rebuild_work_refs(tmp_path: Path) -> Non
 
 
 @pytest.mark.parametrize(
-    "state",
+    ("state", "version"),
     [
-        "version-minus-one", "version-future", "missing-id",
-        "missing-metadata", "bad-projection", "inttext-projection",
+        ("version-minus-one", 0), ("version-minus-one", 1),
+        ("version-future", 0), ("version-future", 1),
+        ("missing-id", 0), ("missing-id", 1),
+        ("missing-metadata", 0), ("missing-metadata", 1),
+        ("bad-projection", 0), ("bad-projection", 1),
+        ("inttext-projection", 0), ("inttext-projection", 1),
+        ("legacy-no-metadata", 1),
+        ("missing-content-and-metadata", 0),
     ],
 )
 def test_main_work_ref_admission_refuses_unknown_or_incompatible_state_without_writes(
-    tmp_path: Path, state: str
+    tmp_path: Path, state: str, version: int
 ) -> None:
     main = tmp_path / f"main-{state}.db"
     relay = tmp_path / f"relay-{state}.db"
@@ -844,6 +850,7 @@ def test_main_work_ref_admission_refuses_unknown_or_incompatible_state_without_w
     provider.close()
 
     with closing(sqlite3.connect(main)) as connection, connection:
+        connection.execute(f"PRAGMA user_version={version}")
         if state == "version-minus-one":
             connection.execute("PRAGMA user_version=-1")
         elif state == "version-future":
@@ -854,6 +861,22 @@ def test_main_work_ref_admission_refuses_unknown_or_incompatible_state_without_w
                 "CREATE TABLE source_items (metadata_json TEXT)"
                 if state == "missing-id"
                 else "CREATE TABLE source_items (id TEXT PRIMARY KEY)"
+            )
+        elif state == "legacy-no-metadata":
+            connection.execute("DROP TABLE source_items")
+            connection.execute(
+                "CREATE TABLE source_items ("
+                "id TEXT PRIMARY KEY, source_type TEXT NOT NULL, "
+                "source_id TEXT NOT NULL, content_type TEXT NOT NULL, "
+                "content TEXT NOT NULL, created_at DATETIME NOT NULL)"
+            )
+        elif state == "missing-content-and-metadata":
+            connection.execute("DROP TABLE source_items")
+            connection.execute(
+                "CREATE TABLE source_items ("
+                "id TEXT PRIMARY KEY, source_type TEXT NOT NULL, "
+                "source_id TEXT NOT NULL, content_type TEXT NOT NULL, "
+                "created_at DATETIME NOT NULL)"
             )
         else:
             connection.execute("DROP TABLE source_item_work_refs")

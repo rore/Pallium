@@ -70,6 +70,12 @@ with one atomic rebuild of `source_item_work_refs` from authoritative metadata.
 The projection table/index, rows and completion mark commit together. Failure
 rolls back that step; other schema initialization steps are not globally atomic.
 Unknown versions and incompatible source/projection schemas fail closed.
+Supported version0 snapshots with the baseline source columns but no
+`metadata_json` first add that nullable column through the existing structural
+upgrade. Those column upgrades remain outside the atomic projection step.
+Version1 missing metadata, missing source IDs and legacy tables missing metadata
+without the complete baseline still fail admission. Projection and repair require
+both authoritative columns before deleting rows or marking completion.
 
 Completed version1 startup skips the metadata scan and projection rewrite.
 A missing projection table is rebuilt atomically without resetting the version;
