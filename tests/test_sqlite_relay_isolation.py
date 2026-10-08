@@ -302,6 +302,163 @@ def _reap_owned_process(process: multiprocessing.Process) -> tuple[int | None, l
         errors.append(f"process close failed: {exc!r}")
     return exitcode, errors
 
+
+def _hold_windows_lock_region(lock_path: str, offset: int, result_queue, release_event) -> None:
+    import msvcrt
+
+    try:
+        with open(lock_path, "r+b") as lock_file:
+            lock_file.seek(offset)
+            msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
+            try:
+                result_queue.put(("locked", Path(lock_path).stat().st_size))
+                if not release_event.wait(15):
+                    result_queue.put(("timeout", Path(lock_path).stat().st_size))
+            finally:
+                lock_file.seek(offset)
+                msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+                result_queue.put(("released", Path(lock_path).stat().st_size))
+    except BaseException as exc:  # pragma: no cover - exercised by Windows child
+        result_queue.put(("error", repr(exc)))
+        raise
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows byte-range locks are required")
+@pytest.mark.parametrize("offset", [0, 7])
+def test_windows_empty_lock_file_locks_beyond_eof_without_growing(
+    tmp_path: Path, offset: int
+) -> None:
+    import msvcrt
+
+    lock_path = tmp_path / f"empty-lock-{offset}.lock"
+    lock_path.write_bytes(b"")
+    context = multiprocessing.get_context("spawn")
+    result_queue = context.Queue()
+    release_event = context.Event()
+    process = context.Process(
+        target=_hold_windows_lock_region,
+        args=(str(lock_path), offset, result_queue, release_event),
+        daemon=True,
+    )
+    started = False
+    exitcode = None
+    cleanup_errors = []
+    try:
+        try:
+            _start_hidden_owned_process(process)
+        finally:
+            if process.pid is not None:
+                started = True
+        assert result_queue.get(timeout=15) == ("locked", 0)
+        with open(lock_path, "r+b") as lock_file:
+            lock_file.seek(offset)
+            with pytest.raises(OSError) as caught:
+                msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
+            assert caught.value.errno == 13
+            release_event.set()
+            assert result_queue.get(timeout=15) == ("released", 0)
+            lock_file.seek(offset)
+            msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
+            lock_file.seek(offset)
+            msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+    finally:
+        release_event.set()
+        if started:
+            try:
+                exitcode, cleanup_errors = _reap_owned_process(process)
+            except Exception as exc:
+                cleanup_errors.append(f"child cleanup failed: {exc!r}")
+        try:
+            result_queue.close()
+            result_queue.join_thread()
+        except Exception as exc:
+            cleanup_errors.append(f"queue cleanup failed: {exc!r}")
+    assert not cleanup_errors, "; ".join(cleanup_errors)
+    assert exitcode == 0
+    assert lock_path.stat().st_size == 0
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows byte-range locks are required")
+@pytest.mark.parametrize("lock_kind", ["schema", "pair"])
+def test_windows_schema_and_pair_lock_contexts_do_not_prime_empty_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, lock_kind: str
+) -> None:
+    database_path = tmp_path / f"empty-{lock_kind}.db"
+    url = f"sqlite:///{database_path}"
+    provider = SQLiteStorageProvider.__new__(SQLiteStorageProvider)
+    engine = None
+    if lock_kind == "schema":
+        engine = SQLiteStorageProvider._create_engine(url)
+        lock_path = provider._schema_lock_path(engine)
+        lock_context = provider._schema_initialization_lock(engine)
+    else:
+        lock_path = database_path.with_name(
+            f"{database_path.name}.relay-pair-init.lock"
+        )
+        lock_context = provider._relay_pair_initialization_lock(url)
+    lock_path.write_bytes(b"")
+
+    context = multiprocessing.get_context("spawn")
+    result_queue = context.Queue()
+    release_event = context.Event()
+    process = context.Process(
+        target=_hold_windows_lock_region,
+        args=(str(lock_path), 0, result_queue, release_event),
+        daemon=True,
+    )
+    started = False
+    exitcode = None
+    cleanup_errors = []
+    acquired_positions = []
+    released_owner = []
+    original_acquire = SQLiteStorageProvider._acquire_schema_file_lock
+
+    def acquire_after_owner_release(lock_file) -> None:
+        acquired_positions.append(lock_file.tell())
+        release_event.set()
+        state = result_queue.get(timeout=15)
+        released_owner.append(state)
+        assert state == ("released", 0)
+        original_acquire(lock_file)
+
+    monkeypatch.setattr(
+        SQLiteStorageProvider,
+        "_acquire_schema_file_lock",
+        staticmethod(acquire_after_owner_release),
+    )
+    try:
+        try:
+            _start_hidden_owned_process(process)
+        finally:
+            if process.pid is not None:
+                started = True
+        assert result_queue.get(timeout=15) == ("locked", 0)
+        with lock_context:
+            pass
+    finally:
+        release_event.set()
+        if started:
+            try:
+                exitcode, cleanup_errors = _reap_owned_process(process)
+            except Exception as exc:
+                cleanup_errors.append(f"child cleanup failed: {exc!r}")
+        try:
+            result_queue.close()
+            result_queue.join_thread()
+        except Exception as exc:
+            cleanup_errors.append(f"queue cleanup failed: {exc!r}")
+        if engine is not None:
+            try:
+                engine.dispose()
+            except Exception as exc:
+                cleanup_errors.append(f"engine dispose failed: {exc!r}")
+    assert not cleanup_errors, "; ".join(cleanup_errors)
+    assert acquired_positions == [0]
+    assert released_owner == [("released", 0)]
+    assert exitcode == 0
+    assert lock_path.stat().st_size == 0
+
+
 def _tables(path: Path) -> set[str]:
     with sqlite3.connect(path) as connection:
         return {
