@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
@@ -1020,7 +1021,55 @@ def test_incremental_ref_updates_soft_forget_and_retention_survive_reopen(
         ) is True
         assert _exact(client, "", "next-ref") == []
         assert [row["source_item_id"] for row in _exact(client, "", "retry-ref")] == [soft_id]
+        from core.contracts import ProcessResult
+
+        storage.commit_process_result(
+            result=ProcessResult(
+                memory_objects=[],
+                relations=[],
+                index_entries=[],
+                source_item_metadata_updates={
+                    soft_id: {"pallium_work_refs": ["Result Ref"]}
+                },
+            )
+        )
+        assert _exact(client, "", "retry-ref") == []
+        assert [row["source_item_id"] for row in _exact(client, "", "result-ref")] == [soft_id]
+        storage.commit_process_result(
+            result=ProcessResult(
+                memory_objects=[],
+                relations=[],
+                index_entries=[],
+                source_item_metadata_updates={soft_id: {"pallium_work_refs": []}},
+            )
+        )
+        assert _exact(client, "", "result-ref") == []
+        assert _indexed_work_refs(client, soft_id) == []
+        storage.update_source_item_metadata(
+            soft_id, {"pallium_work_refs": ["Retry Ref"]}
+        )
+        assert [row["source_item_id"] for row in _exact(client, "", "retry-ref")] == [soft_id]
         storage.complete_source_item_processing(soft_id)
+
+        memory_response = client.post(
+            "/memory/remember",
+            json={
+                "container_ref": "room",
+                "actor_ref": "test-actor",
+                "thread_ref": "thread",
+                "agent_ref": "test-agent",
+                "visibility": "private",
+                "text": "an unrelated memory fact",
+                "type": "decision",
+            },
+        )
+        assert memory_response.status_code == 200, memory_response.text
+        memory_id = memory_response.json()["memory_object_id"]
+        assert client.post(
+            f"/memory/{memory_id}/correct",
+            json={"corrected_text": "a corrected memory fact", "reason": "test"},
+        ).status_code == 200
+        assert [row["source_item_id"] for row in _exact(client, "", "retry-ref")] == [soft_id]
 
         forgotten = client.post(
             "/source/forget",
@@ -1032,6 +1081,11 @@ def test_incremental_ref_updates_soft_forget_and_retention_survive_reopen(
             f"/source/{soft_id}/context",
             params={"container_ref": "room", "query_visibility": "private"},
         ).status_code == 404
+        assert _indexed_work_refs(client, soft_id) == ["retry-ref"]
+        assert client.post(
+            f"/memory/{memory_id}/forget", json={"reason": "test"}
+        ).status_code == 200
+        assert _exact(client, "", "retry-ref") == []
         assert _indexed_work_refs(client, soft_id) == ["retry-ref"]
 
         stats = storage.run_retention_pass(now=now, batch_size=10)
@@ -1056,3 +1110,247 @@ def test_incremental_ref_updates_soft_forget_and_retention_survive_reopen(
             params={"container_ref": "room", "query_visibility": "private"},
         ).status_code == 404
         assert _indexed_work_refs(client, hard_id) == []
+
+
+@pytest.mark.parametrize(
+    ("failure_point", "version", "missing_table"),
+    [
+        ("after_create", 1, True),
+        ("after_delete", 0, False),
+        ("after_insert", 0, False),
+        ("after_version", 0, False),
+    ],
+)
+def test_http_startup_backfill_failure_rolls_back_then_retries(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    drain_queue,
+    failure_point: str,
+    version: int,
+    missing_table: bool,
+) -> None:
+    from fastapi.testclient import TestClient
+    from sqlalchemy.engine import Engine
+
+    db_path = tmp_path / f"http-migration-{failure_point}.db"
+    db_url = f"sqlite:///{db_path}"
+    secret = "ghp_" + ("A" * 36)
+
+    with TestClient(_http_app_for_sqlite(db_url, monkeypatch)) as client:
+        source_id = _add(client, f"http-migration-{failure_point}", "placeholder")
+        drain_queue(client)
+    with closing(sqlite3.connect(db_path)) as connection:
+        connection.execute(
+            "UPDATE source_items SET metadata_json=? WHERE id=?",
+            (
+                json.dumps({"pallium_work_refs": ["Safe Ref", secret], "token": secret}),
+                source_id,
+            ),
+        )
+        if missing_table:
+            connection.execute("DROP TABLE source_item_work_refs")
+        else:
+            connection.execute("DELETE FROM source_item_work_refs")
+            connection.execute(
+                "INSERT INTO source_item_work_refs(source_item_id, work_ref) VALUES (?, ?)",
+                (source_id, "stale-ref"),
+            )
+        connection.execute(f"PRAGMA user_version={version}")
+        connection.commit()
+
+    fired: list[str] = []
+    failed_engines = []
+
+    def fail_after_migration_statement(
+        connection, _cursor, statement, _parameters, _context, _many
+    ) -> None:
+        if connection.engine.url.database != str(db_path):
+            return
+        sql = " ".join(statement.upper().split())
+        matches = {
+            "after_create": sql.startswith("CREATE TABLE SOURCE_ITEM_WORK_REFS"),
+            "after_delete": sql == "DELETE FROM SOURCE_ITEM_WORK_REFS",
+            "after_insert": sql.startswith("INSERT INTO SOURCE_ITEM_WORK_REFS"),
+            "after_version": sql == "PRAGMA MAIN.USER_VERSION=1",
+        }
+        if matches[failure_point]:
+            fired.append(sql)
+            failed_engines.append(connection.engine)
+            raise RuntimeError("injected HTTP startup backfill failure")
+
+    event.listen(Engine, "after_cursor_execute", fail_after_migration_statement)
+    try:
+        with pytest.raises(RuntimeError, match="injected HTTP startup backfill failure"):
+            _http_app_for_sqlite(db_url, monkeypatch)
+    finally:
+        event.remove(Engine, "after_cursor_execute", fail_after_migration_statement)
+        for engine in failed_engines:
+            engine.dispose()
+    assert len(fired) >= 2
+
+    with closing(sqlite3.connect(db_path)) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == version
+        present = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='source_item_work_refs'"
+        ).fetchone() is not None
+        assert present is not missing_table
+        if present:
+            rows = connection.execute(
+                "SELECT work_ref FROM source_item_work_refs WHERE source_item_id=?",
+                (source_id,),
+            ).fetchall()
+            assert rows == [("stale-ref",)]
+
+    with TestClient(_http_app_for_sqlite(db_url, monkeypatch)) as client:
+        for query in ("", "alpha"):
+            rows = _exact(client, query, "safe-ref")
+            assert [row["source_item_id"] for row in rows] == [source_id]
+            assert rows[0]["work_refs"] == ["safe-ref"]
+            assert secret not in str(rows)
+        assert _exact(client, "", "stale-ref") == []
+        assert _indexed_work_refs(client, source_id) == ["safe-ref"]
+    with closing(sqlite3.connect(db_path)) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 1
+
+
+def test_private_repair_from_version_zero_keeps_version_and_http_results(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, drain_queue
+) -> None:
+    from fastapi.testclient import TestClient
+
+    db_path = tmp_path / "private-repair-v0.db"
+    db_url = f"sqlite:///{db_path}"
+    with TestClient(_http_app_for_sqlite(db_url, monkeypatch)) as client:
+        source_id = _add(client, "private-repair-v0", "old-ref")
+        drain_queue(client)
+        with closing(sqlite3.connect(db_path)) as connection:
+            connection.execute(
+                "UPDATE source_items SET metadata_json=? WHERE id=?",
+                (json.dumps({"pallium_work_refs": ["new-ref"]}), source_id),
+            )
+            connection.execute("PRAGMA user_version=0")
+            connection.commit()
+
+        assert _exact(client, "", "new-ref") == []
+        client.app.state.pallium_service._storage._backfill_source_item_work_refs()
+        assert [row["source_item_id"] for row in _exact(client, "", "new-ref")] == [source_id]
+        assert _exact(client, "", "old-ref") == []
+        assert _indexed_work_refs(client, source_id) == ["new-ref"]
+        with closing(sqlite3.connect(db_path)) as connection:
+            assert connection.execute("PRAGMA user_version").fetchone()[0] == 0
+
+
+def test_private_repair_unknown_version_refuses_without_delete_or_coercion(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, drain_queue
+) -> None:
+    from fastapi.testclient import TestClient
+    from sqlalchemy.engine import Engine
+
+    db_path = tmp_path / "private-repair-unknown-version.db"
+    db_url = f"sqlite:///{db_path}"
+    with TestClient(_http_app_for_sqlite(db_url, monkeypatch)) as client:
+        source_id = _add(client, "private-repair-unknown-version", "old-ref")
+        drain_queue(client)
+        with closing(sqlite3.connect(db_path)) as connection:
+            connection.execute("PRAGMA user_version=2")
+            connection.commit()
+
+        deletes: list[str] = []
+
+        def observe_delete(connection, _cursor, statement, _params, _context, _many):
+            if (
+                connection.engine.url.database == str(db_path)
+                and statement.lstrip().upper().startswith(
+                    "DELETE FROM SOURCE_ITEM_WORK_REFS"
+                )
+            ):
+                deletes.append(statement)
+
+        event.listen(Engine, "before_cursor_execute", observe_delete)
+        try:
+            with pytest.raises(RuntimeError, match="Unsupported main database user_version: 2"):
+                client.app.state.pallium_service._storage._backfill_source_item_work_refs()
+        finally:
+            event.remove(Engine, "before_cursor_execute", observe_delete)
+        assert deletes == []
+        assert _indexed_work_refs(client, source_id) == ["old-ref"]
+        with closing(sqlite3.connect(db_path)) as connection:
+            assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
+
+
+def test_secrets_purge_lifecycle_preserves_http_work_refs_and_version_one(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.tools import secrets_purge
+    from fastapi.testclient import TestClient
+
+    db_path = tmp_path / "secrets-purge-http.db"
+    db_url = f"sqlite:///{db_path}"
+    manifest = tmp_path / "secrets-purge-http-manifest.json"
+    secret = "ghp_" + ("B" * 36)
+    payload = {
+        "source_type": "chat",
+        "source_id": "purge-http-source",
+        "content_type": "text/plain",
+        "content": f"alpha detail {secret}",
+        "artifact_kind": "assistant_output",
+        "role": "assistant",
+        "container_ref": "room",
+        "thread_ref": "thread",
+        "visibility": "private",
+        "metadata": {"pallium_work_refs": ["Safe Ref", secret], "token": secret},
+    }
+    with TestClient(_http_app_for_sqlite(db_url, monkeypatch)) as client:
+        response = client.post("/items", json=[payload])
+        assert response.status_code == 200, response.text
+        source_id = response.json()[0]["source_item_id"]
+        assert [row["source_item_id"] for row in _exact(client, "", "safe-ref")] == [source_id]
+
+    with closing(sqlite3.connect(db_path)) as connection:
+        connection.execute(
+            "UPDATE source_items SET content=?, metadata_json=? WHERE id=?",
+            (
+                f"alpha detail {secret}",
+                json.dumps(
+                    {"pallium_work_refs": ["Safe Ref", secret], "token": secret}
+                ),
+                source_id,
+            ),
+        )
+        connection.execute(
+            "INSERT INTO source_item_work_refs(source_item_id, work_ref) VALUES (?, ?)",
+            (source_id, "stale-ref"),
+        )
+        connection.commit()
+
+    phases = (
+        ("--dry-run",),
+        ("--commit", "--yes-i-checked-the-dry-run"),
+        ("--undo", "--yes-i-checked-the-dry-run", "--allow-mtime-drift"),
+    )
+    for index, phase in enumerate(phases):
+        if index == 1:
+            # HTTP inspection writes audit state, so its old manifest is stale.
+            assert secrets_purge.main(
+                [*phase, "--db-url", db_url, "--manifest", str(manifest)]
+            ) == 2
+            assert secrets_purge.main(
+                ["--dry-run", "--db-url", db_url, "--manifest", str(manifest)]
+            ) == 0
+        assert secrets_purge.main(
+            [*phase, "--db-url", db_url, "--manifest", str(manifest)]
+        ) == 0
+        if index == 0:
+            assert json.loads(manifest.read_text(encoding="utf-8"))["counts"][
+                "source_item_rewrites"
+            ] == 1
+        with TestClient(_http_app_for_sqlite(db_url, monkeypatch)) as client:
+            rows = _exact(client, "", "safe-ref")
+            assert [row["source_item_id"] for row in rows] == [source_id]
+            assert rows[0]["work_refs"] == ["safe-ref"]
+            assert secret not in str(rows)
+            assert _exact(client, "", "stale-ref") == []
+            expected_index = ["safe-ref", "stale-ref"] if index == 0 else ["safe-ref"]
+            assert _indexed_work_refs(client, source_id) == expected_index
+        with closing(sqlite3.connect(db_path)) as connection:
+            assert connection.execute("PRAGMA user_version").fetchone()[0] == 1

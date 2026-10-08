@@ -1,12 +1,17 @@
-from pathlib import Path
+import json
 import multiprocessing
+import os
 import sqlite3
 import threading
+import time
+from contextlib import closing
+from datetime import datetime, timezone
+from pathlib import Path
 from queue import Empty
 
 import pytest
-from sqlalchemy import text
-from sqlalchemy.engine import Connection
+from sqlalchemy import event, text
+from sqlalchemy.engine import Connection, Engine
 
 from core.errors import ImmediateTransactionBusyError
 from storage.sqlite import SQLiteStorageProvider
@@ -23,6 +28,27 @@ def _pragma(path: Path, name: str):
     import sqlite3
     with sqlite3.connect(path) as connection:
         return connection.execute(f"PRAGMA {name}").fetchone()[0]
+
+
+def _closed_pragma(path: Path, name: str):
+    with closing(sqlite3.connect(path)) as connection:
+        return connection.execute(f"PRAGMA {name}").fetchone()[0]
+
+
+def _relay_table_rows(path: Path) -> dict[str, list[tuple]]:
+    with closing(sqlite3.connect(path)) as connection:
+        tables = [
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'relay_%' ORDER BY name"
+            )
+        ]
+        return {
+            table: sorted(
+                connection.execute(f'SELECT * FROM "{table}"').fetchall(), key=repr
+            )
+            for table in tables
+        }
 
 
 def test_sqlite_lifecycle_and_writer_isolation(tmp_path: Path) -> None:
@@ -168,6 +194,97 @@ def _initialize_separate_pair_process(
         raise
     result_queue.put("ok")
 
+
+def _initialize_main_and_report_work_ref_migration(
+    path: Path,
+    result_queue,
+    *,
+    relay_database_url: str | None = None,
+    crash_after_version: bool = False,
+    ready_event=None,
+    release_event=None,
+) -> None:
+    operations = []
+
+    def observe(connection, _cursor, statement, _parameters, _context, _many):
+        if Path(connection.engine.url.database).resolve() != path.resolve():
+            return
+        sql = " ".join(statement.upper().split())
+        if sql == "DELETE FROM SOURCE_ITEM_WORK_REFS":
+            operations.append("DELETE")
+        elif sql == "SELECT ID, METADATA_JSON FROM SOURCE_ITEMS":
+            operations.append("SCAN")
+        elif sql.startswith("INSERT INTO SOURCE_ITEM_WORK_REFS"):
+            operations.append("INSERT")
+        elif crash_after_version and sql == "PRAGMA MAIN.USER_VERSION=1":
+            os._exit(73)
+
+    event.listen(Engine, "after_cursor_execute", observe)
+    try:
+        if ready_event is not None:
+            result_queue.put(("ready", os.getpid()))
+            ready_event.set()
+            if not release_event.wait(15):
+                result_queue.put(("error", "startup gate timed out", operations))
+                return
+        provider = SQLiteStorageProvider(
+            f"sqlite:///{path}", relay_database_url=relay_database_url
+        )
+        provider.close()
+    except Exception as exc:  # pragma: no cover - child reports to its parent
+        result_queue.put(("error", repr(exc), operations))
+    else:
+        result_queue.put(("ok", operations))
+    finally:
+        event.remove(Engine, "after_cursor_execute", observe)
+
+
+def _start_hidden_owned_process(process: multiprocessing.Process) -> None:
+    if os.name != "nt":
+        process.start()
+        return
+    from multiprocessing import popen_spawn_win32
+
+    create_process = popen_spawn_win32._winapi.CreateProcess
+
+    def create_hidden_process(*args, **kwargs):
+        arguments = list(args)
+        arguments[5] |= 0x08000000
+        return create_process(*arguments, **kwargs)
+
+    popen_spawn_win32._winapi.CreateProcess = create_hidden_process
+    try:
+        process.start()
+    finally:
+        popen_spawn_win32._winapi.CreateProcess = create_process
+
+
+def _reap_owned_process(process: multiprocessing.Process) -> tuple[int | None, list[str]]:
+    errors = []
+    try:
+        process.join(timeout=15)
+    except Exception as exc:
+        errors.append(f"join failed: {exc!r}")
+    try:
+        if process.is_alive():
+            process.terminate()
+    except Exception as exc:
+        errors.append(f"terminate failed: {exc!r}")
+    try:
+        process.join(timeout=5)
+    except Exception as exc:
+        errors.append(f"reap failed: {exc!r}")
+    exitcode = None
+    try:
+        if process.is_alive():
+            errors.append("owned child is still alive after termination")
+        else:
+            exitcode = process.exitcode
+            process.close()
+    except Exception as exc:
+        errors.append(f"process close failed: {exc!r}")
+    return exitcode, errors
+
 def _tables(path: Path) -> set[str]:
     with sqlite3.connect(path) as connection:
         return {
@@ -217,25 +334,48 @@ def test_concurrent_fresh_separate_pair_startup_is_serialized(tmp_path: Path) ->
         target=_initialize_separate_pair_process,
         args=(main_url, relay_url, result_queue, main_ready, release),
     )
-    first.start()
-    assert main_ready.wait(15)
-    second = context.Process(
-        target=_initialize_separate_pair_process,
-        args=(main_url, relay_url, result_queue),
-    )
-    second.start()
+    started = []
+    exitcodes = []
+    cleanup_errors = []
+    results = []
     try:
+        try:
+            _start_hidden_owned_process(first)
+        finally:
+            if first.pid is not None:
+                started.append(first)
+        if not main_ready.wait(15):
+            raise TimeoutError("first pair initializer did not reach the main-schema gate")
+        second = context.Process(
+            target=_initialize_separate_pair_process,
+            args=(main_url, relay_url, result_queue),
+        )
+        try:
+            _start_hidden_owned_process(second)
+        finally:
+            if second.pid is not None:
+                started.append(second)
         with pytest.raises(Empty):
             result_queue.get(timeout=1)
         release.set()
-        assert result_queue.get(timeout=15) == "ok"
-        assert result_queue.get(timeout=15) == "ok"
+        results = [result_queue.get(timeout=15), result_queue.get(timeout=15)]
     finally:
         release.set()
-        first.join(timeout=15)
-        second.join(timeout=15)
-    assert first.exitcode == 0
-    assert second.exitcode == 0
+        for process in started:
+            exitcode, errors = _reap_owned_process(process)
+            exitcodes.append(exitcode)
+            cleanup_errors.extend(errors)
+        try:
+            result_queue.close()
+        except Exception as exc:
+            cleanup_errors.append(f"queue close failed: {exc!r}")
+        try:
+            result_queue.join_thread()
+        except Exception as exc:
+            cleanup_errors.append(f"queue join failed: {exc!r}")
+        assert not cleanup_errors, "; ".join(cleanup_errors)
+    assert results == ["ok", "ok"]
+    assert exitcodes == [0, 0]
     provider = SQLiteStorageProvider(main_url, relay_database_url=relay_url)
     try:
         for path in (main, relay):
@@ -633,3 +773,1001 @@ def test_relay_association_schema_upgrade_preserves_existing_rows(tmp_path: Path
         assert connection.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='relay_session_work_refs'").fetchone()
         assert connection.execute("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_relay_work_refs_lookup'").fetchone()
     reopened.close()
+
+
+def test_completed_main_reopen_does_not_rebuild_work_refs(tmp_path: Path) -> None:
+    from core.models import IndexEntry, SourceItem
+
+    path = tmp_path / "completed.db"
+    url = f"sqlite:///{path}"
+    source = SourceItem(
+        source_type="chat", source_id="unchanged", content_type="text/plain",
+        content="alpha", metadata={"pallium_work_refs": ["Straße", "STRASSE"]},
+    )
+    initial = SQLiteStorageProvider(url)
+    try:
+        initial.create_source_item(source)
+        initial.create_index_entry(IndexEntry(
+            id="unchanged-vector", target_kind="source_item", target_id=source.id,
+            index_type="vector", text_view="alpha",
+        ))
+    finally:
+        initial.close()
+
+    operations = []
+
+    def observe(connection, _cursor, statement, _parameters, _context, _many):
+        if Path(connection.engine.url.database).resolve() != path.resolve():
+            return
+        sql = " ".join(statement.upper().split())
+        if sql == "DELETE FROM SOURCE_ITEM_WORK_REFS":
+            operations.append("DELETE")
+        elif sql == "SELECT ID, METADATA_JSON FROM SOURCE_ITEMS":
+            operations.append("SCAN")
+        elif sql.startswith("INSERT INTO SOURCE_ITEM_WORK_REFS"):
+            operations.append("INSERT")
+
+    event.listen(Engine, "after_cursor_execute", observe)
+    try:
+        for _ in range(2):
+            reopened = SQLiteStorageProvider(url)
+            try:
+                assert [entry.id for entry, _projection in
+                        reopened.get_source_item_vector_candidates(("strasse",))] == ["unchanged-vector"]
+            finally:
+                reopened.close()
+    finally:
+        event.remove(Engine, "after_cursor_execute", observe)
+    assert operations == []
+    assert _closed_pragma(path, "user_version") == 1
+
+
+@pytest.mark.parametrize(
+    "state",
+    [
+        "version-minus-one", "version-future", "missing-id",
+        "missing-metadata", "bad-projection", "inttext-projection",
+    ],
+)
+def test_main_work_ref_admission_refuses_unknown_or_incompatible_state_without_writes(
+    tmp_path: Path, state: str
+) -> None:
+    main = tmp_path / f"main-{state}.db"
+    relay = tmp_path / f"relay-{state}.db"
+    provider = SQLiteStorageProvider(
+        f"sqlite:///{main}", relay_database_url=f"sqlite:///{relay}"
+    )
+    provider.relay_turn(
+        runtime="codex", session_ref="preserved", container_ref="c",
+        title=None, max_chars=100, max_messages=1, lease_seconds=60,
+    )
+    provider.close()
+
+    with closing(sqlite3.connect(main)) as connection, connection:
+        if state == "version-minus-one":
+            connection.execute("PRAGMA user_version=-1")
+        elif state == "version-future":
+            connection.execute("PRAGMA user_version=2")
+        elif state in {"missing-id", "missing-metadata"}:
+            connection.execute("DROP TABLE source_items")
+            connection.execute(
+                "CREATE TABLE source_items (metadata_json TEXT)"
+                if state == "missing-id"
+                else "CREATE TABLE source_items (id TEXT PRIMARY KEY)"
+            )
+        else:
+            connection.execute("DROP TABLE source_item_work_refs")
+            projection_type = "INTTEXT" if state == "inttext-projection" else "INTEGER"
+            connection.execute(
+                "CREATE TABLE source_item_work_refs ("
+                f"source_item_id TEXT NOT NULL, work_ref {projection_type} NOT NULL, "
+                "PRIMARY KEY (source_item_id, work_ref))"
+            )
+
+    before_main, before_relay = main.read_bytes(), relay.read_bytes()
+    writes = []
+
+    def observe_persistent_write(connection, _cursor, statement, _parameters, _context, _many):
+        database = Path(connection.engine.url.database).resolve()
+        if database not in {main.resolve(), relay.resolve()}:
+            return
+        sql = " ".join(statement.upper().split())
+        if sql.startswith((
+            "PRAGMA AUTO_VACUUM=", "PRAGMA JOURNAL_MODE=", "PRAGMA MAIN.USER_VERSION=",
+            "CREATE ", "ALTER ", "DROP ", "INSERT ", "UPDATE ", "DELETE ", "REPLACE ",
+        )):
+            writes.append((database, sql))
+
+    event.listen(Engine, "before_cursor_execute", observe_persistent_write)
+    try:
+        with pytest.raises(RuntimeError, match="Unsupported main|Incompatible"):
+            SQLiteStorageProvider(
+                f"sqlite:///{main}", relay_database_url=f"sqlite:///{relay}"
+            )
+    finally:
+        event.remove(Engine, "before_cursor_execute", observe_persistent_write)
+    assert writes == []
+    assert main.read_bytes() == before_main
+    assert relay.read_bytes() == before_relay
+
+
+def test_version_one_missing_lookup_index_is_restored_without_rebuild(
+    tmp_path: Path,
+) -> None:
+    from core.models import SourceItem
+
+    path = tmp_path / "missing-work-ref-index.db"
+    url = f"sqlite:///{path}"
+    provider = SQLiteStorageProvider(url)
+    try:
+        provider.create_source_item(
+            SourceItem(
+                source_type="chat", source_id="indexed", content_type="text/plain",
+                content="alpha", metadata={"pallium_work_refs": ["index-ref"]},
+            )
+        )
+    finally:
+        provider.close()
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.execute("DROP INDEX idx_source_item_work_refs_lookup")
+
+    operations = []
+
+    def observe(connection, _cursor, statement, _parameters, _context, _many):
+        if Path(connection.engine.url.database).resolve() != path.resolve():
+            return
+        sql = " ".join(statement.upper().split())
+        if sql == "DELETE FROM SOURCE_ITEM_WORK_REFS":
+            operations.append("DELETE")
+        elif sql == "SELECT ID, METADATA_JSON FROM SOURCE_ITEMS":
+            operations.append("SCAN")
+        elif sql.startswith("INSERT INTO SOURCE_ITEM_WORK_REFS"):
+            operations.append("INSERT")
+
+    event.listen(Engine, "after_cursor_execute", observe)
+    try:
+        reopened = SQLiteStorageProvider(url)
+        reopened.close()
+    finally:
+        event.remove(Engine, "after_cursor_execute", observe)
+    assert operations == []
+    with closing(sqlite3.connect(path)) as connection, connection:
+        assert connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='index' "
+            "AND name='idx_source_item_work_refs_lookup'"
+        ).fetchone() is not None
+
+
+@pytest.mark.parametrize(
+    ("failure_point", "version", "missing_table"),
+    [
+        ("after_create", 1, True),
+        ("after_delete", 0, False),
+        ("after_insert", 0, False),
+        ("after_version", 0, False),
+    ],
+)
+def test_work_ref_migration_failure_rolls_back_and_retry_completes(
+    tmp_path: Path, failure_point: str, version: int, missing_table: bool
+) -> None:
+    from core.models import IndexEntry, SourceItem
+
+    path = tmp_path / f"migration-{failure_point}.db"
+    url = f"sqlite:///{path}"
+    source = SourceItem(
+        source_type="chat", source_id="failure-source", content_type="text/plain",
+        content="alpha", metadata={"pallium_work_refs": ["correct-ref"]},
+    )
+    initial = SQLiteStorageProvider(url)
+    try:
+        initial.create_source_item(source)
+        initial.create_index_entry(
+            IndexEntry(
+                id="failure-vector", target_kind="source_item", target_id=source.id,
+                index_type="vector", text_view="alpha",
+            )
+        )
+    finally:
+        initial.close()
+    with closing(sqlite3.connect(path)) as connection, connection:
+        if missing_table:
+            connection.execute("DROP TABLE source_item_work_refs")
+        else:
+            connection.execute(
+                "INSERT INTO source_item_work_refs (source_item_id, work_ref) VALUES (?, ?)",
+                (source.id, "stale-ref"),
+            )
+            connection.execute("PRAGMA user_version=0")
+
+    engines = []
+    fired = []
+
+    def fail_after_statement(connection, _cursor, statement, _parameters, _context, _many):
+        if Path(connection.engine.url.database).resolve() != path.resolve():
+            return
+        sql = " ".join(statement.upper().split())
+        matches = {
+            "after_create": sql.startswith("CREATE TABLE SOURCE_ITEM_WORK_REFS"),
+            "after_delete": sql == "DELETE FROM SOURCE_ITEM_WORK_REFS",
+            "after_insert": sql.startswith("INSERT INTO SOURCE_ITEM_WORK_REFS"),
+            "after_version": sql == "PRAGMA MAIN.USER_VERSION=1",
+        }
+        if matches[failure_point] and not fired:
+            fired.append(sql)
+            engines.append(connection.engine)
+            raise RuntimeError("injected migration failure")
+
+    event.listen(Engine, "after_cursor_execute", fail_after_statement)
+    try:
+        with pytest.raises(RuntimeError, match="injected migration failure"):
+            SQLiteStorageProvider(url)
+    finally:
+        event.remove(Engine, "after_cursor_execute", fail_after_statement)
+        for engine in engines:
+            engine.dispose()
+    assert fired
+
+    with closing(sqlite3.connect(path)) as connection, connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == version
+        present = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='source_item_work_refs'"
+        ).fetchone() is not None
+        assert present is not missing_table
+        if present:
+            refs = connection.execute(
+                "SELECT work_ref FROM source_item_work_refs WHERE source_item_id=? ORDER BY work_ref",
+                (source.id,),
+            ).fetchall()
+            assert refs == ([] if missing_table else [("correct-ref",), ("stale-ref",)])
+
+    retry = SQLiteStorageProvider(url)
+    try:
+        candidates = retry.get_source_item_vector_candidates(("correct-ref",))
+        assert [entry.id for entry, _projection in candidates] == ["failure-vector"]
+    finally:
+        retry.close()
+    assert _closed_pragma(path, "user_version") == 1
+    with closing(sqlite3.connect(path)) as connection, connection:
+        assert connection.execute(
+            "SELECT work_ref FROM source_item_work_refs WHERE source_item_id=? ORDER BY work_ref",
+            (source.id,),
+        ).fetchall() == [("correct-ref",)]
+
+
+@pytest.mark.parametrize("failure_point", ["after_delete", "after_insert"])
+def test_private_work_ref_repair_failure_rolls_back_and_preserves_version(
+    tmp_path: Path, request: pytest.FixtureRequest, failure_point: str
+) -> None:
+    from core.models import SourceItem
+
+    path = tmp_path / f"repair-{failure_point}.db"
+    provider = SQLiteStorageProvider(f"sqlite:///{path}")
+    request.addfinalizer(provider.close)
+    source = SourceItem(
+        source_type="chat", source_id="repair-source", content_type="text/plain",
+        content="alpha", metadata={"pallium_work_refs": ["old-ref"]},
+    )
+    provider.create_source_item(source)
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.execute(
+            "UPDATE source_items SET metadata_json=? WHERE id=?",
+            (json.dumps({"pallium_work_refs": ["new-ref"]}), source.id),
+        )
+
+    fired = []
+
+    def fail_after_statement(connection, _cursor, statement, _parameters, _context, _many):
+        sql = " ".join(statement.upper().split())
+        matches = {
+            "after_delete": sql == "DELETE FROM SOURCE_ITEM_WORK_REFS",
+            "after_insert": sql.startswith("INSERT INTO SOURCE_ITEM_WORK_REFS"),
+        }
+        if matches[failure_point] and not fired:
+            fired.append(sql)
+            raise RuntimeError("injected repair failure")
+
+    event.listen(provider._engine, "after_cursor_execute", fail_after_statement)
+    try:
+        with pytest.raises(RuntimeError, match="injected repair failure"):
+            provider._backfill_source_item_work_refs()
+    finally:
+        event.remove(provider._engine, "after_cursor_execute", fail_after_statement)
+    assert fired
+    with provider._engine.connect() as connection:
+        assert connection.exec_driver_sql("PRAGMA main.user_version").scalar_one() == 1
+        assert connection.execute(
+            text(
+                "SELECT work_ref FROM source_item_work_refs "
+                "WHERE source_item_id=:source_id ORDER BY work_ref"
+            ),
+            {"source_id": source.id},
+        ).scalars().all() == ["old-ref"]
+
+    provider._backfill_source_item_work_refs()
+    provider._backfill_source_item_work_refs()
+    with provider._engine.connect() as connection:
+        assert connection.exec_driver_sql("PRAGMA main.user_version").scalar_one() == 1
+        assert connection.execute(
+            text(
+                "SELECT work_ref FROM source_item_work_refs "
+                "WHERE source_item_id=:source_id ORDER BY work_ref"
+            ),
+            {"source_id": source.id},
+        ).scalars().all() == ["new-ref"]
+
+
+@pytest.mark.parametrize("populated", [True, False], ids=["legacy-populated", "fresh-pair"])
+def test_concurrent_main_startups_rebuild_once_in_owned_processes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, populated: bool,
+) -> None:
+    from app.config import AppConfig
+    from core.models import IndexEntry, SourceItem
+
+    path = tmp_path / "concurrent-main.db"
+    url = f"sqlite:///{path}"
+    relay_url = AppConfig(sqlite_url=url).resolved_relay_sqlite_url
+    source = None
+    if populated:
+        source = SourceItem(
+            source_type="chat", source_id="concurrent", content_type="text/plain",
+            content="alpha", container_ref="room", thread_ref="thread", visibility="private",
+            metadata={"pallium_work_refs": ["concurrent-ref"]},
+        )
+        initial = SQLiteStorageProvider(url, relay_database_url=relay_url)
+        try:
+            initial.create_source_item(source)
+            initial.create_index_entry(
+                IndexEntry(
+                    id="concurrent-vector", target_kind="source_item", target_id=source.id,
+                    index_type="vector", text_view="alpha",
+                )
+            )
+        finally:
+            initial.close()
+        with closing(sqlite3.connect(path)) as connection, connection:
+            connection.execute(
+                "INSERT INTO source_item_work_refs (source_item_id, work_ref) VALUES (?, ?)",
+                (source.id, "stale-ref"),
+            )
+            connection.execute("PRAGMA user_version=0")
+
+    context = multiprocessing.get_context("spawn")
+    result_queue = context.Queue()
+    ready_event = context.Event()
+    release_event = context.Event()
+    processes = [
+        context.Process(
+            target=_initialize_main_and_report_work_ref_migration,
+            args=(path, result_queue),
+            kwargs={
+                "relay_database_url": relay_url,
+                "ready_event": ready_event,
+                "release_event": release_event,
+            },
+            daemon=True,
+        )
+        for _ in range(2)
+    ]
+    started = []
+    exitcodes = []
+    cleanup_errors = []
+    try:
+        for process in processes:
+            try:
+                _start_hidden_owned_process(process)
+            finally:
+                if process.pid is not None:
+                    started.append(process)
+        deadline = time.monotonic() + 30
+        remaining = deadline - time.monotonic()
+        if remaining <= 0 or not ready_event.wait(remaining):
+            raise TimeoutError("startup workers did not reach the ready gate")
+        for _ in processes:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("startup workers did not both reach the gate")
+            assert result_queue.get(timeout=remaining)[0] == "ready"
+        release_event.set()
+        results = []
+        for _ in processes:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("startup workers did not finish within the bound")
+            results.append(result_queue.get(timeout=remaining))
+    finally:
+        release_event.set()
+        for process in started:
+            exitcode, errors = _reap_owned_process(process)
+            exitcodes.append(exitcode)
+            cleanup_errors.extend(errors)
+        try:
+            result_queue.close()
+        except Exception as exc:
+            cleanup_errors.append(f"queue close failed: {exc!r}")
+        try:
+            result_queue.join_thread()
+        except Exception as exc:
+            cleanup_errors.append(f"queue join failed: {exc!r}")
+        assert not cleanup_errors, "; ".join(cleanup_errors)
+    assert [result[0] for result in results] == ["ok", "ok"]
+    operations = [operation for _status, rows in results for operation in rows]
+    assert operations.count("DELETE") == 1
+    assert operations.count("SCAN") == 1
+    assert operations.count("INSERT") == (1 if populated else 0)
+    assert exitcodes == [0, 0]
+    assert _closed_pragma(path, "user_version") == 1
+
+    reopened = SQLiteStorageProvider(url, relay_database_url=relay_url)
+    try:
+        if populated:
+            candidates = reopened.get_source_item_vector_candidates(("concurrent-ref",))
+            assert [entry.id for entry, _projection in candidates] == ["concurrent-vector"]
+    finally:
+        reopened.close()
+    assert _closed_pragma(path, "user_version") == 1
+    if populated:
+        from fastapi.testclient import TestClient
+
+        from tests.test_exact_work_ref_search import _exact, _http_app_for_sqlite
+
+        app = _http_app_for_sqlite(url, monkeypatch)
+        with TestClient(app) as client:
+            assert [item["source_item_id"] for item in _exact(client, "", "concurrent-ref")] == [source.id]
+
+
+def test_abrupt_exit_after_version_write_rolls_back_migration_and_retry_succeeds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.config import AppConfig
+    from core.models import IndexEntry, SourceItem
+
+    path = tmp_path / "crashed-main.db"
+    url = f"sqlite:///{path}"
+    relay_url = AppConfig(sqlite_url=url).resolved_relay_sqlite_url
+    source = SourceItem(
+        source_type="chat", source_id="crashed", content_type="text/plain",
+        content="alpha", container_ref="room", thread_ref="thread", visibility="private",
+        metadata={"pallium_work_refs": ["crash-ref"]},
+    )
+    initial = SQLiteStorageProvider(url, relay_database_url=relay_url)
+    try:
+        initial.create_source_item(source)
+        initial.create_index_entry(
+            IndexEntry(
+                id="crash-vector", target_kind="source_item", target_id=source.id,
+                index_type="vector", text_view="alpha",
+            )
+        )
+    finally:
+        initial.close()
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.execute(
+            "INSERT INTO source_item_work_refs (source_item_id, work_ref) VALUES (?, ?)",
+            (source.id, "stale-ref"),
+        )
+        connection.execute("PRAGMA user_version=0")
+
+    context = multiprocessing.get_context("spawn")
+    result_queue = context.Queue()
+    process = context.Process(
+        target=_initialize_main_and_report_work_ref_migration,
+        args=(path, result_queue),
+        kwargs={"relay_database_url": relay_url, "crash_after_version": True},
+        daemon=True,
+    )
+    started = False
+    exitcode = None
+    cleanup_errors = []
+    try:
+        try:
+            _start_hidden_owned_process(process)
+        finally:
+            started = process.pid is not None
+        process.join(timeout=30)
+    finally:
+        if started:
+            exitcode, errors = _reap_owned_process(process)
+            cleanup_errors.extend(errors)
+        try:
+            result_queue.close()
+        except Exception as exc:
+            cleanup_errors.append(f"queue close failed: {exc!r}")
+        try:
+            result_queue.join_thread()
+        except Exception as exc:
+            cleanup_errors.append(f"queue join failed: {exc!r}")
+        assert not cleanup_errors, "; ".join(cleanup_errors)
+    assert exitcode == 73
+
+    with closing(sqlite3.connect(path)) as connection, connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 0
+        assert connection.execute(
+            "SELECT work_ref FROM source_item_work_refs WHERE source_item_id=? ORDER BY work_ref",
+            (source.id,),
+        ).fetchall() == [("crash-ref",), ("stale-ref",)]
+
+    retry = SQLiteStorageProvider(url, relay_database_url=relay_url)
+    try:
+        candidates = retry.get_source_item_vector_candidates(("crash-ref",))
+        assert [entry.id for entry, _projection in candidates] == ["crash-vector"]
+    finally:
+        retry.close()
+    assert _closed_pragma(path, "user_version") == 1
+    from fastapi.testclient import TestClient
+
+    from tests.test_exact_work_ref_search import _exact, _http_app_for_sqlite
+
+    app = _http_app_for_sqlite(url, monkeypatch)
+    with TestClient(app) as client:
+        assert [item["source_item_id"] for item in _exact(client, "", "crash-ref")] == [source.id]
+
+
+@pytest.mark.parametrize("scenario", ["valid", "version", "malformed-file"])
+def test_readonly_main_preflight_closes_native_handle_on_success_and_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, scenario: str
+) -> None:
+    path = tmp_path / f"preflight-handle-{scenario}.db"
+    url = f"sqlite:///{path}"
+    if scenario == "malformed-file":
+        path.write_bytes(b"not a sqlite database")
+    else:
+        initial = SQLiteStorageProvider(url)
+        initial.close()
+    if scenario == "version":
+        with closing(sqlite3.connect(path)) as connection, connection:
+            connection.execute("PRAGMA user_version=2")
+
+    original_connect = sqlite3.connect
+    handles = []
+
+    class ConnectionSpy:
+        def __init__(self, connection):
+            self.connection = connection
+            self.closed = False
+
+        def execute(self, *args, **kwargs):
+            return self.connection.execute(*args, **kwargs)
+
+        def close(self):
+            self.closed = True
+            self.connection.close()
+
+    def connect_spy(database, *args, **kwargs):
+        connection = original_connect(database, *args, **kwargs)
+        if not handles and kwargs.get("uri") and "?mode=ro" in str(database):
+            spy = ConnectionSpy(connection)
+            handles.append(spy)
+            return spy
+        return connection
+
+    monkeypatch.setattr(sqlite3, "connect", connect_spy)
+    if scenario == "valid":
+        reopened = SQLiteStorageProvider(url)
+        reopened.close()
+    elif scenario == "malformed-file":
+        with pytest.raises(sqlite3.DatabaseError):
+            SQLiteStorageProvider(url)
+    else:
+        with pytest.raises(RuntimeError, match="Unsupported main database user_version"):
+            SQLiteStorageProvider(url)
+    assert len(handles) == 1
+    assert handles[0].closed
+    if scenario == "malformed-file":
+        assert path.read_bytes() == b"not a sqlite database"
+
+
+@pytest.mark.parametrize("race", ["version", "missing-metadata"])
+def test_main_change_before_pragmas_recheck_refuses_before_engine_writes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, race: str
+) -> None:
+    from core.models import SourceItem
+
+    path = tmp_path / f"preflight-{race}-race.db"
+    url = f"sqlite:///{path}"
+    source = SourceItem(
+        source_type="chat", source_id="preflight-race", content_type="text/plain",
+        content="alpha", metadata={"pallium_work_refs": ["kept-ref"]},
+    )
+    initial = SQLiteStorageProvider(url)
+    try:
+        initial.create_source_item(source)
+    finally:
+        initial.close()
+
+    original_pragmas = SQLiteStorageProvider._initialize_sqlite_pragmas
+
+    def change_version_after_native_preflight(provider, engine):
+        if engine is provider._engine:
+            with closing(sqlite3.connect(path)) as connection, connection:
+                if race == "version":
+                    connection.execute("PRAGMA user_version=2")
+                else:
+                    connection.execute(
+                        "ALTER TABLE source_items RENAME COLUMN metadata_json TO metadata_gone"
+                    )
+        return original_pragmas(provider, engine)
+
+    monkeypatch.setattr(
+        SQLiteStorageProvider,
+        "_initialize_sqlite_pragmas",
+        change_version_after_native_preflight,
+    )
+    writes = []
+
+    def observe_persistent_write(connection, _cursor, statement, _parameters, _context, _many):
+        if Path(connection.engine.url.database).resolve() != path.resolve():
+            return
+        sql = " ".join(statement.upper().split())
+        if sql.startswith((
+            "PRAGMA AUTO_VACUUM=", "PRAGMA JOURNAL_MODE=", "PRAGMA MAIN.USER_VERSION=",
+            "CREATE ", "ALTER ", "DROP ", "INSERT ", "UPDATE ", "DELETE ", "REPLACE ",
+        )):
+            writes.append(sql)
+
+    event.listen(Engine, "before_cursor_execute", observe_persistent_write)
+    try:
+        expected = (
+            "Unsupported main database user_version"
+            if race == "version"
+            else "Incompatible source_items schema"
+        )
+        with pytest.raises(RuntimeError, match=expected):
+            SQLiteStorageProvider(url)
+    finally:
+        event.remove(Engine, "before_cursor_execute", observe_persistent_write)
+    assert writes == []
+    with closing(sqlite3.connect(path)) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == (2 if race == "version" else 1)
+        assert connection.execute(
+            "SELECT work_ref FROM source_item_work_refs WHERE source_item_id=?",
+            (source.id,),
+        ).fetchall() == [("kept-ref",)]
+
+
+@pytest.mark.parametrize("race", ["version", "missing-metadata"])
+def test_main_change_before_locked_recheck_refuses_without_projection_delete(
+    tmp_path: Path, race: str,
+) -> None:
+    from core.models import SourceItem
+
+    path = tmp_path / f"locked-{race}-race.db"
+    url = f"sqlite:///{path}"
+    source = SourceItem(
+        source_type="chat", source_id="locked-race", content_type="text/plain",
+        content="alpha", metadata={"pallium_work_refs": ["kept-ref"]},
+    )
+    initial = SQLiteStorageProvider(url)
+    try:
+        initial.create_source_item(source)
+    finally:
+        initial.close()
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.execute(
+            "INSERT INTO source_item_work_refs (source_item_id, work_ref) VALUES (?, ?)",
+            (source.id, "stale-ref"),
+        )
+        connection.execute("PRAGMA user_version=0")
+
+    version_changed = []
+    projection_deletes = []
+
+    def change_version_before_begin(connection, _cursor, statement, _parameters, _context, _many):
+        if Path(connection.engine.url.database).resolve() != path.resolve():
+            return
+        if " ".join(statement.upper().split()) != "BEGIN IMMEDIATE" or version_changed:
+            return
+        with closing(sqlite3.connect(path)) as native_connection, native_connection:
+            if race == "version":
+                native_connection.execute("PRAGMA user_version=2")
+            else:
+                native_connection.execute(
+                    "ALTER TABLE source_items RENAME COLUMN metadata_json TO metadata_gone"
+                )
+        version_changed.append(True)
+
+    def observe_projection_delete(connection, _cursor, statement, _parameters, _context, _many):
+        if (
+            Path(connection.engine.url.database).resolve() == path.resolve()
+            and " ".join(statement.upper().split()) == "DELETE FROM SOURCE_ITEM_WORK_REFS"
+        ):
+            projection_deletes.append(statement)
+
+    event.listen(Engine, "before_cursor_execute", change_version_before_begin)
+    event.listen(Engine, "after_cursor_execute", observe_projection_delete)
+    try:
+        expected = (
+            "Unsupported main database user_version"
+            if race == "version"
+            else "Incompatible source_items schema"
+        )
+        with pytest.raises(RuntimeError, match=expected):
+            SQLiteStorageProvider(url)
+    finally:
+        event.remove(Engine, "before_cursor_execute", change_version_before_begin)
+        event.remove(Engine, "after_cursor_execute", observe_projection_delete)
+    assert version_changed == [True]
+    assert projection_deletes == []
+    with closing(sqlite3.connect(path)) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == (2 if race == "version" else 0)
+        assert connection.execute(
+            "SELECT work_ref FROM source_item_work_refs WHERE source_item_id=? ORDER BY work_ref",
+            (source.id,),
+        ).fetchall() == [("kept-ref",), ("stale-ref",)]
+
+
+def test_writer_is_busy_during_backfill_and_provider_write_succeeds_afterward(
+    tmp_path: Path,
+) -> None:
+    from core.models import IndexEntry, SourceItem
+
+    path = tmp_path / "migration-writer-contention.db"
+    url = f"sqlite:///{path}"
+    source = SourceItem(
+        source_type="chat", source_id="migration-contention", content_type="text/plain",
+        content="alpha", metadata={"pallium_work_refs": ["migration-ref"]},
+    )
+    initial = SQLiteStorageProvider(url)
+    try:
+        initial.create_source_item(source)
+        initial.create_index_entry(
+            IndexEntry(
+                id="migration-contention-vector", target_kind="source_item",
+                target_id=source.id, index_type="vector", text_view="alpha",
+            )
+        )
+    finally:
+        initial.close()
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.execute(
+            "INSERT INTO source_item_work_refs (source_item_id, work_ref) VALUES (?, ?)",
+            (source.id, "stale-ref"),
+        )
+        connection.execute("PRAGMA user_version=0")
+
+    write_errors = []
+
+    def observe_delete(connection, _cursor, statement, _parameters, _context, _many):
+        if (
+            Path(connection.engine.url.database).resolve() != path.resolve()
+            or " ".join(statement.upper().split()) != "DELETE FROM SOURCE_ITEM_WORK_REFS"
+        ):
+            return
+        with closing(sqlite3.connect(path, timeout=0)) as blocker:
+            try:
+                blocker.execute("BEGIN IMMEDIATE")
+            except sqlite3.OperationalError as exc:
+                write_errors.append(exc.sqlite_errorcode)
+            else:
+                blocker.rollback()
+                write_errors.append(None)
+
+    event.listen(Engine, "after_cursor_execute", observe_delete)
+    try:
+        provider = SQLiteStorageProvider(url)
+    finally:
+        event.remove(Engine, "after_cursor_execute", observe_delete)
+    try:
+        assert write_errors == [5]
+        written = SourceItem(
+            source_type="chat", source_id="after-contention", content_type="text/plain",
+            content="after", metadata={"pallium_work_refs": ["after-ref"]},
+        )
+        provider.create_source_item(written)
+        provider.create_index_entry(
+            IndexEntry(
+                id="after-contention-vector", target_kind="source_item",
+                target_id=written.id, index_type="vector", text_view="after",
+            )
+        )
+        candidates = provider.get_source_item_vector_candidates(("after-ref",))
+        assert [entry.id for entry, _projection in candidates] == ["after-contention-vector"]
+    finally:
+        provider.close()
+
+
+def test_busy_migration_failure_preserves_preimage_and_retry_succeeds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from sqlalchemy.exc import OperationalError
+
+    from core.models import IndexEntry, SourceItem
+
+    path = tmp_path / "migration-busy-failure.db"
+    url = f"sqlite:///{path}"
+    source = SourceItem(
+        source_type="chat", source_id="busy-source", content_type="text/plain",
+        content="alpha", metadata={"pallium_work_refs": ["correct-ref"]},
+    )
+    initial = SQLiteStorageProvider(url)
+    try:
+        initial.create_source_item(source)
+        initial.create_index_entry(
+            IndexEntry(
+                id="busy-vector", target_kind="source_item", target_id=source.id,
+                index_type="vector", text_view="alpha",
+            )
+        )
+    finally:
+        initial.close()
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.execute(
+            "INSERT INTO source_item_work_refs (source_item_id, work_ref) VALUES (?, ?)",
+            (source.id, "stale-ref"),
+        )
+        connection.execute("PRAGMA user_version=0")
+
+    original_ensure = SQLiteStorageProvider._ensure_source_item_work_refs
+    blocker_ready = []
+
+    def hold_writer_during_migration(provider):
+        with closing(sqlite3.connect(path, timeout=0)) as blocker:
+            blocker.execute("BEGIN IMMEDIATE")
+            blocker_ready.append(True)
+            try:
+                return original_ensure(provider)
+            finally:
+                blocker.rollback()
+
+    monkeypatch.setattr(
+        SQLiteStorageProvider,
+        "_ensure_source_item_work_refs",
+        hold_writer_during_migration,
+    )
+    timeouts = []
+
+    def bound_test_connection_timeout(connection, _cursor, statement, _parameters, _context, _many):
+        if (
+            Path(connection.engine.url.database).resolve() == path.resolve()
+            and " ".join(statement.upper().split()) == "BEGIN IMMEDIATE"
+        ):
+            connection.connection.driver_connection.execute("PRAGMA busy_timeout=100")
+            timeouts.append(100)
+
+    event.listen(Engine, "before_cursor_execute", bound_test_connection_timeout)
+    try:
+        with pytest.raises(OperationalError) as caught:
+            SQLiteStorageProvider(url)
+    finally:
+        event.remove(Engine, "before_cursor_execute", bound_test_connection_timeout)
+    assert blocker_ready == [True]
+    assert timeouts == [100]
+    assert getattr(caught.value.orig, "sqlite_errorcode", None) == 5
+    with closing(sqlite3.connect(path)) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 0
+        assert connection.execute(
+            "SELECT work_ref FROM source_item_work_refs WHERE source_item_id=? ORDER BY work_ref",
+            (source.id,),
+        ).fetchall() == [("correct-ref",), ("stale-ref",)]
+
+    monkeypatch.setattr(
+        SQLiteStorageProvider,
+        "_ensure_source_item_work_refs",
+        original_ensure,
+    )
+    retry = SQLiteStorageProvider(url)
+    try:
+        candidates = retry.get_source_item_vector_candidates(("correct-ref",))
+        assert [entry.id for entry, _projection in candidates] == ["busy-vector"]
+    finally:
+        retry.close()
+    assert _closed_pragma(path, "user_version") == 1
+
+
+def test_memory_sqlite_storage_still_supports_source_work_ref_queries() -> None:
+    from core.models import IndexEntry, SourceItem
+
+    provider = SQLiteStorageProvider("sqlite:///:memory:")
+    try:
+        assert provider.get_source_item_vector_candidates(("memory-ref",)) == []
+        source = SourceItem(
+            source_type="chat", source_id="memory", content_type="text/plain",
+            content="memory", metadata={"pallium_work_refs": ["memory-ref"]},
+        )
+        provider.create_source_item(source)
+        provider.create_index_entry(
+            IndexEntry(
+                id="memory-vector", target_kind="source_item", target_id=source.id,
+                index_type="vector", text_view="memory",
+            )
+        )
+        candidates = provider.get_source_item_vector_candidates(("memory-ref",))
+        assert [entry.id for entry, _projection in candidates] == ["memory-vector"]
+        with provider._engine.connect() as connection:
+            assert connection.exec_driver_sql("PRAGMA main.user_version").scalar_one() == 1
+    finally:
+        provider.close()
+
+
+@pytest.mark.parametrize("same_file", [False, True], ids=["separate-relay", "same-file"])
+def test_main_migration_preserves_relay_lifecycle_and_manifest_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, same_file: bool,
+) -> None:
+    from core.relay import RelayConflictError
+    from tests.test_relay_endpoint_repair_e2e import (
+        DELIVERY_A,
+        DELIVERY_B,
+        _apply,
+        _clean_wake_stores,
+        _manifest,
+        _seed,
+    )
+
+    main = tmp_path / f"relay-main-{same_file}.db"
+    relay = main if same_file else tmp_path / "relay-separate.db"
+    main_url = f"sqlite:///{main}"
+    relay_url = f"sqlite:///{relay}"
+
+    def seed_preupgrade_relay_and_manifest() -> dict:
+        with closing(SQLiteStorageProvider(main_url, relay_database_url=relay_url)) as provider:
+            scope = {"container_ref": "migration-scope"}
+            for session in ("sender", "target"):
+                provider.relay_turn(
+                    runtime="codex", session_ref=session, title=None, max_chars=1000,
+                    max_messages=1, lease_seconds=60, **scope,
+                )
+
+            def send(message_id: str) -> None:
+                provider.relay_send(
+                    message_id=message_id, sender_runtime="codex", sender_session_ref="sender",
+                    recipient="codex:target", recipient_runtime="codex", recipient_kind="session",
+                    recipient_value="target", payload=message_id, redacted=False,
+                    expires_in_seconds=3600, in_reply_to=None, **scope,
+                )
+
+            send("claimed-message")
+            claimed = provider.relay_turn(
+                runtime="codex", session_ref="target", title=None, max_chars=1000,
+                max_messages=1, lease_seconds=60, **scope,
+            )["deliveries"][0]
+            assert claimed["state"] == "claimed"
+            send("delivered-message")
+            delivered = provider.relay_turn(
+                runtime="codex", session_ref="target", title=None, max_chars=1000,
+                max_messages=1, lease_seconds=60, **scope,
+            )["deliveries"][0]
+            provider.relay_ack_by_receipt(
+                delivery_id=delivered["delivery_id"], receipt=delivered["receipt"], **scope,
+            )
+            send("pending-message")
+            assert provider.relay_message_status(message_id="claimed-message", **scope)["deliveries"][0]["state"] == "claimed"
+            assert provider.relay_message_status(message_id="delivered-message", **scope)["deliveries"][0]["state"] == "delivered"
+            assert provider.relay_message_status(message_id="pending-message", **scope)["deliveries"][0]["state"] == "pending"
+
+            with closing(sqlite3.connect(main)) as connection, connection:
+                connection.execute("PRAGMA user_version=0")
+            _clean_wake_stores(tmp_path, monkeypatch)
+            _seed(provider, datetime.now(timezone.utc))
+            # Isolate the main migration from existing Relay statistics setup.
+            tables_before_optimize = _tables(relay)
+            provider._optimize_query_planner_stats(provider._relay_engine)
+            if not same_file:
+                assert "sqlite_stat1" not in tables_before_optimize
+                assert _tables(relay) - tables_before_optimize == {"sqlite_stat1"}
+            return _manifest(
+                provider,
+                [
+                    {"delivery_id": DELIVERY_A, "disposition": "suppress"},
+                    {"delivery_id": DELIVERY_B, "disposition": "suppress"},
+                ],
+            )
+
+    manifest = seed_preupgrade_relay_and_manifest()
+
+    before_relay = _relay_table_rows(relay)
+    before_relay_version = _closed_pragma(relay, "user_version")
+    reopened = SQLiteStorageProvider(main_url, relay_database_url=relay_url)
+    try:
+        assert _relay_table_rows(relay) == before_relay
+        assert _closed_pragma(main, "user_version") == 1
+        if same_file:
+            assert before_relay_version == 0
+            assert _closed_pragma(relay, "user_version") == 1
+            with pytest.raises(RelayConflictError, match="repair database identity drifted"):
+                _apply(reopened, manifest, datetime.now(timezone.utc))
+            assert _relay_table_rows(relay) == before_relay
+        else:
+            assert _closed_pragma(relay, "user_version") == before_relay_version
+            assert _closed_pragma(relay, "schema_version") == manifest["database_identity"]["schema_version"]
+            _apply(reopened, manifest, datetime.now(timezone.utc))
+    finally:
+        reopened.close()

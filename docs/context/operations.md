@@ -70,8 +70,10 @@ Out-of-band metadata/row edits no longer receive automatic repair on reopen.
 The existing private `_backfill_source_item_work_refs()` repair remains explicit,
 unconditional and version-preserving; this introduces no public repair command.
 
-Separate Relay database versions/rows are not migrated by this main step. A
-same-file deployment shares the changed header: prior offline repair manifests
+Separate Relay database versions/rows are not migrated by this main step.
+Ordinary Relay startup maintenance can independently change its schema identity
+(for example, by initializing planner statistics) and invalidate a repair manifest.
+A same-file deployment shares the changed header: prior offline repair manifests
 become stale and must be regenerated through the existing stopped procedure.
 Do not bypass their identity fence. Earlier binaries retain schema compatibility
 but resume their old unconditional rebuild; they do not reset version1. This
