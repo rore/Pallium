@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import shutil
 import sys
 import subprocess
 from types import SimpleNamespace
@@ -33,6 +34,27 @@ from app.cli.service import (
     assert_service_stopped,
     service_main,
 )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_service_runtime(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    home = tmp_path / "pallium"
+    private_env = {
+        "HOME": str(tmp_path / "profile"),
+        "USERPROFILE": str(tmp_path / "profile"),
+        "APPDATA": str(tmp_path / "profile" / "AppData" / "Roaming"),
+        "PALLIUM_HOME": str(home),
+        "PALLIUM_CONFIG_FILE": str(tmp_path / "config.toml"),
+        "PALLIUM_ENV_FILE": str(tmp_path / ".env"),
+        "PALLIUM_STORAGE_BACKEND": "memory",
+        "PALLIUM_SQLITE_URL": f"sqlite:///{tmp_path / 'pallium.db'}",
+        "PALLIUM_SNAPSHOT_ENABLED": "false",
+        "PALLIUM_SNAPSHOT_PATH": str(tmp_path / "snapshots"),
+        "PALLIUM_CODEX_WAKE_DIR": str(tmp_path / "codex-wake"),
+        "PALLIUM_CLAUDE_WAKE_DIR": str(tmp_path / "claude-wake"),
+    }
+    for key, value in private_env.items():
+        monkeypatch.setenv(key, value)
 
 
 class TestPalliumHome:
@@ -438,6 +460,8 @@ class TestStartWindows:
         profile = tmp_path / "profile"
         monkeypatch.setattr(Path, "home", lambda: profile)
         expected_home = profile / ".pallium" if home_name is None else tmp_path / home_name
+        if home_name is None:
+            monkeypatch.delenv("PALLIUM_HOME", raising=False)
         python_exe = tmp_path / "פייתון with spaces" / "python.exe"
         monkeypatch.setattr(sys, "executable", str(python_exe))
         monkeypatch.setattr("app.cli.service._find_pallium_cmd", lambda: "pallium")
@@ -473,16 +497,20 @@ class TestStartWindows:
         assert raw.startswith(b"\xff\xfe")
         assert vbs_path.read_text(encoding="utf-16") == (
             'Set WshShell = CreateObject("WScript.Shell")\n'
-            f'WshShell.Run """{python_exe}"" -m app.run service run --port 21987 '
-            f'--home ""{expected_home}""", 0, False\n'
+            f'WScript.Quit WshShell.Run("""{python_exe}"" -m app.run service run --port 21987 '
+            f'--home ""{expected_home}""", 0, True)\n'
         )
         assert len(task_xml) == 1
         assert f'<Arguments>"{vbs_path}"</Arguments>' in task_xml[0]
         assert popen_calls == [["wscript.exe", str(vbs_path)]]
 
     @pytest.mark.skipif(sys.platform != "win32", reason="Windows-only")
+    @pytest.mark.parametrize("supervisor_exit_code", [0, 1])
     def test_run_uses_explicit_unicode_home_for_runtime_state(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        supervisor_exit_code: int,
     ):
         home = (tmp_path / "שירות with spaces").resolve()
         config = SimpleNamespace(
@@ -504,12 +532,12 @@ class TestStartWindows:
             observed["log_file"] = log_file
             assert (home / "run" / "pallium.pid").read_text() == str(os.getpid())
             assert (home / "run" / "port").read_text() == "21987"
-            return 0
+            return supervisor_exit_code
 
         monkeypatch.setattr("app.supervisor.run_supervisor", fake_supervisor)
 
         with patch.dict(os.environ):
-            assert service_main(["run", "--port", "21987", "--home", str(home)]) == 0
+            assert service_main(["run", "--port", "21987", "--home", str(home)]) == supervisor_exit_code
         assert observed == {"log_file": home / "logs" / "pallium.log"}
         assert not (home / "run" / "pallium.pid").exists()
         assert (home / "run" / "port").read_text() == "21987"
@@ -836,6 +864,84 @@ def test_windows_stop_verifier_is_read_only_and_fail_closed(tmp_path: Path, monk
     assert "pyvenv.cfg" in argv[-1]
     assert "$pythonPaths.Contains" in argv[-1]
     assert r"app\.run\s+serve" in argv[-1]
+    assert r"WshShell\.Run(?:\s+|\s*\(\s*)" in argv[-1]
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows PowerShell probe")
+def test_windows_stop_verifier_executes_new_and_legacy_launcher_parsers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import app.cli.service as service
+
+    shell = shutil.which("pwsh") or shutil.which("powershell")
+    assert shell
+    home = tmp_path / "service home"
+    run_dir = home / "run"
+    run_dir.mkdir(parents=True)
+    (run_dir / "port").write_text("21987", encoding="utf-8")
+    python = tmp_path / "Python With Spaces" / "python.exe"
+    python.parent.mkdir()
+    python.touch()
+    monkeypatch.setattr(service.sys, "executable", str(python))
+
+    with monkeypatch.context() as patcher:
+        patcher.setattr(
+            service.subprocess,
+            "run",
+            lambda argv, **_kwargs: subprocess.CompletedProcess(argv, 0, "", ""),
+        )
+        service._install_windows("pallium", 21987, home)
+    generated_vbs = run_dir / "pallium_launcher.vbs"
+    legacy_vbs = tmp_path / "legacy.vbs"
+    legacy_vbs.write_text(
+        'Set WshShell = CreateObject("WScript.Shell")\n'
+        f'WshShell.Run """{python}"" -m app.run service run --port 21987 '
+        f'--home ""{home}""", 0, False\n',
+        encoding="ascii",
+    )
+    malformed_vbs = tmp_path / "malformed.vbs"
+    malformed_vbs.write_text('WshShell.Run "not-python", 0, False\n', encoding="ascii")
+    mismatch_vbs = tmp_path / "mismatch.vbs"
+    mismatch_vbs.write_text(
+        'Set WshShell = CreateObject("WScript.Shell")\n'
+        f'WScript.Quit WshShell.Run("""{python}"" -m app.run service run --port 21987 '
+        f'--home ""{tmp_path / "other-home"}""", 0, True)\n',
+        encoding="utf-16",
+    )
+
+    def run_probe(vbs: Path) -> subprocess.CompletedProcess[str]:
+        probe_call = []
+        with monkeypatch.context() as patcher:
+            patcher.setattr(
+                service.subprocess,
+                "run",
+                lambda argv, **kwargs: probe_call.append((argv, kwargs))
+                or subprocess.CompletedProcess(argv, 0, "", ""),
+            )
+            service.assert_service_stopped(home)
+        probe_env = probe_call[0][1]["env"] | {"PALLIUM_VERIFY_VBS": str(vbs)}
+        mocks = r'''
+function Get-ScheduledTask {
+    [pscustomobject]@{ State = "Ready"; Actions = @([pscustomobject]@{ Arguments = ('"' + $env:PALLIUM_VERIFY_VBS + '"') }) }
+}
+function Get-NetTCPConnection { param($LocalPort, $State, $ErrorAction); @() }
+function Get-CimInstance { param($Class, $Filter, $ErrorAction); @() }
+'''
+        return subprocess.run(
+            [shell, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", mocks + probe_call[0][0][-1]],
+            env=probe_env,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+
+    for vbs in (generated_vbs, legacy_vbs):
+        result = run_probe(vbs)
+        assert result.returncode == 0, result.stdout + result.stderr
+    for vbs in (malformed_vbs, mismatch_vbs):
+        result = run_probe(vbs)
+        assert result.returncode != 0
 
 def test_linux_stop_verifier_rejects_quoted_codex_queue(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("app.cli.service.sys.platform", "linux")

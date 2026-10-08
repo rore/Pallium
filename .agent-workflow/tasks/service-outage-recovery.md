@@ -34,7 +34,7 @@
 
 **Exceptions:** —
 
-**State:** Implementing
+**State:** Blocked
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -86,6 +86,8 @@ new roadmap/work identity was supplied, so none is guessed or attached.
    behavior. Do not run either installer against a real user installation.
    Correct the PowerShell generator's pre-existing ASCII path loss with BOM UTF-16
    serialization, matching the existing CLI generator; qualify Unicode privately.
+   Align `docs/context/operations.md`: source sync/restart does not rewrite generated
+   launchers; actual installed rollout needs its own approved regeneration/verification.
 3. Update the three launcher-reading regexes in `scripts/restart-service.ps1`
    to recognize the new parenthesized Run call as well as legacy statement form.
    Also update the statement-form parser in `app/cli/service.py`
@@ -115,3 +117,142 @@ optional inference probe, vector index load and database checks. Process-level
 session cache does not survive retries. Stage attribution and regression-backed
 optimization are a later reviewed slice; no arbitrary timeout increase, live cache
 access or inferred socket cause is authorized here.
+
+## Bounded offline startup attribution
+
+2026-10-08 implementation checkpoint: reviewed first slice is being implemented by
+a bounded cheap worker in this same isolated checkout; root owns this record and
+profiling evidence. No tests run yet. Native full suite and installed operations
+remain withheld. State uses the workflow's allowed pre-verification value, not an
+invented `Implementing` state; `Ready for review` awaits verification evidence.
+
+Manager explicitly authorized exact cached model/tokenizer inspection/copy, then
+one installed-interpreter profile and private local-only Hub resolution. Neither
+authorization permits installed writes, downloads, online calls or a live DB copy.
+Copied assets for `intfloat/multilingual-e5-small`, snapshot
+`614241f622f53c4eeff9890bdc4f31cfecc418b3`: model470268510 bytes SHA256
+`CA456C06B3A9505DDFD9131408916DD79290368331E7D76BB621F1CBA6BC8665`;
+tokenizer17082730 bytes SHA256
+`0B44A9D7B51C3C62626640CDA0E2C2F70FDACDC25BBBD68038369D14EBDF4C39`.
+Source cache was unchanged; copies/hash checks and scripts/logs are retained only
+under ignored `build/startup-profile` in this isolated checkout (~0.975GB copies).
+
+Actual provider constructor, with `_download_model` returning copied paths, in one
+private offline process per interpreter (no app/service/DB imports, Python -B):
+
+| Phase | Development interpreter | Installed interpreter |
+| --- | ---: | ---: |
+| ORT import |0.415476s|0.351917s|
+| ONNX session |0.625196s|0.618762s|
+| Tokenizer load |0.356802s|0.366045s|
+| Dimension probe |0.008157s|0.017290s|
+| Provider constructor |0.990358s|1.002317s|
+| Imports + constructor |1.716437s|1.592166s|
+
+Both Python3.13.14/ORT1.29.0/tokenizers0.23.2/HF1.30.0; numpy2.5.2 development,
+2.5.3 installed. Separate installed-interpreter HF probe uses explicit
+`local_files_only=True` and a reconstructed private cache: import0.490361s,
+model resolution0.001991s/tokenizer0.000610s. Initial synthetic cache probe failed
+because authored ref had a trailing newline; exact40-byte known main ref was copied
+and corrected probe passed. Both logs retained; that fixture error is not a product
+defect. These probes exclude normal online HF metadata resolution, index/DB work,
+service build, OS/cache load under the historical outage and process contention.
+They do not establish the historical culprit or claim a startup optimization.
+
+Source attribution: optimized SQLite backfill existence query is preferred over
+the paginated fallback; introduced Sep6 atd3e29e3f. It uses source/lexical inner join
+and vector left join, with type/target indexes already available. Vector load reads
+metadata/idmap JSON then nonempty native index. First reconcile waits2s in lifespan
+and gates functional health; it is after service construction. Existing logs have
+no completed INFO marker splitting HF/ORT/vector/backfill/count/reconcile stages.
+uv.lock changed Sep7 at2fbb0f18; unchanged provider source since May2 does not prove
+unchanged installed runtime, and current metadata cannot establish historical drift.
+
+## Implemented first slice and focused verification (2026-10-08)
+
+The reviewed four-file production correction is implemented, not deployed:
+supervisor cancellation owns and cleans up children without restarting them;
+fatal initial/runtime exhaustion and repeated unexpected zero-code exits report
+failure; both hidden VBS generators wait and propagate child status; PowerShell
+serialization preserves Unicode; all four stop/restart metadata parsers accept
+legacy statement and new parenthesized forms while retaining scope validation.
+Operations documentation explicitly distinguishes source sync from separately
+approved installed launcher/task regeneration and scheduler qualification.
+
+Tests run with the existing development interpreter
+`C:/Dev/rore/Pallium/.venv/Scripts/python.exe -B`, private child environment before
+pytest imports, serial `-n 0`, and private/mocked service, scheduler, kill and
+configuration boundaries. New launcher lifecycle tests execute both actual
+generators through a private Windows script host with only stub children and
+fenced Python imports. They prove wait, status0/7 and Unicode behavior, not the
+installed Task Scheduler recovery contract. No user service/app was stopped.
+
+Initial complete focused command:
+`python -B -m pytest tests/test_supervisor.py tests/test_service.py tests/test_restart_service.py tests/test_service_launcher_lifecycle.py -vv -q -n 0 -o faulthandler_timeout=30`
+returned104 passed/18 skipped/2 failed in46.18s. The two failures were test harness
+assumptions: private PALLIUM_HOME overriding default-home expectation, and a
+PowerShell stdout/stderr encoding mismatch. Fixes explicitly unset that variable
+for the default-home test and select UTF-8 in the harness; assertions were not
+weakened and production source did not change. Exact two failed nodes passed
+in1.38s, then both affected files `tests/test_service.py tests/test_restart_service.py`
+passed78/18 skipped in40.29s. Skips are Windows-inapplicable Linux systemd tests.
+Retained stdout logs under ignored `build/service-recovery-evidence`:
+
+- `focused-initial.stdout.log`: SHA256 `861809B7266202A888B828AE89015D228A7E926E03650204CDE837D85F6181CE`
+- `failed-nodes-rerun.stdout.log`: SHA256 `A0BE2C410C580A1843AB7FD03D5C40B9F65256C04083536C379F5F0641CC8E90`
+- `affected-rerun.stdout.log`: SHA256 `DE6CC772FCABC476B54B4DAA949BD451490333834DE3C5011489C1316615E380`
+
+Earlier partial runs are not acceptance evidence. A zero-code child fake initially
+returned0 once then None forever; it was corrected to persist0, and its exact node
+passed1 in0.45s. Only verified test-owned processes were terminated. An attempted
+`uv run --no-sync python --version` created an ignored checkout-local `.venv`;
+it is not used by tests and must not be confused with either existing runtime.
+
+Selector against verified source baseline f31ac141 selected the full lane across
+all10 changed files, including dirty/untracked changes. Final selector against
+fresh origin/main, full non-slow validation, independent final result review,
+workflow/CI/PR gates and publication are NOT complete. State Blocked records the
+manager-withheld full qualification slot while isolated diagnosis/source review
+continue. Manager owns roadmap reconciliation and installed rollout.
+
+## Synthetic startup stages and next attribution boundary
+
+Manager authorized one private synthetic DB/index process after the focused slot
+drained. Actual installed interpreter and real storage/vector methods used a new
+private paired SQLite main/Relay database,17438 synthetic sources,25805 vectors,
+384 dimensions and a native index containing one orphan. No app/service builder,
+actual installed DB/content/cache or online call was used. Results in seconds:
+empty storage0.108682; populated storage0.180632; all-present backfill0.034216;
+vector count0.002380; nonempty native load0.140813; first reconcile with orphan
+0.078597; one missing-first-source backfill0.001251. Fixture index build1.554392
+and save0.088951 are setup, not startup. Process exited0 in5.08s and drained.
+
+Ignored probe script/log SHA256 evidence:
+
+- `profile_model.py`: `5E8360A4765F96D54D11C6F89A54A2C077BB223048A226CFAE00E14C6BFAC24A`
+- `profile_hf_cache.py`: `DEF149BD0EDFCF21EB52DDEC20D975F1C9B07CCF64041DA5B836FE1D25EB96EA`
+- `profile_synthetic.py`: `5BA8B1410150E9A6874FA3A89727B4AB98519AF5E551340DEF3A38E44D0F53E5`
+- `model-timing.log`: `1A5FDAB341BE5EAFEBE9E9481A89E261BD6541056A0A5BACF66257452829CF6D`
+- `installed-model-timing.log`: `80A24FD6A4A56754C1B8CBBBDFE87E023D48F5A9B57C14E43E20BD102DA406E7`
+- `hf-cache-timing-corrected.log`: `49539E90D521C5A1D49A31BB93CCF53DAE0CCB2858ABBCDC9946F08D231AE03A`
+- `synthetic-stage-timing.log`: `81B054FE060A8D905B8B13CADC9CA390E98C4B8E4B104979360ECE0763E5BAC9`
+
+All sampled isolated phases are fast now. Historical startup remains unexplained:
+successful attempt5 spans08:44:20.305994 to08:44:41.487218 UTC; retained logs show
+HEAD302 at local11:44:27 and vector mismatch at11:44:40, with no request-start or
+final redirect timestamps. That approximately13s interval is not measured network
+latency and offline samples cannot be subtracted to identify its cause.
+
+Next authorized diagnosis from manager: ONE <=60s installed-interpreter/private
+cache process timing normal public HF metadata resolution plus actual provider
+constructor. No token, asset download, retry run, live cache/DB, installed mutation,
+production instrumentation or service operation. Establish HEAD-only URL and asset
+download guards before execution; if safe supported seams cannot guarantee that,
+present the exact plan before executing. Current timing cannot prove historical
+causality. Full qualification slot explicitly remains withheld.
+
+Trigger2 dropped: consumer parser/test-fixture review corrections are not an
+agent-workflow defect. Earlier missing guessed reference was an agent path error,
+not a broken skill reference. Installed pallium-memory skill now reads completely;
+exact injected Relay sender identity is still unavailable, so authorized manager
+coordination continues by app-message fallback without guessed scope.

@@ -6,8 +6,12 @@ All tests use fake time, fake processes, and injectable parameters.
 No real processes are spawned.  Not marked slow (fast, no real sleeping).
 """
 
+from contextlib import contextmanager
 import itertools
+import os
 from unittest.mock import patch
+
+import pytest
 
 from app.supervisor import (
     _API_HEALTH_PROBE_FAIL_THRESHOLD,
@@ -15,6 +19,27 @@ from app.supervisor import (
     _MAX_RAPID_RESTARTS,
     run_supervisor,
 )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_supervisor_runtime(monkeypatch: pytest.MonkeyPatch, tmp_path):
+    home = tmp_path / "pallium"
+    private_env = {
+        "HOME": str(tmp_path / "profile"),
+        "USERPROFILE": str(tmp_path / "profile"),
+        "APPDATA": str(tmp_path / "profile" / "AppData" / "Roaming"),
+        "PALLIUM_HOME": str(home),
+        "PALLIUM_CONFIG_FILE": str(tmp_path / "config.toml"),
+        "PALLIUM_ENV_FILE": str(tmp_path / ".env"),
+        "PALLIUM_STORAGE_BACKEND": "memory",
+        "PALLIUM_SQLITE_URL": f"sqlite:///{tmp_path / 'pallium.db'}",
+        "PALLIUM_SNAPSHOT_ENABLED": "false",
+        "PALLIUM_SNAPSHOT_PATH": str(tmp_path / "snapshots"),
+        "PALLIUM_CODEX_WAKE_DIR": str(tmp_path / "codex-wake"),
+        "PALLIUM_CLAUDE_WAKE_DIR": str(tmp_path / "claude-wake"),
+    }
+    for key, value in private_env.items():
+        monkeypatch.setenv(key, value)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -99,6 +124,14 @@ def _counter_stop(n):
 _BASE_ARGS = ["--host", "127.0.0.1", "--port", "19999", "--processors", "1", "--cleaners", "0"]
 
 
+def _use_stop(monkeypatch, stop):
+    @contextmanager
+    def fake_graceful_stop(*, install=True):
+        yield stop
+
+    monkeypatch.setattr("app.supervisor.graceful_stop", fake_graceful_stop)
+
+
 def test_zero_processors_keeps_api_available_without_worker():
     api_proc = FakePopen(poll_returns=[])
     commands = []
@@ -119,6 +152,210 @@ def test_zero_processors_keeps_api_available_without_worker():
     assert result == 0
     assert len(commands) == 1
     assert "serve" in commands[0]
+
+
+def test_initial_api_retry_exhaustion_is_failure(monkeypatch):
+    killed = []
+    monkeypatch.setattr("app.supervisor._kill_tree", lambda proc, **_kw: killed.append(proc.pid))
+    result = run_supervisor(
+        ["--processors", "0", "--cleaners", "0"],
+        popen_factory=lambda *_args, **_kwargs: FakePopen(),
+        sleep_fn=lambda _: None,
+        wait_for_api_fn=lambda *_args, **_kwargs: False,
+        kill_fn=_fake_kill_fn,
+    )
+
+    assert result == 1
+    assert len(killed) == 5
+
+
+def test_stop_during_initial_readiness_keeps_child_owned_and_skips_helpers(monkeypatch):
+    from types import SimpleNamespace
+
+    stop = SimpleNamespace(requested=False)
+    _use_stop(monkeypatch, stop)
+    processes = []
+    commands = []
+
+    def popen_factory(command, **_kwargs):
+        commands.append(command)
+        proc = FakePopen()
+        processes.append(proc)
+        return proc
+
+    def ready_then_stop(*_args, **_kwargs):
+        stop.requested = True
+        return True
+
+    result = run_supervisor(
+        ["--processors", "1", "--cleaners", "1"],
+        popen_factory=popen_factory,
+        wait_for_api_fn=ready_then_stop,
+        sleep_fn=lambda _: None,
+        kill_fn=_fake_kill_fn,
+    )
+
+    assert result == 0
+    assert len(commands) == 1
+    assert processes[0]._terminated
+
+
+def test_stop_before_initial_retry_starts_no_child(monkeypatch):
+    from types import SimpleNamespace
+
+    stop = SimpleNamespace(requested=True)
+    _use_stop(monkeypatch, stop)
+    calls = []
+
+    result = run_supervisor(
+        ["--processors", "0", "--cleaners", "0"],
+        popen_factory=lambda *_args, **_kwargs: calls.append(True),
+        wait_for_api_fn=lambda *_args, **_kwargs: False,
+        kill_fn=_fake_kill_fn,
+    )
+
+    assert result == 0
+    assert calls == []
+
+
+def test_runtime_api_retry_exhaustion_is_failure(monkeypatch):
+    popen_calls = []
+
+    def popen_factory(*_args, **_kwargs):
+        proc = FakePopen(poll_returns=[1]) if not popen_calls else FakePopen()
+        popen_calls.append(proc)
+        return proc
+
+    monkeypatch.setattr("app.supervisor._kill_tree", lambda *_args, **_kwargs: None)
+    wait_calls = [0]
+
+    def wait_for_api(*_args, **_kwargs):
+        wait_calls[0] += 1
+        return wait_calls[0] == 1
+
+    result = run_supervisor(
+        ["--processors", "0", "--cleaners", "0"],
+        popen_factory=popen_factory,
+        wait_for_api_fn=wait_for_api,
+        sleep_fn=lambda _: None,
+        should_stop=lambda: False,
+        clock=lambda: 0.0,
+        kill_fn=_fake_kill_fn,
+    )
+
+    assert result == 1
+    assert len(popen_calls) == 6
+
+
+def test_stop_during_runtime_retry_is_success(monkeypatch):
+    from types import SimpleNamespace
+
+    stop = SimpleNamespace(requested=False)
+    _use_stop(monkeypatch, stop)
+    popen_calls = []
+    retry_kills = []
+
+    def popen_factory(*_args, **_kwargs):
+        proc = FakePopen(poll_returns=[1]) if not popen_calls else FakePopen()
+        popen_calls.append(proc)
+        return proc
+
+    monkeypatch.setattr("app.supervisor._kill_tree", lambda proc, **_kw: retry_kills.append(proc.pid))
+    wait_calls = [0]
+
+    def wait_for_api(*_args, **_kwargs):
+        wait_calls[0] += 1
+        if wait_calls[0] == 1:
+            return True
+        stop.requested = True
+        return False
+
+    result = run_supervisor(
+        ["--processors", "0", "--cleaners", "0"],
+        popen_factory=popen_factory,
+        wait_for_api_fn=wait_for_api,
+        sleep_fn=lambda _: None,
+        should_stop=lambda: False,
+        clock=lambda: 0.0,
+        kill_fn=_fake_kill_fn,
+    )
+
+    assert result == 0
+    assert retry_kills == [popen_calls[1].pid]
+
+
+def test_stop_during_slot_poll_skips_exit_restart(monkeypatch):
+    from types import SimpleNamespace
+
+    stop = SimpleNamespace(requested=False)
+    _use_stop(monkeypatch, stop)
+
+    class StopOnPoll(FakePopen):
+        def poll(self):
+            stop.requested = True
+            return 1
+
+    calls = []
+    result = run_supervisor(
+        ["--processors", "0", "--cleaners", "0"],
+        popen_factory=lambda *_args, **_kwargs: calls.append(True) or StopOnPoll(),
+        wait_for_api_fn=lambda *_args, **_kwargs: True,
+        should_stop=lambda: False,
+        kill_fn=_fake_kill_fn,
+    )
+
+    assert result == 0
+    assert calls == [True]
+
+
+def test_repeated_zero_code_api_exits_are_failure():
+    class RepeatedZeroExit(FakePopen):
+        def poll(self):
+            return 0
+
+    result = run_supervisor(
+        ["--processors", "0", "--cleaners", "0"],
+        popen_factory=lambda *_args, **_kwargs: RepeatedZeroExit(),
+        wait_for_api_fn=lambda *_args, **_kwargs: True,
+        should_stop=lambda: False,
+        clock=lambda: 0.0,
+        kill_fn=_fake_kill_fn,
+    )
+
+    assert result == 1
+
+
+def test_readiness_wait_observes_requested_stop(monkeypatch):
+    from types import SimpleNamespace
+    from app.supervisor import _wait_for_api
+
+    stop = SimpleNamespace(requested=False)
+
+    class RefusedSocket:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def settimeout(self, _timeout):
+            pass
+
+        def connect(self, _address):
+            raise ConnectionRefusedError
+
+    import socket
+    monkeypatch.setattr(socket, "socket", lambda *_args, **_kwargs: RefusedSocket())
+
+    def request_stop(_delay):
+        stop.requested = True
+
+    assert not _wait_for_api(
+        "127.0.0.1", 19999, timeout=5,
+        sleep_fn=request_stop,
+        stop=stop,
+        clock=lambda: 0,
+    )
 
 
 # ---------------------------------------------------------------------------

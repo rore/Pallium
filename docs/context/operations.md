@@ -243,6 +243,16 @@ Queue health is a live database query and may use up to ten seconds; health and
 status remain capped at two seconds, and every request is clipped to the one
 overall readiness deadline. The default readiness budget is three minutes; an explicit
 `-ReadinessTimeoutSeconds` value keeps its exact finite deadline.
+
+Generated Windows VBS launchers keep the service hidden, wait for its termination,
+and return its exit status to the script host. Fatal supervisor recovery exhaustion
+is a failure; requested shutdown is successful. Existing launchers are not rewritten
+by source updates or restarts. A launcher-generation change therefore needs a
+separately approved regeneration of the installed launcher/task, with its metadata
+backed up and rollback available. Verify the actual installed task's lifetime and
+failure status before claiming Task Scheduler recovery; private script-host tests
+and successful service health checks do not establish that result.
+
 For offline Relay endpoint repair, first start the upgraded service once so it creates the repair ledger, then run `scripts/restart-service.ps1 -StopOnly`. The wrapper stops the installed task without starting it again and fails if the task, listener, or managed process tree cannot be conclusively drained.
 
 Create a disposition file that classifies every live repairable delivery on the source endpoints: pending deliveries plus claimed deliveries whose finite lease has expired. An expired claim may only be `suppress`; `adopt`, active claims, missing claim tokens, and missing or malformed leases fail closed.

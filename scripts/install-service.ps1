@@ -86,9 +86,9 @@ if (-not (Test-Path $PythonwPath)) {
 $VbsPath = Join-Path $LauncherDir "service_launcher.vbs"
 $VbsContent = @"
 Set WshShell = CreateObject("WScript.Shell")
-WshShell.Run """$PythonwPath"" ""$LauncherPath""", 0, False
+WScript.Quit WshShell.Run("""$PythonwPath"" ""$LauncherPath""", 0, True)
 "@
-[System.IO.File]::WriteAllText($VbsPath, $VbsContent, [System.Text.Encoding]::ASCII)
+[System.IO.File]::WriteAllText($VbsPath, $VbsContent, [System.Text.Encoding]::Unicode)
 Write-Host "  Wrote VBS launcher: $VbsPath"
 
 # Task action: wscript.exe runs the VBS silently (SW_HIDE is baked into the VBS)

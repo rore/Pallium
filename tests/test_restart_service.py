@@ -25,6 +25,8 @@ def test_default_readiness_budget_allows_three_minute_cold_start() -> None:
 
 
 HARNESS = r'''
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+$OutputEncoding = [Console]::OutputEncoding
 function Log-Call {
     param([string]$Value)
     [IO.File]::AppendAllText($env:RW010_CALL_LOG, $Value + [Environment]::NewLine)
@@ -257,7 +259,20 @@ def _run_restart(
     if pid_file_value is not None:
         (service_home / "run").mkdir(parents=True, exist_ok=True)
         (service_home / "run" / "pallium.pid").write_text(str(pid_file_value))
-    if task_shape == "legacy":
+    if task_shape == "generated_cli":
+        from unittest.mock import patch
+        from app.cli.service import _install_windows
+
+        service_home.mkdir(parents=True, exist_ok=True)
+        (service_home / "run").mkdir(exist_ok=True)
+        vbs = service_home / "run" / "pallium_launcher.vbs"
+        with patch(
+            "app.cli.service.subprocess.run",
+            return_value=subprocess.CompletedProcess([], 0, "", ""),
+        ):
+            _install_windows("pallium", int(port or 21987), service_home)
+        command = None
+    elif task_shape == "legacy":
         python = Path(sys.executable).with_name("pythonw.exe")
         launcher = tmp_path / "service_launcher.py"
         assert python.exists()
@@ -273,19 +288,38 @@ def _run_restart(
         command = f'WshShell.Run """{sys.executable}"" -m app.run service run{port_arg}", 0, False\n'
     else:
         port_arg = "" if port is None else f" --port {port}"
-        command = (
-            f'WshShell.Run """{sys.executable}"" -m app.run service run{port_arg} '
-            f'--home ""{service_home}""", 0, False\n'
+        if task_shape == "canonical_legacy":
+            command = (
+                f'WshShell.Run """{sys.executable}"" -m app.run service run{port_arg} '
+                f'--home ""{service_home}""", 0, False\n'
+            )
+        elif task_shape == "new_launcher":
+            python = Path(sys.executable).with_name("pythonw.exe")
+            assert python.exists()
+            launcher = tmp_path / "service_launcher.py"
+            launcher.write_text(
+                f'from app.run import run\nraise SystemExit(run(["service", "run", "--port", "{port}"]))\n',
+                encoding="ascii",
+            )
+            command = f'WScript.Quit WshShell.Run("""{python}"" ""{launcher}""", 0, True)\n'
+        else:
+            command = (
+                f'WScript.Quit WshShell.Run("""{sys.executable}"" -m app.run service run{port_arg} '
+                f'--home ""{service_home}""", 0, True)\n'
+            )
+    if command is not None:
+        vbs.write_text(
+            'Set WshShell = CreateObject("WScript.Shell")\n' + command,
+            encoding="ascii" if task_shape in {"legacy", "canonical_legacy"} else "utf-16",
         )
-    vbs.write_text(
-        'Set WshShell = CreateObject("WScript.Shell")\n' + command,
-        encoding="ascii" if task_shape == "legacy" else "utf-16",
-    )
 
     env = os.environ.copy()
     env.update(
         RW010_CALL_LOG=str(call_log),
         RW010_HOME=str(tmp_path / "home"),
+        USERPROFILE=str(tmp_path / "profile"),
+        HOME=str(tmp_path / "home"),
+        APPDATA=str(tmp_path / "profile" / "AppData" / "Roaming"),
         RW010_SCENARIO=scenario,
         RW010_SCRIPT=str(RESTART_SCRIPT),
         RW010_PYTHON=str(sys.executable),
@@ -311,6 +345,7 @@ def _run_restart(
         encoding="utf-8",
         errors="replace",
         timeout=15,
+        creationflags=subprocess.CREATE_NO_WINDOW,
     )
     calls = call_log.read_text(encoding="utf-8").splitlines() if call_log.exists() else []
     return result, calls
@@ -405,6 +440,16 @@ def test_legacy_task_passes_exact_working_directory(tmp_path: Path) -> None:
     assert f"Start-Process:{Path(sys.executable).with_name('pythonw.exe')}" in calls
     assert f"PreflightWorkingDirectory:{tmp_path}" in calls
     _assert_port(result, calls, 21988)
+
+
+@pytest.mark.parametrize("task_shape", ["canonical_legacy", "generated_cli", "new_launcher"])
+def test_restart_metadata_parses_legacy_and_generated_launcher_forms(
+    tmp_path: Path, task_shape: str
+) -> None:
+    result, calls = _run_restart(tmp_path, "success", task_shape=task_shape, stop_only=True)
+
+    assert result.returncode == 0, _output(result)
+    assert "Stop-ScheduledTask" in calls
 
 
 def test_legacy_task_passes_unicode_working_directory_exactly(tmp_path: Path) -> None:
