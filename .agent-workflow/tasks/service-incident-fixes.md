@@ -26,13 +26,13 @@
 
 **Plan:** Keep the current installed mitigation untouched. Integrate accepted component revisions without unrelated branch history; resolve only concrete overlapping edits. Reuse component focused evidence, run combined affected checks for interactions and one selector-required full run with private home/transport isolation. Obtain independent combined result review, address findings, publish and merge through normal CI. Prepare exact backup and rollout impact separately before installed changes.
 
-**Verification plan:** Migration legacy/complete/missing-table/repair/rollback/crash/concurrency/unknown-version/Relay-isolation tests; vector eligibility boundaries plus deterministic content-read avoidance and caller HTTP behavior; ASGI event-loop responsiveness, existing runner tracking and post-admission order; supervisor cancellation/recovery/timing checks. Test isolation guards and full selector checks cover interactions. Root verifies actual installed health/status/queue/embedding and startup measurements after separately approved rollout.
+**Verification plan:** Component and combined contracts -> migration legacy/complete/missing-table/repair/rollback/crash/concurrency/unknown-version/Relay-isolation tests; vector eligibility boundaries plus deterministic content-read avoidance and caller HTTP behavior; ASGI event-loop responsiveness, existing runner tracking and post-admission order; supervisor cancellation/recovery/timing checks. Test isolation guards and full selector checks cover interactions. Root verifies actual installed health/status/queue/embedding and startup measurements after separately approved rollout.
 
 **Plan review:** Agent technical review: /root/incident_integration_review, clean-context GO on 2026-10-08 for this exact plan at 91232443. Component acceptance remains required; live rollout stays separately scoped.
 
 **Approvals:** Approved by user 2026-10-08: "i might be gone later so you have my approval to drive this fix till merge and done"
 
-**Exceptions:** No additional exception. Existing user incident directive favors short isolated iterations; final meaningful validation remains required.
+**Exceptions:** None
 
 **State:** Ready to implement
 <!-- agent-workflow:end -->
@@ -42,6 +42,8 @@
 2026-10-08: Isolated integration branch created from current origin/main. Integrated accepted startup timing/budget source 9b41eec0 and reviewed test isolation through ae2559c8. Integrated activation offload d72f59a2 after independent /root/incident_integration_review GO: all 12 sites, preserved callback order, deterministic ASGI proof and 148 affected passes. Integrated vector query source 537455d9 and independent result record 5e7d7747: deterministic content-read red/green, 16 focused passes, 69 affected passes and one existing skip. Migration result remains pending. Full validation has not started.
 
 ## Checkpoints
+
+Combined full at dba1bb1f: 5457 passed, 36 skipped, 2 xfailed, one failure in 355.15 seconds. Unchanged test_snapshot_failure.py::test_restore_from_snapshot_with_older_schema exposes a real compatibility regression: pre-admission rejects the missing metadata column before the supported legacy upgrade. Root assigned the minimal version-aware correction to Relaydev; existing snapshot regression must remain unchanged. Private Python/Node network guards recorded no attempts; all 81 sampled owned process identities drained. Evidence retained in shared build/service-incident-full-20261008. No release acceptance or live migration follows this failed run.
 
 2026-10-08: Integrated migration candidate a43a9c502f053e3a6f3c28276fe3677fc325ee76 without conflicts, production d5b0cd74. Independent component source review and child-fixture preflight accepted; final storage/isolation 50 passed, unchanged HTTP 43 passed, contract/lifecycle 96 passed, corrected owned-child cases 4 passed. No full run has started. Root source review found no additional issue. Current human through-merge approval above satisfies the source result approval requested in the earlier component record; it does not authorize unspecified live environment changes.
 

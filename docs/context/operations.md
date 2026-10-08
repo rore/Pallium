@@ -46,6 +46,15 @@ enabled unit starts and becomes ready when the Ubuntu user session starts
 again. This is WSL qualification, not a live claim for every Linux distribution
 or for macOS.
 
+## Startup diagnostics
+
+API startup has a bounded 120-second allowance per supervisor attempt. This is
+an availability safeguard, not a startup performance target. Logs identify each
+attempt and time storage setup, embedding initialization, vector loading, the raw
+backfill check and lifespan initialization. A completed stage only means that
+call returned; verify health and `embedding_provider_ok` separately. Delays before
+these markers are not attributed by them.
+
 ## SQLite database operations
 
 Both SQLite files use the same lifecycle: WAL, auto_vacuum=INCREMENTAL, and a bounded connection busy timeout. Relay writes use only the Relay file, so a long ingestion transaction in the main file does not hold the Relay writer lock. Each file must still be backed up, checked, and restored as a pair; never mix files from different snapshot generations.

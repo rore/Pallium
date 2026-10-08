@@ -14,7 +14,10 @@
 **Requirement baseline:**
 {"source":"work-record-initial","outcome":"Allow observed slow API startup to complete within a bounded budget and expose the startup stage consuming time.","scope":"app/supervisor.py, app/main.py, tests/test_supervisor.py, existing application startup tests, and this Work Record. Isolated emergency delta from merged PR307 source bc6dda12ad78bf1ab310bca4922dc046ec3607de; no migration or installation.","constraints":"Manager alone owns installed approval, backup, restart and health checks. Preserve nonce fencing, cancellation, retry count/backoff and cleanup. No payload/token logging, new settings, dependencies, recovery framework, schema changes or full-suite run in the emergency loop.","completion_criteria":"Focused deterministic checks cover startup beyond30s, bounded exhaustion, cancellation, identity rejection and stage success/failure logs; independent review accepts the exact delta and manager receives rollout/rollback scope. Installed recovery remains manager-owned and unproved until observed."}
 
-**Risk:** Elevated
+**Behavior changes:**
+[{"target":"task-context.scope","classification":"requirement-change","before":"app/supervisor.py, app/main.py, tests/test_supervisor.py, existing application startup tests, and this Work Record. Isolated emergency delta from merged PR307 source bc6dda12ad78bf1ab310bca4922dc046ec3607de; no migration or installation.","after":"app/supervisor.py, app/main.py, app/runtime_logging.py, app/dependencies.py, tests/test_supervisor.py, tests/test_runtime_logging.py, and this Work Record. Isolated emergency delta from merged PR307 source bc6dda12ad78bf1ab310bca4922dc046ec3607de; no migration or installation.","reason":"Record the already-reviewed plan refinement that places fixed startup stage timing in the existing logging helper and dependency builder.","impact":"No new setting or exception behavior; startup timing covers the actual expensive calls.","alternatives":"Keep less specific startup timing.","authority":{"scope":"task","name":"task-owner"},"approval":{"by":"user","reference":"Root incident task, 2026-10-08, approval to complete the current reviewed fix","verbatim":"i might be gone later so you have my approval to drive this fix till merge and done"}}]
+
+**Risk:** High
 
 **Complexity:** Moderate
 
@@ -30,7 +33,7 @@
 
 **Plan review:** Agent technical review: Pal chat01a1156c-e388-7850-9c42-cc2fcb5dbd51 inspected bc6dda12 source and accepted this exact minimal plan before production edits. Preserve existing grace/foreign-token latch, cancellation/cleanup, fixed log labels and unchanged exception propagation. This is temporary availability mitigation/observability, not root-cause closure.
 
-**Approvals:** Human incident restoration direction conveyed by manager chat01a0d7ce-83c6-77e2-90f7-d413894059e1 explicitly authorizes isolated120s slice and focused checks; installed changes require separate exact approval. No High-risk human gate at this classification.
+**Approvals:** Approved by user 2026-10-08: "i might be gone later so you have my approval to drive this fix till merge and done". Combined integration is High risk; original component was Elevated. Installed changes retain their separately scoped approval.
 
 **Exceptions:** —
 
@@ -38,6 +41,14 @@
 <!-- agent-workflow:end -->
 
 ## Implementation
+
+## Result review
+
+Agent technical review: /root/incident_integration_review, independent non-implementer, accepted the combined source on 2026-10-08.
+Reviewed revision: dba1bb1f743e456ab706e35f29edeeee97d68973.
+Verification adequacy: component startup/cancellation/logging regressions accepted; combined full suite and CI remain pending. The 120-second budget remains mitigation, not root-cause closure.
+
+## Component implementation history
 
 2026-10-08: Migration paused and its private edits preserved. Created separate branch feat/service-startup-budget at retained published source bc6dda12; no production edit yet. Manager owns emergency live restoration. Exact Relay wake trace returned transport_unavailable; authorized app fallback used. Pending independent plan review, then immediate minimal implementation and focused check.
 
