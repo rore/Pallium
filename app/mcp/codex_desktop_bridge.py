@@ -340,6 +340,9 @@ class InventoryWorker:
         first_request = None
         admitted_metadata = continuity = original_pipe = None
         registered = False
+        registration_attempted = False
+        channel_pipe = retired_pipe = None
+        retired_client = retired_manifest = None
         try:
             if self._retained:
                 # Do not occupy the private service slot before a real Relay caller exists.
@@ -355,12 +358,12 @@ class InventoryWorker:
                         continue
                 if self.stop_event.is_set():
                     return
-            from app.codex_bridge_pipe import NativeInventoryClient
-            client = (NativeInventoryClient(self._path, self.stop_event, retained=True)
-                      if self._retained else NativeInventoryClient(self._path, self.stop_event))
-            ready = inventory_status(client.ready())
-            if ready["status"] != "ready":
-                return
+            else:
+                from app.codex_bridge_pipe import NativeInventoryClient
+                client = NativeInventoryClient(self._path, self.stop_event)
+                ready = inventory_status(client.ready())
+                if ready["status"] != "ready":
+                    return
             while not self.stop_event.is_set():
                 if first_request is not None:
                     loop, future, metadata = first_request
@@ -382,7 +385,128 @@ class InventoryWorker:
                                 self.stop_event.set()
                                 break
                             client = replacement
+                        elif (self._retained and client is not None and not registration_attempted
+                              and callable(getattr(client, "bootstrap_unchanged", None))
+                              and type(getattr(client, "manifest", None)) is dict):
+                            # Preserve calls already waiting on this ready source channel.
+                            try:
+                                first_request = self._requests.get_nowait()
+                            except queue.Empty:
+                                if os.environ.get("CODEX_APP_TOOLS_PIPE_PATH") != channel_pipe:
+                                    if retired_pipe is not None:
+                                        self._restart_allowed = False
+                                    self.stop_event.set()
+                                    break
+                                retired_manifest = dict(client.manifest)
+                                retired_pipe = channel_pipe
+                                retired_client = client
+                                self._finish(retired_client)
+                                client = None
+                                if not self._restart_allowed:
+                                    self.stop_event.set()
+                                    break
                         continue
+                if future.cancelled():
+                    continue
+                if self._retained and client is None:
+                    from app.codex_bridge_pipe import NativeInventoryClient, ShadowUnavailable
+                    if retired_client is None:
+                        # Ordinary first startup remains a single attempt.
+                        channel_pipe = os.environ.get("CODEX_APP_TOOLS_PIPE_PATH")
+                        client = NativeInventoryClient(self._path, self.stop_event, retained=True)
+                        ready = inventory_status(client.ready())
+                        if ready["status"] != "ready":
+                            return
+                    else:
+                        acquire_deadline = time.monotonic() + 1.0
+                        while client is None:
+                            if self.stop_event.is_set() or future.cancelled():
+                                break
+                            if os.environ.get("CODEX_APP_TOOLS_PIPE_PATH") != retired_pipe:
+                                self._restart_allowed = False
+                                self.stop_event.set()
+                                break
+                            try:
+                                bootstrap_unchanged = retired_client.bootstrap_unchanged()
+                            except Exception:
+                                self._restart_allowed = False
+                                raise
+                            if not bootstrap_unchanged:
+                                self._restart_allowed = False
+                                self.stop_event.set()
+                                break
+                            remaining = acquire_deadline - time.monotonic()
+                            if remaining <= 0:
+                                break
+                            try:
+                                client = NativeInventoryClient(self._path, self.stop_event, retained=True)
+                            except ShadowUnavailable as exc:
+                                if exc.category != "startup-unavailable":
+                                    self._restart_allowed = False
+                                    raise
+                                remaining = acquire_deadline - time.monotonic()
+                                if remaining <= 0 or self.stop_event.wait(min(0.05, remaining)):
+                                    break
+                                continue
+                            except Exception:
+                                self._restart_allowed = False
+                                raise
+                            try:
+                                replacement_manifest = client.manifest
+                                replacement_unchanged = client.bootstrap_unchanged()
+                                retired_unchanged = retired_client.bootstrap_unchanged()
+                            except Exception:
+                                self._restart_allowed = False
+                                raise
+                            if self.stop_event.is_set():
+                                break
+                            if (os.environ.get("CODEX_APP_TOOLS_PIPE_PATH") != retired_pipe
+                                    or type(replacement_manifest) is not dict
+                                    or replacement_manifest != retired_manifest
+                                    or replacement_unchanged is not True
+                                    or retired_unchanged is not True):
+                                self._restart_allowed = False
+                                self.stop_event.set()
+                                break
+                            if future.cancelled():
+                                unused = client
+                                self._finish(unused)
+                                client = None
+                                if not self._restart_allowed:
+                                    self.stop_event.set()
+                                break
+                            try:
+                                ready_result = client.ready()
+                            except ShadowUnavailable as exc:
+                                if exc.category not in {"stopped", "deadline", "transport-failed"}:
+                                    self._restart_allowed = False
+                                raise
+                            except Exception:
+                                self._restart_allowed = False
+                                raise
+                            ready = inventory_status(ready_result)
+                            if ready["status"] != "ready":
+                                if ready.get("reason") == "peer-mismatch":
+                                    self._restart_allowed = False
+                                return
+                            if self.stop_event.is_set():
+                                break
+                            if os.environ.get("CODEX_APP_TOOLS_PIPE_PATH") != retired_pipe:
+                                self._restart_allowed = False
+                                self.stop_event.set()
+                                break
+                            retired_client = retired_manifest = None
+                            registration_attempted = False
+                    if client is None:
+                        if future.cancelled():
+                            continue
+                        if self.stop_event.is_set():
+                            break
+                        loop.call_soon_threadsafe(ShadowWorker._complete, future,
+                            inventory_status({"reason": "native-failed"}))
+                        continue
+                    if self.stop_event.is_set():
+                        break
                 if future.cancelled():
                     continue
                 if (registered and self._retained
@@ -394,12 +518,22 @@ class InventoryWorker:
                 if future.cancelled():
                     continue
                 request_pipe = os.environ.get("CODEX_APP_TOOLS_PIPE_PATH") if self._retained else None
+                if (self._retained and not registered and retired_pipe is not None
+                        and request_pipe != retired_pipe):
+                    self._restart_allowed = False
+                    self.stop_event.set()
+                    loop.call_soon_threadsafe(ShadowWorker._complete, future,
+                        inventory_status({"reason": "peer-mismatch"}))
+                    break
                 if registered and self._retained and request_pipe != original_pipe:
                     self.stop_event.set()
                     loop.call_soon_threadsafe(ShadowWorker._complete, future,
                         inventory_status({"reason": "peer-mismatch"}))
                     break
                 was_registered = registered
+                registration_attempted = True
+                if self._retained and not was_registered and retired_pipe is not None:
+                    retired_pipe = None
                 try:
                     result = inventory_status(client.register(metadata))
                 except Exception:

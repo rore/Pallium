@@ -32,6 +32,67 @@ test.after(() => {
   try { fs.rmSync(tmpHome, { recursive: true, force: true }); } catch { /* ignore */ }
 });
 
+for (const [name, request] of [
+  ["history", (signal) => P.palliumRequest("POST", "/items", [], signal)],
+  ["relay", (signal) => P.relayRequest("GET", "/relay/sessions", {}, 6000, signal)],
+]) test(`${name}: cancelled requests do not start and stalled bodies respect retirement`, async () => {
+  const previous = globalThis.fetch;
+  try {
+    let calls = 0;
+    globalThis.fetch = async () => { calls++; return { ok: true, text: async () => "{}" }; };
+    const cancelled = new AbortController();
+    cancelled.abort();
+    assert.equal(await request(cancelled.signal), null);
+    assert.equal(calls, 0, "an already-retired caller cannot issue HTTP");
+
+    let entered;
+    const bodyStarted = new Promise((resolve) => { entered = resolve; });
+    let observedSignal;
+    globalThis.fetch = async (_, { signal }) => {
+      observedSignal = signal;
+      return { ok: true, text: () => {
+        entered();
+        return new Promise((_, reject) => signal.addEventListener("abort", () => reject(new Error("body cancelled")), { once: true }));
+      } };
+    };
+    const owner = new AbortController();
+    const pending = request(owner.signal);
+    await bodyStarted;
+    owner.abort();
+    assert.equal(observedSignal.aborted, true);
+    assert.equal(await pending, null);
+  } finally { globalThis.fetch = previous; }
+});
+
+test("retirement during an issued receipt prevents later receipts without retracting a commit", async () => {
+  const previous = globalThis.fetch;
+  const owner = new AbortController();
+  const calls = [];
+  let started, release;
+  const entered = new Promise((resolve) => { started = resolve; });
+  const response = new Promise((resolve) => { release = resolve; });
+  globalThis.fetch = async (_, init) => {
+    const body = JSON.parse(init.body);
+    calls.push(body.delivery_id);
+    started();
+    // The server already committed; cancellation does not undo that receipt.
+    await response;
+    return { ok: true, text: async () => JSON.stringify({ delivery_id: body.delivery_id, state: "delivered", already_delivered: false }) };
+  };
+  try {
+    const pending = P.acknowledgeRelay([
+      { delivery_id: "issued", claim_token: "first" },
+      { delivery_id: "later", claim_token: "second" },
+    ], "path:fixture", owner.signal);
+    await entered;
+    owner.abort();
+    release();
+    const results = await pending;
+    assert.deepEqual(calls, ["issued"]);
+    assert.equal(results.some((result) => result.delivery_id === "later" && result.success), false);
+  } finally { release(); globalThis.fetch = previous; }
+});
+
 // --- container_ref derivation ----------------------------------------------
 
 test("normalizeRemoteUrl canonicalizes ssh/https/user forms", () => {

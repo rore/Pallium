@@ -108,10 +108,14 @@ in one OpenCode configuration.
 }
 ```
 
-Run V2 with the released OpenCode 2.0.22 binary. The isolated Windows E2E uses
+Native Windows V2 lifecycle coverage is qualified on released OpenCode 2.0.22
+and 2.0.24; this does not imply compatibility with every V2 release. The isolated Windows E2E uses
 `PALLIUM_OPENCODE_V2_BINARY` and a local mock provider. It verifies idle and busy
 wakes, tool continuation across a Pallium restart after ACK, pre-claim retry,
 OpenCode hard restart, service startup recovery, history capture and deletion.
+It also reloads the production plugin while a claimed Relay response body is
+withheld, verifies the retired callback sends no ACK or payload to the provider,
+and verifies successor delivery after claim-lease recovery.
 
 A relative plugin path is resolved from the configuration file. For a global
 install, put the entry in `~/.config/opencode/opencode.json` and use a path that
@@ -144,8 +148,14 @@ queue a native user input; the context hook adds the Relay content to the model
 request. The receipt ACK only confirms attachment to model-bound context. It
 does not mean the model completed the requested work.
 
-V2 owns a short server lease and renews it while polling. Plugin disposal detaches
-the owner; a later owner can enroll after the lease expires. A closed session or
+V2 owns a short server lease and renews it while polling. Disposal retires local
+hooks and the event stream, cancels ordinary integration requests, and fences
+late native callbacks. Best-effort owner detach uses one 500 ms remote cleanup
+window with at most four requests in flight; a later owner can enroll after the
+lease expires if detach fails. Repeated disposal shares one result. Cleanup
+attempts every hook and reports disposal failures rather than claiming success.
+Client cancellation cannot undo a request the service already committed.
+A closed session or
 changed container scope invalidates the old binding. If compaction removes a
 queued native input before V2 can verify it, V2 does not guess that delivery was
 admitted or queue it again. Relay keeps the item available for a later normal

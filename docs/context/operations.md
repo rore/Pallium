@@ -67,10 +67,31 @@ on service restart: qualify an updated worker using a normally reloaded dedicate
 child, never by interrupting active user chats or treating service health as
 delivery evidence.
 
+`/status` and the Relay summary expose `relay_wake.native_enrollment` as cached
+lifecycle evidence from this service instance. `never_registered` means no
+registration was accepted in this instance; `registered`, `retained_disconnected`,
+`authority_cleared`, `unresolved_handles`, and `released` describe the last
+observed lifecycle state. `unavailable` means the service snapshot is missing,
+malformed, or its cached evidence was lost while an outcome remained unresolved;
+it does not imply that registration was never accepted. These fields do not probe native handles, prove reachability, identify
+the live owner, or establish the loaded worker version. Continuity opt-in records
+the registration protocol used. The last failure stage and reason are fixed
+categories and may describe an older event after cleanup.
+
 A slow native delivery may cause another registration to return authenticated
 `busy`. An already admitted, unchanged live source keeps its checked connection
 and previous caller, without retrying the registration. Busy does not enroll a
 new source or qualify restart recovery; other failures still fail closed.
+
+Cancellation during initial readiness, before any registration is attempted,
+does not reserve the native admission slot indefinitely. A live request already queued may use the
+existing ready channel; otherwise an idle, never-used resolved channel closes
+without stopping its worker. A fresh request arriving during cleanup may use
+constructor-only retries within a one-second window under the same trusted service
+bootstrap and runtime capability. Readiness, registration and tool calls are
+not replayed; ordinary first acquisition still has no retry, and uncertainty or
+identity changes fail closed. This lifecycle repair is not evidence of installed
+delivery or a historical outage's cause.
 
 For operator-owned native qualification only, the installed
 `scripts/qualify_codex_relay_faults.py` supports `install`/`restore` with explicit
@@ -142,10 +163,17 @@ Claude setup pins its hook port, Relay identity, and wake path. Re-run setup aft
 changing the target; a mismatched service marker fails closed before credential
 write-ahead, while an outage keeps the pinned path. Never share
 `PALLIUM_CLAUDE_WAKE_DIR` across different Relay databases. An exact
-internal Codex wake is excluded from deduplication and memory ingestion. The native
-prompt can remain model-visible when no delivery block accompanies it, so it carries
-the exact delivery ID for nonmutating trace inspection. Ordinary user prompts remain
-fail-open.
+internal Codex wake is excluded from deduplication and memory ingestion. If its hook
+cannot recognize or complete the wake, including when the host skips or terminates
+the hook, the native prompt can remain model-visible without a delivery block.
+Only a delivery-specific wake with a successfully parsed delivery ID supplies
+that ID for nonmutating trace inspection. Ordinary user
+prompts remain fail-open. Once an exact wake is recognized, any exception or failed
+payload/block write before successful emission exits with Codex's blocking signal
+(exit 2), without ACK or memory ingestion. The stderr reason is best effort;
+stderr write/flush errors do not change exit 2, but a blocked pipe or host
+termination can prevent completion. A claimed delivery remains lease-recoverable.
+Successful emission still precedes ACK.
 
 This protects concurrent users inside the supported single-owner, single-Uvicorn-process
 service. SQLite serializes current-fence transitions; the native initiation guard

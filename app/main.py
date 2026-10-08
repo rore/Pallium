@@ -663,6 +663,7 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
             "historical_lookup_funnel": funnel_info,
             "relay_wake": relay_wake_health(
                 dashboard_relay_service, getattr(app.state, "_claude_wake_reconciler", None),
+                getattr(getattr(app.state, "codex_wake_registry", None), "retained_service", None),
             ) if include_relay_wake else None,
         })
 

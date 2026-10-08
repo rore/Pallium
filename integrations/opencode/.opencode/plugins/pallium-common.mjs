@@ -429,9 +429,12 @@ export function formatInjection(injectableBlocks, containerRef, budgetChars, thr
 
 // --- HTTP -------------------------------------------------------------------
 
-export async function palliumRequest(method, reqPath, payload) {
+export async function palliumRequest(method, reqPath, payload, signal) {
+  if (signal?.aborted) return null;
   const url = `${PALLIUM_BASE_URL}${reqPath}`;
   const controller = new AbortController();
+  const cancel = () => controller.abort();
+  signal?.addEventListener("abort", cancel, { once: true });
   const timer = setTimeout(() => controller.abort(), HTTP_TIMEOUT_MS);
   try {
     const init = { method, signal: controller.signal, headers: {} };
@@ -450,17 +453,21 @@ export async function palliumRequest(method, reqPath, payload) {
       return null;
     }
     const raw = await resp.text();
-    if (!raw) return null;
+    if (!raw || controller.signal.aborted) return null;
     return JSON.parse(raw);
   } catch {
     return null;
   } finally {
     clearTimeout(timer);
+    signal?.removeEventListener("abort", cancel);
   }
 }
 
-export async function relayRequest(method, reqPath, payload, timeoutMs) {
+export async function relayRequest(method, reqPath, payload, timeoutMs, signal) {
+  if (signal?.aborted) return null;
   const controller = new AbortController();
+  const cancel = () => controller.abort();
+  signal?.addEventListener("abort", cancel, { once: true });
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const isGet = method === "GET";
@@ -478,11 +485,12 @@ export async function relayRequest(method, reqPath, payload, timeoutMs) {
       return null;
     }
     const raw = await resp.text();
-    return raw ? JSON.parse(raw) : null;
+    return raw && !controller.signal.aborted ? JSON.parse(raw) : null;
   } catch {
     return null;
   } finally {
     clearTimeout(timer);
+    signal?.removeEventListener("abort", cancel);
   }
 }
 
@@ -570,9 +578,13 @@ export function formatRelayContinuation(deliveries, budgetChars = 0) {
 }
 
 
-export async function acknowledgeRelay(deliveries, containerRef) {
+export async function acknowledgeRelay(deliveries, containerRef, signal) {
   const results = [];
   for (const delivery of deliveries || []) {
+    if (signal?.aborted) {
+      results.push({ delivery_id: delivery?.delivery_id ?? null, success: false, error: "ack_cancelled" });
+      continue;
+    }
     if (typeof delivery?.delivery_id !== "string" || !delivery.delivery_id ||
         typeof delivery?.claim_token !== "string" || !delivery.claim_token) {
       results.push({ delivery_id: delivery?.delivery_id ?? null, success: false, error: "invalid_delivery" });
@@ -582,7 +594,7 @@ export async function acknowledgeRelay(deliveries, containerRef) {
       delivery_id: delivery.delivery_id,
       claim_token: delivery.claim_token,
       container_ref: containerRef,
-    }, 500);
+    }, 500, signal);
     const success = response?.delivery_id === delivery.delivery_id && response?.state === "delivered" &&
       typeof response?.already_delivered === "boolean";
     results.push({ delivery_id: delivery.delivery_id, success, ...(success ? {} : { error: "ack_failed" }) });
