@@ -504,3 +504,49 @@ native-host/DB change silently included. ONE default180s restart wrapper observa
 briefly interrupts HTTP/Relay/processing; an optional rollback restart needs distinct
 explicit scope approval. Verify actual revision and all three health endpoints. No
 live change is authorized here; a fast future sample cannot close a historical incident.
+
+## Second full run — failed; no retry
+
+Clean-context /root/outage_source_review cleared ONE full non-slow run on clean
+d5f7ee64fead13e87c91b5a2aa5e80817fe8dde3, source identical6044. Runner SHA256
+3B394D8AE42B1778DA2D6FF381B8C5845D2A33F33E34C4E8F66243D87DAA2ACE;
+Python guard D2C3317EF893C78FD5C6ADF4DB0035EF9DA8EF1AF708A7D62F86C83EDBBF7C87;
+Node guard387D3DBF30CDF27BD00EEACC2770093562908A98FAF499BC9524F14EEA478D6E.
+Private TOML retains fixture precedence; guards are process-local, not an OS firewall.
+Reviewer explicitly limits sampling-based drain evidence: tracked parent PID is not
+creation-validated when admitting children, and a short-lived parent can be missed.
+Before launch, worker caught root's typo in an abbreviated guard hash; full hash
+matched the reviewed artifact and root corrected the instruction. No mismatched run.
+
+The same complete command failed: 1 failed, 855 passed, 2 skipped, 482 deselected,
+1 xfailed in257.69s; inner native exit1, controller exit1, runner266.666s.
+Exact node tests/test_claude_wake_instance_isolation.py::test_two_instances_real_hook_http_and_outage_recovery
+failed at line78: register_claude_wake returned False, binding check rejected and
+HTTP ledger seen=[] before a request. This result is not classified as product or
+harness failure pending its source/artifact chain. Original failed run is retained.
+No retry, source/test/assertion change, live operation or publication.
+
+Private run b916e2b9f8a8416791a94593d0e9cfaa and controller
+da8d01b6186d45da8b5e7a8ca04deafe are retained under local Temp. Hidden controller27300,
+test root72064. Both guards produced no block log; pytest stderr empty. Outer
+collector's separate Test-Path -and parsing error occurred after it had recorded
+the native failure, hashes and sampled drain; it did not mask the pytest result.
+Do not conflate collector error with binding assertion or claim successful evidence.
+
+Worker and root independently compared all47 retained PID/creation identities to
+current CIM processes:0 exact remainders. Worker private-path check found only its
+read-only audit itself, no test residue. This proves recorded identities absent,
+not completeness of sampling. Copied ignored service-recovery-evidence SHA256:
+
+- full-second.stdout.log: 1ABE1AA941C4120AF3AE0182B65051E6F429EB1A39C0C9EDCCFD8A61BC887BA0
+- full-second.stderr.log: E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855
+- full-second-controller.stdout.log: BFACDB772B927B8DEA0D3E64E627C6DCE86C3776D95784CAB3F8320359929754
+- full-second-owned-identities.log: 2DC0EC7239D1791312DE67DC89105A44F401F271A46344F9D18F6B29962B7695
+
+Manager informed and authorized bounded READ-ONLY attribution only: retained private
+binding inputs/path origins, before-import fixture/environment precedence, module
+caching/order and unchanged baseline510 sources. Cheap worker owns this trace; root
+does not duplicate it. Next is one concrete cause/reproduction hypothesis and a safe
+exact-node proposal, not a blind full retry or weaker binding checks. State Blocked;
+required full/final acceptance and manager-owned PR/CI remain unsatisfied. Installed
+service and separate diagnostic proposal unchanged.
