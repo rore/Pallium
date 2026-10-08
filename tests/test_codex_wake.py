@@ -3126,11 +3126,21 @@ def test_relay_turn_logs_service_time_when_exact_wake_fails(
 ) -> None:
     import re
     import time
+    from api import routes
+
+    native_monotonic = time.monotonic
+    clock = [0.0]
+    local_time = SimpleNamespace(**vars(time))
+    local_time.monotonic = lambda: clock[0]
+    monkeypatch.setattr(routes, "time", local_time)
 
     relay = RelayService(client.app.state.pallium_service._storage)
 
+    def snapshot(_request):
+        clock[0] += .125
+
     def unavailable_turn(**_kwargs):
-        time.sleep(0.01)
+        clock[0] += .25
         raise RelayUnavailableError("unavailable")
 
     monkeypatch.setattr(relay, "turn", unavailable_turn)
@@ -3138,6 +3148,7 @@ def test_relay_turn_logs_service_time_when_exact_wake_fails(
     app.include_router(create_router(
         client.app.state.pallium_service,
         relay_service=relay,
+        relay_turn_snapshot_callback=snapshot,
     ))
     delivery_id = "relay-delivery-" + "d" * 32
     caplog.set_level(logging.INFO, logger="api.routes")
@@ -3162,6 +3173,8 @@ def test_relay_turn_logs_service_time_when_exact_wake_fails(
     service_ms, route_ready_ms = map(int, match.groups())
     assert service_ms >= 10
     assert route_ready_ms >= service_ms
+    assert (service_ms, route_ready_ms) == (250, 375)
+    assert clock[0] == .375 and time.monotonic is native_monotonic
     assert SCOPE["container_ref"] not in records[0]
 
 def test_delivery_specific_turn_claims_exact_message_beyond_normal_limit(client) -> None:
