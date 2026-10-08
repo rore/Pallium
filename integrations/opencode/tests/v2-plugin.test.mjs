@@ -546,13 +546,13 @@ test("assistant completion cannot create state when deletion runs after ownershi
     removeSessionPin(id);
     dispose = await v2.setup(ctx);
     await hooks.compaction({ sessionID: id });
+    assert.equal(reads, 0);
+    assert.equal(calls.filter((call) => call.path === "/items").length, 0);
     await deletion.entered;
     deletion.release();
     assert.equal(ownedLocationReads, 1, "the supported location read succeeds before deletion");
     assert.equal(calls.filter((call) => call.path === "/relay/sessions/close" && call.body.session_ref === id).length, 1,
       "the public deletion callback retired the absent entry and issued its close");
-    assert.equal(reads, 0);
-    assert.equal(calls.filter((call) => call.path === "/items").length, 0);
     assert.equal(getPinnedContainer(id), null);
     await dispose();
     assert.equal(calls.filter((call) => call.body.operation === "detach").length, 0,
