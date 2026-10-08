@@ -20,7 +20,7 @@
 
 **Reason:** app/supervisor.py, app/cli/service.py and app/asyncio_windows_accept.py are unclassified gray/watch runtime surfaces; launcher and recovery changes affect availability and child lifecycle. scripts/install-service.ps1 and existing tests/docs are blue. Risk will be reassessed against the exact selected fix and final diff.
 
-**Discovery:** Start from verified installed/shared-main f31ac14186943cdc60ce10dbb37e26c42a3496bc in a new managed isolated checkout. origin/main is stale at5106866622deb9c011fd7538732d6b145a8ba147; no remote revision or service update is assumed. Runtime API restart exhaustion leaves exit_code initially0; both CLI and PowerShell-generated VBS launchers detach with wait=False, so scheduler sees launcher completion, not supervisor lifetime/status. Installed launcher's exact generation/provenance still needs reconciliation because the reported service_launcher.vbs differs from CLI run/pallium_launcher.vbs. Existing AcceptEx patch immediately reschedules transient failures; incident mechanism remains unproved. Manager reports independent restoration succeeded after one wrapper timed out, reproducing disagreement between wrapper and startup/recovery budgets.
+**Discovery:** Start from verified installed/shared-main f31ac14186943cdc60ce10dbb37e26c42a3496bc in a new managed isolated checkout. Later live fetch and ancestry establish current origin/main5106866622deb9c011fd7538732d6b145a8ba147 is newer, not stale; installed baseline is distinct and untouched. Runtime API restart exhaustion leaves exit_code initially0; both CLI and PowerShell-generated VBS launchers detach with wait=False, so scheduler sees launcher completion, not supervisor lifetime/status. Installed launcher's exact generation/provenance still needs reconciliation because the reported service_launcher.vbs differs from CLI run/pallium_launcher.vbs. Existing AcceptEx patch immediately reschedules transient failures; incident mechanism remains unproved. Manager reports independent restoration succeeded after one wrapper timed out, reproducing disagreement between wrapper and startup/recovery budgets.
 
 **Material assumptions:** Source diagnosis and fake-process/private-home tests do not establish installed socket causality or scheduler acceptance. Same clean installed revision was restored by manager with no settings/code update. Tests require an explicitly coordinated bounded slot and fail-closed isolation; no test run begins during discovery.
 
@@ -394,3 +394,22 @@ Keep this managed checkout because source/tests and ignored proof assets remain
 needed by that open work. Historical startup/AcceptEx and broader Relay recovery
 acceptance remain unresolved; the diagnostic proposal is not an implementation or
 live-change approval. No worktree retirement or model-evidence deletion is safe yet.
+
+## Current-main integration checkpoint (before merge)
+
+Manager granted the exclusive ONE full non-slow slot, then explicitly required
+normal integration of exact current main before spending it. Two live fetches and
+ancestry checks established origin/main `5106866622deb9c011fd7538732d6b145a8ba147`
+is a descendant of installed baselinef31ac141, including PR298/300-305. Earlier
+"stale origin" wording was wrong and is corrected; no deployed revision is inferred.
+No full run began on the old base. Frozen correction `9ab72a3910e1243cf02fff516a62dae4a096b949`
+and its reviews/logs remain valid for the original source, not the combined candidate.
+
+Authorized next step: ordinary merge of exact510 into this isolated feature branch,
+no force/rewrite/rebase, installed changes or publication. Inspect whole integration
+and preserve our correction delta; any genuine semantic conflict stops for concrete
+review rather than a guessed resolution. Independent reviewer assesses interactions,
+then ONE full run on the clean combined candidate with private prepytest environment
+and fail-closed external/model/live-service guards. Full harness safety inspection
+precedes execution; root and cheap worker have explicitly withheld old-base execution.
+Diagnostic proposal remains planning-only, not merged instrumentation or rollout.
