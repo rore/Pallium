@@ -1212,7 +1212,7 @@ def test_concurrent_main_startups_rebuild_once_in_owned_processes(
         except Exception as exc:
             cleanup_errors.append(f"queue join failed: {exc!r}")
         assert not cleanup_errors, "; ".join(cleanup_errors)
-    assert [result[0] for result in results] == ["ok", "ok"]
+    assert [result[0] for result in results] == ["ok", "ok"], results
     operations = [operation for _status, rows in results for operation in rows]
     assert operations.count("DELETE") == 1
     assert operations.count("SCAN") == 1
