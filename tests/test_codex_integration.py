@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import threading
@@ -11,6 +12,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from tests.transport_isolation_helpers import isolated_hook_transport
 
 from app.cli import setup_codex
 from app import codex_readiness
@@ -357,7 +359,10 @@ def test_codex_agents_block_is_replaced_when_setup_runs_again() -> None:
     assert "new thin-client instructions" in updated
 
 
-def test_codex_stop_hook_ingests_quietly(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_codex_stop_hook_ingests_quietly(
+    monkeypatch: pytest.MonkeyPatch,
+    isolated_hook_transport: list[str],
+) -> None:
     from integrations.codex.hooks import stop
 
     calls: list[dict] = []
@@ -656,12 +661,40 @@ def test_codex_hooks_import_cleanly_as_subprocess(
 
     stdin_payload = {**stdin_payload, "cwd": str(tmp_path)}
 
+    private_home = tmp_path / "home"
+    bootstrap = tmp_path / "bootstrap"
+    bootstrap.mkdir()
+    ledger_path = tmp_path / "network-attempts.jsonl"
+    (bootstrap / "sitecustomize.py").write_text(
+        "import json, os, socket\n"
+        "_ledger = os.environ['PALLIUM_TEST_NETWORK_LEDGER']\n"
+        "open(os.environ['PALLIUM_TEST_BOOTSTRAP_MARKER'], 'w', encoding='utf-8').write('active')\n"
+        "def _deny(name):\n"
+        " def blocked(*args, **kwargs):\n"
+        "  with open(_ledger, 'a', encoding='utf-8') as stream: stream.write(json.dumps(name) + '\\n')\n"
+        "  raise OSError('network disabled in hook test')\n"
+        " return blocked\n"
+        "socket.socket.connect = _deny('socket.connect')\n"
+        "socket.getaddrinfo = _deny('socket.getaddrinfo')\n",
+        encoding="utf-8",
+    )
+    child_env = {
+        **os.environ,
+        "HOME": str(private_home),
+        "USERPROFILE": str(private_home),
+        "PALLIUM_TEST_NETWORK_LEDGER": str(ledger_path),
+        "PALLIUM_TEST_BOOTSTRAP_MARKER": str(tmp_path / "bootstrap-active"),
+        "PYTHONPATH": os.pathsep.join(
+            [str(bootstrap), os.environ.get("PYTHONPATH", "")]
+        ),
+    }
     result = subprocess.run(
         [sys.executable, str(hook_path)],
         input=json.dumps(stdin_payload),
         capture_output=True,
         text=True,
         timeout=10,
+        env=child_env,
     )
 
     assert result.returncode == 0, (
@@ -669,6 +702,10 @@ def test_codex_hooks_import_cleanly_as_subprocess(
     )
     assert "Traceback" not in result.stderr, (
         f"{hook_name} raised exception: {result.stderr}"
+    )
+    assert (tmp_path / "bootstrap-active").read_text(encoding="utf-8") == "active"
+    assert not ledger_path.exists() or ledger_path.read_text(encoding="utf-8") == "", (
+        f"{hook_name} attempted network access: {ledger_path.read_text(encoding='utf-8')}"
     )
 
 
