@@ -583,3 +583,52 @@ command. No prior-test leak fix or stronger/weaker assertion, source instrumenta
 second node/full retry or live operation. A pass narrows path interaction; a failure
 needs captured import flags/operation errors, not guessed causality. Test allocation
 not yet granted. All required full/final/publication gates remain unsatisfied.
+
+## Unchanged short-path node — narrow reviewed pass
+
+Manager subsequently granted ONE exact node with fresh short --basetemp after
+independent isolation/command review. Reviewer /root/outage_source_review cleared
+runner583A39E59E7A9BEE8FF48F6619168EF10610A26EC276D21EE7D6D587685C274D,
+pinned clean1ea6368b6f2374adf12c766e6b282c89a8f70605; source/assertions/guards
+unchanged. Unique absolute basetemp verified absent before pytest:
+C:/Users/I347041/AppData/Local/Temp/sr-e3fbed824cad4c30af65e0cb42ab1b96.
+It is newly owned, not a reused directory pytest could delete. Known1385 blocked
+read-only preflight once; elevated retry succeeded before launch. No test retry.
+
+ONE unchanged test_two_instances_real_hook_http_and_outage_recovery passed1 in1.70s.
+Worker launch-tool output reports native/controller0, root77844, runner4.667s.
+No separate controller file/PID or three sampled PID/creation identities were retained;
+do not claim those are independently verified. Pytest stdout is independently read
+and hash-verified by root and reviewer, copied to ignored
+service-recovery-evidence/short-path-node.stdout.log SHA256
+454A4A62447DBF9A80CB8B7B117DA144779D64C7E21E04AA1FD32669F840395D.
+Stderr empty, both guard logs absent. Exact private run remains in Temp:
+pallium-full-suite-run-3602f7e42116479089cc78e00aff29cf.
+
+Retained fixture intent JSON/lock lengths208, temporary212; same digest as prior.
+Lock exists, target/temporary absent after lifecycle teardown. Private default TOML
+and fixture paths remain private. Runner sampled3/drained=true; worker and root
+post-run CIM scans found0 private-path matches excluding their own audit and root
+77844 absent. These observations do not reconstruct missing historical identities
+or prove a complete sampled descendant tree.
+
+## Bounded diagnostic result review
+
+Agent technical review: native subagent /root/outage_source_review, clean-context
+gpt-6.1-sol/high, read-only review of the unchanged short-path outcome.
+Reviewed revision:1ea6368b6f2374adf12c766e6b282c89a8f70605.
+Verification adequacy: adequate for this narrow one-node pass, not whole-change
+acceptance. Reviewer independently matched short-node and preserved failed-full
+stdout hashes; confirmed Work Record-only revision difference. Native/controller
+exit0 remains supplied launch-tool evidence without a retained controller artifact.
+Cleanup limitations above remain; no native or installed acceptance.
+
+Standalone short-path pass removes preceding test order as well as shortening paths:
+it is compatible with MAX_PATH hypothesis but proves neither causality nor order
+independence. No caught OSError/winerror was captured, no product defect inferred,
+and no production fix proposed from this evidence. Do not fix leaked port in this
+slice. The prior full validation remains failed and State Blocked; no further full
+allocation assumed. Manager receives exact outcome/review/limits for disposition of
+a next whole-change run with ordinary short isolated paths and retained controller/
+identity evidence. Separate startup diagnosis/installed rollout/Relay acceptance
+and manager-owned publication remain open; installed environment untouched.
