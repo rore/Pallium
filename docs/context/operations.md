@@ -83,6 +83,16 @@ A slow native delivery may cause another registration to return authenticated
 and previous caller, without retrying the registration. Busy does not enroll a
 new source or qualify restart recovery; other failures still fail closed.
 
+Cancellation during initial readiness, before any registration is attempted,
+does not reserve the native admission slot indefinitely. A live request already queued may use the
+existing ready channel; otherwise an idle, never-used resolved channel closes
+without stopping its worker. A fresh request arriving during cleanup may use
+constructor-only retries within a one-second window under the same trusted service
+bootstrap and runtime capability. Readiness, registration and tool calls are
+not replayed; ordinary first acquisition still has no retry, and uncertainty or
+identity changes fail closed. This lifecycle repair is not evidence of installed
+delivery or a historical outage's cause.
+
 For operator-owned native qualification only, the installed
 `scripts/qualify_codex_relay_faults.py` supports `install`/`restore` with explicit
 `--hooks-dir` and `--control-dir`. Provision a fresh case directory outside the
