@@ -1529,6 +1529,19 @@ def test_confirmed_switch_does_not_attach_old_identity_to_new_pin(
     private_time = SimpleNamespace(**vars(common.time))
     private_time.monotonic = count(step=0.001).__next__
     monkeypatch.setattr(common, "time", private_time)
+    replace_errors = []
+    original_replace = common.os.replace
+
+    def replace(source, destination):
+        try:
+            return original_replace(source, destination)
+        except OSError as exc:
+            replace_errors.append(repr(exc))
+            raise
+
+    private_os = SimpleNamespace(**vars(common.os))
+    private_os.replace = replace
+    monkeypatch.setattr(common, "os", private_os)
     sessions = tmp_path / f"{runtime}-confirmed-sessions"
     monkeypatch.setattr(common, "SESSIONS_DIR", sessions)
     sessions.mkdir()
@@ -1552,10 +1565,14 @@ def test_confirmed_switch_does_not_attach_old_identity_to_new_pin(
     monkeypatch.delenv("PALLIUM_HOOK_ACTOR_REF", raising=False)
     assert common.resolve_container_ref("b", session_id, True, False) == "git:b"
     common.derive_actor_ref("b", session_id)
-    result = common.relay_turn(runtime, session_id, "git:b", request=lambda *_a, **_k: _turn_response(
-        container_ref="git:b", endpoint_id="relay-session-e1", scope_generation=1,
-    ))
-    assert result is not None
+    requests = []
+
+    def request(*args, **kwargs):
+        requests.append((args, kwargs))
+        return _turn_response(container_ref="git:b", endpoint_id="relay-session-e1", scope_generation=1)
+
+    result = common.relay_turn(runtime, session_id, "git:b", request=request)
+    assert result is not None, {"replace_errors": replace_errors, "requests": requests, "state": common._read_session_state(session_id)}
     state = json.loads((sessions / f"{session_id}.json").read_text(encoding="utf-8"))
     assert state["container_ref"] == state["last_confirmed_container_ref"] == "git:b"
     assert state["last_confirmed_endpoint_id"] == "relay-session-e1"
