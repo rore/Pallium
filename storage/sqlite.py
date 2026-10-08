@@ -129,6 +129,7 @@ class SQLiteStorageProvider(
             else nullcontext()
         )
         with pair_lock:
+            self._validate_main_work_ref_database(database_url)
             if separate_relay:
                 self._validate_relay_database_pair(database_url, relay_database_url)
             else:
@@ -137,8 +138,12 @@ class SQLiteStorageProvider(
             self._session_factory = sessionmaker(
                 self._engine, expire_on_commit=False, class_=Session
             )
-            self._initialize_sqlite_pragmas(self._engine)
-            self._initialize_schema(include_relay=not separate_relay)
+            try:
+                self._initialize_sqlite_pragmas(self._engine)
+                self._initialize_schema(include_relay=not separate_relay)
+            except BaseException:
+                self._engine.dispose()
+                raise
             self._relay_engine = self._engine
             self._relay_session_factory = self._session_factory
             if separate_relay:
@@ -279,6 +284,16 @@ class SQLiteStorageProvider(
             cursor.execute("PRAGMA busy_timeout=15000")
             cursor.close()
 
+    def _validate_main_work_ref_database(self, database_url: str) -> None:
+        path = self._sqlite_path(database_url)
+        if path is None or not path.exists():
+            return
+        connection = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
+        try:
+            self._validate_main_work_ref_state(connection.execute)
+        finally:
+            connection.close()
+
     def _initialize_sqlite_pragmas(self, engine) -> None:
         if engine.url.get_backend_name() != "sqlite":
             return
@@ -286,6 +301,8 @@ class SQLiteStorageProvider(
             with engine.connect().execution_options(
                 isolation_level="AUTOCOMMIT"
             ) as connection:
+                if engine is self._engine:
+                    self._validate_main_work_ref_state(connection.exec_driver_sql)
                 # auto_vacuum must precede WAL on a new database.
                 connection.exec_driver_sql("PRAGMA auto_vacuum=INCREMENTAL")
                 connection.exec_driver_sql("PRAGMA journal_mode=WAL")

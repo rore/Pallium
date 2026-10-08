@@ -47,7 +47,7 @@ Owner: Relaydev. Assignment: pallium manager, chat `01a0d7ce-83c6-77e2-90f7-d413
 
 **Exceptions:** —
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Recovery
@@ -105,6 +105,10 @@ Rollback/recovery: failed step rolls back table/rows/header together; retry rebu
 Verification: bounded real-transaction and HTTP lifecycle cases above, unchanged protected contracts in CI test job, exact affected tests and whole-diff selector/full suite after allocation, independent technical result review and separate human result approval.
 
 ## Technical references
+
+Implementation checkpoint2026-10-08: native0/1 admission and atomic one-time projection migration implemented in sqlite_schema/sqlite. The retained same-node real red becomes1passed0.44s; two completed reopens now do zero full DELETE/SCAN/INSERT. New focused HTTP group8passed/1failed because its manual-edit fixture incorrectly expected stale old-reference query exposure; existing query validates authoritative metadata. Corrected only newtest: both queries hide stale associations while raw projection remains old until explicitrepair; exactnode1passed1.73s. Undefined make_app in newfixture also corrected before run. Smart independent interim source review found INT-affinity precedence (INTTEXT incorrectly accepted); production now rejects INT before text tokens, worker adds regression. Reviewer otherwise confirms approved transaction ordering, but crash/rollback/concurrency evidence remains pending. Cheap worker owns additional isolated failure tests; root owns production/HTTP/docs and sequential execution. No full or installed operation.
+
+Manager releases incident hold after bounded startup probes on2026-10-08. Resume the already human-approved six-path migration plan without new approval. Actual service timings measure early_storage17.291s/service_storage11.702s on one attempt and2.028s/11.450s on another; embedding22.866s and vector load20.486s also vary. These are stage totals, not attribution of all storage time to this backfill. Native no-site launch probes226ms/136ms and private importtime-help6002ms do not reproduce historical41s launcher/38s premarker gaps. No live database or migration operation authorized. Next implement native versioning and run retained regression green, then focused failure/lifecycle coverage sequentially.
 
 2026-10-08 incident priority handoff: manager explicitly pauses migration while the everyday service is down. Exact human migration-plan approval remains valid; no repeat approval is needed for that scope. Production is still baseline51068666, no migration code applied. Root's private completed-reopen regression retained one real red run (two reopens yielded DELETE/SCAN/INSERT twice) in build/workref-red-retained.log; worker prepared five HTTP tests with one four-state parameterization but ran none. Dirty tests in test_exact_work_ref_search.py and test_sqlite_relay_isolation.py preserved, not staged or discarded. Last implementation records headfff3a565. Next action only after manager releases nonincident hold: resume approved atomic migration implementation, then exact red-green/private coverage; no full slot or installed operation currently allocated. Emergency work is separately retained in service-outage-recovery and exactf31 service-startup-budget-f31 checkouts; manager owns live restoration. No cleanup now.
 

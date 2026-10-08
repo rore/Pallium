@@ -1132,11 +1132,14 @@ class SQLiteSchemaMixin:
 
     def _initialize_schema(self, *, include_relay: bool = True) -> None:
         with self._schema_initialization_lock():
+            with self._engine.connect() as connection:
+                self._validate_main_work_ref_state(connection.exec_driver_sql)
             Base.metadata.create_all(
                 self._engine,
                 tables=[
                     table for name, table in Base.metadata.tables.items()
-                    if include_relay or name not in _RELAY_TABLE_NAMES
+                    if name != "source_item_work_refs"
+                    and (include_relay or name not in _RELAY_TABLE_NAMES)
                 ],
             )
             if include_relay:
@@ -1152,8 +1155,8 @@ class SQLiteSchemaMixin:
             self._ensure_maintenance_state_columns()
             self._ensure_package_processing_columns()
             self._ensure_unique_indexes()
+            self._ensure_source_item_work_refs()
             self._ensure_indexes(include_relay=include_relay)
-            self._backfill_source_item_work_refs()
             self._ensure_query_audit_log_indexes()
             self._ensure_query_audit_log_columns()
             self._ensure_memory_flag_indexes()
@@ -1361,35 +1364,72 @@ class SQLiteSchemaMixin:
                 if column_name not in existing_columns:
                     connection.execute(text(migration_sql))
 
-    def _backfill_source_item_work_refs(self) -> None:
-        """Rebuild the derived work-reference index from authoritative metadata."""
+    @staticmethod
+    def _validate_main_work_ref_state(execute):
+        """Read admission state through either SQLite or SQLAlchemy execution."""
+        version = execute("PRAGMA main.user_version").fetchone()[0]
+        if version not in (0, 1):
+            raise RuntimeError(f"Unsupported main database user_version: {version}")
+        source_columns = {row[1] for row in execute("PRAGMA main.table_info(source_items)")}
+        if source_columns and not {"id", "metadata_json"} <= source_columns:
+            raise RuntimeError("Incompatible source_items schema: id and metadata_json required")
+        columns = list(execute("PRAGMA main.table_info(source_item_work_refs)"))
+        if columns:
+            expected = {"source_item_id": 1, "work_ref": 2}
+            if ({row[1] for row in columns} != set(expected)
+                    or any(not row[3] or row[5] != expected.get(row[1])
+                           or "INT" in row[2].upper()
+                           or not any(kind in row[2].upper() for kind in ("CHAR", "CLOB", "TEXT"))
+                           for row in columns)):
+                raise RuntimeError("Incompatible source_item_work_refs schema")
+        return version, bool(columns), bool(source_columns)
+
+    def _ensure_source_item_work_refs(self) -> None:
+        with self._engine.connect() as connection:
+            version, present, _source_present = self._validate_main_work_ref_state(connection.exec_driver_sql)
+        if version == 1 and present:
+            return
+        # Explicit BEGIN is required for SQLite's legacy driver's DDL rollback.
         with self._engine.begin() as connection:
-            connection.execute(text("DELETE FROM source_item_work_refs"))
-            columns = {
-                row[1] for row in connection.execute(text("PRAGMA table_info(source_items)"))
-            }
-            if "metadata_json" not in columns:
+            connection.exec_driver_sql("BEGIN IMMEDIATE")
+            version, present, source_present = self._validate_main_work_ref_state(connection.exec_driver_sql)
+            if not source_present:
+                raise RuntimeError("source_items must exist before work-reference migration")
+            if version == 1 and present:
                 return
-            rows = []
-            for source_item_id, metadata_json in connection.execute(
-                text("SELECT id, metadata_json FROM source_items")
-            ):
-                try:
-                    metadata = json.loads(metadata_json) if metadata_json else None
-                except (TypeError, ValueError):
-                    metadata = None
-                rows.extend(
-                    {"source_item_id": source_item_id, "work_ref": work_ref}
-                    for work_ref in work_refs_from_metadata(metadata)
-                )
-            if rows:
-                connection.execute(
-                    text(
-                        "INSERT INTO source_item_work_refs(source_item_id, work_ref) "
-                        "VALUES (:source_item_id, :work_ref)"
-                    ),
-                    rows,
-                )
+            SourceItemWorkRefRecord.__table__.create(connection, checkfirst=True)
+            connection.execute(text(self._INDEX_MIGRATIONS["idx_source_item_work_refs_lookup"]))
+            self._rebuild_source_item_work_refs(connection)
+            if version == 0:
+                connection.exec_driver_sql("PRAGMA main.user_version=1")
+
+    def _backfill_source_item_work_refs(self) -> None:
+        """Explicit private repair; never changes the database version."""
+        with self._engine.begin() as connection:
+            connection.exec_driver_sql("BEGIN IMMEDIATE")
+            _version, present, source_present = self._validate_main_work_ref_state(connection.exec_driver_sql)
+            if not present or not source_present:
+                raise RuntimeError("Initialized source and work-reference tables required for repair")
+            self._rebuild_source_item_work_refs(connection)
+
+    @staticmethod
+    def _rebuild_source_item_work_refs(connection) -> None:
+        connection.execute(text("DELETE FROM source_item_work_refs"))
+        rows = []
+        for source_item_id, metadata_json in connection.execute(text("SELECT id, metadata_json FROM source_items")):
+            try:
+                metadata = json.loads(metadata_json) if metadata_json else None
+            except (TypeError, ValueError):
+                metadata = None
+            rows.extend(
+                {"source_item_id": source_item_id, "work_ref": work_ref}
+                for work_ref in work_refs_from_metadata(metadata)
+            )
+        if rows:
+            connection.execute(
+                text("INSERT INTO source_item_work_refs(source_item_id, work_ref) VALUES (:source_item_id, :work_ref)"),
+                rows,
+            )
 
     @staticmethod
     def _sync_source_item_work_refs_in_session(

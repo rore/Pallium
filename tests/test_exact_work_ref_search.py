@@ -91,6 +91,25 @@ def _indexed_work_refs(client, source_item_id: str) -> list[str]:
         ).scalars().all()
 
 
+def _http_app_for_sqlite(db_url: str, monkeypatch: pytest.MonkeyPatch):
+    from app.config import AppConfig
+    from app.main import create_app
+    from storage.vector_index import VectorIndexConfig
+
+    monkeypatch.setattr(
+        "app.dependencies.schedule_codex_relay_wake",
+        lambda *_args, **_kwargs: None,
+    )
+    return create_app(
+        AppConfig(
+            storage_backend="sqlite",
+            sqlite_url=db_url,
+            semantic_packages={},
+            vector_index=VectorIndexConfig(enabled=False),
+        )
+    )
+
+
 def test_blank_exact_ref_is_recent_normalized_and_similar_ref_is_excluded(
     client, drain_queue
 ) -> None:
@@ -785,3 +804,255 @@ def test_exact_work_ref_search_through_enabled_vector_http(
     returned = [row["source_item_id"] for row in response.json()["results"]]
     assert len(returned) == 2
     assert set(returned) == set(right_ids)
+
+
+def test_completed_reopens_skip_work_ref_rebuild_and_keep_http_results(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, drain_queue
+) -> None:
+    from sqlalchemy.engine import Engine
+
+    from fastapi.testclient import TestClient
+
+    db_path = tmp_path / "completed-reopen.db"
+    db_url = f"sqlite:///{db_path}"
+    rebuilds: list[str] = []
+
+    def observe_projection_delete(connection, _cursor, statement, _params, _context, _many):
+        if (
+            connection.engine.url.database == str(db_path)
+            and statement.lstrip().upper().startswith(
+                "DELETE FROM SOURCE_ITEM_WORK_REFS"
+            )
+        ):
+            rebuilds.append(statement)
+
+    event.listen(Engine, "before_cursor_execute", observe_projection_delete)
+    try:
+        with TestClient(_http_app_for_sqlite(db_url, monkeypatch)) as client:
+            source_id = _add(client, "completed-reopen", "proj-1")
+            drain_queue(client)
+            assert [row["source_item_id"] for row in _exact(client, "")] == [source_id]
+            assert [row["source_item_id"] for row in _exact(client, "alpha")] == [source_id]
+
+        rebuilds.clear()
+        for _ in range(2):
+            with TestClient(_http_app_for_sqlite(db_url, monkeypatch)) as client:
+                assert [row["source_item_id"] for row in _exact(client, "")] == [source_id]
+                assert [row["source_item_id"] for row in _exact(client, "alpha")] == [source_id]
+        assert rebuilds == []
+    finally:
+        event.remove(Engine, "before_cursor_execute", observe_projection_delete)
+
+
+@pytest.mark.parametrize("projection_state", ["populated", "empty", "stale", "missing"])
+def test_legacy_projection_backfills_once_from_metadata_through_http(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, drain_queue, projection_state: str
+) -> None:
+    from fastapi.testclient import TestClient
+    from sqlalchemy.engine import Engine
+
+    db_path = tmp_path / f"legacy-{projection_state}.db"
+    db_url = f"sqlite:///{db_path}"
+
+    with TestClient(_http_app_for_sqlite(db_url, monkeypatch)) as client:
+        source_ids = {
+            name: _add(client, name, "placeholder")
+            for name in ("safe", "malformed", "no-refs")
+        }
+        drain_queue(client)
+
+    secret = "ghp_" + "abcdefghijklmnopqrstuvwxyz1234567890"
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE source_items SET metadata_json = ? WHERE id = ?",
+            (
+                json.dumps(
+                    {"pallium_work_refs": ["PROJ 1", "proj-1", "Straße", "STRASSE", secret]},
+                    ensure_ascii=False,
+                ),
+                source_ids["safe"],
+            ),
+        )
+        connection.execute(
+            "UPDATE source_items SET metadata_json = ? WHERE id = ?",
+            ("not-json", source_ids["malformed"]),
+        )
+        connection.execute(
+            "UPDATE source_items SET metadata_json = ? WHERE id = ?",
+            (json.dumps({"other": "metadata"}), source_ids["no-refs"]),
+        )
+        if projection_state in {"empty", "stale"}:
+            connection.execute("DELETE FROM source_item_work_refs")
+        if projection_state == "stale":
+            connection.execute(
+                "INSERT INTO source_item_work_refs (source_item_id, work_ref) VALUES (?, ?)",
+                (source_ids["safe"], "stale-ref"),
+            )
+        elif projection_state == "missing":
+            connection.execute("DROP TABLE source_item_work_refs")
+        connection.execute("PRAGMA user_version = 0")
+
+    backfills: list[str] = []
+
+    def observe_backfill(connection, _cursor, statement, _params, _context, _many):
+        if (
+            connection.engine.url.database == str(db_path)
+            and statement.lstrip().upper().startswith(
+                "DELETE FROM SOURCE_ITEM_WORK_REFS"
+            )
+        ):
+            backfills.append(statement)
+
+    event.listen(Engine, "before_cursor_execute", observe_backfill)
+    try:
+        with TestClient(_http_app_for_sqlite(db_url, monkeypatch)) as client:
+            response = client.post(
+                "/query",
+                json={
+                    "text": "alpha",
+                    "source_only": True,
+                    "trigger_origin": "agent_pull_work",
+                    "work_refs": ["proj-1"],
+                    "container_ref": "room",
+                    "thread_ref": "thread",
+                    "visibility": "private",
+                },
+            )
+            assert response.status_code == 200, response.text
+            rows = response.json()["results"]
+            assert [row["source_item_id"] for row in rows] == [source_ids["safe"]]
+            assert rows[0]["work_refs"] == ["proj-1", "strasse"]
+            assert secret not in response.text
+            assert [row["source_item_id"] for row in _exact(client, "", "strasse")] == [
+                source_ids["safe"]
+            ]
+        assert len(backfills) == 1
+    finally:
+        event.remove(Engine, "before_cursor_execute", observe_backfill)
+
+
+def test_version_one_missing_projection_recovers_and_keeps_http_results(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, drain_queue
+) -> None:
+    from fastapi.testclient import TestClient
+
+    db_path = tmp_path / "missing-v1-projection.db"
+    db_url = f"sqlite:///{db_path}"
+
+    with TestClient(_http_app_for_sqlite(db_url, monkeypatch)) as client:
+        source_id = _add(client, "missing-v1", "proj-1")
+        drain_queue(client)
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("DROP TABLE source_item_work_refs")
+
+    for _ in range(2):
+        with TestClient(_http_app_for_sqlite(db_url, monkeypatch)) as client:
+            assert [row["source_item_id"] for row in _exact(client, "alpha")] == [source_id]
+    with sqlite3.connect(db_path) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 1
+
+
+def test_version_one_manual_projection_repair_is_private_and_idempotent(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, drain_queue
+) -> None:
+    from fastapi.testclient import TestClient
+
+    db_path = tmp_path / "manual-projection-repair.db"
+    db_url = f"sqlite:///{db_path}"
+
+    with TestClient(_http_app_for_sqlite(db_url, monkeypatch)) as client:
+        source_id = _add(client, "manual-repair", "old-ref")
+        drain_queue(client)
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE source_items SET metadata_json = ? WHERE id = ?",
+            (json.dumps({"pallium_work_refs": ["new-ref"]}), source_id),
+        )
+
+    with TestClient(_http_app_for_sqlite(db_url, monkeypatch)) as client:
+        assert _exact(client, "", "new-ref") == []
+        assert _exact(client, "", "old-ref") == []
+        # Query revalidates authoritative metadata; the stale projection still
+        # proves reopen did not silently repair an out-of-band edit.
+        assert _indexed_work_refs(client, source_id) == ["old-ref"]
+        storage = client.app.state.pallium_service._storage
+        storage._backfill_source_item_work_refs()
+        assert _exact(client, "", "old-ref") == []
+        assert [row["source_item_id"] for row in _exact(client, "", "new-ref")] == [source_id]
+        storage._backfill_source_item_work_refs()
+        assert [row["source_item_id"] for row in _exact(client, "", "new-ref")] == [source_id]
+
+    with sqlite3.connect(db_path) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 1
+    with TestClient(_http_app_for_sqlite(db_url, monkeypatch)) as client:
+        assert [row["source_item_id"] for row in _exact(client, "", "new-ref")] == [source_id]
+
+
+def test_incremental_ref_updates_soft_forget_and_retention_survive_reopen(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, drain_queue
+) -> None:
+    from fastapi.testclient import TestClient
+
+    db_path = tmp_path / "incremental-and-retention.db"
+    db_url = f"sqlite:///{db_path}"
+
+    now = datetime.now(timezone.utc)
+    with TestClient(_http_app_for_sqlite(db_url, monkeypatch)) as client:
+        soft_id = _add(client, "soft-forget", "old-ref")
+        hard_id = _add(
+            client, "hard-retention", "retained-ref",
+            occurred_at=now - timedelta(days=3650),
+        )
+        drain_queue(client)
+        storage = client.app.state.pallium_service._storage
+
+        storage.update_source_item_metadata(
+            soft_id, {"pallium_work_refs": ["Next Ref", "next-ref"]}
+        )
+        assert _exact(client, "", "old-ref") == []
+        assert [row["source_item_id"] for row in _exact(client, "", "next-ref")] == [soft_id]
+        assert storage.fail_source_item_processing(
+            soft_id,
+            error="retry",
+            next_attempt_at=None,
+            final=False,
+            metadata_updates={"pallium_work_refs": ["Retry Ref"]},
+        ) is True
+        assert _exact(client, "", "next-ref") == []
+        assert [row["source_item_id"] for row in _exact(client, "", "retry-ref")] == [soft_id]
+        storage.complete_source_item_processing(soft_id)
+
+        forgotten = client.post(
+            "/source/forget",
+            json={"source_item_id": soft_id, "reason": "user request"},
+        )
+        assert forgotten.status_code == 200, forgotten.text
+        assert _exact(client, "", "retry-ref") == []
+        assert client.get(
+            f"/source/{soft_id}/context",
+            params={"container_ref": "room", "query_visibility": "private"},
+        ).status_code == 404
+        assert _indexed_work_refs(client, soft_id) == ["retry-ref"]
+
+        stats = storage.run_retention_pass(now=now, batch_size=10)
+        assert stats.deleted_source_items >= 1
+        assert _exact(client, "", "retained-ref") == []
+        assert client.get(
+            f"/source/{hard_id}/context",
+            params={"container_ref": "room", "query_visibility": "private"},
+        ).status_code == 404
+        assert _indexed_work_refs(client, hard_id) == []
+
+    with TestClient(_http_app_for_sqlite(db_url, monkeypatch)) as client:
+        assert _exact(client, "", "retry-ref") == []
+        assert client.get(
+            f"/source/{soft_id}/context",
+            params={"container_ref": "room", "query_visibility": "private"},
+        ).status_code == 404
+        assert _indexed_work_refs(client, soft_id) == ["retry-ref"]
+        assert _exact(client, "", "retained-ref") == []
+        assert client.get(
+            f"/source/{hard_id}/context",
+            params={"container_ref": "room", "query_visibility": "private"},
+        ).status_code == 404
+        assert _indexed_work_refs(client, hard_id) == []
