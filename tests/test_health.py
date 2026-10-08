@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import threading
+import contextlib
+import logging
+import pytest
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -80,6 +83,33 @@ class TestHealthDegradedEmbeddings:
 
 
 class TestHealthLifecycle:
+
+    @pytest.mark.parametrize("failed", [False, True])
+    def test_lifespan_completion_waits_for_mcp(self, monkeypatch, caplog, failed):
+        manager = pytest.importorskip("mcp.server.streamable_http_manager")
+        caplog.set_level(logging.INFO, logger="app.main")
+
+        @contextlib.asynccontextmanager
+        async def run(_manager):
+            assert app.state._lifespan_complete is False
+            assert "startup stage=lifespan outcome=complete" not in caplog.text
+            if failed:
+                raise RuntimeError("MCP startup failed")
+            yield
+
+        monkeypatch.setattr(manager.StreamableHTTPSessionManager, "run", run)
+        app = create_app(_no_vector_config())
+        if failed:
+            with pytest.raises(RuntimeError, match="MCP startup failed"):
+                with TestClient(app):
+                    pass
+            assert app.state._lifespan_complete is False
+            assert "startup stage=lifespan outcome=complete" not in caplog.text
+        else:
+            with TestClient(app) as client:
+                assert client.get("/health").status_code == 200
+                assert app.state._lifespan_complete is True
+                assert "startup stage=lifespan outcome=complete" in caplog.text
 
     def test_lifespan_flag_starts_false(self) -> None:
         app = create_app(_no_vector_config())

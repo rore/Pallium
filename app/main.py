@@ -393,13 +393,14 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
             logger.warning("Codex retained worker unavailable")
         codex_wake_registry.retained_service = retained_service
         app_instance.state._codex_retained_service = retained_service
-        app_instance.state._lifespan_complete = True
-        logger.info("startup stage=lifespan outcome=complete pid=%s elapsed_seconds=%.3f", os.getpid(), time.monotonic() - lifespan_started)
         try:
-            if mcp_available and session_manager is not None:
-                async with session_manager.run():
-                    yield
-            else:
+            async with (
+                session_manager.run()
+                if mcp_available and session_manager is not None
+                else contextlib.nullcontext()
+            ):
+                app_instance.state._lifespan_complete = True
+                logger.info("startup stage=lifespan outcome=complete pid=%s elapsed_seconds=%.3f", os.getpid(), time.monotonic() - lifespan_started)
                 yield
         finally:
             cleanup()

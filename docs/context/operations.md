@@ -65,19 +65,19 @@ Only the current Relay schema is supported. Keep the main and Relay SQLite files
 
 ### Main database work-reference projection
 
-The main database owns `PRAGMA user_version`: legacy/fresh version0 migrates to1
+The main database owns `PRAGMA user_version`: legacy/fresh version 0 migrates to 1
 with one atomic rebuild of `source_item_work_refs` from authoritative metadata.
 The projection table/index, rows and completion mark commit together. Failure
 rolls back that step; other schema initialization steps are not globally atomic.
 Unknown versions and incompatible source/projection schemas fail closed.
-Supported version0 snapshots with the baseline source columns but no
+Supported version 0 snapshots with the baseline source columns but no
 `metadata_json` first add that nullable column through the existing structural
 upgrade. Those column upgrades remain outside the atomic projection step.
-Version1 missing metadata, missing source IDs and legacy tables missing metadata
+Version 1 missing metadata, missing source IDs and legacy tables missing metadata
 without the complete baseline still fail admission. Projection and repair require
 both authoritative columns before deleting rows or marking completion.
 
-Completed version1 startup skips the metadata scan and projection rewrite.
+Completed version 1 startup skips the metadata scan and projection rewrite.
 A missing projection table is rebuilt atomically without resetting the version;
 a missing lookup index alone is restored without rebuilding rows. Supported
 metadata updates and retention still maintain the projection incrementally.
@@ -91,7 +91,7 @@ Ordinary Relay startup maintenance can independently change its schema identity
 A same-file deployment shares the changed header: prior offline repair manifests
 become stale and must be regenerated through the existing stopped procedure.
 Do not bypass their identity fence. Earlier binaries retain schema compatibility
-but resume their old unconditional rebuild; they do not reset version1. This
+but resume their old unconditional rebuild; they do not reset version 1. This
 release rejects unknown future versions rather than promising arbitrary downgrade.
 Installed rollout separately requires approved paired backup, version provenance
 and compatibility checks, qualified restart, and an exact rollback path. A repo

@@ -1595,7 +1595,7 @@ def test_registration_rejects_wrong_or_spoofed_pipe_server_image(retained, monke
     "failed-nonstring-text", "failed-public-content", "failed-public-iserror-false",
     "failed-wrong-id", "failed-wrong-version", "empty-items",
     "extra-items", "wrong-item", "nonstring-text", "rpc-error", "wrong-id", "wrong-version"])
-def test_native_state_read_contract_failure_releases_without_transport(http_wake, monkeypatch, fault):
+def test_native_state_read_contract_failure_releases_without_transport(http_wake, monkeypatch, fault, client):
     http, _, registry, service, desktop, send, _ = http_wake
     original_read = desktop.read
     def read(deadline):
@@ -1643,5 +1643,8 @@ def test_native_state_read_contract_failure_releases_without_transport(http_wake
     send()
     assert desktop.owners == [] and registry.reservations() == ()
     assert service.retained_registration is None
-    delivery = http.get("/relay/messages/retained-journey", params=SCOPE).json()["deliveries"][0]
+    client.app.state.pallium_service._relay_trace_executor.submit(lambda: None).result(timeout=2)
+    response = http.get("/relay/messages/retained-journey", params=SCOPE)
+    assert response.status_code == 200, (response.status_code, response.text, dict(response.headers))
+    delivery = response.json()["deliveries"][0]
     assert delivery["state"] == "pending" and delivery["attempts"] == 0
