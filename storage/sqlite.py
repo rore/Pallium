@@ -163,10 +163,6 @@ class SQLiteStorageProvider(
         lock_path = path.with_name(f"{path.name}.relay-pair-init.lock")
         lock_path.parent.mkdir(parents=True, exist_ok=True)
         with lock_path.open("a+b") as lock_file:
-            lock_file.seek(0, 2)
-            if lock_file.tell() == 0:
-                lock_file.write(b"0")
-                lock_file.flush()
             lock_file.seek(0)
             self._acquire_schema_file_lock(lock_file)
             try:
