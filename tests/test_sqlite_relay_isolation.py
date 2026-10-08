@@ -4,10 +4,11 @@ import os
 import sqlite3
 import threading
 import time
+import traceback
 from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
-from queue import Empty
+from queue import Empty, Queue
 
 import pytest
 from sqlalchemy import event, text
@@ -231,12 +232,28 @@ def _initialize_main_and_report_work_ref_migration(
             f"sqlite:///{path}", relay_database_url=relay_database_url
         )
         provider.close()
-    except Exception as exc:  # pragma: no cover - child reports to its parent
-        result_queue.put(("error", repr(exc), operations))
+    except Exception:  # child reports to its parent
+        result_queue.put(("error", traceback.format_exc(), operations))
     else:
         result_queue.put(("ok", operations))
     finally:
         event.remove(Engine, "after_cursor_execute", observe)
+
+
+def test_work_ref_startup_child_preserves_exception_stage(tmp_path: Path, monkeypatch) -> None:
+    reports = Queue()
+
+    def failed_admission(_provider, _database_url):
+        raise RuntimeError("injected startup admission failure")
+
+    monkeypatch.setattr(SQLiteStorageProvider, "_validate_main_work_ref_database", failed_admission)
+    _initialize_main_and_report_work_ref_migration(tmp_path / "failed-startup.db", reports)
+    status, error, operations = reports.get_nowait()
+    assert status == "error"
+    assert "failed_admission" in error
+    assert "RuntimeError: injected startup admission failure" in error
+    assert operations == []
+    assert reports.empty()
 
 
 def _start_hidden_owned_process(process: multiprocessing.Process) -> None:
