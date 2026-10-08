@@ -39,9 +39,11 @@
 
 ## Implementation
 
-2026-10-08: Isolated integration branch created from current origin/main. Integrated accepted startup timing/budget source 9b41eec0 and reviewed test isolation through ae2559c8. Integrated activation offload d72f59a2 after independent /root/incident_integration_review GO: all 12 sites, preserved callback order, deterministic ASGI proof and 148 affected passes. Integrated vector query source 537455d9 and independent result record 5e7d7747: deterministic content-read red/green, 16 focused passes, 69 affected passes and one existing skip. Migration result remains pending. Full validation has not started.
+2026-10-08: Isolated integration branch created from current origin/main. Integrated accepted startup timing/budget source 9b41eec0 and reviewed test isolation through ae2559c8. Integrated activation offload d72f59a2 after independent /root/incident_integration_review GO: all 12 sites, preserved callback order, deterministic ASGI proof and 148 affected passes. Integrated vector query source 537455d9 and independent result record 5e7d7747: deterministic content-read red/green, 16 focused passes, 69 affected passes and one existing skip. Migration and subsequent full-run correction evidence are recorded below.
 
 ## Checkpoints
+
+Legacy correction eba8d100 integrated as a6821077 after independent component acceptance. Version-0 tables with the supported baseline columns may add nullable metadata through the existing column-migration mechanism; completed/unknown/incompatible schemas retain strict refusal, and projection rebuild checks remain strict after initialization. Existing snapshot test unchanged. Corrected affected run: 109 passed, one platform skip, one slow deselection in 50.70 seconds. Root inspected the source delta; combined full rerun is required.
 
 Combined full at dba1bb1f: 5457 passed, 36 skipped, 2 xfailed, one failure in 355.15 seconds. Unchanged test_snapshot_failure.py::test_restore_from_snapshot_with_older_schema exposes a real compatibility regression: pre-admission rejects the missing metadata column before the supported legacy upgrade. Root assigned the minimal version-aware correction to Relaydev; existing snapshot regression must remain unchanged. Private Python/Node network guards recorded no attempts; all 81 sampled owned process identities drained. Evidence retained in shared build/service-incident-full-20261008. No release acceptance or live migration follows this failed run.
 
