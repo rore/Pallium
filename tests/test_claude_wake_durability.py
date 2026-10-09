@@ -974,6 +974,7 @@ def test_crashed_intent_lock_owner_allows_hook_publication_and_http_recovery(
     import contextlib
     import time
     from types import FunctionType
+    from unittest.mock import patch
 
     import anyio.from_thread
     import fastapi.routing
@@ -1084,6 +1085,19 @@ def test_crashed_intent_lock_owner_allows_hook_publication_and_http_recovery(
         monkeypatch.setattr(common, "register_claude_wake", timed_sync("hook", common.register_claude_wake))
         with _client(registry) as http:
             monkeypatch.setattr(http, "post", timed_sync("http", http.post))
+            # Qualify steady-state lock refusal separately from cold router setup.
+            old_intent_before_warmup = path.read_bytes()
+            timing_origin = time.monotonic()
+            with patch.object(registry, "register", wraps=registry.register) as register:
+                warmup = http.post("/internal/claude-wake/register", json={})
+                assert warmup.status_code == 400
+                assert warmup.json()["detail"] == "invalid registration"
+                register.assert_not_called()
+            timing_origin = None
+            cold_setup_samples = list(timing_samples)
+            timing_samples.clear()
+            assert registry._registrations == {} and not registry._canonical.exists()
+            assert path.read_bytes() == old_intent_before_warmup
             started = time.monotonic()
             timing_origin = started
             rejected = http.post("/internal/claude-wake/register", json=old)
@@ -1091,6 +1105,7 @@ def test_crashed_intent_lock_owner_allows_hook_publication_and_http_recovery(
             assert rejected.status_code == 409
             assert time.monotonic() - started < 0.5, json.dumps({
                 "router_setup_probe": int(router_setup_probe), "timings": timing_samples,
+                "cold_setup": cold_setup_samples,
             })
             assert registry._registrations == {} and not registry._canonical.exists()
             assert json.loads(path.read_text(encoding="utf-8"))["intent_id"] == "old"
@@ -1133,6 +1148,7 @@ def test_crashed_intent_lock_owner_allows_hook_publication_and_http_recovery(
             timing_origin = None
             assert time.monotonic() - started < 0.5, json.dumps({
                 "router_setup_probe": int(router_setup_probe), "timings": timing_samples,
+                "cold_setup": cold_setup_samples,
             })
             assert http_requests == []
             assert registry._registrations == {} and not registry._canonical.exists()
