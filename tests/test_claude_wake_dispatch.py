@@ -496,11 +496,15 @@ def test_failed_old_generation_cannot_rearm_replacement(monkeypatch: pytest.Monk
     assert result.outcome == "deferred"
 
 def test_relay_messages_response_does_not_wait_for_claude_transport(
-    client, monkeypatch: pytest.MonkeyPatch,
+    client, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
 ) -> None:
+    import time
+    import traceback
+
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
+    import app.dependencies as dependencies
     from app.dependencies import build_router
 
     registry = ClaudeWakeRegistry()
@@ -522,27 +526,82 @@ def test_relay_messages_response_does_not_wait_for_claude_transport(
     started = threading.Event()
     release = threading.Event()
     worker_threads: list[threading.Thread] = []
+    scheduled: list[threading.Thread] = []
+    attempts, errors, phases = [], [], []
+    original_attempt = registry.attempt
+    original_schedule = dependencies.schedule_claude_relay_wake
+
+    def attempt(*args, **kwargs):
+        phases.append(("attempt_entered", time.monotonic()))
+        try:
+            result = original_attempt(*args, **kwargs)
+        except BaseException:
+            errors.append(traceback.format_exc(limit=12))
+            raise
+        attempts.append((result.outcome, result.reason))
+        return result
+
+    def schedule(*args, **kwargs):
+        phases.append(("schedule_entered", time.monotonic()))
+        try:
+            worker = original_schedule(*args, **kwargs)
+        except BaseException:
+            errors.append(traceback.format_exc(limit=12))
+            raise
+        if worker is not None:
+            scheduled.append(worker)
+        phases.append(("schedule_returned", time.monotonic()))
+        return worker
 
     def transport(*_: object) -> str:
         worker_threads.append(threading.current_thread())
+        phases.append(("transport_entered", time.monotonic()))
         started.set()
-        assert release.wait(timeout=5)
+        try:
+            assert release.wait(timeout=5)
+        except BaseException:
+            errors.append(traceback.format_exc(limit=12))
+            raise
         return "accepted"
 
+    monkeypatch.setattr(registry, "attempt", attempt)
+    monkeypatch.setattr(dependencies, "schedule_claude_relay_wake", schedule)
     monkeypatch.setattr("app.claude_wake.claude_wake_transport", transport)
-    response = http.post("/relay/messages", json={
-        "sender_runtime": "codex",
-        "sender_session_ref": "sender",
-        "recipient": "claude-code:target",
-        "payload": "caller-surface payload",
-        **scope,
-    })
-    assert response.status_code == 200
-    assert started.wait(timeout=1)
-    assert worker_threads[0].is_alive()
-    release.set()
-    worker_threads[0].join(timeout=1)
+    caplog.set_level(logging.INFO, logger="app.claude_wake")
+    try:
+        phases.append(("request_started", time.monotonic()))
+        response = http.post("/relay/messages", json={
+            "sender_runtime": "codex",
+            "sender_session_ref": "sender",
+            "recipient": "claude-code:target",
+            "payload": "caller-surface payload",
+            **scope,
+        })
+        phases.append(("response_returned", time.monotonic()))
+        assert response.status_code == 200, response.text
+        arrived = started.wait(timeout=1)
+        diagnostics = None
+        if not arrived:
+            frames = sys._current_frames()
+            diagnostics = {
+                "response": response.text[:2048], "phases": list(phases),
+                "attempts": list(attempts), "errors": list(errors),
+                "workers": [(worker.name, worker.ident, worker.is_alive()) for worker in scheduled[:4]],
+                "stacks": {
+                    str(worker.ident): "".join(traceback.format_stack(frames[worker.ident], limit=12))[-4096:]
+                    for worker in scheduled[:4] if worker.ident in frames
+                },
+            }
+        assert arrived, diagnostics
+        assert worker_threads[0].is_alive()
+    finally:
+        release.set()
+        for worker in dict.fromkeys([*scheduled, *worker_threads]):
+            worker.join(timeout=1)
+        http.close()
+    assert not errors, errors
     assert not worker_threads[0].is_alive()
+    assert all(not worker.is_alive() for worker in scheduled)
 
 
 def test_wake_outcome_categories_are_distinct_and_secret_free(
