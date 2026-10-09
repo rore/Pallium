@@ -11,6 +11,7 @@ import json
 import builtins
 import sys
 import time
+from itertools import count
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -28,6 +29,11 @@ def tmp_state(tmp_path, monkeypatch, request):
     monkeypatch.setattr(common, "STATE_DIR", tmp_path)
     monkeypatch.setattr(common, "SESSIONS_DIR", tmp_path / "sessions")
     monkeypatch.setattr(common, "_HOOK_DEADLINE", None)
+    # Functional pin/cache contracts use real locks without runner latency deciding admission.
+    ticks = count(step=0.001)
+    private_time = SimpleNamespace(**vars(time))
+    private_time.monotonic = lambda: next(ticks)
+    monkeypatch.setattr(common, "time", private_time)
     events = []
 
     def observe(name, operation):
@@ -81,7 +87,7 @@ class TestPinAndGet:
 
     def test_lock_setup_exhaustion_refuses_pin_before_native_acquisition(self, tmp_state, monkeypatch):
         pin_path = tmp_state / "sessions" / "session-abc.json"
-        original_time = common.time
+        original_time = time
         original_open = getattr(common, "open", builtins.open)
         now = [0.0]
         private_time = SimpleNamespace(**vars(original_time))
@@ -191,7 +197,7 @@ class TestCorruptedState:
         sessions.mkdir(parents=True)
         (sessions / "rec.json").write_text("garbage", encoding="utf-8")
         # New SessionStart overwrites with valid pin
-        common.pin_container("rec", "good-container")
+        assert common.pin_container("rec", "good-container") is True
         assert common.get_pinned_container("rec") == "good-container"
 
 
@@ -200,38 +206,38 @@ class TestCorruptedState:
 
 class TestResumeStickiness:
     def test_fresh_start_writes_pin(self, tmp_state):
-        common.pin_container("s1", "container-fresh", source="startup")
+        assert common.pin_container("s1", "container-fresh", source="startup") is True
         assert common.get_pinned_container("s1") == "container-fresh"
 
     def test_resume_preserves_existing_pin(self, tmp_state):
-        common.pin_container("s1", "original-container", source="startup")
-        common.pin_container("s1", "new-container", source="resume")
+        assert common.pin_container("s1", "original-container", source="startup") is True
+        assert common.pin_container("s1", "new-container", source="resume") is True
         assert common.get_pinned_container("s1") == "original-container"
 
     def test_clear_preserves_existing_pin(self, tmp_state):
-        common.pin_container("s1", "original-container", source="startup")
-        common.pin_container("s1", "new-container", source="clear")
+        assert common.pin_container("s1", "original-container", source="startup") is True
+        assert common.pin_container("s1", "new-container", source="clear") is True
         assert common.get_pinned_container("s1") == "original-container"
 
     def test_resume_writes_pin_when_absent(self, tmp_state):
         # Edge: SessionStart fired with source=resume but no prior pin
         # (e.g. first session after this code shipped). Should create pin.
-        common.pin_container("s1", "container-x", source="resume")
+        assert common.pin_container("s1", "container-x", source="resume") is True
         assert common.get_pinned_container("s1") == "container-x"
 
     def test_clear_writes_pin_when_absent(self, tmp_state):
-        common.pin_container("s1", "container-x", source="clear")
+        assert common.pin_container("s1", "container-x", source="clear") is True
         assert common.get_pinned_container("s1") == "container-x"
 
     def test_fresh_start_overwrites_existing(self, tmp_state):
         # If a session_id is somehow reused with source=startup, overwrite.
-        common.pin_container("s1", "old-container", source="startup")
-        common.pin_container("s1", "new-container", source="startup")
+        assert common.pin_container("s1", "old-container", source="startup") is True
+        assert common.pin_container("s1", "new-container", source="startup") is True
         assert common.get_pinned_container("s1") == "new-container"
 
     def test_no_source_overwrites_existing(self, tmp_state):
-        common.pin_container("s1", "old-container")
-        common.pin_container("s1", "new-container")
+        assert common.pin_container("s1", "old-container") is True
+        assert common.pin_container("s1", "new-container") is True
         assert common.get_pinned_container("s1") == "new-container"
 
 
@@ -244,7 +250,7 @@ class TestResolveContainerRef:
         # Even if cwd would derive to a git container, the pin is honored.
         mock_run.return_value.returncode = 0
         mock_run.return_value.stdout = "https://github.com/elsewhere/repo.git\n"
-        common.pin_container("s1", "git:pinned/value")
+        assert common.pin_container("s1", "git:pinned/value") is True
         result = common.resolve_container_ref("/some/cwd", "s1")
         assert result == "git:pinned/value"
 
@@ -280,7 +286,7 @@ class TestResolveContainerRef:
         mock_run.return_value.stdout = ""
         from common import derive_container_ref, pin_container, resolve_container_ref
         original = derive_container_ref("/work/xlm")
-        pin_container("s1", original, source="startup")
+        assert pin_container("s1", original, source="startup") is True
         # Mid-session: agent cd'd into pelican (which IS a git repo)
         mock_run.return_value.returncode = 0
         mock_run.return_value.stdout = "git@github.tools.sap:xlm/pelican.git\n"
@@ -296,21 +302,21 @@ class TestResolveContainerRef:
         root, _git_dir = _fake_repo(tmp_path, monkeypatch)
         mock_run.return_value.returncode = 0
         mock_run.return_value.stdout = "https://github.com/new/repo.git\n"
-        common.pin_container("s1", "git:old/repo")
+        assert common.pin_container("s1", "git:old/repo") is True
         result = common.resolve_container_ref(
             str(root), "s1", allow_project_switch=True,
         )
         assert result == "git:github.com/new/repo"
         assert common.get_pinned_container("s1") == result
         assert common.get_pending_relay_closes("s1") == ["git:old/repo"]
-        common.pin_container("s1", result, pending_relay_closes=[])
+        assert common.pin_container("s1", result, pending_relay_closes=[]) is True
         assert common.get_pending_relay_closes("s1") == []
 
     @patch("common.subprocess.run")
     def test_transient_non_git_cwd_does_not_replace_git_pin(self, mock_run, tmp_state):
         mock_run.return_value.returncode = 128
         mock_run.return_value.stdout = ""
-        common.pin_container("s1", "git:old/repo")
+        assert common.pin_container("s1", "git:old/repo") is True
         result = common.resolve_container_ref("/tmp", "s1", allow_project_switch=True)
         assert result == "git:old/repo"
         assert common.get_pinned_container("s1") == "git:old/repo"
@@ -322,14 +328,14 @@ class TestResolveContainerRef:
 class TestAtomicWrite:
     def test_no_partial_file_left_at_canonical_path(self, tmp_state):
         """If the write succeeds, the canonical path always contains valid JSON."""
-        common.pin_container("s1", "container-a")
+        assert common.pin_container("s1", "container-a") is True
         fp = tmp_state / "sessions" / "s1.json"
         assert fp.exists()
         data = json.loads(fp.read_text(encoding="utf-8"))
         assert data["container_ref"] == "container-a"
 
     def test_tmp_file_cleaned_up_on_success(self, tmp_state):
-        common.pin_container("s1", "container-a")
+        assert common.pin_container("s1", "container-a") is True
         sessions = tmp_state / "sessions"
         tmp_files = list(sessions.glob("*.tmp"))
         assert tmp_files == []
@@ -346,7 +352,7 @@ class TestAtomicWrite:
             raise OSError("simulated rename failure")
         monkeypatch.setattr(common.os, "replace", failing_replace)
 
-        common.pin_container("s1", "container-a")
+        assert common.pin_container("s1", "container-a") is False
 
         # Canonical file shouldn't exist; tmp shouldn't be left behind
         assert not (sessions / "s1.json").exists()
@@ -399,7 +405,7 @@ class TestSweep:
         os.utime(old_file, (ancient, ancient))
 
         # Pin a different session — sweep should run as side effect
-        common.pin_container("new-session", "container-new")
+        assert common.pin_container("new-session", "container-new") is True
 
         assert not old_file.exists()
         assert (sessions / "new-session.json").exists()
@@ -427,7 +433,7 @@ class TestIdentityCache:
             return common.subprocess.CompletedProcess(command, 0, "משתמש\n", "")
 
         monkeypatch.setattr(common.subprocess, "run", run)
-        common.pin_container("s1", "git:example/repo", source="startup")
+        assert common.pin_container("s1", "git:example/repo", source="startup") is True
 
         assert common.derive_actor_ref(str(root), "s1") == "משתמש"
         assert common.resolve_container_ref(str(root), "s1", True) == "git:example/repo"
@@ -444,7 +450,7 @@ class TestIdentityCache:
             return common.subprocess.CompletedProcess(command, 0, output, "")
 
         monkeypatch.setattr(common.subprocess, "run", run)
-        common.pin_container("s1", "git:example.test/repo", source="startup")
+        assert common.pin_container("s1", "git:example.test/repo", source="startup") is True
         assert common.derive_actor_ref(str(root), "s1") == "Actor-1"
 
         (git_dir / "config").write_text("[user]\nname = changed\n", encoding="utf-8")
@@ -471,7 +477,7 @@ class TestIdentityCache:
             "run",
             lambda command, **_kwargs: common.subprocess.CompletedProcess(command, 0, "Actor\n", ""),
         )
-        common.pin_container("s1", "git:example/repo", source="startup")
+        assert common.pin_container("s1", "git:example/repo", source="startup") is True
         common.derive_actor_ref(str(root), "s1")
 
         assert "git-branch:feature/one" in common.discover_work_refs(str(root)).structural_refs
@@ -520,11 +526,11 @@ class TestIdentityCache:
         )
         context = common._identity_context(str(root))
         assert common._cache_identity_context("s1", context, actor_ref="Actor")
-        common.pin_container(
+        assert common.pin_container(
             "s1",
             "git:example/repo",
             pending_relay_closes=["git:example/old"],
-        )
+        ) is True
 
         state = json.loads((sessions / "s1.json").read_text(encoding="utf-8"))
         assert state["legacy"] == {"keep": True}
@@ -535,11 +541,11 @@ class TestIdentityCache:
 
 class TestIdentityCacheTransitions:
     def test_resume_refreshes_old_live_state_before_sweep(self, tmp_state):
-        common.pin_container(
+        assert common.pin_container(
             "s1",
             "git:example/repo",
             pending_relay_closes=["git:example/old"],
-        )
+        ) is True
         state_file = tmp_state / "sessions" / "s1.json"
         ancient = time.time() - common.SESSION_PIN_TTL_SECONDS - 60
         import os
@@ -608,7 +614,7 @@ class TestIdentityCacheTransitions:
     def test_project_switch_lock_failure_keeps_existing_scope(
         self, tmp_state, monkeypatch,
     ):
-        common.pin_container("s1", "git:example/old", source="startup")
+        assert common.pin_container("s1", "git:example/old", source="startup") is True
         monkeypatch.setattr(common, "_identity_context", lambda _cwd: None)
         monkeypatch.setattr(common, "_acquire_session_lock", lambda _session_id: None)
         monkeypatch.setattr(
@@ -660,11 +666,11 @@ def test_codex_helpers_mirror_claude_code(tmp_path, monkeypatch):
         monkeypatch.setattr(mod, "STATE_DIR", tmp_path)
         monkeypatch.setattr(mod, "SESSIONS_DIR", tmp_path / "sessions")
 
-        mod.pin_container("s-codex", "git:foo/bar")
+        assert mod.pin_container("s-codex", "git:foo/bar") is True
         assert mod.get_pinned_container("s-codex") == "git:foo/bar"
         assert mod.resolve_container_ref("/whatever", "s-codex") == "git:foo/bar"
 
-        mod.pin_container("s-codex", "git:something-else", source="resume")
+        assert mod.pin_container("s-codex", "git:something-else", source="resume") is True
         assert mod.get_pinned_container("s-codex") == "git:foo/bar"  # sticky
     finally:
         sys.modules.pop("codex_common_test", None)

@@ -1608,7 +1608,29 @@ def test_registration_rejects_wrong_or_spoofed_pipe_server_image(retained, monke
     "failed-wrong-id", "failed-wrong-version", "empty-items",
     "extra-items", "wrong-item", "nonstring-text", "rpc-error", "wrong-id", "wrong-version"])
 def test_native_state_read_contract_failure_releases_without_transport(http_wake, monkeypatch, fault, client):
+    import traceback
+
     http, _, registry, service, desktop, send, _ = http_wake
+    pallium_service = client.app.state.pallium_service
+    executor = pallium_service._relay_trace_executor
+    original_trace_job = pallium_service._run_relay_trace_job
+    trace_jobs = []
+
+    def observed_trace_job(writer, event):
+        job = {"stage": event.get("stage"), "state": "running"}
+        trace_jobs.append(job)
+        def observed_writer(actual_event):
+            try:
+                return writer(actual_event)
+            except Exception as exc:
+                job["error_type"] = type(exc).__name__
+                raise
+        try:
+            return original_trace_job(observed_writer, event)
+        finally:
+            job["state"] = "finished"
+
+    monkeypatch.setattr(pallium_service, "_run_relay_trace_job", observed_trace_job)
     original_read = desktop.read
     def read(deadline):
         envelope = original_read(deadline)
@@ -1655,7 +1677,23 @@ def test_native_state_read_contract_failure_releases_without_transport(http_wake
     send()
     assert desktop.owners == [] and registry.reservations() == ()
     assert service.retained_registration is None
-    client.app.state.pallium_service._relay_trace_executor.submit(lambda: None).result(timeout=2)
+    sentinel = executor.submit(lambda: None)
+    try:
+        sentinel.result(timeout=2)
+    except TimeoutError as exc:
+        frames = sys._current_frames()
+        diagnostics = {
+            "sentinel_running": sentinel.running(), "sentinel_done": sentinel.done(),
+            "queued": executor._work_queue.qsize(), "jobs": [job.copy() for job in trace_jobs[-8:]],
+            "alive_trace_threads": sum(thread.is_alive() and thread.name.startswith("relay-trace")
+                                       for thread in threading.enumerate()),
+            "owned_threads": [{
+                "name": thread.name, "ident": thread.ident, "alive": thread.is_alive(),
+                "stack": traceback.format_stack(frames[thread.ident], limit=12)
+                if thread.ident in frames else [],
+            } for thread in tuple(executor._threads)],
+        }
+        raise TimeoutError(diagnostics) from exc
     response = http.get("/relay/messages/retained-journey", params=SCOPE)
     assert response.status_code == 200, (response.status_code, response.text, dict(response.headers))
     delivery = response.json()["deliveries"][0]

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import ExitStack
 from pathlib import Path
 import time
 from types import SimpleNamespace
@@ -18,19 +20,41 @@ def test_db_url(tmp_path: Path) -> str:
 
 
 @pytest.fixture()
-def client(test_db_url: str, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+def client(test_db_url: str, monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
+    from app import main as app_main
+
     monkeypatch.setattr("app.dependencies.schedule_codex_relay_wake", lambda *_args, **_kwargs: None)
     from storage.vector_index import VectorIndexConfig
-    app = create_app(
-        AppConfig(
-            storage_backend="sqlite",
-            sqlite_url=test_db_url,
-            default_use_case="demo_agent_memory",
-            semantic_packages=DEMO_SEMANTIC_PACKAGES,
-            vector_index=VectorIndexConfig(enabled=False),
+    storages = []
+    original_storage = app_main.build_storage_provider
+
+    def owned_storage(*args, **kwargs):
+        storage = original_storage(*args, **kwargs)
+        storages.append(storage)
+        return storage
+
+    # Capture early metrics storage without starting the application's lifespan.
+    with monkeypatch.context() as construction:
+        construction.setattr(app_main, "build_storage_provider", owned_storage)
+        app = create_app(
+            AppConfig(
+                storage_backend="sqlite",
+                sqlite_url=test_db_url,
+                default_use_case="demo_agent_memory",
+                semantic_packages=DEMO_SEMANTIC_PACKAGES,
+                vector_index=VectorIndexConfig(enabled=False),
+            )
         )
-    )
-    return TestClient(app)
+    service = app.state.pallium_service
+    storages.append(service._storage)
+    http = TestClient(app)
+    with ExitStack() as cleanup:
+        for storage in reversed(storages):
+            cleanup.callback(storage.close)
+        cleanup.callback(service.close)
+        cleanup.callback(app.state._wait_for_operations)
+        cleanup.callback(http.close)
+        yield http
 
 
 @pytest.fixture()

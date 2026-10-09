@@ -142,6 +142,9 @@ jobs:
       - name: Install dependencies
         run: pip install -e ".[dev,vector]"
 
+      - name: Run Windows stop verifier serially
+        run: python -m pytest tests/test_service.py::test_windows_stop_verifier_executes_new_and_legacy_launcher_parsers -x -q -n 0 --durations=20
+
       - name: Run Windows-sensitive tests
         run: >
           python -m pytest -x -q --durations=20
