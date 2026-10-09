@@ -355,27 +355,44 @@ def test_trace_paging_freezes_later_appends(relay):
 
 
 def test_trace_bound_checks_do_not_reserve_the_correctness_writer(relay):
+    import sys
+    import traceback
+
     storage, service, _ = relay
     message = _message(service)
     reached = threading.Event()
     release = threading.Event()
     trace_errors = []
+    trace_state = {"phase": "not_started"}
+    join_diagnostics = None
 
     def pause_trace_read(
         _conn, _cursor, statement, _parameters, _context, _executemany
     ):
+        if threading.current_thread().name != "trace-contention-test":
+            return
+        trace_state.update(phase="sql_entered", sql_entered=statement[:256])
         if (
-            threading.current_thread().name == "trace-contention-test"
-            and "count(" in statement.lower()
+            "count(" in statement.lower()
             and "relay_delivery_trace" in statement.lower()
             and not reached.is_set()
         ):
+            trace_state["phase"] = "pause_wait"
             reached.set()
-            assert release.wait(timeout=2)
+            trace_state["pause_released"] = release.wait(timeout=2)
+            trace_state["phase"] = "pause_returned"
+            assert trace_state["pause_released"]
+
+    def completed_trace_sql(
+        _conn, _cursor, statement, _parameters, _context, _executemany
+    ):
+        if threading.current_thread().name == "trace-contention-test":
+            trace_state.update(phase="sql_completed", sql_completed=statement[:256])
 
     def record_trace():
+        trace_state["phase"] = "record_trace"
         try:
-            _event(
+            trace_state["result"] = _event(
                 storage,
                 message,
                 "relay-activation-" + "8" * 32,
@@ -383,8 +400,17 @@ def test_trace_bound_checks_do_not_reserve_the_correctness_writer(relay):
             )
         except Exception as exc:
             trace_errors.append(exc)
+            original = getattr(exc, "orig", exc)
+            trace_state["error"] = {
+                "type": type(exc).__name__,
+                "sqlite_errorcode": getattr(original, "sqlite_errorcode", None),
+                "sqlite_errorname": getattr(original, "sqlite_errorname", None),
+            }
+        finally:
+            trace_state["phase"] = "finished"
 
     event.listen(storage._relay_engine, "before_cursor_execute", pause_trace_read)
+    event.listen(storage._relay_engine, "after_cursor_execute", completed_trace_sql)
     worker = threading.Thread(target=record_trace, name="trace-contention-test")
     worker.start()
     try:
@@ -396,8 +422,16 @@ def test_trace_bound_checks_do_not_reserve_the_correctness_writer(relay):
     finally:
         release.set()
         worker.join(timeout=2)
+        joined = not worker.is_alive()
+        if not joined:
+            frame = sys._current_frames().get(worker.ident)
+            join_diagnostics = {
+                "trace": trace_state.copy(),
+                "stack": traceback.format_stack(frame, limit=12) if frame else [],
+            }
         event.remove(storage._relay_engine, "before_cursor_execute", pause_trace_read)
-    assert not worker.is_alive()
+        event.remove(storage._relay_engine, "after_cursor_execute", completed_trace_sql)
+    assert joined, join_diagnostics
     assert all(is_transient_error(exc) for exc in trace_errors)
 
 
