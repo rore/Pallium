@@ -729,17 +729,17 @@ def create_router(
             "activation_projection", lambda: _project_relay_activation(value),
         )
 
+    async def _run_relay_operation(operation):
+        if relay_runner is not None:
+            return await relay_runner(operation)
+        import anyio
+
+        return await anyio.to_thread.run_sync(operation, abandon_on_cancel=False)
+
     async def _relay_call(operation_name: str, operation):
         started = time.monotonic()
         try:
-            if relay_runner is None:
-                import anyio
-
-                result = await anyio.to_thread.run_sync(
-                    operation, abandon_on_cancel=False
-                )
-            else:
-                result = await relay_runner(operation)
+            result = await _run_relay_operation(operation)
             elapsed_ms = int((time.monotonic() - started) * 1000)
             if elapsed_ms >= 100:
                 logger.warning("relay operation=%s outcome=slow duration_ms=%d", operation_name, elapsed_ms)
@@ -778,7 +778,7 @@ def create_router(
         reservation = None
         if request.wake_delivery_id is not None and relay_turn_snapshot_callback is not None:
             try:
-                reservation = relay_turn_snapshot_callback(request_data)
+                reservation = await _run_relay_operation(lambda: relay_turn_snapshot_callback(request_data))
             except Exception:
                 logger.warning("Relay turn wake snapshot unavailable")
         if reservation is not None:
@@ -793,12 +793,12 @@ def create_router(
                     service_ms = int((time.monotonic() - service_started) * 1000)
             if relay_turn_callback is not None:
                 try:
-                    relay_turn_callback(request_data, result)
+                    await _run_relay_operation(lambda: relay_turn_callback(request_data, result))
                 except Exception:
                     logger.exception("Relay turn callback failed after admission")
             if relay_turn_admission_callback is not None:
                 try:
-                    relay_turn_admission_callback(request_data, result, reservation)
+                    await _run_relay_operation(lambda: relay_turn_admission_callback(request_data, result, reservation))
                 except Exception:
                     logger.exception("Relay turn admission callback failed after admission")
             projected = await _with_relay_activation(result)
@@ -930,9 +930,9 @@ def create_router(
         result = await _relay_call("send", lambda: _relay().send(**arguments))
         if relay_send_callback is not None:
             try:
-                relay_send_callback(result, {
+                await _run_relay_operation(lambda: relay_send_callback(result, {
                     "container_ref": request.container_ref,
-                })
+                }))
             except Exception:
                 logger.exception("Relay wake callback failed after persistence")
         return await _with_relay_activation(result)
@@ -945,18 +945,18 @@ def create_router(
         result = await _relay_call("reply", lambda: _relay().reply(**arguments))
         if relay_ack_callback is not None:
             try:
-                relay_ack_callback(
+                await _run_relay_operation(lambda: relay_ack_callback(
                     {
                         "delivery_id": request.delivery_id,
                         "recipient_endpoint_id": result.get("sender_endpoint_id"),
                     },
                     {"container_ref": request.container_ref},
-                )
+                ))
             except Exception:
                 logger.exception("Relay atomic reply ACK callback failed after persistence")
         if relay_send_callback is not None:
             try:
-                relay_send_callback(result, {"container_ref": request.container_ref})
+                await _run_relay_operation(lambda: relay_send_callback(result, {"container_ref": request.container_ref}))
             except Exception:
                 logger.exception("Relay wake callback failed after persistence")
         return await _with_relay_activation(result)
@@ -1001,9 +1001,9 @@ def create_router(
         result = await _relay_call("ack", lambda: _relay().acknowledge(**request.model_dump()))
         if relay_ack_callback is not None:
             try:
-                relay_ack_callback(result, {
+                await _run_relay_operation(lambda: relay_ack_callback(result, {
                     "container_ref": request.container_ref,
-                })
+                }))
             except Exception:
                 logger.exception("Relay ACK callback failed after persistence")
         return result
@@ -1013,7 +1013,7 @@ def create_router(
         result = await _relay_call("mcp_ack", lambda: _relay().ack_by_receipt(**request.model_dump()))
         if relay_ack_callback is not None:
             try:
-                relay_ack_callback(result, {"container_ref": request.container_ref})
+                await _run_relay_operation(lambda: relay_ack_callback(result, {"container_ref": request.container_ref}))
             except Exception:
                 logger.exception("Relay MCP ACK callback failed after persistence")
         return result
@@ -1050,7 +1050,7 @@ def create_router(
             payload.setdefault("idle", False)
             if not isinstance(payload["idle"], bool):
                 raise ValueError
-            if not wake_registry.register(**payload):
+            if not await _run_relay_operation(lambda: wake_registry.register(**payload)):
                 raise HTTPException(status_code=409, detail="registration rejected")
             if relay_service is not None:
                 try:
@@ -1092,7 +1092,7 @@ def create_router(
             payload = json.loads(b"".join(chunks))
             if not isinstance(payload, dict) or set(payload) != {"runtime", "session_ref", "container_ref", "intent_id"}:
                 raise ValueError
-            if not wake_registry.close(**payload):
+            if not await _run_relay_operation(lambda: wake_registry.close(**payload)):
                 raise ValueError
         except (TypeError, UnicodeDecodeError, ValueError, json.JSONDecodeError):
             raise HTTPException(status_code=400, detail="invalid registration")

@@ -36,7 +36,7 @@ def _defer_on_state_timeout(http_wake, retained, bridge, *, unresolved=False, na
 
 
 def test_native_tool_failure_reopens_same_registration_for_hook_delivery(
-        http_wake, retained, monkeypatch, capsys, tmp_path):
+        http_wake, retained, monkeypatch, capsys, tmp_path, client):
     from app import codex_bridge_pipe as bridge
     http, _, registry, service, first, send, _ = http_wake
     _, _, natives = retained
@@ -55,8 +55,15 @@ def test_native_tool_failure_reopens_same_registration_for_hook_delivery(
     delivery = send()
     assert first.owners == [] and registry.reservations() == ()
     assert service.retained_registration is not None
-    assert http.get("/relay/messages/retained-journey", params={
-        "container_ref": "git:example.test/retained-東京"}).json()["deliveries"][0]["state"] == "pending"
+    trace_executor = client.app.state.pallium_service._relay_trace_executor
+    # Native-worker completion does not drain diagnostic writes.
+    trace_executor.submit(lambda: None).result(timeout=2)
+    pending = http.get("/relay/messages/retained-journey", params=SCOPE)
+    assert pending.status_code == 200, pending.text
+    pending_delivery = pending.json()["deliveries"][0]
+    for field in ("delivery_id", "message_id", "recipient_endpoint_id"):
+        assert pending_delivery[field] == delivery[field]
+    assert pending_delivery["state"] == "pending" and pending_delivery["attempts"] == 0
     failure_log = capsys.readouterr().err
     assert "category=native-tool-failed" in failure_log
     assert "stage=state-read" in failure_log
@@ -82,8 +89,13 @@ def test_native_tool_failure_reopens_same_registration_for_hook_delivery(
     assert sum(w.get("params", {}).get("tool") == "read_thread" for w in natives[1].writes) == 1
     assert [event[0] for event in events] == ["emit", "ack"]
     assert registry.reservations() == ()
-    assert http.get("/relay/messages/retained-journey", params={
-        "container_ref": "git:example.test/retained-東京"}).json()["deliveries"][0]["state"] == "delivered"
+    trace_executor.submit(lambda: None).result(timeout=2)
+    delivered = http.get("/relay/messages/retained-journey", params=SCOPE)
+    assert delivered.status_code == 200, delivered.text
+    delivered_delivery = delivered.json()["deliveries"][0]
+    for field in ("delivery_id", "message_id", "recipient_endpoint_id"):
+        assert delivered_delivery[field] == delivery[field]
+    assert delivered_delivery["state"] == "delivered" and delivered_delivery["attempts"] == 1
 
 
 def test_drained_read_timeout_reopens_same_registration_for_hook_delivery(

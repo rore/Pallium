@@ -184,6 +184,7 @@ def test_sqlite_storage_provider_operational_indexes_exist(test_db_url: str) -> 
             "idx_source_items_thread_lookup",
             "idx_source_items_thread_stats",
             "idx_source_items_claim_queue",
+            "idx_source_items_diagnostic_status",
         },
         "relations": {
             "idx_relations_to_target_lookup",
@@ -206,6 +207,72 @@ def test_sqlite_storage_provider_operational_indexes_exist(test_db_url: str) -> 
             rows = connection.execute(text(f"PRAGMA index_list({table_name})")).fetchall()
             actual = {row[1] for row in rows}
             assert expected <= actual
+
+
+def test_diagnostic_status_index_repairs_populated_reopen_idempotently(test_db_url: str, monkeypatch) -> None:
+    import sqlite3
+    from contextlib import ExitStack
+    from sqlalchemy import event
+
+    index_actions = []
+
+    def authorize(action, name, _table, _database, _trigger):
+        if name == "idx_source_items_diagnostic_status" and action in (
+            sqlite3.SQLITE_CREATE_INDEX, sqlite3.SQLITE_DROP_INDEX,
+        ):
+            index_actions.append(action)
+        return sqlite3.SQLITE_OK
+
+    def install_authorizer(connection, _record):
+        connection.set_authorizer(authorize)
+
+    create_engine = SQLiteStorageProvider._create_engine
+
+    def observed_engine(cls, database_url):
+        engine = create_engine(database_url)
+        event.listen(engine, "connect", install_authorizer)
+        return engine
+
+    monkeypatch.setattr(SQLiteStorageProvider, "_create_engine", classmethod(observed_engine))
+
+    with ExitStack() as cleanup:
+        original = SQLiteStorageProvider(test_db_url)
+        cleanup.callback(original.close)
+        assert index_actions == [sqlite3.SQLITE_CREATE_INDEX]
+        item = SourceItem(
+            source_type="test", source_id="completed-history", content_type="text/plain",
+            content="diagnostic history", processing_status="completed", use_case=None,
+        )
+        original.create_source_item(item)
+        with original._engine.begin() as connection:
+            connection.execute(text("DROP INDEX idx_source_items_diagnostic_status"))
+        assert index_actions == [sqlite3.SQLITE_CREATE_INDEX, sqlite3.SQLITE_DROP_INDEX]
+        original.close()
+        index_actions.clear()
+
+        repaired = SQLiteStorageProvider(test_db_url)
+        cleanup.callback(repaired.close)
+        assert index_actions == [sqlite3.SQLITE_CREATE_INDEX]
+        with repaired._engine.connect() as connection:
+            columns = [row[2] for row in connection.execute(
+                text("PRAGMA index_info(idx_source_items_diagnostic_status)")
+            )]
+            assert columns == ["processing_status", "processing_completed_at", "id", "created_at"]
+            rootpage = connection.execute(text(
+                "SELECT rootpage FROM sqlite_master WHERE name='idx_source_items_diagnostic_status'"
+            )).scalar_one()
+        repaired.close()
+        index_actions.clear()
+
+        reopened = SQLiteStorageProvider(test_db_url)
+        cleanup.callback(reopened.close)
+        assert index_actions == []
+        with reopened._engine.connect() as connection:
+            assert connection.execute(text(
+                "SELECT rootpage FROM sqlite_master WHERE name='idx_source_items_diagnostic_status'"
+            )).scalar_one() == rootpage
+            assert connection.execute(text("SELECT count(*) FROM source_items")).scalar_one() == 1
+        assert reopened.get_source_item(item.id).processing_status == "completed"
 
 
 def test_sqlite_storage_provider_batches_index_entry_fetch(test_db_url: str) -> None:

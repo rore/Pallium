@@ -5490,6 +5490,7 @@ def test_old_inflight_claim_generation_cannot_unlock_replacement(
     client, monkeypatch: pytest.MonkeyPatch, isolated_codex_registry,
 ) -> None:
     import storage.sqlite_relay as sqlite_relay
+    from app import dependencies
     from app.dependencies import reconcile_codex_relay_wake_reservations
 
     clock = [datetime(2030, 9, 5, tzinfo=timezone.utc)]
@@ -5506,6 +5507,21 @@ def test_old_inflight_claim_generation_cannot_unlock_replacement(
     registry = isolated_codex_registry
     racing = [False]
     replacements = []
+    captured = []
+
+    def capture_router_snapshot(service, **kwargs):
+        snapshot = kwargs["relay_turn_snapshot_callback"]
+
+        def capture_before_replacement(request):
+            old = snapshot(request)
+            captured.append(old)
+            racing[0] = True
+            return old
+
+        kwargs["relay_turn_snapshot_callback"] = capture_before_replacement
+        return create_router(service, **kwargs)
+
+    monkeypatch.setattr(dependencies, "create_router", capture_router_snapshot)
 
     async def relay_runner(operation):
         if racing[0]:
@@ -5555,12 +5571,12 @@ def test_old_inflight_claim_generation_cannot_unlock_replacement(
     reservation = registry.snapshot(endpoint_id)
     assert reservation is not None
 
-    racing[0] = True
     claim = route.post("/relay/turn", json={
         "runtime": "codex", "session_ref": "target",
         "wake_delivery_id": delivery_id, **SCOPE,
     })
     assert claim.status_code == 200, claim.text
+    assert captured == [reservation]
     replacement = replacements[0]
     assert registry.snapshot(endpoint_id) == replacement
     assert replacement.correlated_claim_attempts is None
