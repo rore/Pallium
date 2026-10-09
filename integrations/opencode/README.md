@@ -155,6 +155,17 @@ window with at most four requests in flight; a later owner can enroll after the
 lease expires if detach fails. Repeated disposal shares one result. Cleanup
 attempts every hook and reports disposal failures rather than claiming success.
 Client cancellation cannot undo a request the service already committed.
+V2 assistant capture keeps the existing aggregate after the latest native user.
+Every selected assistant must have a valid native message ID and a finite
+`time.completed` marker. Empty text (including tool-only turns) and text over
+20,000 UTF-16 units are skipped; a later completed tool-plus-text aggregate can
+be captured. This is best-effort latest-user capture, without historical backfill.
+Overlapping callbacks reserve the same scoped capture identity. Retries and
+plugin reload reuse a full SHA-256 source key derived from agent, actor,
+container, native session and the final selected assistant ID. Pallium's existing
+source uniqueness resolves a committed write whose response was lost. Only a
+valid single receipt under current native ownership marks the capture successful;
+failed writes remain retryable.
 A closed session or
 changed container scope invalidates the old binding. If compaction removes a
 queued native input before V2 can verify it, V2 does not guess that delivery was
@@ -226,7 +237,7 @@ Per-session deduplication and container-pinning state uses
 
 ```bash
 cd integrations/opencode
-node --test tests/*.test.mjs
+npm test
 ```
 
 The suite covers container derivation, redaction parity, deduplication, session
@@ -236,7 +247,7 @@ operation when Pallium is unavailable.
 ## Known gaps
 
 - V1 remains passive. V2 automatic wake is qualified against isolated Windows
-  OpenCode 2.0.22; other releases/platforms and the global installation remain
+  OpenCode 2.0.22 and 2.0.24; other releases/platforms and the global installation remain
   unqualified. Native admission and ACK do not guarantee interrupted task completion.
 - Usage-audit population is server-owned after durable assistant ingestion.
 - Compaction records the latest assistant turn but does not run a pre-compaction
