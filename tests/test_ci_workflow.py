@@ -57,6 +57,25 @@ def test_required_linux_lane_cannot_skip_mcp_tests() -> None:
     assert "--durations=20" in linux
 
 
+def test_windows_stop_verifier_runs_serially_for_pr_and_full_windows_lanes() -> None:
+    node = "tests/test_service.py::test_windows_stop_verifier_executes_new_and_legacy_launcher_parsers"
+    launcher = "tests/test_service_launcher_lifecycle.py"
+    smoke = _job("windows-smoke", "windows-full")
+    full = _job("windows-full", "nightly-slow-smoke")
+    assert "github.event_name != 'pull_request'" not in smoke
+    for block in (smoke, full):
+        commands = re.findall(r"(?m)^\s+run: (python -m pytest .+)$", block)
+        for path in (node, launcher):
+            selected = [command for command in commands if path in command.split()]
+            assert len(selected) == 1
+            assert "-n 0" in selected[0]
+    for path in (node, launcher):
+        assert smoke.count(path) == 1
+        assert full.count(path) == 2
+    assert f"--deselect={node}" in full
+    assert f"--ignore={launcher}" in full
+
+
 def test_all_test_commands_report_slowest_tests() -> None:
     commands = WORKFLOW.split("python -m pytest")[1:]
     assert len(commands) >= 5

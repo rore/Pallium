@@ -1519,7 +1519,29 @@ def test_failed_provisional_switch_does_not_bounce_to_pinned_scope(
 def test_confirmed_switch_does_not_attach_old_identity_to_new_pin(
     monkeypatch, tmp_path: Path, runtime: str, relative: str,
 ):
+    from itertools import count
+    from types import SimpleNamespace
+    import time
+
     common = _load(f"confirmed_identity_{runtime}", relative)
+    original_monotonic = time.monotonic
+    # This state contract uses logical time; disk setup is covered by deadline tests.
+    private_time = SimpleNamespace(**vars(common.time))
+    private_time.monotonic = count(step=0.001).__next__
+    monkeypatch.setattr(common, "time", private_time)
+    replace_errors = []
+    original_replace = common.os.replace
+
+    def replace(source, destination):
+        try:
+            return original_replace(source, destination)
+        except OSError as exc:
+            replace_errors.append(repr(exc))
+            raise
+
+    private_os = SimpleNamespace(**vars(common.os))
+    private_os.replace = replace
+    monkeypatch.setattr(common, "os", private_os)
     sessions = tmp_path / f"{runtime}-confirmed-sessions"
     monkeypatch.setattr(common, "SESSIONS_DIR", sessions)
     sessions.mkdir()
@@ -1543,11 +1565,21 @@ def test_confirmed_switch_does_not_attach_old_identity_to_new_pin(
     monkeypatch.delenv("PALLIUM_HOOK_ACTOR_REF", raising=False)
     assert common.resolve_container_ref("b", session_id, True, False) == "git:b"
     common.derive_actor_ref("b", session_id)
-    result = common.relay_turn(runtime, session_id, "git:b", request=lambda *_a, **_k: _turn_response(
-        container_ref="git:b", endpoint_id="relay-session-e1", scope_generation=1,
-    ))
-    assert result is not None
+    requests = []
+
+    def request(*args, **kwargs):
+        requests.append((args, kwargs))
+        return _turn_response(container_ref="git:b", endpoint_id="relay-session-e1", scope_generation=1)
+
+    result = common.relay_turn(runtime, session_id, "git:b", request=request)
+    assert result is not None, {"replace_errors": replace_errors, "requests": requests, "state": common._read_session_state(session_id)}
+    state = json.loads((sessions / f"{session_id}.json").read_text(encoding="utf-8"))
+    assert state["container_ref"] == state["last_confirmed_container_ref"] == "git:b"
+    assert state["last_confirmed_endpoint_id"] == "relay-session-e1"
+    assert state["last_confirmed_scope_generation"] == 1
+    assert not {"identity_cwd", "repo_config_fingerprint", "actor_ref", "provisional_identity_context"}.intersection(state)
     assert common.resolve_container_ref("a", session_id, True, False) == "git:a"
+    assert time.monotonic is original_monotonic
 
 
 @pytest.mark.parametrize("runtime", ["claude-code", "codex"])

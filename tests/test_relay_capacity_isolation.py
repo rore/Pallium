@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+from datetime import datetime, timezone
 
 import anyio
 import httpx
@@ -28,6 +29,116 @@ async def _start_operation_barrier(app):
 async def _assert_barrier_waiting(barrier) -> None:
     with pytest.raises(asyncio.TimeoutError):
         await asyncio.wait_for(asyncio.shield(barrier), 0.05)
+
+
+@pytest.mark.parametrize("projection_fails", [False, True])
+def test_activation_projection_uses_tracked_relay_runner_after_admission(
+    tmp_path, monkeypatch, projection_fails,
+) -> None:
+    from app import dependencies
+
+    original_create_router = dependencies.create_router
+    entered, release, finished = threading.Event(), threading.Event(), threading.Event()
+    events, runner_calls, projection_threads, projections = [], [], [], []
+    loop_thread = threading.get_ident()
+
+    def observe_router(service, **kwargs):
+        runner = kwargs["relay_runner"]
+        project = kwargs["relay_activation_callback"]
+        admit = kwargs["relay_turn_admission_callback"]
+
+        async def observed_runner(operation):
+            runner_calls.append(operation)
+            return await runner(operation)
+
+        def observed_admission(*args):
+            events.append("admission")
+            return admit(*args)
+
+        def observed_projection(row):
+            events.append("projection")
+            projection_threads.append(threading.get_ident())
+            entered.set()
+            try:
+                # Avoid hanging the regression on the broken event-loop path.
+                if threading.get_ident() != loop_thread:
+                    assert release.wait(10), "projection release watchdog expired"
+                if projection_fails:
+                    raise RuntimeError("activation read unavailable")
+                projection = project(row)
+                projections.append(projection)
+                return projection
+            finally:
+                finished.set()
+
+        kwargs.update(
+            relay_runner=observed_runner,
+            relay_turn_callback=lambda *_: events.append("turn_callback"),
+            relay_turn_admission_callback=observed_admission,
+            relay_activation_callback=observed_projection,
+        )
+        return original_create_router(service, **kwargs)
+
+    monkeypatch.setattr(dependencies, "create_router", observe_router)
+    monkeypatch.setattr(
+        "app.mcp.server.create_server",
+        lambda **_: (_ for _ in ()).throw(ImportError()),
+    )
+    app = create_app(AppConfig(
+        storage_backend="sqlite",
+        sqlite_url=f"sqlite:///{tmp_path / 'main.db'}",
+        relay_sqlite_url=f"sqlite:///{tmp_path / 'relay.db'}",
+        default_use_case="demo_agent_memory",
+        semantic_packages=DEMO_SEMANTIC_PACKAGES,
+        vector_index=VectorIndexConfig(enabled=False),
+    ))
+    scope = {"container_ref": "git:example.test/activation-projection"}
+
+    async def exercise():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            turn = asyncio.create_task(client.post("/relay/turn", json={
+                "runtime": "codex", "session_ref": "projection-東京", **scope,
+            }))
+            try:
+                assert await asyncio.to_thread(entered.wait, 5)
+                assert len(projection_threads) == 1
+                assert projection_threads[0] != loop_thread
+                assert events == ["turn_callback", "admission", "projection"]
+                assert len(runner_calls) == 2
+                health = await asyncio.wait_for(client.get("/health"), 5)
+                assert health.status_code in {200, 503}
+                assert not finished.is_set()
+                assert not turn.done()
+                assert not app.state._wait_for_operations(0)
+            finally:
+                release.set()
+                response = await asyncio.wait_for(turn, 5)
+            assert response.status_code == 200
+            result = response.json()
+            assert result["session"]["session_ref"] == "projection-東京"
+            assert result["deliveries"] == []
+            assert result["session"]["activation"] == (
+                None if projection_fails else projections[0]
+            )
+            assert app.state._wait_for_operations(0)
+            listed = await client.get("/relay/sessions", params=scope)
+            assert listed.status_code == 200
+            assert len(listed.json()) == 1
+            listed_session = listed.json()[0]
+            for field in ("first_seen_at", "last_seen_at"):
+                assert datetime.fromisoformat(listed_session.pop(field)).replace(tzinfo=timezone.utc) == (
+                    datetime.fromisoformat(result["session"].pop(field)).replace(tzinfo=timezone.utc)
+                )
+            assert listed_session == result["session"]
+            assert len(runner_calls) == 4
+
+    try:
+        asyncio.run(exercise())
+    finally:
+        release.set()
+        app.state.pallium_service._storage.close()
+
 
 def test_relay_and_diagnostics_survive_saturated_memory_worker_capacity(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(

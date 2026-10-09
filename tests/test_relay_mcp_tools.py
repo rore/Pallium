@@ -146,8 +146,10 @@ _MISSING_SCOPE_ERROR = (
 
 
 @pytest.fixture()
-def relay_app(test_db_url: str):
+def relay_app(test_db_url: str, monkeypatch: pytest.MonkeyPatch):
     from storage.vector_index import VectorIndexConfig
+    # MCP contracts do not exercise native wake workers or their trace writes.
+    monkeypatch.setattr("app.dependencies.schedule_claude_relay_wake", lambda *_args, **_kwargs: None)
     app = create_app(
         AppConfig(
             storage_backend="sqlite",
@@ -158,7 +160,14 @@ def relay_app(test_db_url: str):
         )
     )
     app.state._lifespan_complete = True
-    return app
+    service = app.state.pallium_service
+    try:
+        yield app
+    finally:
+        try:
+            service.close()
+        finally:
+            service._storage.close()
 
 
 @pytest.fixture()

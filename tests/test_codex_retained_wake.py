@@ -1052,7 +1052,7 @@ def test_busy_target_does_not_slide_due_retry_deadline(http_wake, monkeypatch):
 
 
 @pytest.mark.parametrize("claim_mode", ["active", "acked"])
-def test_retry_cas_loses_to_hook_claim_after_fresh_native_read(http_wake, monkeypatch, claim_mode):
+def test_retry_cas_loses_to_hook_claim_after_fresh_native_read(http_wake, client, monkeypatch, claim_mode):
     from datetime import datetime, timedelta, timezone
 
     import storage.sqlite_relay as sqlite_relay
@@ -1071,6 +1071,16 @@ def test_retry_cas_loses_to_hook_claim_after_fresh_native_read(http_wake, monkey
             returncode=0, communicate=lambda **_kwargs: (None, ""),
         ), None,
     ))
+    # This CAS contract does not depend on diagnostics contending with native admission.
+    service = client.app.state.pallium_service
+    original_enqueue = service.enqueue_relay_trace_event
+
+    def settled_enqueue(writer, event):
+        accepted = original_enqueue(writer, event)
+        service._relay_trace_executor.submit(lambda: None).result(timeout=2)
+        return accepted
+
+    monkeypatch.setattr(service, "enqueue_relay_trace_event", settled_enqueue)
     desktop.state = "idle"
     delivery = send()
     for worker in workers:
@@ -1315,35 +1325,37 @@ def test_natural_hook_overtakes_state_check_without_owner_attempt(http_wake, mon
 def test_queue_wait_allows_fresh_registration_and_disconnect(http_wake, retained, monkeypatch):
     _, _, registry, service, desktop, send, _ = http_wake
     desktop.state = "idle"
-    entered, release = threading.Event(), threading.Event()
-    queues = []
+    queues, checks, callback_errors = [], [], []
     class Process:
         returncode = 0
         def communicate(self, **kwargs):
-            entered.set()
-            assert release.wait(2)
+            # Exercise registration while queue completion is still pending.
+            try:
+                request = {**retained[1], "sequence": 2, "turn_ref": "fresh-turn"}
+                registered = []
+                check = threading.Thread(target=lambda: registered.append(service._process(request, service.source, 1, float("inf"))))
+                checks.append(check)
+                check.start()
+                check.join(.5)
+                assert not check.is_alive() and registered[0]["status"] == "registered"
+                service._drop()
+                assert service.custody is None
+                assert registry.reservations()[0].outcome == "uncertain"
+            except Exception as exc:
+                callback_errors.append(exc)
             return None, ""
     def launch(*args):
         queues.append(args)
         return Process(), None
     monkeypatch.setattr(codex_wake, "_start_launch", launch)
-    thread = threading.Thread(target=send)
-    thread.start()
     try:
-        assert entered.wait(1)
-        request = {**retained[1], "sequence": 2, "turn_ref": "fresh-turn"}
-        registered = []
-        check = threading.Thread(target=lambda: registered.append(service._process(request, service.source, 1, float("inf"))))
-        check.start()
-        check.join(.5)
-        assert not check.is_alive() and registered[0]["status"] == "registered"
-        service._drop()
-        assert service.custody is None
-        assert registry.reservations()[0].outcome == "uncertain"
+        send()
     finally:
-        release.set()
-        thread.join(3)
-    assert not thread.is_alive() and len(queues) == 1 and desktop.owners == []
+        for check in checks:
+            check.join(3)
+    assert not callback_errors, callback_errors
+    assert len(checks) == 1 and not checks[0].is_alive()
+    assert len(queues) == 1 and desktop.owners == []
 
 
 @pytest.mark.parametrize("result", [("ambiguous", "timeout", None), ("failed", "os_error", None)])
@@ -1595,8 +1607,30 @@ def test_registration_rejects_wrong_or_spoofed_pipe_server_image(retained, monke
     "failed-nonstring-text", "failed-public-content", "failed-public-iserror-false",
     "failed-wrong-id", "failed-wrong-version", "empty-items",
     "extra-items", "wrong-item", "nonstring-text", "rpc-error", "wrong-id", "wrong-version"])
-def test_native_state_read_contract_failure_releases_without_transport(http_wake, monkeypatch, fault):
+def test_native_state_read_contract_failure_releases_without_transport(http_wake, monkeypatch, fault, client):
+    import traceback
+
     http, _, registry, service, desktop, send, _ = http_wake
+    pallium_service = client.app.state.pallium_service
+    executor = pallium_service._relay_trace_executor
+    original_trace_job = pallium_service._run_relay_trace_job
+    trace_jobs = []
+
+    def observed_trace_job(writer, event):
+        job = {"stage": event.get("stage"), "state": "running"}
+        trace_jobs.append(job)
+        def observed_writer(actual_event):
+            try:
+                return writer(actual_event)
+            except Exception as exc:
+                job["error_type"] = type(exc).__name__
+                raise
+        try:
+            return original_trace_job(observed_writer, event)
+        finally:
+            job["state"] = "finished"
+
+    monkeypatch.setattr(pallium_service, "_run_relay_trace_job", observed_trace_job)
     original_read = desktop.read
     def read(deadline):
         envelope = original_read(deadline)
@@ -1643,5 +1677,24 @@ def test_native_state_read_contract_failure_releases_without_transport(http_wake
     send()
     assert desktop.owners == [] and registry.reservations() == ()
     assert service.retained_registration is None
-    delivery = http.get("/relay/messages/retained-journey", params=SCOPE).json()["deliveries"][0]
+    sentinel = executor.submit(lambda: None)
+    try:
+        sentinel.result(timeout=2)
+    except TimeoutError as exc:
+        frames = sys._current_frames()
+        diagnostics = {
+            "sentinel_running": sentinel.running(), "sentinel_done": sentinel.done(),
+            "queued": executor._work_queue.qsize(), "jobs": [job.copy() for job in trace_jobs[-8:]],
+            "alive_trace_threads": sum(thread.is_alive() and thread.name.startswith("relay-trace")
+                                       for thread in threading.enumerate()),
+            "owned_threads": [{
+                "name": thread.name, "ident": thread.ident, "alive": thread.is_alive(),
+                "stack": traceback.format_stack(frames[thread.ident], limit=12)
+                if thread.ident in frames else [],
+            } for thread in tuple(executor._threads)],
+        }
+        raise TimeoutError(diagnostics) from exc
+    response = http.get("/relay/messages/retained-journey", params=SCOPE)
+    assert response.status_code == 200, (response.status_code, response.text, dict(response.headers))
+    delivery = response.json()["deliveries"][0]
     assert delivery["state"] == "pending" and delivery["attempts"] == 0

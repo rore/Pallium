@@ -129,6 +129,7 @@ class SQLiteStorageProvider(
             else nullcontext()
         )
         with pair_lock:
+            self._validate_main_work_ref_database(database_url)
             if separate_relay:
                 self._validate_relay_database_pair(database_url, relay_database_url)
             else:
@@ -137,8 +138,12 @@ class SQLiteStorageProvider(
             self._session_factory = sessionmaker(
                 self._engine, expire_on_commit=False, class_=Session
             )
-            self._initialize_sqlite_pragmas(self._engine)
-            self._initialize_schema(include_relay=not separate_relay)
+            try:
+                self._initialize_sqlite_pragmas(self._engine)
+                self._initialize_schema(include_relay=not separate_relay)
+            except BaseException:
+                self._engine.dispose()
+                raise
             self._relay_engine = self._engine
             self._relay_session_factory = self._session_factory
             if separate_relay:
@@ -158,10 +163,6 @@ class SQLiteStorageProvider(
         lock_path = path.with_name(f"{path.name}.relay-pair-init.lock")
         lock_path.parent.mkdir(parents=True, exist_ok=True)
         with lock_path.open("a+b") as lock_file:
-            lock_file.seek(0, 2)
-            if lock_file.tell() == 0:
-                lock_file.write(b"0")
-                lock_file.flush()
             lock_file.seek(0)
             self._acquire_schema_file_lock(lock_file)
             try:
@@ -279,6 +280,16 @@ class SQLiteStorageProvider(
             cursor.execute("PRAGMA busy_timeout=15000")
             cursor.close()
 
+    def _validate_main_work_ref_database(self, database_url: str) -> None:
+        path = self._sqlite_path(database_url)
+        if path is None or not path.exists():
+            return
+        connection = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
+        try:
+            self._validate_main_work_ref_state(connection.execute, allow_legacy_columns=True)
+        finally:
+            connection.close()
+
     def _initialize_sqlite_pragmas(self, engine) -> None:
         if engine.url.get_backend_name() != "sqlite":
             return
@@ -286,6 +297,8 @@ class SQLiteStorageProvider(
             with engine.connect().execution_options(
                 isolation_level="AUTOCOMMIT"
             ) as connection:
+                if engine is self._engine:
+                    self._validate_main_work_ref_state(connection.exec_driver_sql, allow_legacy_columns=True)
                 # auto_vacuum must precede WAL on a new database.
                 connection.exec_driver_sql("PRAGMA auto_vacuum=INCREMENTAL")
                 connection.exec_driver_sql("PRAGMA journal_mode=WAL")
@@ -1459,30 +1472,33 @@ class SQLiteStorageProvider(
         self, *, lexical_text_view_name: str, vector_text_view_name: str,
     ) -> bool:
         vector_entry = aliased(IndexEntryRecord)
-        statement = (
-            select(IndexEntryRecord.id)
-            .join(
-                SourceItemRecord,
-                and_(
-                    SourceItemRecord.id == IndexEntryRecord.target_id,
-                    IndexEntryRecord.target_kind == "source_item",
-                ),
-            )
-            .outerjoin(
-                vector_entry,
-                and_(
-                    vector_entry.target_kind == "source_item",
-                    vector_entry.target_id == IndexEntryRecord.target_id,
-                    vector_entry.index_type == "vector",
-                    vector_entry.text_view_name == vector_text_view_name,
-                ),
-            )
+        matching_vector = (
+            select(vector_entry.id)
             .where(
-                IndexEntryRecord.index_type == "lexical",
-                IndexEntryRecord.text_view_name == lexical_text_view_name,
+                vector_entry.target_kind == "source_item",
+                vector_entry.target_id == IndexEntryRecord.target_id,
+                vector_entry.index_type == "vector",
+                vector_entry.text_view_name == vector_text_view_name,
+            )
+            .exists()
+        )
+        eligible_source = (
+            select(SourceItemRecord.id)
+            .where(
+                SourceItemRecord.id == IndexEntryRecord.target_id,
                 SourceItemRecord.artifact_kind.in_(("message", "assistant_output")),
                 func.length(SourceItemRecord.content) >= 40,
-                vector_entry.id.is_(None),
+            )
+            .exists()
+        )
+        statement = (
+            select(IndexEntryRecord.id)
+            .where(
+                IndexEntryRecord.index_type == "lexical",
+                IndexEntryRecord.target_kind == "source_item",
+                IndexEntryRecord.text_view_name == lexical_text_view_name,
+                ~matching_vector,
+                eligible_source,
             )
             .limit(1)
         )

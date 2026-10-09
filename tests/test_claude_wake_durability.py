@@ -798,9 +798,12 @@ def test_session_end_outage_preserves_newer_registration_intent(tmp_path: Path, 
     assert json.loads(closed_path.read_text(encoding="utf-8"))["intent_id"] == "newer"
 
 
-@pytest.mark.parametrize("startup_delay", [0.0, 1.2], ids=["normal-startup", "delayed-startup"])
+@pytest.mark.parametrize(
+    "startup_delay,exhaust_budget", [(0.0, False), (1.2, False), (0.0, True)],
+    ids=["normal-startup", "delayed-startup", "admission-refusal"],
+)
 def test_new_publisher_waits_for_registry_compare_delete(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, startup_delay: float,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, startup_delay: float, exhaust_budget: bool,
 ) -> None:
     state_dir = tmp_path / "wake"
     registry = ClaudeWakeRegistry(state_dir=state_dir)
@@ -811,6 +814,7 @@ def test_new_publisher_waits_for_registry_compare_delete(
         json.dumps({"relay_id": "0" * 64}), encoding="utf-8"
     )
     path = _intent_path(state_dir, PAYLOAD["session_ref"])
+    before = json.loads(path.read_text(encoding="utf-8"))
     deleting = threading.Event()
     finish_delete = threading.Event()
     result: list[bool] = []
@@ -842,6 +846,37 @@ common.CLAUDE_WAKE_DIR = Path(sys.argv[2])
 common.CLAUDE_WAKE_INTENTS_DIR = Path(sys.argv[3])
 common.PALLIUM_PORT = 65534
 common._WAKE_BINDING = {"port": 65534, "relay_id": "0" * 64, "wake_dir": str(common.CLAUDE_WAKE_DIR)}
+exhaust_budget = sys.argv[7] == "True"
+evidence = {"replace_calls": 0}
+now = [0.0]
+if exhaust_budget:
+    from types import SimpleNamespace
+    common.time = SimpleNamespace(**vars(time))
+    common.time.monotonic = lambda: now[0]
+    acquire = common._acquire_file_lock
+    def observe_acquire(path, budget):
+        result = acquire(path, budget)
+        evidence.update(budget=budget, refused=result is None, clock=now[0])
+        return result
+    common._acquire_file_lock = observe_acquire
+    common.os = SimpleNamespace(**vars(os))
+    replace = common.os.replace
+    def observe_replace(*args, **kwargs):
+        evidence["replace_calls"] += 1
+        return replace(*args, **kwargs)
+    common.os.replace = observe_replace
+else:
+    from itertools import count
+    from types import SimpleNamespace
+    # Qualify compare-delete ordering independently of parent/child scheduling latency.
+    common.time = SimpleNamespace(**vars(time))
+    common.time.monotonic = count(step=0.001).__next__
+
+def observe_contention(error):
+    if exhaust_budget:
+        evidence["errno"] = error.errno
+        now[0] = 0.101
+
 if os.name == "nt":
     import msvcrt
     native_lock = msvcrt.locking
@@ -849,9 +884,10 @@ if os.name == "nt":
     def observe_lock(fd, mode, count):
         try:
             return native_lock(fd, mode, count)
-        except OSError:
+        except OSError as error:
             if mode == msvcrt.LK_NBLCK and not reported[0]:
                 reported[0] = True
+                observe_contention(error)
                 Path(sys.argv[5]).write_text("contended", encoding="utf-8")
                 print("contended", flush=True)
             raise
@@ -863,20 +899,23 @@ else:
     def observe_lock(fd, operation):
         try:
             return native_lock(fd, operation)
-        except OSError:
+        except OSError as error:
             if operation & fcntl.LOCK_NB and not reported[0]:
                 reported[0] = True
+                observe_contention(error)
                 Path(sys.argv[5]).write_text("contended", encoding="utf-8")
                 print("contended", flush=True)
             raise
     fcntl.flock = observe_lock
 print("publishing", flush=True)
 print(common._write_wake_intent(json.loads(sys.argv[4])), flush=True)
+if exhaust_budget:
+    print(json.dumps(evidence), file=sys.stderr, flush=True)
 """
         process = subprocess.Popen(
             [sys.executable, "-c", script, str(hook_dir), str(state_dir),
              str(state_dir / "intents"), json.dumps(newer),
-             str(tmp_path / "contended"), str(startup_delay)],
+             str(tmp_path / "contended"), str(startup_delay), str(exhaust_budget)],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True,
             env={**os.environ, "HOME": str(tmp_path), "USERPROFILE": str(tmp_path)},
@@ -886,6 +925,23 @@ print(common._write_wake_intent(json.loads(sys.argv[4])), flush=True)
         while not marker.exists() and process.poll() is None and time.monotonic() < marker_deadline:
             time.sleep(0.01)
         assert marker.exists(), "child did not observe real OS lock contention before timeout"
+        if exhaust_budget:
+            import errno
+
+            output, errors = process.communicate(timeout=3)
+            assert process.returncode == 0, errors
+            assert output.splitlines() == ["publishing", "contended", "False"], errors
+            evidence = json.loads(errors)
+            assert evidence["errno"] in (errno.EACCES, errno.EAGAIN), evidence
+            assert evidence["budget"] == 0.1 and evidence["clock"] == 0.101, evidence
+            assert evidence["refused"] is True and evidence["replace_calls"] == 0, evidence
+            assert worker.is_alive() and not finish_delete.is_set()
+            assert json.loads(path.read_text(encoding="utf-8")) == before
+            finish_delete.set()
+            worker.join(timeout=2)
+            assert not worker.is_alive() and result == [True]
+            assert not path.exists()
+            return
         finish_delete.set()
         output, errors = process.communicate(timeout=3)
         worker.join(timeout=2)

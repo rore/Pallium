@@ -46,6 +46,15 @@ enabled unit starts and becomes ready when the Ubuntu user session starts
 again. This is WSL qualification, not a live claim for every Linux distribution
 or for macOS.
 
+## Startup diagnostics
+
+API startup has a bounded 120-second allowance per supervisor attempt. This is
+an availability safeguard, not a startup performance target. Logs identify each
+attempt and time storage setup, embedding initialization, vector loading, the raw
+backfill check and lifespan initialization. A completed stage only means that
+call returned; verify health and `embedding_provider_ok` separately. Delays before
+these markers are not attributed by them.
+
 ## SQLite database operations
 
 Both SQLite files use the same lifecycle: WAL, auto_vacuum=INCREMENTAL, and a bounded connection busy timeout. Relay writes use only the Relay file, so a long ingestion transaction in the main file does not hold the Relay writer lock. Each file must still be backed up, checked, and restored as a pair; never mix files from different snapshot generations.
@@ -53,6 +62,40 @@ Both SQLite files use the same lifecycle: WAL, auto_vacuum=INCREMENTAL, and a bo
 Persistent `auto_vacuum` and WAL modes are initialized once under the schema lock on an autocommit connection. Pooled connections set only their bounded busy timeout before ordinary work. Incremental-vacuum/checkpoint maintenance temporarily fails fast and restores the connection's prior timeout, so a live reader defers truncation instead of holding a worker for the full busy window.
 
 Only the current Relay schema is supported. Keep the main and Relay SQLite files together, back up and restore them as a paired snapshot generation, and verify /health, /status, and /debug/queue/health after service restart. A partial live pair or a database missing required current Relay columns fails closed without being rewritten.
+
+### Main database work-reference projection
+
+The main database owns `PRAGMA user_version`: legacy/fresh version 0 migrates to 1
+with one atomic rebuild of `source_item_work_refs` from authoritative metadata.
+The projection table/index, rows and completion mark commit together. Failure
+rolls back that step; other schema initialization steps are not globally atomic.
+Unknown versions and incompatible source/projection schemas fail closed.
+Supported version 0 snapshots with the baseline source columns but no
+`metadata_json` first add that nullable column through the existing structural
+upgrade. Those column upgrades remain outside the atomic projection step.
+Version 1 missing metadata, missing source IDs and legacy tables missing metadata
+without the complete baseline still fail admission. Projection and repair require
+both authoritative columns before deleting rows or marking completion.
+
+Completed version 1 startup skips the metadata scan and projection rewrite.
+A missing projection table is rebuilt atomically without resetting the version;
+a missing lookup index alone is restored without rebuilding rows. Supported
+metadata updates and retention still maintain the projection incrementally.
+Out-of-band metadata/row edits no longer receive automatic repair on reopen.
+The existing private `_backfill_source_item_work_refs()` repair remains explicit,
+unconditional and version-preserving; this introduces no public repair command.
+
+Separate Relay database versions/rows are not migrated by this main step.
+Ordinary Relay startup maintenance can independently change its schema identity
+(for example, by initializing planner statistics) and invalidate a repair manifest.
+A same-file deployment shares the changed header: prior offline repair manifests
+become stale and must be regenerated through the existing stopped procedure.
+Do not bypass their identity fence. Earlier binaries retain schema compatibility
+but resume their old unconditional rebuild; they do not reset version 1. This
+release rejects unknown future versions rather than promising arbitrary downgrade.
+Installed rollout separately requires approved paired backup, version provenance
+and compatibility checks, qualified restart, and an exact rollback path. A repo
+merge or passing private test does not authorize an installed database migration.
 
 ## Relay control-plane resilience
 

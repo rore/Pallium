@@ -267,8 +267,14 @@ class TestDispatch:
 
         registry.attempt.assert_not_called()
 
-    def test_valid_selector_alias_calls_attempt(self) -> None:
+    def test_valid_selector_alias_calls_attempt(self, monkeypatch) -> None:
         """Valid @alias selector calls probe."""
+        import app.claude_wake as wake
+
+        native_thread = threading.Thread
+        inline_threading = SimpleNamespace(**vars(wake.threading))
+        inline_threading.Thread = lambda *, target, **kwargs: SimpleNamespace(start=target)
+        monkeypatch.setattr(wake, "threading", inline_threading)
         registry = MagicMock(spec=ClaudeWakeRegistry)
         result = {
             "recipient": "claude-code:@work",
@@ -286,9 +292,16 @@ class TestDispatch:
             "container_ref": "git:example/repo",
         }
 
-        _join(schedule_claude_relay_wake(result, scope, registry=registry))
+        assert schedule_claude_relay_wake(result, scope, registry=registry) is not None
 
         registry.attempt.assert_called_once()
+        args = registry.attempt.call_args.kwargs
+        assert args["runtime"] == "claude-code" and args["session_ref"] == "session-test"
+        assert args["container_ref"] == scope["container_ref"]
+        assert args["delivery_id"] == "delivery-1"
+        assert args["recipient_endpoint_id"] == "relay-session-" + "a" * 32
+        assert callable(args["transport"]) and callable(args["still_pending"])
+        assert threading.Thread is native_thread
 
     def test_invalid_selector_format_no_op(self) -> None:
         """Invalid alias format (@-bad) calls nothing."""
@@ -483,11 +496,15 @@ def test_failed_old_generation_cannot_rearm_replacement(monkeypatch: pytest.Monk
     assert result.outcome == "deferred"
 
 def test_relay_messages_response_does_not_wait_for_claude_transport(
-    client, monkeypatch: pytest.MonkeyPatch,
+    client, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
 ) -> None:
+    import time
+    import traceback
+
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
+    import app.dependencies as dependencies
     from app.dependencies import build_router
 
     registry = ClaudeWakeRegistry()
@@ -509,27 +526,82 @@ def test_relay_messages_response_does_not_wait_for_claude_transport(
     started = threading.Event()
     release = threading.Event()
     worker_threads: list[threading.Thread] = []
+    scheduled: list[threading.Thread] = []
+    attempts, errors, phases = [], [], []
+    original_attempt = registry.attempt
+    original_schedule = dependencies.schedule_claude_relay_wake
+
+    def attempt(*args, **kwargs):
+        phases.append(("attempt_entered", time.monotonic()))
+        try:
+            result = original_attempt(*args, **kwargs)
+        except BaseException:
+            errors.append(traceback.format_exc(limit=12))
+            raise
+        attempts.append((result.outcome, result.reason))
+        return result
+
+    def schedule(*args, **kwargs):
+        phases.append(("schedule_entered", time.monotonic()))
+        try:
+            worker = original_schedule(*args, **kwargs)
+        except BaseException:
+            errors.append(traceback.format_exc(limit=12))
+            raise
+        if worker is not None:
+            scheduled.append(worker)
+        phases.append(("schedule_returned", time.monotonic()))
+        return worker
 
     def transport(*_: object) -> str:
         worker_threads.append(threading.current_thread())
+        phases.append(("transport_entered", time.monotonic()))
         started.set()
-        assert release.wait(timeout=5)
+        try:
+            assert release.wait(timeout=5)
+        except BaseException:
+            errors.append(traceback.format_exc(limit=12))
+            raise
         return "accepted"
 
+    monkeypatch.setattr(registry, "attempt", attempt)
+    monkeypatch.setattr(dependencies, "schedule_claude_relay_wake", schedule)
     monkeypatch.setattr("app.claude_wake.claude_wake_transport", transport)
-    response = http.post("/relay/messages", json={
-        "sender_runtime": "codex",
-        "sender_session_ref": "sender",
-        "recipient": "claude-code:target",
-        "payload": "caller-surface payload",
-        **scope,
-    })
-    assert response.status_code == 200
-    assert started.wait(timeout=1)
-    assert worker_threads[0].is_alive()
-    release.set()
-    worker_threads[0].join(timeout=1)
+    caplog.set_level(logging.INFO, logger="app.claude_wake")
+    try:
+        phases.append(("request_started", time.monotonic()))
+        response = http.post("/relay/messages", json={
+            "sender_runtime": "codex",
+            "sender_session_ref": "sender",
+            "recipient": "claude-code:target",
+            "payload": "caller-surface payload",
+            **scope,
+        })
+        phases.append(("response_returned", time.monotonic()))
+        assert response.status_code == 200, response.text
+        arrived = started.wait(timeout=1)
+        diagnostics = None
+        if not arrived:
+            frames = sys._current_frames()
+            diagnostics = {
+                "response": response.text[:2048], "phases": list(phases),
+                "attempts": list(attempts), "errors": list(errors),
+                "workers": [(worker.name, worker.ident, worker.is_alive()) for worker in scheduled[:4]],
+                "stacks": {
+                    str(worker.ident): "".join(traceback.format_stack(frames[worker.ident], limit=12))[-4096:]
+                    for worker in scheduled[:4] if worker.ident in frames
+                },
+            }
+        assert arrived, diagnostics
+        assert worker_threads[0].is_alive()
+    finally:
+        release.set()
+        for worker in dict.fromkeys([*scheduled, *worker_threads]):
+            worker.join(timeout=1)
+        http.close()
+    assert not errors, errors
     assert not worker_threads[0].is_alive()
+    assert all(not worker.is_alive() for worker in scheduled)
 
 
 def test_wake_outcome_categories_are_distinct_and_secret_free(
@@ -771,6 +843,8 @@ def test_windows_write_retains_pending_overlapped_concurrently(monkeypatch: pyte
 def test_persisted_claude_d1_d2_d3_actual_hooks(
     client, monkeypatch, tmp_path, capsys,
 ) -> None:
+    from itertools import count
+
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
@@ -790,8 +864,16 @@ def test_persisted_claude_d1_d2_d3_actual_hooks(
     prompt = _load_claude_hook("user_prompt_submit", monkeypatch)
     stop = _load_claude_hook("stop", monkeypatch)
     hook_sessions = tmp_path / "hook-sessions"
+    real_time = start.relay_turn.__globals__["time"]
+    real_monotonic = real_time.monotonic
     for hook in (start, prompt, stop):
-        monkeypatch.setitem(hook.relay_turn.__globals__, "SESSIONS_DIR", hook_sessions)
+        common_globals = hook.relay_turn.__globals__
+        monkeypatch.setitem(common_globals, "SESSIONS_DIR", hook_sessions)
+        # Disk setup latency is not this delivery contract; native locks and hook budgets stay real.
+        local_time = SimpleNamespace(**vars(common_globals["time"]))
+        local_time.monotonic = count(step=.001).__next__
+        monkeypatch.setitem(common_globals, "time", local_time)
+    relay_calls, registration_statuses = [], []
 
     for hook in (start, prompt, stop):
         monkeypatch.setattr(
@@ -808,6 +890,7 @@ def test_persisted_claude_d1_d2_d3_actual_hooks(
 
     def relay(method, path, body, timeout=0.75):
         response = http.request(method, path, json=body)
+        relay_calls.append((method, path, response.status_code))
         return response.json() if response.content else None
     def register(session, container, **kwargs):
         response = http.post("/internal/claude-wake/register", json={
@@ -816,6 +899,7 @@ def test_persisted_claude_d1_d2_d3_actual_hooks(
             "container_ref": container,
             "idle": kwargs.get("idle", False),
         })
+        registration_statuses.append(response.status_code)
         return response.status_code == 204
 
     def acknowledge(deliveries, **kwargs):
@@ -845,8 +929,23 @@ def test_persisted_claude_d1_d2_d3_actual_hooks(
     monkeypatch.setattr(start, "_fetch_orientation", lambda *_: [])
     with pytest.raises(SystemExit):
         start.main()
-    sessions = http.get("/relay/sessions", params=scope).json()
-    assert any(row["session_ref"] == "session-test" for row in sessions)
+    session_response = http.get("/relay/sessions", params=scope)
+    assert session_response.status_code == 200
+    sessions = session_response.json()
+    state_path = hook_sessions / "session-test.json"
+    retained_state = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else None
+    diagnostics = {
+        "relay_calls": relay_calls,
+        "registration_statuses": registration_statuses, "retained_state": retained_state,
+        "start_output": capsys.readouterr().out,
+    }
+    assert relay_calls == [("POST", "/relay/turn", 200)], diagnostics
+    assert registration_statuses == [204], diagnostics
+    admitted = [row for row in sessions if row["session_ref"] == "session-test"]
+    assert len(admitted) == 1 and retained_state is not None, diagnostics
+    assert retained_state["last_confirmed_endpoint_id"] == admitted[0]["endpoint_id"]
+    assert retained_state["last_confirmed_container_ref"] == scope["container_ref"]
+    assert retained_state["last_confirmed_scope_generation"] == admitted[0]["scope_generation"]
     assert http.post(
         "/relay/turn",
         json={"runtime": "codex", "session_ref": "sender", **scope},
@@ -975,6 +1074,13 @@ def test_persisted_claude_d1_d2_d3_actual_hooks(
     output = capsys.readouterr().out
     assert "D2" not in output and "D3" in output
     assert state(sent2) == state(sent3) == "delivered"
+    assert all(status == 200 for _, _, status in relay_calls), relay_calls
+    assert all(status == 204 for status in registration_statuses), registration_statuses
+    assert real_time.monotonic is real_monotonic
+    assert all(
+        hook.relay_turn.__globals__["hook_deadline"]().clock is real_monotonic
+        for hook in (start, prompt, stop)
+    )
 
 def test_restart_and_claim_recovery_deliver_once_on_user_prompt(
     client, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys,
@@ -1402,10 +1508,13 @@ def test_create_app_preserves_new_intent_during_old_cleanup(
 def test_expired_claim_rewakes_once_after_real_app_restart(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str],
 ) -> None:
+    from itertools import count
+
     from fastapi.testclient import TestClient
 
     import app.main as main
     import storage.sqlite_relay as sqlite_relay
+    import core.claude_wake as wake_registry_module
     from app.config import AppConfig
     from app.main import create_app
     from core.relay import RelayService
@@ -1413,6 +1522,12 @@ def test_expired_claim_rewakes_once_after_real_app_restart(
     from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
     from tests.test_claude_code_integration import _load_claude_hook
 
+    real_time = wake_registry_module.time
+    real_monotonic = real_time.monotonic
+    # Lock admission is not this restart contract; retain native locks and real recovery clocks.
+    registry_time = SimpleNamespace(**vars(real_time))
+    registry_time.monotonic = count(step=.001).__next__
+    monkeypatch.setattr(wake_registry_module, "time", registry_time)
     clock = [datetime(2030, 9, 5, tzinfo=timezone.utc)]
 
     def controlled_now(value=None):
@@ -1439,6 +1554,9 @@ def test_expired_claim_rewakes_once_after_real_app_restart(
     monkeypatch.setattr(main, "start_claude_wake_reconciler", lambda *_args, **_kwargs: None)
     with TestClient(create_app(config), client=("127.0.0.1", 50000)) as http_a:
         common = _load_claude_hook("common", monkeypatch)
+        hook_time = SimpleNamespace(**vars(common.time))
+        hook_time.monotonic = count(step=.001).__next__
+        monkeypatch.setattr(common, "time", hook_time)
         monkeypatch.setattr(common, "CLAUDE_WAKE_DIR", tmp_path / "wake")
         monkeypatch.setattr(common, "CLAUDE_WAKE_INTENTS_DIR", tmp_path / "wake" / "intents")
         registration = {**PAYLOAD, "session_ref": "restart-target", "idle": True, "intent_id": "app-a"}
@@ -1481,6 +1599,8 @@ def test_expired_claim_rewakes_once_after_real_app_restart(
             "session_id": "restart-target", "cwd": str(tmp_path), "transcript_path": "",
         })
         registrations: list[dict[str, object]] = []
+        publication_results: list[tuple[str, bool]] = []
+        registration_responses: list[tuple[str, int]] = []
         claimed_ids: list[list[str]] = []
         states_before_ack: list[str] = []
         acknowledged_ids: list[str] = []
@@ -1491,8 +1611,12 @@ def test_expired_claim_rewakes_once_after_real_app_restart(
  "idle": idle, "intent_id": f"stop-{len(registrations)}",
             }
             registrations.append(registration)
-            assert common._write_wake_intent(registration)
-            return http_b.post("/internal/claude-wake/register", json=registration).status_code == 204
+            published = common._write_wake_intent(registration)
+            publication_results.append((registration["intent_id"], published))
+            assert published
+            response = http_b.post("/internal/claude-wake/register", json=registration)
+            registration_responses.append((registration["intent_id"], response.status_code))
+            return response.status_code == 204
 
         def relay(method: str, path: str, body: dict[str, object], *, timeout: float) -> object:
             response = http_b.request(method, path, json=body)
@@ -1531,8 +1655,16 @@ def test_expired_claim_rewakes_once_after_real_app_restart(
         assert claimed_ids == [[delivery["delivery_id"]], []]
         assert acknowledged_ids == [delivery["delivery_id"]]
         candidates = registry.recovery_candidates()
-        assert [candidate["session_ref"] for candidate in candidates] == ["restart-target"]
+        diagnostics = {
+            "publication_results": publication_results,
+            "registration_responses": registration_responses,
+        }
+        assert publication_results == [(f"stop-{index}", True) for index in range(3)], diagnostics
+        assert registration_responses == [(f"stop-{index}", 204) for index in range(3)], diagnostics
+        assert [candidate["session_ref"] for candidate in candidates] == ["restart-target"], diagnostics
         assert all(registration["idle"] is True for registration in registrations)
+        assert registry._clock is real_monotonic and reconciler._clock is real_monotonic
+        assert real_time.monotonic is real_monotonic
     assert reconciler._thread is not None and not reconciler._thread.is_alive()
 
 

@@ -1022,3 +1022,66 @@ def test_start_api_with_retry_kills_alive_unverified_proc(tmp_path, monkeypatch)
     )
     # And the retry budget should have been exhausted (multiple Popen calls)
     assert len(procs) == 5, f"expected 5 attempts, got {len(procs)}"
+
+
+@pytest.mark.parametrize("scenario", ["slow_ready", "timeout", "foreign", "stopped", "dead"])
+def test_startup_budget_preserves_real_probe_fencing(tmp_path, monkeypatch, caplog, scenario):
+    from types import SimpleNamespace
+
+    elapsed = [0.0]
+    stop = SimpleNamespace(requested=False)
+    nonce = "private-test-nonce"
+    (tmp_path / "api_token").write_text(
+        _json.dumps({"nonce": "foreign" if scenario == "foreign" else nonce}), encoding="utf-8",
+    )
+    process = SimpleNamespace(pid=123, returncode=1 if scenario == "dead" else None)
+    process.poll = lambda: process.returncode
+    spawned, killed, budgets, durations = [], [], [], []
+
+    class ProbeSocket:
+        def __init__(self, *_args): pass
+        def __enter__(self): return self
+        def __exit__(self, *_args): return False
+        def settimeout(self, _timeout): pass
+        def connect(self, _address):
+            if scenario == "timeout" or elapsed[0] < 45:
+                raise ConnectionRefusedError
+
+    def advance(delay):
+        elapsed[0] += delay
+        if scenario == "stopped":
+            stop.requested = True
+
+    def spawn(*_args, **_kwargs):
+        elapsed[0] = 0
+        spawned.append(process)
+        return process
+
+    def wait(host, port, **kwargs):
+        budgets.append(kwargs["timeout"])
+        result = _wait_for_api(host, port, **kwargs, clock=lambda: elapsed[0], sleep_fn=advance)
+        durations.append(elapsed[0])
+        return result
+
+    monkeypatch.setattr("socket.socket", ProbeSocket)
+    monkeypatch.setattr("app.supervisor._kill_tree", lambda proc, **_kw: killed.append(proc))
+    caplog.set_level("INFO")
+    result = _start_api_with_retry(
+        ["unused"], "127.0.0.1", 19999, popen_factory=spawn,
+        sleep_fn=lambda _delay: None, wait_for_api_fn=wait, stop=stop,
+        run_dir=tmp_path, token_fn=lambda: nonce,
+    )
+    assert budgets == [120.0] * len(spawned)
+    assert nonce not in caplog.text
+    if scenario == "slow_ready":
+        assert result is process
+        assert durations == [45.0]
+        assert len(spawned) == 1 and killed == []
+        assert "outcome=ready" in caplog.text
+    else:
+        assert result is None
+        assert "outcome=unverified" in caplog.text
+        assert len(spawned) == (1 if scenario == "stopped" else 5)
+        assert len(killed) == (0 if scenario == "dead" else len(spawned))
+        if scenario in {"timeout", "foreign"}:
+            assert durations == [120.0] * 5

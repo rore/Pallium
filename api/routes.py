@@ -700,11 +700,11 @@ def create_router(
             raise HTTPException(status_code=501, detail="relay is not supported by the configured storage")
         return relay_service
 
-    def _with_relay_activation(value: object) -> object:
+    def _project_relay_activation(value: object) -> object:
         if relay_activation_callback is None:
             return value
         if isinstance(value, list):
-            return [_with_relay_activation(item) for item in value]
+            return [_project_relay_activation(item) for item in value]
         if not isinstance(value, dict):
             return value
         result = dict(value)
@@ -719,8 +719,16 @@ def create_router(
                 logger.exception("Relay activation projection failed")
         for key in ("session", "participants", "deliveries"):
             if key in result:
-                result[key] = _with_relay_activation(result[key])
+                result[key] = _project_relay_activation(result[key])
         return result
+
+    async def _with_relay_activation(value: object) -> object:
+        if relay_activation_callback is None:
+            return value
+        return await _relay_call(
+            "activation_projection", lambda: _project_relay_activation(value),
+        )
+
     async def _relay_call(operation_name: str, operation):
         started = time.monotonic()
         try:
@@ -793,7 +801,7 @@ def create_router(
                     relay_turn_admission_callback(request_data, result, reservation)
                 except Exception:
                     logger.exception("Relay turn admission callback failed after admission")
-            projected = _with_relay_activation(result)
+            projected = await _with_relay_activation(result)
             outcome = "ready"
             return projected
         finally:
@@ -809,11 +817,11 @@ def create_router(
 
     @router.post("/relay/sessions/close", response_model=RelaySessionResponse)
     async def relay_close_session(request: RelaySessionMutationRequest):
-        return _with_relay_activation(await _relay_call("close_session", lambda: _relay().close_session(**request.model_dump())))
+        return await _with_relay_activation(await _relay_call("close_session", lambda: _relay().close_session(**request.model_dump())))
 
     @router.post("/relay/opencode/wake", response_model=RelayOpenCodeWakeResponse)
     async def opencode_wake(request: RelayOpenCodeWakeRequest):
-        return _with_relay_activation(await _relay_call(
+        return await _with_relay_activation(await _relay_call(
             "opencode_wake", lambda: _relay().opencode_wake(**request.model_dump()),
         ))
 
@@ -824,7 +832,7 @@ def create_router(
         session_ref: str | None = Query(default=None, max_length=255),
         include_inactive: bool = False,
     ):
-        return _with_relay_activation(await _relay_call(
+        return await _with_relay_activation(await _relay_call(
             "list_sessions",
             lambda: _relay().list_sessions(
                 container_ref=container_ref,
@@ -843,7 +851,7 @@ def create_router(
         session_ref: str = Query(min_length=1, max_length=255),
         container_ref: str = Query(min_length=1, max_length=512),
     ):
-        return _with_relay_activation(await _relay_call(
+        return await _with_relay_activation(await _relay_call(
             "session_work_refs",
             lambda: _relay().session_work_refs(
                 runtime=runtime,
@@ -857,7 +865,7 @@ def create_router(
         response_model=RelayWorkRefAttachResponse,
     )
     async def relay_attach_work_ref(request: RelayWorkRefMutationRequest):
-        return _with_relay_activation(await _relay_call(
+        return await _with_relay_activation(await _relay_call(
             "attach_work_ref",
             lambda: _relay().attach_work_ref(**request.model_dump()),
         ))
@@ -867,7 +875,7 @@ def create_router(
         response_model=RelayWorkRefDetachResponse,
     )
     async def relay_detach_work_ref(request: RelayWorkRefMutationRequest):
-        return _with_relay_activation(await _relay_call(
+        return await _with_relay_activation(await _relay_call(
             "detach_work_ref",
             lambda: _relay().detach_work_ref(**request.model_dump()),
         ))
@@ -885,7 +893,7 @@ def create_router(
         offset: int = Query(default=0, ge=0),
         limit: int = Query(default=50, ge=1, le=200),
     ):
-        return _with_relay_activation(await _relay_call(
+        return await _with_relay_activation(await _relay_call(
             "work_ref_participants",
             lambda: _relay().work_ref_participants(
                 scope_ref=scope_ref,
@@ -912,7 +920,7 @@ def create_router(
 
     @router.post("/relay/sessions/name", response_model=RelaySessionResponse)
     async def relay_name_session(request: RelaySessionNameRequest):
-        return _with_relay_activation(await _relay_call("name_session", lambda: _relay().name_session(**request.model_dump())))
+        return await _with_relay_activation(await _relay_call("name_session", lambda: _relay().name_session(**request.model_dump())))
 
     @router.post("/relay/messages", response_model=RelayMessageResponse)
     async def relay_send(request: RelaySendRequest):
@@ -927,7 +935,7 @@ def create_router(
                 })
             except Exception:
                 logger.exception("Relay wake callback failed after persistence")
-        return _with_relay_activation(result)
+        return await _with_relay_activation(result)
 
     @router.post("/relay/replies", response_model=RelayMessageResponse)
     async def relay_reply(request: RelayReplyRequest):
@@ -951,7 +959,7 @@ def create_router(
                 relay_send_callback(result, {"container_ref": request.container_ref})
             except Exception:
                 logger.exception("Relay wake callback failed after persistence")
-        return _with_relay_activation(result)
+        return await _with_relay_activation(result)
     @router.get("/relay/messages/{message_id}", response_model=RelayMessageResponse)
     async def relay_message_status(
         message_id: str,
@@ -959,7 +967,7 @@ def create_router(
         offset: int | None = Query(default=None, ge=0),
         page_size: int | None = Query(default=None, ge=1, le=RELAY_MESSAGE_MAX_CHARS),
     ):
-        return _with_relay_activation(await _relay_call(
+        return await _with_relay_activation(await _relay_call(
             "message_status",
             lambda: _relay().message_status(
                 message_id=message_id,

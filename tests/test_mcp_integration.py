@@ -23,6 +23,7 @@ from app.mcp.context import PalliumContext
 from app.mcp.server import create_server
 from redaction import redact_sensitive
 from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
+from tests.transport_isolation_helpers import isolated_hook_transport
 
 
 @pytest.fixture()
@@ -294,17 +295,33 @@ class TestMcpStatelessTransport:
                 body = self._parse_sse(response.text)
                 assert "result" in body, f"call #{call_id} expected result, got: {body}"
 
-    def test_tools_call_with_arguments_and_unknown_session_id(self, test_db_url: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_tools_call_with_arguments_and_unknown_session_id(self, test_db_url: str, monkeypatch: pytest.MonkeyPatch, isolated_hook_transport) -> None:
         """Exercise the full argument → context → REST proxy chain under stateless
         transport. Uses pallium_query (requires a `query` arg + container_ref
         override), which is the path the user-reported pallium_rate_memory failure
         actually traverses.
         """
         from starlette.testclient import TestClient
+        async def deny_real_http(_self, _request):
+            isolated_hook_transport.append("httpx")
+            raise httpx.ConnectError("test forbids unintended HTTP transport")
+        monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", deny_real_http)
         # PALLIUM_BASE_URL must be set so the server thinks it's configured;
         # the in-process REST app handles the request — no real network call.
         monkeypatch.setenv("PALLIUM_BASE_URL", "http://testserver")
         app = self._make_app(test_db_url)
+        real_async_client = httpx.AsyncClient
+        requests = []
+
+        async def observe_query(request):
+            requests.append((request.url.path, json.loads(request.content)))
+
+        def asgi_client(*args, **kwargs):
+            kwargs["transport"] = httpx.ASGITransport(app=app)
+            kwargs["event_hooks"] = {"request": [observe_query]}
+            return real_async_client(*args, **kwargs)
+
+        monkeypatch.setattr("app.mcp.client.httpx.AsyncClient", asgi_client)
         with TestClient(app, headers={"host": "127.0.0.1:8000"}) as client:
             response = client.post("/mcp", json={
                 "jsonrpc": "2.0",
@@ -331,6 +348,21 @@ class TestMcpStatelessTransport:
                 f"got Session-not-found error: {body}"
             )
             assert "result" in body, f"expected result, got: {body}"
+
+            result = body["result"]
+            assert result.get("isError", False) is False, result
+            texts = [part["text"] for part in result["content"] if part["type"] == "text"]
+            assert len(texts) == 1
+            tool_payload = json.loads(texts[0])
+            assert "error" not in tool_payload, tool_payload
+            assert isinstance(tool_payload["results"], list)
+            assert "decision_reason" in tool_payload
+            assert requests == [("/query", {
+                "text": "what was decided about caching",
+                "limit": 5,
+                "container_ref": "test-container",
+                "visibility": "public",
+            })]
 
 @pytest.mark.asyncio
 async def test_identity_free_mcp_forget_single_and_bulk_lifecycle(pallium_asgi_app) -> None:

@@ -3,10 +3,11 @@ from __future__ import annotations
 import logging
 import re
 import types
+import pytest
 
 from app.cleaner import run_cleaner
 from app.config import AppConfig
-from app.runtime_logging import emit_runtime_log
+from app.runtime_logging import emit_runtime_log, startup_stage
 from storage.vector_index import VectorIndexConfig
 from storage.base import RetentionRunStats
 from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
@@ -16,6 +17,27 @@ TIMESTAMPED_CLEANER_LINE = re.compile(
     r"^\d{4}-\d{2}-\d{2}T.+ \[cleaner\] cleaner_id=cleaner-test retention deleted_source_items=1 ",
     re.MULTILINE,
 )
+
+
+@pytest.mark.parametrize("failed", [False, True])
+def test_startup_stage_logs_timing_without_exception_content(monkeypatch, caplog, failed):
+    ticks = iter([10.0, 12.5])
+    monkeypatch.setattr("app.runtime_logging.time.monotonic", lambda: next(ticks))
+    monkeypatch.setattr("app.runtime_logging.os.getpid", lambda: 123)
+    caplog.set_level(logging.INFO)
+    error = RuntimeError("sensitive-test-content")
+    try:
+        with startup_stage("service_storage"):
+            if failed:
+                raise error
+    except RuntimeError as caught:
+        assert caught is error
+    assert [record.getMessage() for record in caplog.records] == [
+        "startup stage=service_storage outcome=start pid=123",
+        f"startup stage=service_storage outcome={'failed' if failed else 'complete'} pid=123 elapsed_seconds=2.500",
+    ]
+    assert all(record.exc_info is None for record in caplog.records)
+    assert "sensitive-test-content" not in caplog.text
 
 
 class FakeRetentionService:

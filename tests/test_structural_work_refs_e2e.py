@@ -10,6 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from tests.transport_isolation_helpers import isolated_hook_transport
 
 SECRET = "ghp_abcdefghijklmnopqrstuvwxyz1234567890"
 STRUCTURAL = ["git-branch:fix/alpha", "agent-workflow:alpha"]
@@ -39,7 +40,7 @@ def _load(name: str, path: Path, monkeypatch: pytest.MonkeyPatch):
     spec = importlib.util.spec_from_file_location(name, path)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
+    monkeypatch.setitem(sys.modules, name, module)
     spec.loader.exec_module(module)
     return module
 
@@ -68,6 +69,11 @@ def _quiet_common_side_effects(module, monkeypatch: pytest.MonkeyPatch) -> None:
     ):
         if hasattr(module, name):
             monkeypatch.setattr(module, name, replacement)
+    fetch_confirmed = getattr(module, "fetch_confirmed_work_refs", None)
+    if fetch_confirmed is not None:
+        monkeypatch.setitem(
+            fetch_confirmed.__globals__, "relay_request", lambda *_a, **_k: None
+        )
 
 
 def _python_payloads(
@@ -261,6 +267,7 @@ def test_all_real_callers_capture_and_ingest_exact_refs(
     explicit: list[str],
     expected: list[str],
     explicit_only: list[str],
+    isolated_hook_transport: list[str],
 ) -> None:
     repo = _repo_metadata(tmp_path / "repo")
     captured = _python_payloads(repo, explicit, monkeypatch)
@@ -301,6 +308,7 @@ def test_python_user_and_assistant_resolver_failure_ingest_explicit_only(
     monkeypatch: pytest.MonkeyPatch,
     host: str,
     relative: str,
+    isolated_hook_transport: list[str],
 ) -> None:
     captured = _python_payloads(tmp_path / "missing", CASES[-1][0], monkeypatch)
     selected = [
@@ -345,7 +353,8 @@ def test_opencode_user_and_assistant_resolver_failure_still_ingest(
     (("codex", "codex"), ("claude", "claude-code")),
 )
 def test_python_stop_hook_actual_http_items_round_trips_into_exact_history(
-    client, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, host: str, source_type: str
+    client, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, host: str, source_type: str,
+    isolated_hook_transport: list[str],
 ) -> None:
     payload = next(item for item in _python_payloads(_repo_metadata(tmp_path / host), [], monkeypatch) if item["source_type"] == source_type and item["role"] == "assistant")
     response = client.post("/items", json=[payload])
