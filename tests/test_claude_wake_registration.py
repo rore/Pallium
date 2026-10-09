@@ -84,10 +84,72 @@ def test_registration_keeps_intent_when_store_unusable_marker_cannot_clear(
     assert registry.recovery_candidates() == []
     assert ClaudeWakeRegistry(state_dir=state_dir).recovery_candidates() == []
 
+def test_registration_setup_expiry_preserves_intent_before_native_acquisition(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import builtins
+    import time
+    import core.claude_wake as wake
+
+    state_dir = tmp_path / "wake"
+    registry = ClaudeWakeRegistry(state_dir=state_dir)
+    opened = {**PAYLOAD, "intent_id": "open"}
+    intent = state_dir / "intents" / _safe_session_file(PAYLOAD["runtime"], PAYLOAD["session_ref"], PAYLOAD["container_ref"])
+    intent.parent.mkdir(parents=True)
+    intent.write_text(json.dumps(opened), encoding="utf-8")
+    before = intent.read_bytes()
+    http = _client(registry)
+    now, opened_locks, native_calls = [0.0], [], []
+    private_time = SimpleNamespace(**vars(time))
+    private_time.monotonic = lambda: now[0]
+
+    def open_then_expire(path, *args, **kwargs):
+        result = builtins.open(path, *args, **kwargs)
+        if Path(path) == intent.with_suffix(".lock") and not opened_locks:
+            opened_locks.append(Path(path))
+            now[0] += .101
+        return result
+
+    if sys.platform == "win32":
+        import msvcrt as native
+        native_name = "locking"
+    else:
+        import fcntl as native
+        native_name = "flock"
+    original_native = getattr(native, native_name)
+
+    def observe_native(*args, **kwargs):
+        native_calls.append(args)
+        return original_native(*args, **kwargs)
+
+    with monkeypatch.context() as expiry:
+        expiry.setattr(wake, "time", private_time)
+        expiry.setattr(wake, "open", open_then_expire, raising=False)
+        expiry.setattr(native, native_name, observe_native)
+        response = http.post("/internal/claude-wake/register", json=opened)
+        assert response.status_code == 409
+        assert response.json()["detail"] == "registration rejected"
+        assert opened_locks == [intent.with_suffix(".lock")]
+        assert now[0] == .101 and native_calls == []
+        assert registry._registrations == {} and not registry._canonical.exists()
+        assert intent.read_bytes() == before
+    assert wake.time is time
+    assert http.post("/internal/claude-wake/register", json=opened).status_code == 204
+    assert not intent.exists()
+    assert ClaudeWakeRegistry(state_dir=state_dir).recovery_candidates()[0]["state"] == "idle"
+
+
 @pytest.mark.parametrize("replace_closed_intent", (False, True))
 def test_close_endpoint_write_failure_preserves_exact_intent_for_recovery(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, replace_closed_intent: bool,
 ) -> None:
+    import time
+    from itertools import count
+    import core.claude_wake as wake
+
+    private_time = SimpleNamespace(**vars(time))
+    private_time.monotonic = count(step=.001).__next__
+    monkeypatch.setattr(wake, "time", private_time)
     state_dir = tmp_path / "wake"
     intent = state_dir / "intents" / _safe_session_file(PAYLOAD["runtime"], PAYLOAD["session_ref"], PAYLOAD["container_ref"])
 
@@ -104,9 +166,17 @@ def test_close_endpoint_write_failure_preserves_exact_intent_for_recovery(
     closed.update(intent_id="closed", closed=True)
     write_intent(closed)
     original_write = registry._write_canonical_locked
-    monkeypatch.setattr(registry, "_write_canonical_locked", lambda *_: False)
+    writes = []
 
-    assert client.post("/internal/claude-wake/close", json=closed).status_code == 400
+    def fail_write(registrations):
+        writes.append(dict(registrations))
+        return False
+
+    monkeypatch.setattr(registry, "_write_canonical_locked", fail_write)
+
+    close_request = {key: closed[key] for key in ("runtime", "session_ref", "container_ref", "intent_id")}
+    assert client.post("/internal/claude-wake/close", json=close_request).status_code == 400
+    assert writes == [{}]
     assert json.loads(intent.read_text(encoding="utf-8")) == closed
     assert [candidate["state"] for candidate in registry.recovery_candidates()] == ["idle"]
     assert [candidate["state"] for candidate in ClaudeWakeRegistry(state_dir=state_dir).recovery_candidates()] == ["idle"]

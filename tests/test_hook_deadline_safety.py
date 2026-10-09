@@ -259,25 +259,48 @@ def test_each_hook_starts_one_budget_before_reading_input(relative, monkeypatch)
     assert len([event for event in events if event[0] == "start"]) == 1
 
 
-def test_claude_prompt_emission_failure_leaves_relay_unacknowledged(monkeypatch, tmp_path):
+def test_claude_prompt_emission_failure_leaves_relay_unacknowledged(monkeypatch):
+    common = _load("deadline_prompt_emit_common", "integrations/claude-code/hooks/common.py")
+    monkeypatch.setitem(sys.modules, "common", common)
     hook = _load("deadline_prompt_emit_failure", "integrations/claude-code/hooks/user_prompt_submit.py")
-    monkeypatch.setitem(hook.relay_turn.__globals__, "SESSIONS_DIR", tmp_path / "hook-sessions")
     delivery = {
-        "delivery_id": "delivery", "claim_token": "claim", "message_id": "message",
+        "delivery_id": "relay-delivery-" + "a" * 32, "claim_token": "claim",
+        "message_id": "relay-msg-" + "b" * 32,
         "sender_runtime": "codex", "sender_session_ref": "sender",
         "payload": "continue", "created_at": "2026-09-07T00:00:00Z",
+        "recipient_runtime": "claude-code", "recipient_session_ref": "target",
+        "recipient_container_ref": "git:example/repo", "state": "claimed", "attempts": 1,
+        "payload_offset": 0, "payload_total_chars": len("continue"),
+        "content_truncated": False, "next_offset": None,
     }
     monkeypatch.setattr(hook, "read_hook_input", lambda: {"cwd": ".", "session_id": "target", "prompt": "hi"})
     monkeypatch.setattr(hook, "resolve_container_ref", lambda *_a: "git:example/repo")
     monkeypatch.setattr(hook, "derive_actor_ref", lambda *_a: "actor")
     monkeypatch.setattr(hook, "register_claude_wake", lambda *_a, **_k: True)
     monkeypatch.setattr(hook, "get_pending_relay_close_batch", lambda *_a: ([], 0))
-    monkeypatch.setattr(hook, "relay_request", lambda *_a, **_k: {"session": {"endpoint_id": "relay-session-deadline", "runtime": "claude-code", "session_ref": "target", "container_ref": "git:example/repo", "scope_generation": 0}, "deliveries": [delivery]})
-    monkeypatch.setattr(hook, "emit_utf8", lambda *_a, **_k: False)
+    monkeypatch.setattr(hook, "check_dedup", lambda *_a: False)
+    monkeypatch.setattr(hook, "relay_turn", lambda *_a, **_k: {
+        "session": {"endpoint_id": "relay-session-" + "c" * 32, "runtime": "claude-code",
+                    "session_ref": "target", "container_ref": "git:example/repo", "scope_generation": 0},
+        "deliveries": [delivery], "has_more": False, "remaining_count": 0,
+    })
+    emitted = []
+
+    def fail_emit(text):
+        emitted.append(text)
+        return False
+
+    monkeypatch.setattr(hook, "emit_utf8", fail_emit)
     acknowledgements = []
     monkeypatch.setattr(hook, "acknowledge_relay", lambda *args, **kwargs: acknowledgements.append((args, kwargs)))
 
     hook.main()
+    assert len(emitted) == 1
+    assert all(value in emitted[0] for value in (
+        delivery["payload"], delivery["message_id"], delivery["delivery_id"],
+        '"container_ref":"git:example/repo"', '"thread_ref":"target"',
+        '"actor_ref":"actor"', '"agent_ref":"claude-code"', "codex:sender",
+    ))
     assert acknowledgements == []
 
 
