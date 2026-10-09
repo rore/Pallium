@@ -55,6 +55,13 @@ backfill check and lifespan initialization. A completed stage only means that
 call returned; verify health and `embedding_provider_ok` separately. Delays before
 these markers are not attributed by them.
 
+Relay registry reads and post-persistence callbacks run through the existing
+tracked worker runner, so their SQLite or native I/O cannot block the HTTP event
+loop. Non-Codex activation does not consult Codex authority. Queue diagnostics
+use an all-row status index, including items without a use case; legacy NULL
+statuses still count as pending. The existing schema initializer installs the
+index on populated databases without a new migration command or setting.
+
 ## SQLite database operations
 
 Both SQLite files use the same lifecycle: WAL, auto_vacuum=INCREMENTAL, and a bounded connection busy timeout. Relay writes use only the Relay file, so a long ingestion transaction in the main file does not hold the Relay writer lock. Each file must still be backed up, checked, and restored as a pair; never mix files from different snapshot generations.

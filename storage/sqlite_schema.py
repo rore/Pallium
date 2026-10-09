@@ -956,6 +956,10 @@ class SQLiteSchemaMixin:
             "ON source_items(processing_status, processing_next_attempt_at, processing_lease_expires_at, created_at, id) "
             "WHERE use_case IS NOT NULL"
         ),
+        "idx_source_items_diagnostic_status": (
+            "CREATE INDEX IF NOT EXISTS idx_source_items_diagnostic_status "
+            "ON source_items(processing_status, processing_completed_at, id, created_at)"
+        ),
         "idx_relations_to_target_lookup": (
             "CREATE INDEX IF NOT EXISTS idx_relations_to_target_lookup "
             "ON relations(to_kind, to_id, relation_type, from_kind, from_id)"

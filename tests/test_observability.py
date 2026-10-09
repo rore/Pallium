@@ -371,7 +371,7 @@ def test_integration_debug_logging_is_opt_in(test_db_url: str, capsys) -> None:
     assert "source_item_processing_outcome" in output
     assert "memory_creation_provenance" in output
 
-def test_queue_health_preserves_lease_failure_and_cutoff_semantics(client) -> None:
+def test_queue_health_preserves_lease_failure_and_cutoff_semantics(client, monkeypatch) -> None:
     storage = client.app.state.pallium_service._storage
     now = datetime.now(timezone.utc)
 
@@ -460,6 +460,31 @@ def test_queue_health_preserves_lease_failure_and_cutoff_semantics(client) -> No
         failed_new_id, failed_old_id,
     ]
 
+    monkeypatch.setattr("core.service.utc_now", lambda: now)
+    response = client.get("/debug/queue/health")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status_counts"] == snapshot.status_counts
+    assert payload["status_counts_24h"] == snapshot.status_counts_24h
+    assert payload["pending_without_use_case_count"] == 1
+    assert {item["reason"]: item["count"] for item in payload["unclaimable_pending_counts"]} == {
+        "missing_use_case": 1, "unknown_use_case": 1,
+    }
+    assert len(payload["leased_source_items"]) == 1
+    lease = payload["leased_source_items"][0]
+    assert lease["source_item_id"] == active_source_id
+    assert lease["use_case"] == "known" and lease["processing_claimed_by"] == "worker"
+    assert datetime.fromisoformat(lease["processing_claimed_at"]) == now - timedelta(minutes=1)
+    assert datetime.fromisoformat(lease["processing_lease_expires_at"]) == now + timedelta(minutes=1)
+    assert [item["scope_key"] for item in payload["leased_thread_scopes"]] == ["active-scope"]
+    assert [item["source_item_id"] for item in payload["recent_failures"]] == [
+        failed_new_id, failed_old_id, failed_null_id,
+    ]
+    status = client.get("/status?include_relay_wake=false")
+    assert status.status_code == 200
+    assert status.json()["pending_items"] == 2
+    assert status.json()["total_source_items"] == 9
+
     with_null_failure = storage.get_queue_health_snapshot(
         now=now,
         max_attempts=3,
@@ -469,3 +494,119 @@ def test_queue_health_preserves_lease_failure_and_cutoff_semantics(client) -> No
         recent_failure_limit=3,
     )
     assert with_null_failure.recent_failures[-1].source_item_id == failed_null_id
+
+
+def test_http_diagnostics_use_all_row_status_index_for_completed_history(client) -> None:
+    from storage.sqlite_schema import SourceItemRecord
+
+    storage = client.app.state.pallium_service._storage
+    now = datetime.now(timezone.utc)
+    with storage._session_factory.begin() as session:
+        session.add_all([
+            SourceItemRecord(
+                id=f"diagnostic-history-{index}", source_type="test",
+                source_id=f"diagnostic-history-{index}", content_type="text/plain",
+                content="history " * 512, use_case=None, processing_status="completed",
+                processing_completed_at=now, created_at=now,
+            )
+            for index in range(32)
+        ])
+    statements = []
+
+    def capture(_conn, _cursor, statement, parameters, _context, _executemany):
+        if "from source_items" in statement.lower():
+            statements.append((statement, parameters))
+
+    event.listen(storage._engine, "before_cursor_execute", capture)
+    try:
+        status = client.get("/status?include_relay_wake=false")
+        queue = client.get("/debug/queue/health")
+    finally:
+        event.remove(storage._engine, "before_cursor_execute", capture)
+    assert status.status_code == queue.status_code == 200
+    assert status.json()["pending_items"] == 0
+    assert status.json()["oldest_pending_age_seconds"] is None
+    assert status.json()["total_source_items"] == 32
+    assert queue.json()["status_counts"] == {"completed": 32}
+    assert queue.json()["status_counts_24h"] == {"completed": 32}
+    assert queue.json()["oldest_pending_age_seconds"] is None
+    assert queue.json()["pending_without_use_case_count"] == 0
+    for field in ("unclaimable_pending_counts", "leased_source_items", "leased_thread_scopes", "recent_failures"):
+        assert queue.json()[field] == []
+    assert any("union all" in statement.lower() for statement, _ in statements)
+    with storage._engine.connect() as connection:
+        for statement, parameters in statements:
+            plan = connection.exec_driver_sql("EXPLAIN QUERY PLAN " + statement, parameters).all()
+            detail = " ".join(row[3] for row in plan)
+            if "processing_status" in statement.lower():
+                assert "idx_source_items_diagnostic_status" in detail, detail
+            else:
+                assert "COVERING INDEX" in detail, detail
+
+
+def test_queue_pending_union_maps_nullable_legacy_rows_and_datetimes(test_db_url: str) -> None:
+    from sqlalchemy import MetaData, create_engine
+    from storage.sqlite_schema import SourceItemRecord
+
+    engine = create_engine(test_db_url)
+    try:
+        legacy = SourceItemRecord.__table__.to_metadata(MetaData())
+        legacy.c.processing_status.nullable = True
+        legacy.create(engine)
+    finally:
+        engine.dispose()
+    assert SourceItemRecord.__table__.c.processing_status.nullable is False
+    storage = SQLiteStorageProvider(test_db_url)
+    now = datetime.now(timezone.utc)
+    try:
+        with storage._session_factory.begin() as session:
+            session.add_all([
+                SourceItemRecord(
+                    id="legacy-null", source_type="test", source_id="legacy-null",
+                    content_type="text/plain", content="legacy", use_case=None,
+                    processing_status="pending", created_at=now - timedelta(hours=3),
+                ),
+                SourceItemRecord(
+                    id="pending-backoff", source_type="test", source_id="pending-backoff",
+                    content_type="text/plain", content="pending", use_case="known",
+                    processing_status="pending", processing_attempts=1,
+                    processing_next_attempt_at=now + timedelta(minutes=5),
+                    created_at=now - timedelta(hours=1),
+                ),
+                SourceItemRecord(
+                    id="completed-null-use-case", source_type="test", source_id="completed-null-use-case",
+                    content_type="text/plain", content="completed", use_case=None,
+                    processing_status="completed", processing_completed_at=now,
+                    created_at=now - timedelta(days=1),
+                ),
+            ])
+        with storage._engine.begin() as connection:
+            connection.execute(text("UPDATE source_items SET processing_status=NULL WHERE id='legacy-null'"))
+        statements = []
+
+        def capture(_conn, _cursor, statement, parameters, _context, _executemany):
+            if "union all" in statement.lower():
+                statements.append((statement, parameters))
+
+        event.listen(storage._engine, "before_cursor_execute", capture)
+        try:
+            snapshot = storage.get_queue_health_snapshot(
+                now=now, max_attempts=3, known_use_cases=("known",),
+                scoped_use_cases=("known",), retention_enabled=False,
+            )
+        finally:
+            event.remove(storage._engine, "before_cursor_execute", capture)
+        assert snapshot.status_counts == {"completed": 1, "pending": 2}
+        assert snapshot.status_counts_24h == {"completed": 1}
+        assert snapshot.pending_without_use_case_count == 1
+        assert snapshot.oldest_pending_age_seconds == 10800
+        assert {item.reason: item.count for item in snapshot.unclaimable_pending_counts} == {
+            "missing_use_case": 1, "retry_backoff_active": 1,
+        }
+        assert len(statements) == 1
+        with storage._engine.connect() as connection:
+            statement, parameters = statements[0]
+            plan = connection.exec_driver_sql("EXPLAIN QUERY PLAN " + statement, parameters).all()
+            assert sum("SEARCH source_items USING INDEX idx_source_items_diagnostic_status" in row[3] for row in plan) == 2
+    finally:
+        storage.close()

@@ -673,7 +673,15 @@ class SQLiteQueueMixin:
                 .group_by(status_expr)
             ).all()
             pending_records = session.scalars(
-                select(SourceItemRecord).where(status_expr == "pending")
+                select(SourceItemRecord).from_statement(
+                    select(SourceItemRecord)
+                    .where(SourceItemRecord.processing_status == "pending")
+                    .union_all(
+                        select(SourceItemRecord).where(
+                            SourceItemRecord.processing_status.is_(None)
+                        )
+                    )
+                )
             ).all()
             leased_source_records = session.scalars(
                 select(SourceItemRecord).where(

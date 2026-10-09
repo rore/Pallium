@@ -105,7 +105,7 @@ def test_activation_projection_uses_tracked_relay_runner_after_admission(
                 assert len(projection_threads) == 1
                 assert projection_threads[0] != loop_thread
                 assert events == ["turn_callback", "admission", "projection"]
-                assert len(runner_calls) == 2
+                assert len(runner_calls) == 4
                 health = await asyncio.wait_for(client.get("/health"), 5)
                 assert health.status_code in {200, 503}
                 assert not finished.is_set()
@@ -131,13 +131,286 @@ def test_activation_projection_uses_tracked_relay_runner_after_admission(
                     datetime.fromisoformat(result["session"].pop(field)).replace(tzinfo=timezone.utc)
                 )
             assert listed_session == result["session"]
-            assert len(runner_calls) == 4
+            assert len(runner_calls) == 6
 
     try:
         asyncio.run(exercise())
     finally:
         release.set()
         app.state.pallium_service._storage.close()
+
+
+@pytest.mark.parametrize("phase,outcome", [
+    (phase, outcome)
+    for phase in (
+        "snapshot", "turn", "admission", "send", "reply_ack", "reply_send",
+        "ack", "mcp_ack", "register", "close",
+    )
+    for outcome in ("success", "error")
+] + [("register", "refused"), ("close", "refused")])
+def test_relay_callbacks_use_tracked_runner_without_blocking_health(
+    tmp_path, monkeypatch, phase, outcome,
+) -> None:
+    from app import dependencies
+    from core.claude_wake import ClaudeWakeRegistry
+
+    entered, release = threading.Event(), threading.Event()
+    events, callback_threads, gate_errors = [], [], []
+    sent_message_ids = []
+    loop_thread = threading.get_ident()
+    armed = False
+    selected = {"reply_ack": "ack", "reply_send": "send", "mcp_ack": "ack"}.get(phase, phase)
+
+    def observe(name, callback):
+        def call(*args, **kwargs):
+            if armed:
+                events.append(name)
+                if name == "send":
+                    sent_message_ids.append(args[0]["message_id"])
+                if name == selected:
+                    callback_threads.append(threading.get_ident())
+                    entered.set()
+                    # Broken synchronous dispatch must fail without hanging the loop.
+                    if threading.get_ident() != loop_thread and not release.wait(10):
+                        gate_errors.append("callback release watchdog expired")
+                    if outcome == "error":
+                        if name in {"register", "close"}:
+                            raise ValueError("invalid registration")
+                        raise RuntimeError("callback unavailable")
+                    if outcome == "refused":
+                        return False
+            return callback(*args, **kwargs) if callback is not None else None
+        return call
+
+    original_create_router = dependencies.create_router
+
+    def observe_router(service, **kwargs):
+        for name, key in (
+            ("snapshot", "relay_turn_snapshot_callback"),
+            ("turn", "relay_turn_callback"),
+            ("admission", "relay_turn_admission_callback"),
+            ("send", "relay_send_callback"),
+            ("ack", "relay_ack_callback"),
+        ):
+            kwargs[key] = observe(name, kwargs.get(key))
+        return original_create_router(service, **kwargs)
+
+    registry = ClaudeWakeRegistry()
+    monkeypatch.setattr(dependencies, "create_router", observe_router)
+    monkeypatch.setattr("app.main.build_claude_wake_registry", lambda *_: registry)
+    # The callback contract ends at scheduling, before external native transport.
+    monkeypatch.setattr(dependencies, "schedule_codex_relay_wake", lambda *_, **__: None)
+    monkeypatch.setattr(dependencies, "schedule_claude_relay_wake", lambda *_, **__: None)
+    monkeypatch.setattr(
+        "app.mcp.server.create_server",
+        lambda **_: (_ for _ in ()).throw(ImportError()),
+    )
+    app = create_app(AppConfig(
+        storage_backend="sqlite",
+        sqlite_url=f"sqlite:///{tmp_path / 'main.db'}",
+        relay_sqlite_url=f"sqlite:///{tmp_path / 'relay.db'}",
+        default_use_case="demo_agent_memory",
+        semantic_packages=DEMO_SEMANTIC_PACKAGES,
+        vector_index=VectorIndexConfig(enabled=False),
+    ))
+    monkeypatch.setattr(registry, "register", observe("register", registry.register))
+    monkeypatch.setattr(registry, "close", observe("close", registry.close))
+    scope = {"container_ref": "git:example.test/callbacks-東京"}
+    runtime = "claude-code" if phase in {"register", "close"} else "codex"
+    registration = {
+        "runtime": "claude-code", "session_ref": "target", **scope,
+        "socket_path": "/tmp/callback.sock", "token": "callback-token",
+        "idle": True, "intent_id": "callback-intent",
+    }
+
+    async def exercise():
+        nonlocal armed
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            for role in ("sender", "target"):
+                response = await client.post("/relay/turn", json={
+                    "runtime": runtime, "session_ref": role, **scope,
+                })
+                assert response.status_code == 200
+            message = await client.post("/relay/messages", json={
+                "sender_runtime": runtime, "sender_session_ref": "sender",
+                "recipient": f"{runtime}:target",
+                "payload": "callback payload 東京", **scope,
+            })
+            assert message.status_code == 200
+            message_id = message.json()["message_id"]
+            delivery_id = message.json()["deliveries"][0]["delivery_id"]
+            turn_payload = {"runtime": runtime, "session_ref": "target", "max_chars": 1000, **scope}
+            if phase in {"snapshot", "turn", "admission"}:
+                path, payload = "/relay/turn", {**turn_payload, "wake_delivery_id": delivery_id}
+                expected_events = ["snapshot", "turn", "admission"]
+            elif phase == "send":
+                path, payload = "/relay/messages", {
+                    "sender_runtime": runtime, "sender_session_ref": "sender",
+                    "recipient": f"{runtime}:target",
+                    "payload": "second payload", **scope,
+                }
+                expected_events = ["send"]
+            elif phase in {"register", "close"}:
+                if phase == "close":
+                    assert (await client.post("/internal/claude-wake/register", json=registration)).status_code == 204
+                path = f"/internal/claude-wake/{phase}"
+                payload = registration if phase == "register" else {
+                    "runtime": runtime, "session_ref": "target", **scope,
+                    "intent_id": "callback-intent",
+                }
+                expected_events = [phase]
+            else:
+                claimed = await client.post("/relay/turn", json=turn_payload)
+                assert claimed.status_code == 200
+                delivery = claimed.json()["deliveries"][0]
+                payload = {"delivery_id": delivery_id, **scope}
+                if phase == "ack":
+                    path = "/relay/deliveries/ack"
+                    payload["claim_token"] = delivery["claim_token"]
+                else:
+                    payload["receipt"] = delivery["receipt"]
+                    path = "/relay/deliveries/mcp-ack"
+                expected_events = ["ack"]
+                if phase.startswith("reply_"):
+                    path = "/relay/replies"
+                    payload["payload"] = "reply 東京"
+                    expected_events = ["ack", "send"]
+            armed = True
+            request = asyncio.create_task(client.post(path, json=payload))
+            try:
+                assert await asyncio.to_thread(entered.wait, 5)
+                assert len(callback_threads) == 1
+                assert callback_threads[0] != loop_thread
+                health = await asyncio.wait_for(client.get("/health"), 5)
+                assert health.status_code in {200, 503}
+                assert not request.done()
+                assert not app.state._wait_for_operations(0)
+                # Persistence precedes callbacks; snapshot precedes the exact claim.
+                persisted_message_id = sent_message_ids[0] if phase == "send" else message_id
+                state = await client.get(f"/relay/messages/{persisted_message_id}", params=scope)
+                assert state.status_code == 200
+                if phase == "send":
+                    assert persisted_message_id != message_id
+                    assert state.json()["payload"] == payload["payload"]
+                expected_state = (
+                    "pending" if phase in {"snapshot", "send", "register", "close"}
+                    else "claimed" if phase in {"turn", "admission"} else "delivered"
+                )
+                assert state.json()["deliveries"][0]["state"] == expected_state
+            finally:
+                release.set()
+                response = await asyncio.wait_for(request, 5)
+                armed = False
+            assert gate_errors == []
+            assert events == expected_events
+            assert app.state._wait_for_operations(0)
+            expected_status = 200
+            if phase in {"register", "close"}:
+                expected_status = 204 if outcome == "success" else (
+                    409 if phase == "register" and outcome == "refused" else 400
+                )
+            assert response.status_code == expected_status, response.text
+            if phase == "send" or phase.startswith("reply_"):
+                assert sent_message_ids == [response.json()["message_id"]]
+                sent = await client.get(f"/relay/messages/{sent_message_ids[0]}", params=scope)
+                assert sent.status_code == 200
+                assert sent.json()["payload"] == payload["payload"]
+                assert sent.json()["deliveries"][0]["state"] == "pending"
+                if phase.startswith("reply_"):
+                    assert response.json()["in_reply_to"] == message_id
+                    assert sent.json()["in_reply_to"] == message_id
+                    assert sent.json()["deliveries"][0]["recipient_session_ref"] == "sender"
+            if expected_status == 400:
+                assert response.json()["detail"] == "invalid registration"
+            elif expected_status == 409:
+                assert response.json()["detail"] == "registration rejected"
+            if phase in {"snapshot", "turn", "admission"}:
+                claimed = response.json()["deliveries"]
+                assert len(claimed) == 1
+                assert claimed[0]["delivery_id"] == delivery_id
+                ack = await client.post("/relay/deliveries/ack", json={
+                    "delivery_id": delivery_id, "claim_token": claimed[0]["claim_token"], **scope,
+                })
+                assert ack.status_code == 200
+            if phase not in {"send", "register", "close"}:
+                state = await client.get(f"/relay/messages/{message_id}", params=scope)
+                assert state.status_code == 200
+                assert state.json()["deliveries"][0]["state"] == "delivered"
+            if phase in {"register", "close"}:
+                listed = await client.get("/relay/sessions", params=scope)
+                assert listed.status_code == 200
+                target = next(row for row in listed.json() if row["session_ref"] == "target")
+                registered = (phase == "register" and outcome == "success") or (phase == "close" and outcome != "success")
+                assert target["activation"]["availability"] == ("ready" if registered else "unknown")
+
+    try:
+        asyncio.run(exercise())
+    finally:
+        release.set()
+        try:
+            app.state.pallium_service.close()
+        finally:
+            app.state.pallium_service._storage.close()
+
+
+@pytest.mark.parametrize("runtime", ["claude-code", "opencode"])
+def test_non_codex_http_activation_does_not_read_codex_authority(
+    tmp_path, monkeypatch, runtime,
+) -> None:
+    monkeypatch.setattr(
+        "app.mcp.server.create_server",
+        lambda **_: (_ for _ in ()).throw(ImportError()),
+    )
+    monkeypatch.setattr("app.dependencies.schedule_claude_relay_wake", lambda *_, **__: None)
+    app = create_app(AppConfig(
+        storage_backend="sqlite",
+        sqlite_url=f"sqlite:///{tmp_path / 'main.db'}",
+        relay_sqlite_url=f"sqlite:///{tmp_path / 'relay.db'}",
+        default_use_case="demo_agent_memory",
+        semantic_packages=DEMO_SEMANTIC_PACKAGES,
+        vector_index=VectorIndexConfig(enabled=False),
+    ))
+    reads = []
+
+    def unexpected_authority_read(_registry):
+        reads.append("usable")
+        raise AssertionError("non-Codex projection consulted Codex authority")
+
+    scope = {"container_ref": "git:example.test/runtime-isolation"}
+
+    async def exercise():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            for session in ("sender", "target"):
+                response = await client.post("/relay/turn", json={
+                    "runtime": runtime, "session_ref": session, **scope,
+                })
+                assert response.status_code == 200
+            message = await client.post("/relay/messages", json={
+                "sender_runtime": runtime, "sender_session_ref": "sender",
+                "recipient": f"{runtime}:target", "payload": "runtime isolation", **scope,
+            })
+            assert message.status_code == 200
+            monkeypatch.setattr(
+                type(app.state.codex_wake_registry), "usable", property(unexpected_authority_read),
+            )
+            sessions = await client.get("/relay/sessions", params=scope)
+            assert sessions.status_code == 200
+            assert len(sessions.json()) == 2
+            assert all(row["activation"]["runtime"] == runtime for row in sessions.json())
+            status = await client.get(f"/relay/messages/{message.json()['message_id']}", params=scope)
+            assert status.status_code == 200
+            assert status.json()["deliveries"][0]["activation"]["runtime"] == runtime
+            assert reads == []
+
+    try:
+        asyncio.run(exercise())
+    finally:
+        try:
+            app.state.pallium_service.close()
+        finally:
+            app.state.pallium_service._storage.close()
 
 
 def test_relay_and_diagnostics_survive_saturated_memory_worker_capacity(tmp_path, monkeypatch) -> None:
