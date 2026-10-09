@@ -8,9 +8,11 @@ one container even when Claude Code's tracked cwd drifts mid-session
 from __future__ import annotations
 
 import json
+import builtins
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -21,11 +23,38 @@ import common  # noqa: E402
 
 
 @pytest.fixture
-def tmp_state(tmp_path, monkeypatch):
+def tmp_state(tmp_path, monkeypatch, request):
     """Redirect STATE_DIR + SESSIONS_DIR to a tmp path for isolation."""
     monkeypatch.setattr(common, "STATE_DIR", tmp_path)
     monkeypatch.setattr(common, "SESSIONS_DIR", tmp_path / "sessions")
     monkeypatch.setattr(common, "_HOOK_DEADLINE", None)
+    events = []
+
+    def observe(name, operation):
+        def call(*args, **kwargs):
+            started = time.monotonic()
+            if len(events) < 64:
+                events.append((name, "entered", started))
+            try:
+                result = operation(*args, **kwargs)
+            except BaseException as error:
+                if len(events) < 64:
+                    events.append((name, "error", type(error).__name__, str(error)[:256]))
+                request.node.add_report_section("call", "pin stages", repr(events))
+                raise
+            if len(events) < 64:
+                value = result if result is None or type(result) is bool else type(result).__name__
+                events.append((name, "returned", value, time.monotonic() - started))
+            if name in ("pin_container", "_read_session_state"):
+                request.node.add_report_section("call", "pin stages", repr(events))
+            return result
+        return call
+
+    for name in ("pin_container", "_acquire_session_lock", "_update_session_state", "_read_session_state"):
+        monkeypatch.setattr(common, name, observe(name, getattr(common, name)))
+    private_os = SimpleNamespace(**vars(common.os))
+    private_os.replace = observe("replace", private_os.replace)
+    monkeypatch.setattr(common, "os", private_os)
     return tmp_path
 
 
@@ -50,6 +79,33 @@ class TestPinAndGet:
         assert json.loads(pin_path.read_text(encoding="utf-8"))["container_ref"] == "git:github.com/foo/bar"
         assert common.get_pinned_container("session-abc") == "git:github.com/foo/bar"
 
+    def test_lock_setup_exhaustion_refuses_pin_before_native_acquisition(self, tmp_state, monkeypatch):
+        pin_path = tmp_state / "sessions" / "session-abc.json"
+        original_time = common.time
+        original_open = getattr(common, "open", builtins.open)
+        now = [0.0]
+        private_time = SimpleNamespace(**vars(original_time))
+        private_time.monotonic = lambda: now[0]
+
+        def open_after_setup(*args, **kwargs):
+            handle = original_open(*args, **kwargs)
+            if now[0] == 0.0:
+                now[0] = 0.101
+            return handle
+
+        monkeypatch.setattr(common, "time", private_time)
+        monkeypatch.setattr(common, "open", open_after_setup, raising=False)
+        assert common.pin_container("session-abc", "git:github.com/foo/bar") is False
+        assert (tmp_state / "sessions" / "session-abc.lock").read_bytes() == b"0"
+        assert not pin_path.exists()
+        assert common.get_pinned_container("session-abc") is None
+
+        monkeypatch.setattr(common, "time", original_time)
+        monkeypatch.setattr(common, "open", original_open)
+        assert common.pin_container("session-abc", "git:github.com/foo/bar") is True
+        assert json.loads(pin_path.read_text(encoding="utf-8"))["container_ref"] == "git:github.com/foo/bar"
+        assert common.get_pinned_container("session-abc") == "git:github.com/foo/bar"
+
     def test_get_missing_returns_none(self, tmp_state):
         assert common.get_pinned_container("never-pinned") is None
 
@@ -59,11 +115,11 @@ class TestPinAndGet:
 
     def test_pin_creates_sessions_dir(self, tmp_state):
         assert not (tmp_state / "sessions").exists()
-        common.pin_container("session-x", "path:abc:123")
+        assert common.pin_container("session-x", "path:abc:123") is True
         assert (tmp_state / "sessions").exists()
 
     def test_pinned_value_persists_across_calls(self, tmp_state):
-        common.pin_container("s1", "container-a")
+        assert common.pin_container("s1", "container-a") is True
         # Simulate process restart by calling fresh
         assert common.get_pinned_container("s1") == "container-a"
 
@@ -89,7 +145,7 @@ class TestPinValidation:
         "uuid-style-49c1ce36-1c25-4e18-adaa-2a5ee00a3ca1",
     ])
     def test_accepts_safe_session_id(self, tmp_state, good_id):
-        common.pin_container(good_id, "container-x")
+        assert common.pin_container(good_id, "container-x") is True
         assert common.get_pinned_container(good_id) == "container-x"
 
     def test_empty_container_ref_no_op(self, tmp_state):

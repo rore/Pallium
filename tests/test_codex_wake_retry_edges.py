@@ -385,7 +385,10 @@ def test_expired_claim_retry_still_obeys_target_claim_ack_and_custody_guards(
 
 
 def test_concurrent_expired_claim_recovery_spends_one_new_generation(http_wake, monkeypatch):
-    http, _, registry, _, desktop, send, _ = http_wake
+    import traceback
+    from tests import test_codex_retained_wake as wake_fixture
+
+    http, _, registry, _, desktop, send, workers = http_wake
     now = [datetime(2030, 9, 5, tzinfo=timezone.utc)]
     _freeze_clock(monkeypatch, now)
     first = send()
@@ -396,19 +399,47 @@ def test_concurrent_expired_claim_recovery_spends_one_new_generation(http_wake, 
     initial = registry.snapshot(first["recipient_endpoint_id"])
     now[0] += timedelta(seconds=60)
     barrier, errors = threading.Barrier(3), []
+    phases = {}
+    original_recovery = wake_fixture.recover_expired_relay_wakes
+
+    def observed_recovery(*args, **kwargs):
+        ident = threading.get_ident()
+        phases[ident] = "production recovery"
+        try:
+            return original_recovery(*args, **kwargs)
+        finally:
+            phases[ident] = "native worker joins"
+
+    monkeypatch.setattr(wake_fixture, "recover_expired_relay_wakes", observed_recovery)
+
+    def timeout_diagnostics():
+        frames = sys._current_frames()
+        targets = (*threads, *tuple(workers)[-8:])
+        return {
+            "phases": dict(phases), "errors": [repr(error)[:256] for error in errors],
+            "threads": [{
+                "name": target.name, "ident": target.ident, "alive": target.is_alive(),
+                "stack": traceback.format_stack(frames[target.ident], limit=12)
+                if target.ident in frames else [],
+            } for target in targets],
+        }
+
     def sweep():
+        phases[threading.get_ident()] = "start barrier"
         barrier.wait(timeout=2)
         try:
             recover(http_wake)
         except Exception as exc:
             errors.append(exc)
+        finally:
+            phases[threading.get_ident()] = "finished"
     threads = [threading.Thread(target=sweep) for _ in range(2)]
     for thread in threads:
         thread.start()
     barrier.wait(timeout=2)
     for thread in threads:
         thread.join(3)
-        assert not thread.is_alive()
+        assert not thread.is_alive(), timeout_diagnostics()
     assert errors == []
     assert len(desktop.owners) == 2
     assert registry.snapshot(first["recipient_endpoint_id"]).generation > initial.generation
