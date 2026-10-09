@@ -57,6 +57,20 @@ def _status(client, message_id: str, **scope):
     return client.get("/relay/messages/" + message_id, params={**SCOPE, **scope})
 
 
+def _reply_deliveries(message):
+    rows = []
+    for delivery in message["deliveries"]:
+        row = dict(delivery)
+        # SQLite reloads these UTC message dates without their timezone suffix.
+        for field in ("created_at", "expires_at"):
+            if row[field] is not None:
+                value = datetime.fromisoformat(row[field].replace("Z", "+00:00"))
+                row[field] = (value.replace(tzinfo=timezone.utc) if value.tzinfo is None
+                              else value.astimezone(timezone.utc))
+        rows.append(row)
+    return rows
+
+
 def _ack(client, delivery, token=None, **scope):
     return client.post(
         "/relay/deliveries/ack",
@@ -215,7 +229,26 @@ def test_reply_payload_boundaries_and_long_preview(client):
     ("provider-segment", " C:/short/ghp_aB3dE4fG5hI6jK7lM8nO9pQ0rS1tU2vW3xY4zXcVb", "ghp_aB3dE4fG5hI6jK7lM8nO9pQ0rS1tU2vW3xY4zXcVb"),
     ("assignment", "\npassword: C:/short/folder", "C:/short/folder"),
 ])
-def test_drive_directory_prose_redaction_send_reply_lifecycle(client, case, suffix, secret):
+def test_drive_directory_prose_redaction_send_reply_lifecycle(client, monkeypatch, case, suffix, secret):
+    from app import dependencies
+
+    service = client.app.state.pallium_service
+    workers = []
+    original_schedule = dependencies.schedule_claude_relay_wake
+
+    def capture_schedule(*args, **kwargs):
+        worker = original_schedule(*args, **kwargs)
+        if worker is not None:
+            workers.append(worker)
+        return worker
+
+    def settle_reply_writers():
+        for worker in workers:
+            worker.join(2)
+            assert not worker.is_alive(), "reply wake worker did not finish"
+        service._relay_trace_executor.submit(lambda: None).result(timeout=2)
+
+    monkeypatch.setattr(dependencies, "schedule_claude_relay_wake", capture_schedule)
     _turn(client, "claude-code", "sender")
     _turn(client, "codex", "target")
     path = "C:/Users/reader/.codex/worktrees/sample-project/workspace_run."
@@ -232,7 +265,13 @@ def test_drive_directory_prose_redaction_send_reply_lifecycle(client, case, suff
             replied = _reply(client, claimed["delivery_id"], raw)
             assert replied.status_code == 200, replied.text
             message = replied.json()
-            assert _reply(client, claimed["delivery_id"], raw).json()["message_id"] == message["message_id"]
+            # Separate identity qualification from the real diagnostic writers.
+            settle_reply_writers()
+            duplicate_reply = _reply(client, claimed["delivery_id"], raw)
+            assert duplicate_reply.status_code == 200, duplicate_reply.text
+            assert duplicate_reply.json()["message_id"] == message["message_id"]
+            assert _reply_deliveries(duplicate_reply.json()) == _reply_deliveries(message)
+            settle_reply_writers()
         stored = message["payload"]
         assert message["redacted"] is (secret is not None)
         if secret is None:
@@ -261,6 +300,103 @@ def test_drive_directory_prose_redaction_send_reply_lifecycle(client, case, suff
         assert claimed["payload"] == stored
         assert _ack(client, claimed).status_code == 200
         assert _status(client, message["message_id"]).json()["deliveries"][0]["state"] == "delivered"
+
+
+def test_duplicate_reply_contends_with_prepared_trace_then_keeps_identity(client, monkeypatch):
+    import sqlite3
+    import threading
+
+    from sqlalchemy import event
+    from app import dependencies
+
+    _turn(client, "claude-code", "sender")
+    _turn(client, "codex", "target")
+    parent = _send(client, "claude-code", "sender", "codex:target", "parent")
+    assert parent.status_code == 200, parent.text
+    claimed = _turn(client, "codex", "target")["deliveries"][0]
+    assert _ack(client, claimed).status_code == 200
+    reply_id = "relay-reply-" + hashlib.sha256(claimed["delivery_id"].encode()).hexdigest()
+    service = client.app.state.pallium_service
+    engine = service._storage._relay_engine
+    entered, release = threading.Event(), threading.Event()
+    phase, acquisition_errors, workers = {}, [], []
+    original_schedule = dependencies.schedule_claude_relay_wake
+
+    def capture_schedule(*args, **kwargs):
+        worker = original_schedule(*args, **kwargs)
+        if worker is not None:
+            workers.append(worker)
+        return worker
+
+    def hold_prepared(connection, cursor, statement, parameters, context, executemany):
+        if not statement.lstrip().upper().startswith("INSERT INTO RELAY_DELIVERY_TRACE"):
+            return
+        values = context.compiled_parameters[0]
+        if values.get("message_id") != reply_id or values.get("stage") != "prepared":
+            return
+        phase.update(
+            stage=values["stage"], delivery_id=values["delivery_id"],
+            thread_name=threading.current_thread().name,
+            thread_ident=threading.get_ident(),
+            native_transaction=connection.connection.driver_connection.in_transaction,
+        )
+        entered.set()
+        phase["released"] = release.wait(2)
+
+    def observe_acquisition(context):
+        if context.statement == "BEGIN IMMEDIATE":
+            original = context.original_exception
+            acquisition_errors.append({
+                "code": getattr(original, "sqlite_errorcode", None),
+                "name": getattr(original, "sqlite_errorname", None),
+            })
+
+    monkeypatch.setattr(dependencies, "schedule_claude_relay_wake", capture_schedule)
+    event.listen(engine, "after_cursor_execute", hold_prepared)
+    event.listen(engine, "handle_error", observe_acquisition)
+    try:
+        first = _reply(client, claimed["delivery_id"], "handled once")
+        assert first.status_code == 200, first.text
+        assert first.json()["message_id"] == reply_id
+        assert entered.wait(2), phase
+        busy = _reply(client, claimed["delivery_id"], "handled once")
+        assert busy.status_code == 503, (busy.status_code, busy.text, phase)
+        assert busy.json() == {"detail": {"code": "relay_busy", "retryable": True}}
+        assert busy.headers["Retry-After"] == "1"
+    finally:
+        release.set()
+        try:
+            for worker in workers:
+                worker.join(2)
+                assert not worker.is_alive(), (worker.name, phase)
+            service._relay_trace_executor.submit(lambda: None).result(timeout=2)
+        finally:
+            event.remove(engine, "after_cursor_execute", hold_prepared)
+            event.remove(engine, "handle_error", observe_acquisition)
+
+    assert phase["native_transaction"] is True and phase["released"] is True, phase
+    assert workers and phase["thread_ident"] != threading.get_ident(), phase
+    assert phase["delivery_id"] == first.json()["deliveries"][0]["delivery_id"], phase
+    assert phase["thread_name"].startswith("relay-trace"), phase
+    assert len(acquisition_errors) == 3, acquisition_errors
+    assert all(error == {"code": sqlite3.SQLITE_BUSY, "name": "SQLITE_BUSY"}
+               for error in acquisition_errors), acquisition_errors
+    retained = _status(client, reply_id)
+    assert retained.status_code == 200, retained.text
+    assert _reply_deliveries(retained.json()) == _reply_deliveries(first.json())
+    duplicate = _reply(client, claimed["delivery_id"], "handled once")
+    assert duplicate.status_code == 200, duplicate.text
+    assert duplicate.json()["message_id"] == reply_id
+    assert _reply_deliveries(duplicate.json()) == _reply_deliveries(first.json())
+    for worker in workers:
+        worker.join(2)
+        assert not worker.is_alive(), worker.name
+    service._relay_trace_executor.submit(lambda: None).result(timeout=2)
+    replies = _turn(client, "claude-code", "sender")["deliveries"]
+    assert len(replies) == 1 and replies[0]["message_id"] == reply_id, replies
+    assert _ack(client, replies[0]).status_code == 200
+    assert _status(client, reply_id).json()["deliveries"][0]["state"] == "delivered"
+    assert _status(client, parent.json()["message_id"]).json()["deliveries"][0]["state"] == "delivered"
 
 
 def test_scoped_codepoint_pages_reconstruct_redacted_message_body(client):
