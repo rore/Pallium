@@ -23,7 +23,7 @@ Whole-change validation -> scripts/test-plan.py --base origin/main and Agent Wor
 **Plan review:** Agent technical review: /root/retained_busy_plan_review at 3b9781eb, approved with clarification: typed unavailable/busy at both ready and register, resolved _finish and _restart_allowed before shared backoff, same proof/capability, and actual RetainedService admission plus pending HTTP delivery/hook progression rather than count-only evidence.
 **Approvals:** Not required at this risk level. User authorizes isolated fixes and manager delegation; live environment changes are not authorized.
 **Exceptions:** —
-**State:** Ready to implement
+**State:** Blocked
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -35,6 +35,8 @@ Plan checkpoint: independent reviewer approved retrying ready/register explicit 
 Implementation checkpoint: desired actual-MCP recovery failed in all four busy stage/count cases on unchanged production. Corrected HTTP diagnostics fixture (router-only app has no /status); both pending-delivery cases then failed specifically at replacement enrollment recovery. Production change extends the existing retry/backoff only to ready/register explicit busy after resolved disposal and unchanged proof. First GREEN passed 24 cases; one fixture checkpoint raced successful recovery, so the replacement becomes observable to the worker only after the initial HTTP never_registered witness. Bounded test-only delegation owns tests/test_codex_retained_wake.py; parent reviews and runs evidence.
 
 Verification checkpoint: strengthen busy to real _process custody-lock rejection (bounded helper thread), not a synthetic response. Fresh restart-order tests initially asserted custody after cleanup; moved those witnesses into the live exercise. Parent reviewed every delegated edit. No new runtime API, dependency, setting or guard weakening. Skill-feedback triggers from wrong local command paths and test fixture mistakes are agent-owned, not upstream skill defects; no report filed.
+
+Handoff checkpoint: component implementation and independent technical review complete at acbecc122cd53024e611c6a476a574db699ee689. State Blocked only on manager-owned combined full-suite/CI validation; no new human approval needed for this isolated scope. Manager accepted the sequence for integration with its concurrency work. Preserve this checkout for that concrete purpose; owner Pallium Manager, chat 01a0d7ce-83c6-77e2-90f7-d413894059e1. Next action: integrate commits 3b9781eb, 49685865, acbecc12 and this evidence-only handoff commit, recompute selector, run combined full validation once, and reconcile the owning roadmap under manager authority. No exact roadmap reference supplied to this worker; none invented.
 
 ## Evidence
 
@@ -48,6 +50,14 @@ Strengthened RED: replaced only _auto_reconnect inside the private pytest proces
 
 Affected serial run: test_codex_worker_reconnect.py, test_codex_retained_wake.py, test_codex_retained_continuity.py, test_codex_retained_connection_recovery.py, test_codex_mcp_desktop_bridge.py: 412 passed and 2 newly authored cleanup-witness failures in 108.21s, pallium-busy-741897e18eb24d2daa56c3c0a32d24c2/proof.log. After moving the witnesses before cleanup and strengthening real busy rejection, the 4 affected HTTP journeys passed in 4.20s, pallium-busy-d28624aa578e4f40ad4e682788764f90/proof.log. No production edits after the subsystem run; all other tests unchanged. No guard violations recorded. This is split focused evidence, not a single green full-suite run.
 
+All proof directories are under C:/Users/I347041/AppData/Local/Temp/. SHA256 proof.log hashes: MCP RED 07458469DB9D1EC8B8B848181D46BEA922B22E6C685B18014E3E1D017FB0A557; strengthened HTTP RED E2CE7C6CBB15E46862B439E5CF47B8E1915D1BFC9306237997D4EBFF2275AFDA; affected subsystem 8BB1F22232FC1EB0B8DAB1C23BFE24C185BC37123039EA457F20CB16696A5F9C; final changed HTTP GREEN 841888A9F5379FBE0278ECFF77C5375D2C74E7968EF4B175168CBD2F3C53FAFA.
+
+Local governance: actual import-linter 8 contracts kept, 0 broken; producer exit 0. Fresh Redline GRAY/watch advisory exit 1, no boundary/API/schema/security/config/protected-contract changes. Required Agent Workflow runtime adapter exit 0, clean. Initial attempts lacked generated boundary/Redline artifacts; generated them rather than weakening any gate.
+
 ## Result review
 
-Not yet performed. Full-suite, CI, PR/merge and installed-host acceptance remain open under manager ownership.
+Agent technical review: /root/retained_busy_plan_review, independent non-implementer; approved component handoff, no actionable findings.
+
+Reviewed revision: acbecc122cd53024e611c6a476a574db699ee689.
+
+Verification adequacy: split focused evidence adequate for component handoff, not full validation or merge. Reviewer inspected complete five-file diff, connected source and safety coverage, baseline HTTP RED, affected subsystem failures, and final four-case GREEN. Governance success parent-verified, not independently rerun. Native Desktop/pipe transport simulated. Manager owns integrated full suite, CI, PR/merge and separately approved installed-host qualification. Historical client-side cause remains unproved.
