@@ -4,6 +4,7 @@ import asyncio
 import os
 import threading
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -254,9 +255,16 @@ async def test_retry_limit_applies_only_to_typed_startup_unavailability(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_retry_deadline_and_shutdown_bound_startup_retries(monkeypatch):
+@pytest.mark.parametrize("termination", ["deadline", "shutdown"])
+async def test_retry_deadline_and_shutdown_bound_startup_retries(monkeypatch, termination):
     epochs, attempts = [1], []
     waiting = threading.Event()
+    workers, entered = [], []
+
+    class ObservedWorker(lifecycle.InventoryWorker):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            workers.append(self)
 
     class Native:
         def __init__(self, *args, retained, previous_manifest=None):
@@ -265,6 +273,7 @@ async def test_retry_deadline_and_shutdown_bound_startup_retries(monkeypatch):
             self.continuity = None
             self.unresolved = False
             if self.epoch > 1:
+                entered.append(time.monotonic())
                 attempts.append(previous_manifest)
                 waiting.set()
                 time.sleep(.01)
@@ -287,15 +296,21 @@ async def test_retry_deadline_and_shutdown_bound_startup_retries(monkeypatch):
     monkeypatch.setattr(lifecycle, "RECONNECT_WINDOW_SECONDS", .025)
     monkeypatch.setattr(lifecycle, "RECONNECT_INITIAL_BACKOFF_SECONDS", .01)
     monkeypatch.setattr(lifecycle, "RECONNECT_MAX_BACKOFF_SECONDS", .01)
+    monkeypatch.setattr(lifecycle, "InventoryWorker", ObservedWorker)
     server = _protocol_server(monkeypatch, Native)
 
     async def exercise(session):
         await _actual_status(session, "first")
         epochs[0] = 2
-        await asyncio.to_thread(waiting.wait, .5)
+        assert await asyncio.to_thread(waiting.wait, .5)
+        if termination == "deadline":
+            await asyncio.to_thread(workers[0]._thread.join, .5)
+            assert not workers[0]._thread.is_alive() and workers[0].stop_event.is_set()
 
     await _serve_protocol(server, exercise)
-    assert attempts == [{"epoch": 1}]
+    assert 1 <= len(attempts) <= 12
+    assert attempts == [{"epoch": 1}] * len(attempts)
+    assert all(value - entered[0] < .025 for value in entered)
 
 
 @pytest.mark.asyncio
@@ -594,14 +609,22 @@ def test_busy_recovery_rejects_changed_or_uncertain_candidate(monkeypatch, stage
         assert not worker._restart_allowed
 
 
-@pytest.mark.parametrize("bound", ["attempts", "window", "shutdown"])
+@pytest.mark.parametrize("bound", ["attempts", "window", "early-wake", "shutdown"])
 def test_busy_and_startup_recovery_share_finite_budget(monkeypatch, bound):
     worker = _automatic_recovery_worker(monkeypatch)
     attempts, disposed = [], []
     monkeypatch.setattr(lifecycle, "RECONNECT_MAX_ATTEMPTS", 3)
-    if bound == "window":
+    if bound in {"window", "early-wake"}:
+        clock, waits, entered = [0.0], [], []
+        real_monotonic = time.monotonic
+        monkeypatch.setattr(lifecycle, "time", SimpleNamespace(monotonic=lambda: clock[0]))
         monkeypatch.setattr(lifecycle, "RECONNECT_WINDOW_SECONDS", .02)
         monkeypatch.setattr(lifecycle, "RECONNECT_INITIAL_BACKOFF_SECONDS", .04)
+        def consume_budget(timeout):
+            waits.append(timeout)
+            clock[0] += timeout - .001 if bound == "early-wake" and len(waits) == 1 else timeout
+            return False
+        worker.stop_event.wait = consume_budget
     if bound == "shutdown":
         def stop_on_backoff(_timeout):
             worker.stop_event.set()
@@ -611,6 +634,8 @@ def test_busy_and_startup_recovery_share_finite_budget(monkeypatch, bound):
     class Native:
         def __init__(self, *args, previous_manifest, **kwargs):
             attempts.append(previous_manifest)
+            if bound in {"window", "early-wake"}:
+                entered.append(clock[0])
             self.continuity = None
             self.unresolved = False
             if bound == "attempts" and len(attempts) == 1:
@@ -627,11 +652,16 @@ def test_busy_and_startup_recovery_share_finite_budget(monkeypatch, bound):
 
     assert worker._auto_reconnect(Native, "original-capability",
         {"thread_ref": "actual-runtime", "turn_ref": "admitted"}, "8" * 64, {"epoch": 1}) is None
-    expected = 3 if bound == "attempts" else 1
+    expected = {"attempts": 3, "early-wake": 2}.get(bound, 1)
     assert attempts == [{"epoch": 1}] * expected
-    assert len(disposed) == (2 if bound == "attempts" else 1)
+    assert len(disposed) == (2 if bound == "attempts" else expected)
     assert worker._restart_allowed
     assert worker.stop_event.is_set() is (bound == "shutdown")
+    if bound in {"window", "early-wake"}:
+        assert waits == pytest.approx([.02, .001] if bound == "early-wake" else [.02])
+        assert entered == pytest.approx([0, .019] if bound == "early-wake" else [0])
+        assert all(value < .02 for value in entered) and clock[0] == pytest.approx(.02)
+        assert time.monotonic is real_monotonic
 
 
 @pytest.mark.asyncio
