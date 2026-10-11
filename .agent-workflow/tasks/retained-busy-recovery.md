@@ -32,9 +32,21 @@ Whole-change validation -> scripts/test-plan.py --base origin/main and Agent Wor
 
 Plan checkpoint: independent reviewer approved retrying ready/register explicit busy with resolved disposal and unchanged continuity, within the existing loop. HTTP regression must replace the fixture's pre-admitted service so it proves restored admission. No protected behavior-contract files change; the ordinary busy-stop test is intentionally replaced by the requested automatic recovery expectation. No API, schema, exports, config or callers need modification; _recover_if_gone is the sole production caller.
 
+Implementation checkpoint: desired actual-MCP recovery failed in all four busy stage/count cases on unchanged production. Corrected HTTP diagnostics fixture (router-only app has no /status); both pending-delivery cases then failed specifically at replacement enrollment recovery. Production change extends the existing retry/backoff only to ready/register explicit busy after resolved disposal and unchanged proof. First GREEN passed 24 cases; one fixture checkpoint raced successful recovery, so the replacement becomes observable to the worker only after the initial HTTP never_registered witness. Bounded test-only delegation owns tests/test_codex_retained_wake.py; parent reviews and runs evidence.
+
+Verification checkpoint: strengthen busy to real _process custody-lock rejection (bounded helper thread), not a synthetic response. Fresh restart-order tests initially asserted custody after cleanup; moved those witnesses into the live exercise. Parent reviewed every delegated edit. No new runtime API, dependency, setting or guard weakening. Skill-feedback triggers from wrong local command paths and test fixture mistakes are agent-owned, not upstream skill defects; no report filed.
+
 ## Evidence
 
 Pre-existing isolated baseline: 11 focused cases passed, native transport simulated. Not a failing reproduction and not installed recovery qualification.
+
+RED MCP: 4 failed in 4.99s, private evidence pallium-busy-8370788c20564b3daaf0085b5c4fd78b/proof.log. RED pending delivery: 2 failed in 7.81s at replacement enrollment, pallium-busy-ff033f062642440998a6b33b7ba0ff35/proof.log. Safety/budget baseline: 13 passed, 2 desired retry/backoff failures. First GREEN: 24 passed, 1 fixture ordering failure; not claimed as passing validation. Each run used private profiles/databases and existing network guard; no recorded violations.
+
+Whole-change selector chooses full lane, command python -m pytest tests/ -x -q. Manager must run full validation and required CI against the integrated revision; focused evidence alone does not satisfy those gates.
+
+Strengthened RED: replaced only _auto_reconnect inside the private pytest process with the baseline function from git show 6be22d77 (checkout unchanged); both real custody-lock pending-delivery journeys failed at replacement enrollment, 2 failed in 8.20s. Evidence: pallium-busy-a320e5b9970f449bb054ce8102214044/proof.log.
+
+Affected serial run: test_codex_worker_reconnect.py, test_codex_retained_wake.py, test_codex_retained_continuity.py, test_codex_retained_connection_recovery.py, test_codex_mcp_desktop_bridge.py: 412 passed and 2 newly authored cleanup-witness failures in 108.21s, pallium-busy-741897e18eb24d2daa56c3c0a32d24c2/proof.log. After moving the witnesses before cleanup and strengthening real busy rejection, the 4 affected HTTP journeys passed in 4.20s, pallium-busy-d28624aa578e4f40ad4e682788764f90/proof.log. No production edits after the subsystem run; all other tests unchanged. No guard violations recorded. This is split focused evidence, not a single green full-suite run.
 
 ## Result review
 

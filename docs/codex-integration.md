@@ -61,6 +61,13 @@ recovery. A wake that may already have been submitted stays fenced; reconnecting
 does not resend it. Legacy abandoned reservations still require their existing
 receipt or expiry reconciliation and can delay later messages.
 
+After a confirmed service exit, a previously accepted worker can re-register the
+same authenticated source. Explicit busy rejection during readiness or
+registration uses the existing bounded reconnect backoff, after resolved disposal;
+uncertain responses and changed identity or capability do not. This retries
+admission, not a message or tool call. First enrollment still requires an actual
+runtime request. Installed restart-recovery qualification remains open.
+
 New wake reservations start as `prepared`. Recovery can resume that exact
 generation after a restart, but either wake path must atomically change it to
 `uncertain` before submitting anything. Competing workers cannot submit the same

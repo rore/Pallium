@@ -2,6 +2,7 @@
 from contextlib import asynccontextmanager, contextmanager
 import asyncio
 import json
+import os
 from pathlib import Path
 import threading
 import time
@@ -1423,6 +1424,288 @@ async def test_fresh_runtime_request_reenrolls_after_service_epoch_change(monkey
                      ("connect", 2), ("register", {"thread_ref": "actual-runtime", "turn_ref": "fresh"})]
     assert disposed.is_set()
 
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("busy_stage", ["ready", "register"])
+async def test_accepted_mcp_worker_recovers_pending_http_wake_after_service_replacement(
+    client, monkeypatch, tmp_path, http_wake, capsys, busy_stage,
+):
+    from app.mcp import codex_desktop_bridge as lifecycle
+
+    http, relay, registry, template, _, send, wake_workers = http_wake
+    monkeypatch.setattr(bridge, "native_available", lambda: True)
+    monkeypatch.setattr(bridge, "retained_directory", lambda **_kwargs: tmp_path)
+    monkeypatch.setattr(lifecycle, "RECONNECT_IDLE_POLL_SECONDS", 0.01)
+    monkeypatch.setattr(lifecycle, "RECONNECT_INITIAL_BACKOFF_SECONDS", 0.001)
+    monkeypatch.setenv("PALLIUM_AGENT_REF", "codex")
+    monkeypatch.setenv("CODEX_APP_TOOLS_PIPE_PATH", r"\\.\pipe\desktop-private")
+    monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:19836")
+    monkeypatch.setenv("PALLIUM_CONTAINER_REF", SCOPE["container_ref"])
+
+    def fresh_service(source):
+        result = bridge.RetainedService(source.directory)
+        result.w, result.sid = source.w, source.sid
+        result.current, result.source = source.current, source.source
+        return result
+
+    original = fresh_service(template)
+    active = [original]
+    client.app.state.codex_wake_registry.retained_service = original
+    clients, actual_calls = [], []
+    re_registered = threading.Event()
+    busy_sent = set()
+
+    class Native:
+        def __init__(self, *_args, **_kwargs):
+            self.service = active[0]
+            self.continuity = None
+            self.sequence = 0
+            self.unresolved = False
+            self.disposals = 0
+            clients.append(self)
+
+        def _exchange(self, verb, metadata=None):
+            self.sequence += 1
+            request = {"version": 1, "verb": verb, "epoch": self.service.epoch,
+                       "sequence": self.sequence}
+            if verb == "register":
+                request.update(metadata, endpoint=os.environ["CODEX_APP_TOOLS_PIPE_PATH"],
+                               continuity=self.continuity)
+            try:
+                result = self.service._process(
+                    request, self.service.source, self.sequence - 1, float("inf"))
+            except bridge.ShadowUnavailable as exc:
+                if exc.category == "busy":
+                    return {"status": "unavailable", "reason": "busy"}
+                raise
+            if verb == "register" and result["status"] == "registered":
+                self.continuity = result["continuity"]
+                if self.service is not original:
+                    re_registered.set()
+            return {key: result[key] for key in ("status", "reason", "continuity") if key in result}
+
+        def _busy_once(self, verb, metadata=None):
+            locked, release, finished = threading.Event(), threading.Event(), threading.Event()
+            failures = []
+
+            def hold_lock():
+                with self.service._custody_lock:
+                    locked.set()
+                    if not release.wait(2):
+                        failures.append("custody lock was not released")
+                finished.set()
+
+            holder = threading.Thread(target=hold_lock, daemon=True)
+            holder.start()
+            try:
+                assert locked.wait(1), "test did not acquire the replacement custody lock"
+                return self._exchange(verb, metadata)
+            finally:
+                release.set()
+                holder.join(1)
+                assert finished.is_set() and not holder.is_alive() and not failures
+
+        def ready(self):
+            if self.service is not original and busy_stage == "ready" and self.service not in busy_sent:
+                busy_sent.add(self.service)
+                return self._busy_once("ready")
+            return self._exchange("ready")
+
+        def register(self, metadata):
+            if self.service is not original and busy_stage == "register" and self.service not in busy_sent:
+                busy_sent.add(self.service)
+                return self._busy_once("register", dict(metadata))
+            return self._exchange("register", dict(metadata))
+
+        def service_current(self):
+            return self.service is active[0]
+
+        def dispose(self):
+            self.disposals += 1
+
+    monkeypatch.setattr(bridge, "NativeInventoryClient", Native)
+
+    class Client:
+        def __init__(self, _ctx):
+            pass
+
+        async def relay_status(self, *args, **kwargs):
+            actual_calls.append((args, kwargs))
+            return {"payload": "", "deliveries": [], "payload_offset": 0,
+                    "payload_total_chars": 0, "content_truncated": False, "next_offset": None}
+
+    monkeypatch.setattr(mcp_server, "PalliumMcpClient", Client)
+    server = mcp_server.create_server(
+        lifespan=mcp_server._codex_retained_lifespan, codex_retained=True)
+    replacement = None
+
+    async def exercise(session):
+        result = await session.call_tool("pallium_relay_status", {"message_id": "pending"},
+            meta={"threadId": TARGET, "turnId": "accepted"})
+        assert not result.isError
+        assert len(clients) == 1 and len(actual_calls) == 1
+        assert original.enrollment_diagnostics()["accepted"]
+
+        # Leave one HTTP delivery pending on the accepted service before replacing its API.
+        registered_desktop = original.custody
+        assert registered_desktop is not None
+        registered_desktop.state = "working"
+        registry.retained_service = original
+        delivery = send()
+        pending = http.get("/relay/messages/retained-journey", params=SCOPE).json()["deliveries"][0]
+        assert pending["delivery_id"] == delivery["delivery_id"] and pending["state"] == "pending"
+        assert registered_desktop.owners == []
+
+        nonlocal replacement
+        replacement = fresh_service(original)
+        assert replacement.enrollment_diagnostics()["accepted"] is False
+        registry.retained_service = replacement
+        client.app.state.codex_wake_registry.retained_service = replacement
+        original._drop()
+        assert client.get("/status").json()["relay_wake"]["native_enrollment"]["state"] == "never_registered"
+        active[0] = replacement
+
+        assert await asyncio.to_thread(re_registered.wait, 3), "replacement enrollment did not recover"
+        assert replacement.enrollment_diagnostics()["accepted"]
+        assert client.get("/status").json()["relay_wake"]["native_enrollment"]["state"] == "registered"
+        assert len(actual_calls) == 1, "recovery required another MCP call"
+        assert any(client.service is replacement and client.disposals == 1 for client in clients)
+
+        desktop = replacement.custody
+        assert desktop is not None
+        events = []
+        hook = _hook_runner(http, monkeypatch, "notLoaded", events, tmp_path)
+        desktop.on_owner = lambda request: hook(request["params"]["arguments"]["prompt"])
+        recover((http, relay, registry, replacement, desktop, send, wake_workers))
+
+        delivered = http.get("/relay/messages/retained-journey", params=SCOPE).json()["deliveries"][0]
+        assert delivered["delivery_id"] == pending["delivery_id"] and delivered["state"] == "delivered"
+        assert [event[0] for event in events] == ["emit", "ack"]
+        assert "private-payload-東京" in json.loads(capsys.readouterr().out)[
+            "hookSpecificOutput"]["additionalContext"]
+        assert len(desktop.owners) == 1
+        recover((http, relay, registry, replacement, desktop, send, wake_workers))
+        assert len(desktop.owners) == 1 and [event[0] for event in events] == ["emit", "ack"]
+        assert len(actual_calls) == 1
+
+    try:
+        await _serve_protocol(server, exercise)
+    finally:
+        original._drop()
+        if replacement is not None:
+            replacement._drop()
+    capsys.readouterr()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("restart_order", ["service-before-mcp", "mcp-before-service"])
+async def test_fresh_mcp_request_enrolls_replacement_service_without_background_admission(
+    monkeypatch, tmp_path, retained, restart_order,
+):
+    from app.mcp import codex_desktop_bridge as lifecycle
+
+    template, _, _ = retained
+    monkeypatch.setattr(bridge, "native_available", lambda: True)
+    monkeypatch.setattr(bridge, "retained_directory", lambda **_kwargs: tmp_path)
+    monkeypatch.setenv("PALLIUM_AGENT_REF", "codex")
+    monkeypatch.setenv("CODEX_APP_TOOLS_PIPE_PATH", r"\\.\pipe\desktop-private")
+    monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:19836")
+    monkeypatch.setenv("PALLIUM_CONTAINER_REF", SCOPE["container_ref"])
+
+    def fresh_service(source):
+        result = bridge.RetainedService(source.directory)
+        result.w, result.sid = source.w, source.sid
+        result.current, result.source = source.current, source.source
+        return result
+
+    original, replacement = fresh_service(template), fresh_service(template)
+    active = [original]
+    clients, exchanges, actual_calls, workers = [], [], [], []
+    original_worker = lifecycle.InventoryWorker
+
+    class CapturingWorker(original_worker):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            workers.append(self)
+
+    monkeypatch.setattr(lifecycle, "InventoryWorker", CapturingWorker)
+
+    class Native:
+        def __init__(self, *_args, **_kwargs):
+            self.service = active[0]
+            self.continuity = None
+            self.sequence = 0
+            self.unresolved = False
+            self.disposals = 0
+            clients.append(self)
+
+        def _exchange(self, verb, metadata=None):
+            self.sequence += 1
+            request = {"version": 1, "verb": verb, "epoch": self.service.epoch,
+                       "sequence": self.sequence}
+            if verb == "register":
+                request.update(metadata, endpoint=os.environ["CODEX_APP_TOOLS_PIPE_PATH"],
+                               continuity=self.continuity)
+            result = self.service._process(
+                request, self.service.source, self.sequence - 1, float("inf"))
+            exchanges.append((verb, metadata))
+            if verb == "register" and result["status"] == "registered":
+                self.continuity = result["continuity"]
+            return {key: result[key] for key in ("status", "reason", "continuity") if key in result}
+
+        def ready(self):
+            return self._exchange("ready")
+
+        def register(self, metadata):
+            return self._exchange("register", dict(metadata))
+
+        def service_current(self):
+            return self.service is active[0]
+
+        def dispose(self):
+            self.disposals += 1
+
+    monkeypatch.setattr(bridge, "NativeInventoryClient", Native)
+
+    class Client:
+        def __init__(self, _ctx):
+            pass
+
+        async def relay_status(self, *args, **kwargs):
+            actual_calls.append((args, kwargs))
+            return {"payload": "", "deliveries": [], "payload_offset": 0,
+                    "payload_total_chars": 0, "content_truncated": False, "next_offset": None}
+
+    monkeypatch.setattr(mcp_server, "PalliumMcpClient", Client)
+    if restart_order == "service-before-mcp":
+        original._drop()
+        active[0] = replacement
+    server = mcp_server.create_server(
+        lifespan=mcp_server._codex_retained_lifespan, codex_retained=True)
+
+    async def exercise(session):
+        assert workers and clients == []
+        assert replacement.enrollment_diagnostics()["accepted"] is False
+        if restart_order == "mcp-before-service":
+            original._drop()
+            active[0] = replacement
+        assert clients == [], "a replacement service was enrolled before an actual MCP request"
+        result = await session.call_tool("pallium_relay_status", {"message_id": "fresh"},
+            meta={"threadId": TARGET, "turnId": "fresh-request"})
+        assert not result.isError
+        assert replacement.enrollment_diagnostics()["accepted"]
+        assert replacement.custody is not None
+
+    try:
+        await _serve_protocol(server, exercise)
+    finally:
+        original._drop()
+        replacement._drop()
+
+    assert len(clients) == 1 and clients[0].service is replacement
+    assert exchanges == [("ready", None), ("register", {
+        "thread_ref": TARGET, "turn_ref": "fresh-request"})]
+    assert len(actual_calls) == 1
 @pytest.mark.parametrize("fault", ["start", "stop", None])
 def test_retained_service_failure_keeps_existing_http_lifecycle_live(monkeypatch, request, caplog, fault):
     calls = []
