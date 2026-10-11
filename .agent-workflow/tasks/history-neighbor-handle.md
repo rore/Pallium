@@ -34,7 +34,7 @@ The existing bounded and authorized following window contains the next reference
 
 **Plan:**
 1. Invoke agent-workflow, establish this Work Record and classify the complete intended change before source edits; obtain clean-context technical plan review. Human approval of the narrow presented behavior is recorded below.
-2. Add optional next_source_item_id for the first following neighbor rejected by the existing content budget, after existing eligibility checks. Carry it outside content items through the HTTP response and MCP formatter; retain it within the existing serialized cap, including anchor continuation. No new endpoint, storage query, persistence schema or dependency. Keep normal content selection and evidence receipts unchanged. Document how to open it with existing parent_lookup_id and scope.
+2. Add optional next_source_item_id for the first following neighbor rejected by the existing content budget, after existing eligibility checks. Carry it outside content items through the HTTP response and MCP formatter; retain it within the existing serialized cap, including anchor continuation. If MCP packaging itself removes a following item, retain the earliest removed following handle rather than skipping to a later service handle. If mandatory metadata cannot fit, return a bounded error, never silently remove the handle. No new endpoint, storage query, persistence schema, audit role or dependency. Keep normal content selection and evidence receipts unchanged: the pointer alone is navigation metadata, not delivered content. Document how to open it with existing parent_lookup_id and scope.
 3. Add an anonymous red-before-green public-MCP regression using the demonstrated size class, then boundary/lifecycle cases. Target files: core/service.py, api/routes.py, api/schemas.py, app/mcp/server.py, tests/test_source_neighbor_handle_e2e.py, tests/test_mcp_server.py if needed, docs/session-history.md, and this Work Record. Reconcile roadmap prose only if needed; do not reopen the queued representation study or claim the older investigation passed.
 4. Run focused tests, affected subsystem tests, whole-change test-plan and required full non-slow lane. Independent non-implementer result review covers API/architecture, privacy and evidence accounting. Prepare PR evidence; separate human result review and current CI/checkpoints remain merge gates. No live rollout.
 
@@ -47,7 +47,7 @@ The existing bounded and authorized following window contains the next reference
 - When the implementation is complete, the system shall preserve accepted unrelated behavior -> affected tests, test-plan-selected checks, full non-slow suite, independent review; no downstream task-effect claim.
 
 **Plan review:**
-Pending clean-context technical review of the recorded plan and verification adequacy.
+Agent technical review: /root/neighbor_contract_review, 2026-10-11, base 6be22d77 and Work Record 82ddb441. Approved after clarifying serializer omissions and mandatory-handle cap behavior; clarification incorporated in step 2 before implementation. Reviewer inspected core, schema, HTTP, MCP and delivery consumers; High/Moderate and verification scope retained. No new audit role: a pointer is not message evidence.
 
 **Approvals:**
 Approved by user 2026-10-11: "ok, drive this"
@@ -56,12 +56,12 @@ Approval covers the presented next-message handle fix within existing limits and
 **Exceptions:**
 —
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Applicability and checkpoints
 
-Normal isolated branch/PR workflow: intended runtime/API paths are outside the documentation-only allowlist. No protected behavior-contract edit is planned. API change is additive; architecture change carries a transient authorized navigation reference, not a new memory model. Agent plan review is pending; no source edits yet.
+Normal isolated branch/PR workflow: intended runtime/API paths are outside the documentation-only allowlist. No protected behavior-contract edit is planned. API change is additive; architecture change carries a transient authorized navigation reference, not a new memory model. Technical plan review passed with the incorporated clarification; no source edits preceded review.
 
 ## Delivery boundaries
 
