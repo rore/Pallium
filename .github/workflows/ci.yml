@@ -140,7 +140,7 @@ jobs:
           }
 
       - name: Install dependencies
-        run: pip install -e ".[dev,vector]"
+        run: pip install -e ".[dev,vector,mcp]"
 
       - name: Run process-sensitive tests serially
         run: python -m pytest tests/test_service_launcher_lifecycle.py tests/test_service.py::test_windows_stop_verifier_executes_new_and_legacy_launcher_parsers -x -q -n 0 --durations=20
