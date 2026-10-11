@@ -140,7 +140,11 @@ finally:
         nonlocal fanout
         start, ready, stop_health = asyncio.Event(), asyncio.Event(), asyncio.Event()
         ready_count = 0
-        async with httpx.AsyncClient(base_url=base_url, timeout=30) as client:
+        # Health must not queue behind the journeys' client-side connection pool.
+        async with (
+            httpx.AsyncClient(base_url=base_url, timeout=30) as client,
+            httpx.AsyncClient(base_url=base_url, timeout=30) as health_client,
+        ):
             for runtime, session in [
                 ("opencode", "mixed-sender"),
                 *[("codex", f"mixed-target-{i}") for i in range(caller_count)],
@@ -219,7 +223,7 @@ finally:
                 while not stop_health.is_set():
                     began = time.perf_counter()
                     try:
-                        response = await client.get("/health")
+                        response = await health_client.get("/health")
                         health_samples.append({"seconds": time.perf_counter() - began,
                                                "status": response.status_code})
                     except Exception as error:
