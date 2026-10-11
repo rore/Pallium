@@ -19,6 +19,46 @@ TIMESTAMPED_CLEANER_LINE = re.compile(
 )
 
 
+def test_uvicorn_logging_owns_root_after_actual_mcp_construction() -> None:
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    # Isolate dictConfig and FastMCP's process-wide basicConfig from pytest.
+    script = """
+import logging
+import uvicorn
+from app.runtime_logging import RuntimeLogFormatter, build_uvicorn_log_config
+from app.mcp.server import create_server
+
+uvicorn.Config('app.main:app', factory=True,
+               log_config=build_uvicorn_log_config(component='api'))
+root = logging.getLogger()
+handlers = tuple(root.handlers)
+create_server()
+assert tuple(root.handlers) == handlers, root.handlers
+assert len(handlers) == 1, handlers
+assert type(handlers[0]) is logging.StreamHandler, handlers
+assert isinstance(handlers[0].formatter, RuntimeLogFormatter)
+logging.getLogger('api.routes').warning('logging-owner-unicode-\u05e9\u05dc\u05d5\u05dd')
+"""
+    result = subprocess.run(
+        [sys.executable, "-B", "-c", script],
+        cwd=Path(__file__).resolve().parents[1],
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+        capture_output=True, timeout=30,
+    )
+    stderr = result.stderr.decode("utf-8")
+    assert result.returncode == 0, stderr
+    marker = "logging-owner-unicode-\u05e9\u05dc\u05d5\u05dd"
+    assert stderr.count(marker) == 1, stderr
+    assert any(
+        re.fullmatch(r"\d{4}-\d{2}-\d{2}T.+ \[api\] " + marker, line)
+        for line in stderr.splitlines()
+    ), stderr
+
+
 @pytest.mark.parametrize("failed", [False, True])
 def test_startup_stage_logs_timing_without_exception_content(monkeypatch, caplog, failed):
     ticks = iter([10.0, 12.5])

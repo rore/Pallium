@@ -716,6 +716,7 @@ def build_router(
     claude_wake_registry: ClaudeWakeRegistry | None = None,
     codex_wake_registry: CodexWakeRegistry | None = None,
     relay_runner: Callable[[Callable[[], Any]], Awaitable[Any]] | None = None,
+    relay_codex_runner: Callable[[Callable[[], Any]], Awaitable[Any]] | None = None,
     diagnostic_runner: Callable[[Callable[[], Any]], Awaitable[Any]] | None = None,
 ):
     relay_service = None
@@ -746,17 +747,21 @@ def build_router(
         if not isinstance(delivery_id, str):
             return
 
-        registry.release_delivery(delivery_id)
-        release_codex_relay_wake(delivery_id, registry=codex_registry)
-
         endpoint_id = result.get("recipient_endpoint_id")
-        if not isinstance(endpoint_id, str):
+        live_scope = None
+        if isinstance(endpoint_id, str):
+            try:
+                live_scope = relay_service.session_scope_by_endpoint(endpoint_id)
+            except (RelayNotFoundError, RelayUnavailableError, ValueError):
+                pass
+        # Both sources are runtime-owned: the live endpoint or durable ACK row.
+        runtime = live_scope.get("runtime") if live_scope is not None else result.get("recipient_runtime")
+        if runtime == "claude-code" or runtime not in {"claude-code", "codex", "opencode"}:
+            registry.release_delivery(delivery_id)
+        if runtime == "codex" or runtime not in {"claude-code", "codex", "opencode"}:
+            release_codex_relay_wake(delivery_id, registry=codex_registry)
+        if live_scope is None:
             return
-        try:
-            live_scope = relay_service.session_scope_by_endpoint(endpoint_id)
-        except (RelayNotFoundError, RelayUnavailableError, ValueError):
-            return
-        runtime = live_scope.get("runtime")
         session_ref = live_scope.get("session_ref")
         container_ref = live_scope.get("container_ref")
         if not all(isinstance(value, str) and value for value in (
@@ -865,5 +870,6 @@ def build_router(
         relay_ack_callback=(_relay_ack_release if relay_service is not None else None),
         relay_activation_callback=(_relay_activation if relay_service is not None else None),
         relay_runner=relay_runner,
+        relay_codex_runner=relay_codex_runner,
         diagnostic_runner=diagnostic_runner,
     )

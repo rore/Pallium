@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import itertools
+import sys
 import threading
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import anyio
 import httpx
@@ -12,6 +15,413 @@ from app.config import AppConfig
 from app.main import create_app
 from storage.vector_index import VectorIndexConfig
 from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
+
+
+@pytest.mark.parametrize("runtime", ["codex", "claude-code", "opencode"])
+def test_ack_release_uses_durable_runtime_when_endpoint_scope_read_fails(
+    client, monkeypatch, runtime,
+) -> None:
+    from app import dependencies
+    from core.relay import RelayNotFoundError, RelayService
+
+    calls = []
+    registry = client.app.state.claude_wake_registry
+    original_claude_release = registry.release_delivery
+    original_codex_release = dependencies.release_codex_relay_wake
+
+    def claude_release(*args, **kwargs):
+        calls.append("claude-code")
+        return original_claude_release(*args, **kwargs)
+
+    def codex_release(*args, **kwargs):
+        calls.append("codex")
+        return original_codex_release(*args, **kwargs)
+
+    monkeypatch.setattr(registry, "release_delivery", claude_release)
+    monkeypatch.setattr(dependencies, "release_codex_relay_wake", codex_release)
+    monkeypatch.setattr(dependencies, "schedule_codex_relay_wake", lambda *_, **__: None)
+    monkeypatch.setattr(dependencies, "schedule_claude_relay_wake", lambda *_, **__: None)
+    scope = {"container_ref": "git:example.test/ack-scope-fallback"}
+    for session in ("sender", "target"):
+        response = client.post("/relay/turn", json={"runtime": runtime, "session_ref": session, **scope})
+        assert response.status_code == 200, response.text
+    sent = client.post("/relay/messages", json={
+        "sender_runtime": runtime, "sender_session_ref": "sender",
+        "recipient": f"{runtime}:target", "payload": "scope fallback 東京", **scope,
+    })
+    assert sent.status_code == 200, sent.text
+    claimed = client.post("/relay/turn", json={"runtime": runtime, "session_ref": "target", **scope})
+    assert claimed.status_code == 200, claimed.text
+    delivery, = claimed.json()["deliveries"]
+    original_scope = RelayService.session_scope_by_endpoint
+
+    def unavailable_scope(*_args, **_kwargs):
+        raise RelayNotFoundError("endpoint scope unavailable")
+
+    monkeypatch.setattr(RelayService, "session_scope_by_endpoint", unavailable_scope)
+    acknowledged = client.post("/relay/deliveries/ack", json={
+        "delivery_id": delivery["delivery_id"], "claim_token": delivery["claim_token"], **scope,
+    })
+    assert acknowledged.status_code == 200, acknowledged.text
+    assert acknowledged.json()["delivery_id"] == delivery["delivery_id"]
+    assert acknowledged.json()["state"] == "delivered"
+    assert calls == ([] if runtime == "opencode" else [runtime])
+    monkeypatch.setattr(RelayService, "session_scope_by_endpoint", original_scope)
+    readback = client.get(f"/relay/messages/{sent.json()['message_id']}", params=scope)
+    assert readback.status_code == 200, readback.text
+    retained, = readback.json()["deliveries"]
+    assert retained["delivery_id"] == delivery["delivery_id"]
+    assert retained["state"] == "delivered"
+    assert retained["attempts"] == 1
+
+
+@pytest.mark.parametrize("outcome", ["slow", "busy"])
+def test_relay_warning_sink_uses_tracked_worker_while_health_progresses(
+    tmp_path, monkeypatch, outcome,
+) -> None:
+    from api import routes
+    from core.errors import ImmediateTransactionBusyError
+    from core.relay import RelayService
+
+    entered, release = threading.Event(), threading.Event()
+    warnings = []
+    original_warning = routes.logger.warning
+    loop_thread = threading.get_ident()
+    monkeypatch.setattr(routes, "time", SimpleNamespace(**{
+        **vars(routes.time), "monotonic": itertools.count(step=0.2).__next__,
+    }))
+    monkeypatch.setattr("app.mcp.server.create_server", lambda **_: (_ for _ in ()).throw(ImportError()))
+    app = create_app(AppConfig(
+        storage_backend="sqlite", sqlite_url=f"sqlite:///{tmp_path / 'main.db'}",
+        relay_sqlite_url=f"sqlite:///{tmp_path / 'relay.db'}",
+        default_use_case="demo_agent_memory", semantic_packages=DEMO_SEMANTIC_PACKAGES,
+        vector_index=VectorIndexConfig(enabled=False),
+    ))
+
+    def warning(message, *args, **kwargs):
+        if args and args[0] == "message_trace":
+            warnings.append((threading.get_ident(), message, args))
+            entered.set()
+            if threading.get_ident() != loop_thread:
+                assert release.wait(5), "warning sink watchdog expired"
+        return original_warning(message, *args, **kwargs)
+
+    async def exercise():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            scope = {"container_ref": "git:example.test/log-sink"}
+            for session in ("sender", "target"):
+                response = await client.post("/relay/turn", json={"runtime": "opencode", "session_ref": session, **scope})
+                assert response.status_code == 200, response.text
+            sent = await client.post("/relay/messages", json={
+                "sender_runtime": "opencode", "sender_session_ref": "sender",
+                "recipient": "opencode:target", "payload": "logging 東京", **scope,
+            })
+            assert sent.status_code == 200, sent.text
+            if outcome == "busy":
+                def busy_trace(*_args, **_kwargs):
+                    raise ImmediateTransactionBusyError("writer busy")
+                monkeypatch.setattr(RelayService, "trace_message", busy_trace)
+            monkeypatch.setattr(routes.logger, "warning", warning)
+            request = asyncio.create_task(client.get(f"/relay/messages/{sent.json()['message_id']}/trace"))
+            try:
+                assert await asyncio.to_thread(entered.wait, 5)
+                assert warnings[0][0] != loop_thread
+                health = await asyncio.wait_for(client.get("/health"), 5)
+                assert health.status_code in {200, 503}
+                assert not request.done()
+                assert not app.state._wait_for_operations(0)
+            finally:
+                release.set()
+                response = await asyncio.wait_for(request, 5)
+            assert len(warnings) == 1
+            assert f"outcome={outcome}" in warnings[0][1]
+            if outcome == "busy":
+                assert response.status_code == 503, response.text
+                assert response.headers["Retry-After"] == "1"
+                assert response.json() == {"detail": {"code": "relay_busy", "retryable": True}}
+            else:
+                assert response.status_code == 200, response.text
+                assert response.json()["message_id"] == sent.json()["message_id"]
+            assert app.state._wait_for_operations(0)
+
+    try:
+        asyncio.run(exercise())
+    finally:
+        release.set()
+        try:
+            app.state.pallium_service.close()
+        finally:
+            app.state.pallium_service._storage.close()
+
+
+def test_independent_relay_operations_progress_with_all_codex_callbacks_waiting(
+    tmp_path, monkeypatch,
+) -> None:
+    from app import dependencies
+    from core.relay import RelayService
+
+    held, release, sends_persisted = (
+        threading.Event(), threading.Event(), threading.Event()
+    )
+    callback_threads, admissions, gate_errors, native_schedules, persisted = [], [], [], [], []
+    codex_requests = []
+    armed = False
+    original_router = dependencies.create_router
+
+    def observe_router(service, **kwargs):
+        callback = kwargs["relay_send_callback"]
+        codex_runner = kwargs.get("relay_codex_runner")
+        if codex_runner is not None:
+            async def observe_codex_runner(operation):
+                if armed:
+                    codex_requests.append(operation)
+                return await codex_runner(operation)
+            kwargs["relay_codex_runner"] = observe_codex_runner
+
+        def observe_send(result, scope):
+            if armed and result["deliveries"][0]["recipient_runtime"] == "codex":
+                callback_threads.append(threading.get_ident())
+            return callback(result, scope)
+
+        kwargs["relay_send_callback"] = observe_send
+        return original_router(service, **kwargs)
+
+    monkeypatch.setattr(dependencies, "create_router", observe_router)
+    # Keep durable reserve/reconcile intact; stop before the native worker starts.
+    monkeypatch.setattr(
+        "app.codex_wake._schedule_reserved_codex_relay_wake",
+        lambda reservation, *_args, **_kwargs: native_schedules.append(reservation),
+    )
+    monkeypatch.setattr(
+        "app.mcp.server.create_server",
+        lambda **_: (_ for _ in ()).throw(ImportError()),
+    )
+    for name in ("trace_message", "message_status", "turn", "send"):
+        original = getattr(RelayService, name)
+
+        def observe_entry(self, *args, _name=name, _original=original, **kwargs):
+            if armed and _name != "send":
+                admissions.append((_name, kwargs.get("message_id", kwargs.get("session_ref"))))
+            result = _original(self, *args, **kwargs)
+            if armed and _name == "send" and result["deliveries"][0]["recipient_runtime"] == "codex":
+                persisted.append(result["message_id"])
+                if len(persisted) == 4:
+                    sends_persisted.set()
+            return result
+
+        monkeypatch.setattr(RelayService, name, observe_entry)
+
+    app = create_app(AppConfig(
+        storage_backend="sqlite",
+        sqlite_url=f"sqlite:///{tmp_path / 'main.db'}",
+        relay_sqlite_url=f"sqlite:///{tmp_path / 'relay.db'}",
+        default_use_case="demo_agent_memory",
+        semantic_packages=DEMO_SEMANTIC_PACKAGES,
+        vector_index=VectorIndexConfig(enabled=False),
+    ))
+    scope = {"container_ref": "git:example.test/mixed-capacity"}
+    # These databases are freshly created under tmp_path; no prior owner exists.
+    assert app.state.codex_wake_registry.initialize(old_owner_drained=True)
+
+    def hold_registry():
+        with app.state.codex_wake_registry._lock:
+            held.set()
+            if not release.wait(15):
+                gate_errors.append("registry gate watchdog expired")
+
+    holder = threading.Thread(target=hold_registry, name="test-codex-registry-holder")
+
+    async def exercise():
+        nonlocal armed
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            for runtime, session in [
+                ("opencode", "sender"),
+                *[("codex", f"blocked-{i}") for i in range(4)],
+                *[("opencode", f"passive-{i}") for i in range(8)],
+                *[("opencode", f"ack-passive-{i}") for i in range(8)],
+            ]:
+                registered = await client.post("/relay/turn", json={
+                    "runtime": runtime, "session_ref": session, **scope,
+                })
+                assert registered.status_code == 200, registered.text
+            messages = []
+            for i in range(8):
+                sent = await client.post("/relay/messages", json={
+                    "sender_runtime": "opencode", "sender_session_ref": "sender",
+                    "recipient": f"opencode:passive-{i}", "payload": f"mixed 東京 {i}", **scope,
+                })
+                assert sent.status_code == 200, sent.text
+                messages.append(sent.json())
+
+            acknowledgments = []
+            for i in range(8):
+                sent = await client.post("/relay/messages", json={
+                    "sender_runtime": "opencode", "sender_session_ref": "sender",
+                    "recipient": f"opencode:ack-passive-{i}", "payload": f"ACK {i}", **scope,
+                })
+                assert sent.status_code == 200, sent.text
+                claimed = await client.post("/relay/turn", json={
+                    "runtime": "opencode", "session_ref": f"ack-passive-{i}", **scope,
+                })
+                assert claimed.status_code == 200, claimed.text
+                delivery, = claimed.json()["deliveries"]
+                assert delivery["delivery_id"] == sent.json()["deliveries"][0]["delivery_id"]
+                acknowledgments.append(delivery)
+
+            holder.start()
+            assert await asyncio.to_thread(held.wait, 5)
+            armed = True
+            sends = [asyncio.create_task(client.post("/relay/messages", json={
+                "sender_runtime": "opencode", "sender_session_ref": "sender",
+                "recipient": f"codex:blocked-{i}", "payload": f"blocked {i}", **scope,
+            })) for i in range(4)]
+            probes = []
+            ack_probes = []
+            progressed = False
+            evidence = {}
+            try:
+                assert await asyncio.to_thread(sends_persisted.wait, 5)
+                stacks = {}
+                deadline = asyncio.get_running_loop().time() + 5
+                while True:
+                    for ident in callback_threads:
+                        frame, stack = sys._current_frames().get(ident), []
+                        while frame is not None:
+                            stack.append((frame.f_code.co_name, frame.f_lineno))
+                            frame = frame.f_back
+                        stacks[ident] = stack[:12]
+                    if len(stacks) == 3 and len(codex_requests) == 4 and all(any(name == "dispatch_relay_wake" for name, _ in stack)
+                           for stack in stacks.values()):
+                        break
+                    if asyncio.get_running_loop().time() >= deadline:
+                        break
+                    await asyncio.sleep(0)
+                assert len(stacks) == 3 and len(codex_requests) == 4, (stacks, len(codex_requests))
+                assert all(any(name == "dispatch_relay_wake" for name, _ in stack)
+                           for stack in stacks.values()), stacks
+                for i, message in enumerate(messages):
+                    message_id = message["message_id"]
+                    probes.extend([
+                        asyncio.create_task(client.get(f"/relay/messages/{message_id}/trace")),
+                        asyncio.create_task(client.get(f"/relay/messages/{message_id}", params=scope)),
+                        asyncio.create_task(client.post("/relay/turn", json={
+                            "runtime": "opencode", "session_ref": f"passive-{i}",
+                            "max_chars": 1000, **scope,
+                        })),
+                    ])
+                for index, delivery in enumerate(acknowledgments):
+                    if index % 3 == 0:
+                        path, arguments = "/relay/deliveries/ack", {"claim_token": delivery["claim_token"]}
+                    elif index % 3 == 1:
+                        path, arguments = "/relay/deliveries/mcp-ack", {"receipt": delivery["receipt"]}
+                    else:
+                        path, arguments = "/relay/replies", {
+                            "receipt": delivery["receipt"], "payload": f"Reply 東京 {index}",
+                        }
+                    ack_probes.append(asyncio.create_task(client.post(path, json={
+                        "delivery_id": delivery["delivery_id"], **arguments, **scope,
+                    })))
+                health = await asyncio.wait_for(client.get("/health"), 5)
+                assert health.status_code in {200, 503}
+                combined = asyncio.gather(*probes, *ack_probes)
+                try:
+                    await asyncio.wait_for(asyncio.shield(combined), 5)
+                    progressed = True
+                except asyncio.TimeoutError:
+                    pass
+                evidence = {
+                    "callback_threads": callback_threads,
+                    "blocked_stacks": stacks,
+                    "storage_admissions_while_held": list(admissions),
+                    "completed_independent_requests": sum(task.done() for task in probes),
+                    "completed_independent_acks": sum(task.done() for task in ack_probes),
+                    "persisted_sends_waiting_for_callbacks": len(persisted),
+                    "codex_callbacks_inside": len(stacks),
+                    "codex_callbacks_queued_before_total_capacity": len(codex_requests) - len(stacks),
+                    "health_status": health.status_code,
+                    "native_schedules_while_held": len(native_schedules),
+                }
+            finally:
+                release.set()
+                await asyncio.to_thread(holder.join, 5)
+                assert not holder.is_alive()
+                send_results = await asyncio.wait_for(asyncio.gather(*sends), 5)
+                probe_results = await asyncio.wait_for(asyncio.gather(*probes), 5)
+                ack_results = await asyncio.wait_for(asyncio.gather(*ack_probes), 5)
+                armed = False
+            assert gate_errors == [], gate_errors
+            assert len(native_schedules) == 4
+            assert all(response.status_code == 200 for response in send_results), [
+                (response.status_code, response.text) for response in send_results
+            ]
+            assert all(response.status_code == 200 for response in probe_results), [
+                (response.status_code, response.text) for response in probe_results
+            ]
+            assert all(response.status_code == 200 for response in ack_results), [
+                (response.status_code, response.text) for response in ack_results
+            ]
+            replies = []
+            for index, (expected, acknowledged) in enumerate(zip(acknowledgments, ack_results)):
+                if index % 3 == 2:
+                    reply = acknowledged.json()
+                    assert reply["in_reply_to"] == expected["message_id"]
+                    assert reply["payload"] == f"Reply 東京 {index}"
+                    reply_delivery, = reply["deliveries"]
+                    assert reply_delivery["recipient_runtime"] == "opencode"
+                    assert reply_delivery["recipient_session_ref"] == "sender"
+                    assert reply_delivery["state"] == "pending"
+                    replies.append(reply)
+                else:
+                    assert acknowledged.json()["delivery_id"] == expected["delivery_id"]
+                    assert acknowledged.json()["state"] == "delivered"
+                state = await client.get(f"/relay/messages/{expected['message_id']}", params=scope)
+                assert state.status_code == 200, state.text
+                retained, = state.json()["deliveries"]
+                assert retained["delivery_id"] == expected["delivery_id"]
+                assert retained["state"] == "delivered"
+                assert retained["attempts"] == 1
+            sender_turn = await client.post("/relay/turn", json={
+                "runtime": "opencode", "session_ref": "sender", **scope,
+            })
+            assert sender_turn.status_code == 200, sender_turn.text
+            assert {delivery["delivery_id"] for delivery in sender_turn.json()["deliveries"]} == {
+                reply["deliveries"][0]["delivery_id"] for reply in replies
+            }
+            for delivery in sender_turn.json()["deliveries"]:
+                acknowledged = await client.post("/relay/deliveries/ack", json={
+                    "delivery_id": delivery["delivery_id"], "claim_token": delivery["claim_token"], **scope,
+                })
+                assert acknowledged.status_code == 200, acknowledged.text
+            for i, message in enumerate(messages):
+                trace, status, claimed = probe_results[i * 3:i * 3 + 3]
+                assert trace.json()["message_id"] == status.json()["message_id"] == message["message_id"]
+                delivery, = claimed.json()["deliveries"]
+                assert delivery["delivery_id"] == message["deliveries"][0]["delivery_id"]
+                assert delivery["attempts"] == 1
+                acknowledged = await client.post("/relay/deliveries/ack", json={
+                    "delivery_id": delivery["delivery_id"], "claim_token": delivery["claim_token"], **scope,
+                })
+                assert acknowledged.status_code == 200, acknowledged.text
+                readback = await client.get(f"/relay/messages/{message['message_id']}", params=scope)
+                assert readback.status_code == 200, readback.text
+                retained, = readback.json()["deliveries"]
+                assert retained["delivery_id"] == delivery["delivery_id"]
+                assert retained["state"] == "delivered"
+                assert retained["attempts"] == 1
+            assert app.state._wait_for_operations(0)
+            assert progressed, evidence
+
+    try:
+        asyncio.run(exercise())
+    finally:
+        release.set()
+        if holder.ident is not None:
+            holder.join(5)
+        try:
+            app.state.pallium_service.close()
+        finally:
+            app.state.pallium_service._storage.close()
 
 
 async def _start_operation_barrier(app):
@@ -50,6 +460,13 @@ def test_activation_projection_uses_tracked_relay_runner_after_admission(
         async def observed_runner(operation):
             runner_calls.append(operation)
             return await runner(operation)
+
+        codex_runner = kwargs.get("relay_codex_runner")
+        if codex_runner is not None:
+            async def observed_codex_runner(operation):
+                runner_calls.append(operation)
+                return await codex_runner(operation)
+            kwargs["relay_codex_runner"] = observed_codex_runner
 
         def observed_admission(*args):
             events.append("admission")
@@ -569,6 +986,17 @@ def test_relay_and_diagnostics_survive_saturated_memory_worker_capacity(tmp_path
         app.state.pallium_service._storage.close()
 
 def test_operation_tracking_covers_cancellation_and_failure_boundaries(tmp_path, monkeypatch) -> None:
+    from app import dependencies
+
+    captured_runners = {}
+    original_router = dependencies.create_router
+
+    def observe_router(service, **kwargs):
+        captured_runners["codex"] = kwargs["relay_codex_runner"]
+        captured_runners["ordinary"] = kwargs["relay_runner"]
+        return original_router(service, **kwargs)
+
+    monkeypatch.setattr(dependencies, "create_router", observe_router)
     monkeypatch.setattr(
         "app.mcp.server.create_server",
         lambda **_: (_ for _ in ()).throw(ImportError()),
@@ -667,6 +1095,70 @@ def test_operation_tracking_covers_cancellation_and_failure_boundaries(tmp_path,
             assert all(response.status_code == 200 for response in responses)
             assert await asyncio.wait_for(queued_barrier, 1)
             assert started_count == 4
+
+            native_release, three_native_started = threading.Event(), threading.Event()
+            native_calls = []
+
+            def block_codex_operation():
+                native_calls.append(threading.get_ident())
+                if len(native_calls) == 3:
+                    three_native_started.set()
+                assert native_release.wait(3)
+
+            active_native = [asyncio.create_task(captured_runners["codex"](block_codex_operation))
+                             for _ in range(3)]
+            queued_at_gate = asyncio.Event()
+
+            async def queue_codex_operation():
+                queued_at_gate.set()
+                return await captured_runners["codex"](lambda: native_calls.append("cancelled"))
+
+            try:
+                assert await asyncio.to_thread(three_native_started.wait, 1)
+                queued_native = asyncio.create_task(queue_codex_operation())
+                await asyncio.wait_for(queued_at_gate.wait(), 1)
+                queued_native.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await queued_native
+                native_barrier = await _start_operation_barrier(app)
+                await _assert_barrier_waiting(native_barrier)
+            finally:
+                native_release.set()
+                await asyncio.wait_for(asyncio.gather(*active_native), 3)
+            assert await asyncio.wait_for(native_barrier, 1)
+            assert len(native_calls) == 3
+            assert "cancelled" not in native_calls
+
+            native_release.clear()
+            three_native_started.clear()
+            native_calls.clear()
+            running_native = [asyncio.create_task(captured_runners["codex"](block_codex_operation))
+                              for _ in range(3)]
+            replacement_started = threading.Event()
+            replacement = None
+            try:
+                assert await asyncio.to_thread(three_native_started.wait, 1)
+                for task in running_native:
+                    task.cancel()
+                for task in running_native:
+                    with pytest.raises(asyncio.CancelledError):
+                        await task
+                replacement = asyncio.create_task(captured_runners["codex"](replacement_started.set))
+                # An ordinary operation can complete, while a fourth Codex worker cannot.
+                assert await asyncio.wait_for(captured_runners["ordinary"](lambda: "ordinary"), 1) == "ordinary"
+                await _assert_barrier_waiting(replacement)
+                assert not replacement_started.is_set()
+                assert len(native_calls) == 3
+                assert not app.state._wait_for_operations(0)
+                running_barrier = await _start_operation_barrier(app)
+                await _assert_barrier_waiting(running_barrier)
+            finally:
+                native_release.set()
+                if replacement is not None:
+                    await asyncio.wait_for(replacement, 3)
+                assert await asyncio.to_thread(app.state._wait_for_operations, 3)
+            assert replacement_started.is_set()
+            assert await asyncio.wait_for(running_barrier, 1)
 
             def fail_worker(**_kwargs):
                 raise RuntimeError("worker failed")

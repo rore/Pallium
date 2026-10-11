@@ -690,6 +690,7 @@ def create_router(
     relay_ack_callback: Callable[[dict[str, Any], dict[str, str]], None] | None = None,
     relay_activation_callback: Callable[[dict[str, Any]], dict[str, object]] | None = None,
     relay_runner: Callable[[Callable[[], Any]], Awaitable[Any]] | None = None,
+    relay_codex_runner: Callable[[Callable[[], Any]], Awaitable[Any]] | None = None,
     diagnostic_runner: Callable[[Callable[[], Any]], Awaitable[Any]] | None = None,
 ) -> APIRouter:
     router = APIRouter()
@@ -722,28 +723,51 @@ def create_router(
                 result[key] = _project_relay_activation(result[key])
         return result
 
+    def _has_codex_runtime(value: object) -> bool:
+        if isinstance(value, list):
+            return any(_has_codex_runtime(item) for item in value)
+        if not isinstance(value, dict):
+            return False
+        return (
+            value.get("runtime", value.get("recipient_runtime")) == "codex"
+            or any(_has_codex_runtime(value.get(key)) for key in ("session", "participants", "deliveries"))
+        )
+
     async def _with_relay_activation(value: object) -> object:
         if relay_activation_callback is None:
             return value
         return await _relay_call(
             "activation_projection", lambda: _project_relay_activation(value),
+            codex=_has_codex_runtime(value),
         )
 
-    async def _run_relay_operation(operation):
-        if relay_runner is not None:
-            return await relay_runner(operation)
+    async def _run_relay_operation(operation, *, codex=False):
+        runner = relay_codex_runner if codex and relay_codex_runner is not None else relay_runner
+        if runner is not None:
+            return await runner(operation)
         import anyio
 
         return await anyio.to_thread.run_sync(operation, abandon_on_cancel=False)
 
-    async def _relay_call(operation_name: str, operation):
+    async def _relay_call(operation_name: str, operation, *, codex=False):
         started = time.monotonic()
-        try:
-            result = await _run_relay_operation(operation)
+
+        def observed_operation():
+            try:
+                result = operation()
+            except ImmediateTransactionBusyError:
+                logger.warning(
+                    "relay operation=%s outcome=busy duration_ms=%d",
+                    operation_name, int((time.monotonic() - started) * 1000),
+                )
+                raise
             elapsed_ms = int((time.monotonic() - started) * 1000)
             if elapsed_ms >= 100:
                 logger.warning("relay operation=%s outcome=slow duration_ms=%d", operation_name, elapsed_ms)
             return result
+
+        try:
+            return await _run_relay_operation(observed_operation, codex=codex)
         except RelayNotFoundError as exc:
             raise HTTPException(status_code=404, detail="relay entity not found in the requested scope") from exc
         except RelayConflictError as exc:
@@ -754,11 +778,6 @@ def create_router(
         except RelayUnavailableError as exc:
             raise HTTPException(status_code=501, detail=str(exc)) from exc
         except ImmediateTransactionBusyError as exc:
-            logger.warning(
-                "relay operation=%s outcome=busy duration_ms=%d",
-                operation_name,
-                int((time.monotonic() - started) * 1000),
-            )
             raise HTTPException(
                 status_code=503,
                 detail={"code": "relay_busy", "retryable": True},
@@ -778,7 +797,7 @@ def create_router(
         reservation = None
         if request.wake_delivery_id is not None and relay_turn_snapshot_callback is not None:
             try:
-                reservation = await _run_relay_operation(lambda: relay_turn_snapshot_callback(request_data))
+                reservation = await _run_relay_operation(lambda: relay_turn_snapshot_callback(request_data), codex=request.runtime == "codex")
             except Exception:
                 logger.warning("Relay turn wake snapshot unavailable")
         if reservation is not None:
@@ -793,12 +812,12 @@ def create_router(
                     service_ms = int((time.monotonic() - service_started) * 1000)
             if relay_turn_callback is not None:
                 try:
-                    await _run_relay_operation(lambda: relay_turn_callback(request_data, result))
+                    await _run_relay_operation(lambda: relay_turn_callback(request_data, result), codex=request.runtime == "codex")
                 except Exception:
                     logger.exception("Relay turn callback failed after admission")
             if relay_turn_admission_callback is not None:
                 try:
-                    await _run_relay_operation(lambda: relay_turn_admission_callback(request_data, result, reservation))
+                    await _run_relay_operation(lambda: relay_turn_admission_callback(request_data, result, reservation), codex=request.runtime == "codex")
                 except Exception:
                     logger.exception("Relay turn admission callback failed after admission")
             projected = await _with_relay_activation(result)
@@ -932,7 +951,7 @@ def create_router(
             try:
                 await _run_relay_operation(lambda: relay_send_callback(result, {
                     "container_ref": request.container_ref,
-                }))
+                }), codex=_has_codex_runtime(result))
             except Exception:
                 logger.exception("Relay wake callback failed after persistence")
         return await _with_relay_activation(result)
@@ -949,14 +968,15 @@ def create_router(
                     {
                         "delivery_id": request.delivery_id,
                         "recipient_endpoint_id": result.get("sender_endpoint_id"),
+                        "recipient_runtime": result.get("sender_runtime"),
                     },
                     {"container_ref": request.container_ref},
-                ))
+                ), codex=result.get("sender_runtime") not in {"claude-code", "opencode"})
             except Exception:
                 logger.exception("Relay atomic reply ACK callback failed after persistence")
         if relay_send_callback is not None:
             try:
-                await _run_relay_operation(lambda: relay_send_callback(result, {"container_ref": request.container_ref}))
+                await _run_relay_operation(lambda: relay_send_callback(result, {"container_ref": request.container_ref}), codex=_has_codex_runtime(result))
             except Exception:
                 logger.exception("Relay wake callback failed after persistence")
         return await _with_relay_activation(result)
@@ -1003,7 +1023,7 @@ def create_router(
             try:
                 await _run_relay_operation(lambda: relay_ack_callback(result, {
                     "container_ref": request.container_ref,
-                }))
+                }), codex=result.get("recipient_runtime") not in {"claude-code", "opencode"})
             except Exception:
                 logger.exception("Relay ACK callback failed after persistence")
         return result
@@ -1013,7 +1033,7 @@ def create_router(
         result = await _relay_call("mcp_ack", lambda: _relay().ack_by_receipt(**request.model_dump()))
         if relay_ack_callback is not None:
             try:
-                await _run_relay_operation(lambda: relay_ack_callback(result, {"container_ref": request.container_ref}))
+                await _run_relay_operation(lambda: relay_ack_callback(result, {"container_ref": request.container_ref}), codex=result.get("recipient_runtime") not in {"claude-code", "opencode"})
             except Exception:
                 logger.exception("Relay MCP ACK callback failed after persistence")
         return result
