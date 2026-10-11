@@ -20,15 +20,17 @@ Fresh Desktop/MCP enrollment in both restart orders -> actual MCP request lifecy
 Identity, continuity, uncertainty and unresolved disposal exclusion -> reconnect/continuity existing cases and narrow busy rejection matrix.
 Bounded retries and shutdown without duplicate submission -> attempt/window/cancellation matrix and HTTP status/submission counts.
 Whole-change validation -> scripts/test-plan.py --base origin/main and Agent Workflow local check; manager owns full non-slow suite and required CI before merge.
-**Plan review:** Pending clean-context agent review; implementation not started.
+**Plan review:** Agent technical review: /root/retained_busy_plan_review at 3b9781eb, approved with clarification: typed unavailable/busy at both ready and register, resolved _finish and _restart_allowed before shared backoff, same proof/capability, and actual RetainedService admission plus pending HTTP delivery/hook progression rather than count-only evidence.
 **Approvals:** Not required at this risk level. User authorizes isolated fixes and manager delegation; live environment changes are not authorized.
 **Exceptions:** —
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
 
 2026-10-11: Isolated feat/retained-busy-recovery based on 6be22d77fc059d687563433f94b2523cc90686c0. Only target classes/functions: InventoryWorker._auto_reconnect and relevant reconnect/retained HTTP tests. No production or test edits before plan review. Blocked only on that technical checkpoint.
+
+Plan checkpoint: independent reviewer approved retrying ready/register explicit busy with resolved disposal and unchanged continuity, within the existing loop. HTTP regression must replace the fixture's pre-admitted service so it proves restored admission. No protected behavior-contract files change; the ordinary busy-stop test is intentionally replaced by the requested automatic recovery expectation. No API, schema, exports, config or callers need modification; _recover_if_gone is the sole production caller.
 
 ## Evidence
 
