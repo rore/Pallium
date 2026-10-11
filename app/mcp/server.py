@@ -1692,7 +1692,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None,
         visibility: str | None = None,
         thread_ref: str | None = None,
     ) -> str:
-        """Expand a raw hit around its anchor. Follow `next_offset` with the returned `content_revision` to continue oversized anchor content. Open `next_source_item_id` at offset zero for a following message omitted by the budget, keeping scope and `parent_lookup_id`; its text has not been delivered. Omitted `actor_ref` spans eligible actors; supplied is an exact metadata filter. Treat outdated `historical_updates` as historical; pass `parent_lookup_id` from search."""
+        """Expand a hit. Continue with `next_offset` + `content_revision`. Open `next_source_item_id` at offset 0 without that revision; it is not content. Keep scope and search `parent_lookup_id`. Omit `actor_ref` for eligible actors; supplied filters exactly. Treat outdated `historical_updates` as historical."""
         ctx = resolve_context(
             container_ref=container_ref,
             actor_ref=actor_ref,

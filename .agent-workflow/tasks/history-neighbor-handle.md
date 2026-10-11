@@ -81,6 +81,14 @@ The implementer added a caller-facing MCP→ASGI→service regression first; it 
 - The lead added a sixth public-MCP case forcing metadata-only omission at an 800-character cap. The service returns all five messages, MCP removes neighbors, and its earliest omitted handle opens successfully. That focused node passed. Its first test setup lacked a required finalized lookup parent; adding a real search fixed the fixture without changing runtime behavior.
 - The new pointer initially made the existing 400-character formatter case serialize to 401 characters. The fix conditionally omits optional `supported_memories: null` only when a handle-bearing response exceeds the cap. Existing fitting response behavior and all non-null opt-in handling remain intact; the independent reviewer approved this packing refinement.
 - Whole-change selector requires the full lane. Full non-slow suite is running against the implementation commit following this record update. No required failure is being treated as success.
+- First full invocation at `3677be01` stopped with 3 failures, 1728 passed, 2 skipped and 1 xfailed. All three were test-location artifacts: temporary paths inside the worktree picked up its Git identity/work reference, and the Relay fault harness correctly rejected a fake installation path containing `.codex/worktrees`. The exact recorded failures passed (`--lf --lfnf=none -q -n 0`: 3 passed) with a dedicated temporary directory outside any repository. No Relay/source/test changes were made for this. Full validation is being rerun with that corrected isolation.
+- Correctly isolated full validation at `3677be01` found the new tool description exceeded the existing 1300-character combined History-tool guidance ceiling (1 failed, 3178 passed, 2 skipped, 1 xfailed); Linux CI found the same failure. Shortened only the expansion description, preserving navigation, revision reset, scope/lineage, actor filtering and historical guidance. `tests/test_guidance_budget.py`: 11 passed. No ceiling or assertion was changed. Full validation must run again on the corrected revision.
+
+## Result review
+
+Agent technical review: /root/neighbor_contract_review, 2026-10-11.
+Reviewed revision: `3677be01` runtime, documentation and tests (the reviewed working content was committed unchanged).
+Verification adequacy: focused public MCP/HTTP lifecycle and metadata-only omission cases plus formatter boundary cases cover the narrow approved contract. Existing affected tests protect visibility, forgetting, continuation and delivery semantics. The reviewer found no blocking runtime, API, architecture or privacy findings; required full-suite and CI evidence remain pending. This is navigation capability, not downstream answer quality. Separate human result review has not occurred.
 
 ## Roadmap alignment
 
