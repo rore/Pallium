@@ -1733,7 +1733,10 @@ def create_router(
         defer_delivery: bool = False,
     ) -> SourceContextResponse:
         try:
-            anchor, neighbors, supported, echoed_lookup_id, delivery_attempt_id = service.get_source_context(
+            (
+                anchor, neighbors, supported, echoed_lookup_id,
+                delivery_attempt_id, next_source_item_id,
+            ) = service.get_source_context(
                 source_item_id,
                 container_ref=container_ref,
                 query_actor_ref=query_actor_ref,
@@ -1795,6 +1798,7 @@ def create_router(
             supported_memories=supported_out,
             parent_lookup_id=echoed_lookup_id,
             delivery_attempt_id=delivery_attempt_id,
+            next_source_item_id=next_source_item_id,
         )
 
     @router.post("/historical-access/{attempt_id}/delivery")

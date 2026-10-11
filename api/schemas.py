@@ -342,6 +342,8 @@ class SourceContextResponse(BaseModel):
     # exposed-source-ids audit; expansions are not lookups.
     parent_lookup_id: str | None = None
     delivery_attempt_id: str | None = None
+    # Navigation only: first eligible following message omitted by the budget.
+    next_source_item_id: str | None = None
 
 
 class HistoricalDeliveryItem(BaseModel):

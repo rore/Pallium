@@ -68,6 +68,17 @@ restart at offset zero. Offsets count Unicode code points; `next_offset: null` m
 terminal page. Requests above the MCP maximum report the effective 4,000-character cap.
 Every page refetches the source so forgetting and caller scope are enforced again.
 
+If a requested following message cannot fit, `next_source_item_id` preserves its
+opening path. Open that ID with `pallium_expand_source`, keeping the same caller
+scope and `parent_lookup_id`; reset `content_offset` to zero and omit the old
+anchor's `content_revision`. Finish any `has_more` pages of the current anchor
+first if you need its complete text. The handle is navigation metadata, not
+delivered message content. Opening it checks access and forgetting again.
+It covers only eligible messages in the requested bounded neighborhood, not the
+entire remaining thread. The handle counts toward the same response cap; if the
+required envelope cannot fit, expansion returns an error rather than silently
+losing the handle. This does not change which discussions search finds.
+
 ### Paging search results
 
 Both search tools accept `limit` from 1 through 50. Responses report `total_count`, zero-based `result_offset`, `next_offset`, `has_more`, `effective_max_chars`, and a `result_revision`. Continue with `next_offset` and the unchanged revision; nonzero offsets require it, and limits outside 1–50 are rejected. The revision binds the request and complete ordered candidate window. If that window or its visible representation changes, restart at offset zero. Paging does not change candidate membership, ordering, ranking, accessibility, visibility, redaction, or forgetting.

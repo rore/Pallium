@@ -66,3 +66,34 @@ Normal isolated branch/PR workflow: intended runtime/API paths are outside the d
 ## Delivery boundaries
 
 This is a new narrow correction from current main, separate from draft PR278. It does not establish complete recovery of the original historical question or resolve search discovery failures. No user environment or private evidence is changed.
+
+## Implementation
+
+Planned files: `core/service.py`, `api/routes.py`, `api/schemas.py`, `app/mcp/server.py`, `tests/test_source_neighbor_handle_e2e.py`, and `tests/test_mcp_server.py` only if formatter boundary coverage needs a focused unit case. The MCP client call path was inspected and already forwards its context scope and actor filter; no client signature change is planned. The root lead is handling the separately scoped `docs/session-history.md` guidance.
+
+The implementer added a caller-facing MCP→ASGI→service regression first; it failed because the returned payload lacked the requested following handle. The lead implemented the service/HTTP/MCP propagation, while the implementer completed only `tests/test_source_neighbor_handle_e2e.py`. Coverage now includes three-hop navigation, Unicode and redaction on refetch, receipt exclusion before fetching and inclusion after fetching, current actor/container/visibility/forgetting checks, missing targets, exact/over content boundaries, empty content, end-of-thread, zero sides, public/private filtering, and the 25-item side clamp. Formatter omission, tiny-cap, and continuation cases are covered by the lead's focused tests in `tests/test_mcp_server.py`.
+
+## Evidence
+
+- Red: `python -m pytest tests/test_source_neighbor_handle_e2e.py -q -n 0` failed at the missing `next_source_item_id` assertion after successful MCP search and expansion receipt finalization.
+- Green: `C:/Dev/rore/Pallium/.venv/Scripts/python.exe -m pytest tests/test_source_neighbor_handle_e2e.py -q -n 0 -p no:cacheprovider --basetemp=C:/Dev/rore/Pallium/.test-tmp-history-neighbor9` — 5 passed. The isolated `--basetemp` was needed because the managed worktree cannot write pytest cache/default temp paths under the sandbox.
+- Lead reports 83 formatter tests passed, including four new formatter tests, and 141 affected existing tests passed before the final error-wording change; lead owns remaining whole-change verification.
+- The lead added a sixth public-MCP case forcing metadata-only omission at an 800-character cap. The service returns all five messages, MCP removes neighbors, and its earliest omitted handle opens successfully. That focused node passed. Its first test setup lacked a required finalized lookup parent; adding a real search fixed the fixture without changing runtime behavior.
+- The new pointer initially made the existing 400-character formatter case serialize to 401 characters. The fix conditionally omits optional `supported_memories: null` only when a handle-bearing response exceeds the cap. Existing fitting response behavior and all non-null opt-in handling remain intact; the independent reviewer approved this packing refinement.
+- Whole-change selector requires the full lane. Full non-slow suite is running against the implementation commit following this record update. No required failure is being treated as success.
+
+## Roadmap alignment
+
+The completed `fix-session-history-evidence-access` and `improve-session-history-search-quality` items describe earlier shipped slices. This is a narrow follow-up bug correction, not a reopening or completion of the queued `investigate-history-navigation-and-on-demand-compression` study. Their existing delivery evidence is not evidence for this change. Existing drift: the completed evidence-access item's relationship paragraph still calls its now-completed umbrella open; that unrelated historical wording is not used to infer task status here. No roadmap state is changed.
+
+## Checkpoint: architecture-review
+
+What changes: carry one transient, authorized following-source ID through the existing expansion result. Why: content-budget omission otherwise destroys the only forward opening path. Contract: the private service tuple gains a sixth element and its sole production unpacking caller is updated; no persistence, ranking, import boundary or memory-model changes. Verification: public MCP navigation, lifecycle and receipts plus existing service/visibility tests.
+
+## Checkpoint: api-review
+
+Additive HTTP field `next_source_item_id` is optional; MCP includes it when present and counts it in the existing serialized cap. It is not evidence content and is excluded from content receipts. Opening it uses the existing tool and reapplies live gates. No endpoint or request parameter changes. Mandatory handle metadata that cannot fit returns a bounded error; an optional null supported-memory field may be elided under pressure. Separate human result review and PR checkpoints remain pending.
+
+## Skill feedback
+
+Trigger 5 dropped: initial missing reference paths were the lead's incorrect path guesses, not broken installed skill links. No upstream issue is warranted.
