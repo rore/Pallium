@@ -1268,6 +1268,137 @@ def test_codex_public_lifecycle_converges_across_checkouts_and_uninstall(
     assert json.loads(hooks_path.read_text(encoding="utf-8")) == after_uninstall
     assert 'trusted_hash = "sha256:owned"' in config_path.read_text(encoding="utf-8")
 
+def test_codex_readiness_public_reader_serializes_setup(monkeypatch, tmp_path):
+    from contextlib import contextmanager
+
+    old_script, new_script = str(tmp_path / "old.py"), str(tmp_path / "new.py")
+    codex_readiness.setup(python=sys.executable, script=old_script, changed=True, home=tmp_path)
+    assert codex_readiness.observe_execution(python=sys.executable, script=old_script, home=tmp_path)
+    marker = codex_readiness.marker_path(tmp_path)
+    original_open, original_lock = Path.open, codex_readiness._marker_lock
+    opened, release, writer_attempted = threading.Event(), threading.Event(), threading.Event()
+    reads, writes, published, errors = [], [], [], []
+
+    @contextmanager
+    def held_open(path, *args, **kwargs):
+        with original_open(path, *args, **kwargs) as handle:
+            opened.set()
+            if not release.wait(5):
+                errors.append("reader release watchdog expired")
+            yield handle
+
+    def observe_open(path, *args, **kwargs):
+        if path == marker and args == ("rb",) and threading.current_thread() is reader:
+            return held_open(path, *args, **kwargs)
+        return original_open(path, *args, **kwargs)
+
+    @contextmanager
+    def observe_lock(*args, **kwargs):
+        if threading.current_thread() is writer:
+            writer_attempted.set()
+        with original_lock(*args, **kwargs):
+            yield
+
+    def read():
+        try:
+            reads.append(codex_readiness.read(tmp_path))
+        except BaseException as error:
+            errors.append(error)
+
+    def write():
+        try:
+            writes.append(codex_readiness.reconcile_setup(
+                python=sys.executable, script=new_script, home=tmp_path,
+                install_definition=lambda: published.append("definition") or True,
+            ))
+        except BaseException as error:
+            errors.append(error)
+
+    reader, writer = threading.Thread(target=read), threading.Thread(target=write)
+    monkeypatch.setattr(Path, "open", observe_open)
+    monkeypatch.setattr(codex_readiness, "_marker_lock", observe_lock)
+    try:
+        reader.start()
+        assert opened.wait(5)
+        # Witness actual exclusion before starting the publisher, not scheduler delay.
+        with pytest.raises(TimeoutError):
+            with original_lock(tmp_path, wait_seconds=0):
+                pass
+        writer.start()
+        assert writer_attempted.wait(5)
+        assert not published and not writes and not errors
+    finally:
+        release.set()
+        reader.join(5)
+        if writer.ident is not None:
+            writer.join(5)
+    assert not reader.is_alive() and not writer.is_alive()
+    assert not errors, errors
+    assert reads[0]["state"] == "verified"
+    assert published == ["definition"] and writes[0][0] is True
+    assert writes[0][1]["state"] == "review_required"
+    assert codex_readiness.read(tmp_path)["state"] == "review_required"
+    assert codex_readiness.observe_execution(python=sys.executable, script=new_script, home=tmp_path)
+    assert codex_readiness.read(tmp_path)["state"] == "verified"
+
+
+def test_codex_readiness_public_read_refuses_writer_lock(monkeypatch, tmp_path):
+    script = str(tmp_path / "hook.py")
+    codex_readiness.setup(python=sys.executable, script=script, changed=True, home=tmp_path)
+    assert codex_readiness.observe_execution(python=sys.executable, script=script, home=tmp_path)
+    original_read = codex_readiness._read
+    with codex_readiness._marker_lock(tmp_path, wait_seconds=0):
+        with monkeypatch.context() as patch:
+            patch.setattr(codex_readiness, "_read", lambda _path: pytest.fail("busy marker opened"))
+            patch.setattr(codex_readiness, "time", SimpleNamespace(**vars(time)))
+            patch.setattr(codex_readiness.time, "sleep", lambda _seconds: pytest.fail("public read waited"))
+            assert codex_readiness.read(tmp_path) == {
+                "state": "unknown", "hook_trust": "unknown", "mcp_tool_exposure": "unknown",
+            }
+    assert codex_readiness._read is original_read
+    assert codex_readiness.read(tmp_path)["state"] == "verified"
+
+
+def test_codex_readiness_public_read_resolves_default_home_once(monkeypatch, tmp_path):
+    codex_readiness.setup(python=sys.executable, script=str(tmp_path / "hook.py"),
+                          changed=True, home=tmp_path)
+    calls = []
+
+    def home():
+        calls.append("home")
+        assert len(calls) == 1, "home was resolved again during the same read"
+        return tmp_path
+
+    monkeypatch.setattr(Path, "home", home)
+    assert codex_readiness.read()["state"] == "review_required"
+    assert calls == ["home"]
+
+
+@pytest.mark.parametrize("failure", ["missing", "malformed", "open", "lock"])
+def test_codex_readiness_public_read_uncertainty_is_unknown(monkeypatch, tmp_path, failure):
+    marker = codex_readiness.marker_path(tmp_path)
+    if failure != "missing":
+        codex_readiness.setup(python=sys.executable, script=str(tmp_path / "hook.py"),
+                              changed=True, home=tmp_path)
+    if failure == "malformed":
+        marker.write_text("{", encoding="utf-8")
+    elif failure in ("open", "lock"):
+        original_open = Path.open
+        blocked = marker if failure == "open" else marker.with_suffix(".lock")
+
+        def fail_open(path, *args, **kwargs):
+            if path == blocked:
+                raise PermissionError("controlled private read refusal")
+            return original_open(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "open", fail_open)
+    assert codex_readiness.read(tmp_path) == {
+        "state": "unknown", "hook_trust": "unknown", "mcp_tool_exposure": "unknown",
+    }
+    if failure == "missing":
+        assert not (tmp_path / ".pallium").exists()
+
+
 def test_codex_readiness_marker_transitions_and_stale_unicode_paths(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
