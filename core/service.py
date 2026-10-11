@@ -2535,7 +2535,7 @@ class PalliumService:
         parent_lookup_id: str | None = None,
         active_session_ref: str | None = None,
         defer_delivery: bool = False,
-    ) -> tuple[SourceItem, list[SourceItem], list | None, str | None, str | None]:
+    ) -> tuple[SourceItem, list[SourceItem], list | None, str | None, str | None, str | None]:
         """Bounded neighborhood of raw turns around an anchor source item.
 
         Mirrors ``get_memory_expand`` for visibility/redaction/forgotten/note
@@ -2551,7 +2551,9 @@ class PalliumService:
           ``is_visible``-checked against the CALLER scope + redacted (note
           carve-out). The anchor is always included and exempt from the size cap;
           neighbors fill nearest-first and the farthest are dropped once the
-          ``max_chars`` budget (measured after redaction) is exhausted.
+          ``max_chars`` budget (measured after redaction) is exhausted. The first
+          omitted following ID is returned separately for navigation, not as
+          delivered content.
         - Supported memories (reverse ``supported_by``) are returned only when
           ``include_supported_memories`` and each is ``is_visible``-filtered.
         - ``parent_lookup_id`` is carried onto a persisted "expansion" reuse
@@ -2606,6 +2608,7 @@ class PalliumService:
         anchor_out = _redact(anchor)
 
         neighbors: list[SourceItem] = []
+        next_source_item_id: str | None = None
         if anchor.thread_ref is not None and anchor.container_ref is not None and (before or after):
             preceding, following = self._storage.list_source_item_neighbors(
                 anchor.container_ref, anchor.thread_ref,
@@ -2658,6 +2661,8 @@ class PalliumService:
                         fi += 1
                         took = True
                     else:
+                        # A navigation reference is not delivered message content.
+                        next_source_item_id = c.id
                         fi = len(fol)
                 if not took:
                     break
@@ -2717,4 +2722,5 @@ class PalliumService:
             supported,
             parent_lookup_id,
             delivery_attempt_id if defer_delivery else None,
+            next_source_item_id,
         )
