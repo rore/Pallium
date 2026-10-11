@@ -56,7 +56,7 @@ Approval covers the presented next-message handle fix within existing limits and
 **Exceptions:**
 —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Applicability and checkpoints
@@ -83,12 +83,14 @@ The implementer added a caller-facing MCP→ASGI→service regression first; it 
 - Whole-change selector requires the full lane. Full non-slow suite is running against the implementation commit following this record update. No required failure is being treated as success.
 - First full invocation at `3677be01` stopped with 3 failures, 1728 passed, 2 skipped and 1 xfailed. All three were test-location artifacts: temporary paths inside the worktree picked up its Git identity/work reference, and the Relay fault harness correctly rejected a fake installation path containing `.codex/worktrees`. The exact recorded failures passed (`--lf --lfnf=none -q -n 0`: 3 passed) with a dedicated temporary directory outside any repository. No Relay/source/test changes were made for this. Full validation is being rerun with that corrected isolation.
 - Correctly isolated full validation at `3677be01` found the new tool description exceeded the existing 1300-character combined History-tool guidance ceiling (1 failed, 3178 passed, 2 skipped, 1 xfailed); Linux CI found the same failure. Shortened only the expansion description, preserving navigation, revision reset, scope/lineage, actor filtering and historical guidance. `tests/test_guidance_budget.py`: 11 passed. No ceiling or assertion was changed. Full validation must run again on the corrected revision.
+- Final local full non-slow run at `9c33e256`: `C:/Dev/rore/Pallium/.venv/Scripts/python.exe -m pytest tests/ -x -q --basetemp=C:/Users/I347041/AppData/Local/Temp/pallium-neighbor-20261011-full-final` — **6562 passed, 34 skipped, 2 xfailed**, 418.82 seconds on Windows/Python 3.13.14. This includes all six new caller-facing tests and the formatter/guidance regressions. Later changes to this record are evidence-only; tested application content is unchanged.
+- Delivery and CI evidence surface: [PR #310](https://github.com/rore/Pallium/pull/310). Current PR checks and review comments, not this static record, determine CI and checkpoint status. No merge or installation has occurred.
 
 ## Result review
 
 Agent technical review: /root/neighbor_contract_review, 2026-10-11.
-Reviewed revision: `3677be01` runtime, documentation and tests (the reviewed working content was committed unchanged).
-Verification adequacy: focused public MCP/HTTP lifecycle and metadata-only omission cases plus formatter boundary cases cover the narrow approved contract. Existing affected tests protect visibility, forgetting, continuation and delivery semantics. The reviewer found no blocking runtime, API, architecture or privacy findings; required full-suite and CI evidence remain pending. This is navigation capability, not downstream answer quality. Separate human result review has not occurred.
+Reviewed revision: `9c33e256`; the reviewer approved `3677be01` runtime, documentation and tests, then explicitly extended review to the shortened tool description at `9c33e256` without finding lost semantics.
+Verification adequacy: focused public MCP/HTTP lifecycle and metadata-only omission cases plus formatter boundary cases cover the narrow approved contract. Existing affected tests protect visibility, forgetting, continuation and delivery semantics. The reviewer found no blocking runtime, API, architecture or privacy findings, and the required local full suite passed. PR CI/checkpoint status remains live in PR #310. This is navigation capability, not downstream answer quality. Separate human result review has not occurred.
 
 ## Roadmap alignment
 
@@ -96,7 +98,7 @@ The completed `fix-session-history-evidence-access` and `improve-session-history
 
 ## Checkpoint: architecture-review
 
-What changes: carry one transient, authorized following-source ID through the existing expansion result. Why: content-budget omission otherwise destroys the only forward opening path. Contract: the private service tuple gains a sixth element and its sole production unpacking caller is updated; no persistence, ranking, import boundary or memory-model changes. Verification: public MCP navigation, lifecycle and receipts plus existing service/visibility tests.
+What changes: carry one transient, authorized following-source ID through the existing expansion result. Why: content-budget omission otherwise destroys the only forward opening path. Contract: the internal service tuple gains a sixth element and its sole production unpacking caller is updated; no persistence, ranking, import boundary or memory-model changes. Verification: public MCP navigation, lifecycle and receipts plus existing service/visibility tests.
 
 ## Checkpoint: api-review
 
