@@ -34,7 +34,7 @@
 
 **Exceptions:** None
 
-**State:** Ready to implement
+**State:** Planning — addressing independent review blockers; no production/test edits authorized by plan review yet.
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -48,3 +48,14 @@ Root supplied October9 startup19.748s: embedding10.083s includes HuggingFace mod
 ## Result review
 
 Pending implementation, isolated validation and independent nonimplementer review. No release claim.
+
+## Independent plan review revision
+
+2026-10-11: Initial plan returned for four blocking corrections. The immutable requirement baseline above is retained. Revised scope additionally includes core/service.py, core/vector_embed.py and core/rebuild_coordinator.py, with focused existing reconciliation/rebuild tests where needed. These additions expose truthful bounded bootstrap outcomes and worker settlement; they do not change background repair budgets, model policy or historical-backlog requirements. Root remains roadmap and live-environment owner. This revision supersedes the initial Plan and Verification plan wherever they conflict; re-review is pending before implementation.
+
+- Required bootstrap means construction and vector load/validation, runtime/wake setup, same-task MCP context entry, one successful bounded initial reconciliation batch (existing maximum50), and completion of an already-required rebuild. A bounded batch is not proof of historical convergence. Add opt-in error propagation through the existing reconcile delegation for this bootstrap call only; periodic repair retains existing catch/retry behavior. Do not drain arbitrary historical backlog before binding or accepting initialized operations. Caller tests cover more than50 pending entries and explicit remaining background work.
+- Separate initialized from ready. Partial construction/runtime/MCP setup remains gated with503. Once those required resources are safe, lexical and Relay operations are available while vector bootstrap/rebuild runs. Completed provider-unavailable initialization preserves current HTTP200 degraded health, embedding_provider_ok false and lexical/Relay access, with additive initialized true and ready false. Fully ready retains status ok. Bootstrap errors are observable and non-ready; failures of construction/runtime setup keep operations gated, while vector-only failure preserves safely initialized lexical/Relay functionality. Supervisor accepts owned initialized, nonfatal/degraded health rather than restarting a working degraded API; every matching-nonce, no-nonce and missing-token-grace acceptance path must also pass the HTTP initialization check. Preserve the120-second deadline, foreign-token fence and process/stop checks. CLI full-search readiness stays strict.
+- Rebuild must publish an in-memory terminal outcome even if failure precedes checkpoint creation or checkpoint persistence also fails. Preserve existing durable checkpoint behavior and expose failure through health/status with a safe category and full server log. No status None ambiguity after a worker exits. Test pre-checkpoint failure, failed checkpoint persistence, success and shutdown interruption through the caller surface.
+- Exactly one owned async task enters the initialized application's lifespan/MCP context, waits for shutdown and exits that context itself. Heavy synchronous construction/setup/cleanup uses existing non-abandoning AnyIO worker execution. On shutdown, revoke readiness and delegation first, signal every owned worker, and settle actual worker termination before service/storage closure. Retain the reconcile thread handle; permit explicit unbounded join for the owned rebuild during cleanup, outside the event loop. Existing native worker stop timeouts are not evidence of settlement: app cleanup must also wait for their captured thread handles before closing shared storage. External supervisor termination bounds remain unchanged. Tests hold workers beyond existing join timeouts, prove storage remains open and HTTP loop remains responsive during drainage, then release and verify exactly-once closure and no late readiness publication. Constructor failure must close every acquired resource, including when worker/rebuild startup fails before the existing cleanup try boundary.
+
+Verification remains exact RED/GREEN then affected subsystem files with private profiles, no shared cache/network/live data, and root-owned selector/full/result review. Add caller witnesses for initialized-but-rebuilding access, completed degraded health and lexical/Relay access, all supervisor legacy/nonce/grace branches, terminal pre-checkpoint errors, and same-task MCP entry/exit. No implementation has begun.
