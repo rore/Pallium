@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+import threading
 import time
 import uuid
 from contextlib import contextmanager, nullcontext
@@ -119,8 +120,10 @@ class SQLiteStorageProvider(
     _RELAY_IMMEDIATE_ATTEMPTS = 3
     # Spend the former 50/100ms outer pauses in native waits: the same 450ms allocation.
     _RELAY_IMMEDIATE_BUSY_TIMEOUT_MS = 150
+    _RELAY_IMMEDIATE_ACQUISITION_SECONDS = 0.45
 
     def __init__(self, database_url: str, relay_database_url: str | None = None) -> None:
+        self._relay_writer_lock = threading.Lock()
         separate_relay = relay_database_url is not None and not self._same_sqlite_file(
             database_url, relay_database_url
         )
@@ -252,6 +255,7 @@ class SQLiteStorageProvider(
         """Open an existing Relay database without running schema migrations."""
         cls._validate_relay_schema(relay_database_url, require_tables=True)
         instance = cls.__new__(cls)
+        instance._relay_writer_lock = threading.Lock()
         engine = cls._create_engine(relay_database_url)
         factory = sessionmaker(engine, expire_on_commit=False, class_=Session)
         instance._engine = instance._relay_engine = engine
