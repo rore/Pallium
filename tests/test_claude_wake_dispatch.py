@@ -530,6 +530,74 @@ def test_drain_joins_target_registry_through_final_trace_only(monkeypatch: pytes
         assert not drain_thread.is_alive()
 
 
+def test_shutdown_racing_prepared_trace_prevents_native_worker_start(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.claude_wake as wake
+
+    registry = ClaudeWakeRegistry()
+    registry.register(**{**PAYLOAD, "idle": True})
+    prepared = threading.Event()
+    release_prepared = threading.Event()
+    admission_stopped = threading.Event()
+    schedule_done = threading.Event()
+    trace_events: list[dict[str, object]] = []
+    transport_calls: list[bool] = []
+    scheduled: list[threading.Thread | None] = []
+    errors: list[BaseException] = []
+
+    def trace(event: dict[str, object]) -> None:
+        trace_events.append(event)
+        if event["stage"] == "prepared":
+            prepared.set()
+            assert release_prepared.wait(timeout=5)
+
+    def schedule() -> None:
+        try:
+            scheduled.append(schedule_claude_relay_wake(
+                _wake_result(PAYLOAD["session_ref"], "shutdown-race"),
+                {"container_ref": PAYLOAD["container_ref"]},
+                registry=registry,
+                trace_callback=trace,
+            ))
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            schedule_done.set()
+
+    def stop_admission() -> None:
+        try:
+            wake.stop_claude_relay_wake_admission(registry)
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            admission_stopped.set()
+
+    monkeypatch.setattr(wake, "claude_wake_transport", lambda *_: transport_calls.append(True) or "accepted")
+    schedule_thread = threading.Thread(target=schedule, daemon=True)
+    stop_thread = threading.Thread(target=stop_admission, daemon=True)
+    try:
+        schedule_thread.start()
+        assert prepared.wait(timeout=1)
+        stop_thread.start()
+        assert admission_stopped.wait(timeout=1)
+        release_prepared.set()
+        assert schedule_done.wait(timeout=1)
+        assert scheduled == [None]
+        assert not errors
+        assert not transport_calls
+        completed = [event for event in trace_events if event["stage"] == "completed"]
+        assert len(completed) == 1
+        assert completed[0]["outcome"] == "deferred"
+        wake.drain_claude_relay_wakes(registry)
+    finally:
+        release_prepared.set()
+        for worker in (schedule_thread, stop_thread):
+            if worker.ident is not None:
+                worker.join(timeout=1)
+            assert not worker.is_alive()
+
+
 def test_transport_exception_retains_exact_reservation(monkeypatch: pytest.MonkeyPatch) -> None:
     import app.claude_wake as wake
 

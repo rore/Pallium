@@ -8,6 +8,7 @@ import re
 import threading
 import time
 import uuid
+import weakref
 from typing import TYPE_CHECKING, Any, Callable
 
 from app.claude_wake_transport import claude_wake_transport
@@ -18,8 +19,9 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
-_workers: set[tuple[int, str]] = set()
+_workers: set[tuple[int, threading.Thread]] = set()
 _worker_attempt_ids: dict[tuple[int, str], str] = {}
+_closing_registries = weakref.WeakSet()
 _workers_lock = threading.Lock()
 
 
@@ -66,6 +68,27 @@ def _emit_trace(
     except Exception:
         logger.exception("claude relay trace callback failed")
 
+
+def stop_claude_relay_wake_admission(registry: ClaudeWakeRegistry) -> None:
+    """Prevent new wake workers from starting for this registry."""
+    with _workers_lock:
+        _closing_registries.add(registry)
+
+
+def drain_claude_relay_wakes(registry: ClaudeWakeRegistry) -> None:
+    """Join this registry's wake workers, including their final trace callbacks."""
+    registry_id = id(registry)
+    current_thread = threading.current_thread()
+    with _workers_lock:
+        workers = [thread for owner_id, thread in _workers if owner_id == registry_id]
+    if current_thread in workers:
+        raise RuntimeError("Cannot drain Claude wake workers from a wake worker")
+    for worker in workers:
+        worker.join()
+    with _workers_lock:
+        _workers.difference_update((registry_id, worker) for worker in workers)
+
+
 def schedule_claude_relay_wake(
     result: object,
     scope: object,
@@ -110,10 +133,14 @@ def schedule_claude_relay_wake(
 
     key = (id(registry), endpoint_id)
     with _workers_lock:
+        for owner_id, worker in tuple(_workers):
+            if not worker.is_alive():
+                _workers.discard((owner_id, worker))
+        if registry in _closing_registries:
+            return None
         existing_attempt_id = _worker_attempt_ids.get(key)
         if existing_attempt_id is None:
             attempt_id = f"relay-activation-{uuid.uuid4().hex}"
-            _workers.add(key)
             _worker_attempt_ids[key] = attempt_id
     if existing_attempt_id is not None:
         _emit_trace(trace_callback, existing_attempt_id, delivery_id, endpoint_id, "associated")
@@ -165,26 +192,52 @@ def schedule_claude_relay_wake(
             attempt = ActivationAttemptResult("uncertain", "worker_error", ("submission_attempted",))
             category = attempt.reason
         finally:
-            _log_outcome(delivery_id, session_ref, category, started)
-            with _workers_lock:
-                _workers.discard(key)
-                _worker_attempt_ids.pop(key, None)
-            _emit_trace(trace_callback, attempt_id, delivery_id, endpoint_id, "completed", attempt)
+            try:
+                _log_outcome(delivery_id, session_ref, category, started)
+                _emit_trace(trace_callback, attempt_id, delivery_id, endpoint_id, "completed", attempt)
+            finally:
+                with _workers_lock:
+                    if _worker_attempt_ids.get(key) == attempt_id:
+                        _worker_attempt_ids.pop(key, None)
 
-    worker = threading.Thread(target=run, name="pallium-claude-wake", daemon=True)
     started = time.monotonic()
+    closing = False
+    worker: threading.Thread | None = None
     try:
-        worker.start()
-    except Exception:
         with _workers_lock:
-            _workers.discard(key)
-            _worker_attempt_ids.pop(key, None)
-        _log_outcome(delivery_id, session_ref, "worker_start_failed", started)
-        _emit_trace(
-            trace_callback, attempt_id, delivery_id, endpoint_id, "completed",
-            ActivationAttemptResult("deferred", "worker_start_failed", native_retry_safe=True),
-        )
+            if registry in _closing_registries:
+                closing = True
+            else:
+                worker = threading.Thread(target=run, name="pallium-claude-wake", daemon=True)
+                _workers.add((id(registry), worker))
+                try:
+                    worker.start()
+                except Exception:
+                    _workers.discard((id(registry), worker))
+                    raise
+    except Exception:
+        try:
+            _log_outcome(delivery_id, session_ref, "worker_start_failed", started)
+            _emit_trace(
+                trace_callback, attempt_id, delivery_id, endpoint_id, "completed",
+                ActivationAttemptResult("deferred", "worker_start_failed", native_retry_safe=True),
+            )
+        finally:
+            with _workers_lock:
+                if _worker_attempt_ids.get(key) == attempt_id:
+                    _worker_attempt_ids.pop(key, None)
         return None
+    if closing:
+        result = ActivationAttemptResult("deferred", "shutdown", native_retry_safe=True)
+        try:
+            _log_outcome(delivery_id, session_ref, result.reason, started)
+            _emit_trace(trace_callback, attempt_id, delivery_id, endpoint_id, "completed", result)
+        finally:
+            with _workers_lock:
+                if _worker_attempt_ids.get(key) == attempt_id:
+                    _worker_attempt_ids.pop(key, None)
+        return None
+    assert worker is not None
     return worker
 
 def recover_claude_relay_wakes(

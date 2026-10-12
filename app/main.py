@@ -22,7 +22,11 @@ from app.config import AppConfig
 from app.runtime_logging import startup_stage
 from app import codex_wake
 from app.dashboard import mount_dashboard
-from app.claude_wake import start_claude_wake_reconciler
+from app.claude_wake import (
+    drain_claude_relay_wakes,
+    start_claude_wake_reconciler,
+    stop_claude_relay_wake_admission,
+)
 from app.claude_wake_binding import binding_fingerprint, binding_for_relay_database, service_marker_path, write_json_atomic
 from app.dependencies import (
     build_claude_wake_registry,
@@ -330,6 +334,7 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
                 return
             cleaned = True
             app_instance.state._lifespan_complete = False
+            stop_claude_relay_wake_admission(claude_wake_registry)
             if stop is not None:
                 stop.set()
             for worker in (retained_service, inventory_service, shadow_service,
@@ -364,6 +369,7 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
                 if thread.ident is not None:
                     thread.join()
             wait_for_operations()
+            drain_claude_relay_wakes(claude_wake_registry)
             close_resources()
 
         def initialize_runtime() -> None:
