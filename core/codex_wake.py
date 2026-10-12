@@ -412,10 +412,10 @@ class CodexWakeRegistry:
 
     def release_delivery(self, delivery_id: str) -> CodexWakeReservation | None:
         with self._lock:
+            if self._relay is not None:
+                return self._transition("release_delivery", delivery_id=delivery_id)
             self._refresh()
             match = next((item for item in self._reservations.values() if item.delivery_id == delivery_id), None)
-            if self._relay is not None:
-                return match if match is not None and self.release_generation(match) else None
             if match is None or not self._remove_locked(match.recipient_endpoint_id):
                 return None
             return match

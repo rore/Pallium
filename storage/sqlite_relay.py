@@ -674,7 +674,7 @@ class SQLiteRelayMixin:
         result = None
         with self._begin_relay_immediate() as db:
             marker = db.get(RelayCodexWakeStateRecord, 1)
-            self._validate_wake_authority(db, marker)
+            items = self._validate_wake_authority(db, marker)
             if marker is None:
                 return None
             if operation == "reserve":
@@ -710,6 +710,15 @@ class SQLiteRelayMixin:
                     return None
                 row.correlated_claim_attempts = kwargs["attempts"]
                 result = self._wake_item(row)
+            elif operation == "release_delivery":
+                expected = next((item for item in items if item.delivery_id == kwargs["delivery_id"]), None)
+                if expected is None:
+                    return None
+                row = db.get(RelayCodexWakeReservationRecord, expected.recipient_endpoint_id)
+                if row is None or self._wake_item(row) != expected:
+                    return None
+                db.delete(row)
+                result = expected
             elif operation == "release":
                 removed = []
                 for expected in kwargs["reservations"]:

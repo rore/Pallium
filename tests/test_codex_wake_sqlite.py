@@ -29,6 +29,122 @@ from app.dependencies import build_router
 SCOPE = {"container_ref": "git:example.test/wake-東京"}
 
 
+def test_http_ack_release_validates_current_authority_once(relay_store, tmp_path, monkeypatch):
+    relay, storage, _ = relay_store
+    registry = _registry(relay, tmp_path / 'legacy')
+    assert registry.initialize(old_owner_drained=True)
+    sent = _send(relay)
+    reservation = _reserve(registry, sent)
+    app = FastAPI()
+    app.include_router(build_router(SimpleNamespace(), relay_storage=storage, codex_wake_registry=registry))
+    snapshots, validations = [], []
+    original_snapshot, original_validate = relay.codex_wake_snapshot, storage._validate_wake_authority
+    armed = False
+    def observe_snapshot():
+        if armed:
+            snapshots.append('snapshot')
+        return original_snapshot()
+    def observe_validate(*args, **kwargs):
+        if armed:
+            validations.append('validation')
+        return original_validate(*args, **kwargs)
+    monkeypatch.setattr(relay, 'codex_wake_snapshot', observe_snapshot)
+    monkeypatch.setattr(storage, '_validate_wake_authority', observe_validate)
+    with TestClient(app) as http:
+        claim = http.post('/relay/turn', json={'runtime': 'codex', 'session_ref': 'target',
+            'wake_delivery_id': reservation.delivery_id, **SCOPE})
+        assert claim.status_code == 200, claim.text
+        delivery, = claim.json()['deliveries']
+        assert delivery['attempts'] == 1
+        armed = True
+        try:
+            ack = http.post('/relay/deliveries/ack', json={'delivery_id': reservation.delivery_id,
+                'claim_token': delivery['claim_token'], **SCOPE})
+        finally:
+            armed = False
+        assert ack.status_code == 200, ack.text
+        assert ack.json()['state'] == 'delivered'
+        assert registry.reservations_if_usable() == ()
+        readback = http.get(f'/relay/messages/{sent["message_id"]}', params=SCOPE)
+        assert readback.status_code == 200, readback.text
+        observed, = readback.json()['deliveries']
+        assert observed['delivery_id'] == reservation.delivery_id
+        assert observed['state'] == 'delivered' and observed['attempts'] == 1
+        assert snapshots == [] and validations == ['validation'], (snapshots, validations)
+
+
+@pytest.mark.parametrize('race', ['different_delivery', 'same_delivery', 'commit_before', 'commit_after', 'corrupt_unrelated'])
+def test_http_ack_release_preserves_successor_and_commit_failure_boundaries(relay_store, tmp_path, monkeypatch, race):
+    from app import dependencies
+    relay, storage, database = relay_store
+    registry = _registry(relay, tmp_path / 'legacy')
+    assert registry.initialize(old_owner_drained=True)
+    sent = _send(relay)
+    reservation = _reserve(registry, sent)
+    successor = relay.send(sender_runtime='codex', sender_session_ref='sender',
+        recipient='codex:target', payload='A successor message', **SCOPE)['deliveries'][0] if race == 'different_delivery' else sent
+    if race == 'corrupt_unrelated':
+        unrelated = _reserve(registry, _send(relay, target='unrelated'), target='unrelated')
+    cleared, transitions = [], []
+    monkeypatch.setattr(codex_wake, '_clear_schedule', lambda item, _registry: cleared.append(item))
+    monkeypatch.setattr(dependencies, 'schedule_codex_relay_wake', lambda *_args, **_kwargs: None)
+    app = FastAPI()
+    app.include_router(build_router(SimpleNamespace(), relay_storage=storage, codex_wake_registry=registry))
+    original_transition, original_begin = relay.codex_wake_transition, storage._begin_relay_immediate
+    replacement = replace(reservation, delivery_id=successor['delivery_id'], generation=reservation.generation + 1)
+    @contextmanager
+    def commit_fault():
+        with original_begin() as db:
+            yield db
+            if race == 'commit_before':
+                raise OperationalError('COMMIT', {}, sqlite3.OperationalError('controlled before commit'))
+        if race == 'commit_after':
+            raise OperationalError('COMMIT', {}, sqlite3.OperationalError('controlled after commit'))
+    def race_before_transition(operation, **kwargs):
+        transitions.append(operation)
+        if race in {'same_delivery', 'different_delivery'}:
+            values = asdict(replacement)
+            with sqlite3.connect(database) as db:
+                db.execute('UPDATE relay_codex_wake_state SET generation=? WHERE id=1', (replacement.generation,))
+                db.execute('UPDATE relay_codex_wake_reservations SET delivery_id=?,generation=? WHERE recipient_endpoint_id=?',
+                    (values['delivery_id'], values['generation'], reservation.recipient_endpoint_id))
+        elif race == 'corrupt_unrelated':
+            with sqlite3.connect(database) as db:
+                db.execute('UPDATE relay_codex_wake_reservations SET outcome=? WHERE recipient_endpoint_id=?',
+                    ('invalid', unrelated.recipient_endpoint_id))
+        with monkeypatch.context() as fault:
+            if race in {'commit_before', 'commit_after'}:
+                fault.setattr(storage, '_begin_relay_immediate', commit_fault)
+            return original_transition(operation, **kwargs)
+    with TestClient(app) as http:
+        claim = http.post('/relay/turn', json={'runtime':'codex', 'session_ref':'target',
+            'wake_delivery_id':reservation.delivery_id, **SCOPE})
+        assert claim.status_code == 200, claim.text
+        delivery, = claim.json()['deliveries']
+        assert delivery['attempts'] == 1
+        monkeypatch.setattr(relay, 'codex_wake_transition', race_before_transition)
+        ack = http.post('/relay/deliveries/ack', json={'delivery_id':reservation.delivery_id,
+            'claim_token':delivery['claim_token'], **SCOPE})
+        assert ack.status_code == 200, ack.text
+        assert ack.json()['state'] == 'delivered'
+        monkeypatch.setattr(relay, 'codex_wake_transition', original_transition)
+        assert transitions == ['release_delivery']
+        current = _stored_items(database)
+        if race == 'different_delivery':
+            assert current == {replacement} and cleared == []
+        elif race == 'same_delivery':
+            assert current == set() and cleared == [replacement]
+        elif race == 'commit_after':
+            assert current == set() and cleared == []
+        else:
+            assert reservation in current and cleared == []
+        readback = http.get(f'/relay/messages/{sent["message_id"]}', params=SCOPE)
+        assert readback.status_code == 200, readback.text
+        observed, = readback.json()['deliveries']
+        assert observed['delivery_id'] == reservation.delivery_id
+        assert observed['state'] == 'delivered' and observed['attempts'] == 1
+
+
 @pytest.mark.parametrize('state', ['claimed', 'expired_claim', 'delivered', 'read_failed'])
 def test_http_committed_claim_prevents_old_guarded_native_operation(relay_store, tmp_path, monkeypatch, state):
     from app import dependencies
