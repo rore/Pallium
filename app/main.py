@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import logging
@@ -188,14 +189,18 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
         build_result = build_service(resolved_config, routing_overrides=routing_overrides, query_stats=query_stats, metrics_store=metrics_store)
     service = build_result.service
     relay_limiter = anyio.CapacityLimiter(4)
+    codex_admission_limiter = anyio.CapacityLimiter(3)
     diagnostic_limiter = anyio.CapacityLimiter(2)
     operations = threading.Condition()
     active_operations = 0
 
-    async def run_operation(operation, limiter):
+    async def run_operation(operation, limiter, admission_limiter=None):
         nonlocal active_operations
         worker_started = False
         released_before_start = False
+        admission_acquired = False
+        borrower = object()
+        loop = asyncio.get_running_loop()
         with operations:
             active_operations += 1
 
@@ -208,11 +213,26 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
             try:
                 return operation()
             finally:
-                with operations:
-                    active_operations -= 1
-                    operations.notify_all()
+                try:
+                    if admission_acquired:
+                        # The worker owns this permit even if its awaiting task cancels.
+                        # Shutdown can synchronously drain workers on the loop thread.
+                        try:
+                            loop.call_soon_threadsafe(admission_limiter.release_on_behalf_of, borrower)
+                        except RuntimeError:
+                            if not loop.is_closed():
+                                raise
+                finally:
+                    with operations:
+                        active_operations -= 1
+                        operations.notify_all()
 
         try:
+            # Registry waiters must leave a worker available for durable operations.
+            # Count work before either gate so cancellation and shutdown also see it.
+            if admission_limiter is not None:
+                await admission_limiter.acquire_on_behalf_of(borrower)
+                admission_acquired = True
             return await anyio.to_thread.run_sync(
                 tracked_operation,
                 abandon_on_cancel=False,
@@ -224,8 +244,13 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
                     released_before_start = True
                     active_operations -= 1
                     operations.notify_all()
+                    if admission_acquired:
+                        admission_limiter.release_on_behalf_of(borrower)
     async def run_relay_operation(operation):
         return await run_operation(operation, relay_limiter)
+
+    async def run_codex_relay_operation(operation):
+        return await run_operation(operation, relay_limiter, codex_admission_limiter)
 
     async def run_diagnostic_operation(operation):
         return await run_operation(operation, diagnostic_limiter)
@@ -701,6 +726,7 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
         claude_wake_registry=claude_wake_registry,
         codex_wake_registry=codex_wake_registry,
         relay_runner=run_relay_operation,
+        relay_codex_runner=run_codex_relay_operation,
         diagnostic_runner=run_diagnostic_operation,
     ))
     if mcp_available and mcp_app is not None:

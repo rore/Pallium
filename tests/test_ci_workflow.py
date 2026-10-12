@@ -57,6 +57,12 @@ def test_required_linux_lane_cannot_skip_mcp_tests() -> None:
     assert "--durations=20" in linux
 
 
+def test_windows_smoke_installs_mcp_for_actual_logging_regression() -> None:
+    smoke = _job("windows-smoke", "windows-full")
+    assert "tests/test_runtime_logging.py" in smoke
+    assert 'pip install -e ".[dev,vector,mcp]"' in smoke
+
+
 def test_windows_stop_verifier_runs_serially_for_pr_and_full_windows_lanes() -> None:
     node = "tests/test_service.py::test_windows_stop_verifier_executes_new_and_legacy_launcher_parsers"
     launcher = "tests/test_service_launcher_lifecycle.py"

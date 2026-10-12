@@ -2499,6 +2499,19 @@ class SQLiteRelayMixin:
         now: datetime | None = None,
     ) -> dict[str, Any]:
         current = _now(now)
+        with self._relay_session_factory() as db:
+            # Pin message, delivery and endpoint reads to one WAL snapshot.
+            db.connection().exec_driver_sql("BEGIN")
+            message = db.get(RelayMessageRecord, message_id)
+            if message is None:
+                raise RelayNotFoundError("relay entity not found in the requested scope")
+            if _now(message.expires_at) > current:
+                return self._relay_status_in_session(
+                    db, message, current,
+                    payload_offset=offset or 0,
+                    payload_limit=page_size,
+                )
+        # Expiry cleanup needs a fresh writer transaction and identity map.
         with self._begin_relay_immediate() as db:
             message = db.get(RelayMessageRecord, message_id)
             if message is None:

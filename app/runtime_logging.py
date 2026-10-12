@@ -105,7 +105,10 @@ def build_uvicorn_log_config(*, component: str = "api") -> dict[str, Any]:
                 "stream": "ext://sys.stdout",
             },
         },
+        # Own application logging before FastMCP's basicConfig runs.
+        "root": {"handlers": ["default"], "level": "INFO"},
         "loggers": {
+            "httpx": {"level": "WARNING", "propagate": True},
             "uvicorn": {"handlers": ["default"], "level": "INFO", "propagate": False},
             "uvicorn.error": {"handlers": ["default"], "level": "INFO", "propagate": False},
             "uvicorn.access": {"handlers": ["access"], "level": "WARNING", "propagate": False},

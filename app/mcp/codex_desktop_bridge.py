@@ -288,7 +288,8 @@ class InventoryWorker:
         started, delay = time.monotonic(), RECONNECT_INITIAL_BACKOFF_SECONDS
         from app.codex_bridge_pipe import ShadowUnavailable
         for attempt in range(RECONNECT_MAX_ATTEMPTS):
-            if (self.stop_event.is_set() or time.monotonic() - started >= RECONNECT_WINDOW_SECONDS
+            if (self.stop_event.is_set() or not self._restart_allowed
+                    or time.monotonic() - started >= RECONNECT_WINDOW_SECONDS
                     or os.environ.get("CODEX_APP_TOOLS_PIPE_PATH") != original_pipe
                     or not self._valid_continuity(continuity)):
                 return None
@@ -309,24 +310,27 @@ class InventoryWorker:
                     if time.monotonic() - started >= RECONNECT_WINDOW_SECONDS:
                         self._finish(client)
                         return None
-                    if inventory_status(client.ready())["status"] != "ready":
-                        self._finish(client)
-                        return None
-                    if (self.stop_event.is_set()
-                            or time.monotonic() - started >= RECONNECT_WINDOW_SECONDS
-                            or os.environ.get("CODEX_APP_TOOLS_PIPE_PATH") != original_pipe):
-                        self._finish(client)
-                        return None
-                    result = inventory_status(client.register(metadata))
-                    if (result["status"] == "registered" and client.continuity == continuity
-                            and not self.stop_event.is_set()
-                            and time.monotonic() - started < RECONNECT_WINDOW_SECONDS
-                            and os.environ.get("CODEX_APP_TOOLS_PIPE_PATH") == original_pipe):
-                        return client
+                    result = inventory_status(client.ready())
+                    if result["status"] == "ready":
+                        if (self.stop_event.is_set()
+                                or time.monotonic() - started >= RECONNECT_WINDOW_SECONDS
+                                or os.environ.get("CODEX_APP_TOOLS_PIPE_PATH") != original_pipe):
+                            self._finish(client)
+                            return None
+                        result = inventory_status(client.register(metadata))
+                        if (result["status"] == "registered" and client.continuity == continuity
+                                and not self.stop_event.is_set()
+                                and time.monotonic() - started < RECONNECT_WINDOW_SECONDS
+                                and os.environ.get("CODEX_APP_TOOLS_PIPE_PATH") == original_pipe):
+                            return client
                     self._finish(client)
+                    # Explicit busy rejects admission before mutation; uncertain replies never retry.
+                    if (result["status"] != "unavailable" or result.get("reason") != "busy"
+                            or not self._restart_allowed or client.continuity != continuity):
+                        return None
                 except Exception:
                     self._finish(client)
-                return None
+                    return None
             if attempt + 1 == RECONNECT_MAX_ATTEMPTS:
                 break
             remaining = RECONNECT_WINDOW_SECONDS - (time.monotonic() - started)

@@ -209,7 +209,15 @@ def _wake_events(value: dict[str, Any]) -> list[dict[str, str | int | None]]:
 
 def read(home: Path | None = None) -> dict[str, Any]:
     """Return bounded public evidence without local executable or script paths."""
-    return _public(_read(marker_path(home)))
+    try:
+        resolved_home = home if home is not None else Path.home()
+        path = marker_path(resolved_home)
+        if not path.exists():
+            return _public(None)
+        with _marker_lock(resolved_home, wait_seconds=0):
+            return _public(_read(path))
+    except Exception:
+        return _public(None)
 
 
 def _write(value: dict[str, Any], home: Path | None = None) -> None:
