@@ -706,6 +706,173 @@ async def test_production_factory_shutdown_settles_held_build_before_close(monke
             await asyncio.wait_for(owner, timeout=5)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("held_stage", ["transport", "completed_trace"])
+async def test_production_factory_drains_claude_wake_thread_before_storage_close(
+    monkeypatch, held_stage: str,
+) -> None:
+    import httpx
+    import app.main as main
+    from core.service import PalliumService
+    from sqlalchemy import text
+
+    gate_started, release_gate, trace_finished = threading.Event(), threading.Event(), threading.Event()
+    scheduled_threads = []
+    storage_close_calls, service_close_calls = [], []
+    close_order_witnesses = []
+    created_apps = []
+    create_app = main.create_app
+    original_enqueue = PalliumService.enqueue_relay_trace_event
+
+    def build_inner(*_args, **_kwargs):
+        built = create_app(_no_vector_config())
+        service = built.state.pallium_service
+        storage = service._storage
+        original_storage_close = storage.close
+        original_service_close = service.close
+
+        def close_storage():
+            storage_close_calls.append(storage)
+            close_order_witnesses.append((
+                "storage", tuple(worker.is_alive() for worker in scheduled_threads),
+                trace_finished.is_set(),
+            ))
+            original_storage_close()
+
+        def close_service():
+            service_close_calls.append(service)
+            close_order_witnesses.append((
+                "service", tuple(worker.is_alive() for worker in scheduled_threads),
+                trace_finished.is_set(),
+            ))
+            original_service_close()
+
+        storage.close = close_storage
+        service.close = close_service
+        created_apps.append(built)
+        return built
+
+    def gated_enqueue(service, writer, event):
+        if event.get("stage") == "completed":
+            try:
+                if held_stage == "completed_trace":
+                    gate_started.set()
+                    if not release_gate.wait(8):
+                        raise AssertionError("test did not release the completed trace callback")
+                return original_enqueue(service, writer, event)
+            finally:
+                trace_finished.set()
+        return original_enqueue(service, writer, event)
+
+    def fake_transport(*_args):
+        scheduled_threads.append(threading.current_thread())
+        if held_stage == "transport":
+            gate_started.set()
+            if not release_gate.wait(8):
+                raise AssertionError("test did not release the held wake transport")
+        return "accepted"
+
+    monkeypatch.setattr(main, "create_app", build_inner)
+    monkeypatch.setattr(PalliumService, "enqueue_relay_trace_event", gated_enqueue)
+    monkeypatch.setattr("app.claude_wake.claude_wake_transport", fake_transport)
+    application = main.app()
+    owner = None
+    request_shutdown = asyncio.Event()
+    lifespan_entered = asyncio.Event()
+
+    async def own_lifespan():
+        async with application.router.lifespan_context(application):
+            lifespan_entered.set()
+            await request_shutdown.wait()
+
+    try:
+        owner = asyncio.create_task(own_lifespan())
+        await asyncio.wait_for(lifespan_entered.wait(), timeout=5)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=application, client=("127.0.0.1", 50000)),
+            base_url="http://test",
+        ) as client:
+            _health, health_body = await _wait_for_health(
+                client, lambda body: body.get("initialized") is True,
+            )
+            assert health_body["ready"] is True
+            scope = {"container_ref": "git:example/repo"}
+            for runtime, session_ref in (("codex", "startup-sender"), ("claude-code", "startup-target")):
+                response = await client.post("/relay/turn", json={
+                    "runtime": runtime, "session_ref": session_ref, **scope,
+                })
+                assert response.status_code == 200, response.text
+            registered = await client.post("/internal/claude-wake/register", json={
+                "runtime": "claude-code", "session_ref": "startup-target",
+                "container_ref": scope["container_ref"], "socket_path": "fake-native-endpoint",
+                "token": "test-only-token", "idle": True,
+            })
+            assert registered.status_code == 204, registered.text
+            sent = await client.post("/relay/messages", json={
+                "sender_runtime": "codex", "sender_session_ref": "startup-sender",
+                "recipient": "claude-code:startup-target", "payload": "test-only wake", **scope,
+            })
+            assert sent.status_code == 200, sent.text
+            message_id = sent.json()["message_id"]
+            delivery_id = sent.json()["deliveries"][0]["delivery_id"]
+            assert await asyncio.to_thread(gate_started.wait, 5), "Relay HTTP did not schedule the held Claude wake"
+            assert len(created_apps) == 1
+            registry = created_apps[0].state.claude_wake_registry
+            assert registry is not None
+            assert len(scheduled_threads) == 1
+            wake_thread = scheduled_threads[0]
+            assert wake_thread.name == "pallium-claude-wake" and wake_thread.is_alive()
+            readback = await client.get(f"/relay/messages/{message_id}", params=scope)
+            assert readback.status_code == 200
+            assert readback.json()["deliveries"][0]["delivery_id"] == delivery_id
+            assert readback.json()["deliveries"][0]["state"] == "pending"
+
+            request_shutdown.set()
+            _health, health_body = await _wait_for_health(
+                client, lambda body: body.get("initialized") is False,
+            )
+            status = await client.get("/status")
+            query = await client.post("/query", json={"text": "during wake drainage"})
+            assert health_body["ready"] is False
+            assert status.json()["initialized"] is False
+            assert status.json()["ready"] is False
+            assert query.status_code == 503
+            assert not owner.done(), "shutdown returned before the scheduled wake thread settled"
+            assert wake_thread.is_alive()
+            assert storage_close_calls == []
+            assert service_close_calls == []
+            with created_apps[0].state.pallium_service._storage._session_factory() as session:
+                assert session.execute(text("SELECT 1")).scalar_one() == 1
+
+            release_gate.set()
+            await asyncio.wait_for(owner, timeout=8)
+            await asyncio.to_thread(wake_thread.join, 2)
+            assert not wake_thread.is_alive()
+            assert trace_finished.wait(1)
+            assert storage_close_calls == [created_apps[0].state.pallium_service._storage]
+            assert service_close_calls == [created_apps[0].state.pallium_service]
+            assert close_order_witnesses == [
+                ("service", (False,), True),
+                ("storage", (False,), True),
+            ]
+            health = await client.get("/health")
+            status = await client.get("/status")
+            assert health.json()["initialized"] is False
+            assert health.json()["ready"] is False
+            assert status.json()["initialized"] is False
+            assert status.json()["ready"] is False
+    finally:
+        release_gate.set()
+        request_shutdown.set()
+        try:
+            if owner is not None:
+                await asyncio.wait_for(owner, timeout=8)
+        finally:
+            for worker in dict.fromkeys(scheduled_threads):
+                await asyncio.to_thread(worker.join, 3)
+                assert not worker.is_alive(), "test-owned Claude wake thread did not settle"
+
+
 class TestHealthNoVector:
 
     def test_health_returns_200_when_no_vector_index(self) -> None:

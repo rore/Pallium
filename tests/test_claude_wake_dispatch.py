@@ -447,6 +447,89 @@ def test_wake_worker_coalesces_concurrent_sends(monkeypatch: pytest.MonkeyPatch)
     assert calls == [True]
 
 
+def test_drain_joins_target_registry_through_final_trace_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    import app.claude_wake as wake
+
+    target_registry = ClaudeWakeRegistry()
+    other_registry = ClaudeWakeRegistry()
+    target_registry.register(**{**PAYLOAD, "token": "target-token", "idle": True})
+    other_registry.register(**{**PAYLOAD, "token": "other-token", "idle": True})
+    target_entered = threading.Event()
+    other_entered = threading.Event()
+    release_target = threading.Event()
+    release_other = threading.Event()
+    trace_entered = threading.Event()
+    release_trace = threading.Event()
+    drain_started = threading.Event()
+    drain_finished = threading.Event()
+    failures: list[BaseException] = []
+
+    def transport(_socket_path: str, token: str) -> str:
+        if token == "target-token":
+            target_entered.set()
+            assert release_target.wait(timeout=5)
+            return "accepted"
+        other_entered.set()
+        assert release_other.wait(timeout=5)
+        return "accepted"
+
+    def target_trace(event: dict[str, object]) -> None:
+        if event["stage"] == "completed":
+            trace_entered.set()
+            assert release_trace.wait(timeout=5)
+
+    def drain() -> None:
+        drain_started.set()
+        try:
+            wake.drain_claude_relay_wakes(target_registry)
+        except BaseException as exc:
+            failures.append(exc)
+        finally:
+            drain_finished.set()
+
+    monkeypatch.setattr(wake, "claude_wake_transport", transport)
+    target_worker = other_worker = None
+    drain_thread = threading.Thread(target=drain, daemon=True)
+    try:
+        target_worker = schedule_claude_relay_wake(
+            _wake_result(PAYLOAD["session_ref"], "target-delivery"),
+            {"container_ref": PAYLOAD["container_ref"]},
+            registry=target_registry,
+            trace_callback=target_trace,
+        )
+        other_worker = schedule_claude_relay_wake(
+            _wake_result(PAYLOAD["session_ref"], "other-delivery"),
+            {"container_ref": PAYLOAD["container_ref"]},
+            registry=other_registry,
+        )
+        assert target_worker is not None and other_worker is not None
+        assert target_entered.wait(timeout=1)
+        assert other_entered.wait(timeout=1)
+
+        drain_thread.start()
+        assert drain_started.wait(timeout=1)
+        release_target.set()
+        assert trace_entered.wait(timeout=1)
+        assert not drain_finished.wait(timeout=0.05)
+
+        release_trace.set()
+        assert drain_finished.wait(timeout=1)
+        assert not failures
+        assert not target_worker.is_alive()
+        assert other_worker.is_alive()
+    finally:
+        release_target.set()
+        release_trace.set()
+        release_other.set()
+        for worker in (target_worker, other_worker):
+            if worker is not None:
+                worker.join(timeout=1)
+        if drain_thread.ident is not None:
+            drain_thread.join(timeout=1)
+        assert all(worker is None or not worker.is_alive() for worker in (target_worker, other_worker))
+        assert not drain_thread.is_alive()
+
+
 def test_transport_exception_retains_exact_reservation(monkeypatch: pytest.MonkeyPatch) -> None:
     import app.claude_wake as wake
 
@@ -654,13 +737,57 @@ def test_worker_start_failure_logs_and_later_send_retries(
     thread_class = threading.Thread
     caplog.set_level(logging.INFO, logger="app.claude_wake")
     monkeypatch.setattr(wake.threading, "Thread", FailingThread)
-    assert schedule_claude_relay_wake(_wake_result(PAYLOAD["session_ref"], "failed-start"), scope, registry=registry) is None
-    monkeypatch.setattr(wake.threading, "Thread", thread_class)
+    try:
+        assert schedule_claude_relay_wake(_wake_result(PAYLOAD["session_ref"], "failed-start"), scope, registry=registry) is None
+        wake.drain_claude_relay_wakes(registry)
+    finally:
+        monkeypatch.setattr(wake.threading, "Thread", thread_class)
     monkeypatch.setattr(wake, "claude_wake_transport", lambda *_: True)
-    _join(schedule_claude_relay_wake(_wake_result(PAYLOAD["session_ref"], "retry"), scope, registry=registry))
+    worker = schedule_claude_relay_wake(_wake_result(PAYLOAD["session_ref"], "retry"), scope, registry=registry)
+    try:
+        _join(worker)
+        wake.drain_claude_relay_wakes(registry)
+        wake.drain_claude_relay_wakes(registry)
+    finally:
+        if worker is not None:
+            worker.join(timeout=1)
+            assert not worker.is_alive()
     logged = "\n".join(record.getMessage() for record in caplog.records)
     assert "category=worker_start_failed" in logged
     assert "category=accepted" in logged
+
+
+def test_drain_is_idempotent_when_completed_trace_callback_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.claude_wake as wake
+
+    registry = ClaudeWakeRegistry()
+    registry.register(**{**PAYLOAD, "idle": True})
+    completed = threading.Event()
+
+    def trace(event: dict[str, object]) -> None:
+        if event["stage"] == "completed":
+            completed.set()
+            raise RuntimeError("trace callback failed")
+
+    monkeypatch.setattr(wake, "claude_wake_transport", lambda *_: "accepted")
+    worker = schedule_claude_relay_wake(
+        _wake_result(PAYLOAD["session_ref"]),
+        {"container_ref": PAYLOAD["container_ref"]},
+        registry=registry,
+        trace_callback=trace,
+    )
+    try:
+        assert completed.wait(timeout=1)
+        _join(worker)
+        wake.drain_claude_relay_wakes(registry)
+        wake.drain_claude_relay_wakes(registry)
+    finally:
+        if worker is not None:
+            worker.join(timeout=1)
+            assert not worker.is_alive()
+
 
 def test_public_turn_busy_stop_idle_lifecycle_is_fail_closed(client) -> None:
     from fastapi import FastAPI
