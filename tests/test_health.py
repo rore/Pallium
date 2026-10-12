@@ -457,14 +457,14 @@ async def test_production_factory_serves_lexical_and_relay_before_vector_ready(
     application = main.app()
     try:
         async with application.router.lifespan_context(application):
-            assert await asyncio.to_thread(reconcile_started.wait, 2), "vector reconciliation did not start"
-            assert len(reconcile_done_events) == 1 and not reconcile_done_events[0].is_set()
             async with httpx.AsyncClient(
                 transport=httpx.ASGITransport(app=application), base_url="http://test",
             ) as client:
                 _health, health_body = await _wait_for_health(
                     client, lambda body: body.get("initialized") is True,
                 )
+                assert await asyncio.to_thread(reconcile_started.wait, 2), "vector reconciliation did not start"
+                assert len(reconcile_done_events) == 1 and not reconcile_done_events[0].is_set()
                 status = await client.get("/status")
                 query = await client.post("/query", json={"text": "startup probe"})
                 relay = await client.get("/relay/sessions", params={"container_ref": "startup-probe"})
