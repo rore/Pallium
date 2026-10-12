@@ -1,5 +1,30 @@
 # Asynchronous service startup and truthful readiness
 
+## Current root integration checkpoint — 2026-10-12
+
+The historical planning entries below are retained as provenance, not current
+execution state. Root integrated reviewed performance checkpoint `54291be8` as
+`6fb1c08c`, evidence `51650fec` as `8f957892`, and bounded writer fix `f0011ef8`
+as `631d3dd2`. Recovery and the three installed emergency-file corrections were
+already integrated at `bdacab61`. The REL-13 exact wake-continuation guidance
+component is independently accepted and awaiting its final commit for integration.
+
+Production component qualification passed all 50 real HTTP/hook claim, emission,
+ACK and public-readback journeys under unchanged deadlines (max claim 721.81 ms,
+ACK 48.08 ms), plus the remaining three load variants, 36 deadline/cleanup cases
+and 53 capacity/cancellation cases. Native transport was inert in the load test;
+this is not installed native-wake acceptance. The external-writer test retained
+late-release success and typed exhaustion without partial claim. Shared 450 ms
+acquisition is a scheduling policy, not an OS wall-clock guarantee.
+
+Final whole-change selector/full validation, combined review, CI/merge and
+installed verification remain pending. Root owns those stages and the canonical
+ordered incident checklist in `roadmap/features/add-wake-first-relay-delivery.md`.
+Installed base remains `cf558114` with only the three known, hash-verified hotfix
+files; preserve them and rollback evidence during rollout. Historical outage
+attribution, archived-target messageability and live task-continuation proof are
+explicit evidence limits, not implicitly closed by the load result.
+
 Combined verification (2026-10-12): integration head dc8b9798 passed 228 checks
 with one stale completed-checkpoint test expectation. Completion intentionally
 removes the durable checkpoint after swapping the live index. The corrected

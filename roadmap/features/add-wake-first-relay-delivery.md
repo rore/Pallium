@@ -8,6 +8,31 @@ milestone: pallium-relay
 lane: capability
 ---
 
+## Incident execution checklist (updated 2026-10-12)
+
+Root owns this ordered checklist and the final installed result. A component report,
+queued assignment, passing experiment, or healthy HTTP endpoint does not close it.
+Existing Work Records apply; no separate tracker or duplicate implementation.
+
+| Step | Owner | State | Completion evidence / next handoff |
+|---|---|---|---|
+| 1. Implement bounded Relay writer coordination. | Performance developer (`discovery_contract_review`) | Active; root approved the remaining-budget refusal rule. | Provider-owned mutex with one shared 450 ms acquisition allowance, at most three attempts, unchanged caller deadlines, release on every exit, and native SQLite arbitration across providers/processes. Private-only experiment passed 50/50; production implementation still required. |
+| 2. Review and test the production implementation. | Architecture reviewer + performance developer | Active alongside step 1. | Lock-order/non-recursion audit; deadline, external-writer, multi-provider, cancellation/cleanup and non-BUSY recovery regressions; no duplicate work or weakened assertions. |
+| 3. Pass the real delivery acceptance test. | Performance developer | Production 50/50 passed; remaining cancellation and load variants in progress. | Unchanged 750/500 ms deadlines: max claim 721.81 ms, ACK 48.08 ms; attempt-one emission/ACK/public readback, 21 health responses all 200. Native transport was inert; installed native delivery remains step 7. Claim headroom is narrow, not unlimited throughput assurance. |
+| 4. Integrate all accepted incident fixes. | Root | Waiting on accepted performance component. | Combine recovery, ACK completion, writer coordination, retention, startup, inventory and shutdown changes in the existing integration checkout; reconcile docs and exact source revisions. Preserve installed emergency changes and unrelated work. |
+| 5. Finish combined regression and independent review. | Root + reviewer | Waiting on step 4. | Run whole-change selector and required full suite once on final source, plus required slow load/lifecycle coverage. Verify restart recovery, busy-to-idle delivery and successive pending messages. Address genuine findings. |
+| 6. Publish and merge. | Root | Waiting on step 5. | Existing authorized PR workflow, exact-head CI green, all required review findings resolved; no bypass or duplicate full dispatch. |
+| 7. Deploy and verify the installed service. | Root | Waiting on step 6 and confirmed exact rollout scope. | Preserve code/data/settings and rollback; reconcile the three-file emergency hotfix; use installed restart wrapper; verify health/status/queue/embedding and real Relay receipt after restart. Reuse exact approvals; surface only genuinely additional live scope. |
+| 8. Resume coordinated dogfooding. | Root | Waiting on step 7. | Notify managers through Relay with truthful qualification/known limits; verify representative actual receipts, not only pending send results. |
+| 9. Reconcile every remaining bug and close the incident honestly. | Root; recovery reviewer for independent triage | Open. | Each REL row has verified closure or an explicit unresolved cause/host limitation and next action. REL-11 historical cause, REL-12 archived-target eligibility and REL-13 task continuity must not disappear behind the load-test success. Preserve evidence and complete checkout cleanup only when safe. |
+
+Management rule: at each test result, review completion, handoff or user status
+request, root checks actual agent state and resolves the next dependency. Resume a
+completed agent with a follow-up task, not a message that leaves it idle. A worker
+waiting for a root decision is root's active task. Report verified milestones and
+new blockers; never describe pending transport as accepted work. Minimap refresh
+remains deferred until incident stability; do not add unrelated work here.
+
 ## Open reliability bugs (updated 2026-10-12)
 
 This is the current consolidated closure list, maintained by the Pallium manager.
@@ -18,8 +43,8 @@ one fix; do not create separate mechanisms merely to match the rows.
 
 | ID | Bug / evidence | Owner and current state | Required closure evidence |
 |---|---|---|---|
-| REL-01 | Concurrent claims and ACKs exceed their budgets. Latest observer-off run with original capacity: 27 claims, zero ACKs, 23 claim refusals. | Performance developer (`discovery_contract_review`), active. Extra admission limit withdrawn. Removing duplicate exact-claim correlation writes is under implementation with equivalent generation/recovery fences. | All 50 real HTTP/hook journeys emit and ACK once with public readback, unchanged budgets, ordinary traffic and health responsiveness covered. |
-| REL-02 | Retained Codex enrollment disappears while the service survives; subsequent reconnects fail. | Reviewed same-epoch recovery integrated; combined checks passed, installed verification pending. | Same-service-epoch connection-loss reproduction becomes green; authenticated recovery preserves peer identity, continuity, and uncertain-I/O fences, without replaying application operations. |
+| REL-01 | Concurrent claims and ACKs exceeded their budgets. Production bounded writer coordination now passed all 50 claims/emissions/ACKs/public readbacks within unchanged deadlines (max 721.81/48.08 ms). | Source and 36 new deadline/cleanup/cross-provider tests independently accepted; remaining cancellation/load variants in progress before integration. Earlier ACK checkpoint `54291be8` integrated as `6fb1c08c`. Scalar hydration showed no gain and was rejected. | Final combined regression, merge and installed verification remain. One production test pass with inert native transport is not live native/global throughput assurance. |
+| REL-02 | Retained Codex enrollment disappears while the service survives; subsequent reconnects fail. | Resolved idle-readiness failure permanently disabling the worker reproduced and corrected in `08b2f078` (229 affected tests passed). Approved local hotfix installed; service-owned idle wake delivered one real payload and hook ACK at 15:07:40 UTC. Earlier live failure trigger remains unproved; combined merge and broader acceptance remain open. | Same-service-epoch connection-loss reproduction becomes green; authenticated recovery preserves peer identity, continuity, and uncertain-I/O fences, without replaying application operations. |
 | REL-03 | Messages remain pending and arrive much later, including old developer reports received here. | Performance/recovery owners share cause analysis; root owns integration. | Busy-to-idle and multiple pending messages on one endpoint progress through real scheduler, hook and ACK without loss or duplicate action; growing delivered history covered. |
 | REL-04 | Live Relay operations take up to five seconds. | Performance developer, active; do not assume identical cause to REL-01. | Locate wait versus work; compare before/after under concurrent load and verify installed delivery. |
 | REL-05 | Database lock failures and exhausted retries; retention unnecessarily holds the writer while doing later reads. | Reviewed fix integrated at `351ad670`; 33 retention checks pass. Writer interval sample 70.38 to 5.69 ms; total elapsed sample increased, so no overall throughput claim. | Fresh protection/lease checks and deletion correctness survive concurrent writes; measured writer hold reduction and contention regression. Historical live writer attribution remains open. |
@@ -27,8 +52,10 @@ one fix; do not create separate mechanisms merely to match the rows.
 | REL-07 | Rebuild inventory performs repeated reads and hydrates already-indexed sources. | Reviewed fix integrated and combined checks passed. At 5,000 rows all-present sample improved 2,899 to 8 ms; deployment pending. | Eligibility, missing-tail, resume, cancellation and startup caller tests; comparable measurement. Single private samples are not live attribution. |
 | REL-08 | Shutdown can skip cleanup after worker start/stop failure or close storage before active children drain. | `relaydev` handed off reviewed correction; root combined validation passed, deployment pending. | Start/stop failure and held-child caller regressions; actual workers drain before storage closes, including error paths. |
 | REL-09 | Embedded NUL text exposes disagreement between SQL and Python length eligibility. | Reviewed fix integrated at `dc8b9798`; combined verification and deployment pending. | Preserve actual end-to-end eligibility at 39/40 characters and across pages, including Unicode and NUL; verify subsequent eligibility rechecks too. |
-| REL-10 | Healthy service does not imply working native wake; generic `peer-mismatch` also represents absent registration and can obscure the initiating failure. | Reviewed recovery diagnostic correction integrated; root owns installed acceptance. | Distinguish unavailable registration from actual peer mismatch, retain initiating failure evidence, and verify status reflects wake availability without claiming receipt. |
+| REL-10 | Healthy service does not imply working native wake; generic `peer-mismatch` also represents absent registration and can obscure the initiating failure. | Missing status allowlist entry corrected in `0aaf20ff`, four HTTP regressions passed and approved installed correction verified. Bounded source-channel/maintenance failure logs added; installed status now exposes registered custody with no unresolved handles. Combined merge remains open. | Distinguish unavailable registration from actual peer mismatch, retain initiating failure evidence, and verify status reflects wake availability without claiming receipt. |
 | REL-11 | Historical outage and remaining unexplained startup duration are not fully attributed. | Root + startup developer; investigation open. | Identify reproducible causes or explicitly document evidence limits; measure startup phases and prove relevant regressions. A 120-second allowance is mitigation, not closure. |
+| REL-12 | Two old pending deliveries repeatedly receive native owner refusal despite healthy retained custody. Both exact target chats are archived, confirmed through supported archive listing; readable `notLoaded` alone was insufficient. | Bounded recovery review complete: current per-wake `read_thread` and hooks expose no archive signal, and owner refusal is untyped. No justified eligibility change yet; no resend or unarchive. | Needs authoritative messageability or typed refusal to use existing unreachable fencing while preserving payloads. Do not infer archival from age, `notLoaded`, or generic failure. Archived status is established; exact refusal attribution remains pending. |
+| REL-13 | Downstream manager reports an agent ended an unfinished implementation turn after handling an empty wake, then needed direct resumption. | Reported, not independently reproduced. Separate task-continuity handling from transport delay; no causal claim that the wake runtime interrupted the turn. | Verify the reported turn boundary and ensure empty-wake handling resumes the authorized task rather than treating trace-only work as completion. No restart or configuration change is implied. |
 
 Execution: delivery performance and authenticated recovery are independent developer
 lanes; relaydev finishes startup/cleanup. Keep source ownership explicit. Run heavy
@@ -73,6 +100,13 @@ HTTP/hook tests separately: the default full suite excludes them. These bursts
 use distinct endpoints; existing same-endpoint backlog and restart regressions
 cover their functional contracts separately. Do not claim a combined
 same-endpoint restart/load witness from these results.
+
+Additional live incident, inspected October 12: message
+`relay-msg-0717eb474c454a7698ab0adf071738cf` was prepared at 12:42:18 UTC,
+repeatedly deferred as `native_unavailable`, and claimed/ACKed once at
+14:25:25 UTC. The bounded trace is incomplete. This proves a delivery delay of
+about 103 minutes, not its complete cause or duplicate claiming. It remains
+part of REL-02/REL-03 installed recovery acceptance; no receive or resend was used.
 
 ## Historical execution status (reconciled 2026-10-07)
 
