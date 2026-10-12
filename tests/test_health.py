@@ -732,7 +732,11 @@ async def test_production_factory_drains_claude_wake_thread_before_storage_close
     from sqlalchemy import text
 
     gate_started, release_gate, trace_finished = threading.Event(), threading.Event(), threading.Event()
+    producers_settled, drain_started, service_close_started = (
+        threading.Event(), threading.Event(), threading.Event(),
+    )
     scheduled_threads = []
+    direct_producer_threads = []
     storage_close_calls, service_close_calls = [], []
     close_order_witnesses = []
     created_apps = []
@@ -755,6 +759,7 @@ async def test_production_factory_drains_claude_wake_thread_before_storage_close
             original_storage_close()
 
         def close_service():
+            service_close_started.set()
             service_close_calls.append(service)
             close_order_witnesses.append((
                 "service", tuple(worker.is_alive() for worker in scheduled_threads),
@@ -787,7 +792,54 @@ async def test_production_factory_drains_claude_wake_thread_before_storage_close
                 raise AssertionError("test did not release the held wake transport")
         return "accepted"
 
+    import app.claude_wake as claude_wake
+    original_start_reconciler = main.start_claude_wake_reconciler
+    actual_drain = getattr(main, "drain_claude_relay_wakes", None)
+
+    def start_reconciler(registry, relay_service, *, trace_callback=None, **_kwargs):
+        reconciler = original_start_reconciler(
+            registry, relay_service, claim_recovery=None, trace_callback=trace_callback,
+        )
+        original_stop = reconciler.stop
+
+        def stop_and_settle_producers():
+            original_stop()
+            state = created_apps[0].state
+            for name in (
+                "_claude_wake_reconciler", "_codex_retained_service",
+                "_codex_inventory_service", "_codex_shadow_service",
+            ):
+                producer = getattr(state, name, None)
+                if producer is None:
+                    continue
+                thread = getattr(producer, "thread", None) or getattr(producer, "_thread", None)
+                if thread is None:
+                    continue
+                assert thread not in scheduled_threads
+                if thread not in direct_producer_threads:
+                    direct_producer_threads.append(thread)
+                if thread.ident is not None:
+                    thread.join()
+            assert state._wait_for_operations(timeout=0)
+            producers_settled.set()
+
+        reconciler.stop = stop_and_settle_producers
+        return reconciler
+
+    def observe_actual_drain(registry):
+        drain_started.set()
+        return actual_drain(registry)
+
+    def unexpected_missing_drain(_registry):
+        raise AssertionError("old source unexpectedly called a drain helper it does not own")
+
     monkeypatch.setattr(main, "create_app", build_inner)
+    monkeypatch.setattr(main, "start_claude_wake_reconciler", start_reconciler)
+    monkeypatch.setattr(claude_wake, "recover_claude_relay_wakes", lambda *_args, **_kwargs: None)
+    if actual_drain is None:
+        monkeypatch.setattr(main, "drain_claude_relay_wakes", unexpected_missing_drain, raising=False)
+    else:
+        monkeypatch.setattr(main, "drain_claude_relay_wakes", observe_actual_drain)
     monkeypatch.setattr(PalliumService, "enqueue_relay_trace_event", gated_enqueue)
     monkeypatch.setattr("app.claude_wake.claude_wake_transport", fake_transport)
     application = main.app()
@@ -854,6 +906,18 @@ async def test_production_factory_drains_claude_wake_thread_before_storage_close
             _health, health_body = await _wait_for_health(
                 client, lambda body: body.get("initialized") is False,
             )
+            assert await asyncio.to_thread(producers_settled.wait, 5), "direct producer threads did not settle"
+            async with asyncio.timeout(5):
+                while not (drain_started.is_set() or service_close_started.is_set()):
+                    await asyncio.sleep(0)
+            assert direct_producer_threads
+            assert all(not thread.is_alive() for thread in direct_producer_threads)
+            assert scheduled_threads[0] not in direct_producer_threads
+            assert scheduled_threads[0].is_alive(), "held wake thread settled before the drain boundary"
+            assert not service_close_started.is_set(), "service close began before wake drainage completed"
+            assert storage_close_calls == []
+            assert service_close_calls == []
+
             status = await client.get("/status")
             query = await client.post("/query", json={"text": "during wake drainage"})
             assert health_body["ready"] is False
