@@ -1,9 +1,94 @@
 """Recovery after a conclusively drained retained Desktop read failure."""
 import pytest
+import asyncio
+import json
+import threading
 
 from tests.test_codex_retained_wake import (
     SCOPE, TARGET, _hook_runner, http_wake, recover, retained as retained_fixture,
 )
+
+
+@pytest.mark.asyncio
+async def test_actual_mcp_idle_recovers_same_epoch_enrollment_without_replay(
+        retained, monkeypatch, tmp_path):
+    from app import codex_bridge_pipe as bridge
+    from tests.test_codex_worker_reconnect import _protocol_server, _actual_status
+    from tests.test_codex_mcp_desktop_bridge import _serve_protocol
+
+    service, request, natives = retained
+    manifest = {"epoch": service.epoch}
+    registrations, operations = [], []
+    recovered = threading.Event()
+    healthy_observed = threading.Event()
+    monkeypatch.setattr(bridge, "_read_private", lambda *a: json.dumps(manifest).encode())
+    native_type = bridge.NativeInventoryClient
+
+    class IO:
+        unresolved = False
+
+        def write(self, value, deadline):
+            self.request = value
+
+        def read(self, deadline):
+            value = self.request
+            result = service._process(value, service.source, value["sequence"] - 1, deadline)
+            if value["verb"] == "register":
+                registrations.append(dict(value))
+                if len(registrations) == 2:
+                    recovered.set()
+            elif len(registrations) == 2 and result["connected"]:
+                healthy_observed.set()
+            return {**result, "version": 1, "epoch": service.epoch,
+                    "sequence": value["sequence"]}
+
+        def close(self):
+            pass
+
+    def native(path, stop, *, retained):
+        client = object.__new__(native_type)
+        client.w, client.sid = service.w, service.sid
+        client.bootstrap_path, client.manifest = path, manifest
+        client.stop_event, client.retained = stop, retained
+        client.peer, client.source = service.current, service.source
+        client.io, client.sequence = IO(), 0
+        client.continuity, client.unresolved = None, False
+        return client
+
+    server = _protocol_server(monkeypatch, native, operations)
+    monkeypatch.setenv("CODEX_APP_TOOLS_PIPE_PATH", request["endpoint"])
+
+    async def exercise(session):
+        assert not (await _actual_status(session, "first")).isError
+        assert len(registrations) == 1 and len(natives) == 1
+        with service._custody_lock:
+            original = service.retained_registration
+            assert original is not None
+            continuity = service._continuity_fingerprint()
+            # Preserve the initiating failure while testing resolved enrollment loss.
+            service._drop(diagnostic_failure=("owner-result", "native-tool-failed"))
+            assert service.retained_registration is None and service.custody is None
+        assert await asyncio.to_thread(recovered.wait, 1)
+        assert await asyncio.to_thread(healthy_observed.wait, 1)
+        assert len(registrations) == 2 and len(operations) == 1
+        assert registrations[1]["continuity"] == continuity
+        assert service.epoch == manifest["epoch"]
+        assert service.retained_registration["desktop_identity"] == original["desktop_identity"]
+        assert service.enrollment_diagnostics()["last_failure_reason"] == "native-tool-failed"
+        assert all(not desktop.owners for desktop in natives)
+        assert not (await _actual_status(session, "fresh")).isError
+        assert len(operations) == 2
+
+    await _serve_protocol(server, exercise)
+
+
+def test_missing_saved_registration_is_not_reported_as_peer_mismatch(retained):
+    from app import codex_bridge_pipe as bridge
+    service, _, _ = retained
+    with pytest.raises(bridge.ShadowUnavailable) as failure:
+        service._reopen_registration()
+    assert failure.value.category == "registration-missing"
+    assert bridge._inventory_reason(failure.value) == "native-failed"
 
 
 @pytest.fixture
