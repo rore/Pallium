@@ -602,6 +602,7 @@ def test_python_relay_early_return_includes_structural_work_ref(
 def test_codex_prompt_identity_cache_keeps_work_refs_live(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
 ) -> None:
     monkeypatch.delenv("PALLIUM_HOOK_ACTOR_REF", raising=False)
     repo = _repo_metadata(tmp_path / "repo")
@@ -638,11 +639,54 @@ def test_codex_prompt_identity_cache_keeps_work_refs_live(
     state_dir = tmp_path / "state"
     monkeypatch.setattr(prompt._common, "STATE_DIR", state_dir)
     monkeypatch.setattr(prompt._common, "SESSIONS_DIR", state_dir / "sessions")
-    prompt._common.pin_container(
+    stages = []
+    hook_turn = [0]
+    request.addfinalizer(lambda: (tmp_path / "identity-pin-stages.json").write_text(
+        json.dumps(stages, indent=2), encoding="utf-8",
+    ))
+    original_lock = prompt._common._acquire_session_lock
+    original_write = prompt._common._write_session_state_locked
+    original_turn = prompt.relay_turn
+
+    def acquire_lock(*args, **kwargs):
+        remaining = prompt._common.remaining_safe_time(kwargs.get("deadline"))
+        result = original_lock(*args, **kwargs)
+        stages.append({"stage": "lock", "turn": hook_turn[0], "acquired": result is not None,
+                       "remaining_seconds": remaining if remaining != float("inf") else None})
+        return result
+
+    def write_state(session_id, state):
+        result = original_write(session_id, state)
+        remaining = prompt._common.remaining_safe_time()
+        stages.append({"stage": "write", "turn": hook_turn[0], "written": result,
+                       "container_ref": state.get("container_ref"),
+                       "scope_generation": state.get("last_confirmed_scope_generation"),
+                       "has_turn_intent": "relay_turn_intent" in state,
+                       "remaining_seconds": remaining if remaining != float("inf") else None})
+        return result
+
+    def turn(*args, **kwargs):
+        result = None
+        try:
+            result = original_turn(*args, **kwargs)
+            return result
+        finally:
+            session = result.get("session", {}) if isinstance(result, dict) else {}
+            remaining = prompt._common.remaining_safe_time()
+            stages.append({"stage": "turn", "turn": hook_turn[0],
+                           "returned_dict": isinstance(result, dict),
+                           "container_ref": session.get("container_ref"),
+                           "remaining_seconds": remaining if remaining != float("inf") else None})
+
+    monkeypatch.setattr(prompt._common, "_acquire_session_lock", acquire_lock)
+    monkeypatch.setattr(prompt._common, "_write_session_state_locked", write_state)
+    monkeypatch.setattr(prompt, "relay_turn", turn)
+    assert prompt._common.pin_container(
         "cache-session",
         "git:example.test/repo",
         source="startup",
-    )
+    ), stages
+    assert prompt._common.get_pinned_container("cache-session") == "git:example.test/repo", stages
 
     git_calls = []
 
@@ -697,13 +741,14 @@ def test_codex_prompt_identity_cache_keeps_work_refs_live(
     monkeypatch.setattr(prompt, "emit_context", lambda *_args: None)
     requests = []
 
-    def request(_method, path, body=None, **_kwargs):
+    def history_request(_method, path, body=None, **_kwargs):
         if path == "/item-and-query":
             requests.append(body)
             return {"source_item_id": f"source-{len(requests)}", "injectable_blocks": []}
         return None
 
-    monkeypatch.setattr(prompt, "pallium_request", request)
+    monkeypatch.setattr(prompt, "pallium_request", history_request)
+    hook_turn[0] = 1
     with pytest.raises(SystemExit):
         prompt.main()
 
@@ -712,11 +757,13 @@ def test_codex_prompt_identity_cache_keeps_work_refs_live(
         encoding="utf-8",
     )
     current["prompt"] = "Second prompt after the active work changed."
+    hook_turn[0] = 2
     with pytest.raises(SystemExit):
         prompt.main()
 
     current["cwd"] = str(other_repo)
     current["prompt"] = "Third prompt after switching repository and active work."
+    hook_turn[0] = 3
     with pytest.raises(SystemExit):
         prompt.main()
 
@@ -743,10 +790,12 @@ def test_codex_prompt_identity_cache_keeps_work_refs_live(
         "Actor", "Actor", "Other Actor",
     ]
     assert all(path == "/relay/turn" for path, _body in relay_calls)
+    assert len(relay_calls) == 3, stages
+    assert relay_calls[-1][1]["container_ref"] == "git:example.test/other", stages
     assert relay_calls[-1][1]["previous_container_ref"] == "git:example.test/repo"
     assert relay_calls[-1][1]["previous_endpoint_id"] == "relay-session-00000000000000000000000000000001"
     assert relay_calls[-1][1]["previous_scope_generation"] == 0
-    assert prompt._common.get_pinned_container("cache-session") == "git:example.test/other"
+    assert prompt._common.get_pinned_container("cache-session") == "git:example.test/other", stages
     assert prompt._common.get_pending_relay_closes("cache-session") == []
 @pytest.mark.parametrize(
     "host,relative",

@@ -41,14 +41,23 @@ async def _wait_for_health(client, predicate, *, timeout: float = 5.0):
 
 
 @pytest.mark.asyncio
-async def test_production_factory_keeps_http_responsive_during_build(monkeypatch, test_db_url: str) -> None:
+async def test_production_factory_keeps_http_responsive_during_build(monkeypatch, client) -> None:
     import httpx
     from app import main
     from fastapi import FastAPI
 
     build_started, release_build, build_finished = threading.Event(), threading.Event(), threading.Event()
-    create_app = main.create_app
     inner_apps, inner_scope_types = [], []
+    worker_threads, production_closes = [], []
+    event_loop_thread = threading.get_ident()
+    built = client.app  # Real construction is fixture setup, not a two-second startup SLA.
+    original_close = built.state.pallium_service.close
+
+    def observe_close():
+        production_closes.append(build_finished.is_set())
+        original_close()
+
+    monkeypatch.setattr(built.state.pallium_service, "close", observe_close)
     fastapi_call = FastAPI.__call__
 
     async def observe_inner_scope(self, scope, receive, send):
@@ -57,11 +66,11 @@ async def test_production_factory_keeps_http_responsive_during_build(monkeypatch
         await fastapi_call(self, scope, receive, send)
 
     def held_builder(*_args, **_kwargs):
+        worker_threads.append(threading.get_ident())
         build_started.set()
         if not release_build.wait(5):
             raise AssertionError("test did not release the held app build")
         try:
-            built = create_app(_no_vector_config(test_db_url))
             inner_apps.append(built)
             return built
         finally:
@@ -87,6 +96,8 @@ async def test_production_factory_keeps_http_responsive_during_build(monkeypatch
         async with application.router.lifespan_context(application):
             try:
                 assert await asyncio.to_thread(build_started.wait, 2), "app lifespan did not start construction"
+                assert len(worker_threads) == 1
+                assert worker_threads[0] != event_loop_thread
                 async with httpx.AsyncClient(
                     transport=httpx.ASGITransport(app=application), base_url="http://test",
                 ) as client:
@@ -156,6 +167,7 @@ async def test_production_factory_keeps_http_responsive_during_build(monkeypatch
         release_build.set()
         if application is None:
             application = await asyncio.wait_for(factory, timeout=5)
+    assert production_closes == [True], "production lifespan must close before fixture cleanup"
 
 
 @pytest.mark.asyncio

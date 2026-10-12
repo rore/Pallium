@@ -2,6 +2,38 @@
 
 ## PR 312 review correction checkpoint — 2026-10-12
 
+Full 58fb2a3d completed 6,893 passed, one failed, 45 skipped, two xfailed
+in 463.92 s; all 83 owned processes drained and guards empty. Exact failure:
+tests/test_structural_work_refs_e2e.py::test_codex_prompt_identity_cache_keeps_work_refs_live
+observed the previous pin after three hook calls. No write outcome was captured,
+so neither deadline expiry nor a filesystem failure is established. Root extends
+test-only diagnostic scope to this node: assert initial pin success and capture
+pass-through lock, state-write and Relay outcomes with remaining budgets, preserving
+real clocks, return values and all caller assertions. No production or budget
+change. Run the exact node and its file; retain uncertainty if not reproduced.
+The diagnostic does not expose swallowed filesystem error codes and cannot
+attribute a missing event uniquely to deadline expiry. Architecture accepted
+the actual wrappers and stronger initial-pin/third-Relay assertions.
+
+Exact diagnostic case passed 1/1 in 0.31 s; entire structural file passed
+16 with two skips in 17.56 s. Guards empty; three and five owned processes
+drained respectively. Normal third-turn persistence succeeded, but REL-15 is
+unattributed and unfixed. Codex common.py is unchanged from main, blob
+202451b15f2af2e1f37e0135942c20c322f25bb1. Architecture accepts evidence reuse
+of the complete run plus focused corrections, conditional on exact final-head
+platform CI. This accepts verified improvements, not closure of every bug.
+Health fixture correction passed 1/1 in 0.90 s with actual production-close
+and off-loop worker witnesses; no runtime source change since 58fb2a3d.
+
+Final old Windows 3.13 CI failure: responsiveness test's post-release two-second
+wait included real early-storage construction (logged 3.145 s). Root and
+architecture accept reusing the existing client fixture's prebuilt real app
+in this exact health test. Keep the actual worker gate and assert its thread
+differs from the HTTP loop, preserve all HTTP/readiness/delegation checks and
+two-second handoff limit, and witness lifespan closure before fixture fallback.
+No production deadline or constructor behavior changes. This node qualifies
+responsiveness while construction is held, not a two-second database-build SLA.
+
 Root additionally authorizes the independently reviewed node-only correction
 in tests/test_codex_wake.py::test_relay_turn_logs_correlated_service_and_route_ready_timing.
 Its HTTP timing, privacy, callback ordering and validation contract will use an
