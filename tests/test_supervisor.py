@@ -721,6 +721,7 @@ def test_wait_for_api_succeeds_when_token_matches(tmp_path, monkeypatch):
 
     # TCP succeeds on first try
     monkeypatch.setattr("socket.socket", _stub_socket_factory([True]))
+    monkeypatch.setattr("app.supervisor._probe_initialized_health", lambda *_args, **_kwargs: True, raising=False)
 
     times = iter([0.0, 0.1, 0.2])
     clock = lambda: next(times, 0.5)
@@ -823,6 +824,7 @@ def test_wait_for_api_falls_back_after_grace_when_token_missing(tmp_path, monkey
     run_dir.mkdir()  # but no api_token file
 
     monkeypatch.setattr("socket.socket", _stub_socket_factory([True] * 100))
+    monkeypatch.setattr("app.supervisor._probe_initialized_health", lambda *_args, **_kwargs: True, raising=False)
 
     # Each clock() call jumps far enough that grace period elapses on the
     # second iteration after TCP starts succeeding.
@@ -845,6 +847,7 @@ def test_wait_for_api_falls_back_after_grace_when_token_missing(tmp_path, monkey
 def test_wait_for_api_no_self_id_legacy_path(tmp_path, monkeypatch):
     """Without expected_nonce/run_dir, behavior is legacy: TCP success → True."""
     monkeypatch.setattr("socket.socket", _stub_socket_factory([True]))
+    monkeypatch.setattr("app.supervisor._probe_initialized_health", lambda *_args, **_kwargs: True, raising=False)
     result = _wait_for_api(
         "127.0.0.1", 19999, timeout=5.0, sleep_fn=lambda _: None,
     )
@@ -875,6 +878,7 @@ def test_wait_for_api_handles_corrupt_token_file(tmp_path, monkeypatch):
     (run_dir / "api_token").write_text("not valid json {{{", encoding="utf-8")
 
     monkeypatch.setattr("socket.socket", _stub_socket_factory([True] * 100))
+    monkeypatch.setattr("app.supervisor._probe_initialized_health", lambda *_args, **_kwargs: True, raising=False)
 
     t = [0.0]
     def clock():
@@ -890,6 +894,38 @@ def test_wait_for_api_handles_corrupt_token_file(tmp_path, monkeypatch):
         clock=clock,
     )
     assert result is True, "corrupt JSON → treated as absent, grace fallback applies"
+
+
+@pytest.mark.parametrize("identity", ["nonce", "legacy", "grace", "corrupt_grace"])
+def test_wait_for_api_requires_initialized_http_after_tcp(identity, tmp_path, monkeypatch):
+    """TCP plus any existing identity route is insufficient while HTTP is initializing."""
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    kwargs = {}
+    if identity == "nonce":
+        nonce = "expected-token"
+        (run_dir / "api_token").write_text(_json.dumps({"nonce": nonce}), encoding="utf-8")
+        kwargs.update(expected_nonce=nonce, run_dir=run_dir)
+    elif identity in {"grace", "corrupt_grace"}:
+        if identity == "corrupt_grace":
+            (run_dir / "api_token").write_text("not json", encoding="utf-8")
+        kwargs.update(expected_nonce="missing-token", run_dir=run_dir, grace_period=0.0)
+
+    monkeypatch.setattr("socket.socket", _stub_socket_factory([True] * 10))
+    probes = []
+    monkeypatch.setattr(
+        "app.supervisor._probe_initialized_health",
+        lambda *_args, **_kwargs: probes.append(True) or False,
+        raising=False,
+    )
+    ticks = iter(range(100))
+    result = _wait_for_api(
+        "127.0.0.1", 19999, timeout=2.0, sleep_fn=lambda _: None,
+        clock=lambda: next(ticks) * 0.6, **kwargs,
+    )
+
+    assert result is False
+    assert probes, "a TCP/ownership candidate must be checked through HTTP"
 
 
 def test_generate_launch_token_is_unique():

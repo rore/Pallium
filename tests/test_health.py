@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import threading
 import contextlib
 import logging
@@ -26,6 +27,224 @@ def _no_vector_config() -> AppConfig:
         semantic_packages=DEMO_SEMANTIC_PACKAGES,
         vector_index=VectorIndexConfig(enabled=False),
     )
+
+
+@pytest.mark.asyncio
+async def test_production_factory_keeps_http_responsive_during_build(monkeypatch) -> None:
+    import httpx
+    from app import main
+    from fastapi import FastAPI
+
+    build_started, release_build, build_finished = threading.Event(), threading.Event(), threading.Event()
+    create_app = main.create_app
+    inner_apps, inner_scope_types = [], []
+    fastapi_call = FastAPI.__call__
+
+    async def observe_inner_scope(self, scope, receive, send):
+        if inner_apps and self is inner_apps[0]:
+            inner_scope_types.append(scope["type"])
+        await fastapi_call(self, scope, receive, send)
+
+    def held_builder(*_args, **_kwargs):
+        build_started.set()
+        if not release_build.wait(5):
+            raise AssertionError("test did not release the held app build")
+        try:
+            built = create_app(_no_vector_config())
+            inner_apps.append(built)
+            return built
+        finally:
+            build_finished.set()
+
+    monkeypatch.setattr(main, "create_app", held_builder)
+    monkeypatch.setattr(FastAPI, "__call__", observe_inner_scope)
+    factory = asyncio.create_task(asyncio.to_thread(main.app))
+    application = None
+    try:
+        try:
+            application = await asyncio.wait_for(asyncio.shield(factory), timeout=1)
+        except asyncio.TimeoutError:
+            started = await asyncio.to_thread(build_started.wait, 1)
+            release_build.set()
+            application = await asyncio.wait_for(factory, timeout=5)
+            async with application.router.lifespan_context(application):
+                pass
+            pytest.fail(
+                f"production app factory waited for synchronous construction (builder_started={started})"
+            )
+
+        async with application.router.lifespan_context(application):
+            try:
+                assert await asyncio.to_thread(build_started.wait, 2), "app lifespan did not start construction"
+                async with httpx.AsyncClient(
+                    transport=httpx.ASGITransport(app=application), base_url="http://test",
+                ) as client:
+                    health = await client.get("/health")
+                    status = await client.get("/status")
+                    assert health.json()["initialized"] is False
+                    assert health.json()["ready"] is False
+                    assert status.json()["initialized"] is False
+                    assert status.json()["ready"] is False
+                    assert not build_finished.is_set(), "health/status waited for construction"
+
+                    query = await client.post("/query", json={"text": "startup probe"})
+                    mcp = await client.post("/mcp", json={
+                        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+                        "params": {"protocolVersion": "2025-03-26", "capabilities": {},
+                                   "clientInfo": {"name": "startup-probe", "version": "1"}},
+                    })
+                    assert query.status_code == 503
+                    assert mcp.status_code == 503
+                    assert not build_finished.is_set(), "operational request reached the partial app"
+
+                    websocket_messages = []
+
+                    async def websocket_receive():
+                        return {"type": "websocket.connect"}
+
+                    async def websocket_send(message):
+                        websocket_messages.append(message)
+
+                    await application(
+                        {
+                            "type": "websocket",
+                            "asgi": {"version": "3.0", "spec_version": "2.4"},
+                            "scheme": "ws",
+                            "path": "/startup-probe",
+                            "raw_path": b"/startup-probe",
+                            "query_string": b"",
+                            "headers": [],
+                            "client": ("testclient", 12345),
+                            "server": ("testserver", 80),
+                            "subprotocols": [],
+                        },
+                        websocket_receive,
+                        websocket_send,
+                    )
+                    assert websocket_messages == [{"type": "websocket.close", "code": 1013}]
+                    assert inner_scope_types == [], "uninitialized request entered the partial app"
+
+                release_build.set()
+                assert await asyncio.to_thread(build_finished.wait, 2), "app construction did not settle"
+                async with httpx.AsyncClient(
+                    transport=httpx.ASGITransport(app=application), base_url="http://test",
+                ) as client:
+                    health = await client.get("/health")
+                    status = await client.get("/status")
+                    assert health.status_code == 200
+                    assert health.json()["initialized"] is True
+                    assert health.json()["ready"] is True
+                    assert status.json()["initialized"] is True
+                    assert status.json()["ready"] is True
+                    assert (await client.post("/query", json={"text": "startup probe"})).status_code == 200
+                    assert "http" in inner_scope_types, "ready request was not delegated to the built app"
+            finally:
+                release_build.set()
+    finally:
+        release_build.set()
+        if application is None:
+            application = await asyncio.wait_for(factory, timeout=5)
+
+
+@pytest.mark.asyncio
+async def test_production_factory_keeps_mcp_lifespan_on_one_task(monkeypatch) -> None:
+    from app import main
+
+    manager = pytest.importorskip("mcp.server.streamable_http_manager")
+    create_app = main.create_app
+    monkeypatch.setattr(main, "create_app", lambda *_args, **_kwargs: create_app(_no_vector_config()))
+    lifecycle_tasks = []
+
+    @contextlib.asynccontextmanager
+    async def run(_manager):
+        lifecycle_tasks.append(("enter", asyncio.current_task()))
+        try:
+            yield
+        finally:
+            lifecycle_tasks.append(("exit", asyncio.current_task()))
+
+    monkeypatch.setattr(manager.StreamableHTTPSessionManager, "run", run)
+    application = main.app()
+    async with application.router.lifespan_context(application):
+        pass
+
+    assert [phase for phase, _task in lifecycle_tasks] == ["enter", "exit"]
+    assert lifecycle_tasks[0][1] is lifecycle_tasks[1][1]
+
+
+def test_production_factory_degraded_provider_keeps_query_operational(monkeypatch) -> None:
+    from app import main
+
+    create_app = main.create_app
+    monkeypatch.setattr(main, "create_app", lambda *_args, **_kwargs: create_app(_failed_embedding_config()))
+    application = main.app()
+    with TestClient(application) as client:
+        health = client.get("/health")
+        status = client.get("/status")
+        query = client.post("/query", json={"text": "startup probe"})
+
+    assert health.status_code == 200
+    assert health.json()["status"] == "degraded"
+    assert health.json()["initialized"] is True
+    assert health.json()["ready"] is False
+    assert status.json()["initialized"] is True
+    assert status.json()["ready"] is False
+    assert query.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_production_factory_shutdown_settles_held_build_before_close(monkeypatch) -> None:
+    from app import main
+
+    build_started, release_build, build_finished = threading.Event(), threading.Event(), threading.Event()
+    create_app = main.create_app
+    built_apps, close_after_build = [], []
+
+    def held_builder(*_args, **_kwargs):
+        build_started.set()
+        if not release_build.wait(5):
+            raise AssertionError("test did not release the held app build")
+        try:
+            built = create_app(_no_vector_config())
+            original_close = built.state.pallium_service.close
+
+            def counted_close():
+                close_after_build.append(build_finished.is_set())
+                original_close()
+
+            built.state.pallium_service.close = counted_close
+            built_apps.append(built)
+            return built
+        finally:
+            build_finished.set()
+
+    monkeypatch.setattr(main, "create_app", held_builder)
+    application = main.app()
+    lifespan = application.router.lifespan_context(application)
+    entered = False
+    shutdown = None
+    try:
+        await lifespan.__aenter__()
+        entered = True
+        assert await asyncio.to_thread(build_started.wait, 2), "app lifespan did not start construction"
+        shutdown = asyncio.create_task(lifespan.__aexit__(None, None, None))
+        loop_pulse = asyncio.Event()
+        asyncio.get_running_loop().call_soon(loop_pulse.set)
+        await asyncio.wait_for(loop_pulse.wait(), timeout=1)
+        assert not shutdown.done(), "shutdown abandoned or bypassed the held build"
+        assert not build_finished.is_set()
+
+        release_build.set()
+        await asyncio.wait_for(shutdown, timeout=5)
+        assert build_finished.is_set()
+        assert len(built_apps) == 1
+        assert close_after_build == [True]
+    finally:
+        release_build.set()
+        if shutdown is not None:
+            await asyncio.wait_for(shutdown, timeout=5)
+        elif entered:
+            await asyncio.wait_for(lifespan.__aexit__(None, None, None), timeout=5)
 
 
 class TestHealthNoVector:
