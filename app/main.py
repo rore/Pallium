@@ -103,6 +103,10 @@ def _start_reconcile_thread(
     *,
     interval: float = RECONCILE_INTERVAL_SECONDS,
     reconcile_done: threading.Event | None = None,
+    reconcile_failed: threading.Event | None = None,
+    bootstrap: bool = False,
+    owned_threads: list[threading.Thread] | None = None,
+    rebuild_thread: threading.Thread | None = None,
 ) -> threading.Event:
     """Start a daemon thread that periodically reconciles SQLite → usearch.
 
@@ -114,15 +118,31 @@ def _start_reconcile_thread(
     stop = threading.Event()
 
     def loop() -> None:
+        if bootstrap and rebuild_thread is not None:
+            # Reconcile the replacement index, not new-model vectors into the old index.
+            rebuild_thread.join()
+        if bootstrap and not stop.is_set():
+            try:
+                service.reconcile_vector_index(raise_errors=True)
+                if reconcile_done is not None:
+                    reconcile_done.set()
+            except Exception:
+                if reconcile_failed is not None:
+                    reconcile_failed.set()
+                logger.exception("Initial vector reconciliation failed")
         while not stop.wait(interval):
             try:
                 service.reconcile_vector_index()
-                if reconcile_done is not None:
+                if reconcile_done is not None and not (
+                    reconcile_failed is not None and reconcile_failed.is_set()
+                ):
                     reconcile_done.set()
             except Exception:
                 logger.debug("Vector reconciliation error in daemon thread", exc_info=True)
 
     thread = threading.Thread(target=loop, daemon=True, name="vector-reconcile")
+    if owned_threads is not None:
+        owned_threads.append(thread)
     thread.start()
     return stop
 
@@ -185,9 +205,26 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
         logger.warning("MetricsStore could not be initialized; metrics persistence disabled", exc_info=True)
 
     query_stats = QueryStats(metrics_store=metrics_store)
-    with startup_stage("build_service"):
-        build_result = build_service(resolved_config, routing_overrides=routing_overrides, query_stats=query_stats, metrics_store=metrics_store)
+    try:
+        with startup_stage("build_service"):
+            build_result = build_service(resolved_config, routing_overrides=routing_overrides, query_stats=query_stats, metrics_store=metrics_store)
+    except BaseException:
+        if early_storage is not None:
+            early_storage.close()
+        raise
     service = build_result.service
+    resources_closed = False
+
+    def close_resources() -> None:
+        nonlocal resources_closed
+        if resources_closed:
+            return
+        resources_closed = True
+        with contextlib.ExitStack() as cleanup_stack:
+            for provider in (service._storage, early_storage):
+                if isinstance(provider, SQLiteStorageProvider):
+                    cleanup_stack.callback(provider.close)
+            cleanup_stack.callback(service.close)
     relay_limiter = anyio.CapacityLimiter(4)
     codex_admission_limiter = anyio.CapacityLimiter(3)
     diagnostic_limiter = anyio.CapacityLimiter(2)
@@ -280,55 +317,26 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
     async def app_lifespan(app_instance: FastAPI) -> AsyncIterator[None]:
         lifespan_started = time.monotonic()
         logger.info("startup stage=lifespan outcome=start pid=%s", os.getpid())
-        # Write the launch token as early as possible so the supervisor's
-        # readiness probe can self-identify this process before any heavy
-        # startup (vector reconcile, rebuild) extends the window during which
-        # an orphan from a prior generation could be mistaken for us.
         token_path = _write_launch_token()
         app_instance.state._launch_token_path = token_path
-
-        # Start reconcile thread inside lifespan so shutdown stops it cleanly.
-        stop: threading.Event | None = None
-        rebuild_coordinator: "RebuildCoordinator | None" = None
-        if build_result.index_holder.is_available:
-            reconcile_done = threading.Event()
-            app_instance.state._reconcile_done = reconcile_done
-            stop = _start_reconcile_thread(
-                service, reconcile_done=reconcile_done,
-            )
-            app_instance.state._reconcile_stop = stop
-        else:
-            app_instance.state._reconcile_done = None
-
-        # Start background rebuild if needed
-        if build_result.rebuild_needed and build_result.embedding_provider is not None:
-            from core.rebuild_coordinator import RebuildCoordinator
-            from semantic.agent_conversation_memory_embedding import EMBEDDING_SCHEMA_VERSION
-
-            _recover_interrupted_swap(build_result.index_path)
-            RebuildCoordinator.cleanup_orphaned_rebuild(build_result.index_path)
-
-            rebuild_coordinator = RebuildCoordinator(
-                storage=service._storage,
-                embedding_provider=build_result.embedding_provider,
-                index_holder=build_result.index_holder,
-                index_path=build_result.index_path,
-                target_model_name=build_result.embedding_provider.model_name(),
-                target_dimensions=build_result.embedding_provider.dimensions(),
-                target_schema_version=EMBEDDING_SCHEMA_VERSION,
-                reason=build_result.rebuild_reason,
-                on_swap_callback=service._vector_embedder.reset_reconcile_state,
-            )
-            rebuild_coordinator.start()
-            app_instance.state._rebuild_coordinator = rebuild_coordinator
-
-        claude_wake_reconciler = None
-        shadow_service = None
-        inventory_service = None
-        retained_service = None
-        relay_service = None
+        stop = rebuild_coordinator = None
+        claude_wake_reconciler = shadow_service = inventory_service = retained_service = relay_service = None
+        owned_threads: list[threading.Thread] = []
+        cleaned = False
 
         def cleanup() -> None:
+            nonlocal cleaned
+            if cleaned:
+                return
+            cleaned = True
+            app_instance.state._lifespan_complete = False
+            if stop is not None:
+                stop.set()
+            for worker in (retained_service, inventory_service, shadow_service,
+                           claude_wake_reconciler, rebuild_coordinator):
+                thread = getattr(worker, "thread", None) or getattr(worker, "_thread", None)
+                if thread is not None and thread not in owned_threads:
+                    owned_threads.append(thread)
             if retained_service is not None:
                 try:
                     retained_service.stop()
@@ -350,75 +358,115 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
                 claude_wake_reconciler.stop()
             if rebuild_coordinator is not None:
                 rebuild_coordinator.stop()
-            if stop is not None:
-                stop.set()
             _remove_launch_token(token_path)
+            # Bounded stop timeouts do not prove that storage users have exited.
+            for thread in owned_threads:
+                if thread.ident is not None:
+                    thread.join()
             wait_for_operations()
-            service.close()
-            for storage_provider in (service._storage, early_storage):
-                if isinstance(storage_provider, SQLiteStorageProvider):
-                    storage_provider.close()
+            close_resources()
 
-        try:
-            binding = claude_binding
-            service_port = os.environ.get("PALLIUM_SERVICE_PORT")
-            if binding is not None and service_port is not None:
-                port = int(service_port)
-                write_json_atomic(service_marker_path(port), {"port": port, **binding})
-            claude_wake_registry.recover_intents()
-            relay_service = RelayService(build_result.storage)
+        def initialize_runtime() -> None:
+            nonlocal stop, rebuild_coordinator, claude_wake_reconciler
+            nonlocal shadow_service, inventory_service, retained_service, relay_service
+            # Start background rebuild if needed
+            if build_result.rebuild_needed and build_result.embedding_provider is not None:
+                from core.rebuild_coordinator import RebuildCoordinator
+                from semantic.agent_conversation_memory_embedding import EMBEDDING_SCHEMA_VERSION
 
-            def relay_trace(event: dict[str, object]) -> bool:
-                return service.enqueue_relay_trace_event(
-                    relay_service.record_trace_event, event
+                _recover_interrupted_swap(build_result.index_path)
+                RebuildCoordinator.cleanup_orphaned_rebuild(build_result.index_path)
+
+                rebuild_coordinator = RebuildCoordinator(
+                    storage=service._storage,
+                    embedding_provider=build_result.embedding_provider,
+                    index_holder=build_result.index_holder,
+                    index_path=build_result.index_path,
+                    target_model_name=build_result.embedding_provider.model_name(),
+                    target_dimensions=build_result.embedding_provider.dimensions(),
+                    target_schema_version=EMBEDDING_SCHEMA_VERSION,
+                    reason=build_result.rebuild_reason,
+                    on_swap_callback=service._vector_embedder.reset_reconcile_state,
                 )
+                rebuild_coordinator.start()
+                app_instance.state._rebuild_coordinator = rebuild_coordinator
 
-            claude_wake_reconciler = start_claude_wake_reconciler(
-                claude_wake_registry,
-                relay_service,
-                claim_recovery=lambda: recover_expired_relay_wakes(
-                    relay_service,
+            # Start reconcile thread inside lifespan so shutdown stops it cleanly.
+            if build_result.index_holder.is_available or rebuild_coordinator is not None:
+                reconcile_done = threading.Event()
+                app_instance.state._reconcile_done = reconcile_done
+                stop = _start_reconcile_thread(
+                    service, reconcile_done=reconcile_done, owned_threads=owned_threads,
+                    bootstrap=bool(getattr(app_instance.state, "_production_bootstrap", False)),
+                    reconcile_failed=app_instance.state._reconcile_failed,
+                    rebuild_thread=getattr(rebuild_coordinator, "_thread", None),
+                )
+                app_instance.state._reconcile_stop = stop
+            else:
+                app_instance.state._reconcile_done = None
+
+            try:
+                binding = claude_binding
+                service_port = os.environ.get("PALLIUM_SERVICE_PORT")
+                if binding is not None and service_port is not None:
+                    port = int(service_port)
+                    write_json_atomic(service_marker_path(port), {"port": port, **binding})
+                claude_wake_registry.recover_intents()
+                relay_service = RelayService(build_result.storage)
+
+                def relay_trace(event: dict[str, object]) -> bool:
+                    return service.enqueue_relay_trace_event(
+                        relay_service.record_trace_event, event
+                    )
+
+                claude_wake_reconciler = start_claude_wake_reconciler(
                     claude_wake_registry,
-                    codex_registry=codex_wake_registry,
+                    relay_service,
+                    claim_recovery=lambda: recover_expired_relay_wakes(
+                        relay_service,
+                        claude_wake_registry,
+                        codex_registry=codex_wake_registry,
+                        trace_callback=relay_trace,
+                    ),
                     trace_callback=relay_trace,
-                ),
-                trace_callback=relay_trace,
-            )
-            claude_wake_registry.set_reconcile_signal(
-                None if claude_wake_reconciler is None else claude_wake_reconciler.signal,
-            )
-            app_instance.state._claude_wake_reconciler = claude_wake_reconciler
-        except RelayUnavailableError:
-            app_instance.state._claude_wake_reconciler = None
-        except BaseException:
-            cleanup()
-            raise
+                )
+                claude_wake_registry.set_reconcile_signal(
+                    None if claude_wake_reconciler is None else claude_wake_reconciler.signal,
+                )
+                app_instance.state._claude_wake_reconciler = claude_wake_reconciler
+            except RelayUnavailableError:
+                app_instance.state._claude_wake_reconciler = None
+            except BaseException:
+                cleanup()
+                raise
+
+            try:
+                from app.codex_bridge_pipe import start_shadow_service
+
+                shadow_service = start_shadow_service(build_result.storage)
+            except Exception:
+                logger.warning("Codex shadow worker unavailable")
+            app_instance.state._codex_shadow_service = shadow_service
+            try:
+                from app.codex_bridge_pipe import start_inventory_service
+
+                inventory_service = start_inventory_service(
+                    trial_relay=relay_service, trial_registry=codex_wake_registry,
+                )
+            except Exception:
+                logger.warning("Codex inventory worker unavailable")
+            app_instance.state._codex_inventory_service = inventory_service
+            try:
+                from app.codex_bridge_pipe import start_retained_service
+
+                retained_service = start_retained_service()
+            except Exception:
+                logger.warning("Codex retained worker unavailable")
+            codex_wake_registry.retained_service = retained_service
+            app_instance.state._codex_retained_service = retained_service
 
         try:
-            from app.codex_bridge_pipe import start_shadow_service
-
-            shadow_service = start_shadow_service(build_result.storage)
-        except Exception:
-            logger.warning("Codex shadow worker unavailable")
-        app_instance.state._codex_shadow_service = shadow_service
-        try:
-            from app.codex_bridge_pipe import start_inventory_service
-
-            inventory_service = start_inventory_service(
-                trial_relay=relay_service, trial_registry=codex_wake_registry,
-            )
-        except Exception:
-            logger.warning("Codex inventory worker unavailable")
-        app_instance.state._codex_inventory_service = inventory_service
-        try:
-            from app.codex_bridge_pipe import start_retained_service
-
-            retained_service = start_retained_service()
-        except Exception:
-            logger.warning("Codex retained worker unavailable")
-        codex_wake_registry.retained_service = retained_service
-        app_instance.state._codex_retained_service = retained_service
-        try:
+            await anyio.to_thread.run_sync(initialize_runtime, abandon_on_cancel=False)
             async with (
                 session_manager.run()
                 if mcp_available and session_manager is not None
@@ -428,13 +476,14 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
                 logger.info("startup stage=lifespan outcome=complete pid=%s elapsed_seconds=%.3f", os.getpid(), time.monotonic() - lifespan_started)
                 yield
         finally:
-            cleanup()
+            await anyio.to_thread.run_sync(cleanup, abandon_on_cancel=False)
 
     app = FastAPI(title="Pallium", version="0.1.0", lifespan=app_lifespan)
     app.state.pallium_service = service
     app.state.metrics_store = metrics_store
     app.state._lifespan_complete = False
     app.state._reconcile_done = None
+    app.state._reconcile_failed = threading.Event()
     app.state._rebuild_coordinator = None
     app.state._start_time = time.monotonic()
     app.state._wait_for_operations = wait_for_operations
@@ -486,6 +535,8 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
             body["claude_wake_binding_id"] = binding_fingerprint(claude_binding)
         status_code = 200 if ready else 503
         return JSONResponse(content=body, status_code=status_code)
+
+    app.state._health_response = health
 
     @app.post("/shutdown")
     def shutdown(request: Request) -> JSONResponse:
@@ -703,38 +754,171 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
     async def status(include_relay_wake: bool = True) -> JSONResponse:
         return await run_diagnostic_operation(lambda: status_body(include_relay_wake))
 
+    app.state._status_response = status
+    app.state._close_constructed = close_resources
+
     try:
-        dashboard_relay_service = RelayService(build_result.storage)
-    except RelayUnavailableError:
-        dashboard_relay_service = None
-    codex_wake_registry = codex_wake.get_codex_wake_registry_for_relay_database(
-        resolved_config.resolved_relay_sqlite_url, relay_service=dashboard_relay_service,
-    )
-    app.state.codex_wake_registry = codex_wake_registry
-    mount_dashboard(
-        app,
-        show_roi=resolved_config.features.dashboard_roi,
-        relay_service=dashboard_relay_service,
-        codex_wake_registry=codex_wake_registry,
-    )
-    claude_wake_registry = build_claude_wake_registry(resolved_config.resolved_relay_sqlite_url)
-    app.state.claude_wake_registry = claude_wake_registry
-    app.include_router(build_router(
-        service,
-        audit_log_enabled=resolved_config.observability.query_audit_log,
-        relay_storage=build_result.storage,
-        claude_wake_registry=claude_wake_registry,
-        codex_wake_registry=codex_wake_registry,
-        relay_runner=run_relay_operation,
-        relay_codex_runner=run_codex_relay_operation,
-        diagnostic_runner=run_diagnostic_operation,
-    ))
-    if mcp_available and mcp_app is not None:
-        app.mount("", mcp_app)
-        logger.info("MCP endpoint available at /mcp")
+        try:
+            dashboard_relay_service = RelayService(build_result.storage)
+        except RelayUnavailableError:
+            dashboard_relay_service = None
+        codex_wake_registry = codex_wake.get_codex_wake_registry_for_relay_database(
+            resolved_config.resolved_relay_sqlite_url, relay_service=dashboard_relay_service,
+        )
+        app.state.codex_wake_registry = codex_wake_registry
+        mount_dashboard(
+            app,
+            show_roi=resolved_config.features.dashboard_roi,
+            relay_service=dashboard_relay_service,
+            codex_wake_registry=codex_wake_registry,
+        )
+        claude_wake_registry = build_claude_wake_registry(resolved_config.resolved_relay_sqlite_url)
+        app.state.claude_wake_registry = claude_wake_registry
+        app.include_router(build_router(
+            service,
+            audit_log_enabled=resolved_config.observability.query_audit_log,
+            relay_storage=build_result.storage,
+            claude_wake_registry=claude_wake_registry,
+            codex_wake_registry=codex_wake_registry,
+            relay_runner=run_relay_operation,
+            relay_codex_runner=run_codex_relay_operation,
+            diagnostic_runner=run_diagnostic_operation,
+        ))
+        if mcp_available and mcp_app is not None:
+            app.mount("", mcp_app)
+            logger.info("MCP endpoint available at /mcp")
+    except BaseException:
+        close_resources()
+        raise
     return app
 
 
+class _StartupGate:
+    """Delegate operational scopes only after owned runtime initialization."""
+
+    def __init__(self, app, state):
+        self.app, self.state = app, state
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] in ("http", "websocket") and scope.get("path") not in (
+            "/health", "/status", "/shutdown",
+        ):
+            built = self.state._initialized_app
+            if built is not None and not self.state._closing:
+                await built(scope, receive, send)
+            elif scope["type"] == "websocket":
+                await send({"type": "websocket.close", "code": 1013})
+            else:
+                await JSONResponse({"error": "service not initialized"}, status_code=503)(
+                    scope, receive, send,
+                )
+            return
+        await self.app(scope, receive, send)
+
+
 def app() -> FastAPI:
-    """ASGI factory for uvicorn --factory mode."""
-    return create_app()
+    """Production ASGI factory: bind before non-abandoning initialization."""
+    @contextlib.asynccontextmanager
+    async def lifespan(startup: FastAPI):
+        if startup.state._owner is not None:
+            raise RuntimeError("Production startup lifespan already entered")
+        stopped = asyncio.Event()
+        token_path = _write_launch_token()
+
+        async def initialize():
+            try:
+                built = await anyio.to_thread.run_sync(create_app, abandon_on_cancel=False)
+                built.state._production_bootstrap = True
+                if startup.state._closing:
+                    await anyio.to_thread.run_sync(built.state._close_constructed, abandon_on_cancel=False)
+                    return
+                # The same task owns MCP context entry, lifetime, and exit.
+                async with built.router.lifespan_context(built):
+                    if not startup.state._closing:
+                        startup.state._initialized_app = built
+                    await stopped.wait()
+            except Exception:
+                startup.state._initialization_error = "service_initialization_failed"
+                logger.exception("Service initialization failed")
+            finally:
+                startup.state._initialized_app = None
+
+        owner = asyncio.create_task(initialize(), name="pallium-initialize")
+        startup.state._owner = owner
+        try:
+            yield
+        finally:
+            startup.state._closing = True
+            startup.state._initialized_app = None
+            stopped.set()
+            try:
+                await asyncio.shield(owner)
+            except asyncio.CancelledError:
+                # Native task cancellation must not abandon a constructing worker.
+                await asyncio.shield(owner)
+                raise
+            finally:
+                _remove_launch_token(token_path)
+
+    startup = FastAPI(title="Pallium", version="0.1.0", lifespan=lifespan)
+    startup.state._initialized_app = None
+    startup.state._owner = None
+    startup.state._initialization_error = None
+    startup.state._closing = False
+    startup.add_middleware(_StartupGate, state=startup.state)
+
+    async def startup_response(kind: str, include_relay_wake: bool = True):
+        built = startup.state._initialized_app
+        if built is None or startup.state._closing:
+            error = startup.state._initialization_error
+            body = {
+                "status": "failed" if error else "initializing",
+                "initialized": False, "ready": False,
+                "vector_index_ready": False, "embedding_provider_ok": False,
+            }
+            if error:
+                body["initialization_error"] = error
+            return JSONResponse(body, status_code=503)
+        response = await (
+            built.state._health_response() if kind == "health"
+            else built.state._status_response(include_relay_wake)
+        )
+        body = json.loads(response.body)
+        rebuild = built.state._rebuild_coordinator
+        rebuild_status = rebuild.status() if rebuild is not None else None
+        failed = built.state._reconcile_failed.is_set() or (
+            rebuild_status is not None and rebuild_status["status"] in ("failed", "interrupted")
+        )
+        ready = bool(body.get("vector_index_ready")) and not failed and (
+            rebuild is None or rebuild_status is not None and rebuild_status["status"] == "completed"
+        )
+        body.update(initialized=True, ready=ready, vector_index_ready=ready)
+        if kind == "health":
+            if failed:
+                body["status"] = "degraded"
+                body["initialization_error"] = "vector_bootstrap_failed"
+                response.status_code = 200
+            elif body.get("embedding_provider_ok"):
+                body["status"] = "ok" if ready else "initializing"
+                response.status_code = 200 if ready else 503
+        elif failed:
+            body["initialization_error"] = "vector_bootstrap_failed"
+        return JSONResponse(body, status_code=response.status_code)
+
+    @startup.get("/health")
+    async def health():
+        return await startup_response("health")
+
+    @startup.get("/status")
+    async def status(include_relay_wake: bool = True):
+        return await startup_response("status", include_relay_wake)
+
+    @startup.post("/shutdown")
+    def shutdown(request: Request):
+        if request.client is None or request.client.host not in ("127.0.0.1", "::1"):
+            return JSONResponse({"error": "forbidden"}, status_code=403)
+        import signal
+        os.kill(os.getpid(), signal.SIGINT)
+        return JSONResponse({"status": "shutting_down"})
+
+    return startup

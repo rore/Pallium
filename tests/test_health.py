@@ -11,11 +11,11 @@ from unittest.mock import MagicMock
 
 from fastapi.testclient import TestClient
 
-from app.config import AppConfig, LLMProviderConfig, SemanticPackageConfig, SnapshotConfig
+from app.config import AppConfig, EmbeddingProviderConfig, LLMProviderConfig, SemanticPackageConfig, SnapshotConfig
 from app.main import create_app
 from core.models import MemoryObject, SourceItem
 from core.vector_index_holder import VectorIndexHolder
-from storage.vector_index import VectorIndexConfig
+from storage.vector_index import VectorIndex, VectorIndexConfig
 from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
 
 
@@ -27,6 +27,17 @@ def _no_vector_config() -> AppConfig:
         semantic_packages=DEMO_SEMANTIC_PACKAGES,
         vector_index=VectorIndexConfig(enabled=False),
     )
+
+
+async def _wait_for_health(client, predicate, *, timeout: float = 5.0):
+    """Wait for an externally visible startup state, not a worker-side signal."""
+    async with asyncio.timeout(timeout):
+        while True:
+            response = await client.get("/health")
+            body = response.json()
+            if predicate(body):
+                return response, body
+            await asyncio.sleep(0)
 
 
 @pytest.mark.asyncio
@@ -129,11 +140,12 @@ async def test_production_factory_keeps_http_responsive_during_build(monkeypatch
                 async with httpx.AsyncClient(
                     transport=httpx.ASGITransport(app=application), base_url="http://test",
                 ) as client:
-                    health = await client.get("/health")
+                    health, health_body = await _wait_for_health(
+                        client, lambda body: body.get("initialized") is True,
+                    )
                     status = await client.get("/status")
                     assert health.status_code == 200
-                    assert health.json()["initialized"] is True
-                    assert health.json()["ready"] is True
+                    assert health_body["ready"] is True
                     assert status.json()["initialized"] is True
                     assert status.json()["ready"] is True
                     assert (await client.post("/query", json={"text": "startup probe"})).status_code == 200
@@ -172,38 +184,463 @@ async def test_production_factory_keeps_mcp_lifespan_on_one_task(monkeypatch) ->
     assert lifecycle_tasks[0][1] is lifecycle_tasks[1][1]
 
 
-def test_production_factory_degraded_provider_keeps_query_operational(monkeypatch) -> None:
+@pytest.mark.asyncio
+async def test_production_factory_rejects_second_active_lifespan_without_second_build(monkeypatch) -> None:
+    from app import main
+
+    build_started, release_build = threading.Event(), threading.Event()
+    build_calls = []
+    create_app = main.create_app
+
+    def held_builder(*_args, **_kwargs):
+        build_calls.append(True)
+        build_started.set()
+        if not release_build.wait(5):
+            raise AssertionError("test did not release the held app build")
+        return create_app(_no_vector_config())
+
+    monkeypatch.setattr(main, "create_app", held_builder)
+    application = main.app()
+    request_shutdown = asyncio.Event()
+    lifespan_entered = asyncio.Event()
+
+    async def own_lifespan():
+        async with application.router.lifespan_context(application):
+            lifespan_entered.set()
+            await request_shutdown.wait()
+
+    owner = asyncio.create_task(own_lifespan())
+    try:
+        await asyncio.wait_for(lifespan_entered.wait(), timeout=5)
+        assert await asyncio.to_thread(build_started.wait, 2), "app lifespan did not start construction"
+        second_lifespan = application.router.lifespan_context(application)
+        with pytest.raises(RuntimeError, match="already entered"):
+            await second_lifespan.__aenter__()
+        assert build_calls == [True]
+    finally:
+        release_build.set()
+        request_shutdown.set()
+        await asyncio.wait_for(owner, timeout=5)
+    assert build_calls == [True]
+
+
+@pytest.mark.asyncio
+async def test_production_factory_degraded_provider_keeps_query_operational(monkeypatch) -> None:
+    import httpx
     from app import main
 
     create_app = main.create_app
     monkeypatch.setattr(main, "create_app", lambda *_args, **_kwargs: create_app(_failed_embedding_config()))
     application = main.app()
-    with TestClient(application) as client:
-        health = client.get("/health")
-        status = client.get("/status")
-        query = client.post("/query", json={"text": "startup probe"})
+    async with application.router.lifespan_context(application):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=application), base_url="http://test",
+        ) as client:
+            health, body = await _wait_for_health(
+                client, lambda state: state.get("initialized") is True,
+            )
+            status = await client.get("/status")
+            query = await client.post("/query", json={"text": "startup probe"})
 
     assert health.status_code == 200
-    assert health.json()["status"] == "degraded"
-    assert health.json()["initialized"] is True
-    assert health.json()["ready"] is False
+    assert body["status"] == "degraded"
+    assert body["ready"] is False
     assert status.json()["initialized"] is True
     assert status.json()["ready"] is False
     assert query.status_code == 200
 
 
 @pytest.mark.asyncio
-async def test_production_factory_shutdown_settles_held_build_before_close(monkeypatch) -> None:
+async def test_production_factory_constructor_failure_closes_acquired_storage(monkeypatch) -> None:
+    import httpx
     from app import main
+
+    config = _no_vector_config()
+    create_app = main.create_app
+    storage_builder = main.build_storage_provider
+    acquired_storage, close_calls = [], []
+    storage_closed = threading.Event()
+
+    def tracked_storage_builder(_config):
+        storage = storage_builder(config)
+        original_close = storage.close
+
+        def close():
+            close_calls.append(storage)
+            try:
+                original_close()
+            finally:
+                storage_closed.set()
+
+        storage.close = close
+        acquired_storage.append(storage)
+        return storage
+
+    def fail_service_build(*_args, **_kwargs):
+        raise RuntimeError("planned constructor failure")
+
+    monkeypatch.setattr(main, "build_storage_provider", tracked_storage_builder)
+    monkeypatch.setattr(main, "build_service", fail_service_build)
+    monkeypatch.setattr(main, "create_app", lambda *_args, **_kwargs: create_app(config))
+    application = main.app()
+    async with application.router.lifespan_context(application):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=application), base_url="http://test",
+        ) as client:
+            assert await asyncio.to_thread(storage_closed.wait, 5), "constructor failure leaked its acquired SQLite storage"
+            health, health_body = await _wait_for_health(
+                client, lambda body: bool(body.get("initialization_error")),
+            )
+            status = await client.get("/status")
+            query = await client.post("/query", json={"text": "after constructor failure"})
+
+    assert len(acquired_storage) == 1
+    assert close_calls == acquired_storage
+    assert health.status_code == 503
+    assert health_body["initialized"] is False
+    assert health_body["ready"] is False
+    assert status.json()["initialized"] is False
+    assert status.json()["ready"] is False
+    assert query.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_production_factory_runtime_setup_failure_closes_app_resources(monkeypatch) -> None:
+    import httpx
+    from app import main
+
+    config = _no_vector_config()
+    create_app = main.create_app
+    storage_builder = main.build_storage_provider
+    acquired_storage, storage_close_calls, service_close_calls = [], [], []
+    resources_closed = threading.Event()
+    inner_apps = []
+
+    def tracked_storage_builder(storage_config):
+        storage = storage_builder(storage_config)
+        original_close = storage.close
+
+        def close():
+            storage_close_calls.append(storage)
+            try:
+                original_close()
+            finally:
+                if len(storage_close_calls) == 2:
+                    resources_closed.set()
+
+        storage.close = close
+        acquired_storage.append(storage)
+        return storage
+
+    def capture_created_app(*_args, **_kwargs):
+        built = create_app(config)
+        service = built.state.pallium_service
+        original_close = service.close
+
+        def close_service():
+            service_close_calls.append(service)
+            original_close()
+
+        service.close = close_service
+        inner_apps.append(built)
+        return built
+
+    def fail_runtime_setup(*_args, **_kwargs):
+        raise RuntimeError("planned runtime setup failure")
+
+    monkeypatch.setattr(main, "build_storage_provider", tracked_storage_builder)
+    monkeypatch.setattr("app.dependencies.build_storage_provider", tracked_storage_builder)
+    monkeypatch.setattr(main, "create_app", capture_created_app)
+    monkeypatch.setattr(main, "start_claude_wake_reconciler", fail_runtime_setup)
+    application = main.app()
+    async with application.router.lifespan_context(application):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=application), base_url="http://test",
+        ) as client:
+            assert await asyncio.to_thread(resources_closed.wait, 5), "runtime setup failure did not close all acquired SQLite storage"
+            health, health_body = await _wait_for_health(
+                client, lambda body: bool(body.get("initialization_error")),
+            )
+            status = await client.get("/status")
+            query = await client.post("/query", json={"text": "after runtime failure"})
+
+    assert len(inner_apps) == 1
+    assert len(acquired_storage) == 2
+    assert sorted(map(id, storage_close_calls)) == sorted(map(id, acquired_storage))
+    assert len(service_close_calls) == 1
+    assert health.status_code == 503
+    assert health_body["initialized"] is False
+    assert health_body["ready"] is False
+    assert status.json()["initialized"] is False
+    assert status.json()["ready"] is False
+    assert query.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_production_factory_serves_lexical_and_relay_before_vector_ready(monkeypatch, tmp_path: Path) -> None:
+    import httpx
+    from app import main
+
+    config = AppConfig(
+        storage_backend="sqlite",
+        sqlite_url="sqlite:///:memory:",
+        default_use_case="demo_agent_memory",
+        semantic_packages=DEMO_SEMANTIC_PACKAGES,
+        vector_index=VectorIndexConfig(
+            enabled=True,
+            index_path=str(tmp_path / "startup.index"),
+            embedding_provider="local",
+        ),
+        embedding_providers={
+            "local": EmbeddingProviderConfig(name="local", kind="fastembed", model="startup-test"),
+        },
+    )
+    provider = MagicMock()
+    provider.model_name.return_value = "startup-test"
+    provider.dimensions.return_value = 4
+    index = MagicMock(spec=VectorIndex)
+    index.model_name = "startup-test"
+    index.entry_count.return_value = 0
+    monkeypatch.setattr("app.dependencies.build_embedding_provider", lambda *_args, **_kwargs: provider)
+    monkeypatch.setattr("app.dependencies._load_or_create_vector_index", lambda *_args, **_kwargs: index)
+
+    reconcile_started, release_reconcile, reconcile_finished = threading.Event(), threading.Event(), threading.Event()
+    reconcile_done_events = []
+
+    def gated_reconcile(_service, *, reconcile_done=None, **_kwargs):
+        stop = threading.Event()
+        reconcile_done_events.append(reconcile_done)
+
+        def run():
+            reconcile_started.set()
+            try:
+                release_reconcile.wait(5)
+                if reconcile_done is not None and not stop.is_set():
+                    reconcile_done.set()
+            finally:
+                reconcile_finished.set()
+
+        threading.Thread(target=run, daemon=True, name="test-vector-reconcile").start()
+        return stop
+
+    create_app = main.create_app
+    monkeypatch.setattr(main, "_start_reconcile_thread", gated_reconcile)
+    monkeypatch.setattr(main, "create_app", lambda *_args, **_kwargs: create_app(config))
+    application = main.app()
+    try:
+        async with application.router.lifespan_context(application):
+            assert await asyncio.to_thread(reconcile_started.wait, 2), "vector reconciliation did not start"
+            assert len(reconcile_done_events) == 1 and not reconcile_done_events[0].is_set()
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=application), base_url="http://test",
+            ) as client:
+                _health, health_body = await _wait_for_health(
+                    client, lambda body: body.get("initialized") is True,
+                )
+                status = await client.get("/status")
+                query = await client.post("/query", json={"text": "startup probe"})
+                relay = await client.get("/relay/sessions", params={"container_ref": "startup-probe"})
+                assert health_body["ready"] is False
+                assert status.json()["initialized"] is True
+                assert status.json()["ready"] is False
+                assert query.status_code == 200
+                assert relay.status_code == 200
+
+                release_reconcile.set()
+                assert await asyncio.to_thread(reconcile_finished.wait, 2), "vector reconciliation did not settle"
+                _health, health_body = await _wait_for_health(
+                    client, lambda body: body.get("ready") is True,
+                )
+                status = await client.get("/status")
+                assert health_body["initialized"] is True
+                assert status.json()["initialized"] is True
+                assert status.json()["ready"] is True
+    finally:
+        release_reconcile.set()
+        if reconcile_started.is_set():
+            assert await asyncio.to_thread(reconcile_finished.wait, 2), "test reconcile worker did not settle"
+
+
+@pytest.mark.asyncio
+async def test_production_factory_drains_real_rebuild_inventory_before_storage_close(monkeypatch, tmp_path: Path) -> None:
+    import httpx
+    from app import main
+    from core.rebuild_coordinator import RebuildCoordinator
+    from sqlalchemy import text
+
+    index_path = tmp_path / "live.index"
+    config = AppConfig(
+        storage_backend="sqlite",
+        sqlite_url=f"sqlite:///{tmp_path / 'startup.db'}",
+        default_use_case="demo_agent_memory",
+        semantic_packages=DEMO_SEMANTIC_PACKAGES,
+        vector_index=VectorIndexConfig(
+            enabled=True,
+            index_path=str(index_path),
+            embedding_provider="local",
+        ),
+        embedding_providers={
+            "local": EmbeddingProviderConfig(name="local", kind="fastembed", model="startup-test"),
+        },
+    )
+    provider = MagicMock()
+    provider.model_name.return_value = "startup-test"
+    provider.dimensions.return_value = 4
+    provider.recommended_min_similarity.return_value = 0.1
+    index = MagicMock(spec=VectorIndex)
+    index.model_name = "prior-test-model"
+    index.entry_count.return_value = 1
+    index.search.return_value = []
+    monkeypatch.setattr("app.dependencies.build_embedding_provider", lambda *_args, **_kwargs: provider)
+    monkeypatch.setattr("app.dependencies._load_or_create_vector_index", lambda *_args, **_kwargs: index)
+
+    inventory_started, release_inventory, inventory_finished = threading.Event(), threading.Event(), threading.Event()
+    worker_threads, pre_checkpoint = [], []
+    storage_close_after_worker = []
+    real_inventory = RebuildCoordinator._inventory_raw_source_vectors
+    create_shadow = threading.Event()
+
+    def held_inventory(coordinator):
+        worker_threads.append(threading.current_thread())
+        pre_checkpoint.append(
+            coordinator._checkpoint is None and not coordinator._state_path.exists()
+        )
+        inventory_started.set()
+        if not release_inventory.wait(10):
+            raise AssertionError("test did not release rebuild inventory")
+        try:
+            return real_inventory(coordinator)
+        finally:
+            inventory_finished.set()
+
+    def no_native_shadow_index(_coordinator):
+        create_shadow.set()
+
+    monkeypatch.setattr(RebuildCoordinator, "_inventory_raw_source_vectors", held_inventory)
+    monkeypatch.setattr(RebuildCoordinator, "_create_shadow_index", no_native_shadow_index)
+
+    def reconciled_without_thread(_service, *, reconcile_done=None, **_kwargs):
+        if reconcile_done is not None:
+            reconcile_done.set()
+        return threading.Event()
+
+    monkeypatch.setattr(main, "_start_reconcile_thread", reconciled_without_thread)
+    create_app = main.create_app
+    inner_apps = []
+
+    def build_inner(*_args, **_kwargs):
+        built = create_app(config)
+        storage = built.state.pallium_service._storage
+        original_close = storage.close
+
+        def close_storage():
+            storage_close_after_worker.append(
+                inventory_finished.is_set() and worker_threads and not worker_threads[0].is_alive()
+            )
+            original_close()
+
+        storage.close = close_storage
+        inner_apps.append(built)
+        return built
+
+    def sqlite_select_one(storage):
+        with storage._session_factory() as session:
+            return session.execute(text("SELECT 1")).scalar_one()
+
+    monkeypatch.setattr(main, "create_app", build_inner)
+    application = main.app()
+    owner = None
+    request_shutdown = asyncio.Event()
+    lifespan_entered = asyncio.Event()
+
+    async def own_lifespan():
+        async with application.router.lifespan_context(application):
+            lifespan_entered.set()
+            await request_shutdown.wait()
+
+    try:
+        owner = asyncio.create_task(own_lifespan())
+        await asyncio.wait_for(lifespan_entered.wait(), timeout=5)
+        assert await asyncio.to_thread(inventory_started.wait, 3), "real rebuild inventory did not start"
+        assert pre_checkpoint == [True]
+        assert worker_threads[0].name == "vector-rebuild"
+        assert worker_threads[0].is_alive()
+        assert not create_shadow.is_set()
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=application), base_url="http://test",
+        ) as client:
+            _health, health_body = await _wait_for_health(
+                client, lambda body: body.get("initialized") is True,
+            )
+            status = await client.get("/status")
+            query = await client.post("/query", json={"text": "startup probe"})
+            relay = await client.get("/relay/sessions", params={"container_ref": "startup-probe"})
+            assert health_body["ready"] is False
+            assert status.json()["initialized"] is True
+            assert status.json()["ready"] is False
+            assert query.status_code == 200
+            assert relay.status_code == 200
+
+            request_shutdown.set()
+            health, health_body = await _wait_for_health(
+                client, lambda body: body.get("initialized") is False,
+            )
+            loop_pulse = asyncio.Event()
+            asyncio.get_running_loop().call_soon(loop_pulse.set)
+            await asyncio.wait_for(loop_pulse.wait(), timeout=1)
+            assert not owner.done(), "shutdown abandoned the active rebuild inventory"
+            assert worker_threads[0].is_alive()
+            assert storage_close_after_worker == []
+            assert await asyncio.to_thread(
+                sqlite_select_one, inner_apps[0].state.pallium_service._storage
+            ) == 1
+
+            status = await client.get("/status")
+            query = await client.post("/query", json={"text": "during shutdown"})
+            assert health_body["ready"] is False
+            assert status.json()["initialized"] is False
+            assert status.json()["ready"] is False
+            assert query.status_code == 503
+
+            release_inventory.set()
+            await asyncio.wait_for(owner, timeout=5)
+            assert await asyncio.to_thread(inventory_finished.wait, 1)
+            assert create_shadow.is_set()
+            assert not worker_threads[0].is_alive()
+            assert storage_close_after_worker == [True]
+
+            health = await client.get("/health")
+            status = await client.get("/status")
+            assert health.json()["initialized"] is False
+            assert health.json()["ready"] is False
+            assert status.json()["initialized"] is False
+            assert status.json()["ready"] is False
+    finally:
+        release_inventory.set()
+        request_shutdown.set()
+        if owner is not None:
+            await asyncio.wait_for(owner, timeout=5)
+
+
+@pytest.mark.asyncio
+async def test_production_factory_shutdown_settles_held_build_before_close(monkeypatch) -> None:
+    import httpx
+    from app import main
+    from fastapi import FastAPI
 
     build_started, release_build, build_finished = threading.Event(), threading.Event(), threading.Event()
     create_app = main.create_app
     built_apps, close_after_build = [], []
+    inner_scope_types = []
+    fastapi_call = FastAPI.__call__
+
+    async def observe_inner_scope(self, scope, receive, send):
+        if built_apps and self is built_apps[0]:
+            inner_scope_types.append(scope["type"])
+        await fastapi_call(self, scope, receive, send)
 
     def held_builder(*_args, **_kwargs):
-        build_started.set()
-        if not release_build.wait(5):
-            raise AssertionError("test did not release the held app build")
         try:
             built = create_app(_no_vector_config())
             original_close = built.state.pallium_service.close
@@ -214,37 +651,59 @@ async def test_production_factory_shutdown_settles_held_build_before_close(monke
 
             built.state.pallium_service.close = counted_close
             built_apps.append(built)
+            build_started.set()
+            if not release_build.wait(5):
+                raise AssertionError("test did not release the held app build")
             return built
         finally:
             build_finished.set()
 
     monkeypatch.setattr(main, "create_app", held_builder)
+    monkeypatch.setattr(FastAPI, "__call__", observe_inner_scope)
     application = main.app()
-    lifespan = application.router.lifespan_context(application)
-    entered = False
-    shutdown = None
+    owner = None
+    request_shutdown = asyncio.Event()
+    lifespan_entered = asyncio.Event()
+
+    async def own_lifespan():
+        async with application.router.lifespan_context(application):
+            lifespan_entered.set()
+            await request_shutdown.wait()
+
     try:
-        await lifespan.__aenter__()
-        entered = True
+        owner = asyncio.create_task(own_lifespan())
+        await asyncio.wait_for(lifespan_entered.wait(), timeout=5)
         assert await asyncio.to_thread(build_started.wait, 2), "app lifespan did not start construction"
-        shutdown = asyncio.create_task(lifespan.__aexit__(None, None, None))
+        request_shutdown.set()
         loop_pulse = asyncio.Event()
         asyncio.get_running_loop().call_soon(loop_pulse.set)
         await asyncio.wait_for(loop_pulse.wait(), timeout=1)
-        assert not shutdown.done(), "shutdown abandoned or bypassed the held build"
+        assert not owner.done(), "shutdown abandoned or bypassed the held build"
         assert not build_finished.is_set()
+        assert close_after_build == [], "shutdown closed resources while construction was still held"
 
         release_build.set()
-        await asyncio.wait_for(shutdown, timeout=5)
+        await asyncio.wait_for(owner, timeout=5)
         assert build_finished.is_set()
         assert len(built_apps) == 1
         assert close_after_build == [True]
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=application), base_url="http://test",
+        ) as client:
+            health = await client.get("/health")
+            status = await client.get("/status")
+            query = await client.post("/query", json={"text": "after shutdown"})
+        assert health.json()["initialized"] is False
+        assert health.json()["ready"] is False
+        assert status.json()["initialized"] is False
+        assert status.json()["ready"] is False
+        assert query.status_code == 503
+        assert inner_scope_types == [], "post-shutdown request was delegated to the settled app"
     finally:
         release_build.set()
-        if shutdown is not None:
-            await asyncio.wait_for(shutdown, timeout=5)
-        elif entered:
-            await asyncio.wait_for(lifespan.__aexit__(None, None, None), timeout=5)
+        request_shutdown.set()
+        if owner is not None:
+            await asyncio.wait_for(owner, timeout=5)
 
 
 class TestHealthNoVector:

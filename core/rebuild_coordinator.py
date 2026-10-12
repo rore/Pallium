@@ -143,6 +143,7 @@ class RebuildCoordinator:
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._checkpoint: RebuildCheckpoint | None = None
+        self._terminal_status: str | None = None
         self._shadow_index: VectorIndex | None = None
         self._state_path = Path(f"{self._index_path}.rebuild_state.json")
         self._shadow_dir = Path(f"{self._index_path}.rebuild")
@@ -156,7 +157,7 @@ class RebuildCoordinator:
         )
         self._thread.start()
 
-    def stop(self, timeout: float = 5.0) -> None:
+    def stop(self, timeout: float | None = 5.0) -> None:
         """Signal stop and wait for thread to finish."""
         self._stop_event.set()
         if self._thread is not None:
@@ -169,10 +170,20 @@ class RebuildCoordinator:
     def status(self) -> dict | None:
         """Return current rebuild status for /status endpoint."""
         if self._checkpoint is None:
-            return None
+            if self._terminal_status is None:
+                return None
+            return {
+                "active": False,
+                "status": self._terminal_status,
+                "reason": self._reason,
+                "progress_percent": 0.0,
+                "entries_processed": 0,
+                "entries_total": 0,
+                "started_at": "",
+            }
         return {
-            "active": self._checkpoint.status == "in_progress",
-            "status": self._checkpoint.status,
+            "active": self._terminal_status is None and self._checkpoint.status == "in_progress",
+            "status": self._terminal_status or self._checkpoint.status,
             "reason": self._reason,
             "progress_percent": round(
                 self._checkpoint.entry_count_processed / max(self._checkpoint.entry_count_total, 1) * 100, 1
@@ -207,9 +218,13 @@ class RebuildCoordinator:
             self._rebuild_loop()
         except Exception:
             logger.error("Rebuild failed", exc_info=True)
+            self._terminal_status = "failed"
             if self._checkpoint is not None:
                 self._checkpoint.status = "failed"
-                self._checkpoint.save(self._state_path)
+                try:
+                    self._checkpoint.save(self._state_path)
+                except Exception:
+                    logger.error("Could not persist failed rebuild checkpoint", exc_info=True)
 
     def _start_or_resume(self) -> None:
         """Initialize or resume from checkpoint."""
@@ -317,7 +332,10 @@ class RebuildCoordinator:
                 return
             if self._stop_event.wait(0.01):
                 logger.info("Rebuild stopped by signal at %d entries", self._checkpoint.entry_count_processed)
+                self._terminal_status = "interrupted"
                 return
+        if self._stop_event.is_set() and self._checkpoint.status == "in_progress":
+            self._terminal_status = "interrupted"
 
     def _process_one_batch(self) -> int:
         """Process one batch of entries. Returns count processed (0 = done)."""

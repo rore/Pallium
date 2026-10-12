@@ -55,6 +55,29 @@ backfill check and lifespan initialization. A completed stage only means that
 call returned; verify health and `embedding_provider_ok` separately. Delays before
 these markers are not attributed by them.
 
+The production ASGI factory binds before heavyweight service construction. One
+owned task builds the service off the HTTP loop, enters the MCP/runtime lifespan,
+and owns its exit. Embedded `create_app` remains the eager builder. This improves
+responsiveness during initialization; it does not promise less initialization work.
+
+`/health` and `/status` distinguish `initialized` from `ready`. Before construction
+and runtime/MCP entry finish, both are false and operational HTTP/MCP/WebSocket
+access is refused without reading partial resources. After safe initialization,
+lexical and Relay access are available while `ready` remains false during vector
+bootstrap or rebuild. A successful bounded first reconciliation batch (at most50,
+not historical convergence) and completion of any required rebuild establish
+readiness. Provider-unavailable initialization retains HTTP200 degraded health,
+initialized access and `ready: false`; vector bootstrap failures expose a safe
+category without hiding failure behind a completed thread or absent checkpoint.
+
+Supervisor startup success requires initialized, nonfatal HTTP as well as its
+existing ownership checks, including nonce, legacy and missing-token-grace paths.
+It does not require vector readiness; CLI full-search readiness remains stricter.
+Shutdown revokes delegation/readiness before waiting off-loop for actual owned
+worker termination and tracked operations, then closes service/storage. A bounded
+worker stop timeout alone does not establish settlement. This lifecycle does not
+reload existing MCP processes or qualify their installed versions.
+
 Relay registry reads and post-persistence callbacks run through the existing
 tracked worker runner, so their SQLite or native I/O cannot block the HTTP event
 loop. Non-Codex activation does not consult Codex authority. Queue diagnostics

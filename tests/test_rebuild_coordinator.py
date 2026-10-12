@@ -822,6 +822,38 @@ class TestFullLifecycle:
         assert checkpoint is not None
         assert checkpoint.status == "in_progress"
 
+    def test_stop_without_timeout_waits_during_inventory(self, tmp_path: Path):
+        coordinator, holder, storage, _ = _make_coordinator(tmp_path, [])
+        entered = threading.Event()
+        release = threading.Event()
+
+        def blocked_inventory(index_type, *, after_id=None, limit=None):
+            entered.set()
+            assert release.wait(timeout=10)
+            return []
+
+        storage.list_index_entries_by_type_page.side_effect = blocked_inventory
+        coordinator.start()
+        thread = coordinator._thread
+        try:
+            assert thread is not None
+            assert entered.wait(timeout=10)
+            coordinator.stop(timeout=0)
+            assert thread.is_alive()
+        finally:
+            release.set()
+            coordinator.stop(timeout=None)
+
+        assert thread is not None
+        assert not thread.is_alive()
+        assert not holder.is_available
+        status = coordinator.status()
+        assert status is not None
+        assert status["status"] == "interrupted"
+        checkpoint = RebuildCheckpoint.load(Path(f"{tmp_path / 'live.usearch'}.rebuild_state.json"))
+        assert checkpoint is not None
+        assert checkpoint.status == "in_progress"
+
     def test_on_swap_callback_resets_reconcile(self, tmp_path: Path):
         """Verify the on_swap_callback mechanism works for reconcile state reset."""
         index_path = tmp_path / "live.usearch"

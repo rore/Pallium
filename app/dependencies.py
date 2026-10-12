@@ -365,6 +365,25 @@ def build_service(
     resolved_config = config or AppConfig.from_env()
     with startup_stage("service_storage"):
         storage = build_storage_provider(resolved_config)
+    try:
+        return _build_service_from_storage(
+            resolved_config, storage, routing_overrides,
+            enable_vector=enable_vector, query_stats=query_stats, metrics_store=metrics_store,
+        )
+    except BaseException:
+        storage.close()
+        raise
+
+
+def _build_service_from_storage(
+    resolved_config: AppConfig,
+    storage,
+    routing_overrides: RoutingOverrides | None,
+    *,
+    enable_vector: bool,
+    query_stats: QueryStats | None,
+    metrics_store,
+) -> BuildResult:
     with startup_stage("semantic_plugins"):
         plugins = build_semantic_plugins(resolved_config, routing_overrides=routing_overrides)
 
