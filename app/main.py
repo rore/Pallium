@@ -360,9 +360,15 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
                     logger.warning("Codex shadow worker shutdown failed")
             claude_wake_registry.set_reconcile_signal(None)
             if claude_wake_reconciler is not None:
-                claude_wake_reconciler.stop()
+                try:
+                    claude_wake_reconciler.stop()
+                except Exception:
+                    logger.warning("Claude wake reconciler shutdown failed")
             if rebuild_coordinator is not None:
-                rebuild_coordinator.stop()
+                try:
+                    rebuild_coordinator.stop()
+                except Exception:
+                    logger.warning("Vector rebuild worker shutdown failed")
             _remove_launch_token(token_path)
             # Bounded stop timeouts do not prove that storage users have exited.
             for thread in owned_threads:

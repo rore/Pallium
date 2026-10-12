@@ -474,7 +474,10 @@ async def test_production_factory_serves_lexical_and_relay_before_vector_ready(
 
 
 @pytest.mark.asyncio
-async def test_production_factory_drains_real_rebuild_inventory_before_storage_close(monkeypatch, tmp_path: Path) -> None:
+@pytest.mark.parametrize("stop_failure", [None, "rebuild", "claude_reconciler"])
+async def test_production_factory_drains_real_rebuild_inventory_before_storage_close(
+    monkeypatch, tmp_path: Path, stop_failure: str | None,
+) -> None:
     import httpx
     from app import main
     from core.rebuild_coordinator import RebuildCoordinator
@@ -509,6 +512,8 @@ async def test_production_factory_drains_real_rebuild_inventory_before_storage_c
     inventory_started, release_inventory, inventory_finished = threading.Event(), threading.Event(), threading.Event()
     worker_threads, pre_checkpoint = [], []
     storage_close_after_worker = []
+    drain_started = threading.Event()
+    real_drain = main.drain_claude_relay_wakes
     real_inventory = RebuildCoordinator._inventory_raw_source_vectors
     create_shadow = threading.Event()
 
@@ -531,6 +536,43 @@ async def test_production_factory_drains_real_rebuild_inventory_before_storage_c
     monkeypatch.setattr(RebuildCoordinator, "_inventory_raw_source_vectors", held_inventory)
     monkeypatch.setattr(RebuildCoordinator, "_create_shadow_index", no_native_shadow_index)
 
+    if stop_failure == "rebuild":
+        def fail_rebuild_stop(coordinator, *_args, **_kwargs):
+            coordinator._stop_event.set()
+            raise RuntimeError("planned rebuild stop failure")
+
+        monkeypatch.setattr(RebuildCoordinator, "stop", fail_rebuild_stop)
+    elif stop_failure == "claude_reconciler":
+        monkeypatch.setattr(RebuildCoordinator, "stop", lambda coordinator: coordinator._stop_event.set())
+
+    def observe_drain(registry):
+        drain_started.set()
+        return real_drain(registry)
+
+    monkeypatch.setattr(main, "drain_claude_relay_wakes", observe_drain)
+
+    real_start_wake_reconciler = main.start_claude_wake_reconciler
+    wake_reconcilers = []
+
+    def start_wake_reconciler(
+        registry, relay_service, *, claim_recovery=None, trace_callback=None, **kwargs,
+    ):
+        reconciler = real_start_wake_reconciler(
+            registry, relay_service, claim_recovery=None, trace_callback=trace_callback, **kwargs,
+        )
+        wake_reconcilers.append(reconciler)
+        if stop_failure == "claude_reconciler":
+            original_stop = reconciler.stop
+
+            def stop_then_raise():
+                original_stop()
+                raise RuntimeError("planned Claude reconciler stop failure")
+
+            reconciler.stop = stop_then_raise
+        return reconciler
+
+    monkeypatch.setattr(main, "start_claude_wake_reconciler", start_wake_reconciler)
+
     def reconciled_without_thread(_service, *, reconcile_done=None, **_kwargs):
         if reconcile_done is not None:
             reconcile_done.set()
@@ -548,6 +590,8 @@ async def test_production_factory_drains_real_rebuild_inventory_before_storage_c
         def close_storage():
             storage_close_after_worker.append(
                 inventory_finished.is_set() and worker_threads and not worker_threads[0].is_alive()
+                and wake_reconcilers and not wake_reconcilers[0]._thread.is_alive()
+                and drain_started.is_set()
             )
             original_close()
 
@@ -604,6 +648,7 @@ async def test_production_factory_drains_real_rebuild_inventory_before_storage_c
             assert not owner.done(), "shutdown abandoned the active rebuild inventory"
             assert worker_threads[0].is_alive()
             assert storage_close_after_worker == []
+            assert not drain_started.is_set(), "cleanup advanced past the held rebuild before it settled"
             assert await asyncio.to_thread(
                 sqlite_select_one, inner_apps[0].state.pallium_service._storage
             ) == 1
@@ -620,6 +665,9 @@ async def test_production_factory_drains_real_rebuild_inventory_before_storage_c
             assert await asyncio.to_thread(inventory_finished.wait, 1)
             assert create_shadow.is_set()
             assert not worker_threads[0].is_alive()
+            assert len(wake_reconcilers) == 1
+            assert not wake_reconcilers[0]._thread.is_alive()
+            assert drain_started.is_set()
             assert storage_close_after_worker == [True]
 
             health = await client.get("/health")
@@ -630,6 +678,136 @@ async def test_production_factory_drains_real_rebuild_inventory_before_storage_c
             assert status.json()["ready"] is False
     finally:
         release_inventory.set()
+        request_shutdown.set()
+        if owner is not None:
+            await asyncio.wait_for(owner, timeout=5)
+
+
+@pytest.mark.asyncio
+async def test_production_factory_closes_resources_after_rebuild_thread_start_failure(
+    monkeypatch, tmp_path: Path,
+) -> None:
+    import httpx
+    import app.dependencies as dependencies
+    from app import main
+    from storage.sqlite import SQLiteStorageProvider
+
+    config = AppConfig(
+        storage_backend="sqlite",
+        sqlite_url=f"sqlite:///{tmp_path / 'start-failure.db'}",
+        default_use_case="demo_agent_memory",
+        semantic_packages=DEMO_SEMANTIC_PACKAGES,
+        vector_index=VectorIndexConfig(
+            enabled=True, index_path=str(tmp_path / "live.index"), embedding_provider="local",
+        ),
+        embedding_providers={
+            "local": EmbeddingProviderConfig(name="local", kind="fastembed", model="startup-test"),
+        },
+    )
+    provider = MagicMock()
+    provider.model_name.return_value = "startup-test"
+    provider.dimensions.return_value = 4
+    provider.recommended_min_similarity.return_value = 0.1
+    index = MagicMock(spec=VectorIndex)
+    index.model_name = "prior-test-model"
+    index.entry_count.return_value = 1
+    index.search.return_value = []
+    monkeypatch.setattr("app.dependencies.build_embedding_provider", lambda *_args, **_kwargs: provider)
+    monkeypatch.setattr("app.dependencies._load_or_create_vector_index", lambda *_args, **_kwargs: index)
+
+    storage_close_calls: dict[int, int] = {}
+    storages: list[SQLiteStorageProvider] = []
+
+    def instrument_storage_builder(builder):
+        def build_storage(*args, **kwargs):
+            storage = builder(*args, **kwargs)
+            if isinstance(storage, SQLiteStorageProvider):
+                storages.append(storage)
+                original_close = storage.close
+
+                def counted_close():
+                    storage_close_calls[id(storage)] = storage_close_calls.get(id(storage), 0) + 1
+                    original_close()
+
+                storage.close = counted_close
+            return storage
+
+        return build_storage
+
+    monkeypatch.setattr(main, "build_storage_provider", instrument_storage_builder(main.build_storage_provider))
+    monkeypatch.setattr(
+        dependencies, "build_storage_provider",
+        instrument_storage_builder(dependencies.build_storage_provider),
+    )
+    service_close_calls = []
+    built_apps = []
+    create_app = main.create_app
+
+    def build_inner(*_args, **_kwargs):
+        built = create_app(config)
+        service = built.state.pallium_service
+        original_close = service.close
+
+        def counted_service_close():
+            service_close_calls.append(service)
+            original_close()
+
+        service.close = counted_service_close
+        built_apps.append(built)
+        return built
+
+    monkeypatch.setattr(main, "create_app", build_inner)
+    thread_starts = []
+    real_thread_start = threading.Thread.start
+
+    def fail_rebuild_start(thread):
+        if thread.name == "vector-rebuild":
+            thread_starts.append(thread)
+            raise RuntimeError("planned vector rebuild thread start failure")
+        return real_thread_start(thread)
+
+    monkeypatch.setattr(threading.Thread, "start", fail_rebuild_start)
+    application = main.app()
+    owner = None
+    request_shutdown = asyncio.Event()
+    lifespan_entered = asyncio.Event()
+
+    async def own_lifespan():
+        async with application.router.lifespan_context(application):
+            lifespan_entered.set()
+            await request_shutdown.wait()
+
+    try:
+        owner = asyncio.create_task(own_lifespan())
+        await asyncio.wait_for(lifespan_entered.wait(), timeout=5)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=application), base_url="http://test",
+        ) as client:
+            health, body = await _wait_for_health(
+                client, lambda value: value.get("initialization_error") == "service_initialization_failed",
+            )
+            status = await client.get("/status")
+            query = await client.post("/query", json={"text": "failed startup probe"})
+            assert health.status_code == 503
+            assert body["status"] == "failed"
+            assert body["initialized"] is False and body["ready"] is False
+            assert status.status_code == 503
+            assert status.json()["initialized"] is False and status.json()["ready"] is False
+            assert query.status_code == 503
+
+            assert len(thread_starts) == 1
+            assert thread_starts[0].name == "vector-rebuild"
+            assert thread_starts[0].ident is None and not thread_starts[0].is_alive()
+            assert len(built_apps) == 1
+            assert len(service_close_calls) == 1
+            assert service_close_calls == [built_apps[0].state.pallium_service]
+            assert len(storages) == 2
+            assert set(storage_close_calls) == {id(storage) for storage in storages}
+            assert all(storage_close_calls[id(storage)] == 1 for storage in storages)
+
+        request_shutdown.set()
+        await asyncio.wait_for(owner, timeout=5)
+    finally:
         request_shutdown.set()
         if owner is not None:
             await asyncio.wait_for(owner, timeout=5)

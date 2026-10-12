@@ -160,7 +160,7 @@ class RebuildCoordinator:
     def stop(self, timeout: float | None = 5.0) -> None:
         """Signal stop and wait for thread to finish."""
         self._stop_event.set()
-        if self._thread is not None:
+        if self._thread is not None and self._thread.ident is not None:
             self._thread.join(timeout=timeout)
 
     def run_sync(self) -> None:

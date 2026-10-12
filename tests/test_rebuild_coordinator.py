@@ -243,6 +243,22 @@ class TestRebuildCoordinator:
         assert coordinator.status()["status"] == "interrupted"
         assert not coordinator._state_path.exists()
 
+    def test_stop_after_thread_start_failure_skips_unstarted_join(self, tmp_path: Path, monkeypatch):
+        coordinator, _, _, _ = _make_coordinator(tmp_path, [])
+
+        def fail_start(_thread):
+            raise RuntimeError("thread start failed")
+
+        monkeypatch.setattr(threading.Thread, "start", fail_start)
+        with pytest.raises(RuntimeError, match="thread start failed"):
+            coordinator.start()
+
+        assert coordinator._thread is not None
+        assert coordinator._thread.ident is None
+        coordinator.stop()
+        assert coordinator._stop_event.is_set()
+        assert not coordinator._thread.is_alive()
+
     def test_stop_after_preparation_without_checkpoint_skips_rebuild(self, tmp_path: Path):
         coordinator, _, _, _ = _make_coordinator(tmp_path, [])
         prepare = MagicMock(side_effect=coordinator._stop_event.set)
