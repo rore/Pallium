@@ -18,16 +18,16 @@ one fix; do not create separate mechanisms merely to match the rows.
 
 | ID | Bug / evidence | Owner and current state | Required closure evidence |
 |---|---|---|---|
-| REL-01 | Concurrent claims and ACKs exceed their budgets. Latest synchronized run: 24 pass; 50 fail, 33 claims and zero confirmed ACKs. | Performance developer (`discovery_contract_review`), active. Read reductions implemented; writer and queue tails remain. | All 50 real HTTP/hook journeys emit and ACK once with public readback, unchanged budgets, ordinary traffic and health responsiveness covered. |
-| REL-02 | Retained Codex enrollment disappears while the service survives; subsequent reconnects fail. | `incident_integration_review` accepted recovery ownership after freezing its inventory edge. Root coordinates with relaydev. | Same-service-epoch connection-loss reproduction becomes green; authenticated recovery preserves peer identity, continuity, and uncertain-I/O fences, without replaying application operations. |
+| REL-01 | Concurrent claims and ACKs exceed their budgets. Latest observer-off run with original capacity: 27 claims, zero ACKs, 23 claim refusals. | Performance developer (`discovery_contract_review`), active. Extra admission limit withdrawn. Removing duplicate exact-claim correlation writes is under implementation with equivalent generation/recovery fences. | All 50 real HTTP/hook journeys emit and ACK once with public readback, unchanged budgets, ordinary traffic and health responsiveness covered. |
+| REL-02 | Retained Codex enrollment disappears while the service survives; subsequent reconnects fail. | Reviewed same-epoch recovery integrated; combined checks passed, installed verification pending. | Same-service-epoch connection-loss reproduction becomes green; authenticated recovery preserves peer identity, continuity, and uncertain-I/O fences, without replaying application operations. |
 | REL-03 | Messages remain pending and arrive much later, including old developer reports received here. | Performance/recovery owners share cause analysis; root owns integration. | Busy-to-idle and multiple pending messages on one endpoint progress through real scheduler, hook and ACK without loss or duplicate action; growing delivered history covered. |
 | REL-04 | Live Relay operations take up to five seconds. | Performance developer, active; do not assume identical cause to REL-01. | Locate wait versus work; compare before/after under concurrent load and verify installed delivery. |
-| REL-05 | Database lock failures and exhausted retries; retention unnecessarily holds the writer while doing later reads. | Root; next bounded persistence slice after current delivery diagnosis. | Fresh protection/lease checks and deletion correctness survive concurrent writes; measured writer hold reduction and contention regression. Historical live writer attribution remains open. |
-| REL-06 | Heavy startup can block responsiveness; readiness must reflect completed initialization. | `relaydev`, isolated async-startup implementation prepared. | Real lifecycle tests keep HTTP responsive during initialization, gate readiness correctly, and expose failure; installed startup verification. |
-| REL-07 | Rebuild inventory performs repeated reads and hydrates already-indexed sources. | `incident_integration_review`, candidate measured; not accepted yet. At 5,000 rows all-present sample improved 2,899 to 8 ms. | Eligibility, missing-tail, resume, cancellation and startup caller tests; comparable measurement. Single private samples are not live attribution. |
-| REL-08 | Shutdown can skip cleanup after worker start/stop failure or close storage before active children drain. | `relaydev`, correction prepared; final focused proofs pending. | Start/stop failure and held-child caller regressions; actual workers drain before storage closes, including error paths. |
-| REL-09 | Embedded NUL text exposes disagreement between SQL and Python length eligibility. | Inventory developer + architecture review; unresolved. | Preserve actual end-to-end eligibility at 39/40 characters and across pages, including Unicode and NUL; verify subsequent eligibility rechecks too. |
-| REL-10 | Healthy service does not imply working native wake; generic `peer-mismatch` also represents absent registration and can obscure the initiating failure. | Recovery developer accepted; root owns operational acceptance. | Distinguish unavailable registration from actual peer mismatch, retain initiating failure evidence, and verify status reflects wake availability without claiming receipt. |
+| REL-05 | Database lock failures and exhausted retries; retention unnecessarily holds the writer while doing later reads. | Reviewed fix integrated at `351ad670`; 33 retention checks pass. Writer interval sample 70.38 to 5.69 ms; total elapsed sample increased, so no overall throughput claim. | Fresh protection/lease checks and deletion correctness survive concurrent writes; measured writer hold reduction and contention regression. Historical live writer attribution remains open. |
+| REL-06 | Heavy startup can block responsiveness; readiness must reflect completed initialization. | `relaydev` handed off reviewed startup fix; root combined validation passed, deployment pending. | Real lifecycle tests keep HTTP responsive during initialization, gate readiness correctly, and expose failure; installed startup verification. |
+| REL-07 | Rebuild inventory performs repeated reads and hydrates already-indexed sources. | Reviewed fix integrated and combined checks passed. At 5,000 rows all-present sample improved 2,899 to 8 ms; deployment pending. | Eligibility, missing-tail, resume, cancellation and startup caller tests; comparable measurement. Single private samples are not live attribution. |
+| REL-08 | Shutdown can skip cleanup after worker start/stop failure or close storage before active children drain. | `relaydev` handed off reviewed correction; root combined validation passed, deployment pending. | Start/stop failure and held-child caller regressions; actual workers drain before storage closes, including error paths. |
+| REL-09 | Embedded NUL text exposes disagreement between SQL and Python length eligibility. | Reviewed fix integrated at `dc8b9798`; combined verification and deployment pending. | Preserve actual end-to-end eligibility at 39/40 characters and across pages, including Unicode and NUL; verify subsequent eligibility rechecks too. |
+| REL-10 | Healthy service does not imply working native wake; generic `peer-mismatch` also represents absent registration and can obscure the initiating failure. | Reviewed recovery diagnostic correction integrated; root owns installed acceptance. | Distinguish unavailable registration from actual peer mismatch, retain initiating failure evidence, and verify status reflects wake availability without claiming receipt. |
 | REL-11 | Historical outage and remaining unexplained startup duration are not fully attributed. | Root + startup developer; investigation open. | Identify reproducible causes or explicitly document evidence limits; measure startup phases and prove relevant regressions. A 120-second allowance is mitigation, not closure. |
 
 Execution: delivery performance and authenticated recovery are independent developer
@@ -46,8 +46,33 @@ race/caller checks passing (overlapping selections, not an additive total).
 Startup affected evidence is 214 passed / 2 skipped plus the two corrected fixture
 nodes passing separately. Performance remains open: the diagnostic found about
 755 ms of serialized correctness-transaction hold time during the failed burst;
-commit execution was not the dominant tail. The next probe measures removable
-work inside those transactions before selecting another production correction.
+commit execution was not the dominant tail. Accepted performance baseline
+`b16d1467` and the NUL eligibility fix are now combined at `dc8b9798`.
+The separate completion-capacity candidate passes 58 safety checks but fails
+instrumented 24/50-message acceptance. It remains unaccepted and unmerged.
+The next exact 50-message qualification disables heavy diagnostic observers
+while preserving real caller deadlines and every delivery/ACK assertion.
+Combined startup/recovery/inventory checks passed 228 cases plus one corrected
+completed-checkpoint node separately. Reviewed checkpoint `4caecee8` records the
+evidence; no installed change occurred. The observer-off 50-message check still
+failed (19 completed, 31 claim refusals), so instrumentation is not the sole cause.
+Retention and read-only native lock separation are now integrated locally at
+`9db51338`. The latter has 104 passing focused checks, but does not resolve the
+50-message failure. A two-slot admission experiment was withdrawn; original
+capacity still produced 27 claims and no ACKs. The current simplification reuses
+the exact claim's durable generation instead of duplicating correlation writes,
+with native/recovery consumers and legacy behavior covered together. It remains
+incomplete until load evidence passes. The canonical generation and native guard
+correction is independently reviewed and integrated at `4fc8f457`, with 116
+focused checks passing. Its clean load run reached 39 claims/emissions but only
+three confirmed ACKs; this is not release acceptance. One private execution slot
+is shared between lanes; no installed change has occurred.
+
+Final acceptance must run the slow ordinary and synchronized 24/50-message
+HTTP/hook tests separately: the default full suite excludes them. These bursts
+use distinct endpoints; existing same-endpoint backlog and restart regressions
+cover their functional contracts separately. Do not claim a combined
+same-endpoint restart/load witness from these results.
 
 ## Historical execution status (reconciled 2026-10-07)
 
