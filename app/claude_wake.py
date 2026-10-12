@@ -194,11 +194,11 @@ def schedule_claude_relay_wake(
         finally:
             try:
                 _log_outcome(delivery_id, session_ref, category, started)
-                _emit_trace(trace_callback, attempt_id, delivery_id, endpoint_id, "completed", attempt)
             finally:
                 with _workers_lock:
                     if _worker_attempt_ids.get(key) == attempt_id:
                         _worker_attempt_ids.pop(key, None)
+                _emit_trace(trace_callback, attempt_id, delivery_id, endpoint_id, "completed", attempt)
 
     started = time.monotonic()
     closing = False
@@ -218,24 +218,24 @@ def schedule_claude_relay_wake(
     except Exception:
         try:
             _log_outcome(delivery_id, session_ref, "worker_start_failed", started)
-            _emit_trace(
-                trace_callback, attempt_id, delivery_id, endpoint_id, "completed",
-                ActivationAttemptResult("deferred", "worker_start_failed", native_retry_safe=True),
-            )
         finally:
             with _workers_lock:
                 if _worker_attempt_ids.get(key) == attempt_id:
                     _worker_attempt_ids.pop(key, None)
+            _emit_trace(
+                trace_callback, attempt_id, delivery_id, endpoint_id, "completed",
+                ActivationAttemptResult("deferred", "worker_start_failed", native_retry_safe=True),
+            )
         return None
     if closing:
         result = ActivationAttemptResult("deferred", "shutdown", native_retry_safe=True)
         try:
             _log_outcome(delivery_id, session_ref, result.reason, started)
-            _emit_trace(trace_callback, attempt_id, delivery_id, endpoint_id, "completed", result)
         finally:
             with _workers_lock:
                 if _worker_attempt_ids.get(key) == attempt_id:
                     _worker_attempt_ids.pop(key, None)
+            _emit_trace(trace_callback, attempt_id, delivery_id, endpoint_id, "completed", result)
         return None
     assert worker is not None
     return worker

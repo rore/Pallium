@@ -530,6 +530,101 @@ def test_drain_joins_target_registry_through_final_trace_only(monkeypatch: pytes
         assert not drain_thread.is_alive()
 
 
+def test_drain_keeps_completed_predecessor_and_eligible_successor_owned(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.claude_wake as wake
+
+    registry = ClaudeWakeRegistry()
+    registry.register(**{**PAYLOAD, "idle": True})
+    first_transport_entered = threading.Event()
+    release_first_trace = threading.Event()
+    first_trace_entered = threading.Event()
+    second_transport_entered = threading.Event()
+    release_second_transport = threading.Event()
+    drain_started = threading.Event()
+    drain_finished = threading.Event()
+    calls: list[int] = []
+    trace_events: list[dict[str, object]] = []
+    errors: list[BaseException] = []
+
+    def transport(*_args: object) -> str:
+        calls.append(len(calls) + 1)
+        if len(calls) == 1:
+            first_transport_entered.set()
+            return "accepted"
+        second_transport_entered.set()
+        assert release_second_transport.wait(timeout=5)
+        return "accepted"
+
+    def trace(event: dict[str, object]) -> None:
+        trace_events.append(event)
+        if event["stage"] == "completed" and event["delivery_id"] == "first-delivery":
+            first_trace_entered.set()
+            assert release_first_trace.wait(timeout=5)
+
+    def drain() -> None:
+        drain_started.set()
+        try:
+            wake.drain_claude_relay_wakes(registry)
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            drain_finished.set()
+
+    monkeypatch.setattr(wake, "claude_wake_transport", transport)
+    first_worker = second_worker = None
+    drain_thread = threading.Thread(target=drain, daemon=True)
+    try:
+        first_worker = schedule_claude_relay_wake(
+            _wake_result(PAYLOAD["session_ref"], "first-delivery"),
+            {"container_ref": PAYLOAD["container_ref"]},
+            registry=registry,
+            trace_callback=trace,
+        )
+        assert first_worker is not None
+        assert first_transport_entered.wait(timeout=1)
+        assert first_trace_entered.wait(timeout=1)
+        assert registry.release_delivery("first-delivery")
+        assert registry.register(**{**PAYLOAD, "idle": True})
+
+        second_worker = schedule_claude_relay_wake(
+            _wake_result(PAYLOAD["session_ref"], "second-delivery"),
+            {"container_ref": PAYLOAD["container_ref"]},
+            registry=registry,
+            trace_callback=trace,
+        )
+        assert second_worker is not None and second_worker is not first_worker
+        assert second_transport_entered.wait(timeout=1)
+        with wake._workers_lock:
+            owned = {
+                worker for owner_id, worker in wake._workers
+                if owner_id == id(registry)
+            }
+        assert first_worker in owned and second_worker in owned
+        assert not any(event["stage"] == "associated" for event in trace_events)
+
+        wake.stop_claude_relay_wake_admission(registry)
+        drain_thread.start()
+        assert drain_started.wait(timeout=1)
+        release_first_trace.set()
+        assert not drain_finished.wait(timeout=0.05)
+        release_second_transport.set()
+        assert drain_finished.wait(timeout=1)
+        assert not errors
+        assert not first_worker.is_alive() and not second_worker.is_alive()
+    finally:
+        release_first_trace.set()
+        release_second_transport.set()
+        for worker in (first_worker, second_worker):
+            if worker is not None:
+                worker.join(timeout=1)
+        if drain_thread.ident is not None:
+            drain_thread.join(timeout=1)
+        assert all(worker is None or not worker.is_alive() for worker in (first_worker, second_worker))
+        assert not drain_thread.is_alive()
+
+
 def test_shutdown_racing_prepared_trace_prevents_native_worker_start(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
