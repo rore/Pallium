@@ -1,5 +1,16 @@
 # Asynchronous service startup and truthful readiness
 
+Root integration checkpoint (2026-10-12): reviewed startup component 88004c9b and
+recovery branch ff8d9825 are combined at dcf2d0a3 in this isolated checkout.
+Recovery's original Work Record and baseline commit are preserved by the merge.
+No installed files or service state changed. Performance branch integration and
+combined validation remain pending; this is not a completed product claim.
+After inventory integration, the two inventory-before-preparation cancellation
+tests must expect no fresh shadow/checkpoint, while retaining worker drainage,
+resource closure and terminal interruption assertions. The embedding-held test
+must still preserve its existing durable checkpoint. Root owns further checkout
+edits; startup owner remains available for findings.
+
 <!-- agent-workflow:start -->
 **Outcome:** Bind HTTP promptly and keep it responsive during long initialization, reporting ready only after all required initialization completes; reject operational access to partial services and clean owned resources on failure or shutdown.
 
