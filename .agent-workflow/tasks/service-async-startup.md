@@ -63,12 +63,12 @@ edits; startup owner remains available for findings.
 
 **Exceptions:** None
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
 
-Component handoff: original startup/Claude drainage/dispatch/stop-guard/cleanup focused proofs and affected selection are complete with the two diagnosed test-fixture corrections verified. Current production remains1498cbbc; bd9d3919 changes only those two test bodies and record. Lane is ready for manager-owned combined integration and independent final review, not merge/installed readiness. Canonical roadmap stays manager-owned; same-epoch connection recovery remains separate, no connection source changes here. Task State remains Blocked until combined inventory/capacity interaction, one selected full, final independent review/CI/approved rollout gates pass. Do not duplicate prior validation merely for handoff.
+Component handoff: original startup/Claude drainage/dispatch/stop-guard/cleanup focused proofs and affected selection are complete with the two diagnosed test-fixture corrections verified. Original component production is1498cbbc; bd9d3919 changes only those two test bodies and record. Root has integrated the accepted recovery, inventory, retention and observational-lock components and verified their startup interaction. Work is actively continuing toward the 50-message requirement and final combined validation; no user decision currently blocks implementation. Ready to implement denotes this active integration work, not merge or installed readiness. One selected full, final independent review, CI and installed verification remain. Do not duplicate prior validation merely for handoff.
 
 Affected run reveals two test assumption failures, not a reason to weaken production: MCP one-task test immediately exits outer asynchronous lifespan before construction can enter MCP; wait via existing HTTP health read path for initialized before exiting, retain exact enter/exit task identity. Alias dispatch test substitutes an unhashable SimpleNamespace Thread with only start; actual thread ownership now requires hashable native Thread handles. Remove that inline-thread fake, schedule actual private thread, boundedly join/assert settlement and preserve exact registry attempt/selector/scope/callback assertions. Only tests/test_health.py and tests/test_claude_wake_dispatch.py plus record change; no production/settings/contract changes. Parent handles these tiny mechanical fixture corrections directly rather than paying another delegation handoff. Stop/reported affected failure; no blind rerun. Root owns next slot and review.
 
