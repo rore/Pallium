@@ -342,6 +342,11 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
                 thread = getattr(worker, "thread", None) or getattr(worker, "_thread", None)
                 if thread is not None and thread not in owned_threads:
                     owned_threads.append(thread)
+            if rebuild_coordinator is not None:
+                try:
+                    rebuild_coordinator.stop(timeout=0)
+                except Exception:
+                    logger.warning("Vector rebuild worker shutdown failed")
             if retained_service is not None:
                 try:
                     retained_service.stop()
@@ -364,11 +369,6 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
                     claude_wake_reconciler.stop()
                 except Exception:
                     logger.warning("Claude wake reconciler shutdown failed")
-            if rebuild_coordinator is not None:
-                try:
-                    rebuild_coordinator.stop()
-                except Exception:
-                    logger.warning("Vector rebuild worker shutdown failed")
             _remove_launch_token(token_path)
             # Bounded stop timeouts do not prove that storage users have exited.
             for thread in owned_threads:

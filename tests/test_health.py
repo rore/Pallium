@@ -490,7 +490,7 @@ async def test_production_factory_serves_lexical_and_relay_before_vector_ready(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("stop_failure", [None, "rebuild", "claude_reconciler"])
+@pytest.mark.parametrize("stop_failure", [None, "rebuild", "claude_reconciler", "held_claude"])
 async def test_production_factory_drains_real_rebuild_inventory_before_storage_close(
     monkeypatch, tmp_path: Path, stop_failure: str | None,
 ) -> None:
@@ -559,7 +559,7 @@ async def test_production_factory_drains_real_rebuild_inventory_before_storage_c
 
         monkeypatch.setattr(RebuildCoordinator, "stop", fail_rebuild_stop)
     elif stop_failure == "claude_reconciler":
-        monkeypatch.setattr(RebuildCoordinator, "stop", lambda coordinator: coordinator._stop_event.set())
+        monkeypatch.setattr(RebuildCoordinator, "stop", lambda coordinator, **_kwargs: coordinator._stop_event.set())
 
     def observe_drain(registry):
         drain_started.set()
@@ -569,6 +569,7 @@ async def test_production_factory_drains_real_rebuild_inventory_before_storage_c
 
     real_start_wake_reconciler = main.start_claude_wake_reconciler
     wake_reconcilers = []
+    claude_stop_started, release_claude_stop = threading.Event(), threading.Event()
 
     def start_wake_reconciler(
         registry, relay_service, *, claim_recovery=None, trace_callback=None, **kwargs,
@@ -577,6 +578,16 @@ async def test_production_factory_drains_real_rebuild_inventory_before_storage_c
             registry, relay_service, claim_recovery=None, trace_callback=trace_callback, **kwargs,
         )
         wake_reconcilers.append(reconciler)
+        if stop_failure == "held_claude":
+            original_stop = reconciler.stop
+
+            def held_stop():
+                claude_stop_started.set()
+                if not release_claude_stop.wait(5):
+                    raise AssertionError("test did not release Claude stop")
+                original_stop()
+
+            reconciler.stop = held_stop
         if stop_failure == "claude_reconciler":
             original_stop = reconciler.stop
 
@@ -676,6 +687,13 @@ async def test_production_factory_drains_real_rebuild_inventory_before_storage_c
             assert status.json()["ready"] is False
             assert query.status_code == 503
 
+            rebuild = inner_apps[0].state._rebuild_coordinator
+            if stop_failure == "held_claude":
+                assert await asyncio.to_thread(claude_stop_started.wait, 2)
+                assert rebuild._stop_event.is_set(), "rebuild cancellation waited behind another worker"
+                release_claude_stop.set()
+            else:
+                assert await asyncio.to_thread(rebuild._stop_event.wait, 2)
             release_inventory.set()
             await asyncio.wait_for(owner, timeout=5)
             assert await asyncio.to_thread(inventory_finished.wait, 1)
@@ -693,6 +711,7 @@ async def test_production_factory_drains_real_rebuild_inventory_before_storage_c
             assert status.json()["initialized"] is False
             assert status.json()["ready"] is False
     finally:
+        release_claude_stop.set()
         release_inventory.set()
         request_shutdown.set()
         if owner is not None:
