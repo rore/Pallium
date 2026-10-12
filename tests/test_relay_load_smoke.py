@@ -9,6 +9,7 @@ import sys
 import threading
 import time
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import httpx
@@ -23,7 +24,7 @@ from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
 @pytest.mark.slow
 @pytest.mark.parametrize("caller_count", [24, 50])
 def test_concurrent_http_hook_journeys_keep_exact_delivery_lifecycle(
-    tmp_path, monkeypatch, caller_count, _isolated=False,
+    tmp_path, monkeypatch, caller_count, _isolated=False, _synchronized_hooks=False,
 ) -> None:
     if not _isolated:
         # As in runtime_logging coverage, isolate process-wide logging from pytest.
@@ -38,28 +39,115 @@ from tests.test_relay_load_smoke import test_concurrent_http_hook_journeys_keep_
 patch = pytest.MonkeyPatch()
 try:
     test_concurrent_http_hook_journeys_keep_exact_delivery_lifecycle(
-        Path(sys.argv[1]), patch, int(sys.argv[2]), _isolated=True)
+        Path(sys.argv[1]), patch, int(sys.argv[2]), _isolated=True,
+        _synchronized_hooks=sys.argv[3] == '1')
 finally:
     patch.undo()
 """
         child = subprocess.run(
-            [sys.executable, "-B", "-c", program, str(tmp_path), str(caller_count)],
+            [sys.executable, "-B", "-c", program, str(tmp_path), str(caller_count), str(int(_synchronized_hooks))],
             cwd=Path(__file__).resolve().parents[1],
             capture_output=True, text=True, encoding="utf-8", timeout=120,
         )
         assert child.returncode == 0, child.stdout + child.stderr
         return
-    from app import codex_bridge_pipe, codex_wake
+    from app import codex_bridge_pipe, codex_wake, dependencies
     from core.relay_activation import ActivationAttemptResult
     from scripts.live_funnel_smoke import ScratchServer
     from sqlalchemy import event
     from sqlalchemy.engine import Engine
+    from httpcore._async.connection_pool import AsyncPoolRequest
     from tests.test_agent_relay_hooks import _load
 
     workers, native_attempts, statements, sqlite_errors, hook_calls = [], [], [], [], []
     phases, health_samples, emissions, results, fanout_stacks = [], [], {}, [], {}
+    operation_spans, stage_spans = [], []
+    sql_spans, transaction_spans = [], []
+    active_operations, active_stages, active_transactions = {}, {}, {}
+    transport_events, server_spans, pool_spans = [], [], []
     fanout = False
     original_schedule = codex_wake._schedule_reserved_codex_relay_wake
+    original_router = dependencies.create_router
+
+    def observe_router(service, **kwargs):
+        def measure_stage(operation, label):
+            def measured(*args, **kw):
+                if not fanout:
+                    return operation(*args, **kw)
+                span = {"stage": label, "entered": time.perf_counter(),
+                        "thread_id": threading.get_ident()}
+                stage_spans.append(span)
+                previous_stage = active_stages.get(span["thread_id"])
+                active_stages[span["thread_id"]] = label
+                try:
+                    return operation(*args, **kw)
+                except BaseException as error:
+                    span["error_type"] = type(error).__name__
+                    raise
+                finally:
+                    span["finished"] = time.perf_counter()
+                    if previous_stage is None:
+                        active_stages.pop(span["thread_id"], None)
+                    else:
+                        active_stages[span["thread_id"]] = previous_stage
+            return measured
+
+        for key in ("relay_turn_snapshot_callback", "relay_turn_callback",
+                    "relay_turn_admission_callback"):
+            if kwargs.get(key) is not None:
+                kwargs[key] = measure_stage(kwargs[key], key)
+        factory = kwargs.get("relay_activation_callback_factory")
+        if factory is not None:
+            measured_factory = measure_stage(factory, "relay_activation_callback_factory")
+
+            def prepare_projection(callback):
+                prepared = measured_factory(callback)
+                return measure_stage(prepared, "relay_activation_callback") if callable(prepared) else prepared
+
+            # The factory uses default-callback identity to select its optimized path.
+            kwargs["relay_activation_callback_factory"] = prepare_projection
+        elif kwargs.get("relay_activation_callback") is not None:
+            kwargs["relay_activation_callback"] = measure_stage(
+                kwargs["relay_activation_callback"], "relay_activation_callback")
+        relay = kwargs.get("relay_service")
+        if relay is not None:
+            monkeypatch.setattr(relay, "turn", measure_stage(relay.turn, "durable_turn"))
+
+        def measure_runner(runner, lane):
+            async def measured(operation):
+                if not fanout:
+                    return await runner(operation)
+                # Record only static route labels, never closure payload/scope values.
+                code = getattr(operation, "__code__", None)
+                names = code.co_freevars if code is not None else ()
+                label = next((name for name in names if name.endswith("_callback")), "unlabelled")
+                if "operation_name" in names:
+                    label = operation.__closure__[names.index("operation_name")].cell_contents
+                span = {"lane": lane, "operation": label, "submitted": time.perf_counter()}
+                operation_spans.append(span)
+
+                def observed_worker():
+                    span["worker_entered"] = time.perf_counter()
+                    span["thread_id"] = threading.get_ident()
+                    active_operations[span["thread_id"]] = label
+                    try:
+                        return operation()
+                    except BaseException as error:
+                        span["error_type"] = type(error).__name__
+                        raise
+                    finally:
+                        span["worker_finished"] = time.perf_counter()
+                        active_operations.pop(span["thread_id"], None)
+
+                try:
+                    return await runner(observed_worker)
+                finally:
+                    span["await_finished"] = time.perf_counter()
+            return measured
+
+        for key, lane in (("relay_runner", "ordinary"), ("relay_codex_runner", "codex")):
+            kwargs[key] = measure_runner(kwargs[key], lane)
+        return original_router(service, **kwargs)
 
     class InertRetainedTransport:
         def dispatch(self, reservation, registry):
@@ -80,11 +168,55 @@ finally:
 
     def observe_sql(_connection, _cursor, statement, _parameters, _context, _many):
         if fanout:
-            statements.append(statement.split()[0].upper())
+            words = statement.split()
+            kind = words[0].upper()
+            statements.append(kind)
+            thread_id = threading.get_ident()
+            frame, owner = sys._getframe(), "untracked"
+            for _ in range(32):
+                if frame is None:
+                    break
+                if frame.f_code.co_name.startswith("relay_"):
+                    owner = frame.f_code.co_name
+                    break
+                frame = frame.f_back
+            span = {"kind": kind, "entered": time.perf_counter(), "thread_id": thread_id,
+                    "connection_id": id(_connection), "owner": owner,
+                    "operation": active_operations.get(thread_id), "stage": active_stages.get(thread_id)}
+            if kind == "BEGIN" and len(words) > 1:
+                span["mode"] = words[1].upper()
+            sql_spans.append(span)
+            _context.pallium_sql_span = span
+
+    def finish_sql(connection, context, error=None):
+        span = getattr(context, "pallium_sql_span", None)
+        if span is None:
+            return
+        span["finished"] = time.perf_counter()
+        if error is not None:
+            span["error_type"] = type(error).__name__
+        connection_id = id(connection)
+        if span["kind"] == "BEGIN" and span.get("mode") in {"IMMEDIATE", "DEFERRED"} and error is None:
+            transaction = {"connection_id": connection_id, "thread_id": span["thread_id"],
+                           "owner": span["owner"], "mode": span["mode"],
+                           "entered": span["entered"], "began": span["finished"], "settlements": []}
+            transaction_spans.append(transaction)
+            active_transactions[connection_id] = transaction
+        elif span["kind"] in {"COMMIT", "ROLLBACK"}:
+            transaction = active_transactions.get(connection_id)
+            if transaction is not None:
+                transaction["settlements"].append(span)
+                if error is None or span["kind"] == "ROLLBACK":
+                    transaction["finished"] = span["finished"]
+                    active_transactions.pop(connection_id, None)
+
+    def after_sql(connection, _cursor, _statement, _parameters, context, _many):
+        finish_sql(connection, context)
 
     def observe_sql_error(context):
         if fanout:
             error = context.original_exception
+            finish_sql(context.connection, context.execution_context, error)
             frame, stack = sys._getframe(), []
             while frame is not None and len(stack) < 16:
                 stack.append(frame.f_code.co_name)
@@ -99,6 +231,7 @@ finally:
             })
 
     monkeypatch.setattr(codex_wake, "_schedule_reserved_codex_relay_wake", observe_schedule)
+    monkeypatch.setattr(dependencies, "create_router", observe_router)
     monkeypatch.setattr(codex_bridge_pipe, "start_shadow_service", lambda *_: None)
     monkeypatch.setattr(codex_bridge_pipe, "start_inventory_service", lambda **_: None)
     monkeypatch.setattr(codex_bridge_pipe, "start_retained_service", InertRetainedTransport)
@@ -115,24 +248,92 @@ finally:
     assert logging.getLogger().handlers
     assert all(type(handler).__name__ != "RichHandler" for handler in logging.getLogger().handlers)
     assert app.state.codex_wake_registry.initialize(old_owner_drained=True)
+
+    async def observed_app(scope, receive, send):
+        reference = dict(scope.get("headers", ())).get(b"x-pallium-performance")
+        if scope["type"] != "http" or reference is None:
+            return await app(scope, receive, send)
+        span = {"request": reference.decode("ascii"), "entered": time.perf_counter()}
+        server_spans.append(span)
+
+        async def observed_send(message):
+            await send(message)
+            if message["type"] == "http.response.start":
+                span["response_started"] = time.perf_counter()
+            elif message["type"] == "http.response.body" and not message.get("more_body", False):
+                span["body_sent"] = time.perf_counter()
+
+        return await app(scope, receive, observed_send)
+
+    def transport_options(reference):
+        async def trace_event(name, _info):
+            # Discard connection objects, headers and all other trace contents.
+            transport_events.append({"request": reference, "event": name, "at": time.perf_counter()})
+        return {"headers": {"x-pallium-performance": reference}, "extensions": {"trace": trace_event}}
+
+    async def observe_request(request):
+        reference = request.headers.get("x-pallium-performance")
+        if reference is not None:
+            transport_events.append({"request": reference, "event": "httpx.request_ready", "at": time.perf_counter()})
+
+    original_pool_wait = AsyncPoolRequest.wait_for_connection
+
+    async def observe_pool_wait(pool_request, *args, **kwargs):
+        reference = dict(pool_request.request.headers).get(b"x-pallium-performance")
+        if reference is None:
+            return await original_pool_wait(pool_request, *args, **kwargs)
+        span = {"request": reference.decode("ascii"), "started": time.perf_counter()}
+        pool_spans.append(span)
+        try:
+            return await original_pool_wait(pool_request, *args, **kwargs)
+        except BaseException as error:
+            span["error_type"] = type(error).__name__
+            raise
+        finally:
+            span["finished"] = time.perf_counter()
+
+    monkeypatch.setattr(AsyncPoolRequest, "wait_for_connection", observe_pool_wait)
+
     common = _load("concurrent_codex_common", "integrations/codex/hooks/common.py")
     assert common.hook_deadline() is None
     monkeypatch.setattr(common, "SESSIONS_DIR", tmp_path / "hook-sessions")
     monkeypatch.setattr(common, "STATE_DIR", tmp_path / "hook-state")
     original_request = common.relay_request
+    original_urlopen = common.urllib.request.urlopen
+
+    def hook_reference(path, payload):
+        identity = payload.get("session_ref") if path == "/relay/turn" else payload.get("delivery_id")
+        return f"hook:{path}:{identity}" if identity is not None else None
+
+    def observe_urlopen(request, *args, **kwargs):
+        if isinstance(request, common.urllib.request.Request) and request.data is not None:
+            path = common.urllib.parse.urlparse(request.full_url).path
+            if path in ("/relay/turn", "/relay/deliveries/ack"):
+                reference = hook_reference(path, json.loads(request.data))
+                if reference is not None:
+                    request.add_header("x-pallium-performance", reference)
+        return original_urlopen(request, *args, **kwargs)
 
     def observe_hook_request(method, path, *args, **kwargs):
         started = time.perf_counter()
-        response = original_request(method, path, *args, **kwargs)
-        hook_calls.append({
-            "method": method, "path": path,
-            "seconds": time.perf_counter() - started,
-            "returned": response is not None,
-        })
-        return response
+        span = {"method": method, "path": path, "started": started,
+                "request": hook_reference(path, args[0]), "returned": False}
+        hook_calls.append(span)
+        try:
+            response = original_request(method, path, *args, **kwargs)
+            span["returned"] = response is not None
+            return response
+        except BaseException as error:
+            span["error_type"] = type(error).__name__
+            raise
+        finally:
+            span["finished"] = time.perf_counter()
+            span["seconds"] = span["finished"] - started
 
     monkeypatch.setattr(common, "relay_request", observe_hook_request)
+    monkeypatch.setattr(common.urllib.request, "urlopen", observe_urlopen)
     event.listen(Engine, "before_cursor_execute", observe_sql)
+    event.listen(Engine, "after_cursor_execute", after_sql)
     event.listen(Engine, "handle_error", observe_sql_error)
     scope = {"container_ref": "git:example.test/concurrent-http-東京"}
 
@@ -142,8 +343,8 @@ finally:
         ready_count = 0
         # Health must not queue behind the journeys' client-side connection pool.
         async with (
-            httpx.AsyncClient(base_url=base_url, timeout=30) as client,
-            httpx.AsyncClient(base_url=base_url, timeout=30) as health_client,
+            httpx.AsyncClient(base_url=base_url, timeout=30, event_hooks={"request": [observe_request]}) as client,
+            httpx.AsyncClient(base_url=base_url, timeout=30, event_hooks={"request": [observe_request]}) as health_client,
         ):
             for runtime, session in [
                 ("opencode", "mixed-sender"),
@@ -156,8 +357,13 @@ finally:
 
             async def request(index, phase, method, path, **kwargs):
                 began = time.perf_counter()
+                reference = f"{index}:{phase}"
+                options = transport_options(reference)
+                kwargs["headers"] = {**kwargs.get("headers", {}), **options["headers"]}
+                kwargs["extensions"] = {**kwargs.get("extensions", {}), **options["extensions"]}
                 response = await client.request(method, path, **kwargs)
                 phases.append({"index": index, "phase": phase,
+                               "request": reference, "started": began, "finished": time.perf_counter(),
                                "seconds": time.perf_counter() - began,
                                "status": response.status_code})
                 assert response.status_code == 200, (index, phase, response.status_code, response.text)
@@ -191,12 +397,7 @@ finally:
                                "status": "confirmed" if confirmed == emitted else "refused"})
                 assert confirmed == emitted, (index, "hook ACK refused")
 
-            async def journey(index):
-                nonlocal ready_count
-                ready_count += 1
-                if ready_count == caller_count:
-                    ready.set()
-                await start.wait()
+            async def prepare_message(index):
                 message = await request(index, "send", "POST", "/relay/messages", json={
                     "sender_runtime": "opencode", "sender_session_ref": "mixed-sender",
                     "recipient": f"codex:mixed-target-{index}",
@@ -209,7 +410,10 @@ finally:
                 )
                 assert trace["message_id"] == status["message_id"] == message_id
                 assert len(status["deliveries"]) == 1
-                await asyncio.to_thread(hook_claim_emit_ack, index, message)
+                return message
+
+            async def readback(index, message):
+                message_id = message["message_id"]
                 retained = await request(index, "readback", "GET", f"/relay/messages/{message_id}", params=scope)
                 delivery, = retained["deliveries"]
                 assert delivery["delivery_id"] == message["deliveries"][0]["delivery_id"]
@@ -218,13 +422,60 @@ finally:
                 assert retained["payload"] == f"Concurrent message 東京 {index}"
                 return message_id, delivery["delivery_id"]
 
+            async def journey(index):
+                nonlocal ready_count
+                ready_count += 1
+                if ready_count == caller_count:
+                    ready.set()
+                await start.wait()
+                message = await prepare_message(index)
+                await asyncio.to_thread(hook_claim_emit_ack, index, message)
+                return await readback(index, message)
+
+            async def synchronized_burst():
+                messages = await asyncio.gather(
+                    *(prepare_message(i) for i in range(caller_count)), return_exceptions=True,
+                )
+                if any(isinstance(message, BaseException) for message in messages):
+                    return messages
+                barrier = threading.Barrier(caller_count + 1, timeout=10)
+                pool = ThreadPoolExecutor(max_workers=caller_count)
+                futures = []
+
+                def gated_hook(index, message):
+                    # All callers reach this gate before their real hook deadline starts.
+                    barrier.wait()
+                    hook_claim_emit_ack(index, message)
+
+                async def finish(index, message, future):
+                    await future
+                    return await readback(index, message)
+
+                try:
+                    loop = asyncio.get_running_loop()
+                    for i, message in enumerate(messages):
+                        futures.append(loop.run_in_executor(pool, gated_hook, i, message))
+                    await asyncio.to_thread(barrier.wait)
+                    return await asyncio.gather(
+                        *(finish(i, message, future) for i, (message, future) in enumerate(zip(messages, futures))),
+                        return_exceptions=True,
+                    )
+                finally:
+                    barrier.abort()
+                    try:
+                        await asyncio.gather(*futures, return_exceptions=True)
+                    finally:
+                        await asyncio.to_thread(pool.shutdown, wait=True, cancel_futures=True)
+
             async def monitor_health():
                 await start.wait()
                 while not stop_health.is_set():
                     began = time.perf_counter()
                     try:
-                        response = await health_client.get("/health")
+                        reference = f"health:{len(health_samples)}"
+                        response = await health_client.get("/health", **transport_options(reference))
                         health_samples.append({"seconds": time.perf_counter() - began,
+                                               "request": reference, "started": began, "finished": time.perf_counter(),
                                                "status": response.status_code})
                     except Exception as error:
                         health_samples.append({"seconds": time.perf_counter() - began,
@@ -241,13 +492,15 @@ finally:
                             fanout_stacks[thread.name + ":" + str(ident)] = stack
                     await asyncio.sleep(0.05)
 
-            tasks = [asyncio.create_task(journey(i)) for i in range(caller_count)]
+            tasks = [] if _synchronized_hooks else [asyncio.create_task(journey(i)) for i in range(caller_count)]
             health = asyncio.create_task(monitor_health())
-            await ready.wait()
+            if not _synchronized_hooks:
+                await ready.wait()
             fanout = True
             start.set()
             try:
-                results.extend(await asyncio.gather(*tasks, return_exceptions=True))
+                results.extend(await synchronized_burst() if _synchronized_hooks else
+                               await asyncio.gather(*tasks, return_exceptions=True))
             finally:
                 stop_health.set()
                 await health
@@ -257,6 +510,18 @@ finally:
             assert failures == [], failures
             assert len(set(results)) == len(emissions) == caller_count
             assert set(results) == set(emissions.values())
+            assert operation_spans and all(
+                span["submitted"] <= span["worker_entered"] <= span["worker_finished"] <= span["await_finished"]
+                for span in operation_spans
+            )
+            assert {"send", "activation_projection"} <= {span["operation"] for span in operation_spans}
+            assert server_spans and all(
+                span["entered"] <= span["response_started"] <= span["body_sent"]
+                for span in server_spans
+            )
+            assert {phase["request"] for phase in phases if "request" in phase} <= {
+                span["request"] for span in server_spans
+            }
             listed = await request(-1, "sessions", "GET", "/relay/sessions", params=scope)
             assert len(listed) == caller_count + 1
             assert common.hook_deadline() is None
@@ -265,7 +530,7 @@ finally:
         reservation.bind(("127.0.0.1", 0))
         port = reservation.getsockname()[1]
     try:
-        with ScratchServer(app, "127.0.0.1", port) as server:
+        with ScratchServer(observed_app, "127.0.0.1", port) as server:
             monkeypatch.setattr(common, "PALLIUM_BASE_URL", server.base_url)
             try:
                 asyncio.run(exercise(server.base_url))
@@ -277,6 +542,7 @@ finally:
     finally:
         fanout = False
         event.remove(Engine, "before_cursor_execute", observe_sql)
+        event.remove(Engine, "after_cursor_execute", after_sql)
         event.remove(Engine, "handle_error", observe_sql_error)
         stacks = {}
         for ident, frame in sys._current_frames().items():
@@ -289,7 +555,13 @@ finally:
                 frame = frame.f_back
             stacks[thread.name + ":" + str(ident)] = stack
         evidence = {
-            "callers": caller_count, "phases": phases, "health": health_samples,
+            "callers": caller_count, "synchronized_hooks": _synchronized_hooks,
+            "phases": phases, "health": health_samples,
+            "operation_spans": operation_spans,
+            "stage_spans": stage_spans,
+            "sql_spans": sql_spans, "transaction_spans": transaction_spans,
+            "transport_events": transport_events, "server_spans": server_spans,
+            "pool_spans": pool_spans,
             "sql_statements": dict(Counter(statements)), "sqlite_errors": sqlite_errors,
             "hook_calls": hook_calls, "native_attempts": len(native_attempts),
             "native_workers": len(workers), "emissions": len(emissions),
@@ -303,6 +575,16 @@ finally:
             "callers", "sql_statements", "sqlite_errors", "native_attempts", "native_workers",
             "emissions", "successful_journeys", "root_log_handlers",
         )}))
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("caller_count", [24, 50])
+def test_synchronized_http_hook_burst_keeps_exact_delivery_lifecycle(
+    tmp_path, monkeypatch, caller_count,
+) -> None:
+    test_concurrent_http_hook_journeys_keep_exact_delivery_lifecycle(
+        tmp_path, monkeypatch, caller_count, _synchronized_hooks=True,
+    )
 
 
 @pytest.mark.slow

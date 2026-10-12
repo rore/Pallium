@@ -248,6 +248,15 @@ class CodexWakeRegistry:
         ):
             return False
         with self._lock:
+            if self._relay is not None:
+                if attempts >= 2**63 or expected_generation >= 2**63:
+                    return False
+                return self._transition(
+                    "correlate", delivery_id=delivery_id,
+                    recipient_endpoint_id=recipient_endpoint_id,
+                    session_ref=session_ref, container_ref=container_ref,
+                    attempts=attempts, expected_generation=expected_generation,
+                ) is not None
             self._refresh()
             current = self._reservations.get(recipient_endpoint_id)
             if (
@@ -259,8 +268,6 @@ class CodexWakeRegistry:
                 or current.correlated_claim_attempts not in (None, attempts)
             ):
                 return False
-            if self._relay is not None:
-                return self._transition("correlate", reservation=current, attempts=attempts) is not None
             updated_item = replace(current, correlated_claim_attempts=attempts)
             updated = {**self._reservations, recipient_endpoint_id: updated_item}
             if not self._write_locked(updated):
@@ -393,10 +400,20 @@ class CodexWakeRegistry:
             self._refresh()
             return self._reservations.get(recipient_endpoint_id)
 
+    def snapshot_if_usable(self, recipient_endpoint_id: str) -> CodexWakeReservation | None:
+        with self._lock:
+            self._refresh()
+            return self._reservations.get(recipient_endpoint_id) if self._usable else None
+
     def reservations(self) -> tuple[CodexWakeReservation, ...]:
         with self._lock:
             self._refresh()
             return tuple(self._reservations.values())
+
+    def reservations_if_usable(self) -> tuple[CodexWakeReservation, ...]:
+        with self._lock:
+            self._refresh()
+            return tuple(self._reservations.values()) if self._usable else ()
 
     def _remove_locked(self, endpoint_id: str) -> bool:
         updated = dict(self._reservations)

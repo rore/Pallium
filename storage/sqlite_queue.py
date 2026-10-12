@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from difflib import SequenceMatcher
 
 from sqlalchemy import func, select, text
+from sqlalchemy.engine import Row
 from sqlalchemy.orm import Session
 
 from core.contracts import ProcessResult, PromotionHint, SupersessionHint
@@ -672,19 +673,32 @@ class SQLiteQueueMixin:
                 )
                 .group_by(status_expr)
             ).all()
-            pending_records = session.scalars(
-                select(SourceItemRecord).from_statement(
-                    select(SourceItemRecord)
-                    .where(SourceItemRecord.processing_status == "pending")
-                    .union_all(
-                        select(SourceItemRecord).where(
-                            SourceItemRecord.processing_status.is_(None)
-                        )
+            pending_columns = (
+                SourceItemRecord.id,
+                SourceItemRecord.created_at,
+                SourceItemRecord.processing_status,
+                SourceItemRecord.use_case,
+                SourceItemRecord.processing_attempts,
+                SourceItemRecord.processing_next_attempt_at,
+                SourceItemRecord.visibility,
+            )
+            pending_records = session.execute(
+                select(*pending_columns)
+                .where(SourceItemRecord.processing_status == "pending")
+                .union_all(
+                    select(*pending_columns).where(
+                        SourceItemRecord.processing_status.is_(None)
                     )
                 )
             ).all()
-            leased_source_records = session.scalars(
-                select(SourceItemRecord).where(
+            leased_source_records = session.execute(
+                select(
+                    SourceItemRecord.id,
+                    SourceItemRecord.use_case,
+                    SourceItemRecord.processing_claimed_by,
+                    SourceItemRecord.processing_claimed_at,
+                    SourceItemRecord.processing_lease_expires_at,
+                ).where(
                     SourceItemRecord.processing_status == "processing",
                     SourceItemRecord.processing_lease_expires_at.isnot(None),
                     SourceItemRecord.processing_lease_expires_at > normalized_now,
@@ -1446,7 +1460,7 @@ class SQLiteQueueMixin:
 
     def _classify_unclaimable_pending_reason(
         self,
-        record: SourceItemRecord,
+        record: SourceItemRecord | Row,
         *,
         now: datetime,
         max_attempts: int,

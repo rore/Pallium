@@ -5523,7 +5523,9 @@ def test_old_inflight_claim_generation_cannot_unlock_replacement(
 
     monkeypatch.setattr(dependencies, "create_router", capture_router_snapshot)
 
-    async def relay_runner(operation):
+    original_turn = RelayService.turn
+
+    def replace_before_claim(self, **kwargs):
         if racing[0]:
             racing[0] = False
             old = registry.snapshot(endpoint_id)
@@ -5538,6 +5540,11 @@ def test_old_inflight_claim_generation_cannot_unlock_replacement(
             assert current is not None
             assert registry.record_outcome(current, "accepted")
             replacements.append(registry.snapshot(endpoint_id))
+        return original_turn(self, **kwargs)
+
+    monkeypatch.setattr(RelayService, "turn", replace_before_claim)
+
+    async def relay_runner(operation):
         return operation()
 
     app = FastAPI()

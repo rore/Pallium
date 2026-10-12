@@ -592,22 +592,43 @@ def test_raw_source_backfill_http_startup_and_reopen(tmp_path, monkeypatch, vect
         assert response.status_code == 200
         source_id = response.json()[0]["source_item_id"]
         assert len(response.json()[0]["index_entry_ids"]) == 1
+        response = client.post("/items", json=[{
+            "source_type": "chat_message", "source_id": "indexed-peer",
+            "content_type": "text/plain", "content": content,
+            "artifact_kind": "message", "container_ref": "test-container",
+        }])
+        assert response.status_code == 200
+        indexed_id = response.json()[0]["source_item_id"]
 
-    if vector_exists:
-        storage = SQLiteStorageProvider(sqlite_url)
-        try:
+    storage = SQLiteStorageProvider(sqlite_url)
+    try:
+        for target_id in ([source_id, indexed_id] if vector_exists else [indexed_id]):
             storage.create_index_entry(build_index_entry(
-                target_kind="source_item", target_id=source_id, index_type="vector",
+                target_kind="source_item", target_id=target_id, index_type="vector",
                 text_view=content, text_view_name=SOURCE_ITEM_VECTOR_TEXT_VIEW,
             ))
-        finally:
-            storage.close()
+    finally:
+        storage.close()
 
     monkeypatch.setattr(
         "app.dependencies.build_embedding_provider",
         lambda config, *, provider_name: StubEmbeddingProvider(),
     )
     monkeypatch.setattr(RebuildCoordinator, "start", RebuildCoordinator.run_sync)
+    original_inventory = RebuildCoordinator._inventory_raw_source_vectors
+    inventories = []
+    def observed_inventory(coordinator):
+        hydrated = []
+        original_get = coordinator._storage.get_source_item
+        def get_source(source_id):
+            hydrated.append(source_id)
+            return original_get(source_id)
+        with monkeypatch.context() as patch:
+            patch.setattr(coordinator._storage, "get_source_item", get_source)
+            result = original_inventory(coordinator)
+        inventories.append(hydrated)
+        return result
+    monkeypatch.setattr(RebuildCoordinator, "_inventory_raw_source_vectors", observed_inventory)
     config = _minimal_config(
         sqlite_url=sqlite_url,
         vector_index=VectorIndexConfig(
@@ -633,6 +654,12 @@ def test_raw_source_backfill_http_startup_and_reopen(tmp_path, monkeypatch, vect
             )
             assert response.status_code == 200
             assert response.json()["items"][0]["content"] == content
+            response = client.get(
+                f"/source/{indexed_id}/context", params={"container_ref": "test-container"},
+            )
+            assert response.status_code == 200
+            assert response.json()["items"][0]["content"] == content
+    assert inventories == ([] if vector_exists else [[source_id]])
 
 
 class TestCLICommands:

@@ -220,21 +220,27 @@ class RebuildCoordinator:
                 existing.entry_count_processed, existing.entry_count_total,
             )
             added = self._inventory_raw_source_vectors()
+            if self._stop_event.is_set():
+                return
             self._checkpoint = existing
-            if added:
+            total = self._storage.count_index_entries_by_type(VECTOR_INDEX_TYPE)
+            reset_needed = bool(added) or total != existing.entry_count_total
+            if reset_needed:
                 self._checkpoint.last_processed_entry_id = None
                 self._checkpoint.entry_count_processed = 0
-                self._checkpoint.entry_count_total = self._storage.count_index_entries_by_type(VECTOR_INDEX_TYPE)
+                self._checkpoint.entry_count_total = total
                 self._create_shadow_index()
             shadow_index_path = self._shadow_dir / "index.usearch"
-            if not added and shadow_index_path.exists() and Path(f"{shadow_index_path}.meta.json").exists():
+            if not reset_needed and shadow_index_path.exists() and Path(f"{shadow_index_path}.meta.json").exists():
                 self._shadow_index = VectorIndex.load(shadow_index_path)
-            elif not added:
+            elif not reset_needed:
                 self._checkpoint.last_processed_entry_id = None
                 self._checkpoint.entry_count_processed = 0
                 self._create_shadow_index()
         else:
             self._inventory_raw_source_vectors()
+            if self._stop_event.is_set():
+                return
             total = self._storage.count_index_entries_by_type(VECTOR_INDEX_TYPE)
             self._checkpoint = RebuildCheckpoint(
                 status="in_progress",
@@ -258,12 +264,26 @@ class RebuildCoordinator:
         after_id: str | None = None
         created = 0
         while True:
-            batch = self._storage.list_index_entries_by_type_page(
-                "lexical", after_id=after_id, limit=self._batch_size,
-            )
+            if self._stop_event.is_set():
+                return created
+            optimized = getattr(self._storage, "list_raw_source_vector_backfill_page", None)
+            if callable(optimized):
+                batch = optimized(
+                    lexical_text_view_name=SOURCE_ITEM_CONTENT_TEXT_VIEW,
+                    vector_text_view_name=SOURCE_ITEM_VECTOR_TEXT_VIEW,
+                    after_id=after_id, limit=self._batch_size,
+                )
+                if not isinstance(batch, list):
+                    raise TypeError("Raw-source vector inventory page must be a list")
+            else:
+                batch = self._storage.list_index_entries_by_type_page(
+                    "lexical", after_id=after_id, limit=self._batch_size,
+                )
             if not batch:
                 return created
             for lexical_entry in batch:
+                if self._stop_event.is_set():
+                    return created
                 if (
                     lexical_entry.target_kind != "source_item"
                     or lexical_entry.text_view_name != SOURCE_ITEM_CONTENT_TEXT_VIEW
@@ -273,6 +293,8 @@ class RebuildCoordinator:
                     source_item = self._storage.get_source_item(lexical_entry.target_id)
                 except KeyError:
                     continue
+                if self._stop_event.is_set():
+                    return created
                 text = source_item_embedding_text(source_item)
                 if text is None or self._storage.find_index_entry(
                     target_kind="source_item",
@@ -281,6 +303,8 @@ class RebuildCoordinator:
                     text_view_name=SOURCE_ITEM_VECTOR_TEXT_VIEW,
                 ) is not None:
                     continue
+                if self._stop_event.is_set():
+                    return created
                 entry = build_index_entry(
                     target_kind="source_item",
                     target_id=source_item.id,
