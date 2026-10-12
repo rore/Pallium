@@ -58,6 +58,104 @@ def _register(registry: ClaudeWakeRegistry, root: Path, payload: dict, intent_id
     return registry.register(**payload, intent_id=intent_id)
 
 
+def _modern_admission_fixture(root: Path) -> ClaudeWakeRegistry:
+    """Persist the modern row shape; hosted tests do not require Git history."""
+    registry = ClaudeWakeRegistry(state_dir=root)
+    assert _register(registry, root, PAYLOAD, "A")
+    path = root / "capabilities.json"
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    raw["registrations"][0]["admission_id"] = "A"
+    path.write_text(json.dumps(raw), encoding="utf-8")
+    before = path.read_bytes()
+    loaded = ClaudeWakeRegistry(state_dir=root)
+    assert path.read_bytes() == before
+    return loaded
+
+
+@pytest.mark.parametrize("scenario", ["remove", "transition", "replacement", "pending", "inflight"])
+def test_compatibility_reader_consumes_modern_notice_without_rewinding(tmp_path, scenario):
+    registry = _modern_admission_fixture(tmp_path)
+    scope = {key: PAYLOAD[key] for key in ("runtime", "session_ref", "container_ref")}
+    if scenario == "transition":
+        assert registry.mark_busy(**scope)
+        assert json.loads((tmp_path / "capabilities.json").read_text())["registrations"][0]["admission_id"] == "A"
+    elif scenario == "inflight":
+        assert registry.attempt(
+            **scope, delivery_id="relay-delivery-" + "a" * 32,
+            recipient_endpoint_id=ENDPOINT_ID, transport=lambda *_: True,
+        ).outcome == "accepted"
+    elif scenario == "replacement":
+        assert _register(registry, tmp_path, PAYLOAD, "B")
+        assert "admission_id" not in json.loads((tmp_path / "capabilities.json").read_text())["registrations"][0]
+    elif scenario == "pending":
+        _write_intent(tmp_path, {**PAYLOAD, "token": "replacement-token"}, "B")
+
+    identity = [*scope.values(), "A"]
+    digest = hashlib.sha256(json.dumps(identity, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
+    notice = tmp_path / "intents" / ("revoke-" + digest + ".json")
+    notice.write_text(json.dumps({**scope, "admission_id": "A", "closed": True}), encoding="utf-8")
+    registry = ClaudeWakeRegistry(state_dir=tmp_path)
+    registry.recover_intents()
+    registry.recover_intents()
+    state = registry.state_for(recipient_endpoint_id=ENDPOINT_ID, session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"])
+    assert state == ("idle" if scenario in {"replacement", "pending"} else "wake_inflight" if scenario == "inflight" else None)
+    assert not notice.exists()
+    if scenario == "pending":
+        tokens = []
+        assert registry.probe(**scope, transport=lambda _path, token: tokens.append(token) or True)
+        assert tokens == ["replacement-token"]
+    if scenario == "inflight":
+        assert not registry.probe(**scope, transport=lambda *_: pytest.fail("spent authority must not reopen"))
+        assert _register(registry, tmp_path, PAYLOAD, "B")
+        raw = json.loads((tmp_path / "capabilities.json").read_text())["registrations"][0]
+        assert raw["state"] == "wake_inflight" and "admission_id" not in raw
+
+
+def test_compatibility_writer_keeps_legacy_rows_and_disables_deferred_publication(tmp_path, monkeypatch):
+    from tests.test_claude_code_integration import _load_claude_hook
+
+    registry = ClaudeWakeRegistry(state_dir=tmp_path)
+    assert _register(registry, tmp_path, PAYLOAD, "legacy")
+    assert "admission_id" not in json.loads((tmp_path / "capabilities.json").read_text())["registrations"][0]
+    registry = _modern_admission_fixture(tmp_path)
+    common = _load_claude_hook("common", monkeypatch)
+    monkeypatch.setattr(common, "CLAUDE_WAKE_DIR", tmp_path)
+    monkeypatch.setattr(common, "CLAUDE_WAKE_INTENTS_DIR", tmp_path / "intents")
+    monkeypatch.setattr(common, "_wake_binding_matches_service", lambda: True)
+    written = []
+    monkeypatch.setattr(common, "_write_wake_intent", lambda payload: written.append(payload) or False)
+    assert common.close_claude_wake(PAYLOAD["session_ref"], PAYLOAD["container_ref"], credential_loss=True) is False
+    assert len(written) == 1 and written[0]["expected_admission_id"] == "A"
+    assert not list((tmp_path / "intents").glob("revoke-*.json"))
+    assert registry.probe(**{key: PAYLOAD[key] for key in ("runtime", "session_ref", "container_ref")}, transport=lambda *_: True)
+
+
+def test_compatibility_qualified_close_preserves_replacement_and_pending_intent(tmp_path, monkeypatch):
+    from tests.test_claude_code_integration import _load_claude_hook
+
+    registry = _modern_admission_fixture(tmp_path)
+    common = _load_claude_hook("common", monkeypatch)
+    monkeypatch.setattr(common, "CLAUDE_WAKE_DIR", tmp_path)
+    monkeypatch.setattr(common, "CLAUDE_WAKE_INTENTS_DIR", tmp_path / "intents")
+    monkeypatch.setattr(common, "_wake_binding_matches_service", lambda: True)
+    _write_intent(tmp_path, {**PAYLOAD, "token": "new-token"}, "B")
+    intent = _intent_path(tmp_path, PAYLOAD["session_ref"])
+    pending = intent.read_bytes()
+    assert common.close_claude_wake(PAYLOAD["session_ref"], PAYLOAD["container_ref"], credential_loss=True) is False
+    assert intent.read_bytes() == pending
+    assert not list((tmp_path / "intents").glob("revoke-*.json"))
+
+    assert registry.register(**{**PAYLOAD, "token": "new-token"}, intent_id="B")
+    intent.write_text(json.dumps({
+        **{key: PAYLOAD[key] for key in ("runtime", "session_ref", "container_ref")},
+        "intent_id": "old-close", "closed": True, "expected_admission_id": "A",
+    }), encoding="utf-8")
+    assert not registry.close(**{key: PAYLOAD[key] for key in ("runtime", "session_ref", "container_ref")}, intent_id="old-close")
+    tokens = []
+    assert registry.probe(**{key: PAYLOAD[key] for key in ("runtime", "session_ref", "container_ref")}, transport=lambda _path, token: tokens.append(token) or True)
+    assert tokens == ["new-token"]
+
+
 def test_compare_before_apply_rejects_delayed_intent_and_restart_uses_latest(tmp_path: Path) -> None:
     registry = ClaudeWakeRegistry(state_dir=tmp_path)
     assert _register(registry, tmp_path, PAYLOAD, "A")

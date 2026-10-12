@@ -897,12 +897,21 @@ def test_restricted_claude_prompt_still_delivers_and_acks_pending_relay(
 
 
 def test_hook_enforces_encoded_body_limit_before_open(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from contextlib import closing
+
     common = _load_claude_hook("common", monkeypatch)
     wake_dir = tmp_path / "wake"
     monkeypatch.setattr(common, "CLAUDE_WAKE_DIR", wake_dir)
     monkeypatch.setattr(common, "CLAUDE_WAKE_INTENTS_DIR", wake_dir / "intents")
     monkeypatch.setenv("CLAUDE_CODE_MESSAGING_SOCKET", "socket")
     monkeypatch.setenv("CLAUDE_CODE_MESSAGING_TOKEN", "é" * MAX_TOKEN_CHARS)
+    opened = {**PAYLOAD, "session_ref": "session", "socket_path": "socket", "intent_id": "before-overflow"}
+    intent = common._wake_intent_path("claude-code", opened["session_ref"], opened["container_ref"])
+    intent.parent.mkdir(parents=True)
+    intent.write_text(json.dumps(opened), encoding="utf-8")
+    registry = ClaudeWakeRegistry(state_dir=wake_dir)
+    with closing(_client(registry)) as admitted:
+        assert admitted.post("/internal/claude-wake/register", json=opened).status_code == 204
     requested_paths: list[str] = []
 
     def unavailable_open(request, **_kwargs):
@@ -918,6 +927,7 @@ def test_hook_enforces_encoded_body_limit_before_open(tmp_path: Path, monkeypatc
     assert requested_paths == ["/internal/claude-wake/close"]
     close_intent = common._wake_intent_path("claude-code", "session", "git:example/repo")
     assert json.loads(close_intent.read_text(encoding="utf-8"))["closed"] is True
+    assert json.loads(close_intent.read_text(encoding="utf-8"))["expected_admission_id"] is None
     assert list((wake_dir / "intents").glob("*.tmp")) == []
     restarted = ClaudeWakeRegistry(state_dir=wake_dir)
     restarted.recover_intents()

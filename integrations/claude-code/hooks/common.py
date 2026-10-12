@@ -1442,6 +1442,9 @@ def _write_wake_intent(payload: dict[str, object]) -> bool:
             return False
         temporary = target.with_name(target.name + ".tmp")
         try:
+            if payload.get("closed") is True and "expected_admission_id" in payload and target.exists():
+                # Preserve every pending intent; reconciliation arbitrates the captured admission.
+                return False
             temporary.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
             if os.name != "nt":
                 try:
@@ -1475,7 +1478,7 @@ def register_claude_wake(
     if not all(_credential_value(value, maximum) for value, maximum in zip(values[:3], _CREDENTIAL_LIMITS[:3], strict=True)):
         return False
     if not all(_credential_value(value, maximum) for value, maximum in zip(values[3:], _CREDENTIAL_LIMITS[3:], strict=True)):
-        close_claude_wake(session_ref, container_ref)
+        close_claude_wake(session_ref, container_ref, credential_loss=True)
         return False
     body_data: dict[str, object] = {
         "runtime": "claude-code",
@@ -1488,7 +1491,7 @@ def register_claude_wake(
     }
     body = json.dumps(body_data).encode("utf-8")
     if len(body) > _CREDENTIAL_BODY_MAX_BYTES:
-        close_claude_wake(session_ref, container_ref)
+        close_claude_wake(session_ref, container_ref, credential_loss=True)
         return False
     if not _write_wake_intent(body_data):
         return False
@@ -1514,7 +1517,61 @@ def register_claude_wake(
     except Exception:
         return False
 
-def close_claude_wake(session_ref: object, container_ref: object) -> bool:
+def _captured_wake_admission(session_ref: str, container_ref: str) -> tuple[bool, str | None]:
+    if CLAUDE_WAKE_DIR is None or not _wake_binding_matches_service():
+        return False, None
+    try:
+        raw = json.loads((CLAUDE_WAKE_DIR / "capabilities.json").read_text(encoding="utf-8"))
+        if not isinstance(raw, dict) or raw.get("version") != 1 or not isinstance(raw.get("registrations"), list):
+            return False, None
+        required = {
+            "runtime", "session_ref", "container_ref", "socket_path", "token", "generation",
+            "expires_at", "idle", "state", "delivery_id", "attempted_at",
+        }
+        seen, matches = set(), []
+        if len(raw["registrations"]) > 256:
+            return False, None
+        for row in raw["registrations"]:
+            if not isinstance(row, dict) or not required <= set(row) or set(row) - required - {"recipient_endpoint_id", "admission_id"}:
+                return False, None
+            identity = tuple(row[key] for key in ("runtime", "session_ref", "container_ref", "socket_path", "token"))
+            if row["runtime"] != "claude-code" or not all(_credential_value(value, maximum) for value, maximum in zip(identity, _CREDENTIAL_LIMITS, strict=True)):
+                return False, None
+            scope = identity[:3]
+            if scope in seen or type(row["generation"]) is not int or row["generation"] < 0 or type(row["idle"]) is not bool:
+                return False, None
+            seen.add(scope)
+            if type(row["state"]) is not str or row["state"] not in {"idle", "busy", "wake_inflight", "unreachable"} or row["idle"] != (row["state"] == "idle") or type(row["expires_at"]) not in (int, float):
+                return False, None
+            if "admission_id" in row and not _credential_value(row["admission_id"], 128):
+                return False, None
+            if row["state"] != "wake_inflight":
+                if any(row.get(key) is not None for key in ("delivery_id", "attempted_at", "recipient_endpoint_id")):
+                    return False, None
+            elif (
+                not _credential_value(row["delivery_id"], 128)
+                or type(row["attempted_at"]) not in (int, float)
+                or not float("-inf") < row["attempted_at"] < float("inf")
+                or (row.get("recipient_endpoint_id") is not None and (
+                    not isinstance(row["recipient_endpoint_id"], str)
+                    or re.fullmatch(r"relay-session-[0-9a-f]{32}", row["recipient_endpoint_id"]) is None
+                ))
+            ):
+                return False, None
+            if scope == ("claude-code", session_ref, container_ref):
+                matches.append(row)
+        if len(matches) != 1:
+            return False, None
+        row = matches[0]
+        if "admission_id" not in row:
+            return True, None  # Verified old-format row, fenced against a modern replacement.
+        admission = row["admission_id"]
+        return (_credential_value(admission, 128), admission if _credential_value(admission, 128) else None)
+    except (OSError, ValueError):
+        return False, None
+
+
+def close_claude_wake(session_ref: object, container_ref: object, *, credential_loss: bool = False) -> bool:
     """Write a closed intent before best-effort loopback removal."""
     if not all(_credential_value(value, maximum) for value, maximum in zip(("claude-code", session_ref, container_ref), _CREDENTIAL_LIMITS[:3], strict=True)):
         return False
@@ -1522,7 +1579,14 @@ def close_claude_wake(session_ref: object, container_ref: object) -> bool:
         "runtime": "claude-code", "session_ref": session_ref, "container_ref": container_ref,
         "intent_id": uuid.uuid4().hex, "closed": True,
     }
+    admission_id = None
+    if credential_loss:
+        captured, admission_id = _captured_wake_admission(session_ref, container_ref)
+        if not captured:
+            return False
+        payload["expected_admission_id"] = admission_id
     if not _write_wake_intent(payload):
+        # Reader-first stage consumes modern notices but does not publish them.
         return False
     request = urllib.request.Request(
         f"{PALLIUM_BASE_URL}/internal/claude-wake/close", data=json.dumps({key: payload[key] for key in ("runtime", "session_ref", "container_ref", "intent_id")}).encode("utf-8"), method="POST", headers={"Content-Type": "application/json"},
