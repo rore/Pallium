@@ -35,6 +35,7 @@ Whole change -> import/workflow checks and root combined full; no live integrati
 - Existing bounded/completed-vector/eligibility matrix: `pallium-full-suite-run-5611c9ef940241b89fae723f7170a478`, 15 passed in 1.82 s. Stdout SHA `6D7B3220BCC9AA92FB411B24E9D0694C6E0BA2B8ABCA6B6DB01D66C2E3DA8EEE`.
 - Every run: fresh private profile/paired DBs, network guards empty, stderr empty, three identity-matched owned processes drained. Runner adapted only checkout/branch/HEAD, exact four-path allowlist/new-record admission and selectors; original node runner SHA `FA949993F4FB054C23F1A34978FDE7D0B0AE8D42ECC56142B7FDEAEA8AC93E91`. Root owns combined full; no duplicate local full or live operation.
 - Import-linter exit 0; selector reports full validation for the complete NUL slice, delegated to root combined validation. Evidence copies/manifest preserved under `C:/Dev/rore/Pallium/build/service-performance-20261012/raw-source-nul-startup`; manifest SHA `EFCEE44805B35F6CDE270D587D476271E2512C3162C04172D5779ABD8B078838`.
+- Fresh four-path slice Redline report and Agent Workflow checker completed clean 0 with no failed predicates against root-supplied baseline. Work Record baseline committed before source commit; root owns whole integrated path-set governance and full run.
 
 ## Result review
 

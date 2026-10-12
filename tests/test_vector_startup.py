@@ -570,7 +570,8 @@ class TestLoadOrCreateVectorIndex:
 
 @requires_usearch
 @pytest.mark.parametrize("vector_exists", [False, True])
-def test_raw_source_backfill_http_startup_and_reopen(tmp_path, monkeypatch, vector_exists):
+@pytest.mark.parametrize("content", ["é" * 40, "é" * 19 + "\x00" + "é" * 20], ids=["unicode", "nul40"])
+def test_raw_source_backfill_http_startup_and_reopen(tmp_path, monkeypatch, vector_exists, content):
     from fastapi.testclient import TestClient
 
     from app.config import EmbeddingProviderConfig
@@ -580,7 +581,6 @@ def test_raw_source_backfill_http_startup_and_reopen(tmp_path, monkeypatch, vect
     from storage.sqlite import SQLiteStorageProvider
 
     sqlite_url = f"sqlite:///{tmp_path / 'startup.db'}"
-    content = "é" * 40
     with TestClient(create_app(_minimal_config(
         sqlite_url=sqlite_url, vector_index=VectorIndexConfig(enabled=False),
     ))) as client:

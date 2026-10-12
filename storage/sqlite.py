@@ -1512,7 +1512,28 @@ class SQLiteStorageProvider(
             vector_text_view_name=vector_text_view_name,
         ).with_only_columns(IndexEntryRecord.id).limit(1)
         with self._session_factory() as session:
-            return session.scalar(statement) is not None
+            if session.scalar(statement) is not None:
+                return True
+            # SQLite length(TEXT) stops at NUL; Python counts the entire source.
+            source = aliased(SourceItemRecord)
+            candidates = self._raw_source_vector_backfill_statement(
+                lexical_text_view_name=lexical_text_view_name,
+                vector_text_view_name=vector_text_view_name,
+                require_minimum_length=False,
+            ).with_only_columns(IndexEntryRecord.id, source.content).join(
+                source, source.id == IndexEntryRecord.target_id,
+            ).where(func.instr(source.content, "\x00") > 0).order_by(IndexEntryRecord.id.asc())
+            after_id = None
+            while True:
+                page = candidates
+                if after_id is not None:
+                    page = page.where(IndexEntryRecord.id > after_id)
+                rows = session.execute(page.limit(128)).all()
+                if not rows:
+                    return False
+                if any(len(content) >= 40 for _, content in rows):
+                    return True
+                after_id = rows[-1][0]
 
     def list_raw_source_vector_backfill_page(
         self, *, lexical_text_view_name: str, vector_text_view_name: str,

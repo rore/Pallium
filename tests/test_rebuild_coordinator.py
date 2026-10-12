@@ -971,6 +971,37 @@ def _create_raw_inventory_source(storage, source_id, *, content="é" * 40,
 
 
 class TestFilteredRawSourceInventory:
+
+    @pytest.mark.parametrize("short_count", [127, 128, 129])
+    def test_boolean_nul_scan_advances_across_short_candidates(self, tmp_path, monkeypatch, short_count):
+        from sqlalchemy import event
+        from storage.sqlite import SQLiteStorageProvider
+        storage = SQLiteStorageProvider(f"sqlite:///{tmp_path / 'nul.db'}")
+        try:
+            selects = []
+            event.listen(storage._engine, "before_cursor_execute",
+                lambda conn, cursor, statement, parameters, context, executemany:
+                    selects.append(statement) if statement.lstrip().upper().startswith("SELECT") else None)
+            monkeypatch.setattr(storage, "get_source_item",
+                lambda *a: pytest.fail("boolean check hydrated a source DTO"))
+            assert raw_source_vector_backfill_needed(storage) is False
+            assert len(selects) == 2
+            for i in range(short_count):
+                _create_raw_inventory_source(storage, f"a-{i:03d}", content="é" * 18 + "\x00" + "é" * 20)
+            selects.clear()
+            assert raw_source_vector_backfill_needed(storage) is False
+            assert len(selects) == 2 + (short_count + 127) // 128
+            _create_raw_inventory_source(storage, "z-valid", content="é" * 19 + "\x00" + "é" * 20)
+            selects.clear()
+            assert raw_source_vector_backfill_needed(storage) is True
+            assert len(selects) == 1 + (short_count + 128) // 128
+            _create_raw_inventory_source(storage, "zz-ordinary", content="東京" * 20)
+            selects.clear()
+            assert raw_source_vector_backfill_needed(storage) is True
+            assert len(selects) == 1
+        finally:
+            storage.close()
+
     @pytest.mark.parametrize("failure", [None, ValueError("query failed")])
     def test_broken_optimized_page_does_not_fall_back(self, tmp_path, monkeypatch, failure):
         from storage.sqlite import SQLiteStorageProvider
