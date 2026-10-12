@@ -37,7 +37,7 @@
 
 **Exceptions:** None
 
-**State:** Blocked — initial RED confirmed; extension qualification stopped on Windows private fixture-path failure. Revised short-basetemp runners await root review/GO and a new exclusive slot; GREEN and all-worker settlement remain unproved.
+**State:** Blocked — initial RED confirmed, but the repaired extension tests passed on pre-fix production and therefore do not prove child-drain correctness. Strengthen phase observation before another qualified run; GREEN was withheld, slot released, all-worker settlement remains unproved.
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -61,6 +61,8 @@ Ownership assumption checkpoint: source inspection found per-delivery daemon thr
 2026-10-11: Loaded Agent Workflow, Redline and Ponytail; read actual AGENTS.md (no AGENTS.local.md), runtime/supervisor/CLI and bootstrap/vector helpers. Clean detached checkout equals origin/main6be22d77. Created feat/service-async-startup. Whole intended change includes application and tests outside documentation allowlist, so normal workflow applies; no exemption or default-branch protection inference. Classified High/Moderate before production/test edits. Canonical roadmap item read through Minimap skill; root owns reconciliation.
 
 ## Evidence
+
+Short-basetemp extension run after relay-msg-be8c26fc011d448d876fda5ebde33d93 GO:2 passed3.30s/exit0 on unchangedb92 production with reviewed corrected fixture. This is not a failing-before-fix witness. Proof C:/Users/I347041/AppData/Local/Temp/pallium-startup-f390335b14b3498fad53ca1d0d13f0c6/proof.log SHA2562244AA33B7DD2F46D3A91D2CA778359A4B00FF00B7DB2BEC2690B7B1D66ED1E1. Child3120 settled/PIDabsent/no guardlogs; conditional GREEN withheld, slot released in reply45bc54e4. Current test releases the held child immediately after outer shutdown revocation and owner-notdone; cleanup may still be settling unrelated direct producers, so child can exit before old cleanup closes resources. Reassess acceptance instead of another production patch: add exact producer-settled and actual-drain-entry/resource-close phase observation, suppress unrelated recovery sweeps only in this test fixture while preserving a real reconciler Thread and real HTTP/native worker. Await root technical disposition; do not claim the ownership gap reproduced or solved by these passed baseline cases.
 
 Corrected extension RED run (relay-msg-4030ce79eee145e4bd9dbdf25e87d4d7 GO):2 failed2.79s/exit1 in fixture write_json_atomic before HTTP registration, not shutdown. Actual failing temp filenames are264 characters with existing parents, consistent with Windows path-length limits. Proof C:/Users/I347041/AppData/Local/Temp/pallium-startup-1e1e5bd1508d4c579eddff14daffec8d/proof.log SHA2568DF0ADB38A200AC78751283CEF8823A3D202C6189EB0B94745637DF3CA6B5CCE. Child65560 settledtrue/exactPIDabsent, no guardlogs; GREEN withheld as required, private slot released in reply467c1ef0. Modified only ignored runners: existing-pattern separate UUID sr-* pytestbasetemp under Temp (checked absent), preserving private profile/config/cache and all process bounds/guards. Paths shorten by roughly24 characters; no Windows setting, source or fixture assertion change. New correctedRED SHA25645EDB2FE7F022C4A56ADB6556200A449A6D8584DA2E1473D21D50EC89D25C035; GREEN SHA25688001F85BB9DBECEEAFD943762621F44FFCF5FA48760EB2F79EA3C5ACFE63E3D. Parsers/diff check pass; no rerun. Exact frozen source/fixture overlays and12selectors/16GREENcases remain as previously reviewed. Root must recompare/hash-review/GO a new exclusive run.
 
