@@ -41,7 +41,7 @@ _INVENTORY_FAILURE_CATEGORIES = frozenset({
     "invalid-policy", "invalid-policy-lock", "invalid-response", "message-limit", "native-failed",
     "path-unavailable", "peer-gone", "peer-mismatch", "peer-unavailable", "policy-busy",
     "policy-changed", "policy-inactive", "stopped", "transport-failed", "unsafe-acl", "unsafe-owner",
-    "unsafe-path", "unsupported-acl",
+    "unsafe-path", "unsupported-acl", "registration-missing",
 })
 
 
@@ -2465,8 +2465,11 @@ class RetainedService(InventoryService):
 
     def _reopen_registration(self) -> None:
         saved = self.retained_registration
-        if (saved is None or self.stop_event.is_set() or self.unresolved or _native_uncertain
-                or saved["epoch"] != self.epoch or saved["source"] is not self.source
+        if self.stop_event.is_set() or self.unresolved or _native_uncertain:
+            raise ShadowUnavailable("stopped")
+        if saved is None:
+            raise ShadowUnavailable("registration-missing")
+        if (saved["epoch"] != self.epoch or saved["source"] is not self.source
                 or saved["source_identity"] != (self.source.pid, self.source.creation)):
             raise ShadowUnavailable("peer-mismatch")
         self.current.check()
@@ -2725,7 +2728,7 @@ class RetainedService(InventoryService):
                     ), reservation
             except Exception as exc:
                 category = getattr(exc, "category", None)
-                diagnostic_category = ("native-tool-failed" if category == "native-tool-failed"
+                diagnostic_category = (category if category in {"native-tool-failed", "registration-missing"}
                                        else _inventory_reason(exc))
                 delivery_ref, _, _ = relay_wake_log_refs(
                     reservation.delivery_id, reservation.session_ref, reservation.container_ref,

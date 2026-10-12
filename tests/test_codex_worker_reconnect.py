@@ -42,6 +42,81 @@ async def _actual_status(session, turn):
         meta={"threadId": "actual-runtime", "turnId": turn})
 
 
+@pytest.mark.parametrize("case", ["healthy", "ready-busy", "register-busy", "unresolved",
+    "invalid-continuity", "pipe-changed", "source-exited", "ready-malformed",
+    "ready-refused", "register-refused", "register-uncertain", "continuity-changed",
+    "pipe-changed-after", "stopped-after", "ready-pipe-changed", "ready-continuity-changed",
+    "ready-unresolved", "ready-stopped"])
+def test_same_epoch_recovery_preserves_admission_and_identity_fences(monkeypatch, case):
+    worker = object.__new__(lifecycle.InventoryWorker)
+    worker.stop_event = threading.Event()
+    worker._restart_allowed = True
+    worker._auto_reconnect = lambda *a: pytest.fail("same epoch replaced the source channel")
+    monkeypatch.setenv("CODEX_APP_TOOLS_PIPE_PATH", "original-capability")
+    calls = []
+
+    class Native:
+        unresolved = case == "unresolved"
+        continuity = "a" * 64
+
+        def service_current(self):
+            return True
+
+        def ready(self):
+            calls.append("ready")
+            if case == "ready-pipe-changed":
+                monkeypatch.setenv("CODEX_APP_TOOLS_PIPE_PATH", "changed-capability")
+            if case == "ready-continuity-changed":
+                self.continuity = "b" * 64
+            if case == "ready-unresolved":
+                self.unresolved = True
+            if case == "ready-stopped":
+                worker.stop_event.set()
+            if case == "ready-busy":
+                return {"status": "unavailable", "reason": "busy"}
+            if case == "ready-refused":
+                return {"status": "unavailable", "reason": "peer-mismatch"}
+            if case == "ready-malformed":
+                return {"status": "ready"}
+            return {"status": "ready", "connected": case == "healthy",
+                    "source_exited": case == "source-exited"}
+
+        def register(self, metadata):
+            calls.append("register")
+            assert metadata == {"thread_ref": "actual-runtime", "turn_ref": "first"}
+            if case == "register-busy":
+                return {"status": "unavailable", "reason": "busy"}
+            if case == "register-refused":
+                return {"status": "unavailable", "reason": "peer-mismatch"}
+            if case == "register-uncertain":
+                self.unresolved = True
+                raise bridge.ShadowUnavailable("transport-failed")
+            if case == "continuity-changed":
+                self.continuity = "b" * 64
+            if case == "pipe-changed-after":
+                monkeypatch.setenv("CODEX_APP_TOOLS_PIPE_PATH", "changed-capability")
+            if case == "stopped-after":
+                worker.stop_event.set()
+            return {"status": "registered", "reason": "ok"}
+
+    client = Native()
+    proof = "a" * 64
+    if case == "invalid-continuity":
+        proof = "invalid"
+    if case == "pipe-changed":
+        monkeypatch.setenv("CODEX_APP_TOOLS_PIPE_PATH", "changed-capability")
+    result, disposed = worker._recover_if_gone(client, Native, "original-capability",
+        {"thread_ref": "actual-runtime", "turn_ref": "first"}, proof)
+    assert not disposed
+    accepted = case in {"healthy", "ready-busy", "register-busy"}
+    assert (result is client) == accepted
+    expected = [] if case in {"unresolved", "invalid-continuity", "pipe-changed"} else ["ready"]
+    if case in {"register-busy", "register-refused", "register-uncertain", "continuity-changed",
+                "pipe-changed-after", "stopped-after"}:
+        expected.append("register")
+    assert calls == expected
+
+
 @pytest.mark.asyncio
 async def test_actual_request_reconnects_after_old_service_epoch_is_gone(monkeypatch):
     epochs = [1]
@@ -58,7 +133,8 @@ async def test_actual_request_reconnects_after_old_service_epoch_is_gone(monkeyp
             clients.append(self)
 
         def ready(self):
-            return {"status": "ready", "reason": "ready"}
+            return {"status": "ready", "reason": "ready", "connected": True,
+                    "source_exited": False}
 
         def register(self, metadata):
             self.registrations.append((dict(metadata), self.continuity))
@@ -413,7 +489,7 @@ async def test_retained_worker_preserves_admission_after_busy_reregister(monkeyp
             clients.append(self)
 
         def ready(self):
-            return {"status": "ready"}
+            return {"status": "ready", "connected": True, "source_exited": False}
 
         def register(self, metadata):
             calls.append((self, dict(metadata)))

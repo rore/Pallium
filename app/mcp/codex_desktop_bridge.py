@@ -269,7 +269,36 @@ class InventoryWorker:
         if not hasattr(client, "service_current") or not self._restart_allowed:
             return None, False
         try:
+            if (self.stop_event.is_set() or getattr(client, "unresolved", False)
+                    or getattr(getattr(client, "io", None), "unresolved", False)
+                    or os.environ.get("CODEX_APP_TOOLS_PIPE_PATH") != original_pipe
+                    or not self._valid_continuity(continuity)
+                    or getattr(client, "continuity", None) != continuity):
+                raise RuntimeError("retained continuity unavailable")
             if client.service_current():
+                ready = inventory_status(client.ready())
+                busy = ready.get("status") == "unavailable" and ready.get("reason") == "busy"
+                if not busy:
+                    if (ready.get("status") != "ready"
+                            or type(ready.get("connected")) is not bool
+                            or ready.get("source_exited") is not False):
+                        raise RuntimeError("retained readiness unavailable")
+                    if not ready["connected"]:
+                        if (self.stop_event.is_set() or getattr(client, "unresolved", False)
+                                or getattr(getattr(client, "io", None), "unresolved", False)
+                                or os.environ.get("CODEX_APP_TOOLS_PIPE_PATH") != original_pipe
+                                or getattr(client, "continuity", None) != continuity):
+                            raise RuntimeError("retained continuity changed before registration")
+                        registered = inventory_status(client.register(metadata))
+                        if not (registered.get("status") == "registered"
+                                or registered.get("status") == "unavailable"
+                                and registered.get("reason") == "busy"):
+                            raise RuntimeError("retained registration unavailable")
+                if (self.stop_event.is_set() or getattr(client, "unresolved", False)
+                        or getattr(getattr(client, "io", None), "unresolved", False)
+                        or os.environ.get("CODEX_APP_TOOLS_PIPE_PATH") != original_pipe
+                        or getattr(client, "continuity", None) != continuity):
+                    raise RuntimeError("retained continuity changed")
                 return client, False
         except Exception:
             self._restart_allowed = False
