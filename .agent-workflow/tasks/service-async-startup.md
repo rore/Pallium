@@ -37,7 +37,7 @@
 
 **Exceptions:** None
 
-**State:** Blocked — initial frozen RED completed; preparing approved Claude production extension and awaiting a separately scheduled GREEN/affected validation slot. No readiness or all-worker settlement proof yet.
+**State:** Blocked — initial RED confirmed; extension qualification stopped on Windows private fixture-path failure. Revised short-basetemp runners await root review/GO and a new exclusive slot; GREEN and all-worker settlement remain unproved.
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -61,6 +61,8 @@ Ownership assumption checkpoint: source inspection found per-delivery daemon thr
 2026-10-11: Loaded Agent Workflow, Redline and Ponytail; read actual AGENTS.md (no AGENTS.local.md), runtime/supervisor/CLI and bootstrap/vector helpers. Clean detached checkout equals origin/main6be22d77. Created feat/service-async-startup. Whole intended change includes application and tests outside documentation allowlist, so normal workflow applies; no exemption or default-branch protection inference. Classified High/Moderate before production/test edits. Canonical roadmap item read through Minimap skill; root owns reconciliation.
 
 ## Evidence
+
+Corrected extension RED run (relay-msg-4030ce79eee145e4bd9dbdf25e87d4d7 GO):2 failed2.79s/exit1 in fixture write_json_atomic before HTTP registration, not shutdown. Actual failing temp filenames are264 characters with existing parents, consistent with Windows path-length limits. Proof C:/Users/I347041/AppData/Local/Temp/pallium-startup-1e1e5bd1508d4c579eddff14daffec8d/proof.log SHA2568DF0ADB38A200AC78751283CEF8823A3D202C6189EB0B94745637DF3CA6B5CCE. Child65560 settledtrue/exactPIDabsent, no guardlogs; GREEN withheld as required, private slot released in reply467c1ef0. Modified only ignored runners: existing-pattern separate UUID sr-* pytestbasetemp under Temp (checked absent), preserving private profile/config/cache and all process bounds/guards. Paths shorten by roughly24 characters; no Windows setting, source or fixture assertion change. New correctedRED SHA25645EDB2FE7F022C4A56ADB6556200A449A6D8584DA2E1473D21D50EC89D25C035; GREEN SHA25688001F85BB9DBECEEAFD943762621F44FFCF5FA48760EB2F79EA3C5ACFE63E3D. Parsers/diff check pass; no rerun. Exact frozen source/fixture overlays and12selectors/16GREENcases remain as previously reviewed. Root must recompare/hash-review/GO a new exclusive run.
 
 Corrected qualification setup: GREEN pinned source5ced41cd03ec65780b800bbf004c205830273492 (successor correction plus reviewed private-file/durable-intent fixtures) at build/startup-green-5ced41cd, runner build/startup-green-runner.ps1 SHA2566709FAC86D4BA1FD6E0E3E48EA382E79D86B7A37F5A31926AB6D32AA2FF4264B, archive SHA2562B8AC79B8DE70435CF4C7E9A0CE26580BCEE423C66483828B738D8A05B643580. Twelve selectors/16 cases add the eligible successor regression to prior list. Separate corrected RED build/claude-extension-corrected-red-runner.ps1 SHA2567419BD9DA22E6973556A87E66242D3219444C6DDF6754BB3A70F16174C0E0757 targets build/claude-extension-red-b92d305f-fixed-fixture: unchangedb92 production archive plus only reviewed tests/test_health.py fixture overlay from5ced41cd; canonical app/main/claude_wake blobs equalb92, corrected health blob equals5ced41cd. Overlay SHA2563B08FEBA8B5519010363386C6D60FA44DBE3F7B16057D56BFAD26E10C6CB1FD8. Existing snapshots preserved. Both bounded runner parsers and diff check pass; no execution. Request root comparison/GO and exclusive slot, corrected RED then GREEN; prior incorrect fixture failures remain explicitly unproved target RED.
 
