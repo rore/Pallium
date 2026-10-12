@@ -1553,7 +1553,10 @@ async def test_accepted_mcp_worker_recovers_pending_http_wake_after_service_repl
     client.app.state.codex_wake_registry.retained_service = original
     clients, actual_calls = [], []
     re_registered = threading.Event()
+    idle_ready_observed = threading.Event()
+    idle_ready_responses = []
     busy_sent = set()
+    public_status = bridge.NativeInventoryClient._public
 
     class Native:
         def __init__(self, *_args, **_kwargs):
@@ -1582,7 +1585,13 @@ async def test_accepted_mcp_worker_recovers_pending_http_wake_after_service_repl
                 self.continuity = result["continuity"]
                 if self.service is not original:
                     re_registered.set()
-            return {key: result[key] for key in ("status", "reason", "continuity") if key in result}
+            response = public_status(result)
+            if "continuity" in result:
+                response["continuity"] = result["continuity"]
+            if verb == "ready" and self.service is original and self.continuity is not None:
+                idle_ready_responses.append(response)
+                idle_ready_observed.set()
+            return response
 
         def _busy_once(self, verb, metadata=None):
             locked, release, finished = threading.Event(), threading.Event(), threading.Event()
@@ -1645,6 +1654,11 @@ async def test_accepted_mcp_worker_recovers_pending_http_wake_after_service_repl
         assert not result.isError
         assert len(clients) == 1 and len(actual_calls) == 1
         assert original.enrollment_diagnostics()["accepted"]
+        assert await asyncio.to_thread(idle_ready_observed.wait, 1), "accepted source was not observed idle"
+        assert idle_ready_responses
+        assert all((response.get("connected"), response.get("source_exited"),
+                    response.get("inventory_ok")) == (True, False, False)
+                   for response in idle_ready_responses), idle_ready_responses
 
         # Leave one HTTP delivery pending on the accepted service before replacing its API.
         registered_desktop = original.custody
@@ -1722,6 +1736,7 @@ async def test_fresh_mcp_request_enrolls_replacement_service_without_background_
     active = [original]
     clients, exchanges, actual_calls, workers = [], [], [], []
     original_worker = lifecycle.InventoryWorker
+    public_status = bridge.NativeInventoryClient._public
 
     class CapturingWorker(original_worker):
         def __init__(self, *args, **kwargs):
@@ -1751,7 +1766,10 @@ async def test_fresh_mcp_request_enrolls_replacement_service_without_background_
             exchanges.append((verb, metadata))
             if verb == "register" and result["status"] == "registered":
                 self.continuity = result["continuity"]
-            return {key: result[key] for key in ("status", "reason", "continuity") if key in result}
+            response = public_status(result)
+            if "continuity" in result:
+                response["continuity"] = result["continuity"]
+            return response
 
         def ready(self):
             return self._exchange("ready")

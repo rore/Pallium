@@ -1,3 +1,20 @@
+## Combined full-suite follow-up — 2026-10-12
+
+The replacement-ready regression failed at combined head d9bedaca because its
+fake Native._exchange omitted connected/source_exited/inventory_ok fields that
+the real NativeInventoryClient._public preserves. Root and independent architecture
+approve restoring realistic ready-envelope parity and an explicit healthy idle-ready
+witness before replacement. Scope remains tests/test_codex_retained_wake.py only;
+keep the three-second recovery bound, public delivery, single native call and
+no-new-MCP-request assertions. Demonstrate the fixture failure before correction.
+No production fence or restart behavior changes are authorized by this correction.
+Verified RED: 2 failed / 2 passed in 2.91 s on missing healthy-ready fields before
+the epoch switch; GREEN: 4 passed in 3.41 s after real public projection parity in
+both relevant adapters. Green stdout SHA256
+7B0F0763AC04F234F3460C55E6D57ACF2863B3B89C296C9932F59461F864F898.
+Private run 2970a060b0354d61992154555078ca13 has empty guards/stderr and all three
+owned children drained. No production code or original recovery deadline changed.
+
 <!-- agent-workflow:start -->
 **Outcome:** Authenticated retained Codex enrollment can recover after same-epoch registration loss without replaying a failed native operation; diagnostics distinguish absent registration from identity mismatch.
 **Target:** Pallium retained Codex service and source worker.

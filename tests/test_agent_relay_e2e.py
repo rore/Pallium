@@ -378,7 +378,8 @@ def test_duplicate_reply_contends_with_prepared_trace_then_keeps_identity(client
     assert workers and phase["thread_ident"] != threading.get_ident(), phase
     assert phase["delivery_id"] == first.json()["deliveries"][0]["delivery_id"], phase
     assert phase["thread_name"].startswith("relay-trace"), phase
-    assert len(acquisition_errors) == 3, acquisition_errors
+    # The shared acquisition allowance can expire before all three native attempts.
+    assert 1 <= len(acquisition_errors) <= service._storage._RELAY_IMMEDIATE_ATTEMPTS, acquisition_errors
     assert all(error == {"code": sqlite3.SQLITE_BUSY, "name": "SQLITE_BUSY"}
                for error in acquisition_errors), acquisition_errors
     retained = _status(client, reply_id)
