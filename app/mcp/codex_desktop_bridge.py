@@ -213,6 +213,7 @@ class InventoryWorker:
         self._requests = queue.Queue(maxsize=1)
         self._busy = False
         self._restart_allowed = True
+        self._fresh_request_retirement = None
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
@@ -265,7 +266,8 @@ class InventoryWorker:
             unresolved = unresolved or bool(getattr(client, "unresolved", False))
         self._restart_allowed = restart_allowed and not unresolved
 
-    def _recover_if_gone(self, client, native_type, original_pipe, metadata, continuity):
+    def _recover_if_gone(self, client, native_type, original_pipe, metadata, continuity,
+                         *, allow_ready_retirement=False):
         if not hasattr(client, "service_current") or not self._restart_allowed:
             return None, False
         try:
@@ -276,7 +278,34 @@ class InventoryWorker:
                     or getattr(client, "continuity", None) != continuity):
                 raise RuntimeError("retained continuity unavailable")
             if client.service_current():
-                ready = inventory_status(client.ready())
+                try:
+                    ready = inventory_status(client.ready())
+                except Exception as exc:
+                    from app.codex_bridge_pipe import ShadowUnavailable
+                    source_io = getattr(client, "io", None)
+                    manifest = getattr(client, "manifest", None)
+                    if (not allow_ready_retirement or not isinstance(exc, ShadowUnavailable)
+                            or exc.category not in {"transport-failed", "deadline"}
+                            or self.stop_event.is_set() or getattr(client, "unresolved", False)
+                            or getattr(source_io, "unresolved", False)
+                            or os.environ.get("CODEX_APP_TOOLS_PIPE_PATH") != original_pipe
+                            or getattr(client, "continuity", None) != continuity
+                            or type(manifest) is not dict or not client.service_current()
+                            or client.bootstrap_unchanged() is not True):
+                        raise
+                    previous_manifest = dict(manifest)
+                    self._finish(client)
+                    if (not self._restart_allowed or self.stop_event.is_set()
+                            or getattr(client, "unresolved", False)
+                            or getattr(source_io, "unresolved", False)
+                            or os.environ.get("CODEX_APP_TOOLS_PIPE_PATH") != original_pipe
+                            or getattr(client, "continuity", None) != continuity
+                            or client.bootstrap_unchanged() is not True
+                            or client.manifest != previous_manifest):
+                        raise
+                    # Resolved observation failure permits only a new real caller.
+                    self._fresh_request_retirement = (client, previous_manifest)
+                    return None, True
                 busy = ready.get("status") == "unavailable" and ready.get("reason") == "busy"
                 if not busy:
                     if (ready.get("status") != "ready"
@@ -411,9 +440,16 @@ class InventoryWorker:
                                 self.stop_event.set()
                                 break
                             replacement, disposed = self._recover_if_gone(
-                                client, NativeInventoryClient, original_pipe, admitted_metadata, continuity)
+                                client, NativeInventoryClient, original_pipe, admitted_metadata, continuity,
+                                allow_ready_retirement=True)
                             if disposed:
                                 client = replacement
+                            if self._fresh_request_retirement is not None:
+                                retired_client, retired_manifest = self._fresh_request_retirement
+                                self._fresh_request_retirement = None
+                                retired_pipe = original_pipe
+                                registered = False
+                                continue
                             if replacement is None:
                                 self.stop_event.set()
                                 break
@@ -441,6 +477,13 @@ class InventoryWorker:
                         continue
                 if future.cancelled():
                     continue
+                if (self._retained and admitted_metadata is not None
+                        and metadata.get("thread_ref") != admitted_metadata.get("thread_ref")):
+                    self._restart_allowed = False
+                    self.stop_event.set()
+                    loop.call_soon_threadsafe(ShadowWorker._complete, future,
+                        inventory_status({"reason": "peer-mismatch"}))
+                    break
                 if self._retained and client is None:
                     from app.codex_bridge_pipe import NativeInventoryClient, ShadowUnavailable
                     if retired_client is None:
@@ -565,6 +608,8 @@ class InventoryWorker:
                     break
                 was_registered = registered
                 registration_attempted = True
+                if self._retained and not was_registered and continuity is not None:
+                    client.continuity = continuity
                 if self._retained and not was_registered and retired_pipe is not None:
                     retired_pipe = None
                 try:

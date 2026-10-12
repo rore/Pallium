@@ -82,6 +82,142 @@ async def test_actual_mcp_idle_recovers_same_epoch_enrollment_without_replay(
     await _serve_protocol(server, exercise)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("idle_result", [
+    "healthy", "busy", "resolved-transport-failure", "resolved-deadline",
+    "peer-mismatch", "invalid-response", "unresolved", "changed-pipe",
+    "changed-bootstrap", "changed-continuity", "disposal-failure", "different-thread",
+    "dispose-changed-pipe", "dispose-changed-bootstrap", "dispose-changed-continuity",
+    "dispose-unresolved", "changed-source", "admission-register-failure",
+])
+async def test_actual_mcp_idle_ready_preserves_or_fences_source_channel(
+    retained, monkeypatch, idle_result,
+):
+    from app import codex_bridge_pipe as bridge
+    from app.mcp import codex_desktop_bridge as lifecycle
+    from tests.test_codex_worker_reconnect import _protocol_server, _actual_status
+    from tests.test_codex_mcp_desktop_bridge import _serve_protocol
+
+    service, request, natives = retained
+    source = service.source
+    manifest = {"epoch": service.epoch}
+    registrations, operations, workers, clients = [], [], [], []
+    idle_observed, disposed = threading.Event(), threading.Event()
+    native_type, worker_type = bridge.NativeInventoryClient, lifecycle.InventoryWorker
+    monkeypatch.setattr(bridge, "_read_private", lambda *args: json.dumps(manifest).encode())
+
+    class Worker(worker_type):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            workers.append(self)
+
+    monkeypatch.setattr(lifecycle, "InventoryWorker", Worker)
+
+    class IO:
+        unresolved = False
+        def write(self, value, deadline):
+            self.request = value
+        def read(self, deadline):
+            value = self.request
+            if value["verb"] == "ready" and registrations:
+                idle_observed.set()
+                if idle_result == "admission-register-failure":
+                    service._drop()
+                elif len(clients) == 1 and idle_result not in {"healthy", "busy"}:
+                    if idle_result == "unresolved":
+                        self.unresolved = True
+                    elif idle_result == "changed-pipe":
+                        monkeypatch.setenv("CODEX_APP_TOOLS_PIPE_PATH", "changed-capability")
+                    elif idle_result == "changed-bootstrap":
+                        manifest["epoch"] = "changed-epoch"
+                    elif idle_result == "changed-continuity":
+                        clients[0].continuity = "b" * 64
+                    elif idle_result == "changed-source":
+                        clients[0].source.gone = True
+                    category = (idle_result if idle_result in {"peer-mismatch", "invalid-response"}
+                                else "deadline" if idle_result == "resolved-deadline"
+                                else "transport-failed")
+                    raise bridge.ShadowUnavailable(category)
+            if value["verb"] == "register" and registrations and idle_result == "admission-register-failure":
+                raise bridge.ShadowUnavailable("transport-failed")
+            result = service._process(value, service.source, value["sequence"] - 1, deadline)
+            if value["verb"] == "register":
+                registrations.append(dict(value))
+            elif registrations and idle_result == "busy":
+                result = {**result, "status": "unavailable", "reason": "busy"}
+            return {**result, "version": 1, "epoch": service.epoch,
+                    "sequence": value["sequence"]}
+        def close(self):
+            # The inherited loop EOF proof independently verifies this exact cleanup.
+            service._drop()
+            disposed.set()
+            if idle_result == "disposal-failure":
+                raise RuntimeError("controlled conclusive-disposal failure")
+            if idle_result == "dispose-changed-pipe":
+                monkeypatch.setenv("CODEX_APP_TOOLS_PIPE_PATH", "changed-capability")
+            elif idle_result == "dispose-changed-bootstrap":
+                manifest["epoch"] = "changed-epoch"
+            elif idle_result == "dispose-changed-continuity":
+                clients[0].continuity = "b" * 64
+            elif idle_result == "dispose-unresolved":
+                self.unresolved = True
+
+    def native(path, stop, *, retained):
+        client = object.__new__(native_type)
+        client.w, client.sid = service.w, service.sid
+        client.bootstrap_path, client.manifest = path, dict(manifest)
+        client.stop_event, client.retained = stop, retained
+        from tests.test_codex_retained_wake import Peer
+        client.peer = Peer(service.w, service.current.pid, creation=service.current.creation)
+        client.source = Peer(service.w, source.pid, creation=source.creation)
+        if clients:
+            # The service's next accepted source handle names the same live process.
+            service.source = Peer(service.w, source.pid, creation=source.creation)
+        client.io, client.sequence = IO(), 0
+        client.continuity, client.unresolved = None, False
+        clients.append(client)
+        return client
+
+    server = _protocol_server(monkeypatch, native, operations)
+    monkeypatch.setenv("CODEX_APP_TOOLS_PIPE_PATH", request["endpoint"])
+
+    async def exercise(session):
+        assert not (await _actual_status(session, "first")).isError
+        assert len(registrations) == len(operations) == 1
+        assert await asyncio.to_thread(idle_observed.wait, 1)
+        worker, = workers
+        if idle_result in {"resolved-transport-failure", "resolved-deadline", "different-thread"}:
+            assert await asyncio.to_thread(disposed.wait, 1)
+            assert not service.unresolved and not source.gone
+            assert service.retained_registration is None and service.custody is None
+            assert len(clients) == len(registrations) == 1, "idle retirement retried enrollment"
+            if idle_result == "different-thread":
+                fresh = await session.call_tool("pallium_relay_status", {"message_id": "message"},
+                    meta={"threadId": "different-runtime", "turnId": "fresh"})
+                assert not fresh.isError
+                await asyncio.to_thread(worker._thread.join, 1)
+                assert not worker._thread.is_alive() and not worker._restart_allowed
+                assert len(clients) == len(registrations) == 1
+            else:
+                assert not (await _actual_status(session, "fresh")).isError
+                assert len(registrations) == 2 and len(operations) == 2
+                assert registrations[1]["continuity"] == clients[0].continuity
+                assert service.retained_registration is not None and service.custody is not None
+        elif idle_result in {"healthy", "busy"}:
+            assert worker._thread.is_alive() and worker._restart_allowed
+            assert service.retained_registration is not None and service.custody is not None
+            assert not disposed.is_set() and not source.gone
+            assert len(registrations) == 1 and len(operations) == 1
+        else:
+            await asyncio.to_thread(worker._thread.join, 1)
+            assert not worker._thread.is_alive() and not worker._restart_allowed
+            assert not (await _actual_status(session, "fresh")).isError
+            assert len(clients) == len(registrations) == 1 and len(operations) == 2
+        assert all(not desktop.owners for desktop in natives)
+
+    await _serve_protocol(server, exercise)
+
+
 def test_missing_saved_registration_is_not_reported_as_peer_mismatch(retained):
     from app import codex_bridge_pipe as bridge
     service, _, _ = retained

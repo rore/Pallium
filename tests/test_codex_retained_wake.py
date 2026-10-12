@@ -455,6 +455,60 @@ def test_inherited_stop_timeout_invalidates_enrollment_evidence(client, retained
     assert not worker.is_alive()
 
 
+def test_conclusive_source_channel_eof_clears_registration_while_source_is_alive(
+    retained, monkeypatch,
+):
+    service, request, natives = retained
+    source = service.source
+    observations = []
+    w = service.w
+    w.con.FILE_FLAG_OVERLAPPED = 4
+    for name, value in dict(PIPE_ACCESS_DUPLEX=1, PIPE_TYPE_MESSAGE=2,
+                           PIPE_READMODE_MESSAGE=4, PIPE_WAIT=8,
+                           PIPE_REJECT_REMOTE_CLIENTS=16).items():
+        setattr(w.pipe, name, value)
+    w.pipe.CreateNamedPipe = lambda *args: 91
+    w.pipe.GetNamedPipeClientProcessId = lambda handle: source.pid
+
+    def disconnected(handle):
+        observations.append((service.retained_registration, service.custody,
+                             source.gone, service.stop_event.is_set()))
+        service.stop_event.set()
+
+    w.pipe.DisconnectNamedPipe = disconnected
+
+    class SourceIO:
+        unresolved = False
+        def __init__(self, *args):
+            self.reads = 0
+        def accept(self, deadline):
+            pass
+        def read(self, deadline):
+            self.reads += 1
+            if self.reads == 1:
+                return {**request, "continuity": None}
+            assert service.retained_registration is not None
+            assert not source.gone and service.source is source
+            raise bridge.ShadowUnavailable("transport-failed")
+        def write(self, response, deadline):
+            assert response["status"] == "registered"
+            assert response["connected"] and not response["source_exited"]
+        def close(self):
+            pass
+
+    monkeypatch.setattr(bridge, "_native", lambda: w)
+    monkeypatch.setattr(bridge, "_self_sid", lambda _w: service.sid)
+    monkeypatch.setattr(bridge, "_check_path", lambda *args, **kwargs: None)
+    monkeypatch.setattr(bridge, "_lock_file", lambda *args: 92)
+    monkeypatch.setattr(bridge, "_security_attributes", lambda *args, **kwargs: None)
+    monkeypatch.setattr(bridge, "_atomic_private", lambda *args: None)
+    monkeypatch.setattr(bridge, "_PipeIO", SourceIO)
+    service._run()
+    assert observations == [(None, None, False, False)]
+    assert len(natives) == 1 and natives[0].closed and not natives[0].owners
+    assert not service.unresolved and not source.gone
+
+
 @pytest.mark.parametrize("failure_at", ["accept", "read"])
 def test_inherited_source_io_unresolved_invalidates_enrollment_evidence(
     client, retained, monkeypatch, caplog, failure_at,
