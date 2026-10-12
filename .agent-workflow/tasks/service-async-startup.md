@@ -1,5 +1,62 @@
 # Asynchronous service startup and truthful readiness
 
+## Prepared reservation release refusal — 2026-10-12
+
+Exact real SQLite contention recovery proof passed 1/1 in 1.60 s: original
+release refused with native BUSY, prepared pending/zero-attempt authority survived,
+existing recovery removed the malformed-target reservation without owner writes,
+and valid recovery emitted/ACKed one real payload on attempt one. Initial test
+instrumentation also observed an unrelated trace-thread cleanup error; scoping
+evidence to the release thread identified actual BEGIN BUSY without hiding its
+errors. A reused Desktop object required correcting one test alias assumption.
+Affected retained, capacity and MCP files passed 390 in 142.53 s; guards empty,
+three owned processes drained. Run 3545993822bc4bf9b29d1d93a759dedd stdout
+E9C86884D66F7C8E60B5AE4664435749B949D49DC0B5E620D95C82D04C5EB4CF.
+Claude diagnostic case and CI routing file passed 13 in 20.42 s; guards empty,
+12 owned processes drained. Run a6a1d3d1e3ae4174855c615ea6d1cee8 stdout
+B4E1B76457357AA021E89EF4383C26B3F0FD898646E223AF4CA0254A7739964F.
+These checks do not attribute historical setup refusals or establish final
+platform success. No production source changed in this correction.
+
+Windows 3.12 also emitted the real payload but exceeded the retained hook's
+unchanged two-second qualification bound (2.578 s) while parallel suite setup
+was slow. This does not establish host scheduling as the cause. Architecture
+accepts moving only test_session_start_lock_budget_claims_emits_and_acks_once
+to the existing Windows serial qualification lane, including PR smoke, with
+exact-once deselection from the full parallel remainder and a CI routing test.
+All six runtime/contention cases, real clocks, assertions and deadlines remain
+unchanged. The separate Claude callback-registration refusal remains unattributed.
+Root authorizes node-local pass-through diagnostics in
+tests/test_claude_wake_durability.py::test_recovery_health_callbacks_bind_each_exact_candidate:
+record actual intent-lock elapsed/result, canonical write result and register
+return/error for its two setup registrations only. Attach bounded evidence to
+existing assertions and restore before callback exercise. No clock, retry,
+deadline, production or successful-admission assertion changes.
+
+PR Linux 3.12 additionally refused two functional setup turns after 2571/3030 ms:
+MCP receipt secrecy and tracked-callback admission-success. Root authorizes
+failure-only, test-local pass-through acquisition diagnostics for those nodes in
+tests/test_relay_mcp_tools.py and tests/test_relay_capacity_isolation.py.
+Record bounded phase timestamps, mutex admission, same-operation-thread BEGIN
+and busy-timeout events/native codes; restore wrappers/listeners in finally.
+Keep actual HTTP/database paths, clocks, assertions and budgets unchanged.
+No historical cause or fix is established by the duration alone.
+
+Final-head Linux 3.13 CI 38291964353 observed no native owner write but a
+prepared reservation after release logged ImmediateTransactionBusyError.
+Historical contention cause is unknown. Architecture verified existing recovery
+reschedules prepared authority after the worker clears its local scheduling state.
+Root approves test-only scope in tests/test_codex_retained_wake.py: hold a real
+independent SQLite immediate writer during original release, witness native BUSY
+and public pending/zero-attempt state, then use the existing recovery sweep to
+remove the malformed-target reservation without owner writes. A later valid
+descriptor must permit exactly one native write and actual hook delivery/ACK.
+Only after this proof, the original malformed-descriptor test may use one existing
+recovery sweep on captured release False plus the exact typed busy diagnostic;
+all final assertions remain unconditional. No generic retry, deadline increase,
+production edit or inference that arbitrary failures are safe. Root owns the
+isolated runner and final combined review; architecture_check owns this test file.
+
 ## PR 312 review correction checkpoint — 2026-10-12
 
 Full 58fb2a3d completed 6,893 passed, one failed, 45 skipped, two xfailed

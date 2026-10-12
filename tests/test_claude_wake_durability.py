@@ -1321,11 +1321,41 @@ def test_recovery_health_callbacks_bind_each_exact_candidate(
     from datetime import datetime, timezone
 
     from app import claude_wake
+    from core import claude_wake as wake_core
 
     registry = ClaudeWakeRegistry(state_dir=tmp_path)
     second = {**PAYLOAD, "session_ref": "session-β"}
-    assert _register(registry, tmp_path, PAYLOAD, "first")
-    assert _register(registry, tmp_path, second, "second")
+    stages = []
+
+    def observe(stage, original):
+        def call(*args, **kwargs):
+            started = time.monotonic()
+            result, error = None, None
+            try:
+                result = original(*args, **kwargs)
+                return result
+            except BaseException as exc:
+                error = type(exc).__name__
+                raise
+            finally:
+                stages.append({
+                    "stage": stage, "elapsed_ms": (time.monotonic() - started) * 1000,
+                    "result": result if type(result) is bool else result is not None,
+                    "error": error,
+                })
+        return call
+
+    # Keep real clocks and native locks; expose only the failed setup phase.
+    with monkeypatch.context() as setup:
+        setup.setattr(wake_core, "_acquire_intent_lock", observe("intent_lock", wake_core._acquire_intent_lock))
+        for name in ("_read_intent_locked", "_intent_matches", "_write_canonical_locked", "_clear_unusable_locked", "register"):
+            setup.setattr(registry, name, observe(name, getattr(registry, name)))
+        try:
+            assert _register(registry, tmp_path, PAYLOAD, "first"), json.dumps(stages)
+            assert _register(registry, tmp_path, second, "second"), json.dumps(stages)
+        except BaseException as exc:
+            exc.add_note("Claude registration setup: " + json.dumps(stages))
+            raise
     callbacks = []
     marked: list[tuple[str, str]] = []
 

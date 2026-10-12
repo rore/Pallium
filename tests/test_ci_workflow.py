@@ -88,6 +88,19 @@ def test_all_test_commands_report_slowest_tests() -> None:
     assert all("--durations=20" in command.split("\n\n", 1)[0] for command in commands)
 
 
+def test_retained_hook_deadline_runs_once_in_each_windows_lane() -> None:
+    node = "tests/test_codex_retained_wake.py::test_session_start_lock_budget_claims_emits_and_acks_once"
+    smoke = _job("windows-smoke", "windows-full")
+    full = _job("windows-full", "nightly-slow-smoke")
+    for block in (smoke, full):
+        commands = re.findall(r"(?m)^\s+run: (python -m pytest .+)$", block)
+        selected = [command for command in commands if node in command.split()]
+        assert len(selected) == 1 and "-n 0" in selected[0]
+    assert smoke.count(node) == 1
+    assert full.count(node) == 2
+    assert f"--deselect={node}" in full
+
+
 def test_nightly_slow_smoke_is_bounded_and_hermetic() -> None:
     nightly = _job("nightly-slow-smoke", "result")
     assert "if: github.event_name == 'schedule'" in nightly

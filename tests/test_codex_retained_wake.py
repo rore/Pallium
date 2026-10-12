@@ -680,12 +680,126 @@ def test_pending_busy_or_unknown_releases_and_recovers(http_wake, state):
     json.dumps({"schemaVersion": True, "thread": {"id": TARGET, "kind": "codex", "hostId": "local", "status": {"type": "notLoaded"}}}),
     *[json.dumps({"schemaVersion": 1, "thread": {"id": TARGET, "kind": "codex", "hostId": "local", "status": {"type": "notLoaded"}, **change}})
       for change in ({"id": "other"}, {"kind": "chatgpt"}, {"hostId": "remote"}, {"status": "notLoaded"})]])
-def test_malformed_descriptor_never_writes_owner(http_wake, body, caplog):
-    _, _, registry, _, desktop, send, _ = http_wake
+def test_malformed_descriptor_never_writes_owner(http_wake, body, caplog, monkeypatch):
+    _, relay, registry, _, desktop, send, _ = http_wake
+    release_results, release_errors = [], []
+    original_transition = relay.codex_wake_transition
+    original_release = registry.release_generation
+
+    def transition(operation, **kwargs):
+        try:
+            return original_transition(operation, **kwargs)
+        except Exception as exc:
+            if operation == "release":
+                release_errors.append(exc)
+            raise
+
+    def release(reservation):
+        result = original_release(reservation)
+        release_results.append(result)
+        return result
+
+    monkeypatch.setattr(relay, "codex_wake_transition", transition)
+    monkeypatch.setattr(registry, "release_generation", release)
     desktop.body = body
     send()
+    if release_results == [False] and release_errors and all(
+        type(error) is ImmediateTransactionBusyError for error in release_errors
+    ):
+        recover(http_wake)
     assert desktop.owners == [] and registry.reservations() == ()
     assert "private-" not in caplog.text
+
+
+def test_malformed_descriptor_release_busy_recovers_without_owner_replay(
+    http_wake, monkeypatch, tmp_path,
+):
+    from sqlalchemy import event
+
+    http, relay, registry, service, desktop, send, _ = http_wake
+    storage = relay._store
+    engine = storage._relay_engine
+    native_errors, release_results, gate_errors = [], [], []
+    release_thread = [None]
+    original_release = registry.release_generation
+    desktop.body = json.dumps({"schemaVersion": 1, "thread": {
+        "id": TARGET, "kind": "codex", "hostId": "local", "status": "notLoaded",
+    }})
+
+    def observe_error(context):
+        if threading.get_ident() != release_thread[0]:
+            return
+        error = context.original_exception
+        statement = (context.statement or "").strip().upper()
+        native_errors.append({
+            "statement": statement if statement in {"BEGIN IMMEDIATE", "ROLLBACK", "COMMIT"}
+            else statement.split(" ", 1)[0],
+            "code": getattr(error, "sqlite_errorcode", None),
+            "name": getattr(error, "sqlite_errorname", None),
+            "error": str(error)[:160],
+        })
+
+    def held_release(reservation):
+        if release_results:
+            return original_release(reservation)
+        args, kwargs = engine.dialect.create_connect_args(engine.url)
+        writer = engine.dialect.dbapi.connect(*args, **kwargs)
+        try:
+            writer.execute("BEGIN IMMEDIATE")
+            assert writer.in_transaction
+            release_thread[0] = threading.get_ident()
+            result = original_release(reservation)
+            release_results.append(result)
+            return result
+        except BaseException as exc:
+            gate_errors.append(exc)
+            raise
+        finally:
+            release_thread[0] = None
+            writer.rollback()
+            writer.close()
+
+    event.listen(engine, "handle_error", observe_error)
+    monkeypatch.setattr(registry, "release_generation", held_release)
+    try:
+        delivery = send()
+    finally:
+        event.remove(engine, "handle_error", observe_error)
+    assert gate_errors == []
+    assert release_results == [False]
+    assert native_errors and all(
+        error["code"] == 5 and error["name"] == "SQLITE_BUSY" for error in native_errors
+    ), json.dumps(native_errors)
+    reservations = registry.reservations()
+    assert len(reservations) == 1 and reservations[0].outcome == "prepared"
+    assert reservations[0].delivery_id == delivery["delivery_id"]
+    assert desktop.owners == []
+    response = http.get("/relay/messages/retained-journey", params=SCOPE)
+    assert response.status_code == 200, response.text
+    pending = response.json()["deliveries"][0]
+    assert pending["delivery_id"] == delivery["delivery_id"]
+    assert pending["state"] == "pending" and pending["attempts"] == 0
+
+    recover(http_wake)
+    assert registry.reservations() == () and desktop.owners == []
+    request = {"version": 1, "verb": "register", "epoch": service.epoch, "sequence": 2,
+               "thread_ref": "source-α", "turn_ref": "turn-β", "endpoint": r"\\.\pipe\desktop-private"}
+    assert service._process(request, service.source, 1, float("inf"))["status"] == "registered"
+    valid_desktop = service.custody
+    valid_desktop.body = None
+    recover(http_wake)
+    assert len(valid_desktop.owners) == 1
+    events = []
+    hook = _hook_runner(http, monkeypatch, "notLoaded", events, tmp_path)
+    hook()
+    assert [item[0] for item in events] == ["emit", "ack"]
+    assert "private-payload-東京" in events[0][2]
+    response = http.get("/relay/messages/retained-journey", params=SCOPE)
+    assert response.status_code == 200, response.text
+    delivered = response.json()["deliveries"][0]
+    assert delivered["delivery_id"] == delivery["delivery_id"]
+    assert delivered["state"] == "delivered" and delivered["attempts"] == 1
+    assert len(valid_desktop.owners) == 1
 
 @pytest.mark.parametrize("fault", ["lost", "malformed", "native-error", None])
 def test_write_is_fenced_across_concurrency_recovery_restart(http_wake, fault):

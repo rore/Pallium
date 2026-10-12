@@ -857,13 +857,16 @@ class TestClaimTokenSecrecy:
             assert "safe-receipt-for-model" in text
 
     @pytest.mark.asyncio
-    async def test_receipt_present_in_mcp_result(self, monkeypatch: pytest.MonkeyPatch, asgi_post):
+    async def test_receipt_present_in_mcp_result(self, monkeypatch: pytest.MonkeyPatch, asgi_post, relay_app):
         """receipt is visible in the MCP response; delivery_id is present for ACK."""
+        from tests.test_relay_capacity_isolation import _observe_setup_writer
+
         bind_asgi_post(monkeypatch, asgi_post)
 
         # register both sessions first
-        await asgi_post("/relay/turn", {"runtime": _RUNTIME, "session_ref": _SESSION, **_SCOPE})
-        await asgi_post("/relay/turn", {"runtime": "codex", "session_ref": "tool-sender", **_SCOPE})
+        with _observe_setup_writer(relay_app.state.pallium_service._storage, monkeypatch):
+            await asgi_post("/relay/turn", {"runtime": _RUNTIME, "session_ref": _SESSION, **_SCOPE})
+            await asgi_post("/relay/turn", {"runtime": "codex", "session_ref": "tool-sender", **_SCOPE})
         await asgi_post("/relay/messages", {
             "sender_runtime": "codex", "sender_session_ref": "tool-sender",
             "recipient": f"{_RUNTIME}:{_SESSION}", "payload": "test message", **_SCOPE,

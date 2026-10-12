@@ -4,6 +4,7 @@ import asyncio
 import itertools
 import sys
 import threading
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
@@ -15,6 +16,92 @@ from app.config import AppConfig
 from app.main import create_app
 from storage.vector_index import VectorIndexConfig
 from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
+
+
+@contextmanager
+def _observe_setup_writer(storage, monkeypatch):
+    """Attach acquisition evidence to failures in the two real-DB setup probes."""
+    import json
+    import time
+    from sqlalchemy import event
+
+    stages, active = [], set()
+    overflow = [False]
+    original_begin = storage._begin_relay_immediate
+    original_lock = storage._relay_writer_lock
+    engine = storage._relay_engine
+
+    def record(stage, **values):
+        if len(stages) >= 128:
+            overflow[0] = True
+            return
+        stages.append({"stage": stage, "at": time.monotonic(),
+                       "thread": threading.get_ident(), **values})
+
+    class ObservedLock:
+        def acquire(self, *args, **kwargs):
+            observed = threading.get_ident() in active
+            if observed:
+                record("local_wait")
+            result = original_lock.acquire(*args, **kwargs)
+            if observed:
+                record("local_result", acquired=result)
+            return result
+
+        def release(self):
+            return original_lock.release()
+
+        def locked(self):
+            return original_lock.locked()
+
+    @contextmanager
+    def begin():
+        ident = threading.get_ident()
+        active.add(ident)
+        record("helper_enter")
+        try:
+            with original_begin() as session:
+                record("acquired")
+                yield session
+        except BaseException as exc:
+            record("helper_error", category=type(exc).__name__)
+            raise
+        finally:
+            record("helper_exit")
+            active.discard(ident)
+
+    def sql(stage, statement, error=None):
+        if threading.get_ident() in active:
+            normalized = (statement or "").strip().upper()
+            if normalized == "BEGIN IMMEDIATE" or normalized.startswith("PRAGMA BUSY_TIMEOUT="):
+                record(stage, statement=normalized,
+                       code=getattr(error, "sqlite_errorcode", None))
+
+    def before(_conn, _cursor, statement, _params, _context, _many):
+        sql("sql_enter", statement)
+
+    def after(_conn, _cursor, statement, _params, _context, _many):
+        sql("sql_exit", statement)
+
+    def error(context):
+        sql("sql_error", context.statement, context.original_exception)
+
+    listeners = [("before_cursor_execute", before), ("after_cursor_execute", after), ("handle_error", error)]
+    with monkeypatch.context() as local:
+        local.setattr(storage, "_relay_writer_lock", ObservedLock())
+        local.setattr(storage, "_begin_relay_immediate", begin)
+        for name, callback in listeners:
+            event.listen(engine, name, callback)
+        try:
+            yield
+        except BaseException as exc:
+            exc.add_note("relay setup acquisition: " + json.dumps({
+                "stages": stages, "overflow": overflow[0],
+            }))
+            raise
+        finally:
+            for name, callback in listeners:
+                event.remove(engine, name, callback)
 
 
 @pytest.mark.parametrize("receipt_ack", [False, True])
@@ -1008,11 +1095,12 @@ def test_relay_callbacks_use_tracked_runner_without_blocking_health(
         nonlocal armed
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            for role in ("sender", "target"):
-                response = await client.post("/relay/turn", json={
-                    "runtime": runtime, "session_ref": role, **scope,
-                })
-                assert response.status_code == 200
+            with _observe_setup_writer(app.state.pallium_service._storage, monkeypatch):
+                for role in ("sender", "target"):
+                    response = await client.post("/relay/turn", json={
+                        "runtime": runtime, "session_ref": role, **scope,
+                    })
+                    assert response.status_code == 200, response.text
             message = await client.post("/relay/messages", json={
                 "sender_runtime": runtime, "sender_session_ref": "sender",
                 "recipient": f"{runtime}:target",
