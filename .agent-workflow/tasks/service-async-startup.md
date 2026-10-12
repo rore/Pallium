@@ -37,7 +37,7 @@
 
 **Exceptions:** None
 
-**State:** Blocked — original startup nine, Claude shutdown two and dispatch five focused cases confirmed. Preparing root-requested stop guard and affected validation; independent/full/CI/installed gates remain outstanding. No overall release claim.
+**State:** Blocked — original startup nine, Claude shutdown two, dispatch five and stop-guard three focused cases confirmed. Affected startup validation awaits manager slot; independent/full/CI/installed gates remain outstanding. No overall release claim.
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -65,6 +65,10 @@ Ownership assumption checkpoint: source inspection found per-delivery daemon thr
 2026-10-11: Loaded Agent Workflow, Redline and Ponytail; read actual AGENTS.md (no AGENTS.local.md), runtime/supervisor/CLI and bootstrap/vector helpers. Clean detached checkout equals origin/main6be22d77. Created feat/service-async-startup. Whole intended change includes application and tests outside documentation allowlist, so normal workflow applies; no exemption or default-branch protection inference. Classified High/Moderate before production/test edits. Canonical roadmap item read through Minimap skill; root owns reconciliation.
 
 ## Evidence
+
+Stop-guard RED/GREEN completed once on manager's exclusive slot. Before-fix162d39383c0e9cde5203386f7185d05c38fa69f3 plus identical new test overlay fails3/3 in0.86s, exit1, because preparation/rebuild work is still called after stop. Candidateb26ccf5be55a1dc81e9577146310874c517fb8cc passes3/3 in0.24s, exit0: stop before prepare, stop after prepare without checkpoint, and byte-identical durable checkpoint preservation. RED proof C:/Users/I347041/AppData/Local/Temp/pallium-startup-6763248123224817b5f0046f5eef0414/proof.log SHA256B50EE905C3B93E14B2492881CFE87E173E3F2D0AFFD76F7612270266E960766C; GREEN proof C:/Users/I347041/AppData/Local/Temp/pallium-startup-a73452e7ab9a401ea35d1e7dd73303c0/proof.log SHA256430EC0DA199D69A9FFA473EADDF821E4BD62563DA44BAF9DBC613342BB7AD378. Reviewed runner reused with only frozenroot changed: RED SHA25600A60D7361E152726598ECF34757E2D7261C411C103CD83DB115ADC5DF527A16; GREEN SHA25605715623422B2E5DEF1B486E72B4E8CC45121F6B0B917B68703D3BCD5FB90156. Exact source/test Git blobs match frozen refs; both share test blob42f97b1b65a7ecdb61e3072b80245675f82701d5. Children46220/60996 settled and exact PID queries absent; no guard logs, not independent descendant/control-exercise evidence. Slot released immediately through authorized app fallback because manager's Relay instructions were pending. No further tests or live operations.
+
+Affected startup preparation reuses existing pinnedb26ccf5b snapshot and GREEN runner, no additional archives. Proposed five affected files: tests/test_health.py, tests/test_supervisor.py, tests/test_vector_self_healing.py, tests/test_rebuild_coordinator.py, tests/test_claude_wake_dispatch.py, serial -n0 with existing180-second owned-child bound/private profile and network guard. CLI/eager create_app compatibility in tests/test_service.py and tests/test_vector_startup.py remains in manager's combined full lane. Whole-change selector requires full; focused evidence does not replace it. Independent final review and canonical roadmap reconciliation remain manager-owned. Current lane is not merge-ready.
 
 Stop-guard source and three run_sync/status regressions prepared; AST and diff checks pass. Whole-change selector against origin/main cf5581147d9a1e1ec8ac73e8e8d186fb948a4269 reports full lane because tests changed; manager owns one combined startup/performance full run. Manager app fallback now grants sole slot for exactly these three stop-guard regressions, frozen pre-guard production plus identical new test overlay RED then pinned candidate GREEN, using unchanged reviewed bounded private runner except source root/nodes. Release immediately after settlement; affected startup files remain preparation-only pending another slot.
 
