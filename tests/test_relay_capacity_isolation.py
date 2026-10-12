@@ -985,6 +985,116 @@ def test_relay_and_diagnostics_survive_saturated_memory_worker_capacity(tmp_path
     finally:
         app.state.pallium_service._storage.close()
 
+@pytest.mark.parametrize("failure", [None, "callback", "schedule"])
+def test_codex_operation_tracking_settles_after_event_loop_closes(tmp_path, monkeypatch, failure):
+    from contextlib import ExitStack
+    from app import dependencies, main as app_main
+
+    started, release, finished = threading.Event(), threading.Event(), threading.Event()
+    worker_threads, outcomes = [], []
+    original_router, original_dispatch = dependencies.create_router, anyio.to_thread.run_sync
+    callback_error = ValueError("controlled callback failure")
+    schedule_error = RuntimeError("controlled open-loop scheduling failure")
+    callback_result = object()
+
+    def callback(*_args):
+        worker_threads.append(threading.current_thread())
+        started.set()
+        assert release.wait(5), "callback gate watchdog expired"
+        if failure == "callback":
+            raise callback_error
+        return callback_result
+
+    def observe_router(service, **kwargs):
+        kwargs["relay_turn_callback"] = callback
+        return original_router(service, **kwargs)
+
+    async def observe_dispatch(operation, **kwargs):
+        def observe_completion():
+            try:
+                result = operation()
+                if worker_threads and threading.current_thread() is worker_threads[0]:
+                    outcomes.append(result)
+                return result
+            except BaseException as error:
+                if worker_threads and threading.current_thread() is worker_threads[0]:
+                    outcomes.append(error)
+                raise
+            finally:
+                if worker_threads and threading.current_thread() is worker_threads[0]:
+                    finished.set()
+        return await original_dispatch(observe_completion, **kwargs)
+
+    monkeypatch.setattr(dependencies, "create_router", observe_router)
+    monkeypatch.setattr("app.main.anyio.to_thread.run_sync", observe_dispatch)
+    monkeypatch.setattr("app.mcp.server.create_server", lambda **_: (_ for _ in ()).throw(ImportError()))
+    cleanup, original_storage = ExitStack(), app_main.build_storage_provider
+
+    def owned_storage(*args, **kwargs):
+        storage = original_storage(*args, **kwargs)
+        cleanup.callback(storage.close)
+        return storage
+
+    monkeypatch.setattr(app_main, "build_storage_provider", owned_storage)
+    try:
+        app = create_app(AppConfig(
+            storage_backend="sqlite", sqlite_url=f"sqlite:///{tmp_path / 'main.db'}",
+            relay_sqlite_url=f"sqlite:///{tmp_path / 'relay.db'}",
+            default_use_case="demo_agent_memory", semantic_packages=DEMO_SEMANTIC_PACKAGES,
+            vector_index=VectorIndexConfig(enabled=False),
+        ))
+    except BaseException:
+        cleanup.close()
+        raise
+    cleanup.callback(app.state.pallium_service._storage.close)
+    cleanup.callback(app.state.pallium_service.close)
+    loop = asyncio.new_event_loop()
+    if failure == "schedule":
+        original_schedule = loop.call_soon_threadsafe
+
+        def fail_permit_schedule(callback, *args, **kwargs):
+            if getattr(callback, "__name__", None) == "release_on_behalf_of":
+                assert not loop.is_closed()
+                raise schedule_error
+            return original_schedule(callback, *args, **kwargs)
+
+        monkeypatch.setattr(loop, "call_soon_threadsafe", fail_permit_schedule)
+
+    async def cancel_http_request():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            request = asyncio.create_task(client.post("/relay/turn", json={
+                "runtime": "codex", "session_ref": "loop-close-target",
+                "container_ref": "git:example.test/loop-close", "actor_ref": "capacity-user",
+            }))
+            try:
+                assert await asyncio.to_thread(started.wait, 1)
+            finally:
+                request.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await request
+
+    try:
+        loop.run_until_complete(cancel_http_request())
+        if failure != "schedule":
+            loop.close()
+        assert not finished.is_set()
+        assert not app.state._wait_for_operations(0)
+        release.set()
+        assert finished.wait(1)
+        worker_threads[0].join(5)
+        assert not worker_threads[0].is_alive()
+        assert app.state._wait_for_operations(1)
+        expected = {None: callback_result, "callback": callback_error, "schedule": schedule_error}
+        assert outcomes == [expected[failure]]
+    finally:
+        release.set()
+        if not loop.is_closed():
+            loop.close()
+        for worker in worker_threads:
+            worker.join(5)
+        cleanup.close()
+
+
 def test_operation_tracking_covers_cancellation_and_failure_boundaries(tmp_path, monkeypatch) -> None:
     from app import dependencies
 

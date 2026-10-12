@@ -213,13 +213,19 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
             try:
                 return operation()
             finally:
-                if admission_acquired:
-                    # The worker owns this permit even if its awaiting task cancels.
-                    # Shutdown can synchronously drain workers on the loop thread.
-                    loop.call_soon_threadsafe(admission_limiter.release_on_behalf_of, borrower)
-                with operations:
-                    active_operations -= 1
-                    operations.notify_all()
+                try:
+                    if admission_acquired:
+                        # The worker owns this permit even if its awaiting task cancels.
+                        # Shutdown can synchronously drain workers on the loop thread.
+                        try:
+                            loop.call_soon_threadsafe(admission_limiter.release_on_behalf_of, borrower)
+                        except RuntimeError:
+                            if not loop.is_closed():
+                                raise
+                finally:
+                    with operations:
+                        active_operations -= 1
+                        operations.notify_all()
 
         try:
             # Registry waiters must leave a worker available for durable operations.

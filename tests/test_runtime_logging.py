@@ -42,6 +42,10 @@ assert len(handlers) == 1, handlers
 assert type(handlers[0]) is logging.StreamHandler, handlers
 assert isinstance(handlers[0].formatter, RuntimeLogFormatter)
 logging.getLogger('api.routes').warning('logging-owner-unicode-\u05e9\u05dc\u05d5\u05dd')
+httpx_logger = logging.getLogger('httpx')
+assert httpx_logger.propagate
+httpx_logger.info('httpx-info-noise-marker')
+httpx_logger.warning('httpx-warning-marker')
 """
     result = subprocess.run(
         [sys.executable, "-B", "-c", script],
@@ -53,6 +57,8 @@ logging.getLogger('api.routes').warning('logging-owner-unicode-\u05e9\u05dc\u05d
     assert result.returncode == 0, stderr
     marker = "logging-owner-unicode-\u05e9\u05dc\u05d5\u05dd"
     assert stderr.count(marker) == 1, stderr
+    assert "httpx-info-noise-marker" not in stderr, stderr
+    assert stderr.count("httpx-warning-marker") == 1, stderr
     assert any(
         re.fullmatch(r"\d{4}-\d{2}-\d{2}T.+ \[api\] " + marker, line)
         for line in stderr.splitlines()
