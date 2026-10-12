@@ -3800,10 +3800,21 @@ def test_crash_after_claim_rewakes_and_actual_codex_hook_delivers_once(
         message_id=sent["message_id"], **SCOPE
     )["deliveries"][0]["state"] == "claimed"
     reservation = registry.reservations()[0]
-    assert reservation.correlated_claim_attempts == claimed["attempts"] == 1
+    assert reservation.correlated_claim_attempts is None
+    assert claimed["attempts"] == 1
+    committed = relay.codex_wake_reservation_state(delivery_id=claimed["delivery_id"])
+    assert (
+        committed["delivery_id"], committed["recipient_endpoint_id"],
+        committed["state"], committed["stored_state"], committed["attempts"],
+        committed["codex_wake_generation"],
+    ) == (
+        reservation.delivery_id, reservation.recipient_endpoint_id,
+        "claimed", "claimed", 1, reservation.generation,
+    )
 
     registry = _sqlite_wake_registry(storage, registry_root)
-    assert registry.reservations()[0].correlated_claim_attempts == 1
+    assert registry.reservations()[0] == reservation
+    assert relay.codex_wake_reservation_state(delivery_id=claimed["delivery_id"]) == committed
     recovered_app = FastAPI()
     recovered_app.include_router(build_router(
         client.app.state.pallium_service,
@@ -4000,7 +4011,16 @@ def test_late_exact_hook_claim_is_correlated_before_expired_wake_sweep(
     claimed = route.get(f"/relay/messages/{sent['message_id']}", params=SCOPE).json()["deliveries"][0]
     assert (claimed["delivery_id"], claimed["state"], claimed["attempts"]) == (first_id, "claimed", 1)
     correlated = registry.reservations()[0]
-    assert correlated.correlated_claim_attempts == claimed["attempts"]
+    assert correlated == initial and correlated.correlated_claim_attempts is None
+    committed = relay.codex_wake_reservation_state(delivery_id=first_id)
+    assert (
+        committed["delivery_id"], committed["recipient_endpoint_id"],
+        committed["state"], committed["stored_state"], committed["attempts"],
+        committed["codex_wake_generation"],
+    ) == (
+        correlated.delivery_id, correlated.recipient_endpoint_id,
+        "claimed", "claimed", 1, correlated.generation,
+    )
 
     later = route.post("/relay/messages", json={
         "sender_runtime": "claude-code", "sender_session_ref": "sender",

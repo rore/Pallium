@@ -1,5 +1,35 @@
 # Service-wide performance investigation and correction
 
+## Actual credential-revocation diagnosis — 2026-10-12
+
+Root authorizes diagnostic-only tests/test_claude_wake_registration.py changes
+to observe the real intent-write, native-lock admission, close HTTP and return
+stages of the failing empty-token case. Keep real clocks and all deadlines,
+native I/O and unknown/other-scope assertions. No production edit or fixture-clock
+isolation is approved. A false registration return alone does not prove revoke
+success; identify the actual failed boundary before proposing a correction.
+Real-clock exact empty-token check passed in 1.01 s: close-intent publication
+2.230 ms, publisher/registry lock acquisition 0.534/0.684 ms, close HTTP204 and
+final unknown availability. The full registration file passed 77 cases in 19.47 s.
+This does not attribute the earlier full-run failure. Keep stage observations in
+the next full run; do not claim a production fix or replace clocks. Both runners
+have empty guards and drained three owned children. Evidence private runs
+7da8efce40444506b803cb53fa209156 and f71f0a6e2556496eb9d8ea55c9ce0cdf.
+
+## Combined correlation regression follow-up — 2026-10-12
+
+Combined full at 1d36cab7 exposed stale non-null duplicate-correlation assertions
+in tests/test_codex_wake.py's crash-after-claim and late-exact-hook cases. The
+accepted implementation stores claim attempt and matching wake generation in the
+durable delivery itself. Root authorizes correcting these two callers to assert
+that authoritative delivery identity, claimed state, attempt one and matching
+generation survive registry restart; preserve all subsequent recovery, native
+write count, hook emission, second attempt and ACK assertions. Explicit legacy
+correlation tests remain unchanged. No production or deadline change.
+Both corrected cases pass (2 passed, 4.44 s); stdout SHA256
+84D67DF51B54694CD73DCA8831457FC7759EAC1EED7CB2345244815546815E14.
+Independent review accepts the authoritative assertions and unchanged lifecycle.
+
 <!-- agent-workflow:start -->
 **Outcome:** Investigate service-wide performance and correct measured bottlenecks so the service remains responsive and correct under representative concurrent and background workloads; do not claim universal absence of performance issues before evidence.
 
@@ -76,13 +106,13 @@ Initialization-only historical checkpoint: no application test, performance/load
 | Queue health,1000large active rows |184→15ms direct p50;1001→1ORM payload row | Five warm sequential private samples;11observability tests and affected checks GREEN; architecture GO; full/platform pending. |
 | Observational Codex projection |2→1locked snapshot refresh | Ten actual HTTP authority/runtime cases GREEN; native transitions unchanged. |
 | Preclaim / persistent correlation | Exact HTTP authority snapshots5→3, including two unchanged row projections | Architecture GO;79focused checks across two runs after fixture correction; synchronized burst qualification pending. |
-| Concurrent50real HTTP/hook journeys | Latest clean atomic-release sample36claims/10ACK; thin diagnostic50claims/39ACK | Open; all50 completion not qualified. Writer setup/acquisition and Native completion admission delays measured; deadlines unchanged, no retries/weakening. |
+| Concurrent50real HTTP/hook journeys | Accepted bounded-writer sample50claims/50ACK; maximum claim721.81ms/ACK48.08ms | Component passes unchanged750/500ms budgets; narrow claim headroom and inert native transport limit the claim. Combined full/CI/installed validation remain pending. Earlier36/10 and50/39 results are superseded experiments. |
 | Startup | Installed ordinary~19s; observed backfill6.725s | Private footprint max230ms did not reproduce installed cost; relaydev active on separate async-startup lane. |
 | Background repair | Not measured | Open measurement; no broad service guarantee. |
 
 These are bounded measured findings, not a guarantee that the entire service has no bottlenecks. Root owns one coherent affected/full qualification and service-wide completion.
 
-Not implementation-ready. The next owner first collects the assigned discovery/latency reports and accepted isolated measurements, then writes exact fix paths, budgets, causal verification and plan review before edits. Human authorization remains available for the stated objective; do not request it again merely because discovery is unfinished. Root owns any roadmap reconciliation. Preserve this isolated checkout and WR-first history for the task; no push or deployment by this initializer.
+Historical initialization instruction (superseded by the accepted implementation and evidence below): collect discovery/latency reports and isolated measurements before implementation. Human authorization remains available for the stated objective. Root owns roadmap reconciliation, integration and deployment; preserve component WR-first history.
 
 
 ## Reviewed diagnostic stage and discovery checkpoint — 2026-10-12

@@ -647,8 +647,11 @@ def test_hook_helpers_use_persistent_loopback_register_and_close_routes(
     ["missing_socket", "missing_token", "empty_socket", "empty_token", "control_socket", "control_token", "long_socket", "long_token", "encoded_overflow"],
 )
 def test_unusable_claude_credentials_revoke_exact_wake(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch, unusable: str,
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, unusable: str, tmp_path: Path,
 ) -> None:
+    import time
+    import core.claude_wake as wake
+
     common = _load_claude_hook("common", monkeypatch)
     registry = client.app.state.claude_wake_registry
     wake_dir = registry._state_dir
@@ -662,6 +665,29 @@ def test_unusable_claude_credentials_revoke_exact_wake(
 
     wake_http = TestClient(client.app, client=("127.0.0.1", 50000))
     statuses = []
+    stages = []
+
+    def observe_lock(original, stage):
+        def acquire(*args, **kwargs):
+            started = time.perf_counter()
+            result = original(*args, **kwargs)
+            stages.append({"stage": stage, "acquired": result is not None,
+                           "elapsed_ms": (time.perf_counter() - started) * 1000})
+            return result
+        return acquire
+
+    monkeypatch.setattr(common, "_acquire_file_lock", observe_lock(common._acquire_file_lock, "publisher_lock"))
+    monkeypatch.setattr(wake, "_acquire_intent_lock", observe_lock(wake._acquire_intent_lock, "registry_lock"))
+    original_publish = common._write_wake_intent
+
+    def publish(payload):
+        started = time.perf_counter()
+        result = original_publish(payload)
+        stages.append({"stage": "publish", "closed": payload.get("closed") is True,
+                       "written": result, "elapsed_ms": (time.perf_counter() - started) * 1000})
+        return result
+
+    monkeypatch.setattr(common, "_write_wake_intent", publish)
 
     def open_request(request, **_kwargs):
         response = wake_http.request(request.get_method(), urlsplit(request.full_url).path, content=request.data)
@@ -703,10 +729,16 @@ def test_unusable_claude_credentials_revoke_exact_wake(
     else:
         monkeypatch.setenv("CLAUDE_CODE_MESSAGING_TOKEN", "é" * MAX_TOKEN_CHARS)
 
-    assert not common.register_claude_wake(session_ref, container_ref, idle=False)
-    assert activation()["activation"]["availability"] == "unknown", activation()
-    assert registry.state_for(recipient_endpoint_id="relay-session-" + "a" * 32, session_ref=session_ref, container_ref=other_container) == "idle"
-    assert not registry.probe(runtime="claude-code", session_ref=session_ref, container_ref=container_ref, transport=lambda *_: pytest.fail("stale native wake"))
+    try:
+        assert not common.register_claude_wake(session_ref, container_ref, idle=False), (statuses, stages)
+        final = activation()
+        assert final["activation"]["availability"] == "unknown", (final, statuses, stages)
+        assert registry.state_for(recipient_endpoint_id="relay-session-" + "a" * 32, session_ref=session_ref, container_ref=other_container) == "idle"
+        assert not registry.probe(runtime="claude-code", session_ref=session_ref, container_ref=container_ref, transport=lambda *_: pytest.fail("stale native wake"))
+    finally:
+        (tmp_path / "credential-revocation-stages.json").write_text(
+            json.dumps({"case": unusable, "http_statuses": statuses, "stages": stages}), encoding="utf-8",
+        )
 
 
 @pytest.mark.parametrize("session_ref,container_ref", [
