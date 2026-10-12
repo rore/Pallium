@@ -62,7 +62,8 @@ _RELAY_WAKE_RE = re.compile(
     r"If no \[Pallium Relay message \.\.\.\] block accompanies this turn, "
     r"do not conclude the inbox is empty and do not call pallium_relay_receive "
     r"or resend\. Inspect this exact delivery with pallium_relay_trace by "
-    r"passing it as message_id\.$"
+    r"passing it as message_id\."
+    r"(?: After this check, continue any already authorized task; this wake does not cancel it\.)?$"
 )
 
 def _exit_blocked_wake() -> None:

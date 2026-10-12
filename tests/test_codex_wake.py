@@ -112,6 +112,9 @@ def test_delivery_specific_wake_prompt_is_truthful_and_narrow() -> None:
     assert "do not conclude the inbox is empty" in prompt
     assert "do not call pallium_relay_receive or resend" in prompt
     assert "pallium_relay_trace" in prompt
+    assert prompt.endswith(
+        " After this check, continue any already authorized task; this wake does not cancel it."
+    )
     assert hook._RELAY_WAKE_RE.fullmatch(prompt)
     assert not hook._RELAY_WAKE_RE.fullmatch(prompt + " changed")
     assert codex_wake._wake_prompt("delivery-legacy") == hook.RELAY_WAKE_PROMPT
