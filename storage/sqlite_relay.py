@@ -777,7 +777,8 @@ class SQLiteRelayMixin:
                         "container_ref": expected.container_ref,
                     }
                     if (state["recipient_endpoint_id"] != expected.recipient_endpoint_id
-                        or state["wake_target"] != target or not _wake_retry_pending(state)):
+                        or state["wake_target"] != target or not _wake_retry_pending(state)
+                        or (state["stored_state"] == "claimed" and state["codex_wake_generation"] == expected.generation)):
                         return None
                 if operation == "retry":
                     if expected.outcome not in {"reserved", "accepted", "uncertain"} or expected.correlated_claim_attempts is not None:
@@ -822,18 +823,13 @@ class SQLiteRelayMixin:
                         if state["state"] in {"delivered", "expired", "suppressed"}:
                             db.delete(row)
                             result = ("released", expected)
-                        elif (expected.outcome == "prepared" and expected.correlated_claim_attempts is None
-                              and _wake_retry_pending(state) and state["wake_target"] == {
-                                  "runtime": "codex", "session_ref": expected.session_ref,
-                                  "container_ref": expected.container_ref,
-                              }):
-                            result = ("resume", expected)
                         elif (state["state"] == "pending" and state["stored_state"] == "claimed"
                               and state["attempts"] > 0
                               and (state["attempts"] == expected.correlated_claim_attempts
                                    or state["codex_wake_generation"] == expected.generation)
-                              and state["wake_target"] is not None
-                              and marker.generation < 2**63 - 1):
+                              and state["wake_target"] is not None):
+                            if marker.generation >= 2**63 - 1:
+                                return None
                             marker.generation += 1
                             target = state["wake_target"]
                             replacement = replace(expected, generation=marker.generation, outcome="prepared",
@@ -842,6 +838,12 @@ class SQLiteRelayMixin:
                             for name, value in asdict(replacement).items():
                                 setattr(row, name, value)
                             result = ("replaced", replacement)
+                        elif (expected.outcome == "prepared" and expected.correlated_claim_attempts is None
+                              and _wake_retry_pending(state) and state["wake_target"] == {
+                                  "runtime": "codex", "session_ref": expected.session_ref,
+                                  "container_ref": expected.container_ref,
+                              }):
+                            result = ("resume", expected)
                         elif (expected.outcome in {"reserved", "accepted", "uncertain"}
                               and expected.correlated_claim_attempts is None
                               and expected.retry_not_before is not None

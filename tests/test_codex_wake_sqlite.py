@@ -29,6 +29,212 @@ from app.dependencies import build_router
 SCOPE = {"container_ref": "git:example.test/wake-東京"}
 
 
+@pytest.mark.parametrize('state', ['claimed', 'expired_claim', 'delivered', 'read_failed'])
+def test_http_committed_claim_prevents_old_guarded_native_operation(relay_store, tmp_path, monkeypatch, state):
+    from app import dependencies
+    relay, storage, database = relay_store
+    registry = _registry(relay, tmp_path / 'legacy')
+    assert registry.initialize(old_owner_drained=True)
+    reservation = registry.begin_native_attempt(_reserve(registry, _send(relay)))
+    assert reservation is not None
+    original_router = dependencies.create_router
+    def observe_router(service, **kwargs):
+        kwargs['relay_ack_callback'] = None  # Witness durable ACK before queued Native cleanup.
+        return original_router(service, **kwargs)
+    monkeypatch.setattr(dependencies, 'create_router', observe_router)
+    app = FastAPI()
+    app.include_router(build_router(SimpleNamespace(), relay_storage=storage, codex_wake_registry=registry))
+    with TestClient(app) as http:
+        claim = http.post('/relay/turn', json={'runtime':'codex', 'session_ref':'target',
+                                             'wake_delivery_id':reservation.delivery_id, **SCOPE})
+        assert claim.status_code == 200, claim.text
+        delivery, = claim.json()['deliveries']
+        assert delivery['attempts'] == 1
+        if state == 'expired_claim':
+            with sqlite3.connect(database) as db:
+                db.execute('UPDATE relay_deliveries SET lease_expires_at=? WHERE id=?',
+                           ((datetime.now(timezone.utc)-timedelta(seconds=1)).strftime('%Y-%m-%d %H:%M:%S.%f'),reservation.delivery_id))
+        elif state == 'delivered':
+            ack = http.post('/relay/deliveries/ack', json={'delivery_id':reservation.delivery_id,
+                                                         'claim_token':delivery['claim_token'], **SCOPE})
+            assert ack.status_code == 200, ack.text
+        elif state == 'read_failed':
+            def unavailable(**_kwargs):
+                raise TimeoutError('controlled state read failure')
+            monkeypatch.setattr(relay, 'codex_wake_reservation_state', unavailable)
+        assert registry.snapshot(reservation.recipient_endpoint_id) == reservation
+        operations = []
+        guarded = registry.run_if_current(reservation, lambda: operations.append('native-write'))
+        assert guarded == (False, None) and operations == []
+        assert registry.snapshot(reservation.recipient_endpoint_id) == reservation
+
+
+def test_actual_native_closure_rechecks_claim_committed_after_state_observation(relay_store, tmp_path, monkeypatch):
+    relay, storage, _ = relay_store
+    registry = _registry(relay, tmp_path / 'legacy')
+    assert registry.initialize(old_owner_drained=True)
+    reservation = _reserve(registry, _send(relay))
+    app = FastAPI()
+    app.include_router(build_router(SimpleNamespace(), relay_storage=storage, codex_wake_registry=registry))
+    original_state = relay.codex_wake_reservation_state
+    claims, writes = [], []
+    monkeypatch.setattr(codex_wake, 'time', SimpleNamespace(**{**vars(codex_wake.time), 'sleep': lambda _: None}))
+    monkeypatch.setattr('app.codex_bridge_pipe.retained_wake_enabled', lambda: False)
+    monkeypatch.setattr(codex_wake, '_start_launch', lambda *args: writes.append(args))
+    with TestClient(app) as http:
+        def claim_after_observation(**kwargs):
+            observed = original_state(**kwargs)
+            if not claims:
+                claims.append(http.post('/relay/turn', json={'runtime':'codex', 'session_ref':'target',
+                    'wake_delivery_id':reservation.delivery_id, **SCOPE}))
+            return observed
+        monkeypatch.setattr(relay, 'codex_wake_reservation_state', claim_after_observation)
+        codex_wake._wake_after_debounce(reservation, registry)
+        assert len(claims) == 1 and claims[0].status_code == 200, [r.text for r in claims]
+        claimed, = claims[0].json()['deliveries']
+        assert claimed['delivery_id'] == reservation.delivery_id and claimed['attempts'] == 1
+        assert writes == []
+        assert registry.snapshot(reservation.recipient_endpoint_id) == reservation
+
+
+@pytest.mark.parametrize('outcome', ['prepared', 'accepted', 'uncertain'])
+def test_http_exact_claim_generation_is_the_durable_native_fence(
+    relay_store, tmp_path, monkeypatch, outcome,
+):
+    relay, storage, database = relay_store
+    registry = _registry(relay, tmp_path / 'legacy')
+    assert registry.initialize(old_owner_drained=True)
+    reservation = _reserve(registry, _send(relay))
+    if outcome != 'prepared':
+        reservation = registry.begin_native_attempt(reservation)
+        assert reservation is not None
+        if outcome == 'accepted':
+            assert registry.record_outcome(reservation, 'accepted')
+            reservation = registry.snapshot(reservation.recipient_endpoint_id)
+    original_transition = storage.relay_codex_wake_transition
+    correlations = []
+    def observe_transition(*, operation, **kwargs):
+        if operation == 'correlate':
+            correlations.append(kwargs)
+        return original_transition(operation=operation, **kwargs)
+    monkeypatch.setattr(storage, 'relay_codex_wake_transition', observe_transition)
+    app = FastAPI()
+    app.include_router(build_router(SimpleNamespace(), relay_storage=storage, codex_wake_registry=registry))
+    with TestClient(app) as http:
+        response = http.post('/relay/turn', json={
+            'runtime': 'codex', 'session_ref': 'target', 'wake_delivery_id': reservation.delivery_id, **SCOPE,
+        })
+        assert response.status_code == 200, response.text
+        claimed, = response.json()['deliveries']
+        assert claimed['delivery_id'] == reservation.delivery_id and claimed['attempts'] == 1
+        with sqlite3.connect(database) as db:
+            assert db.execute('SELECT codex_wake_generation, attempts FROM relay_deliveries WHERE id=?',
+                              (reservation.delivery_id,)).fetchone() == (reservation.generation, 1)
+        current = registry.snapshot(reservation.recipient_endpoint_id)
+        assert replace(current, correlated_claim_attempts=None) == reservation
+        assert current.correlated_claim_attempts is None
+        assert registry.begin_native_attempt(current) is None
+        # Expired claim evidence requires a new generation, never resume/spend of the old one.
+        with sqlite3.connect(database) as db:
+            db.execute('UPDATE relay_deliveries SET lease_expires_at=? WHERE id=?',
+                       ((datetime.now(timezone.utc) - timedelta(seconds=1)).strftime('%Y-%m-%d %H:%M:%S.%f'), reservation.delivery_id))
+        assert registry.begin_native_attempt(current) is None
+        reconciled = registry.reconcile(current)
+        assert reconciled is not None and reconciled[0] == 'replaced'
+        replacement = reconciled[1]
+        assert replacement.delivery_id == reservation.delivery_id and replacement.generation > reservation.generation
+        spent = registry.begin_native_attempt(replacement)
+        assert spent is not None and spent.generation == replacement.generation
+        assert registry.begin_native_attempt(replacement) is None
+        redelivery = http.post('/relay/turn', json={
+            'runtime': 'codex', 'session_ref': 'target', 'wake_delivery_id': replacement.delivery_id, **SCOPE,
+        })
+        assert redelivery.status_code == 200, redelivery.text
+        repeated, = redelivery.json()['deliveries']
+        assert repeated['delivery_id'] == claimed['delivery_id'] and repeated['attempts'] == 2
+        ack = http.post('/relay/deliveries/ack', json={
+            'delivery_id': repeated['delivery_id'], 'claim_token': repeated['claim_token'], **SCOPE,
+        })
+        assert ack.status_code == 200, ack.text
+        retained = http.get(f"/relay/messages/{claimed['message_id']}", params=SCOPE)
+        assert retained.status_code == 200, retained.text
+        final, = retained.json()['deliveries']
+        assert (final['delivery_id'], final['state'], final['attempts']) == (claimed['delivery_id'], 'delivered', 2)
+        assert correlations == [], 'built-in persistent exact claims must not duplicate committed generation authority'
+
+
+@pytest.mark.parametrize('change', ['replacement', 'unrelated_corruption', 'callback_failure', 'exhausted_generation'])
+def test_http_committed_generation_preserves_current_authority_boundaries(
+    relay_store, tmp_path, monkeypatch, change,
+):
+    from app import dependencies
+    relay, storage, database = relay_store
+    registry = _registry(relay, tmp_path / 'legacy')
+    assert registry.initialize(old_owner_drained=True)
+    reservation = _reserve(registry, _send(relay))
+    other = _reserve(registry, _send(relay, target='other'), target='other')
+    expected = [reservation]
+    callback_calls = []
+    original_turn, original_router = RelayService.turn, dependencies.create_router
+    def turn_after_capture(self, **kwargs):
+        if kwargs.get('exact_delivery_id') == reservation.delivery_id:
+            assert kwargs['codex_wake_generation'] == reservation.generation
+            if change == 'replacement':
+                expected[0] = registry.replace_generation(reservation, session_ref='target', container_ref=SCOPE['container_ref'])
+                assert expected[0] is not None and expected[0].generation > reservation.generation
+            elif change == 'unrelated_corruption':
+                with sqlite3.connect(database) as db:
+                    db.execute('UPDATE relay_codex_wake_reservations SET generation=0 WHERE recipient_endpoint_id=?', (other.recipient_endpoint_id,))
+            elif change == 'exhausted_generation':
+                with sqlite3.connect(database) as db:
+                    db.execute('UPDATE relay_codex_wake_state SET generation=?', (2**63 - 1,))
+        return original_turn(self, **kwargs)
+    def observe_router(service, **kwargs):
+        if change == 'callback_failure':
+            def failed_callback(request, result, captured):
+                callback_calls.append((captured, result['deliveries'][0]['delivery_id'], result['deliveries'][0]['attempts']))
+                raise RuntimeError('controlled postcommit callback failure')
+            kwargs['relay_turn_admission_callback'] = failed_callback
+        return original_router(service, **kwargs)
+    monkeypatch.setattr(RelayService, 'turn', turn_after_capture)
+    monkeypatch.setattr(dependencies, 'create_router', observe_router)
+    app = FastAPI()
+    app.include_router(build_router(SimpleNamespace(), relay_storage=storage, codex_wake_registry=registry))
+    with TestClient(app) as http:
+        response = http.post('/relay/turn', json={
+            'runtime': 'codex', 'session_ref': 'target', 'wake_delivery_id': reservation.delivery_id, **SCOPE,
+        })
+        assert response.status_code == 200, response.text
+        claimed, = response.json()['deliveries']
+        assert claimed['delivery_id'] == reservation.delivery_id and claimed['attempts'] == 1
+        assert callback_calls == ([(reservation, reservation.delivery_id, 1)] if change == 'callback_failure' else [])
+        stored = {item.recipient_endpoint_id: item for item in _stored_items(database)}
+        assert stored[reservation.recipient_endpoint_id] == expected[0]
+        assert stored[other.recipient_endpoint_id] == (replace(other, generation=0) if change == 'unrelated_corruption' else other)
+        state = relay.codex_wake_reservation_state(delivery_id=reservation.delivery_id)
+        assert state['codex_wake_generation'] == reservation.generation and state['attempts'] == 1
+        assert registry.begin_native_attempt(expected[0]) is None
+        if change == 'exhausted_generation':
+            with sqlite3.connect(database) as db:
+                db.execute('UPDATE relay_deliveries SET lease_expires_at=? WHERE id=?',
+                           ((datetime.now(timezone.utc) - timedelta(seconds=1)).strftime('%Y-%m-%d %H:%M:%S.%f'), reservation.delivery_id))
+            assert registry.reconcile(expected[0]) is None
+            assert registry.begin_native_attempt(expected[0]) is None
+            assert registry.snapshot(reservation.recipient_endpoint_id) == expected[0]
+        retained = http.get(f"/relay/messages/{claimed['message_id']}", params=SCOPE)
+        assert retained.status_code == 200, retained.text
+        row, = retained.json()['deliveries']
+        assert row['delivery_id'] == reservation.delivery_id and row['attempts'] == 1
+        if change != 'exhausted_generation':
+            ack = http.post('/relay/deliveries/ack', json={
+                'delivery_id': claimed['delivery_id'], 'claim_token': claimed['claim_token'], **SCOPE,
+            })
+            assert ack.status_code == 200, ack.text
+            final = http.get(f"/relay/messages/{claimed['message_id']}", params=SCOPE)
+            assert final.status_code == 200, final.text
+            assert final.json()['deliveries'][0]['state'] == 'delivered'
+
+
 @pytest.mark.parametrize('phase', ['preclaim', 'projection'])
 def test_http_fresh_authority_observation_does_not_wait_for_native_owner(
     relay_store, tmp_path, monkeypatch, phase,
@@ -101,7 +307,7 @@ def test_http_fresh_authority_observation_does_not_wait_for_native_owner(
             claimed, = response.json()['deliveries']
             assert claimed['delivery_id'] == reservation.delivery_id and claimed['attempts'] == 1
             current = registry.snapshot(reservation.recipient_endpoint_id)
-            assert current == replace(reservation, correlated_claim_attempts=1)
+            assert current == reservation
             ack = http.post('/relay/deliveries/ack', json={
                 'delivery_id': claimed['delivery_id'], 'claim_token': claimed['claim_token'], **SCOPE,
             })
@@ -257,7 +463,7 @@ def test_authority_reads_preserve_all_fields_without_global_orm_hydration(
     assert registry.usable is (damage is None)
 
 
-def test_http_exact_claim_uses_one_preclaim_refresh_and_atomic_correlation(
+def test_http_exact_claim_uses_fresh_authority_and_committed_generation(
     relay_store, tmp_path, monkeypatch,
 ):
     relay, storage, _ = relay_store
@@ -293,7 +499,7 @@ def test_http_exact_claim_uses_one_preclaim_refresh_and_atomic_correlation(
         claimed, = response.json()["deliveries"]
         assert claimed["delivery_id"] == reservation.delivery_id
         assert claimed["attempts"] == 1
-        assert registry.snapshot(reservation.recipient_endpoint_id) == replace(before, correlated_claim_attempts=1)
+        assert registry.snapshot(reservation.recipient_endpoint_id) == before
         acknowledged = http.post("/relay/deliveries/ack", json={
             "delivery_id": claimed["delivery_id"], "claim_token": claimed["claim_token"], **SCOPE,
         })
@@ -336,7 +542,7 @@ def test_http_response_projection_uses_fresh_authority_and_distinct_health(
 
         def change_after_admission(request, result, captured):
             admission(request, result, captured)
-            assert registry.snapshot(reservation.recipient_endpoint_id).correlated_claim_attempts == 1
+            assert registry.snapshot(reservation.recipient_endpoint_id).correlated_claim_attempts is None
             if authority in {"removed", "health"}:
                 assert registry.release_generation(registry.snapshot(reservation.recipient_endpoint_id))
                 if authority == "health":
@@ -448,7 +654,7 @@ def test_http_projection_factory_preserves_overrides_and_error_fallback(
         assert len(reads) == 3  # One preclaim plus two preserved fallback row reads.
         if callback_mode.startswith("factory_"):
             assert any("projector preparation failed" in record.message for record in caplog.records)
-        assert registry.snapshot(reservation.recipient_endpoint_id).correlated_claim_attempts == 1
+        assert registry.snapshot(reservation.recipient_endpoint_id).correlated_claim_attempts is None
 
 
 @pytest.mark.parametrize("change", [
@@ -489,7 +695,12 @@ def test_http_claim_correlation_uses_fresh_identity_and_preserves_authority(
         return result
 
     def observe_router(service, **kwargs):
-        admission = kwargs["relay_turn_admission_callback"]
+        # Explicit correlation remains a supported postcommit callback/failure path.
+        def admission(request, result, captured):
+            codex_wake.correlate_codex_relay_wake_claim(
+                request['wake_delivery_id'], request['session_ref'], request['container_ref'],
+                result, captured, registry=registry,
+            )
 
         def change_before_correlation(request, result, captured):
             assert captured == current
@@ -741,7 +952,9 @@ def test_http_send_restart_exact_claim_ack_preserves_sqlite_fence(
     assert claim.status_code == 200, claim.text
     claimed = claim.json()["deliveries"][0]
     assert claimed["payload"] == body["payload"]
-    assert restarted.snapshot(current.recipient_endpoint_id).correlated_claim_attempts == claimed["attempts"]
+    assert restarted.snapshot(current.recipient_endpoint_id).correlated_claim_attempts is None
+    state = relay.codex_wake_reservation_state(delivery_id=current.delivery_id)
+    assert state['codex_wake_generation'] == current.generation and state['attempts'] == claimed['attempts'] == 1
     acknowledged = http.post("/relay/deliveries/ack", json={"delivery_id": current.delivery_id,
                                                               "claim_token": claimed["claim_token"], **SCOPE})
     assert acknowledged.status_code == 200, acknowledged.text
@@ -930,7 +1143,8 @@ def test_http_restart_prepares_new_generation_after_expired_hook_claim(client, t
     assert claim.status_code == 200, claim.text
     assert claim.json()["deliveries"][0]["attempts"] == 1
     claimed = registry.snapshot(delivery["recipient_endpoint_id"])
-    assert claimed is not None and claimed.correlated_claim_attempts == 1
+    assert claimed is not None and claimed.correlated_claim_attempts is None
+    assert relay.codex_wake_reservation_state(delivery_id=delivery['delivery_id'])['codex_wake_generation'] == claimed.generation
     clock[0] += timedelta(seconds=RELAY_CLAIM_LEASE_SECONDS + 1)
 
     restarted = _registry(relay, directory)
@@ -1396,9 +1610,10 @@ def test_ambiguous_settlement_keeps_durable_authority_and_prevents_reschedule(
     elif operation == "correlate":
         assert current == replace(reservation, correlated_claim_attempts=1)
     else:
-        assert current == reservation
+        assert current.generation > reservation.generation
+        assert replace(current, generation=reservation.generation) == reservation
     # A committed stale generation can never initiate native I/O.
-    if committed and operation != "reconcile":
+    if committed:
         assert registry.run_if_current(reservation, lambda: pytest.fail("stale generation launch")) == (False, None)
 
 

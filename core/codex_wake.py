@@ -185,6 +185,24 @@ class CodexWakeRegistry:
                 return False, None
             if self._reservations.get(reservation.recipient_endpoint_id) != reservation:
                 return False, None
+            if self._relay is not None:
+                try:
+                    state = self._relay.codex_wake_reservation_state(delivery_id=reservation.delivery_id)
+                except Exception as exc:
+                    logger.warning("codex_wake_native_state_read_failed error_type=%s", type(exc).__name__)
+                    return False, None
+                if (
+                    not isinstance(state, dict)
+                    or state.get("delivery_id") != reservation.delivery_id
+                    or state.get("recipient_endpoint_id") != reservation.recipient_endpoint_id
+                    or state.get("state") not in {"pending", "claimed"}
+                    or state.get("stored_state") not in {"pending", "claimed"}
+                    or (
+                        state.get("stored_state") == "claimed"
+                        and state.get("codex_wake_generation") == reservation.generation
+                    )
+                ):
+                    return False, None
             return True, operation()
 
     def record_outcome(self, reservation: CodexWakeReservation, outcome: str) -> bool:

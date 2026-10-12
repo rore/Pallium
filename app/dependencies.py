@@ -871,7 +871,8 @@ def build_router(
             return
         if request.get("runtime") == "codex":
             wake_delivery_id = request.get("wake_delivery_id")
-            if isinstance(wake_delivery_id, str) and reservation is not None:
+            # Persistent exact claims already commit their generation with the delivery.
+            if isinstance(wake_delivery_id, str) and reservation is not None and not codex_registry.persistent:
                 correlate_codex_relay_wake_claim(
                     wake_delivery_id,
                     session_ref,
