@@ -5,6 +5,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field, replace
 import json
+import hashlib
 import math
 import os
 import re
@@ -42,9 +43,15 @@ class _Registration:
     delivery_id: str | None = None
     attempted_at: float | None = None
     recipient_endpoint_id: str | None = None
+    admission_id: str | None = None
 
 
 Transport = Callable[[str, str], object]
+
+
+def _revocation_file(runtime: str, session_ref: str, container_ref: str, admission_id: str) -> str:
+    identity = json.dumps([runtime, session_ref, container_ref, admission_id], ensure_ascii=False, separators=(",", ":"))
+    return "revoke-" + hashlib.sha256(identity.encode("utf-8")).hexdigest() + ".json"
 
 
 def _valid(value: object, maximum: int) -> bool:
@@ -185,13 +192,14 @@ class ClaudeWakeRegistry:
             registration = (
                 replace(
                     existing, socket_path=socket_path, token=token,
-                    generation=self._generation,
+                    generation=self._generation, admission_id=intent_id,
                     expires_at=(float("inf") if self._state_dir else self._clock() + TTL_SECONDS),
                 )
                 if existing is not None and existing.state == "wake_inflight"
                 else _Registration(
                     runtime=runtime, session_ref=session_ref, container_ref=container_ref,
                     socket_path=socket_path, token=token, generation=self._generation,
+                    admission_id=intent_id,
                     expires_at=(float("inf") if self._state_dir else self._clock() + TTL_SECONDS),
                     idle=idle, state="idle" if idle else "busy",
                 )
@@ -429,6 +437,9 @@ class ClaudeWakeRegistry:
                 intent = self._read_json(path)
                 if not isinstance(intent, dict) or "actor_ref" in intent:
                     continue
+                if path.name.startswith("revoke-"):
+                    self._recover_revocation_locked(path, intent)
+                    continue
                 scope = tuple(
                     intent.get(key)
                     for key in ("runtime", "session_ref", "container_ref")
@@ -475,6 +486,44 @@ class ClaudeWakeRegistry:
                     except OSError:
                         pass
 
+    def _recover_revocation_locked(self, path: Path, notice: dict) -> None:
+        keys = {"runtime", "session_ref", "container_ref", "admission_id", "closed"}
+        if (
+            set(notice) != keys or notice.get("closed") is not True
+            or notice.get("runtime") != RUNTIME
+            or not _valid(notice.get("session_ref"), MAX_SESSION_CHARS)
+            or not _valid(notice.get("container_ref"), MAX_CONTAINER_CHARS)
+            or not _valid(notice.get("admission_id"), 128)
+            or path.name != _revocation_file(*(notice[key] for key in ("runtime", "session_ref", "container_ref", "admission_id")))
+        ):
+            return
+        runtime, session_ref, container_ref = (notice[key] for key in ("runtime", "session_ref", "container_ref"))
+        with self._scoped_intent_lock(runtime, session_ref, container_ref) as acquired:
+            if not acquired:
+                return
+            current = self._registrations.get((runtime, session_ref, container_ref))
+            if current is not None and current.admission_id == notice["admission_id"]:
+                pending = self._read_intent_locked(runtime, session_ref, container_ref)
+                if (
+                    isinstance(pending, dict) and pending.get("closed") is not True
+                    and type(pending.get("idle")) is bool and _valid(pending.get("intent_id"), 128)
+                    and self._valid_registration(*(pending.get(key) for key in ("runtime", "session_ref", "container_ref", "socket_path", "token")))
+                    and all(pending.get(key) == notice[key] for key in ("runtime", "session_ref", "container_ref"))
+                ):
+                    return
+                if current.state != "wake_inflight":
+                    updated = dict(self._registrations)
+                    updated.pop((runtime, session_ref, container_ref))
+                    if not self._write_canonical_locked(updated):
+                        return
+                    self._registrations = updated
+            # Never remove the scoped intent: it may represent a competing admission.
+            if self._read_json(path) == notice:
+                try:
+                    path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+
     def rearm_inflight(self, **_kwargs: object) -> bool:
         """Compatibility no-op: elapsed time never releases a reservation."""
         return False
@@ -498,6 +547,10 @@ class ClaudeWakeRegistry:
                 }.items()):
                     return False
             registration = self._registrations.get((runtime, session_ref, container_ref))
+            if self._state_dir is not None and "expected_admission_id" in intent:
+                if registration is None or registration.admission_id != intent["expected_admission_id"]:
+                    self._delete_intent_locked(runtime, session_ref, container_ref, expected_intent_id=intent_id)
+                    return False
             if registration is not None and (registration.container_ref != container_ref):
                 return False
             if registration is not None and registration.state == "wake_inflight":
@@ -628,7 +681,9 @@ class ClaudeWakeRegistry:
             "generation", "expires_at", "idle", "state", "delivery_id",
             "attempted_at",
         }
-        if set(item) not in (required, required | {"recipient_endpoint_id"}):
+        if (not required <= set(item)
+            or set(item) - required - {"recipient_endpoint_id", "admission_id"}
+            or ("admission_id" in item and not _valid(item["admission_id"], 128))):
             return False
         if (
             type(item["generation"]) is not int
@@ -737,7 +792,11 @@ class ClaudeWakeRegistry:
     def _write_canonical_locked(self, registrations: dict[tuple[str, str, str], _Registration]) -> bool:
         if self._canonical is None:
             return True
-        payload = {"version": 1, "registrations": [asdict(item) for item in registrations.values()]}
+        rows = [asdict(item) for item in registrations.values()]
+        for row in rows:
+            if row["admission_id"] is None:
+                row.pop("admission_id")
+        payload = {"version": 1, "registrations": rows}
         return self._atomic_write(self._canonical, payload)
 
     def _quarantine_or_mark_unusable_locked(self) -> bool:
