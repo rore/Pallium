@@ -667,7 +667,7 @@ async def test_production_factory_drains_real_rebuild_inventory_before_storage_c
             release_inventory.set()
             await asyncio.wait_for(owner, timeout=5)
             assert await asyncio.to_thread(inventory_finished.wait, 1)
-            assert create_shadow.is_set()
+            assert not create_shadow.is_set()
             assert not worker_threads[0].is_alive()
             assert len(wake_reconcilers) == 1
             assert not wake_reconcilers[0]._thread.is_alive()

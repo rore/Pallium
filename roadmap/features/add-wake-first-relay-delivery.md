@@ -1,14 +1,55 @@
 ---
 id: add-wake-first-relay-delivery
 title: Add wake-first Relay delivery
-status: queued
+status: active
 priority: high
 commitment: committed
 milestone: pallium-relay
 lane: capability
 ---
 
-## Current execution status (reconciled 2026-10-07)
+## Open reliability bugs (updated 2026-10-12)
+
+This is the current consolidated closure list, maintained by the Pallium manager.
+The historical delivery and merge evidence below does not close these incidents.
+Every row remains open until its regression passes, the reviewed fix is merged,
+and the installed result is verified. Shared causes may close multiple rows with
+one fix; do not create separate mechanisms merely to match the rows.
+
+| ID | Bug / evidence | Owner and current state | Required closure evidence |
+|---|---|---|---|
+| REL-01 | Concurrent claims and ACKs exceed their budgets. Latest synchronized run: 24 pass; 50 fail, 33 claims and zero confirmed ACKs. | Performance developer (`discovery_contract_review`), active. Read reductions implemented; writer and queue tails remain. | All 50 real HTTP/hook journeys emit and ACK once with public readback, unchanged budgets, ordinary traffic and health responsiveness covered. |
+| REL-02 | Retained Codex enrollment disappears while the service survives; subsequent reconnects fail. | `incident_integration_review` accepted recovery ownership after freezing its inventory edge. Root coordinates with relaydev. | Same-service-epoch connection-loss reproduction becomes green; authenticated recovery preserves peer identity, continuity, and uncertain-I/O fences, without replaying application operations. |
+| REL-03 | Messages remain pending and arrive much later, including old developer reports received here. | Performance/recovery owners share cause analysis; root owns integration. | Busy-to-idle and multiple pending messages on one endpoint progress through real scheduler, hook and ACK without loss or duplicate action; growing delivered history covered. |
+| REL-04 | Live Relay operations take up to five seconds. | Performance developer, active; do not assume identical cause to REL-01. | Locate wait versus work; compare before/after under concurrent load and verify installed delivery. |
+| REL-05 | Database lock failures and exhausted retries; retention unnecessarily holds the writer while doing later reads. | Root; next bounded persistence slice after current delivery diagnosis. | Fresh protection/lease checks and deletion correctness survive concurrent writes; measured writer hold reduction and contention regression. Historical live writer attribution remains open. |
+| REL-06 | Heavy startup can block responsiveness; readiness must reflect completed initialization. | `relaydev`, isolated async-startup implementation prepared. | Real lifecycle tests keep HTTP responsive during initialization, gate readiness correctly, and expose failure; installed startup verification. |
+| REL-07 | Rebuild inventory performs repeated reads and hydrates already-indexed sources. | `incident_integration_review`, candidate measured; not accepted yet. At 5,000 rows all-present sample improved 2,899 to 8 ms. | Eligibility, missing-tail, resume, cancellation and startup caller tests; comparable measurement. Single private samples are not live attribution. |
+| REL-08 | Shutdown can skip cleanup after worker start/stop failure or close storage before active children drain. | `relaydev`, correction prepared; final focused proofs pending. | Start/stop failure and held-child caller regressions; actual workers drain before storage closes, including error paths. |
+| REL-09 | Embedded NUL text exposes disagreement between SQL and Python length eligibility. | Inventory developer + architecture review; unresolved. | Preserve actual end-to-end eligibility at 39/40 characters and across pages, including Unicode and NUL; verify subsequent eligibility rechecks too. |
+| REL-10 | Healthy service does not imply working native wake; generic `peer-mismatch` also represents absent registration and can obscure the initiating failure. | Recovery developer accepted; root owns operational acceptance. | Distinguish unavailable registration from actual peer mismatch, retain initiating failure evidence, and verify status reflects wake availability without claiming receipt. |
+| REL-11 | Historical outage and remaining unexplained startup duration are not fully attributed. | Root + startup developer; investigation open. | Identify reproducible causes or explicitly document evidence limits; measure startup phases and prove relevant regressions. A 120-second allowance is mitigation, not closure. |
+
+Execution: delivery performance and authenticated recovery are independent developer
+lanes; relaydev finishes startup/cleanup. Keep source ownership explicit. Run heavy
+private qualifications serially on this machine to avoid contaminating timings;
+source analysis, implementation, and review proceed in parallel. Root merges the
+lanes, runs combined validation, and owns rollout and live receipt verification.
+Current implementation records are `service-performance`, `service-async-startup`,
+and `codex-enrollment-recovery`.
+Preserve installed configuration/data and use the approved installed restart wrapper.
+
+Integration checkpoint: startup component `88004c9b` and recovery `ff8d9825` are
+combined in development at `dcf2d0a3`; neither is deployed. Recovery has a genuine
+same-epoch loss RED/GREEN, 34 recovery/guard checks, 86 worker checks, and 20 final
+race/caller checks passing (overlapping selections, not an additive total).
+Startup affected evidence is 214 passed / 2 skipped plus the two corrected fixture
+nodes passing separately. Performance remains open: the diagnostic found about
+755 ms of serialized correctness-transaction hold time during the failed burst;
+commit execution was not the dominant tail. The next probe measures removable
+work inside those transactions before selecting another production correction.
+
+## Historical execution status (reconciled 2026-10-07)
 
 The closure follow-up is owned by relaydev in
 `.agent-workflow/tasks/relay-recovery-closure.md`. On October 6 the user explicitly

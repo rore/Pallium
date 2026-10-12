@@ -921,8 +921,7 @@ class TestFullLifecycle:
         assert status is not None
         assert status["status"] == "interrupted"
         checkpoint = RebuildCheckpoint.load(Path(f"{tmp_path / 'live.usearch'}.rebuild_state.json"))
-        assert checkpoint is not None
-        assert checkpoint.status == "in_progress"
+        assert checkpoint is None
 
     def test_on_swap_callback_resets_reconcile(self, tmp_path: Path):
         """Verify the on_swap_callback mechanism works for reconcile state reset."""
