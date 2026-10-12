@@ -44,3 +44,18 @@ Agent technical review: architecture_check 2026-10-12 final acceptance of correc
 Reviewed revision: accepted baseline `a3c9c7443840d0b6b439ac005d6c8d27a4905d6c` plus frozen two-path source/test delta and this record; candidate source hash above.
 
 Verification adequacy: real SQLite writer progresses during protected preparation and is refused during final safety rereads for both present and absent maintenance marker. Race cases cover new protection/processing lease/TTL/status, expected lease replacement/expiry, cursor/marker/start/wrap conflicts and bounded exhaustion, source deletion/created_at change, flushed rollback/FTS restoration and transient preparation retry/exhaustion. Root owns integrated full and any equal-fixture followup timing. Historical installed contention attribution remains unknown.
+
+## Equal-fixture timing followup
+
+2026-10-12: Ran the unchanged original private probe once on accepted source commit `7f4ac56a1d301037a166fa10eb2a4bebb90a1d72`. Private run `pallium-full-suite-run-3464356c27254da2b7c3750bb7dc6080` exited 0; guards/stderr empty, three owned identities drained. All deletion/survivor/stats/cursor assertions passed. Source hash remained `D47EA55FFEB5BB5DE95E65EDFA6D64056606B51A4E8F3F5C13189A4A71E248EE`. No live attribution or further timing rerun.
+
+| Protected rows | Ordering | SQL before → after | Total ms before → after | First-write-to-return ms before → after |
+|---|---|---|---|---|
+| 50 | Deletable first | 110 → 114 | 21.17 → 29.18 | 18.26 → 4.06 |
+| 50 | Protected first | 110 → 114 | 23.57 → 25.46 | 1.67 → 3.93 |
+| 200 | Deletable first | 410 → 414 | 74.89 → 132.22 | 70.38 → 5.69 |
+| 200 | Protected first | 410 → 414 | 76.13 → 103.89 | 1.89 → 5.74 |
+
+The worst writer-residence proxy fell from 70.38 to 5.69 ms, while total elapsed increased in this sample. This supports shorter writer occupancy, not overall throughput improvement. First-write-to-return includes commit/return overhead; these are single instrumented private samples. The 200-protected fixture scans 201 rows; the normal caller cap remains 200. The unchanged gated SELECT after first DML now observes final fresh safety checking rather than the old protected suffix, so gated timings are not comparable substages. The independent caller RED/GREEN proves the protected preparation mechanism. Historical installed lock contention remains unattributed; deployment and combined validation remain root-owned.
+
+Evidence preserved under `C:/Dev/rore/Pallium/build/service-performance-20261012/retention-writer-candidate`: timing JSON SHA `673EA19E4413295F6D3E84573846367A66F74EB1AFCFFACD31152B1E4FDFED4B`; comparison JSON SHA `18D537FB86F501419DEA0E38A741C4DFBB8CC02F909A05B4899673C864153107`; updated manifest SHA `3E5490E1E36881D2FF19F3BD210EE4ED00527147CA63D074DEA064739F8CEDDE`. Stdout SHA `B8E6B4A24A9F26902AD2702269A9605C87DBE8B91C9546CAD38C15D2D9C7F3C6`; unchanged probe SHA `2B0E70F145C4A005BC4D2CC5AD0430682BCD746CAB074A68FE70CB1AB401D03F`; candidate runner SHA `ACF23771C85B022F3E2D9664D7FCA96A2490D9DC6126F6ECD2BED4485B3167A1`. Baseline JSON SHA `FD9CD44B2F23C345655D6CCC11F9FB28ADB41C9E9AE9D0DCCAF02605338BF3E0`.
