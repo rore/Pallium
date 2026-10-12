@@ -214,7 +214,13 @@ class RebuildCoordinator:
 
     def _run_safe(self) -> None:
         try:
+            if self._stop_event.is_set():
+                self._terminal_status = "interrupted"
+                return
             self._start_or_resume()
+            if self._stop_event.is_set():
+                self._terminal_status = "interrupted"
+                return
             self._rebuild_loop()
         except Exception:
             logger.error("Rebuild failed", exc_info=True)

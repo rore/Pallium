@@ -228,6 +228,56 @@ class TestRebuildCoordinator:
         assert status["entries_processed"] == 4
         assert status["progress_percent"] == 100.0
 
+    def test_stop_before_preparation_skips_work_and_reports_interrupted(self, tmp_path: Path):
+        coordinator, _, _, _ = _make_coordinator(tmp_path, [])
+        coordinator._stop_event.set()
+        prepare = MagicMock()
+        rebuild = MagicMock()
+        coordinator._start_or_resume = prepare
+        coordinator._rebuild_loop = rebuild
+
+        coordinator.run_sync()
+
+        prepare.assert_not_called()
+        rebuild.assert_not_called()
+        assert coordinator.status()["status"] == "interrupted"
+        assert not coordinator._state_path.exists()
+
+    def test_stop_after_preparation_without_checkpoint_skips_rebuild(self, tmp_path: Path):
+        coordinator, _, _, _ = _make_coordinator(tmp_path, [])
+        prepare = MagicMock(side_effect=coordinator._stop_event.set)
+        rebuild = MagicMock()
+        coordinator._start_or_resume = prepare
+        coordinator._rebuild_loop = rebuild
+
+        coordinator.run_sync()
+
+        prepare.assert_called_once_with()
+        rebuild.assert_not_called()
+        assert coordinator.status()["status"] == "interrupted"
+        assert not coordinator._state_path.exists()
+
+    def test_stop_after_preparation_preserves_durable_checkpoint(self, tmp_path: Path):
+        coordinator, _, _, _ = _make_coordinator(tmp_path, [])
+        prepare = coordinator._start_or_resume
+        rebuild = MagicMock()
+        checkpoint_bytes: list[bytes] = []
+
+        def prepare_then_stop() -> None:
+            prepare()
+            checkpoint_bytes.append(coordinator._state_path.read_bytes())
+            coordinator._stop_event.set()
+
+        coordinator._start_or_resume = prepare_then_stop
+        coordinator._rebuild_loop = rebuild
+
+        coordinator.run_sync()
+
+        rebuild.assert_not_called()
+        assert coordinator.status()["status"] == "interrupted"
+        assert len(checkpoint_bytes) == 1
+        assert coordinator._state_path.read_bytes() == checkpoint_bytes[0]
+
     def test_status_reports_failure_before_checkpoint(self, tmp_path: Path):
         coordinator, _, _, _ = _make_coordinator(tmp_path, [])
         coordinator._start_or_resume = MagicMock(side_effect=RuntimeError("private failure detail"))
