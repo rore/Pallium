@@ -1054,15 +1054,26 @@ def _cache_identity_context(
     context: dict[str, str] | None,
     *,
     actor_ref: str | None = None,
+    expected_container_ref: str | None = None,
 ) -> bool:
     sid = _safe_session_id(session_id)
     if sid is None or context is None:
         return False
 
-    def update(state: dict[str, Any]) -> dict[str, Any]:
+    def update(state: dict[str, Any]) -> dict[str, Any] | None:
+        if expected_container_ref is not None and state.get("container_ref") != expected_container_ref:
+            return None
         if not _identity_context_matches(state, context):
             state.pop("actor_ref", None)
         state.update(context)
+        if expected_container_ref is not None:
+            state["identity_container_ref"] = {
+                "container_ref": expected_container_ref,
+                "identity_cwd": context.get("identity_cwd"),
+                "repo_config_fingerprint": context.get("repo_config_fingerprint"),
+            }
+        else:
+            state.pop("identity_container_ref", None)
         state.pop("provisional_identity_context", None)
         if actor_ref:
             state["actor_ref"] = actor_ref
@@ -1144,6 +1155,7 @@ def pin_container(
         ):
             state.pop("identity_cwd", None)
             state.pop("repo_config_fingerprint", None)
+            state.pop("identity_container_ref", None)
             state.pop("actor_ref", None)
         return state
 
@@ -1241,11 +1253,15 @@ def resolve_container_ref(
     context = _identity_context(cwd)
     sid = _safe_session_id(session_id)
     state = _read_session_state(sid) if sid is not None else None
+    binding = state.get("identity_container_ref") if state is not None else None
     if (
         pinned
         and context is not None
         and state is not None
         and _identity_context_matches(state, context)
+        and isinstance(binding, dict)
+        and binding.get("container_ref") == pinned
+        and _identity_context_matches(binding, context)
     ):
         return pinned
     if (
@@ -1264,18 +1280,20 @@ def resolve_container_ref(
         if not updated:
             return pinned or current
         pinned = current
-    _cache_identity_context(session_id, context)
+    _cache_identity_context(session_id, context, expected_container_ref=pinned or current)
     return pinned or current
 
 
 def derive_actor_ref(
     cwd: str | None = None,
     session_id: str | None = None,
+    expected_container_ref: str | None = None,
 ) -> str:
     """Get actor_ref from the session cache or Git, falling back to 'local'."""
     context = _identity_context(cwd) if cwd is not None else None
     sid = _safe_session_id(session_id)
     state = _read_session_state(sid) if sid is not None else None
+    binding = state.get("identity_container_ref") if state is not None else None
     # A non-persisting project switch is provisional until Relay confirms it.
     # Do not cache its identity context, or the next failed turn will make the
     # old pin look current and bounce the provisional scope back.
@@ -1292,20 +1310,30 @@ def derive_actor_ref(
             and cached
             and context is not None
             and _identity_context_matches(state, context)
+            and (
+                expected_container_ref is None
+                or (
+                    isinstance(binding, dict)
+                    and binding.get("container_ref") == state.get("container_ref") == expected_container_ref
+                    and _identity_context_matches(binding, context)
+                )
+            )
         ):
             return cached
 
     actor_ref = os.environ.get("PALLIUM_HOOK_ACTOR_REF", "").strip()
     if actor_ref:
         if not transient_scope:
-            _cache_identity_context(session_id, context, actor_ref=actor_ref)
+            _cache_identity_context(session_id, context, actor_ref=actor_ref,
+                                    expected_container_ref=expected_container_ref)
         return actor_ref
 
     actor_ref = "local"
     timeout = _bounded_timeout(SUBPROCESS_TIMEOUT)
     if timeout <= 0:
         if not transient_scope:
-            _cache_identity_context(session_id, context, actor_ref=actor_ref)
+            _cache_identity_context(session_id, context, actor_ref=actor_ref,
+                                    expected_container_ref=expected_container_ref)
         return actor_ref
     try:
         result = subprocess.run(
@@ -1320,7 +1348,8 @@ def derive_actor_ref(
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         pass
     if not transient_scope:
-        _cache_identity_context(session_id, context, actor_ref=actor_ref)
+        _cache_identity_context(session_id, context, actor_ref=actor_ref,
+                                expected_container_ref=expected_container_ref)
     return actor_ref
 def pallium_request(
     method: str,
@@ -2568,7 +2597,7 @@ def relay_turn(
                 return invalid_response
 
             if isinstance(source, str) and source != confirmed_container:
-                for key in ("identity_cwd", "repo_config_fingerprint", "actor_ref", "provisional_identity_context"):
+                for key in ("identity_cwd", "repo_config_fingerprint", "identity_container_ref", "actor_ref", "provisional_identity_context"):
                     state.pop(key, None)
             state["last_confirmed_container_ref"] = confirmed_container
             state["last_confirmed_endpoint_id"] = endpoint_id

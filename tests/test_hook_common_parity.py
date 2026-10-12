@@ -147,6 +147,130 @@ def test_configured_actor_precedes_git_and_deadline_but_not_valid_cache(
 
 
 @pytest.mark.parametrize("module", (cc_common, codex_common))
+def test_actor_cache_checks_expected_pin_inside_session_update(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, module,
+) -> None:
+    monkeypatch.setattr(module, "SESSIONS_DIR", tmp_path / "sessions")
+    monkeypatch.setattr(module, "_HOOK_DEADLINE", None)
+    session = "changed-pin"
+    expected = "git:example.test/expected"
+    replacement = "git:example.test/replacement"
+    assert module.pin_container(session, expected)
+    original_update = module._update_session_state
+    replaced = []
+
+    def update_after_pin_change(sid, update):
+        # Change the actual pin before the cache's locked read, not a cached lookup.
+        with monkeypatch.context() as patch:
+            patch.setattr(module, "_update_session_state", original_update)
+            assert module.pin_container(sid, replacement)
+        replaced.append(module._read_session_state(sid))
+        return original_update(sid, update)
+
+    monkeypatch.setattr(module, "_update_session_state", update_after_pin_change)
+    context = {"identity_cwd": "new-context", "repo_config_fingerprint": "new-fingerprint"}
+    module._cache_identity_context(
+        session, context, actor_ref="new actor", expected_container_ref=expected,
+    )
+    assert len(replaced) == 1
+    assert module._read_session_state(session) == replaced[0]
+    monkeypatch.setattr(module, "_update_session_state", original_update)
+    assert module._cache_identity_context(
+        session, context, actor_ref="new actor", expected_container_ref=replacement,
+    )
+    assert module._read_session_state(session) == {
+        **replaced[0], **context, "actor_ref": "new actor",
+        "identity_container_ref": {"container_ref": replacement, **context},
+    }
+
+
+@pytest.mark.parametrize("module", (cc_common, codex_common))
+def test_old_writer_context_overwrite_cannot_reuse_cache_association(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, module,
+) -> None:
+    monkeypatch.setattr(module, "SESSIONS_DIR", tmp_path / "sessions")
+    monkeypatch.setattr(module, "_HOOK_DEADLINE", None)
+    monkeypatch.delenv("PALLIUM_HOOK_ACTOR_REF", raising=False)
+    _make_repo(tmp_path)
+    (tmp_path / ".git" / "config").write_text(
+        '[remote "origin"]\nurl = https://example.test/other.git\n', encoding="utf-8",
+    )
+    session, old = "old-writer", "git:example.test/repo"
+    assert module.pin_container(session, old)
+    old_context = {"identity_cwd": "previous", "repo_config_fingerprint": "previous"}
+    assert module._cache_identity_context(
+        session, old_context, actor_ref="old actor", expected_container_ref=old,
+    )
+    binding = module._read_session_state(session)["identity_container_ref"]
+    assert binding == {"container_ref": old, **old_context}
+    context = module._identity_context(str(tmp_path))
+    assert context is not None
+    # The old writer does not know the association field and preserves it.
+    assert module._update_session_state(session, lambda state: {
+        **state, **context, "actor_ref": "old actor",
+    })
+    assert module._read_session_state(session)["identity_container_ref"] == binding
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append(command[1])
+        return type("Result", (), {"returncode": 0, "stdout":
+            "https://example.test/other.git\n" if command[1] == "remote" else "fresh actor\n"})()
+
+    monkeypatch.setattr(module.subprocess, "run", run)
+    resolved = module.resolve_container_ref(str(tmp_path), session, True, False)
+    assert resolved == "git:example.test/other"
+    assert calls == ["remote"]
+    assert module.derive_actor_ref(str(tmp_path), session, resolved) == "fresh actor"
+    assert calls == ["remote", "config"]
+
+
+@pytest.mark.parametrize("module", (cc_common, codex_common))
+def test_refused_cache_association_stays_untrusted_until_locked_publication(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, module,
+) -> None:
+    monkeypatch.setattr(module, "SESSIONS_DIR", tmp_path / "sessions")
+    monkeypatch.setattr(module, "_HOOK_DEADLINE", None)
+    monkeypatch.delenv("PALLIUM_HOOK_ACTOR_REF", raising=False)
+    _make_repo(tmp_path)
+    (tmp_path / ".git" / "config").write_text(
+        '[remote "origin"]\nurl = https://example.test/repo.git\n', encoding="utf-8",
+    )
+    session, scope = "legacy-cache", "git:example.test/repo"
+    assert module.pin_container(session, scope)
+    context = module._identity_context(str(tmp_path))
+    assert context is not None
+    assert module._update_session_state(session, lambda state: {
+        **state, **context, "actor_ref": "legacy actor",
+    })
+    before = module._read_session_state(session)
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append(command[1])
+        return type("Result", (), {"returncode": 0, "stdout":
+            "https://example.test/repo.git\n" if command[1] == "remote" else "fresh actor\n"})()
+
+    monkeypatch.setattr(module.subprocess, "run", run)
+    lock = module._acquire_session_lock(session)
+    assert lock is not None
+    try:
+        assert module.resolve_container_ref(str(tmp_path), session, True, False) == scope
+        assert module.derive_actor_ref(str(tmp_path), session, scope) == "fresh actor"
+        assert module._read_session_state(session) == before
+    finally:
+        module._release_session_lock(lock)
+    assert calls == ["remote", "config"]
+    assert module.resolve_container_ref(str(tmp_path), session, True, False) == scope
+    assert calls == ["remote", "config", "remote"]
+    assert module._read_session_state(session)["identity_container_ref"] == {
+        "container_ref": scope, **context,
+    }
+    assert module.resolve_container_ref(str(tmp_path), session, True, False) == scope
+    assert calls == ["remote", "config", "remote"]
+
+
+@pytest.mark.parametrize("module", (cc_common, codex_common))
 @pytest.mark.parametrize("configured", (None, "   "))
 def test_blank_or_unset_configured_actor_keeps_git_fallback(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, module, configured: str | None,

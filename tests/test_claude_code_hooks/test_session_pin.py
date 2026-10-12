@@ -435,7 +435,7 @@ class TestIdentityCache:
         monkeypatch.setattr(common.subprocess, "run", run)
         assert common.pin_container("s1", "git:example/repo", source="startup") is True
 
-        assert common.derive_actor_ref(str(root), "s1") == "משתמש"
+        assert common.derive_actor_ref(str(root), "s1", "git:example/repo") == "משתמש"
         assert common.resolve_container_ref(str(root), "s1", True) == "git:example/repo"
         assert common.derive_actor_ref(str(root), "s1") == "משתמש"
         assert calls == [("git", "config", "user.name")]
