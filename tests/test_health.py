@@ -838,6 +838,9 @@ async def test_production_factory_shutdown_settles_held_build_before_close(
 
     def held_builder(*_args, **_kwargs):
         try:
+            build_started.set()
+            if not release_build.wait(5):
+                raise AssertionError("test did not release the held app build")
             built = create_app(_no_vector_config(test_db_url))
             original_close = built.state.pallium_service.close
 
@@ -847,9 +850,6 @@ async def test_production_factory_shutdown_settles_held_build_before_close(
 
             built.state.pallium_service.close = counted_close
             built_apps.append(built)
-            build_started.set()
-            if not release_build.wait(5):
-                raise AssertionError("test did not release the held app build")
             return built
         finally:
             build_finished.set()

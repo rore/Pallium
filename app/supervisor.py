@@ -194,8 +194,10 @@ _API_START_TIMEOUT_SECONDS = 120.0
 _API_HEALTH_BODY_MAX_BYTES = 64 * 1024
 
 
-def _probe_initialized_health(host: str, port: int, timeout: float) -> bool:
-    """Accept only an initialized, nonfatal /health response."""
+def _probe_initialized_health(
+    host: str, port: int, timeout: float, *, fail_fast: bool = False,
+) -> bool | None:
+    """Accept initialized health; optionally distinguish terminal startup failure."""
     if timeout <= 0:
         return False
     deadline = time.monotonic() + timeout
@@ -235,6 +237,13 @@ def _probe_initialized_health(host: str, port: int, timeout: float) -> bool:
         initialized = health.get("initialized")
         if not isinstance(status, str):
             return False
+        if (
+            fail_fast and response.status == 503 and status == "failed"
+            and initialized is False and health.get("ready") is False
+            and health.get("initialization_error") == "service_initialization_failed"
+            and time.monotonic() < deadline
+        ):
+            return None
         if initialized is True:
             valid = (response.status == 503 and status == "initializing") or (
                 response.status == 200 and status in {"ok", "degraded"}
@@ -306,11 +315,13 @@ def _wait_for_api(
             continue
 
         # TCP succeeded; preserve the token/legacy/grace ownership gate first.
+        verified_owned = False
         if expected_nonce is None or run_dir is None:
             candidate = True  # legacy / no self-id requested
         else:
             token_match = _check_token(run_dir / "api_token", expected_nonce)
             candidate = token_match is True
+            verified_owned = candidate and process is not None and process.poll() is None
             if token_match is False:
                 # Never let a later missing token launder a foreign bind through grace.
                 foreign_bind_seen = True
@@ -323,7 +334,19 @@ def _wait_for_api(
 
         if candidate:
             remaining = deadline - clock()
-            if remaining > 0 and _probe_initialized_health(host, port, min(1.0, remaining)):
+            health = (
+                _probe_initialized_health(host, port, min(1.0, remaining), fail_fast=verified_owned)
+                if remaining > 0 else False
+            )
+            if health is None and verified_owned:
+                if (
+                    clock() < deadline
+                    and not (stop is not None and getattr(stop, "requested", False))
+                    and process.poll() is None
+                    and _check_token(run_dir / "api_token", expected_nonce) is True
+                ):
+                    return False
+            if health:
                 # HTTP can block; recheck every startup fence before accepting.
                 if clock() < deadline and not (stop is not None and getattr(stop, "requested", False)):
                     if process is None or process.poll() is None:

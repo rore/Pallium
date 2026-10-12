@@ -570,7 +570,10 @@ class TestLoadOrCreateVectorIndex:
 
 @requires_usearch
 @pytest.mark.parametrize("vector_exists", [False, True])
-@pytest.mark.parametrize("content", ["é" * 40, "é" * 19 + "\x00" + "é" * 20], ids=["unicode", "nul40"])
+@pytest.mark.parametrize("content", [
+    "é" * 40, "é" * 19 + "\x00" + "é" * 20,
+    "\x00" + "😀" * 39, "e\u0301\x00" * 13 + "\n",
+], ids=["unicode", "nul40", "leading-nul", "multiple-nul-newline"])
 def test_raw_source_backfill_http_startup_and_reopen(tmp_path, monkeypatch, vector_exists, content):
     from fastapi.testclient import TestClient
 

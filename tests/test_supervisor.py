@@ -1071,6 +1071,79 @@ def test_wait_for_api_rechecks_fences_after_health_probe(fence, tmp_path, monkey
     assert result is False
 
 
+@pytest.mark.parametrize("scenario", [
+    "owned", "foreign", "missing", "legacy", "nonce_changed", "stopped", "exited",
+    "initializing", "degraded", "malformed",
+])
+def test_wait_for_api_terminal_failure_requires_owned_nonce(scenario, tmp_path):
+    from types import SimpleNamespace
+
+    nonce = "terminal-failure-owner"
+    token_path = tmp_path / "api_token"
+    if scenario not in {"missing", "legacy"}:
+        token_path.write_text(_json.dumps({"nonce": "foreign" if scenario == "foreign" else nonce}))
+    health = {"status": "failed", "initialized": False, "ready": False,
+              "initialization_error": "service_initialization_failed"}
+    status_code = 503
+    if scenario == "initializing":
+        health = {"status": "initializing", "initialized": False, "ready": False}
+    elif scenario == "degraded":
+        health = {"status": "degraded", "initialized": True, "ready": False}
+        status_code = 200
+    elif scenario == "malformed":
+        health["ready"] = True
+    process = SimpleNamespace(returncode=None)
+    process.poll = lambda: process.returncode
+    stop = SimpleNamespace(requested=False)
+    elapsed, sleeps, requests = [0.0], [], []
+
+    class HealthHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            requests.append(self.path)
+            if scenario == "nonce_changed":
+                token_path.write_text(_json.dumps({"nonce": "replacement"}))
+            elif scenario == "stopped":
+                stop.requested = True
+            elif scenario == "exited":
+                process.returncode = 1
+            body = _json.dumps(health).encode()
+            self.send_response(status_code)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_args):
+            pass
+
+    def advance(seconds):
+        sleeps.append(seconds)
+        elapsed[0] += seconds
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), HealthHandler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        result = _wait_for_api(
+            "127.0.0.1", server.server_port, timeout=2, sleep_fn=advance,
+            process=process, stop=stop, expected_nonce=None if scenario == "legacy" else nonce,
+            run_dir=tmp_path, grace_period=0, clock=lambda: elapsed[0],
+        )
+        assert result is (scenario == "degraded")
+        if scenario == "owned":
+            assert requests == ["/health"]
+            assert sleeps == [], "terminal owned failure must not consume the startup budget"
+        elif scenario == "degraded":
+            assert requests == ["/health"]
+            assert sleeps == []
+        elif scenario not in {"stopped", "exited"}:
+            assert elapsed[0] == 2, "unverified or nonterminal response must retain the wait policy"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=1)
+    assert not thread.is_alive()
+
+
 def test_generate_launch_token_is_unique():
     """Each call must produce a different token — otherwise a stale token from
     a crashed previous attempt could be confused for the next attempt."""

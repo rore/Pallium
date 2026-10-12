@@ -1,5 +1,43 @@
 # Asynchronous service startup and truthful readiness
 
+## PR 312 review correction checkpoint — 2026-10-12
+
+Root additionally authorizes the independently reviewed node-only correction
+in tests/test_codex_wake.py::test_relay_turn_logs_correlated_service_and_route_ready_timing.
+Its HTTP timing, privacy, callback ordering and validation contract will use an
+instance-local Relay turn result, retaining real HTTP, clocks and callback delay.
+Assert turn then callback for both valid requests and no invocation for invalid
+input. Actual database deadline, typed busy and burst delivery tests remain
+unchanged. This removes unrelated database availability from a logging test;
+it is not a fix or attribution for the historical Windows 1234 ms busy response.
+Reviewer architecture_check accepted the coverage separation before edits.
+
+Logging node and three unchanged actual-database callback/claim tests passed
+4/4 in 2.90 s, guards empty and three owned processes drained. Private run
+1b577059f96a4cf68e7c706a0a61bc06 stdout SHA256
+D2F31CBC4D9D8B99CE0F53E3AA6F626DF0D4EFD5963CAD57E7FEF62EE5465FAF.
+
+Root authorizes the independently reviewed narrow correction in app/supervisor.py
+and tests/test_supervisor.py: recognize the exact terminal initialization-failed
+503 envelope only for a nonce-verified live owned child, rechecking ownership,
+nonce and stop state after HTTP. Reuse existing cleanup/retry; retain legacy,
+foreign/missing nonce, initializing and completed-degraded behavior and budgets.
+No main application lifetime change. Reviewer: /root/architecture_check.
+
+The Linux 3.13 shutdown test signaled builder entry after real construction.
+In tests/test_health.py move its existing entry signal and release gate before
+construction, preserving real construction/close ordering and all timeouts.
+Verify focused terminal/ownership/control cases and the shutdown caller test,
+then affected tests and combined required validation before release. Prior
+result acceptance does not cover these new production edits.
+
+Focused causal RED: one owned-failure case failed and ten controls passed;
+GREEN: eleven passed in 7.05 s. Architecture accepted actual source and tests.
+Combined supervisor, health, rebuild and vector startup files: 209 passed,
+one skipped in 60.37 s; guards empty and three owned processes drained.
+Evidence: shared build/service-performance-20261012/review-corrections-affected,
+stdout SHA256 F87F0E51EE700ED91040F92C3ACC29317541B14CACE3CE4AFE2DF3E9D580B514.
+
 ## Collect-all regression follow-up — 2026-10-12
 
 Independent final review accepts evidence reuse: complete local run below plus

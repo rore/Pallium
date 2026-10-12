@@ -462,6 +462,14 @@ class TestRebuildCoordinator:
             ("message", "", "source_item.content", "source", None, None, False, "source_item", "source_item", "vector"),
             ("message", "é" * 39, "source_item.content", "source", None, None, False, "source_item", "source_item", "vector"),
             ("message", "é" * 40, "source_item.content", "source", None, None, True, "source_item", "source_item", "vector"),
+            ("message", "\x00" * 39, "source_item.content", "source", None, None, False, "source_item", "source_item", "vector"),
+            ("message", "\x00" * 40, "source_item.content", "source", None, None, True, "source_item", "source_item", "vector"),
+            ("message", "\x00" + "😀" * 38, "source_item.content", "source", None, None, False, "source_item", "source_item", "vector"),
+            ("message", "\x00" + "😀" * 39, "source_item.content", "source", None, None, True, "source_item", "source_item", "vector"),
+            ("message", "界" * 39 + "\x00", "source_item.content", "source", None, None, True, "source_item", "source_item", "vector"),
+            ("message", "e\u0301\x00" * 13, "source_item.content", "source", None, None, False, "source_item", "source_item", "vector"),
+            ("message", "e\u0301\x00" * 13 + "\n", "source_item.content", "source", None, None, True, "source_item", "source_item", "vector"),
+            ("message", "😀\x00界\x00" * 10, "source_item.content", "source", None, None, True, "source_item", "source_item", "vector"),
             ("assistant_output", "é" * 40, "source_item.content", "source", None, None, True, "source_item", "source_item", "vector"),
             ("tool_use_summary", "é" * 40, "source_item.content", "source", None, None, False, "source_item", "source_item", "vector"),
             ("message", "é" * 40, "wrong.view", "source", None, None, False, "source_item", "source_item", "vector"),
@@ -990,11 +998,13 @@ class TestFilteredRawSourceInventory:
                 _create_raw_inventory_source(storage, f"a-{i:03d}", content="é" * 18 + "\x00" + "é" * 20)
             selects.clear()
             assert raw_source_vector_backfill_needed(storage) is False
-            assert len(selects) == 2 + (short_count + 127) // 128
+            assert len(selects) == 2
+            assert "content" not in selects[-1].split("FROM", 1)[0]
             _create_raw_inventory_source(storage, "z-valid", content="é" * 19 + "\x00" + "é" * 20)
             selects.clear()
             assert raw_source_vector_backfill_needed(storage) is True
-            assert len(selects) == 1 + (short_count + 128) // 128
+            assert len(selects) == 2
+            assert "content" not in selects[-1].split("FROM", 1)[0]
             _create_raw_inventory_source(storage, "zz-ordinary", content="東京" * 20)
             selects.clear()
             assert raw_source_vector_backfill_needed(storage) is True

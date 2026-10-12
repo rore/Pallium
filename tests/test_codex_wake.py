@@ -3097,20 +3097,37 @@ def test_relay_turn_callback_rearms_only_after_success(client) -> None:
         assert route_client.post("/relay/turn", json=body).status_code == 422
     assert len(callbacks) == 2
 
-def test_relay_turn_logs_correlated_service_and_route_ready_timing(client, caplog) -> None:
+def test_relay_turn_logs_correlated_service_and_route_ready_timing(client, caplog, monkeypatch) -> None:
     import re
     import time
 
-    callbacks = []
+    callbacks, events = [], []
     app = FastAPI()
+    relay = RelayService(client.app.state.pallium_service._storage)
+
+    def successful_turn(**request):
+        # This test measures route logging; adjacent tests exercise actual SQLite claims.
+        events.append("turn")
+        return {
+            "session": {
+                "endpoint_id": "relay-session-" + "a" * 32,
+                "runtime": request["runtime"], "session_ref": request["session_ref"],
+                "container_ref": request["container_ref"], "state": "active",
+                "first_seen_at": "2026-01-01T00:00:00Z", "last_seen_at": "2026-01-01T00:00:00Z",
+            },
+            "deliveries": [], "has_more": False, "remaining_count": 0,
+        }
+
+    monkeypatch.setattr(relay, "turn", successful_turn)
 
     def delayed_callback(request, result):
+        events.append("callback")
         callbacks.append((request, result))
         time.sleep(0.01)
 
     app.include_router(create_router(
         client.app.state.pallium_service,
-        relay_service=RelayService(client.app.state.pallium_service._storage),
+        relay_service=relay,
         relay_turn_callback=delayed_callback,
     ))
     route = TestClient(app)
@@ -3126,6 +3143,7 @@ def test_relay_turn_logs_correlated_service_and_route_ready_timing(client, caplo
     assert response.status_code == 200
     assert response.json()["session"]["session_ref"] == "target"
     assert len(callbacks) == 1
+    assert events == ["turn", "callback"]
     records = [record.getMessage() for record in caplog.records if delivery_id in record.getMessage()]
     assert len(records) == 1
     match = re.fullmatch(
@@ -3143,6 +3161,7 @@ def test_relay_turn_logs_correlated_service_and_route_ready_timing(client, caplo
         "runtime": "codex", "session_ref": "target", **SCOPE,
     })
     assert without_wake_id.status_code == 200
+    assert events == ["turn", "callback", "turn", "callback"]
     assert not any("service_ms=" in record.getMessage() for record in caplog.records)
 
     caplog.clear()
@@ -3153,6 +3172,7 @@ def test_relay_turn_logs_correlated_service_and_route_ready_timing(client, caplo
         **SCOPE,
     })
     assert invalid.status_code == 422
+    assert events == ["turn", "callback", "turn", "callback"]
     assert not any("service_ms=" in record.getMessage() for record in caplog.records)
 
 def test_relay_turn_logs_service_time_when_exact_wake_fails(

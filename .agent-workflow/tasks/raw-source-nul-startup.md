@@ -24,6 +24,27 @@ Whole change -> import/workflow checks and root combined full; no live integrati
 
 ## Implementation
 
+2026-10-12 PR 312 review correction: root authorizes replacing the Python NUL
+candidate paging loop with one scalar ID LIMIT 1 query using SQLAlchemy's
+existing SQLite REGEXP support and pattern `(?s)^.{40}`. Actual isolated engine
+proof matches Python length for 13 NUL, Unicode and newline boundary cases.
+The proposed SQLite replace expression failed and is rejected. Preserve the
+ordinary fast positive query and all kind/view/missing/source predicates.
+This supersedes the paging implementation plan, not the immutable eligibility
+baseline. At most two statements and bounded result transfer are guaranteed;
+the database may still scan candidates. No new UDF registration, dependency,
+schema or cache. Architecture_check independently accepted this exact plan.
+Owner edits storage/sqlite.py and existing scoped regression files; verify
+39/40 parity, many short candidates plus eligible tail, no content hydration,
+two fallback statements, and existing HTTP startup/reopen behavior.
+
+Correction evidence: RED three short-row boundaries failed only their query
+counts (3/3/4 rather than 2); focused GREEN 34 passed in 21.36 s. Combined
+affected files passed 209 with one skip in 60.37 s. Both private runs had empty
+guards and drained all three owned processes. Architecture accepted the actual
+source/test delta. Evidence: shared build/service-performance-20261012/nul-regexp,
+manifest E8B718648B26FC454F8498BF4E5D64148C342C212F2A948A0575C95E58761DE2.
+
 2026-10-12: Created isolated branch from root-supplied baseline. Reviewed draft patch SHA 97C2145BA919211F7442D24189EE9E48DA7D195B56ADDFBB805F19EC39798126 applies cleanly. Record written before test/source mutation. Own next private execution slot; no shared checkout edits or live actions.
 
 2026-10-12: Applied reviewed draft with narrowly selected Git-native hunks: tests first, source after genuine RED. No apply_patch failure or fallback. NUL40 missing-vector HTTP startup skipped repair on original helper. Candidate repaired it and preserved exact source content/readback, reopening and existing-vector behavior. All 127/128/129 candidate boundaries and existing SQLite eligibility cases passed. Source/test frozen; slot released and final architecture delta review requested. Historical Relay/load issues are separate and no live-resolution claim is made.
