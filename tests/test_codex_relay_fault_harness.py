@@ -374,7 +374,7 @@ def _configure_observation_hook(module, tmp_path, *, rendered=True,
         "prompt": "ordinary user prompt",
     }
     module.derive_container_ref = lambda cwd: "container"
-    module.derive_actor_ref = lambda cwd, session: "actor"
+    module.derive_actor_ref = lambda cwd, session, expected_container_ref=None: "actor"
     module.pin_container = lambda *a, **k: None
     module.resolve_container_ref = lambda *a, **k: "container"
     module.discover_work_refs = lambda *a, **k: {}
