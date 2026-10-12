@@ -59,7 +59,7 @@ def _assert_snapshot_shape(snapshot: dict) -> None:
         "message-limit", "native-failed", "native-tool-failed", "path-unavailable",
         "peer-gone", "peer-mismatch", "peer-unavailable", "policy-busy", "policy-changed",
         "policy-inactive", "stopped", "timeout", "transport-failed", "unsafe-acl",
-        "unsafe-owner", "unsafe-path", "unsupported-acl",
+        "unsafe-owner", "unsafe-path", "unsupported-acl", "registration-missing",
     } or enrollment["state"] == "unavailable"
     fields = {
         "state", "evidence", "observed_at", "accepted", "registration_remembered",
@@ -229,6 +229,36 @@ def test_native_enrollment_is_cached_lifecycle_evidence(world, tmp_path, path, c
         assert enrollment["reason"] == "snapshot_unavailable"
     else:
         assert enrollment["evidence"] == "cached_lifecycle_observation"
+
+
+@pytest.mark.parametrize("path", VIEWS)
+@pytest.mark.parametrize("unknown_reason", [False, True])
+def test_native_enrollment_preserves_missing_registration_evidence(world, tmp_path, path, unknown_reason):
+    service = bridge.RetainedService(tmp_path)
+    service._publish_enrollment_diagnostics(
+        accepted=True, registration_remembered=False, custody_present=False,
+        unresolved_handles=False, continuity_opted_in=True,
+    )
+    service._record_enrollment_failure("reopen", "registration-missing")
+    if unknown_reason:
+        service._enrollment_diagnostics["last_failure_reason"] = "unknown-reason-sentinel"
+    world[2].retained_service = service
+    enrollment = _view(world, path)["native_enrollment"]
+    if unknown_reason:
+        assert enrollment["state"] == "unavailable"
+        assert enrollment["reason"] == "snapshot_unavailable"
+        assert enrollment["last_failure_reason"] is None
+        assert "unknown-reason-sentinel" not in json.dumps(enrollment)
+    else:
+        assert enrollment["state"] == "released"
+        assert enrollment["evidence"] == "cached_lifecycle_observation"
+        assert enrollment["accepted"] is True
+        assert enrollment["registration_remembered"] is False
+        assert enrollment["custody_present"] is False
+        assert enrollment["unresolved_handles"] is False
+        assert enrollment["continuity_opted_in"] is True
+        assert enrollment["last_failure_stage"] == "reopen"
+        assert enrollment["last_failure_reason"] == "registration-missing"
 
 
 @pytest.mark.parametrize("path", VIEWS)

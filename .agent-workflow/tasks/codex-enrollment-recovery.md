@@ -1,7 +1,7 @@
 <!-- agent-workflow:start -->
 **Outcome:** Authenticated retained Codex enrollment can recover after same-epoch registration loss without replaying a failed native operation; diagnostics distinguish absent registration from identity mismatch.
 **Target:** Pallium retained Codex service and source worker.
-**Scope:** app/codex_bridge_pipe.py; app/mcp/codex_desktop_bridge.py; existing tests/test_codex_retained_connection_recovery.py and tests/test_codex_worker_reconnect.py; this Work Record. Exact implementation path set remains subject to plan review. Root owns roadmap/features/add-wake-first-relay-delivery.md REL-02/REL-10 and integration.
+**Scope:** app/codex_bridge_pipe.py; app/mcp/codex_desktop_bridge.py; app/relay_wake_health.py; existing tests/test_codex_retained_connection_recovery.py, tests/test_codex_worker_reconnect.py and tests/test_relay_wake_health.py; this Work Record. Root owns roadmap/features/add-wake-first-relay-delivery.md REL-02/REL-10 and integration.
 **Constraints:** Preserve original source/Desktop/ancestor identity, continuity, unresolved-I/O and wake generation fences. Preserve initiating failure and never replay or resend it. No live changes, restart, rearm, budgets, config, cache, new executor, or protocol expansion without reviewed necessity. Keep separate from Relay performance and startup owners.
 **Completion criteria:** Existing caller surface demonstrates same-epoch enrollment loss and authenticated recovery, exact delivery/ACK lifecycle, no replay, truthful missing-versus-mismatch diagnosis, and fail-closed identity/unresolved-I/O boundaries.
 **Requirement baseline:**
@@ -21,6 +21,10 @@ Whole-change regression -> root-coordinated selected full and final integration 
 **Exceptions:** —
 **State:** Ready for review
 <!-- agent-workflow:end -->
+
+2026-10-12 diagnostic compatibility correction: root assigned architecture_check the existing recovery follow-up in the combined checkout. Extend scope to app/relay_wake_health.py and tests/test_relay_wake_health.py. The new registration-missing reason is rejected by the health projection allowlist, hiding otherwise valid lifecycle evidence. Preserve all unknown-reason refusal and lifecycle semantics; add only the known category and an HTTP status/summary boundary regression using the real diagnostic recorder. Existing High-risk recovery classification and authorization remain; no installed files, schema, configuration, native operations or full-suite run in this bounded lane. Capture exact RED then GREEN under existing isolated guards; root reviews and integrates.
+
+2026-10-12 correction verification: exact HTTP boundary RED produced two expected failures (released lifecycle incorrectly unavailable) and two passing unknown-reason controls in 2.52s. One-category allowlist correction passed all four cases in 2.09s. RED stdout SHA256 5A10FE253AE63C6E66BB80E67D1282647BFE91C2C29895A9C1827BC198DB0B56; GREEN 816EDB3DF1DD095D5521B264AFB3C3D44B6DE503F030F27B7B79C43C6DF6C8B8. Both stderr empty, network guards empty, three owned processes drained. Logs/drain ledgers and hashes preserved under build/service-performance-20261012/enrollment-health-reason/{red,green}. git diff --check passed. This restores diagnostic visibility only; it neither proves nor fixes the installed enrollment-loss trigger. No live files changed. Root retains combined full validation and independent final review.
 
 ## Implementation
 
