@@ -8,6 +8,7 @@ from __future__ import annotations
 import threading
 import time
 from unittest.mock import MagicMock, patch
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import text
@@ -213,6 +214,7 @@ class TestImmediateTransactionRetry:
 
         assert len(attempts) == 3
         assert sleep.call_count == 2
+        assert [call.args[0] for call in sleep.call_args_list] == [0.05, 0.1]
         assert sessions[0].close.called and sessions[1].close.called
         assert sessions[-1].flush.call_count == 1
         for session in sessions:
@@ -232,8 +234,77 @@ class TestImmediateTransactionRetry:
             assert active is session
 
         statements = [str(call.args[0]) for call in connection.execute.call_args_list]
-        assert "PRAGMA busy_timeout=100" in statements
+        assert "PRAGMA busy_timeout=150" in statements
         assert "PRAGMA busy_timeout=1000" not in statements
+
+    @pytest.mark.parametrize("failure", ["locked_twice", "locked_all", "nontransient", "body", "unknown", "io", "table_locked", "busy_snapshot"])
+    def test_relay_acquisition_retains_native_wait_without_outer_backoff(self, storage, monkeypatch, failure):
+        from storage import sqlite_queue
+        sessions, attempts, bodies = [], [], []
+        sleep = MagicMock()
+        monkeypatch.setattr(sqlite_queue, "time", SimpleNamespace(**{**vars(sqlite_queue.time), "sleep": sleep}))
+
+        def factory():
+            session, connection = MagicMock(), MagicMock()
+            session.connection.return_value = connection
+            def execute(statement):
+                if str(statement) != "BEGIN IMMEDIATE":
+                    return None
+                attempts.append(1)
+                if failure == "nontransient":
+                    raise _make_sa_operational_error("no such table: missing")
+                if failure == "locked_all" or (failure == "locked_twice" and len(attempts) < 3):
+                    import sqlite3
+                    error = _make_sa_operational_error("database is locked")
+                    error.orig.sqlite_errorcode = sqlite3.SQLITE_BUSY
+                    raise error
+                if failure in {"unknown", "io", "table_locked", "busy_snapshot"} and len(attempts) < 3:
+                    import sqlite3
+                    error = _make_sa_operational_error("disk I/O error" if failure == "io" else "database is locked")
+                    codes = {"io": sqlite3.SQLITE_IOERR, "table_locked": sqlite3.SQLITE_LOCKED,
+                             "busy_snapshot": sqlite3.SQLITE_BUSY_SNAPSHOT}
+                    if failure in codes:
+                        error.orig.sqlite_errorcode = codes[failure]
+                    raise error
+            connection.execute.side_effect = execute
+            sessions.append(session)
+            return session
+        storage._relay_session_factory = factory
+        def acquire():
+            with storage._begin_relay_immediate():
+                bodies.append(1)
+                if failure == "body":
+                    raise ValueError("controlled body refusal")
+        if failure == "locked_all":
+            with pytest.raises(ImmediateTransactionBusyError, match="database is locked"):
+                acquire()
+        elif failure == "nontransient":
+            with pytest.raises(SAOperationalError, match="no such table"):
+                acquire()
+        elif failure == "body":
+            with pytest.raises(ValueError, match="controlled body refusal"):
+                acquire()
+        else:
+            acquire()
+        assert len(attempts) == (1 if failure in {"nontransient", "body"} else 3)
+        assert bodies == ([] if failure in {"locked_all", "nontransient"} else [1])
+        assert all(session.close.call_count == 1 for session in sessions)
+        for session in sessions:
+            statements = [str(call.args[0]) for call in session.connection.return_value.execute.call_args_list]
+            assert "PRAGMA busy_timeout=150" in statements
+            assert statements[-1] == "PRAGMA busy_timeout=15000"
+        final = [str(call.args[0]) for call in sessions[-1].connection.return_value.execute.call_args_list]
+        if failure not in {"locked_all", "nontransient", "body"}:
+            assert final.count("COMMIT") == 1 and sessions[-1].flush.call_count == 1
+        else:
+            assert "COMMIT" not in final
+        if failure == "body":
+            assert "ROLLBACK" in final
+        if failure in {"unknown", "io", "table_locked", "busy_snapshot"}:
+            assert [call.args[0] for call in sleep.call_args_list] == [0.05, 0.1]
+        else:
+            assert sleep.call_count == 0
+        assert storage._RELAY_IMMEDIATE_ATTEMPTS * storage._RELAY_IMMEDIATE_BUSY_TIMEOUT_MS == 450
 
     def test_immediate_transaction_restores_the_pooled_busy_timeout(self, storage):
         def timeout() -> int:

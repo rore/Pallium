@@ -117,7 +117,8 @@ class SQLiteStorageProvider(
     StorageProvider,
 ):
     _RELAY_IMMEDIATE_ATTEMPTS = 3
-    _RELAY_IMMEDIATE_BUSY_TIMEOUT_MS = 100
+    # Spend the former 50/100ms outer pauses in native waits: the same 450ms allocation.
+    _RELAY_IMMEDIATE_BUSY_TIMEOUT_MS = 150
 
     def __init__(self, database_url: str, relay_database_url: str | None = None) -> None:
         separate_relay = relay_database_url is not None and not self._same_sqlite_file(

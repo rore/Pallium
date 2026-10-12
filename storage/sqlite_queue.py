@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -108,6 +109,7 @@ class SQLiteQueueMixin:
             self._relay_session_factory,
             attempts=self._RELAY_IMMEDIATE_ATTEMPTS,
             busy_timeout_ms=self._RELAY_IMMEDIATE_BUSY_TIMEOUT_MS,
+            busy_backoff_seconds=0,
         ) as session:
             yield session
 
@@ -143,6 +145,7 @@ class SQLiteQueueMixin:
         *,
         attempts: int | None = None,
         busy_timeout_ms: int | None = None,
+        busy_backoff_seconds: float | None = None,
     ):
         """Start a transaction with BEGIN IMMEDIATE for exclusive claim operations.
 
@@ -159,6 +162,8 @@ class SQLiteQueueMixin:
         conn = None
         attempts = attempts or self._IMMEDIATE_ATTEMPTS
         busy_timeout_ms = busy_timeout_ms or self._IMMEDIATE_BUSY_TIMEOUT_MS
+        if busy_backoff_seconds is None:
+            busy_backoff_seconds = self._IMMEDIATE_BACKOFF_SECONDS
         for attempt in range(attempts):
             session = session_factory()
             try:
@@ -179,7 +184,13 @@ class SQLiteQueueMixin:
                     raise
                 if attempt == attempts - 1:
                     raise ImmediateTransactionBusyError("database is locked (immediate transaction retry exhausted)") from exc
-                time.sleep(self._IMMEDIATE_BACKOFF_SECONDS * (attempt + 1))
+                original = getattr(exc, "orig", exc)
+                backoff = (busy_backoff_seconds
+                           if isinstance(original, sqlite3.OperationalError)
+                           and getattr(original, "sqlite_errorcode", None) == sqlite3.SQLITE_BUSY
+                           else self._IMMEDIATE_BACKOFF_SECONDS)
+                if backoff:
+                    time.sleep(backoff * (attempt + 1))
         assert session is not None and conn is not None
         try:
             yield session

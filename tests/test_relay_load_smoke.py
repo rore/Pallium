@@ -10,6 +10,7 @@ import sys
 import threading
 import time
 from collections import Counter
+from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -25,10 +26,12 @@ from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
 @pytest.mark.slow
 @pytest.mark.parametrize("caller_count", [24, 50])
 def test_concurrent_http_hook_journeys_keep_exact_delivery_lifecycle(
-    tmp_path, monkeypatch, caller_count, _isolated=False, _synchronized_hooks=False, _diagnostics=None,
+    tmp_path, monkeypatch, caller_count, _isolated=False, _synchronized_hooks=False, _diagnostics=None, _timing_only=False,
 ) -> None:
     if _diagnostics is None:
-        _diagnostics = os.environ.get('PALLIUM_RELAY_LOAD_DIAGNOSTICS') == '1'
+        mode = os.environ.get('PALLIUM_RELAY_LOAD_DIAGNOSTICS')
+        _diagnostics = mode == '1'
+        _timing_only = _timing_only or mode == 'timing'
     if not _isolated:
         # As in runtime_logging coverage, isolate process-wide logging from pytest.
         program = """
@@ -43,12 +46,12 @@ patch = pytest.MonkeyPatch()
 try:
     test_concurrent_http_hook_journeys_keep_exact_delivery_lifecycle(
         Path(sys.argv[1]), patch, int(sys.argv[2]), _isolated=True,
-        _synchronized_hooks=sys.argv[3] == '1', _diagnostics=sys.argv[4] == '1')
+        _synchronized_hooks=sys.argv[3] == '1', _diagnostics=sys.argv[4] == '1', _timing_only=sys.argv[5] == '1')
 finally:
     patch.undo()
 """
         child = subprocess.run(
-            [sys.executable, "-B", "-c", program, str(tmp_path), str(caller_count), str(int(_synchronized_hooks)), str(int(_diagnostics))],
+            [sys.executable, "-B", "-c", program, str(tmp_path), str(caller_count), str(int(_synchronized_hooks)), str(int(_diagnostics)), str(int(_timing_only))],
             cwd=Path(__file__).resolve().parents[1],
             capture_output=True, text=True, encoding="utf-8", timeout=120,
         )
@@ -64,7 +67,7 @@ finally:
 
     workers, native_attempts, statements, sqlite_errors, hook_calls = [], [], [], [], []
     phases, health_samples, emissions, results, fanout_stacks = [], [], {}, [], {}
-    operation_spans, stage_spans = [], []
+    operation_spans, stage_spans, writer_spans = [], [], []
     sql_spans, transaction_spans = [], []
     active_operations, active_stages, active_transactions = {}, {}, {}
     transport_events, server_spans, pool_spans = [], [], []
@@ -95,12 +98,12 @@ finally:
                         active_stages[span["thread_id"]] = previous_stage
             return measured
 
-        for key in ("relay_turn_snapshot_callback", "relay_turn_callback",
-                    "relay_turn_admission_callback"):
+        for key in (("relay_turn_snapshot_callback", "relay_turn_callback",
+                     "relay_turn_admission_callback") if _diagnostics else ()):
             if kwargs.get(key) is not None:
                 kwargs[key] = measure_stage(kwargs[key], key)
         factory = kwargs.get("relay_activation_callback_factory")
-        if factory is not None:
+        if _diagnostics and factory is not None:
             measured_factory = measure_stage(factory, "relay_activation_callback_factory")
 
             def prepare_projection(callback):
@@ -109,12 +112,36 @@ finally:
 
             # The factory uses default-callback identity to select its optimized path.
             kwargs["relay_activation_callback_factory"] = prepare_projection
-        elif kwargs.get("relay_activation_callback") is not None:
+        elif _diagnostics and kwargs.get("relay_activation_callback") is not None:
             kwargs["relay_activation_callback"] = measure_stage(
                 kwargs["relay_activation_callback"], "relay_activation_callback")
         relay = kwargs.get("relay_service")
-        if relay is not None:
+        if _diagnostics and relay is not None:
             monkeypatch.setattr(relay, "turn", measure_stage(relay.turn, "durable_turn"))
+        if _timing_only and relay is not None:
+            original_begin = relay._store._begin_relay_immediate
+
+            @contextmanager
+            def timed_writer():
+                if not fanout:
+                    with original_begin() as db:
+                        yield db
+                    return
+                thread_id = threading.get_ident()
+                span = {"operation": active_operations.get(thread_id), "thread_id": thread_id,
+                        "entered": time.perf_counter()}
+                writer_spans.append(span)
+                try:
+                    with original_begin() as db:
+                        span["acquired"] = time.perf_counter()
+                        yield db
+                except BaseException as error:
+                    span["error_type"] = type(error).__name__
+                    raise
+                finally:
+                    span["finished"] = time.perf_counter()
+
+            monkeypatch.setattr(relay._store, "_begin_relay_immediate", timed_writer)
 
         def measure_runner(runner, lane):
             async def measured(operation):
@@ -126,6 +153,8 @@ finally:
                 label = next((name for name in names if name.endswith("_callback")), "unlabelled")
                 if "operation_name" in names:
                     label = operation.__closure__[names.index("operation_name")].cell_contents
+                elif "relay_request" in names:
+                    label = "exact_turn_composite"
                 span = {"lane": lane, "operation": label, "submitted": time.perf_counter()}
                 operation_spans.append(span)
 
@@ -234,7 +263,7 @@ finally:
             })
 
     monkeypatch.setattr(codex_wake, "_schedule_reserved_codex_relay_wake", observe_schedule)
-    if _diagnostics:
+    if _diagnostics or _timing_only:
         monkeypatch.setattr(dependencies, "create_router", observe_router)
     monkeypatch.setattr(codex_bridge_pipe, "start_shadow_service", lambda *_: None)
     monkeypatch.setattr(codex_bridge_pipe, "start_inventory_service", lambda **_: None)
@@ -567,10 +596,11 @@ finally:
                 frame = frame.f_back
             stacks[thread.name + ":" + str(ident)] = stack
         evidence = {
-            "callers": caller_count, "synchronized_hooks": _synchronized_hooks, "diagnostics": _diagnostics,
+            "callers": caller_count, "synchronized_hooks": _synchronized_hooks, "diagnostics": _diagnostics, "timing_only": _timing_only,
             "phases": phases, "health": health_samples,
             "operation_spans": operation_spans,
             "stage_spans": stage_spans,
+            "writer_spans": writer_spans,
             "sql_spans": sql_spans, "transaction_spans": transaction_spans,
             "transport_events": transport_events, "server_spans": server_spans,
             "pool_spans": pool_spans,

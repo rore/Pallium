@@ -8,7 +8,7 @@ import time
 from collections.abc import Awaitable
 from typing import Any, Callable
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request
 from fastapi.responses import Response
 from pydantic import ValidationError
 
@@ -1085,26 +1085,30 @@ def create_router(
             ),
         )
 
+    async def _complete_relay_ack(result, scope, callback_name):
+        try:
+            await _run_relay_operation(
+                lambda: relay_ack_callback(result, scope),
+                codex=result.get("recipient_runtime") not in {"claude-code", "opencode"},
+            )
+        except Exception:
+            logger.exception("%s failed after persistence", callback_name)
+
     @router.post("/relay/deliveries/ack", response_model=RelayAckResponse)
-    async def relay_ack(request: RelayAckRequest):
+    async def relay_ack(request: RelayAckRequest, background_tasks: BackgroundTasks):
         result = await _relay_call("ack", lambda: _relay().acknowledge(**request.model_dump()))
         if relay_ack_callback is not None:
-            try:
-                await _run_relay_operation(lambda: relay_ack_callback(result, {
-                    "container_ref": request.container_ref,
-                }), codex=result.get("recipient_runtime") not in {"claude-code", "opencode"})
-            except Exception:
-                logger.exception("Relay ACK callback failed after persistence")
+            # Response-owned cleanup still drains before ASGI lifespan shutdown.
+            background_tasks.add_task(_complete_relay_ack, result,
+                                      {"container_ref": request.container_ref}, "Relay ACK callback")
         return result
 
     @router.post("/relay/deliveries/mcp-ack", response_model=RelayAckResponse)
-    async def relay_mcp_ack(request: RelayMcpAckRequest):
+    async def relay_mcp_ack(request: RelayMcpAckRequest, background_tasks: BackgroundTasks):
         result = await _relay_call("mcp_ack", lambda: _relay().ack_by_receipt(**request.model_dump()))
         if relay_ack_callback is not None:
-            try:
-                await _run_relay_operation(lambda: relay_ack_callback(result, {"container_ref": request.container_ref}), codex=result.get("recipient_runtime") not in {"claude-code", "opencode"})
-            except Exception:
-                logger.exception("Relay MCP ACK callback failed after persistence")
+            background_tasks.add_task(_complete_relay_ack, result,
+                                      {"container_ref": request.container_ref}, "Relay MCP ACK callback")
         return result
 
     @router.post("/internal/claude-wake/register", status_code=204)

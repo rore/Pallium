@@ -17,6 +17,157 @@ from storage.vector_index import VectorIndexConfig
 from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
 
 
+@pytest.mark.parametrize("receipt_ack", [False, True])
+@pytest.mark.parametrize("callback_failure", [False, True])
+def test_tcp_ack_receipt_precedes_owned_callback_and_shutdown_drains(
+    tmp_path, monkeypatch, caplog, receipt_ack, callback_failure,
+) -> None:
+    import socket
+    from contextlib import ExitStack
+    from concurrent.futures import ThreadPoolExecutor
+    from app import dependencies, main as app_main, codex_bridge_pipe
+    from scripts.live_funnel_smoke import ScratchServer
+
+    entered, release, finished = threading.Event(), threading.Event(), threading.Event()
+    closed, shutdown_started = threading.Event(), threading.Event()
+    calls, dispatches, native_calls = [], [], []
+    original_router = dependencies.create_router
+    cleanup, original_storage = ExitStack(), app_main.build_storage_provider
+
+    def own_storage(*args, **kwargs):
+        storage = original_storage(*args, **kwargs)
+        original_close = storage.close
+
+        def close():
+            closed.set()
+            original_close()
+
+        monkeypatch.setattr(storage, "close", close)
+        cleanup.callback(storage.close)
+        return storage
+
+    def router(service, **kwargs):
+        callback = kwargs["relay_ack_callback"]
+
+        def held_callback(result, scope):
+            calls.append((result["delivery_id"], result["state"], result["recipient_runtime"]))
+            entered.set()
+            try:
+                if not release.wait(5):
+                    raise RuntimeError("callback gate watchdog expired")
+                if callback_failure:
+                    raise RuntimeError("controlled ACK cleanup failure")
+                return callback(result, scope)
+            finally:
+                finished.set()
+
+        kwargs["relay_ack_callback"] = held_callback
+        kwargs["relay_send_callback"] = None
+        return original_router(service, **kwargs)
+
+    def schedule(result, *_args, **_kwargs):
+        dispatches.extend(row["delivery_id"] for row in result["deliveries"])
+
+    monkeypatch.setattr(dependencies, "create_router", router)
+    monkeypatch.setattr(dependencies, "schedule_codex_relay_wake", schedule)
+    monkeypatch.setattr(app_main, "build_storage_provider", own_storage)
+    monkeypatch.setattr("app.mcp.server.create_server", lambda **_: (_ for _ in ()).throw(ImportError()))
+    monkeypatch.setattr(codex_bridge_pipe, "start_shadow_service", lambda *_: None)
+    monkeypatch.setattr(codex_bridge_pipe, "start_inventory_service", lambda **_: None)
+    monkeypatch.setattr(codex_bridge_pipe, "start_retained_service", lambda **_: None)
+    app = create_app(AppConfig(
+        storage_backend="sqlite", sqlite_url=f"sqlite:///{tmp_path / 'main.db'}",
+        relay_sqlite_url=f"sqlite:///{tmp_path / 'relay.db'}",
+        default_use_case="demo_agent_memory", semantic_packages=DEMO_SEMANTIC_PACKAGES,
+        vector_index=VectorIndexConfig(enabled=False),
+    ))
+    cleanup.callback(app.state.pallium_service.close)
+    registry = app.state.codex_wake_registry
+    assert registry.initialize(old_owner_drained=True)
+    scope = {"container_ref": "git:example.test/ack-response-owner"}
+    with socket.socket() as reservation:
+        reservation.bind(("127.0.0.1", 0))
+        port = reservation.getsockname()[1]
+    server = ScratchServer(app, "127.0.0.1", port)
+    pool = ThreadPoolExecutor(max_workers=1)
+    shutdown = None
+    response = None
+    closed_by_lifespan = False
+    try:
+        server.__enter__()
+        with httpx.Client(base_url=server.base_url, timeout=2) as client:
+            for session in ("sender", "target"):
+                registered = client.post("/relay/turn", json={"runtime": "codex", "session_ref": session, **scope})
+                assert registered.status_code == 200, registered.text
+            sent = []
+            for payload in ("first café 東京", "next café 東京"):
+                message = client.post("/relay/messages", json={
+                    "sender_runtime": "codex", "sender_session_ref": "sender",
+                    "recipient": "codex:target", "payload": payload, **scope,
+                })
+                assert message.status_code == 200, message.text
+                sent.append(message.json())
+            first = sent[0]["deliveries"][0]
+            saved = registry.reserve(
+                recipient_endpoint_id=first["recipient_endpoint_id"],
+                delivery_id=first["delivery_id"], session_ref="target", **scope,
+            )
+            assert saved is not None
+            claimed = client.post("/relay/turn", json={
+                "runtime": "codex", "session_ref": "target", "max_messages": 1,
+                "wake_delivery_id": first["delivery_id"], **scope,
+            })
+            assert claimed.status_code == 200, claimed.text
+            delivery, = claimed.json()["deliveries"]
+            assert delivery["delivery_id"] == first["delivery_id"]
+            assert delivery["attempts"] == 1
+            path = "/relay/deliveries/mcp-ack" if receipt_ack else "/relay/deliveries/ack"
+            proof = {"receipt": delivery["receipt"]} if receipt_ack else {"claim_token": delivery["claim_token"]}
+            request = pool.submit(client.post, path, json={"delivery_id": delivery["delivery_id"], **proof, **scope}, timeout=0.5)
+            assert entered.wait(2), "actual ACK callback did not enter"
+            try:
+                response = request.result(2)
+            except httpx.TimeoutException:
+                pass
+            retained = client.get(f"/relay/messages/{sent[0]['message_id']}", params=scope)
+            assert retained.status_code == 200, retained.text
+            stored, = retained.json()["deliveries"]
+            assert (stored["delivery_id"], stored["state"], stored["attempts"]) == (delivery["delivery_id"], "delivered", 1)
+            assert registry.run_if_current(saved, lambda: native_calls.append("duplicate")) == (False, None)
+            assert native_calls == []
+            assert not finished.is_set() and not closed.is_set()
+
+            def stop():
+                shutdown_started.set()
+                server.__exit__()
+
+            shutdown = threading.Thread(target=stop, name="ack-owned-shutdown")
+            shutdown.start()
+            assert shutdown_started.wait(2)
+            shutdown.join(0.1)
+            assert shutdown.is_alive() and not closed.is_set(), "shutdown bypassed request-owned callback"
+    finally:
+        release.set()
+        pool.shutdown(wait=True)
+        if shutdown is not None:
+            shutdown.join(10)
+        server.__exit__()
+        closed_by_lifespan = closed.is_set()
+        cleanup.close()
+    assert shutdown is not None and not shutdown.is_alive()
+    assert server._thread is not None and not server._thread.is_alive()
+    assert finished.is_set() and closed_by_lifespan
+    assert calls == [(first["delivery_id"], "delivered", "codex")]
+    assert dispatches == ([] if callback_failure else [sent[1]["deliveries"][0]["delivery_id"]])
+    if callback_failure:
+        assert any("Relay ACK callback failed after persistence" in record.message or
+                   "Relay MCP ACK callback failed after persistence" in record.message for record in caplog.records)
+    assert response is not None, "durable ACK response waited for callback cleanup"
+    assert response.status_code == 200, response.text
+    assert response.json()["delivery_id"] == first["delivery_id"]
+    assert response.json()["state"] == "delivered"
+
+
 @pytest.mark.parametrize("failure", [
     None, "snapshot", "turn_callback", "admission", "projection",
     "not_found", "conflict", "unavailable", "busy", "invalid", "runner_busy", "cancel_after_claim",
