@@ -1204,6 +1204,8 @@ class TestFilteredRawSourceInventory:
             resumed.run_sync()
             assert resumed.status()["status"] == "completed"
             assert resumed_holder.index.known_entry_ids() == frozenset({"a-repaired", "z-old"})
-            assert RebuildCheckpoint.load(resumed._state_path).entry_count_total == 2
+            assert resumed.status()["entries_total"] == 2
+            assert resumed.status()["entries_processed"] == 2
+            assert not resumed._state_path.exists()
         finally:
             storage.close()

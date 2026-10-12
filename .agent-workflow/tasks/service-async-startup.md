@@ -1,5 +1,20 @@
 # Asynchronous service startup and truthful readiness
 
+Combined verification (2026-10-12): integration head dc8b9798 passed 228 checks
+with one stale completed-checkpoint test expectation. Completion intentionally
+removes the durable checkpoint after swapping the live index. The corrected
+node retains cancellation byte-preservation and exact live-ID assertions, checks
+status entries_total/entries_processed are both two, and requires the checkpoint
+file to be absent. It passed separately (1 passed, 1.23s). Independent architecture
+review accepted the interaction and expectation correction. Evidence is preserved
+under shared build/service-performance-20261012/combined-integration:
+combined-228-pass-1-fail.log SHA256 F27D40D5474233EB576AEE6E9EB1C71C9C9AC71DB375CC86EFDF4B80792E6B11;
+checkpoint-node-green.log SHA256 64ECEBDAE81C71D9E3B26AF36E6DDECBC6F5DC50BDFB7D6690CA58C4939F09C6.
+Both owned runner children settled and no network guard logs were produced.
+The preceding sandbox attempt had 229 setup errors and interpreter-location
+failure; it is not application validation. Full selection and combined review
+remain required after the outstanding performance and retention work.
+
 Root integration checkpoint (2026-10-12): reviewed startup component 88004c9b and
 recovery branch ff8d9825 are combined at dcf2d0a3 in this isolated checkout.
 Recovery's original Work Record and baseline commit are preserved by the merge.
