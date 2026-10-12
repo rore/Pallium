@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
@@ -281,21 +282,31 @@ def test_expired_status_rereads_ack_committed_before_writer_acquisition(
     paused = threading.Event()
     resume = threading.Event()
     reads = []
+    original_begin = storage._begin_relay_immediate
 
-    def pause_writer(connection, cursor, statement, parameters, context, many):
-        if "FROM relay_messages" in statement and parameters == (sent["message_id"],):
-            reads.append(connection)
-        if statement == "BEGIN IMMEDIATE" and not paused.is_set():
+    @contextmanager
+    def pause_before_writer_acquisition():
+        # Let ACK win before status owns either local or SQLite writer admission.
+        if not paused.is_set():
             paused.set()
             assert resume.wait(10), "ACK did not release expiry writer"
+        with original_begin() as session:
+            yield session
 
-    event.listen(storage._relay_engine, "before_cursor_execute", pause_writer)
+    monkeypatch.setattr(storage, "_begin_relay_immediate", pause_before_writer_acquisition)
+
+    def observe_reads(connection, cursor, statement, parameters, context, many):
+        if "FROM relay_messages" in statement and parameters == (sent["message_id"],):
+            reads.append(connection)
+
+    event.listen(storage._relay_engine, "before_cursor_execute", observe_reads)
     try:
         with ThreadPoolExecutor(max_workers=1) as pool:
             pending = pool.submit(client.get, f"/relay/messages/{sent['message_id']}", params=SCOPE)
             try:
                 assert paused.wait(10), "expired status never reached writer fallback"
                 assert len(reads) == 1
+                assert not storage._relay_writer_lock.locked()
                 ack = client.post("/relay/deliveries/ack", json={
                     "delivery_id": delivery["delivery_id"],
                     "claim_token": delivery["claim_token"], **SCOPE,
@@ -309,7 +320,7 @@ def test_expired_status_rereads_ack_committed_before_writer_acquisition(
             assert reads[0] is not reads[1]
     finally:
         resume.set()
-        event.remove(storage._relay_engine, "before_cursor_execute", pause_writer)
+        event.remove(storage._relay_engine, "before_cursor_execute", observe_reads)
     returned = response.json()["deliveries"][0]
     assert returned["state"] == "delivered"
     assert returned["delivered_at"] is not None

@@ -798,6 +798,7 @@ class TestCLICommands:
             return []
 
         mock_storage.list_index_entries_by_type_page.side_effect = page
+        mock_storage.list_raw_source_vector_backfill_page.return_value = []
         mock_storage.get_memory_object.return_value = memory_obj
         mock_storage.get_source_item.return_value = source_item
         mock_storage.update_index_entry_text_view = MagicMock()
@@ -823,6 +824,8 @@ class TestCLICommands:
         from storage.vector_index import VectorIndex
         loaded = VectorIndex.load(index_path)
         assert loaded.entry_count() == 2
+        assert loaded.known_entry_ids() == frozenset({"e1", "e2"})
+        mock_storage.list_raw_source_vector_backfill_page.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
