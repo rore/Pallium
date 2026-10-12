@@ -341,8 +341,8 @@ Root supplied October9 startup19.748s: embedding10.083s includes HuggingFace mod
 ## Result review
 
 Agent technical review: /root/architecture_check independent final combined review and 2026-10-12 fixture/evidence-reuse acceptance in this task.
-Reviewed revision: 20dadaf5be1374012c02710d8a2da3dcdf7c6170 plus reviewed status test SHA256 72AB363F2335C0C0CB204464C9808A9970810BC84311DCCF1EC5016C9482B3B5 and CLI test SHA256 DB4ED95E21CE751C5C78AC9EAD1C85EA510D3D61B917EAC5F91DC59757EB6C8F.
-Verification adequacy: Full selected local coverage completed; its two fixture failures are corrected and pass individually. Four slow load variants and focused boundary/lifecycle evidence remain valid on unchanged production source. Exact published-head Linux/Windows full CI is required before merge. Intermittent pre-existing credential revocation and historical attribution remain explicit limits.
+Reviewed revision: d7a7bb78eaf515b4a40c03cc6df809ceece7c40a test/CI correction, following accepted 58fb2a3d production and 215c8437 focused corrections; /root/architecture_check reviewed the actual seven-file delta before commit.
+Verification adequacy: Latest full local run completed 6,893 passed and one pin failure, explicitly tracked as REL-15; focused corrections and instrumentation passed. Real release-recovery proof, 390 affected and 13 final focused checks passed. Four slow load variants remain accepted on unchanged Relay writer source. Exact published-head Linux/Windows full CI is required before merge; setup refusal diagnostics are not root-cause fixes. REL-14, REL-15 and historical attribution remain open.
 
 Implementation and component review are complete. Combined full validation is
 still in progress after correcting stale test fixtures. Intermittent credential
