@@ -959,6 +959,9 @@ async def test_mcp_cancellation_releases_unused_channel_for_fresh_request(monkey
         return task
 
     async def exercise(session):
+        catalog = await session.list_tools()
+        assert any(tool.name == "pallium_relay_status" for tool in catalog.tools)
+        assert not clients and not calls and not operations
         original_send_request = session.send_request
         pending = []
 
