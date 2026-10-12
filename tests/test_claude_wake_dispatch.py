@@ -267,14 +267,10 @@ class TestDispatch:
 
         registry.attempt.assert_not_called()
 
-    def test_valid_selector_alias_calls_attempt(self, monkeypatch) -> None:
+    def test_valid_selector_alias_calls_attempt(self) -> None:
         """Valid @alias selector calls probe."""
-        import app.claude_wake as wake
 
         native_thread = threading.Thread
-        inline_threading = SimpleNamespace(**vars(wake.threading))
-        inline_threading.Thread = lambda *, target, **kwargs: SimpleNamespace(start=target)
-        monkeypatch.setattr(wake, "threading", inline_threading)
         registry = MagicMock(spec=ClaudeWakeRegistry)
         result = {
             "recipient": "claude-code:@work",
@@ -292,7 +288,9 @@ class TestDispatch:
             "container_ref": "git:example/repo",
         }
 
-        assert schedule_claude_relay_wake(result, scope, registry=registry) is not None
+        worker = schedule_claude_relay_wake(result, scope, registry=registry)
+        assert isinstance(worker, threading.Thread)
+        _join(worker)
 
         registry.attempt.assert_called_once()
         args = registry.attempt.call_args.kwargs

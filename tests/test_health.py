@@ -160,6 +160,7 @@ async def test_production_factory_keeps_http_responsive_during_build(monkeypatch
 
 @pytest.mark.asyncio
 async def test_production_factory_keeps_mcp_lifespan_on_one_task(monkeypatch, test_db_url: str) -> None:
+    import httpx
     from app import main
 
     manager = pytest.importorskip("mcp.server.streamable_http_manager")
@@ -178,7 +179,10 @@ async def test_production_factory_keeps_mcp_lifespan_on_one_task(monkeypatch, te
     monkeypatch.setattr(manager.StreamableHTTPSessionManager, "run", run)
     application = main.app()
     async with application.router.lifespan_context(application):
-        pass
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=application), base_url="http://test",
+        ) as client:
+            await _wait_for_health(client, lambda body: body.get("initialized") is True)
 
     assert [phase for phase, _task in lifecycle_tasks] == ["enter", "exit"]
     assert lifecycle_tasks[0][1] is lifecycle_tasks[1][1]
