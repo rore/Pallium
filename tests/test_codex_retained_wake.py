@@ -455,9 +455,11 @@ def test_inherited_stop_timeout_invalidates_enrollment_evidence(client, retained
     assert not worker.is_alive()
 
 
+@pytest.mark.parametrize("failure_at", ["accept", "read"])
 def test_inherited_source_io_unresolved_invalidates_enrollment_evidence(
-    client, retained, monkeypatch,
+    client, retained, monkeypatch, caplog, failure_at,
 ):
+    monkeypatch.setattr(bridge._log, "handlers", [*bridge._log.handlers, caplog.handler])
     service, request, _ = retained
     assert service._process(request, service.source, 0, float("inf"))["status"] == "registered"
     client.app.state.codex_wake_registry.retained_service = service
@@ -468,7 +470,8 @@ def test_inherited_source_io_unresolved_invalidates_enrollment_evidence(
             PIPE_ACCESS_DUPLEX=1, PIPE_TYPE_MESSAGE=2, PIPE_READMODE_MESSAGE=4,
             PIPE_WAIT=8, PIPE_REJECT_REMOTE_CLIENTS=16,
             CreateNamedPipe=lambda *args: 91,
-            GetNamedPipeClientProcessId=lambda handle: 40,
+            GetNamedPipeClientProcessId=lambda handle: 42,
+            GetNamedPipeServerProcessId=lambda handle: 40,
             DisconnectNamedPipe=lambda handle: None,
         ),
         event=SimpleNamespace(WaitForSingleObject=lambda *args: 258,
@@ -477,9 +480,21 @@ def test_inherited_source_io_unresolved_invalidates_enrollment_evidence(
     class BrokenIO:
         def __init__(self, *_args):
             self.unresolved = False
+            self.reads = 0
         def accept(self, _deadline):
+            if failure_at == "read":
+                return
             self.unresolved = True
             raise bridge.ShadowUnavailable("transport-failed")
+        def read(self, _deadline):
+            self.reads += 1
+            if self.reads == 1:
+                assert not any("codex_retained_source_channel_closed" in record.message for record in caplog.records)
+                raise bridge.ShadowUnavailable("deadline")
+            self.unresolved = True
+            error = bridge.ShadowUnavailable("transport-failed")
+            error.args = ("private-error-sentinel",)
+            raise error
         def close(self):
             pass
     monkeypatch.setattr(bridge, "_native", lambda: w)
@@ -490,10 +505,41 @@ def test_inherited_source_io_unresolved_invalidates_enrollment_evidence(
     monkeypatch.setattr(bridge, "_atomic_private", lambda *_args: None)
     monkeypatch.setattr(bridge, "_PipeIO", BrokenIO)
     service._run()
+    records = [record for record in caplog.records if "codex_retained_source_channel_closed" in record.message]
+    assert len(records) == (1 if failure_at == "read" else 0)
+    if records:
+        message, observed_at = records[0].message.split(" observed_at=")
+        assert message == "codex_retained_source_channel_closed category=transport-failed unresolved=True stopping=False"
+        assert bridge.datetime.fromisoformat(observed_at).utcoffset().total_seconds() == 0
+        assert records[0].exc_info is None
+        assert records[0].created > 0
+    assert "private-error-sentinel" not in caplog.text
     assert service.unresolved and service.enrollment_diagnostics() is None
     for path in ("/status", "/dashboard/api/relay/summary"):
         enrollment = client.get(path).json()["relay_wake"]["native_enrollment"]
         assert enrollment["state"] == "unavailable"
+
+
+@pytest.mark.parametrize("category,expected", [("peer-gone", "peer-gone"), ("private-category-sentinel", "unavailable")])
+def test_retained_maintenance_failure_logs_bounded_category_once(retained, monkeypatch, caplog, category, expected):
+    monkeypatch.setattr(bridge._log, "handlers", [*bridge._log.handlers, caplog.handler])
+    service, _ = register(retained)
+    def fail():
+        error = bridge.ShadowUnavailable(category)
+        error.args = ("private-error-sentinel",)
+        raise error
+    monkeypatch.setattr(service, "_check_custody", fail)
+    service._maintain()
+    service._maintain()
+    records = [record for record in caplog.records if "codex_retained_maintenance_failed" in record.message]
+    assert len(records) == 1
+    message, observed_at = records[0].message.split(" observed_at=")
+    assert message == f"codex_retained_maintenance_failed category={expected} unresolved=False stopping=False"
+    assert bridge.datetime.fromisoformat(observed_at).utcoffset().total_seconds() == 0
+    assert records[0].exc_info is None and records[0].created > 0
+    assert "private-error-sentinel" not in caplog.text
+    assert "private-category-sentinel" not in caplog.text
+    assert service.custody is None
 
 @pytest.fixture
 def http_wake(client, retained, monkeypatch):

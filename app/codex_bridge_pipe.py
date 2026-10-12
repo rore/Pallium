@@ -1925,7 +1925,12 @@ class InventoryService:
                         response.update(version=1, epoch=self.epoch,
                                         sequence=candidate if _integer(candidate, 1) else sequence)
                         io.write(response, deadline)
-                except ShadowUnavailable:
+                except ShadowUnavailable as exc:
+                    if self.retained:
+                        category = exc.category if exc.category in _INVENTORY_FAILURE_CATEGORIES else "unavailable"
+                        _log.warning("codex_retained_source_channel_closed category=%s unresolved=%s stopping=%s observed_at=%s",
+                                     category, io.unresolved, self.stop_event.is_set(),
+                                     datetime.now(timezone.utc).isoformat())
                     if io.unresolved or self.stop_event.is_set():
                         raise
                 finally:
@@ -2492,6 +2497,11 @@ class RetainedService(InventoryService):
             try:
                 self._check_custody()
             except Exception as exc:
+                category = getattr(exc, "category", None)
+                category = category if category in _INVENTORY_FAILURE_CATEGORIES else "unavailable"
+                _log.warning("codex_retained_maintenance_failed category=%s unresolved=%s stopping=%s observed_at=%s",
+                             category, self.unresolved or bool(self.custody and self.custody.unresolved),
+                             self.stop_event.is_set(), datetime.now(timezone.utc).isoformat())
                 self._record_enrollment_failure("maintenance", _inventory_reason(exc))
                 self._drop()
         finally:
