@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import socket
 import subprocess
 import sys
@@ -24,8 +25,10 @@ from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
 @pytest.mark.slow
 @pytest.mark.parametrize("caller_count", [24, 50])
 def test_concurrent_http_hook_journeys_keep_exact_delivery_lifecycle(
-    tmp_path, monkeypatch, caller_count, _isolated=False, _synchronized_hooks=False,
+    tmp_path, monkeypatch, caller_count, _isolated=False, _synchronized_hooks=False, _diagnostics=None,
 ) -> None:
+    if _diagnostics is None:
+        _diagnostics = os.environ.get('PALLIUM_RELAY_LOAD_DIAGNOSTICS') == '1'
     if not _isolated:
         # As in runtime_logging coverage, isolate process-wide logging from pytest.
         program = """
@@ -40,12 +43,12 @@ patch = pytest.MonkeyPatch()
 try:
     test_concurrent_http_hook_journeys_keep_exact_delivery_lifecycle(
         Path(sys.argv[1]), patch, int(sys.argv[2]), _isolated=True,
-        _synchronized_hooks=sys.argv[3] == '1')
+        _synchronized_hooks=sys.argv[3] == '1', _diagnostics=sys.argv[4] == '1')
 finally:
     patch.undo()
 """
         child = subprocess.run(
-            [sys.executable, "-B", "-c", program, str(tmp_path), str(caller_count), str(int(_synchronized_hooks))],
+            [sys.executable, "-B", "-c", program, str(tmp_path), str(caller_count), str(int(_synchronized_hooks)), str(int(_diagnostics))],
             cwd=Path(__file__).resolve().parents[1],
             capture_output=True, text=True, encoding="utf-8", timeout=120,
         )
@@ -231,7 +234,8 @@ finally:
             })
 
     monkeypatch.setattr(codex_wake, "_schedule_reserved_codex_relay_wake", observe_schedule)
-    monkeypatch.setattr(dependencies, "create_router", observe_router)
+    if _diagnostics:
+        monkeypatch.setattr(dependencies, "create_router", observe_router)
     monkeypatch.setattr(codex_bridge_pipe, "start_shadow_service", lambda *_: None)
     monkeypatch.setattr(codex_bridge_pipe, "start_inventory_service", lambda **_: None)
     monkeypatch.setattr(codex_bridge_pipe, "start_retained_service", InertRetainedTransport)
@@ -250,6 +254,8 @@ finally:
     assert app.state.codex_wake_registry.initialize(old_owner_drained=True)
 
     async def observed_app(scope, receive, send):
+        if not _diagnostics:
+            return await app(scope, receive, send)
         reference = dict(scope.get("headers", ())).get(b"x-pallium-performance")
         if scope["type"] != "http" or reference is None:
             return await app(scope, receive, send)
@@ -266,6 +272,8 @@ finally:
         return await app(scope, receive, observed_send)
 
     def transport_options(reference):
+        if not _diagnostics:
+            return {}
         async def trace_event(name, _info):
             # Discard connection objects, headers and all other trace contents.
             transport_events.append({"request": reference, "event": name, "at": time.perf_counter()})
@@ -292,7 +300,8 @@ finally:
         finally:
             span["finished"] = time.perf_counter()
 
-    monkeypatch.setattr(AsyncPoolRequest, "wait_for_connection", observe_pool_wait)
+    if _diagnostics:
+        monkeypatch.setattr(AsyncPoolRequest, "wait_for_connection", observe_pool_wait)
 
     common = _load("concurrent_codex_common", "integrations/codex/hooks/common.py")
     assert common.hook_deadline() is None
@@ -330,11 +339,12 @@ finally:
             span["finished"] = time.perf_counter()
             span["seconds"] = span["finished"] - started
 
-    monkeypatch.setattr(common, "relay_request", observe_hook_request)
-    monkeypatch.setattr(common.urllib.request, "urlopen", observe_urlopen)
-    event.listen(Engine, "before_cursor_execute", observe_sql)
-    event.listen(Engine, "after_cursor_execute", after_sql)
-    event.listen(Engine, "handle_error", observe_sql_error)
+    if _diagnostics:
+        monkeypatch.setattr(common, "relay_request", observe_hook_request)
+        monkeypatch.setattr(common.urllib.request, "urlopen", observe_urlopen)
+        event.listen(Engine, "before_cursor_execute", observe_sql)
+        event.listen(Engine, "after_cursor_execute", after_sql)
+        event.listen(Engine, "handle_error", observe_sql_error)
     scope = {"container_ref": "git:example.test/concurrent-http-東京"}
 
     async def exercise(base_url):
@@ -343,8 +353,8 @@ finally:
         ready_count = 0
         # Health must not queue behind the journeys' client-side connection pool.
         async with (
-            httpx.AsyncClient(base_url=base_url, timeout=30, event_hooks={"request": [observe_request]}) as client,
-            httpx.AsyncClient(base_url=base_url, timeout=30, event_hooks={"request": [observe_request]}) as health_client,
+            httpx.AsyncClient(base_url=base_url, timeout=30, event_hooks={"request": [observe_request]} if _diagnostics else None) as client,
+            httpx.AsyncClient(base_url=base_url, timeout=30, event_hooks={"request": [observe_request]} if _diagnostics else None) as health_client,
         ):
             for runtime, session in [
                 ("opencode", "mixed-sender"),
@@ -359,8 +369,8 @@ finally:
                 began = time.perf_counter()
                 reference = f"{index}:{phase}"
                 options = transport_options(reference)
-                kwargs["headers"] = {**kwargs.get("headers", {}), **options["headers"]}
-                kwargs["extensions"] = {**kwargs.get("extensions", {}), **options["extensions"]}
+                kwargs["headers"] = {**kwargs.get("headers", {}), **options.get("headers", {})}
+                kwargs["extensions"] = {**kwargs.get("extensions", {}), **options.get("extensions", {})}
                 response = await client.request(method, path, **kwargs)
                 phases.append({"index": index, "phase": phase,
                                "request": reference, "started": began, "finished": time.perf_counter(),
@@ -480,7 +490,7 @@ finally:
                     except Exception as error:
                         health_samples.append({"seconds": time.perf_counter() - began,
                                                "error": type(error).__name__})
-                    if not fanout_stacks and not stop_health.is_set():
+                    if _diagnostics and not fanout_stacks and not stop_health.is_set():
                         for ident, frame in sys._current_frames().items():
                             thread = next((thread for thread in threading.enumerate() if thread.ident == ident), None)
                             if thread is None or not ("AnyIO" in thread.name or "scratch-server" == thread.name):
@@ -510,18 +520,19 @@ finally:
             assert failures == [], failures
             assert len(set(results)) == len(emissions) == caller_count
             assert set(results) == set(emissions.values())
-            assert operation_spans and all(
-                span["submitted"] <= span["worker_entered"] <= span["worker_finished"] <= span["await_finished"]
-                for span in operation_spans
-            )
-            assert {"send", "activation_projection"} <= {span["operation"] for span in operation_spans}
-            assert server_spans and all(
-                span["entered"] <= span["response_started"] <= span["body_sent"]
-                for span in server_spans
-            )
-            assert {phase["request"] for phase in phases if "request" in phase} <= {
-                span["request"] for span in server_spans
-            }
+            if _diagnostics:
+                assert operation_spans and all(
+                    span["submitted"] <= span["worker_entered"] <= span["worker_finished"] <= span["await_finished"]
+                    for span in operation_spans
+                )
+                assert {"send", "activation_projection"} <= {span["operation"] for span in operation_spans}
+                assert server_spans and all(
+                    span["entered"] <= span["response_started"] <= span["body_sent"]
+                    for span in server_spans
+                )
+                assert {phase["request"] for phase in phases if "request" in phase} <= {
+                    span["request"] for span in server_spans
+                }
             listed = await request(-1, "sessions", "GET", "/relay/sessions", params=scope)
             assert len(listed) == caller_count + 1
             assert common.hook_deadline() is None
@@ -541,11 +552,12 @@ finally:
                 app.state.pallium_service._relay_trace_executor.submit(lambda: None).result(2)
     finally:
         fanout = False
-        event.remove(Engine, "before_cursor_execute", observe_sql)
-        event.remove(Engine, "after_cursor_execute", after_sql)
-        event.remove(Engine, "handle_error", observe_sql_error)
+        if _diagnostics:
+            event.remove(Engine, "before_cursor_execute", observe_sql)
+            event.remove(Engine, "after_cursor_execute", after_sql)
+            event.remove(Engine, "handle_error", observe_sql_error)
         stacks = {}
-        for ident, frame in sys._current_frames().items():
+        for ident, frame in (sys._current_frames().items() if _diagnostics else ()):
             thread = next((thread for thread in threading.enumerate() if thread.ident == ident), None)
             if thread is None or not ("AnyIO" in thread.name or "scratch-server" == thread.name):
                 continue
@@ -555,7 +567,7 @@ finally:
                 frame = frame.f_back
             stacks[thread.name + ":" + str(ident)] = stack
         evidence = {
-            "callers": caller_count, "synchronized_hooks": _synchronized_hooks,
+            "callers": caller_count, "synchronized_hooks": _synchronized_hooks, "diagnostics": _diagnostics,
             "phases": phases, "health": health_samples,
             "operation_spans": operation_spans,
             "stage_spans": stage_spans,

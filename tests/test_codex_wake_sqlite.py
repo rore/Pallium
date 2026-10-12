@@ -29,6 +29,150 @@ from app.dependencies import build_router
 SCOPE = {"container_ref": "git:example.test/wake-東京"}
 
 
+@pytest.mark.parametrize('phase', ['preclaim', 'projection'])
+def test_http_fresh_authority_observation_does_not_wait_for_native_owner(
+    relay_store, tmp_path, monkeypatch, phase,
+):
+    from concurrent.futures import ThreadPoolExecutor
+    from app import dependencies
+
+    relay, storage, _ = relay_store
+    registry = _registry(relay, tmp_path / 'legacy')
+    assert registry.initialize(old_owner_drained=True)
+    reservation = _reserve(registry, _send(relay))
+    captured, gate_errors = [], []
+    entered, observed, held, release = (threading.Event() for _ in range(4))
+    original_router = dependencies.create_router
+
+    def observe_router(service, **kwargs):
+        key = 'relay_turn_snapshot_callback' if phase == 'preclaim' else 'relay_activation_callback'
+        original = kwargs[key]
+        def observation(*args):
+            entered.set()
+            value = original(*args)
+            if phase == 'preclaim':
+                captured.append(value)
+            observed.set()
+            return value
+        kwargs[key] = observation
+        return original_router(service, **kwargs)
+    monkeypatch.setattr(dependencies, 'create_router', observe_router)
+    app = FastAPI()
+    app.include_router(build_router(SimpleNamespace(), relay_storage=storage, codex_wake_registry=registry))
+
+    def hold_native_owner():
+        with registry._lock:
+            held.set()
+            if not release.wait(5):
+                gate_errors.append('native owner gate watchdog expired')
+    holder = threading.Thread(target=hold_native_owner, name='test-native-owner')
+    with TestClient(app) as http, ThreadPoolExecutor(max_workers=1) as pool:
+        holder.start()
+        try:
+            assert held.wait(2)
+            if phase == 'preclaim':
+                request = pool.submit(http.post, '/relay/turn', json={
+                    'runtime': 'codex', 'session_ref': 'target',
+                    'wake_delivery_id': reservation.delivery_id, **SCOPE,
+                })
+            else:
+                request = pool.submit(http.get, '/relay/sessions', params={
+                    'runtime': 'codex', 'session_ref': 'target', **SCOPE,
+                })
+            assert entered.wait(2), 'actual observation callback was not entered'
+            progressed = observed.wait(1)
+            completed_while_held = None
+            if phase == 'projection':
+                completed_while_held = False
+                if progressed:
+                    try:
+                        request.result(1)
+                        completed_while_held = True
+                    except TimeoutError:
+                        pass
+        finally:
+            release.set()
+            holder.join(5)
+        response = request.result(5)
+        assert not holder.is_alive() and not gate_errors, gate_errors
+        assert response.status_code == 200, response.text
+        if phase == 'preclaim':
+            assert captured == [reservation]
+            claimed, = response.json()['deliveries']
+            assert claimed['delivery_id'] == reservation.delivery_id and claimed['attempts'] == 1
+            current = registry.snapshot(reservation.recipient_endpoint_id)
+            assert current == replace(reservation, correlated_claim_attempts=1)
+            ack = http.post('/relay/deliveries/ack', json={
+                'delivery_id': claimed['delivery_id'], 'claim_token': claimed['claim_token'], **SCOPE,
+            })
+            assert ack.status_code == 200, ack.text
+            retained = http.get(f"/relay/messages/{claimed['message_id']}", params=SCOPE)
+            assert retained.status_code == 200, retained.text
+            row, = retained.json()['deliveries']
+            assert (row['delivery_id'], row['state'], row['attempts']) == (reservation.delivery_id, 'delivered', 1)
+        else:
+            row, = response.json()
+            assert row['endpoint_id'] == reservation.recipient_endpoint_id
+            assert row['activation']['availability'] == 'attempt_inflight'
+        assert progressed and (phase != 'projection' or completed_while_held), {
+            'fresh_observation_completed_while_owner_held': progressed,
+            'projection_http_completed_while_owner_held': completed_while_held,
+        }
+
+
+@pytest.mark.parametrize('accessor', ['snapshot', 'reservations'])
+def test_persistent_observation_preserves_cached_state_and_action_authority(
+    relay_store, tmp_path, accessor,
+):
+    relay, _, database = relay_store
+    registry = _registry(relay, tmp_path / 'legacy')
+    assert registry.initialize(old_owner_drained=True)
+    reservation = _reserve(registry, _send(relay))
+    other = _reserve(registry, _send(relay, target='other'), target='other')
+    assert reservation is not None and other is not None
+    registry._usable, registry._initialized, registry._reservations = False, None, {}
+    cache = registry._reservations
+
+    def observe():
+        return (registry.snapshot_if_usable(reservation.recipient_endpoint_id) if accessor == 'snapshot'
+                else registry.reservations_if_usable())
+    observed = observe()
+    if accessor == 'snapshot':
+        assert observed == reservation
+    else:
+        assert len(observed) == 2 and set(observed) == {reservation, other}
+    assert registry._usable is False and registry._initialized is None
+    assert registry._reservations is cache and cache == {}
+    # An earlier valid observation cannot authorize a later action against corrupt authority.
+    with sqlite3.connect(database) as db:
+        db.execute('UPDATE relay_codex_wake_reservations SET generation=0 WHERE recipient_endpoint_id=?',
+                   (other.recipient_endpoint_id,))
+    assert observe() == (None if accessor == 'snapshot' else ())
+    assert registry._usable is False and registry._initialized is None
+    assert registry._reservations is cache and cache == {}
+    assert registry.begin_native_attempt(reservation) is None
+    stored = {item.recipient_endpoint_id: item for item in _stored_items(database)}
+    assert stored[reservation.recipient_endpoint_id] == reservation
+    assert stored[other.recipient_endpoint_id] == replace(other, generation=0)
+
+
+def test_persistent_observation_preserves_endpoint_canonicalization_and_full_validation():
+    first = CodexWakeReservation('relay-session-' + 'a' * 32, 'delivery-first', 'target', SCOPE['container_ref'], 1)
+    last = replace(first, delivery_id='delivery-last', generation=2)
+    provider = SimpleNamespace(codex_wake_snapshot=lambda: (True, (first, last)))
+    registry = CodexWakeRegistry(relay_service=provider)
+    registry._usable, registry._initialized, registry._reservations = False, None, {}
+    cache = registry._reservations
+    assert registry.snapshot_if_usable(first.recipient_endpoint_id) == last
+    assert registry.reservations_if_usable() == (last,)
+    # Canonicalization never hides an invalid earlier entry from full validation.
+    provider.codex_wake_snapshot = lambda: (True, (replace(first, generation=0), last))
+    assert registry.snapshot_if_usable(first.recipient_endpoint_id) is None
+    assert registry.reservations_if_usable() == ()
+    assert registry._usable is False and registry._initialized is None
+    assert registry._reservations is cache and cache == {}
+
+
 @pytest.mark.parametrize("count, damage", [
     (0, None), (1, None), (50, None), (256, None),
     (257, "overflow"), (50, "unrelated"), (1, "absent_marker"),

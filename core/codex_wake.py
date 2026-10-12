@@ -56,13 +56,25 @@ class CodexWakeRegistry:
             # data is read only by explicit offline SQLite initialization.
             self._usable = False
 
+    def _validated_persistent_snapshot(self):
+        initialized, items = self._relay.codex_wake_snapshot()
+        if len(items) > MAX_RESERVATIONS or any(not self._valid_item(item) for item in items):
+            raise ValueError("invalid persisted Codex wake fence")
+        return initialized, items
+
+    def _observe_persistent_authority(self) -> tuple[CodexWakeReservation, ...]:
+        try:
+            initialized, items = self._validated_persistent_snapshot()
+            return tuple({item.recipient_endpoint_id: item for item in items}.values()) if initialized else ()
+        except Exception as exc:
+            logger.warning("codex_wake_authority_read_failed error_type=%s", type(exc).__name__)
+            return ()
+
     def _refresh(self) -> None:
         if self._relay is None:
             return
         try:
-            initialized, items = self._relay.codex_wake_snapshot()
-            if len(items) > MAX_RESERVATIONS or any(not self._valid_item(item) for item in items):
-                raise ValueError("invalid persisted Codex wake fence")
+            initialized, items = self._validated_persistent_snapshot()
             self._usable = initialized
             self._initialized = initialized
             self._reservations = {item.recipient_endpoint_id: item for item in items}
@@ -401,6 +413,9 @@ class CodexWakeRegistry:
             return self._reservations.get(recipient_endpoint_id)
 
     def snapshot_if_usable(self, recipient_endpoint_id: str) -> CodexWakeReservation | None:
+        if self._relay is not None:
+            return next((item for item in self._observe_persistent_authority()
+                         if item.recipient_endpoint_id == recipient_endpoint_id), None)
         with self._lock:
             self._refresh()
             return self._reservations.get(recipient_endpoint_id) if self._usable else None
@@ -411,6 +426,9 @@ class CodexWakeRegistry:
             return tuple(self._reservations.values())
 
     def reservations_if_usable(self) -> tuple[CodexWakeReservation, ...]:
+        if self._relay is not None:
+            # Immutable SQL observations do not take Native action ownership or publish cache state.
+            return self._observe_persistent_authority()
         with self._lock:
             self._refresh()
             return tuple(self._reservations.values()) if self._usable else ()
