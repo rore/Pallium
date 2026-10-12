@@ -19,10 +19,10 @@ from storage.vector_index import VectorIndex, VectorIndexConfig
 from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
 
 
-def _no_vector_config() -> AppConfig:
+def _no_vector_config(sqlite_url: str = "sqlite:///:memory:") -> AppConfig:
     return AppConfig(
         storage_backend="sqlite",
-        sqlite_url="sqlite:///:memory:",
+        sqlite_url=sqlite_url,
         default_use_case="demo_agent_memory",
         semantic_packages=DEMO_SEMANTIC_PACKAGES,
         vector_index=VectorIndexConfig(enabled=False),
@@ -41,7 +41,7 @@ async def _wait_for_health(client, predicate, *, timeout: float = 5.0):
 
 
 @pytest.mark.asyncio
-async def test_production_factory_keeps_http_responsive_during_build(monkeypatch) -> None:
+async def test_production_factory_keeps_http_responsive_during_build(monkeypatch, test_db_url: str) -> None:
     import httpx
     from app import main
     from fastapi import FastAPI
@@ -61,7 +61,7 @@ async def test_production_factory_keeps_http_responsive_during_build(monkeypatch
         if not release_build.wait(5):
             raise AssertionError("test did not release the held app build")
         try:
-            built = create_app(_no_vector_config())
+            built = create_app(_no_vector_config(test_db_url))
             inner_apps.append(built)
             return built
         finally:
@@ -159,12 +159,12 @@ async def test_production_factory_keeps_http_responsive_during_build(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_production_factory_keeps_mcp_lifespan_on_one_task(monkeypatch) -> None:
+async def test_production_factory_keeps_mcp_lifespan_on_one_task(monkeypatch, test_db_url: str) -> None:
     from app import main
 
     manager = pytest.importorskip("mcp.server.streamable_http_manager")
     create_app = main.create_app
-    monkeypatch.setattr(main, "create_app", lambda *_args, **_kwargs: create_app(_no_vector_config()))
+    monkeypatch.setattr(main, "create_app", lambda *_args, **_kwargs: create_app(_no_vector_config(test_db_url)))
     lifecycle_tasks = []
 
     @contextlib.asynccontextmanager
@@ -185,7 +185,9 @@ async def test_production_factory_keeps_mcp_lifespan_on_one_task(monkeypatch) ->
 
 
 @pytest.mark.asyncio
-async def test_production_factory_rejects_second_active_lifespan_without_second_build(monkeypatch) -> None:
+async def test_production_factory_rejects_second_active_lifespan_without_second_build(
+    monkeypatch, test_db_url: str,
+) -> None:
     from app import main
 
     build_started, release_build = threading.Event(), threading.Event()
@@ -197,7 +199,7 @@ async def test_production_factory_rejects_second_active_lifespan_without_second_
         build_started.set()
         if not release_build.wait(5):
             raise AssertionError("test did not release the held app build")
-        return create_app(_no_vector_config())
+        return create_app(_no_vector_config(test_db_url))
 
     monkeypatch.setattr(main, "create_app", held_builder)
     application = main.app()
@@ -225,12 +227,16 @@ async def test_production_factory_rejects_second_active_lifespan_without_second_
 
 
 @pytest.mark.asyncio
-async def test_production_factory_degraded_provider_keeps_query_operational(monkeypatch) -> None:
+async def test_production_factory_degraded_provider_keeps_query_operational(
+    monkeypatch, test_db_url: str,
+) -> None:
     import httpx
     from app import main
 
     create_app = main.create_app
-    monkeypatch.setattr(main, "create_app", lambda *_args, **_kwargs: create_app(_failed_embedding_config()))
+    monkeypatch.setattr(
+        main, "create_app", lambda *_args, **_kwargs: create_app(_failed_embedding_config(test_db_url)),
+    )
     application = main.app()
     async with application.router.lifespan_context(application):
         async with httpx.AsyncClient(
@@ -251,11 +257,13 @@ async def test_production_factory_degraded_provider_keeps_query_operational(monk
 
 
 @pytest.mark.asyncio
-async def test_production_factory_constructor_failure_closes_acquired_storage(monkeypatch) -> None:
+async def test_production_factory_constructor_failure_closes_acquired_storage(
+    monkeypatch, test_db_url: str,
+) -> None:
     import httpx
     from app import main
 
-    config = _no_vector_config()
+    config = _no_vector_config(test_db_url)
     create_app = main.create_app
     storage_builder = main.build_storage_provider
     acquired_storage, close_calls = [], []
@@ -305,11 +313,13 @@ async def test_production_factory_constructor_failure_closes_acquired_storage(mo
 
 
 @pytest.mark.asyncio
-async def test_production_factory_runtime_setup_failure_closes_app_resources(monkeypatch) -> None:
+async def test_production_factory_runtime_setup_failure_closes_app_resources(
+    monkeypatch, test_db_url: str,
+) -> None:
     import httpx
     from app import main
 
-    config = _no_vector_config()
+    config = _no_vector_config(test_db_url)
     create_app = main.create_app
     storage_builder = main.build_storage_provider
     acquired_storage, storage_close_calls, service_close_calls = [], [], []
@@ -377,13 +387,15 @@ async def test_production_factory_runtime_setup_failure_closes_app_resources(mon
 
 
 @pytest.mark.asyncio
-async def test_production_factory_serves_lexical_and_relay_before_vector_ready(monkeypatch, tmp_path: Path) -> None:
+async def test_production_factory_serves_lexical_and_relay_before_vector_ready(
+    monkeypatch, tmp_path: Path, test_db_url: str,
+) -> None:
     import httpx
     from app import main
 
     config = AppConfig(
         storage_backend="sqlite",
-        sqlite_url="sqlite:///:memory:",
+        sqlite_url=test_db_url,
         default_use_case="demo_agent_memory",
         semantic_packages=DEMO_SEMANTIC_PACKAGES,
         vector_index=VectorIndexConfig(
@@ -624,7 +636,9 @@ async def test_production_factory_drains_real_rebuild_inventory_before_storage_c
 
 
 @pytest.mark.asyncio
-async def test_production_factory_shutdown_settles_held_build_before_close(monkeypatch) -> None:
+async def test_production_factory_shutdown_settles_held_build_before_close(
+    monkeypatch, test_db_url: str,
+) -> None:
     import httpx
     from app import main
     from fastapi import FastAPI
@@ -642,7 +656,7 @@ async def test_production_factory_shutdown_settles_held_build_before_close(monke
 
     def held_builder(*_args, **_kwargs):
         try:
-            built = create_app(_no_vector_config())
+            built = create_app(_no_vector_config(test_db_url))
             original_close = built.state.pallium_service.close
 
             def counted_close():
@@ -709,10 +723,11 @@ async def test_production_factory_shutdown_settles_held_build_before_close(monke
 @pytest.mark.asyncio
 @pytest.mark.parametrize("held_stage", ["transport", "completed_trace"])
 async def test_production_factory_drains_claude_wake_thread_before_storage_close(
-    monkeypatch, held_stage: str,
+    monkeypatch, test_db_url: str, held_stage: str,
 ) -> None:
     import httpx
     import app.main as main
+    from app.claude_wake_binding import write_json_atomic
     from core.service import PalliumService
     from sqlalchemy import text
 
@@ -725,7 +740,7 @@ async def test_production_factory_drains_claude_wake_thread_before_storage_close
     original_enqueue = PalliumService.enqueue_relay_trace_event
 
     def build_inner(*_args, **_kwargs):
-        built = create_app(_no_vector_config())
+        built = create_app(_no_vector_config(test_db_url))
         service = built.state.pallium_service
         storage = service._storage
         original_storage_close = storage.close
@@ -802,11 +817,21 @@ async def test_production_factory_drains_claude_wake_thread_before_storage_close
                     "runtime": runtime, "session_ref": session_ref, **scope,
                 })
                 assert response.status_code == 200, response.text
-            registered = await client.post("/internal/claude-wake/register", json={
+            registry = created_apps[0].state.claude_wake_registry
+            assert registry is not None and registry._state_dir is not None
+            registration = {
                 "runtime": "claude-code", "session_ref": "startup-target",
                 "container_ref": scope["container_ref"], "socket_path": "fake-native-endpoint",
-                "token": "test-only-token", "idle": True,
-            })
+                "token": "test-only-token", "idle": True, "intent_id": "test-only-registration",
+            }
+            registration_path = registry._intent_path(
+                registration["runtime"], registration["session_ref"], registration["container_ref"],
+            )
+            assert registration_path is not None
+            assert registration_path.parent == registry._state_dir / "intents"
+            write_json_atomic(registration_path, registration)
+            assert registration_path.is_file()
+            registered = await client.post("/internal/claude-wake/register", json=registration)
             assert registered.status_code == 204, registered.text
             sent = await client.post("/relay/messages", json={
                 "sender_runtime": "codex", "sender_session_ref": "startup-sender",
@@ -817,8 +842,6 @@ async def test_production_factory_drains_claude_wake_thread_before_storage_close
             delivery_id = sent.json()["deliveries"][0]["delivery_id"]
             assert await asyncio.to_thread(gate_started.wait, 5), "Relay HTTP did not schedule the held Claude wake"
             assert len(created_apps) == 1
-            registry = created_apps[0].state.claude_wake_registry
-            assert registry is not None
             assert len(scheduled_threads) == 1
             wake_thread = scheduled_threads[0]
             assert wake_thread.name == "pallium-claude-wake" and wake_thread.is_alive()
@@ -891,13 +914,13 @@ class TestHealthNoVector:
         assert set(body.keys()) == {"status", "vector_index_ready", "embedding_provider_ok"}
 
 
-def _failed_embedding_config() -> AppConfig:
+def _failed_embedding_config(sqlite_url: str = "sqlite:///:memory:") -> AppConfig:
     """Vector is EXPECTED (enabled) but the embedding provider can't build
     (empty provider name) → index stays None. Simulates the silent-degrade
     scenario without needing a real ONNX model."""
     return AppConfig(
         storage_backend="sqlite",
-        sqlite_url="sqlite:///:memory:",
+        sqlite_url=sqlite_url,
         default_use_case="demo_agent_memory",
         semantic_packages=DEMO_SEMANTIC_PACKAGES,
         vector_index=VectorIndexConfig(enabled=True, embedding_provider=""),
