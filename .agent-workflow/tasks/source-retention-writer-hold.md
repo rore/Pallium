@@ -35,6 +35,7 @@ Whole change -> static/governance checks and root combined full; no live databas
 - Entire existing retention file: private `pallium-full-suite-run-df9609db80b14c3c81b5af46ee5e8b8f`, 33 passed in 8.77 s including 19 new safety cases. Stdout SHA `B918C1B717D4291DD063D7F52C95EF77EFD14CEDD45F83C52065C2D655C405A3`.
 - All runs guards/stderr empty and three identity-matched owned processes drained. Candidate source finally restored byte/hash exact `D47EA55FFEB5BB5DE95E65EDFA6D64056606B51A4E8F3F5C13189A4A71E248EE`. Slot released to discovery immediately after drain; no live changes or duplicate full.
 - Reviewed focused runner SHA `615514AE6FBEF4F2CCDB66C1B2808CD5DBC1B9CDF03BE96950A4610811242643`, source-mode wrapper SHA `A51EF04A16EF6AC5E3820239873207695353BA9658860E0F43BADC31CC137E55`; affected change was selector-only within same exact scope/HEAD/isolation.
+- Import-linter exit 0, AST/diff checks clean; fresh three-path slice Redline and Agent Workflow checker clean 0 with no failed predicates. Selector requires full validation, assigned to root combined run. Evidence preserved under `C:/Dev/rore/Pallium/build/service-performance-20261012/retention-writer-candidate`, manifest SHA `79B13A99F9A7752EDE31A8563055210F55D812ABDF5D6E8763C01757FC859906`.
 
 ## Result review
 
