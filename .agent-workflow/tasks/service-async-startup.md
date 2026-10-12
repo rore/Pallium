@@ -37,7 +37,7 @@
 
 **Exceptions:** None
 
-**State:** Blocked — application tests await the manager's private slot; the per-delivery Claude wake thread ownership boundary needs manager scope/review disposition before all-worker settlement can be claimed.
+**State:** Blocked — the manager reserved the private RED slot; execution awaits runner review and explicit GO. The per-delivery Claude wake thread ownership boundary still needs manager scope/review disposition before all-worker settlement can be claimed.
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -55,6 +55,8 @@ Ownership assumption checkpoint: source inspection found per-delivery daemon thr
 2026-10-11: Loaded Agent Workflow, Redline and Ponytail; read actual AGENTS.md (no AGENTS.local.md), runtime/supervisor/CLI and bootstrap/vector helpers. Clean detached checkout equals origin/main6be22d77. Created feat/service-async-startup. Whole intended change includes application and tests outside documentation allowlist, so normal workflow applies; no exemption or default-branch protection inference. Classified High/Moderate before production/test edits. Canonical roadmap item read through Minimap skill; root owns reconciliation.
 
 ## Evidence
+
+Private RED preparation checkpoint (2026-10-12): manager delivery relay-msg-38fecfba53cb40c6b99b419a5f90d9cf reserves the queued slot and requires exact runner path/hash, frozen revision and six selectors before GO. Existing ignored build/startup-focused-runner.ps1 now targets build/startup-red-59272fbf, a separate Git archive of 59272fbff02c5c7f351d7baa6d73ae9be19e27b8; application source directories at that revision equal cf558114. No source rollback, installed change or test execution. Retain private environment/network guard and no visible child window; send static preparation evidence for manager final review, then execute only on GO. Overall lifecycle ownership question remains unresolved.
 
 Root supplied October9 startup19.748s: embedding10.083s includes HuggingFace model/tokenizer HEAD and unrelated api/agent-harnesses GET; raw_source_backfill_check2.017s, vector_load1.042s, service_storage.360s, early_storage.505s, build_service13.728s, lifespan.180s. Separate network-forbidden cache probe HF import.710s/cachelookup.0311s/nativeimports.4415s/ORTsession.7306s/tokenizer.377s with384 dimensions/model470268510bytes is not a full service benchmark or universal10-to2 improvement. Existing raw-source EXISTS is already optimized. No tests executed by this developer yet.
 
