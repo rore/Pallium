@@ -15,6 +15,7 @@ from typing import Any, Callable
 
 from sqlalchemy import and_, case, delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import defer
 
 from core.relay import (
     RELAY_RECENT_SECONDS,
@@ -431,10 +432,11 @@ class SQLiteRelayMixin:
     def relay_codex_wake_snapshot(self):
         with self._relay_session_factory() as db:
             db.connection().exec_driver_sql("BEGIN")  # One consistent marker/row snapshot.
-            marker = db.get(RelayCodexWakeStateRecord, 1)
-            rows = db.scalars(select(RelayCodexWakeReservationRecord).limit(MAX_RESERVATIONS + 1)).all()
-            self._validate_wake_authority(db, marker, rows)
-            return marker is not None, tuple(self._wake_item(row) for row in rows)
+            marker = db.execute(select(RelayCodexWakeStateRecord.generation).where(
+                RelayCodexWakeStateRecord.id == 1
+            )).first()
+            items = self._validate_wake_authority(db, marker)
+            return marker is not None, items
 
     def relay_codex_trial_native_suppressed(self, endpoint_id: str) -> bool:
         """Read the endpoint tombstone and trial row from one snapshot."""
@@ -637,14 +639,19 @@ class SQLiteRelayMixin:
 
     def _validate_wake_authority(self, db, marker, rows=None):
         if rows is None:
-            rows = db.scalars(select(RelayCodexWakeReservationRecord).limit(MAX_RESERVATIONS + 1)).all()
+            rows = db.execute(select(*(
+                getattr(RelayCodexWakeReservationRecord, name)
+                for name in CodexWakeReservation.__dataclass_fields__
+            )).limit(MAX_RESERVATIONS + 1)).all()
+        items = tuple(self._wake_item(row) for row in rows)
         if (db.scalar(select(func.count()).select_from(RelayCodexWakeStateRecord)) != (1 if marker is not None else 0)
-            or len(rows) > MAX_RESERVATIONS
-            or (marker is None and rows)
+            or len(items) > MAX_RESERVATIONS
+            or (marker is None and items)
             or (marker is not None and (type(marker.generation) is not int or not 0 <= marker.generation < 2**63))
-            or any(not CodexWakeRegistry._valid_item(self._wake_item(row))
-                   or row.generation > marker.generation for row in rows)):
+            or any(not CodexWakeRegistry._valid_item(item)
+                   or item.generation > marker.generation for item in items)):
             raise ValueError("invalid persisted Codex wake authority")
+        return items
 
     def relay_codex_wake_initialize(self, *, reservations):
         with self._begin_relay_immediate() as db:
@@ -692,6 +699,17 @@ class SQLiteRelayMixin:
                 marker.generation += 1
                 result = CodexWakeReservation(**values, generation=marker.generation, outcome="prepared")
                 db.add(RelayCodexWakeReservationRecord(**asdict(result)))
+            elif operation == "correlate":
+                row = db.get(RelayCodexWakeReservationRecord, kwargs["recipient_endpoint_id"])
+                if (row is None
+                    or row.delivery_id != kwargs["delivery_id"]
+                    or row.session_ref != kwargs["session_ref"]
+                    or row.container_ref != kwargs["container_ref"]
+                    or row.generation != kwargs["expected_generation"]
+                    or row.correlated_claim_attempts not in (None, kwargs["attempts"])):
+                    return None
+                row.correlated_claim_attempts = kwargs["attempts"]
+                result = self._wake_item(row)
             elif operation == "release":
                 removed = []
                 for expected in kwargs["reservations"]:
@@ -853,10 +871,6 @@ class SQLiteRelayMixin:
                                      retry_not_before=_now().timestamp() + WAKE_RETRY_COOLDOWN_SECONDS)
                 elif operation == "outcome":
                     result = replace(expected, outcome=kwargs["outcome"])
-                elif operation == "correlate":
-                    if expected.correlated_claim_attempts not in (None, kwargs["attempts"]):
-                        return None
-                    result = replace(expected, correlated_claim_attempts=kwargs["attempts"])
                 else:
                     raise ValueError("unsupported Codex wake transition")
                 if operation != "reconcile":
@@ -1489,7 +1503,7 @@ class SQLiteRelayMixin:
                 .values(state="expired", claim_token=None)
             )
 
-            rows = db.execute(
+            eligible_query = (
                 select(RelayDeliveryRecord, RelayMessageRecord)
                 .join(RelayMessageRecord, RelayMessageRecord.id == RelayDeliveryRecord.message_id)
                 .where(
@@ -1504,23 +1518,22 @@ class SQLiteRelayMixin:
                     ),
                 )
                 .order_by(RelayMessageRecord.created_at, RelayDeliveryRecord.id)
-            ).all()
-
-            eligible_rows = [
-                (delivery, message)
-                for delivery, message in rows
-                if _delivery_render_safe(delivery, message)
-                and (
-                    exact_delivery_id is None
-                    or delivery.id == exact_delivery_id
-                )
-            ]
+            )
+            eligible_count = db.execute(
+                eligible_query.with_only_columns(func.count(), maintain_column_froms=True)
+                .order_by(None)
+            ).scalar_one()
+            if exact_delivery_id is None:
+                # Sort metadata, then load payloads only for candidates we examine.
+                eligible_query = eligible_query.options(defer(RelayMessageRecord.payload)).execution_options(yield_per=16)
+            else:
+                eligible_query = eligible_query.where(RelayDeliveryRecord.id == exact_delivery_id)
             session_view = _session_view(registered, current, 24 * 60 * 60, generation)
             selected: list[tuple[RelayDeliveryRecord, RelayMessageRecord, dict[str, Any], int, str]] = []
             used = 0
 
             def response(deliveries: list[dict[str, Any]]) -> dict[str, Any]:
-                remaining = len(rows) - len(deliveries)
+                remaining = eligible_count - len(deliveries)
                 result = {
                     "session": session_view,
                     "deliveries": deliveries,
@@ -1531,60 +1544,63 @@ class SQLiteRelayMixin:
                     result.update(wake=self._opencode_wake_view(wake), restored=False)
                 return result
 
-            for delivery, message in eligible_rows:
-                token = f"relay-claim-{uuid.uuid4().hex}"
-                lease_expires_at = current + timedelta(seconds=lease_seconds)
+            with db.execute(eligible_query) as rows:
+                for delivery, message in rows:
+                    if not _delivery_render_safe(delivery, message):
+                        continue
+                    token = f"relay-claim-{uuid.uuid4().hex}"
+                    lease_expires_at = current + timedelta(seconds=lease_seconds)
 
-                def project(prefix_chars: int) -> tuple[dict[str, Any], int] | None:
-                    view = _delivery_view(
-                        delivery, message, registered.state,
-                        payload_limit=None if prefix_chars == len(message.payload) else prefix_chars,
-                    )
-                    view.update(
-                        state="claimed",
-                        claim_token=token,
-                        receipt=_delivery_receipt(token),
-                        claimed_at=_iso(current),
-                        lease_expires_at=_iso(lease_expires_at),
-                        attempts=int(delivery.attempts or 0) + 1,
-                    )
-                    attempt = view["attempts"]
-                    attempt = attempt if 1 <= attempt <= 2**53 - 1 else None
-                    view.update(
-                        claim_attempt=attempt,
-                        possible_redelivery=None if attempt is None else attempt > 1,
-                        redelivery_guidance=(
-                            "Check exact delivery_id in context/artifacts. "
-                            "Skip completed actions; if unknown, inspect target state before irreversible retry. "
-                            "Attempts do not prove emission/actions. ACK: receipt, not completion"
-                        ),
-                    )
-                    rendered_chars = len(_delivery_text(delivery, message, view)) + (2 if selected else 0)
-                    if max_chars and used + rendered_chars > max_chars:
-                        return None
-                    prospective = [*(item[2] for item in selected), view]
-                    if max_response_chars and _compact_json_chars(response(prospective)) > max_response_chars:
-                        return None
-                    return view, rendered_chars
+                    def project(prefix_chars: int) -> tuple[dict[str, Any], int] | None:
+                        view = _delivery_view(
+                            delivery, message, registered.state,
+                            payload_limit=None if prefix_chars == len(message.payload) else prefix_chars,
+                        )
+                        view.update(
+                            state="claimed",
+                            claim_token=token,
+                            receipt=_delivery_receipt(token),
+                            claimed_at=_iso(current),
+                            lease_expires_at=_iso(lease_expires_at),
+                            attempts=int(delivery.attempts or 0) + 1,
+                        )
+                        attempt = view["attempts"]
+                        attempt = attempt if 1 <= attempt <= 2**53 - 1 else None
+                        view.update(
+                            claim_attempt=attempt,
+                            possible_redelivery=None if attempt is None else attempt > 1,
+                            redelivery_guidance=(
+                                "Check exact delivery_id in context/artifacts. "
+                                "Skip completed actions; if unknown, inspect target state before irreversible retry. "
+                                "Attempts do not prove emission/actions. ACK: receipt, not completion"
+                            ),
+                        )
+                        rendered_chars = len(_delivery_text(delivery, message, view)) + (2 if selected else 0)
+                        if max_chars and used + rendered_chars > max_chars:
+                            return None
+                        prospective = [*(item[2] for item in selected), view]
+                        if max_response_chars and _compact_json_chars(response(prospective)) > max_response_chars:
+                            return None
+                        return view, rendered_chars
 
-                projected = project(len(message.payload))
-                if projected is None and not selected and len(message.payload) > 1:
-                    low, high = 1, len(message.payload) - 1
-                    while low <= high:
-                        middle = (low + high) // 2
-                        candidate = project(middle)
-                        if candidate is None:
-                            high = middle - 1
-                        else:
-                            projected = candidate
-                            low = middle + 1
-                if projected is None:
-                    continue
-                view, rendered_chars = projected
-                selected.append((delivery, message, view, rendered_chars, token))
-                used += rendered_chars
-                if max_messages and len(selected) >= max_messages:
-                    break
+                    projected = project(len(message.payload))
+                    if projected is None and not selected and len(message.payload) > 1:
+                        low, high = 1, len(message.payload) - 1
+                        while low <= high:
+                            middle = (low + high) // 2
+                            candidate = project(middle)
+                            if candidate is None:
+                                high = middle - 1
+                            else:
+                                projected = candidate
+                                low = middle + 1
+                    if projected is None:
+                        continue
+                    view, rendered_chars = projected
+                    selected.append((delivery, message, view, rendered_chars, token))
+                    used += rendered_chars
+                    if max_messages and len(selected) >= max_messages:
+                        break
 
             claimed: list[dict[str, Any]] = []
             for delivery, message, view, _, token in selected:

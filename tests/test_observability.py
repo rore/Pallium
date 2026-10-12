@@ -496,6 +496,100 @@ def test_queue_health_preserves_lease_failure_and_cutoff_semantics(client, monke
     assert with_null_failure.recent_failures[-1].source_item_id == failed_null_id
 
 
+def test_queue_health_http_avoids_pending_and_leased_payload_reads(client, monkeypatch) -> None:
+    import json
+    import re
+    from types import SimpleNamespace
+
+    from sqlalchemy import update
+    from storage.sqlite_schema import SourceItemRecord
+
+    service = client.app.state.pallium_service
+    storage = service._storage
+    now = datetime(2026, 10, 12, tzinfo=timezone.utc)
+    monkeypatch.setattr("core.service.utc_now", lambda: now)
+    monkeypatch.setattr(service, "_semantic_plugins", {
+        "known": SimpleNamespace(requires_visibility_context=True),
+    })
+
+    def record(source_id, **changes):
+        fields = dict(
+            id=source_id, source_type="test", source_id=source_id,
+            content_type="text/plain", content="small", use_case="known",
+            processing_status="pending", processing_attempts=0,
+            visibility="private", created_at=now - timedelta(hours=2),
+        )
+        fields.update(changes)
+        return SourceItemRecord(**fields)
+
+    with storage._session_factory.begin() as session:
+        session.add_all([
+            record("claimable-東京"),
+            record("backoff", processing_attempts=1,
+                   processing_next_attempt_at=now + timedelta(minutes=5)),
+            record("missing-visibility", visibility=""),
+            record("missing-use-case", use_case=None),
+            record("unknown-use-case", use_case="unconfigured"),
+            record("exhausted", processing_attempts=3),
+            record("active-lease-東京", processing_status="processing",
+                   processing_claimed_by="private-worker",
+                   processing_claimed_at=now - timedelta(minutes=1),
+                   processing_lease_expires_at=now + timedelta(minutes=1)),
+            record("equal-expiry-lease", processing_status="processing",
+                   processing_claimed_by="old-worker",
+                   processing_claimed_at=now - timedelta(minutes=2),
+                   processing_lease_expires_at=now),
+            record("failed", processing_status="failed", processing_attempts=2,
+                   processing_completed_at=now, processing_error="failure 東京",
+                   metadata_json=json.dumps({OBSERVABILITY_METADATA_KEY: {
+                       "failure_category": "llm_failure",
+                   }})),
+        ])
+
+    statements = []
+
+    def capture(_conn, _cursor, statement, _parameters, _context, _many):
+        if "from source_items" in statement.lower():
+            statements.append(" ".join(statement.lower().split()))
+
+    event.listen(storage._engine, "before_cursor_execute", capture)
+    try:
+        payloads = []
+        for size in (64, 65536):
+            with storage._session_factory.begin() as session:
+                session.execute(update(SourceItemRecord).values(content="Q" * size))
+            response = client.get("/debug/queue/health")
+            assert response.status_code == 200, response.text
+            payloads.append(response.json())
+    finally:
+        event.remove(storage._engine, "before_cursor_execute", capture)
+
+    assert payloads[0] == payloads[1]
+    payload = payloads[0]
+    assert payload["status_counts"] == {"pending": 6, "processing": 2, "failed": 1}
+    assert payload["status_counts_24h"] == {"failed": 1}
+    assert payload["pending_without_use_case_count"] == 1
+    assert payload["oldest_pending_age_seconds"] == 7200
+    assert {item["reason"]: item["count"] for item in payload["unclaimable_pending_counts"]} == {
+        "retry_backoff_active": 1, "missing_visibility_for_scoped_use_case": 1,
+        "missing_use_case": 1, "unknown_use_case": 1,
+        "legacy_max_attempts_exhausted_pending": 1,
+    }
+    lease, = payload["leased_source_items"]
+    assert lease["source_item_id"] == "active-lease-東京"
+    assert lease["use_case"] == "known" and lease["processing_claimed_by"] == "private-worker"
+    assert datetime.fromisoformat(lease["processing_claimed_at"]) == now - timedelta(minutes=1)
+    assert datetime.fromisoformat(lease["processing_lease_expires_at"]) == now + timedelta(minutes=1)
+    failure, = payload["recent_failures"]
+    assert failure["source_item_id"] == "failed" and failure["failure_category"] == "llm_failure"
+    assert failure["processing_error"] == "failure 東京" and failure["processing_attempts"] == 2
+    pending = [statement for statement in statements if " union all " in statement]
+    leased = [statement for statement in statements if "processing_lease_expires_at >" in statement]
+    assert len(pending) == len(leased) == 2
+    assert all(not re.search(r"\bsource_items\.content\b", statement.split(" from ")[0])
+               for statement in pending + leased), pending + leased
+
+
 def test_http_diagnostics_use_all_row_status_index_for_completed_history(client) -> None:
     from storage.sqlite_schema import SourceItemRecord
 

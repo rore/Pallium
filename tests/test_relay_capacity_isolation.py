@@ -17,6 +17,219 @@ from storage.vector_index import VectorIndexConfig
 from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
 
 
+@pytest.mark.parametrize("failure", [
+    None, "snapshot", "turn_callback", "admission", "projection",
+    "not_found", "conflict", "unavailable", "busy", "invalid", "runner_busy", "cancel_after_claim",
+])
+def test_exact_codex_turn_uses_one_admission_and_preserves_phase_failures(
+    tmp_path, monkeypatch, caplog, failure,
+) -> None:
+    from contextlib import ExitStack
+    from app import dependencies, main as app_main
+    from core.errors import ImmediateTransactionBusyError
+    from core.relay import (
+        RelayConflictError, RelayNotFoundError, RelayService, RelayUnavailableError,
+    )
+
+    armed = False
+    admissions, phases = [], []
+    claimed_rows = []
+    callback_entered, release_callback = threading.Event(), threading.Event()
+    local = threading.local()
+    original_router = dependencies.create_router
+    original_turn = RelayService.turn
+    durable_errors = {
+        "not_found": (RelayNotFoundError, 404, "relay entity not found in the requested scope"),
+        "conflict": (RelayConflictError, 409, "controlled conflict"),
+        "unavailable": (RelayUnavailableError, 501, "controlled unavailable"),
+        "busy": (ImmediateTransactionBusyError, 503, {"code": "relay_busy", "retryable": True}),
+        "invalid": (ValueError, 422, "controlled invalid"),
+        "runner_busy": (ImmediateTransactionBusyError, 503, {"code": "relay_busy", "retryable": True}),
+    }
+
+    def phase(name):
+        phases.append((name, local.admission, threading.get_ident()))
+
+    def observe_turn(self, **kwargs):
+        if armed:
+            phase("claim")
+            if failure in durable_errors:
+                error, _, _ = durable_errors[failure]
+                raise error(f"controlled {failure}")
+        return original_turn(self, **kwargs)
+
+    def observe_router(service, **kwargs):
+        for name in ("relay_runner", "relay_codex_runner"):
+            original = kwargs[name]
+
+            async def runner(operation, _name=name, _original=original):
+                if not armed:
+                    return await _original(operation)
+                token = (_name, len(admissions))
+                admissions.append(token)
+                if failure == "runner_busy":
+                    raise ImmediateTransactionBusyError("controlled runner rejection")
+
+                def observed():
+                    local.admission = token
+                    try:
+                        return operation()
+                    finally:
+                        del local.admission
+                return await _original(observed)
+            kwargs[name] = runner
+
+        def snapshot(_request):
+            if not armed:
+                return None
+            phase("snapshot")
+            if failure == "snapshot":
+                raise RuntimeError("controlled snapshot failure")
+            return None
+
+        def turn_callback(_request, result):
+            phase("turn_callback")
+            assert result["deliveries"][0]["state"] == "claimed"
+            claimed_rows.append(dict(result["deliveries"][0]))
+            if failure == "cancel_after_claim":
+                callback_entered.set()
+                assert release_callback.wait(5), "exact callback gate watchdog expired"
+            if failure == "turn_callback":
+                raise RuntimeError("controlled turn callback failure")
+
+        def admission(_request, result, reservation):
+            phase("admission")
+            assert reservation is None
+            assert result["deliveries"][0]["attempts"] == 1
+            if failure == "admission":
+                raise RuntimeError("controlled admission failure")
+
+        activation = kwargs["relay_activation_callback"]
+        def project(row):
+            if armed:
+                phase("projection")
+                if failure == "projection" and "session_ref" in row:
+                    raise RuntimeError("controlled projection failure")
+            return activation(row)
+
+        # Native transport is outside this caller/ordering regression.
+        kwargs["relay_send_callback"] = None
+        kwargs["relay_ack_callback"] = None
+        kwargs["relay_turn_snapshot_callback"] = snapshot
+        kwargs["relay_turn_callback"] = lambda *args: turn_callback(*args) if armed else None
+        kwargs["relay_turn_admission_callback"] = lambda *args: admission(*args) if armed else None
+        kwargs["relay_activation_callback"] = project
+        return original_router(service, **kwargs)
+
+    monkeypatch.setattr(dependencies, "create_router", observe_router)
+    monkeypatch.setattr(RelayService, "turn", observe_turn)
+    monkeypatch.setattr("app.mcp.server.create_server", lambda **_: (_ for _ in ()).throw(ImportError()))
+    cleanup, original_storage = ExitStack(), app_main.build_storage_provider
+    def owned_storage(*args, **kwargs):
+        storage = original_storage(*args, **kwargs)
+        cleanup.callback(storage.close)
+        return storage
+    monkeypatch.setattr(app_main, "build_storage_provider", owned_storage)
+    app = None
+
+    async def exercise():
+        nonlocal armed
+        loop_thread = threading.get_ident()
+        scope = {"container_ref": "git:example.test/exact-turn-admission"}
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            for session in ("sender", "target"):
+                response = await client.post("/relay/turn", json={"runtime": "codex", "session_ref": session, **scope})
+                assert response.status_code == 200, response.text
+            sent = await client.post("/relay/messages", json={
+                "sender_runtime": "codex", "sender_session_ref": "sender",
+                "recipient": "codex:target", "payload": "one admission café 東京", **scope,
+            })
+            assert sent.status_code == 200, sent.text
+            delivery_id = sent.json()["deliveries"][0]["delivery_id"]
+            exact_request = {
+                "runtime": "codex", "session_ref": "target",
+                "wake_delivery_id": delivery_id, "max_messages": 1, **scope,
+            }
+            armed = True
+            try:
+                if failure == "cancel_after_claim":
+                    request = asyncio.create_task(client.post("/relay/turn", json=exact_request))
+                    try:
+                        assert await asyncio.to_thread(callback_entered.wait, 5)
+                        request.cancel()
+                        with pytest.raises(asyncio.CancelledError):
+                            await request
+                        assert not app.state._wait_for_operations(0)
+                    finally:
+                        release_callback.set()
+                        if not request.done():
+                            request.cancel()
+                            with pytest.raises(asyncio.CancelledError):
+                                await request
+                        assert await asyncio.to_thread(app.state._wait_for_operations, 5)
+                else:
+                    response = await client.post("/relay/turn", json=exact_request)
+            finally:
+                armed = False
+            if failure in durable_errors:
+                _, status, detail = durable_errors[failure]
+                assert response.status_code == status, response.text
+                assert response.json() == {"detail": detail}
+                if failure in {"busy", "runner_busy"}:
+                    assert response.headers["Retry-After"] == "1"
+                assert [p[0] for p in phases] == ([] if failure == "runner_busy" else ["snapshot", "claim"])
+            else:
+                if failure == "cancel_after_claim":
+                    committed = await client.get(f"/relay/messages/{sent.json()['message_id']}", params=scope)
+                    assert committed.status_code == 200, committed.text
+                    persisted, = committed.json()["deliveries"]
+                    assert persisted["delivery_id"] == delivery_id
+                    assert persisted["state"] == "claimed"
+                    assert persisted["attempts"] == 1
+                    duplicate = await client.post("/relay/turn", json=exact_request)
+                    assert duplicate.status_code == 200, duplicate.text
+                    assert duplicate.json()["deliveries"] == []
+                    delivery, = claimed_rows
+                else:
+                    assert response.status_code == 200, response.text
+                    delivery, = response.json()["deliveries"]
+                assert delivery["delivery_id"] == delivery_id
+                assert delivery["payload"] == "one admission café 東京"
+                assert delivery["attempts"] == 1
+                assert [p[0] for p in phases] == [
+                    "snapshot", "claim", "turn_callback", "admission", "projection", "projection",
+                ]
+                acknowledged = await client.post("/relay/deliveries/ack", json={
+                    "delivery_id": delivery_id, "claim_token": delivery["claim_token"], **scope,
+                })
+                assert acknowledged.status_code == 200, acknowledged.text
+            readback = await client.get(f"/relay/messages/{sent.json()['message_id']}", params=scope)
+            assert readback.status_code == 200, readback.text
+            retained, = readback.json()["deliveries"]
+            assert retained["delivery_id"] == delivery_id
+            assert retained["state"] == ("pending" if failure in durable_errors else "delivered")
+            assert retained["attempts"] == (0 if failure in durable_errors else 1)
+            if failure in {"snapshot", "turn_callback", "admission", "projection"}:
+                assert any("snapshot unavailable" in r.message or "failed" in r.message for r in caplog.records)
+            assert app.state._wait_for_operations(0)
+            assert admissions == [("relay_codex_runner", 0)], admissions
+            assert all(p[1] == admissions[0] and p[2] != loop_thread for p in phases), phases
+
+    try:
+        app = create_app(AppConfig(
+            storage_backend="sqlite", sqlite_url=f"sqlite:///{tmp_path / 'main.db'}",
+            relay_sqlite_url=f"sqlite:///{tmp_path / 'relay.db'}",
+            default_use_case="demo_agent_memory", semantic_packages=DEMO_SEMANTIC_PACKAGES,
+            vector_index=VectorIndexConfig(enabled=False),
+        ))
+        cleanup.callback(app.state.pallium_service._storage.close)
+        cleanup.callback(app.state.pallium_service.close)
+        asyncio.run(exercise())
+    finally:
+        release_callback.set()
+        cleanup.close()
+
+
 @pytest.mark.parametrize("runtime", ["codex", "claude-code", "opencode"])
 def test_ack_release_uses_durable_runtime_when_endpoint_scope_read_fails(
     client, monkeypatch, runtime,

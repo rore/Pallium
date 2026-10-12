@@ -807,7 +807,9 @@ def build_router(
                 },
                 {"container_ref": live_scope["container_ref"]},
             )
-    def _relay_activation(row: dict[str, Any]) -> dict[str, object]:
+    def _relay_activation(
+        row: dict[str, Any], *, reserved_endpoints: frozenset[str] | None = None,
+    ) -> dict[str, object]:
         endpoint_id = row.get("endpoint_id") or row.get("recipient_endpoint_id") or row.get("id")
         projection = row
         if relay_service is not None and "recipient_endpoint_id" in row and "endpoint_id" not in row:
@@ -828,19 +830,30 @@ def build_router(
         container_ref = projection.get("container_ref", projection.get("recipient_container_ref"))
         runtime = projection.get("runtime", projection.get("recipient_runtime"))
         claude_state = registry.state_for(recipient_endpoint_id=endpoint_id, session_ref=session_ref, container_ref=container_ref) if runtime == "claude-code" and all(isinstance(value, str) for value in (endpoint_id, session_ref, container_ref)) else None
-        codex_reserved = runtime == "codex" and codex_registry.usable and isinstance(endpoint_id, str) and codex_registry.snapshot(endpoint_id) is not None
+        codex_reserved = runtime == "codex" and isinstance(endpoint_id, str) and (
+            endpoint_id in reserved_endpoints if reserved_endpoints is not None
+            else codex_registry.snapshot_if_usable(endpoint_id) is not None
+        )
         opencode_registered = runtime == "opencode" and isinstance(endpoint_id, str) and relay_service is not None and relay_service.opencode_wake_active(endpoint_id)
         return retained_activation_snapshot(relay_activation_snapshot(projection, platform=current_platform(), claude_state=claude_state, codex_reserved=codex_reserved, opencode_registered=opencode_registered))
 
+    def _relay_activation_factory(actual_callback):
+        if actual_callback is not _relay_activation:
+            return actual_callback
+        reserved_endpoints = frozenset(
+            item.recipient_endpoint_id for item in codex_registry.reservations_if_usable()
+        )
+        return partial(_relay_activation, reserved_endpoints=reserved_endpoints)
+
     def _relay_turn_snapshot(request: dict[str, Any]) -> CodexWakeReservation | None:
-        if request.get("runtime") != "codex" or not codex_registry.usable:
+        if request.get("runtime") != "codex":
             return None
         delivery_id = request.get("wake_delivery_id")
         session_ref = request.get("session_ref")
         container_ref = request.get("container_ref")
         return next(
             (
-                reservation for reservation in codex_registry.reservations()
+                reservation for reservation in codex_registry.reservations_if_usable()
                 if reservation.delivery_id == delivery_id
                 and reservation.session_ref == session_ref
                 and reservation.container_ref == container_ref
@@ -888,6 +901,7 @@ def build_router(
         relay_turn_snapshot_callback=_relay_turn_snapshot,
         relay_ack_callback=(_relay_ack_release if relay_service is not None else None),
         relay_activation_callback=(_relay_activation if relay_service is not None else None),
+        relay_activation_callback_factory=(_relay_activation_factory if relay_service is not None else None),
         relay_runner=relay_runner,
         relay_codex_runner=relay_codex_runner,
         diagnostic_runner=diagnostic_runner,
