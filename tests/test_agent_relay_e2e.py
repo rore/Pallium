@@ -466,7 +466,10 @@ def test_scoped_codepoint_pages_reconstruct_redacted_message_body(client):
 
 
 
-def test_identity_selector_scope_and_state_errors_are_visible(client):
+def test_identity_selector_scope_and_state_errors_are_visible(client, monkeypatch, tmp_path, request):
+    from tests.test_codex_wake_retry_edges import _observe_relay_busy_acquisition
+
+    _observe_relay_busy_acquisition(client.app.state.pallium_service._storage, monkeypatch, request, tmp_path)
     _turn(client, "claude-code", "sender")
     assert client.post("/relay/turn", json={"runtime": "other", "session_ref": "x", **SCOPE}).status_code == 422
     assert client.post("/relay/turn", json={"runtime": "codex", "session_ref": "bad\x00", **SCOPE}).status_code == 422
