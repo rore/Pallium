@@ -1000,9 +1000,24 @@ def _read_session_state(session_id: str) -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None
 
 
+def _report_session_state_failure(phase: str, error: BaseException | None = None) -> None:
+    try:
+        errno = error.errno if type(getattr(error, "errno", None)) is int else None
+        winerror = error.winerror if type(getattr(error, "winerror", None)) is int else None
+        print(
+            f"pallium hook: session_state_write_failed phase={phase} "
+            f"error={type(error).__name__ if error is not None else None} errno={errno} winerror={winerror}",
+            file=sys.stderr,
+        )
+    except Exception:
+        pass
+
+
 def _acquire_session_lock(
     session_id: str, *, timeout: float = 0.1, deadline: HookDeadline | None = None,
 ):
+    phase = "lock_setup"
+    native_attempted, last_native_error, last_prepare_error = False, None, None
     try:
         SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
         lock_file = open(SESSIONS_DIR / f"{session_id}.lock", "a+b")
@@ -1012,27 +1027,49 @@ def _acquire_session_lock(
             lock_file.flush()
         wait_budget = min(timeout, remaining_safe_time(), remaining_safe_time(deadline))
         if wait_budget <= 0:
+            _report_session_state_failure("lock_budget_exhausted")
+            phase = "lock_close"
             lock_file.close()
             return None
         clock = deadline.clock if deadline is not None else time.monotonic
         lock_deadline = clock() + wait_budget
         while clock() < lock_deadline:
             try:
+                phase = "native_prepare"
                 lock_file.seek(0)
                 if os.name == "nt":
                     import msvcrt
+                    phase = "native_lock"
+                    native_attempted = True
                     msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
                 else:
                     import fcntl
+                    phase = "native_lock"
+                    native_attempted = True
                     fcntl.flock(
                         lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB
                     )
+                last_native_error = last_prepare_error = None
                 return lock_file
-            except OSError:
+            except OSError as error:
+                if phase == "native_lock":
+                    last_native_error = error
+                else:
+                    last_prepare_error = error
                 time.sleep(min(0.01, max(0.0, lock_deadline - clock())))
+        _report_session_state_failure(
+            "native_wait_exhausted" if native_attempted else (
+                "native_prepare" if last_prepare_error is not None else "pre_attempt_deadline"
+            ),
+            last_native_error if native_attempted else last_prepare_error,
+        )
+        last_native_error = last_prepare_error = None
+        phase = "lock_close"
         lock_file.close()
         return None
-    except OSError:
+    except OSError as error:
+        _report_session_state_failure(phase, error)
+        last_native_error = last_prepare_error = None
         return None
 
 
@@ -1059,18 +1096,23 @@ def _update_session_state(
     if lock_file is None:
         return False
     temporary: Path | None = None
+    phase = "state_read"
     try:
         current = _read_session_state(session_id) or {}
+        phase = "state_update"
         updated = update(dict(current))
         if updated is None:
             return True
+        phase = "temporary_write"  # Includes JSON encoding and the native write.
         temporary = SESSIONS_DIR / (
             f".{session_id}.{os.getpid()}.{uuid.uuid4().hex}.tmp"
         )
         temporary.write_text(json.dumps(updated), encoding="utf-8")
+        phase = "atomic_replace"
         _replace_atomic_state_file(temporary, SESSIONS_DIR / f"{session_id}.json")
         return True
-    except (OSError, TypeError, ValueError):
+    except (OSError, TypeError, ValueError) as error:
+        _report_session_state_failure(phase, error)
         return False
     finally:
         if temporary is not None:

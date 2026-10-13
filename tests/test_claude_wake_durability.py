@@ -1191,7 +1191,7 @@ else:
 print("publishing", flush=True)
 print(common._write_wake_intent(json.loads(sys.argv[4])), flush=True)
 if exhaust_budget:
-    print(json.dumps(evidence), file=sys.stderr, flush=True)
+    print("admission-evidence=" + json.dumps(evidence), file=sys.stderr, flush=True)
 """
         process = subprocess.Popen(
             [sys.executable, "-c", script, str(hook_dir), str(state_dir),
@@ -1212,7 +1212,15 @@ if exhaust_budget:
             output, errors = process.communicate(timeout=3)
             assert process.returncode == 0, errors
             assert output.splitlines() == ["publishing", "contended", "False"], errors
-            evidence = json.loads(errors)
+            error_lines = errors.splitlines()
+            assert len(error_lines) == 2, errors
+            assert error_lines[1].startswith("admission-evidence="), errors
+            evidence = json.loads(error_lines[1].removeprefix("admission-evidence="))
+            error_class = "PermissionError" if os.name == "nt" else "BlockingIOError"
+            assert error_lines[0] == (
+                "pallium hook: session_state_write_failed phase=native_wait_exhausted "
+                f"error={error_class} errno={evidence['errno']} winerror=None"
+            ), errors
             assert evidence["errno"] in (errno.EACCES, errno.EAGAIN), evidence
             assert evidence["budget"] == 0.1 and evidence["clock"] == 0.101, evidence
             assert evidence["refused"] is True and evidence["replace_calls"] == 0, evidence

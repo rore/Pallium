@@ -300,8 +300,9 @@ def test_atomic_state_native_failure_closes_only_owned_resource(module, failure_
 @pytest.mark.parametrize("module", (cc_common, codex_common))
 @pytest.mark.parametrize("phase", ("temporary_write", "atomic_replace"))
 @pytest.mark.parametrize("mode", ("native_codes", "noninteger_codes", "stderr_failure"))
+@pytest.mark.parametrize("writer", ("locked", "update"))
 def test_session_state_write_failure_is_sanitized_and_preserves_state(
-    module, phase, mode, tmp_path, monkeypatch, capsys,
+    module, phase, mode, writer, tmp_path, monkeypatch, capsys,
 ):
     from types import SimpleNamespace
 
@@ -330,7 +331,10 @@ def test_session_state_write_failure_is_sanitized_and_preserves_state(
     if mode == "stderr_failure":
         monkeypatch.setattr(module, "sys", SimpleNamespace(**dict(vars(module.sys), stderr=BrokenStderr())))
 
-    assert module._write_session_state_locked("private-session", {"new": "private-marker"}) is False
+    if writer == "update":
+        assert module.pin_container("private-session", "git:example.test/repo") is False
+    else:
+        assert module._write_session_state_locked("private-session", {"new": "private-marker"}) is False
     assert canonical.read_text(encoding="utf-8") == '{"old":true}'
     assert list(tmp_path.glob("*.tmp")) == []
     output = capsys.readouterr()
@@ -346,6 +350,82 @@ def test_session_state_write_failure_is_sanitized_and_preserves_state(
     assert "private-marker" not in output.err
     assert "private-session" not in output.err
     assert str(tmp_path) not in output.err
+
+
+@pytest.mark.parametrize("module", (cc_common, codex_common))
+@pytest.mark.parametrize("phase", ("pre_attempt_deadline", "native_wait_exhausted", "native_prepare", "lock_setup"))
+def test_session_lock_failure_reports_actual_boundary_without_changing_wait(
+    module, phase, tmp_path, capsys,
+):
+    import builtins
+    from types import FunctionType, SimpleNamespace
+
+    failure = PermissionError(13, "private-marker", str(tmp_path))
+    failure.winerror = 32
+    values = [0.0] if phase == "lock_setup" else (
+        [0.0, 0.11] if phase == "pre_attempt_deadline" else [0.0, 0.01, 0.11, 0.12]
+    )
+    if phase in {"native_wait_exhausted", "native_prepare"} and module is cc_common:
+        values.pop()
+    if phase == "lock_setup" and module is codex_common:
+        values.clear()
+    clock_values, attempts, handles = list(values), [], []
+
+    def clock():
+        return clock_values.pop(0)
+
+    def locking(*_args):
+        attempts.append("native")
+        raise failure
+
+    def open_lock(*args, **kwargs):
+        if phase == "lock_setup":
+            raise failure
+        handle = builtins.open(*args, **kwargs)
+        handles.append(handle)
+        if phase != "native_prepare":
+            return handle
+
+        class PreparedLock:
+            def __getattr__(self, name):
+                return getattr(handle, name)
+
+            def seek(self, offset, whence=0):
+                if whence == 0:
+                    raise failure
+                return handle.seek(offset, whence)
+
+        return PreparedLock()
+
+    def isolated_import(name, *args, **kwargs):
+        if name == "msvcrt":
+            return SimpleNamespace(locking=locking, LK_NBLCK=2)
+        return builtins.__import__(name, *args, **kwargs)
+
+    implementation = module._acquire_file_lock if module is cc_common else module._acquire_session_lock
+    namespace = dict(implementation.__globals__)
+    namespace["__builtins__"] = dict(vars(builtins), __import__=isolated_import)
+    namespace["open"] = open_lock
+    namespace["sys"] = SimpleNamespace(**dict(vars(module.sys), platform="win32"))
+    namespace["os"] = SimpleNamespace(**dict(vars(module.os), name="nt"))
+    namespace["SESSIONS_DIR"] = tmp_path
+    sleeps = []
+    namespace["time"] = SimpleNamespace(**dict(
+        vars(module.time), monotonic=clock,
+        sleep=sleeps.append,
+    ))
+    acquire = FunctionType(implementation.__code__, namespace)
+    result = acquire(tmp_path / "private-session.lock", 0.1) if module is cc_common else acquire("private-session", timeout=0.1, deadline=None)
+    assert result is None
+    assert not clock_values
+    assert attempts == (["native"] if phase == "native_wait_exhausted" else [])
+    assert sleeps == ([0.0] if module is codex_common and phase in {"native_wait_exhausted", "native_prepare"} else [])
+    assert all(handle.closed for handle in handles)
+    expected_error = "None errno=None winerror=None" if phase == "pre_attempt_deadline" else "PermissionError errno=13 winerror=32"
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert output.err == f"pallium hook: session_state_write_failed phase={phase} error={expected_error}\n"
+    assert "private-marker" not in output.err and str(tmp_path) not in output.err
 
 
 @pytest.mark.parametrize("module", (cc_common, codex_common))

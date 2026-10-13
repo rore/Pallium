@@ -965,11 +965,27 @@ def _read_session_state(session_id: str) -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None
 
 
+def _report_session_state_failure(phase: str, error: BaseException | None = None) -> None:
+    try:
+        errno = error.errno if type(getattr(error, "errno", None)) is int else None
+        winerror = error.winerror if type(getattr(error, "winerror", None)) is int else None
+        print(
+            f"pallium hook: session_state_write_failed phase={phase} "
+            f"error={type(error).__name__ if error is not None else None} errno={errno} winerror={winerror}",
+            file=sys.stderr,
+        )
+    except Exception:
+        pass
+
+
 def _acquire_file_lock(lock_path: Path, wait_budget: float):
     if wait_budget <= 0:
+        _report_session_state_failure("lock_budget_exhausted")
         return None
     deadline = time.monotonic() + wait_budget
     lock_file = None
+    phase = "lock_setup"
+    native_attempted, last_native_error = False, None
     try:
         lock_path.parent.mkdir(parents=True, exist_ok=True)
         lock_file = open(lock_path, "a+b")
@@ -978,32 +994,56 @@ def _acquire_file_lock(lock_path: Path, wait_budget: float):
             lock_file.write(b"0")
             lock_file.flush()
         if wait_budget <= 0:
+            _report_session_state_failure("lock_budget_exhausted")
+            phase = "lock_close"
             lock_file.close()
             return None
         while True:
             if time.monotonic() >= deadline:
+                _report_session_state_failure(
+                    "native_wait_exhausted" if native_attempted else "pre_attempt_deadline",
+                    last_native_error,
+                )
+                last_native_error = None
                 try:
+                    phase = "lock_close"
                     lock_file.close()
-                except OSError:
-                    pass
+                except OSError as error:
+                    _report_session_state_failure(phase, error)
                 return None
             try:
+                phase = "native_prepare"
                 lock_file.seek(0)
                 if sys.platform == "win32":
                     import msvcrt
+                    phase = "native_lock"
+                    native_attempted = True
                     msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
                 else:
                     import fcntl
+                    phase = "native_lock"
+                    native_attempted = True
                     fcntl.flock(
                         lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB
                     )
+                last_native_error = None
                 return lock_file
-            except OSError:
+            except OSError as error:
+                if phase == "native_lock":
+                    last_native_error = error
                 if time.monotonic() >= deadline:
+                    _report_session_state_failure(
+                        "native_wait_exhausted" if phase == "native_lock" else phase,
+                        error,
+                    )
+                    last_native_error = None
+                    phase = "lock_close"
                     lock_file.close()
                     return None
                 time.sleep(min(0.01, max(0.0, deadline - time.monotonic())))
-    except OSError:
+    except OSError as error:
+        _report_session_state_failure(phase, error)
+        last_native_error = None
         if lock_file is not None:
             try:
                 lock_file.close()
@@ -1046,18 +1086,23 @@ def _update_session_state(
     if lock_file is None:
         return False
     temporary: Path | None = None
+    phase = "state_read"
     try:
         current = _read_session_state(session_id) or {}
+        phase = "state_update"
         updated = update(dict(current))
         if updated is None:
             return True
+        phase = "temporary_write"  # Includes JSON encoding and the native write.
         temporary = SESSIONS_DIR / (
             f".{session_id}.{os.getpid()}.{uuid.uuid4().hex}.tmp"
         )
         temporary.write_text(json.dumps(updated), encoding="utf-8")
+        phase = "atomic_replace"
         _replace_atomic_state_file(temporary, SESSIONS_DIR / f"{session_id}.json")
         return True
-    except (OSError, TypeError, ValueError):
+    except (OSError, TypeError, ValueError) as error:
+        _report_session_state_failure(phase, error)
         return False
     finally:
         if temporary is not None:

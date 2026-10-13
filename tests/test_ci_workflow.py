@@ -21,6 +21,25 @@ def test_ci_cancels_only_the_same_event_and_ref() -> None:
     assert "cancel-in-progress: true" in WORKFLOW
 
 
+def test_relay_capture_is_default_off_and_explicit_only_on_full_matrix_commands() -> None:
+    dispatch = WORKFLOW.split("  workflow_dispatch:\n", 1)[1].split("  schedule:\n", 1)[0]
+    assert re.search(
+        r"(?m)^    inputs:\n      relay_capture:\n        description: [^\n]+\n"
+        r"        type: boolean\n        default: false\n", dispatch,
+    )
+    gate = "${{ github.event_name == 'workflow_dispatch' && inputs.relay_capture == true && '-p scripts.pytest_relay_capture' || '' }}"
+    assert WORKFLOW.count(gate) == WORKFLOW.count("-p scripts.pytest_relay_capture") == 3
+    linux = _job("test", "windows-smoke")
+    windows = _job("windows-full", "nightly-slow-smoke")
+    assert linux.count(gate) == 1 and windows.count(gate) == 2
+    commands = re.findall(r"(?m)^\s+run: (python -m pytest .+)$", linux + windows)
+    assert len(commands) == 3 and all(command.endswith(gate) for command in commands)
+    for name, following in (("focused", "test"), ("windows-smoke", "windows-full"),
+                            ("nightly-slow-smoke", "result")):
+        assert "scripts.pytest_relay_capture" not in _job(name, following)
+    assert "PYTEST_ADDOPTS" not in WORKFLOW
+
+
 def test_every_event_reports_selection_and_policy_is_trusted() -> None:
     assert "paths-ignore:" not in WORKFLOW
     assert "  workflow_dispatch:" in WORKFLOW
