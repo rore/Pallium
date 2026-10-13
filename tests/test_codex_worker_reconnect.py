@@ -746,6 +746,7 @@ def test_busy_and_startup_recovery_share_finite_budget(monkeypatch, bound):
 ])
 async def test_busy_response_does_not_preserve_changed_or_unresolved_admission(monkeypatch, denial):
     clients, calls = [], []
+    admitted_ready, ready_responses = threading.Event(), []
     proof = "7" * 64
 
     class Native:
@@ -760,7 +761,12 @@ async def test_busy_response_does_not_preserve_changed_or_unresolved_admission(m
             clients.append(self)
 
         def ready(self):
-            return {"status": "ready"}
+            result = {"status": "ready", "connected": self.continuity is not None,
+                      "source_exited": False}
+            if self.continuity == proof and len(calls) == 1:
+                ready_responses.append(dict(result))
+                admitted_ready.set()
+            return result
 
         def register(self, metadata):
             calls.append(dict(metadata))
@@ -789,6 +795,10 @@ async def test_busy_response_does_not_preserve_changed_or_unresolved_admission(m
 
     async def exercise(session):
         assert not (await _actual_status(session, "admitted")).isError
+        # Observe a real idle poll before injecting the next admission refusal.
+        assert await asyncio.to_thread(admitted_ready.wait, 1)
+        assert ready_responses[0].get("connected") is True
+        assert ready_responses[0].get("source_exited") is False
         if denial == "capability":
             os.environ["CODEX_APP_TOOLS_PIPE_PATH"] = "changed-capability"
             result = await _actual_status(session, "changed-capability")

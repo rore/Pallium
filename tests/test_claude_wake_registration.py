@@ -844,7 +844,54 @@ def test_missing_credentials_retry_close_after_intent_publication_failure(
 
 def test_restricted_claude_prompt_still_delivers_and_acks_pending_relay(
     client: TestClient, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+    tmp_path: Path, request: pytest.FixtureRequest,
 ) -> None:
+    import time
+    from contextlib import contextmanager
+
+    stages: list[dict[str, object]] = []
+
+    def save_stages():
+        metadata = json.dumps({"stages": stages[:128], "truncated": max(0, len(stages) - 128)})
+        (tmp_path / "restricted-relay-admission.json").write_text(metadata, encoding="utf-8")
+        print("restricted relay admission: " + metadata, file=sys.stderr)
+
+    request.addfinalizer(save_stages)
+    provider = client.app.state.pallium_service._storage
+    original_writer = provider._begin_relay_immediate
+    original_native = provider._begin_immediate_for
+
+    @contextmanager
+    def measured_context(delegate, stage, *args, **kwargs):
+        row = {"stage": stage, "thread": threading.get_ident(), "entered": time.perf_counter()}
+        stages.append(row)
+        try:
+            with delegate(*args, **kwargs) as db:
+                row["acquired"] = time.perf_counter()
+                try:
+                    yield db
+                finally:
+                    row["body_finished"] = time.perf_counter()
+        except BaseException as exc:
+            row["error_type"] = type(exc).__name__
+            cause = exc
+            for _ in range(4):
+                original = getattr(cause, "orig", cause)
+                if getattr(original, "sqlite_errorcode", None) is not None:
+                    row.update(sqlite_code=original.sqlite_errorcode,
+                               sqlite_name=getattr(original, "sqlite_errorname", None))
+                    break
+                if cause.__cause__ is None:
+                    break
+                cause = cause.__cause__
+            raise
+        finally:
+            row["settled"] = time.perf_counter()
+
+    monkeypatch.setattr(provider, "_begin_relay_immediate",
+                        lambda: measured_context(original_writer, "writer_admission"))
+    monkeypatch.setattr(provider, "_begin_immediate_for",
+                        lambda *args, **kwargs: measured_context(original_native, "native_and_setup", *args, **kwargs))
     prompt = _load_claude_hook("user_prompt_submit", monkeypatch)
     common = sys.modules[prompt.register_claude_wake.__module__]
     wake_dir = client.app.state.claude_wake_registry._state_dir
@@ -877,6 +924,8 @@ def test_restricted_claude_prompt_still_delivers_and_acks_pending_relay(
 
     def relay(method, path, body, **_kwargs):
         response = client.request(method, path, json=body)
+        stages.append({"stage": "relay_http", "path": path, "status": response.status_code,
+                       "finished": time.perf_counter()})
         assert response.status_code == 200, response.text
         return response.json()
 

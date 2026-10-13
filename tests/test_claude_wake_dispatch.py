@@ -1625,6 +1625,8 @@ def test_create_app_preserves_new_intent_during_old_cleanup(
     from storage.vector_index import VectorIndexConfig
     from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
     from tests.test_claude_code_integration import _load_claude_hook
+    import sys
+    import time
 
     wake_dir = tmp_path / "wake"
     monkeypatch.setenv("PALLIUM_CLAUDE_WAKE_DIR", str(wake_dir))
@@ -1657,6 +1659,54 @@ def test_create_app_preserves_new_intent_during_old_cleanup(
         common = _load_claude_hook("common", monkeypatch)
         common.CLAUDE_WAKE_DIR = wake_dir
         common.CLAUDE_WAKE_INTENTS_DIR = wake_dir / "intents"
+        stages: list[dict[str, object]] = []
+
+        def capture(stage, delegate, metadata, *args, **kwargs):
+            row = {"stage": stage, "thread": threading.get_ident(),
+                   "entered": time.perf_counter(), **metadata}
+            stages.append(row)
+            try:
+                result = delegate(*args, **kwargs)
+                row["return_type"] = type(result).__name__
+                if isinstance(result, bool):
+                    row["returned"] = result
+                elif stage == "intent_lock":
+                    row["acquired"] = result is not None
+                return result
+            except BaseException as exc:
+                row.update(error_type=type(exc).__name__, errno=getattr(exc, "errno", None),
+                           winerror=getattr(exc, "winerror", None))
+                raise
+            finally:
+                row["finished"] = time.perf_counter()
+
+        original_acquire = common._acquire_file_lock
+        original_publish = common._write_wake_intent
+        original_intent_path = common._wake_intent_path
+        original_replace = common.os.replace
+
+        class IntentPath(type(tmp_path)):
+            def write_text(self, *args, **kwargs):
+                return capture("temporary_write", super().write_text,
+                               {"path_length": len(str(self))}, *args, **kwargs)
+
+        def publish(payload):
+            try:
+                return capture("publication", original_publish, {}, payload)
+            finally:
+                metadata = json.dumps({"stages": stages[:128], "truncated": max(0, len(stages) - 128)})
+                (tmp_path / "old-cleanup-publication.json").write_text(metadata, encoding="utf-8")
+                print("old cleanup publication: " + metadata, file=sys.stderr)
+
+        monkeypatch.setattr(common, "_acquire_file_lock", lambda path, budget:
+                            capture("intent_lock", original_acquire, {"budget": budget}, path, budget))
+        monkeypatch.setattr(common, "_wake_intent_path", lambda *args: IntentPath(original_intent_path(*args)))
+        monkeypatch.setattr(common, "os", SimpleNamespace(**vars(common.os)))
+        monkeypatch.setattr(common.os, "replace", lambda source, destination:
+                            capture("atomic_replace", original_replace,
+                                    {"source_length": len(str(source)), "destination_length": len(str(destination))},
+                                    source, destination))
+        monkeypatch.setattr(common, "_write_wake_intent", publish)
 
         session = "overlap-\u2713"
 
