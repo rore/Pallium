@@ -37,7 +37,7 @@ async def _wait_for_health(client, predicate, *, timeout: float = 5.0):
             body = response.json()
             if predicate(body):
                 return response, body
-            await asyncio.sleep(0)
+            await asyncio.sleep(.01)
 
 
 @pytest.mark.asyncio

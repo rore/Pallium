@@ -2350,9 +2350,10 @@ def test_relay_formatter_redelivery_envelope_respects_budget_without_acknowledgi
     [False, True],
     ids=["normal-deadline", "empty-discovery-optional-lookup"],
 )
+@pytest.mark.parametrize("hold_pin_reader", [False, True], ids=["unheld-reader", "held-reader"])
 def test_configured_actor_hook_registers_and_delivers_across_git_containers(
     client, monkeypatch, tmp_path: Path, runtime: str, relative: str, codex: bool,
-    advance_empty_optional_lookup: bool,
+    advance_empty_optional_lookup: bool, hold_pin_reader: bool,
 ):
     """Relay delivery crosses containers and configured actor metadata."""
     # This test drives an ordinary turn; native wake/trace workers have separate coverage.
@@ -2403,13 +2404,43 @@ def test_configured_actor_hook_registers_and_delivers_across_git_containers(
     monkeypatch.setattr(hook, "get_pending_relay_close_batch", lambda *_args: ([], 0))
     monkeypatch.setattr(hook, "check_dedup", lambda *_args: False)
     monkeypatch.setattr(hook, "pallium_request", lambda *_args, **_kwargs: None)
+    import threading
+
+    reader_opened, reader_release = threading.Event(), threading.Event()
+    reader_workers, reader_results, ack_calls = [], [], []
+    common_namespace = hook.relay_turn.__globals__
+    original_open = common_namespace["_open_atomic_state_file"]
+
+    from contextlib import contextmanager
+
+    @contextmanager
+    def held_open(path):
+        with original_open(path) as stream:
+            if threading.current_thread() in reader_workers:
+                reader_opened.set()
+                reader_release.wait()
+            yield stream
+
+    if hold_pin_reader:
+        monkeypatch.setitem(common_namespace, "_open_atomic_state_file", held_open)
 
     def relay(method, path, body, *, timeout):
         response = client.request(method, path, json=body)
         assert response.status_code == 200, response.text
-        return response.json()
+        result = response.json()
+        if hold_pin_reader and result.get("deliveries"):
+            worker = threading.Thread(target=lambda: reader_results.append(
+                common_namespace["get_pinned_container"]("target-session")
+            ))
+            reader_workers.append(worker)
+            worker.start()
+            assert reader_opened.wait(1)
+        return result
 
     def acknowledge(deliveries, *, container_ref):
+        ack_calls.append(len(deliveries))
+        if hold_pin_reader:
+            assert reader_workers[0].is_alive()
         for delivery in deliveries:
             response = client.post("/relay/deliveries/ack", json={
                 "delivery_id": delivery["delivery_id"], "claim_token": delivery["claim_token"],
@@ -2451,10 +2482,21 @@ def test_configured_actor_hook_registers_and_delivers_across_git_containers(
     assert sent.status_code == 200, sent.text
     payload = {"cwd": str(target), "session_id": "target-session", "prompt": "deliver this"}
     monkeypatch.setattr(hook, "read_hook_input", lambda: payload)
-    with pytest.raises(SystemExit):
-        hook.main()
+    try:
+        with pytest.raises(SystemExit):
+            hook.main()
+    finally:
+        reader_release.set()
+        for worker in reader_workers:
+            worker.join(1)
+            assert not worker.is_alive()
     assert any("cross-container delivery" in text for text in emitted)
+    assert sum("cross-container delivery" in text for text in emitted) == 1
+    assert ack_calls == [1]
     assert client.get(f"/relay/messages/{sent.json()['message_id']}", params={"container_ref": target_container}).json()["deliveries"][0]["state"] == "delivered"
+    assert "relay_turn_intent" not in common_namespace["_read_session_state"]("target-session")
+    if hold_pin_reader:
+        assert reader_results == [target_container]
     if advance_empty_optional_lookup:
         assert discoveries and all(not discovery.structural_refs for discovery in discoveries)
         assert lookup_calls == []

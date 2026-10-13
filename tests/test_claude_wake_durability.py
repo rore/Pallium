@@ -7,7 +7,7 @@ import subprocess
 import sys
 import threading
 import time
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import urlsplit
@@ -56,6 +56,130 @@ def _write_intent(root: Path, payload: dict, intent_id: str) -> None:
 def _register(registry: ClaudeWakeRegistry, root: Path, payload: dict, intent_id: str) -> bool:
     _write_intent(root, payload, intent_id)
     return registry.register(**payload, intent_id=intent_id)
+
+
+@pytest.mark.parametrize("phase", ["mkdir", "temporary_write", "atomic_replace"])
+@pytest.mark.parametrize("codes", ["native", "untrusted", "logger-failure"])
+def test_atomic_reservation_failure_reports_only_safe_metadata(
+    tmp_path, monkeypatch, caplog, phase, codes,
+):
+    import core.claude_wake as wake
+
+    registry = ClaudeWakeRegistry(state_dir=tmp_path)
+    assert _register(registry, tmp_path, PAYLOAD, "initial")
+    canonical = registry._canonical
+    before = canonical.read_bytes()
+    failure = PermissionError("private exception detail", str(canonical))
+    failure.errno = 13 if codes != "untrusted" else "private errno"
+    failure.winerror = 32 if codes != "untrusted" else True
+    native_replace = wake._replace_atomic_state_file
+
+    class FailurePath(type(tmp_path)):
+        def mkdir(self, *args, **kwargs):
+            if phase == "mkdir" and self == tmp_path:
+                raise failure
+            return super().mkdir(*args, **kwargs)
+
+        def write_text(self, *args, **kwargs):
+            if phase == "temporary_write" and self == canonical.with_name(canonical.name + ".tmp"):
+                raise failure
+            return super().write_text(*args, **kwargs)
+
+    def replace(source, destination):
+        if phase == "atomic_replace" and destination == canonical:
+            raise failure
+        return native_replace(source, destination)
+
+    transport_calls = []
+    scope = {key: PAYLOAD[key] for key in ("runtime", "session_ref", "container_ref")}
+    with monkeypatch.context() as fault:
+        fault.setattr(registry, "_canonical", FailurePath(canonical))
+        fault.setattr(wake, "_replace_atomic_state_file", replace)
+        if codes == "logger-failure":
+            def broken_log(*_args, **_kwargs):
+                raise RuntimeError("private logging failure")
+            fault.setattr(wake.logger, "warning", broken_log)
+        result = registry.attempt(**scope, transport=lambda *_: transport_calls.append(True) or True)
+    assert (result.outcome, result.reason) == ("deferred", "reservation_write_failed")
+    assert not transport_calls and canonical.read_bytes() == before
+    if codes != "logger-failure":
+        records = [record for record in caplog.records if record.name == "core.claude_wake"]
+        assert len(records) == 1
+        expected_codes = "errno=13 winerror=32" if codes == "native" else "errno=None winerror=None"
+        assert records[0].getMessage() == (
+            f"claude_wake_atomic_write_failed phase={phase} error_type=PermissionError {expected_codes}"
+        )
+        assert records[0].exc_info is None
+    assert registry.probe(**scope, transport=lambda *_: transport_calls.append(True) or True)
+    assert transport_calls == [True]
+    assert len(caplog.records) == (0 if codes == "logger-failure" else 1)
+
+
+def test_open_canonical_reader_preserves_snapshot_through_http_wake_and_ack(
+    client, tmp_path, monkeypatch,
+):
+    import core.claude_wake as wake
+
+    registry = client.app.state.claude_wake_registry
+    assert registry.persistent
+    scope = {"container_ref": PAYLOAD["container_ref"]}
+    for runtime, session in (("codex", "sender"), ("claude-code", PAYLOAD["session_ref"])):
+        assert client.post("/relay/turn", json={"runtime": runtime, "session_ref": session, **scope}).status_code == 200
+    assert _register(registry, registry._state_dir, PAYLOAD, "idle")
+    canonical = registry._canonical
+    previous = json.loads(canonical.read_text(encoding="utf-8"))
+    opened, release, notified = threading.Event(), threading.Event(), threading.Event()
+    snapshots, transport_calls = [], []
+    native_open = wake._open_atomic_state_file
+    reader_id = []
+
+    @contextmanager
+    def held_reader(path):
+        with native_open(path) as source:
+            if path == canonical and reader_id == [threading.get_ident()]:
+                opened.set()
+                release.wait()
+            yield source
+
+    def reader():
+        reader_id.append(threading.get_ident())
+        snapshots.append(registry._read_json(canonical))
+
+    def transport(*_args):
+        transport_calls.append(True)
+        notified.set()
+        return True
+
+    monkeypatch.setattr(wake, "_open_atomic_state_file", held_reader)
+    monkeypatch.setattr("app.claude_wake.claude_wake_transport", transport)
+    worker = threading.Thread(target=reader)
+    worker.start()
+    try:
+        assert opened.wait(1)
+        sent = client.post("/relay/messages", json={
+            "sender_runtime": "codex", "sender_session_ref": "sender",
+            "recipient": "claude-code:" + PAYLOAD["session_ref"],
+            "payload": "canonical reader snapshot ✓", **scope,
+        })
+        assert sent.status_code == 200, sent.text
+        assert notified.wait(1) and worker.is_alive()
+        assert json.loads(canonical.read_text(encoding="utf-8"))["registrations"][0]["state"] == "wake_inflight"
+        claimed = client.post("/relay/turn", json={
+            "runtime": "claude-code", "session_ref": PAYLOAD["session_ref"], **scope,
+        })
+        assert claimed.status_code == 200, claimed.text
+        delivery = claimed.json()["deliveries"][0]
+        assert client.post("/relay/deliveries/ack", json={
+            "delivery_id": delivery["delivery_id"], "claim_token": delivery["claim_token"], **scope,
+        }).status_code == 200
+        public = client.get(f"/relay/messages/{sent.json()['message_id']}", params=scope)
+        assert public.status_code == 200 and public.json()["deliveries"][0]["state"] == "delivered"
+        assert transport_calls == [True] and worker.is_alive()
+    finally:
+        release.set()
+        worker.join(1)
+        assert not worker.is_alive()
+    assert snapshots == [previous]
 
 
 def _modern_admission_fixture(root: Path) -> ClaudeWakeRegistry:
@@ -138,7 +262,7 @@ def test_compatibility_qualified_close_preserves_replacement_and_pending_intent(
     temporary = tmp_path / "capabilities.json.tmp"
     intent_path = _intent_path(tmp_path, PAYLOAD["session_ref"])
     phases = []
-    original_write, original_replace = Path.write_text, wake.os.replace
+    original_write, original_replace = Path.write_text, wake._replace_atomic_state_file
     original_acquire = wake._acquire_intent_lock
 
     def observe(phase, callback, *args, **kwargs):
@@ -174,9 +298,7 @@ def test_compatibility_qualified_close_preserves_replacement_and_pending_intent(
             return observe("acquire", original_acquire, path)
         return original_acquire(path)
 
-    private_os = SimpleNamespace(**vars(wake.os))
-    private_os.replace = replace
-    monkeypatch.setattr(wake, "os", private_os)
+    monkeypatch.setattr(wake, "_replace_atomic_state_file", replace)
     monkeypatch.setattr(wake, "_acquire_intent_lock", acquire)
     monkeypatch.setattr(Path, "write_text", write)
 

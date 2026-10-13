@@ -6,6 +6,7 @@ from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field, replace
 import json
 import hashlib
+import logging
 import math
 import os
 import re
@@ -27,6 +28,97 @@ MAX_CONTAINER_CHARS = 512
 MAX_SOCKET_CHARS = 4096
 MAX_TOKEN_CHARS = 8192
 _ENDPOINT_RE = re.compile(r"^relay-session-[0-9a-f]{32}$")
+logger = logging.getLogger(__name__)
+
+
+@contextmanager
+def _open_atomic_state_file(path: Path):
+    """Let atomic replacement proceed while an existing read snapshot is open."""
+    name = os.fspath(path)
+    if "\x00" in name:
+        raise ValueError("embedded null character")
+    if os.name != "nt":
+        with path.open("r", encoding="utf-8") as source:
+            yield source
+        return
+    import ctypes
+    from ctypes import wintypes
+    import msvcrt
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    create_file = kernel32.CreateFileW
+    create_file.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                           wintypes.LPVOID, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+    create_file.restype = wintypes.HANDLE
+    close_handle = kernel32.CloseHandle
+    close_handle.argtypes = [wintypes.HANDLE]
+    close_handle.restype = wintypes.BOOL
+    # GENERIC_READ, FILE_SHARE_READ|WRITE|DELETE, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL.
+    handle = create_file(name, 0x80000000, 7, None, 3, 0x80, None)
+    if handle == ctypes.c_void_p(-1).value:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        fd = msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY)
+    except BaseException:
+        close_handle(handle)
+        raise
+    try:
+        with os.fdopen(fd, "r", encoding="utf-8", closefd=False) as source:
+            yield source
+    finally:
+        os.close(fd)
+
+
+def _replace_atomic_state_file(source: Path, destination: Path) -> None:
+    source_name, destination_name = os.fspath(source), os.fspath(destination)
+    if "\x00" in source_name or "\x00" in destination_name:
+        raise ValueError("embedded null character")
+    if os.name != "nt":
+        os.replace(source_name, destination_name)
+        return
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    create_file = kernel32.CreateFileW
+    create_file.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                           wintypes.LPVOID, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+    create_file.restype = wintypes.HANDLE
+    close_handle = kernel32.CloseHandle
+    close_handle.argtypes = [wintypes.HANDLE]
+    close_handle.restype = wintypes.BOOL
+    rename = kernel32.SetFileInformationByHandle
+    rename.argtypes = [wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD]
+    rename.restype = wintypes.BOOL
+
+    class RenameInfo(ctypes.Structure):
+        _fields_ = [("Flags", wintypes.DWORD), ("RootDirectory", wintypes.HANDLE),
+                    ("FileNameLength", wintypes.DWORD), ("FileName", wintypes.WCHAR * 1)]
+
+    filename = os.path.abspath(destination_name).encode("utf-16-le", "surrogatepass")
+    buffer = ctypes.create_string_buffer(ctypes.sizeof(RenameInfo) + len(filename) + 2)
+    info = ctypes.cast(buffer, ctypes.POINTER(RenameInfo)).contents
+    info.Flags = 3  # REPLACE_IF_EXISTS | POSIX_SEMANTICS.
+    info.RootDirectory = None
+    info.FileNameLength = len(filename)
+    ctypes.memmove(ctypes.addressof(buffer) + RenameInfo.FileName.offset, filename, len(filename))
+    # DELETE, shared read/write/delete, OPEN_EXISTING, OPEN_REPARSE_POINT.
+    handle = create_file(source_name, 0x10000, 7, None, 3, 0x200080, None)
+    if handle == ctypes.c_void_p(-1).value:
+        raise ctypes.WinError(ctypes.get_last_error())
+    fallback = False
+    try:
+        if not rename(handle, 22, buffer, len(buffer)):
+            error = ctypes.get_last_error()
+            if error in {1, 50, 87}:
+                fallback = True
+            else:
+                raise ctypes.WinError(error)
+    finally:
+        if not close_handle(handle):
+            raise ctypes.WinError(ctypes.get_last_error())
+    if fallback:
+        os.replace(source_name, destination_name)
 
 
 @dataclass(frozen=True)
@@ -824,6 +916,7 @@ class ClaudeWakeRegistry:
         return True
 
     def _atomic_write(self, path: Path, payload: dict) -> bool:
+        phase = "mkdir"
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             if os.name != "nt":
@@ -831,6 +924,7 @@ class ClaudeWakeRegistry:
                     os.chmod(path.parent, 0o700)
                 except OSError:
                     pass
+            phase = "temporary_write"
             temp = path.with_name(path.name + ".tmp")
             temp.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
             if os.name != "nt":
@@ -838,9 +932,21 @@ class ClaudeWakeRegistry:
                     os.chmod(temp, 0o600)
                 except OSError:
                     pass
-            os.replace(temp, path)
+            phase = "atomic_replace"
+            _replace_atomic_state_file(temp, path)
             return True
-        except (OSError, TypeError, ValueError):
+        except (OSError, TypeError, ValueError) as error:
+            try:
+                errno = getattr(error, "errno", None)
+                winerror = getattr(error, "winerror", None)
+                logger.warning(
+                    "claude_wake_atomic_write_failed phase=%s error_type=%s errno=%s winerror=%s",
+                    phase, type(error).__name__,
+                    errno if type(errno) is int else None,
+                    winerror if type(winerror) is int else None,
+                )
+            except Exception:
+                pass
             return False
 
     @staticmethod
@@ -848,6 +954,8 @@ class ClaudeWakeRegistry:
         if path is None:
             return None
         try:
-            return json.loads(path.read_text(encoding="utf-8"))
+            with _open_atomic_state_file(path) as source:
+                contents = source.read()
+            return json.loads(contents)
         except (OSError, ValueError, json.JSONDecodeError):
             return None

@@ -712,7 +712,7 @@ def test_malformed_descriptor_never_writes_owner(http_wake, body, caplog, monkey
 
 
 def test_malformed_descriptor_release_busy_recovers_without_owner_replay(
-    http_wake, monkeypatch, tmp_path,
+    http_wake, monkeypatch, tmp_path, caplog,
 ):
     from sqlalchemy import event
 
@@ -800,6 +800,10 @@ def test_malformed_descriptor_release_busy_recovers_without_owner_replay(
     assert delivered["delivery_id"] == delivery["delivery_id"]
     assert delivered["state"] == "delivered" and delivered["attempts"] == 1
     assert len(valid_desktop.owners) == 1
+    release_warnings = [record.message for record in caplog.records if record.name == "core.codex_wake"
+                        and record.message.startswith("codex_wake_transition_failed operation=release error_type=ImmediateTransactionBusyError")]
+    assert len(release_warnings) == 1
+    assert release_warnings[0].rpartition("acquisition_stage=")[2] in ImmediateTransactionBusyError.ACQUISITION_STAGES
 
 @pytest.mark.parametrize("fault", ["lost", "malformed", "native-error", None])
 def test_write_is_fenced_across_concurrency_recovery_restart(http_wake, fault):

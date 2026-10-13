@@ -79,6 +79,29 @@ def _codex_skill_dir() -> Path:
     return Path.home() / ".codex" / "skills" / "pallium-memory"
 
 
+def _same_skill_tree(left: Path, right: Path) -> bool:
+    try:
+        left_stat, right_stat = left.lstat(), right.lstat()
+        for info in (left_stat, right_stat):
+            if stat.S_ISLNK(info.st_mode) or (
+                getattr(info, "st_file_attributes", 0)
+                & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+            ):
+                return False
+        if stat.S_ISREG(left_stat.st_mode) and stat.S_ISREG(right_stat.st_mode):
+            return left.read_bytes() == right.read_bytes()
+        if not (stat.S_ISDIR(left_stat.st_mode) and stat.S_ISDIR(right_stat.st_mode)):
+            return False
+        left_entries = {item.name: item for item in left.iterdir()}
+        right_entries = {item.name: item for item in right.iterdir()}
+        return left_entries.keys() == right_entries.keys() and all(
+            _same_skill_tree(item, right_entries[name])
+            for name, item in left_entries.items()
+        )
+    except OSError:
+        return False
+
+
 def _install_skill() -> None:
     """Stage and atomically activate the complete Pallium-managed skill tree."""
     source_dir = _codex_skill_src().parent
@@ -92,6 +115,8 @@ def _install_skill() -> None:
         shutil.copytree(source_dir, staged)
         if not (staged / "SKILL.md").is_file():
             raise FileNotFoundError("staged Pallium skill has no SKILL.md")
+        if _same_skill_tree(staged, dest_dir):
+            return
         if dest_dir.exists():
             dest_dir.rename(previous)
         try:

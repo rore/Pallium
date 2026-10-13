@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 
 import pytest
+from core import claude_wake as core_claude_wake
 
 import importlib.util
 import inspect
@@ -23,6 +24,328 @@ ROOT = Path(__file__).resolve().parent.parent
 
 cc_common = _load_module(str(ROOT / "integrations" / "claude-code" / "hooks" / "common.py"), "cc_common_parity")
 codex_common = _load_module(str(ROOT / "integrations" / "codex" / "hooks" / "common.py"), "codex_common_parity")
+
+
+@pytest.mark.parametrize("module", (cc_common, codex_common))
+def test_atomic_state_reader_keeps_coherent_snapshot_during_replacement(module, tmp_path, monkeypatch):
+    monkeypatch.setattr(module, "SESSIONS_DIR", tmp_path)
+    before = {"container_ref": "git:例/old", "relay_turn_intent": {"runtime": "codex"}}
+    after = {"container_ref": "git:例/new"}
+    assert module._write_session_state_locked("session", before)
+    with module._open_atomic_state_file(tmp_path / "session.json") as reader:
+        assert module._write_session_state_locked("session", after)
+        assert json.loads(reader.read()) == before
+        assert module._read_session_state("session") == after
+    assert reader.closed
+
+
+@pytest.mark.parametrize("module", (cc_common, codex_common, core_claude_wake))
+@pytest.mark.parametrize("phase,code", (("rename", 1), ("rename", 50), ("rename", 87),
+                                        ("rename", 5), ("rename", 32), ("open", 5),
+                                        ("close", 87), ("close_after_success", 5)))
+def test_atomic_state_rename_fallback_is_capability_only_after_close(module, phase, code, tmp_path):
+    import builtins
+    import ctypes
+    from ctypes import wintypes
+    from types import FunctionType, SimpleNamespace
+
+    calls = []
+    failure = OSError(13, "native operation refused")
+    failure.winerror = code
+    close_failure = OSError(13, "native close refused")
+    close_failure.winerror = 5
+    native_code = [code]
+
+    def create(_path, access, sharing, _security, disposition, attributes, _template):
+        assert (access, sharing, disposition, attributes) == (0x10000, 7, 3, 0x80 | 0x00200000)
+        calls.append("open")
+        return ctypes.c_void_p(-1).value if phase == "open" else 123
+
+    def close(handle):
+        assert handle == 123
+        calls.append("close")
+        if phase in {"close", "close_after_success"}:
+            native_code[0] = 5
+            return False
+        return True
+
+    def rename(handle, information_class, _buffer, _length):
+        assert (handle, information_class) == (123, 22)
+        calls.append("rename")
+        return phase == "close_after_success"
+
+    def fallback(source, destination):
+        assert calls == ["open", "rename", "close"]
+        calls.append("fallback")
+
+    native = SimpleNamespace(**dict(
+        vars(ctypes), wintypes=wintypes,
+        WinDLL=lambda *_args, **_kwargs: SimpleNamespace(CreateFileW=create, CloseHandle=close, SetFileInformationByHandle=rename),
+        get_last_error=lambda: native_code[0],
+        WinError=lambda _code: close_failure if phase in {"close", "close_after_success"} and _code == 5 else failure,
+    ))
+    def isolated_import(name, *args, **kwargs):
+        return native if name == "ctypes" else builtins.__import__(name, *args, **kwargs)
+
+    namespace = dict(module._replace_atomic_state_file.__globals__)
+    namespace["__builtins__"] = dict(vars(builtins), __import__=isolated_import)
+    namespace["os"] = SimpleNamespace(**dict(vars(module.os), name="nt", replace=fallback))
+    replace = FunctionType(module._replace_atomic_state_file.__code__, namespace)
+    if phase == "rename" and code in {1, 50, 87}:
+        replace(tmp_path / "source", tmp_path / "状态-🚀.json")
+        assert calls == ["open", "rename", "close", "fallback"]
+    else:
+        with pytest.raises(OSError) as caught:
+            replace(tmp_path / "source", tmp_path / "状态-🚀.json")
+        assert caught.value is (close_failure if phase in {"close", "close_after_success"} else failure)
+        assert calls == (["open"] if phase == "open" else ["open", "rename", "close"])
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="actual Windows information-class refusal")
+@pytest.mark.parametrize("module", (cc_common, codex_common, core_claude_wake))
+def test_atomic_state_invalid_native_class_preserves_files_before_compatibility_fallback(module, tmp_path):
+    import builtins
+    import ctypes
+    from ctypes import wintypes
+    from types import FunctionType, SimpleNamespace
+
+    source, destination = tmp_path / "source.tmp", tmp_path / "状态-🚀.json"
+    source.write_text("new", encoding="utf-8")
+    destination.write_text("old", encoding="utf-8")
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    native_rename = kernel.SetFileInformationByHandle
+    native_rename.argtypes = [wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD]
+    native_rename.restype = wintypes.BOOL
+    closed, rejected = [], []
+    native_close = kernel.CloseHandle
+    native_close.argtypes, native_close.restype = [wintypes.HANDLE], wintypes.BOOL
+
+    def reject_class(handle, _information_class, buffer, length):
+        result = native_rename(handle, 0x7fffffff, buffer, length)
+        code = ctypes.get_last_error()
+        assert not result and code in {1, 50, 87}
+        rejected.append(code)
+        with module._open_atomic_state_file(source) as reader:
+            assert reader.read() == "new"
+        assert destination.read_text(encoding="utf-8") == "old"
+        ctypes.set_last_error(code)
+        return result
+
+    def close(handle):
+        result = native_close(handle)
+        closed.append(bool(result))
+        return result
+
+    def fallback(old, new):
+        assert closed == [True] and len(rejected) == 1
+        assert source.read_text(encoding="utf-8") == "new"
+        assert destination.read_text(encoding="utf-8") == "old"
+        module.os.replace(old, new)
+
+    native = SimpleNamespace(**dict(vars(ctypes), WinDLL=lambda *_args, **_kwargs: SimpleNamespace(
+        CreateFileW=kernel.CreateFileW, CloseHandle=close, SetFileInformationByHandle=reject_class,
+    )))
+    def isolated_import(name, *args, **kwargs):
+        return native if name == "ctypes" else builtins.__import__(name, *args, **kwargs)
+
+    namespace = dict(module._replace_atomic_state_file.__globals__)
+    namespace["__builtins__"] = dict(vars(builtins), __import__=isolated_import)
+    namespace["os"] = SimpleNamespace(**dict(vars(module.os), replace=fallback))
+    replace = FunctionType(module._replace_atomic_state_file.__code__, namespace)
+    replace(source, destination)
+    assert destination.read_text(encoding="utf-8") == "new" and not source.exists()
+
+
+@pytest.mark.parametrize("module", (cc_common, codex_common, core_claude_wake))
+@pytest.mark.parametrize("invalid_path", ("source", "destination"))
+def test_atomic_state_rename_rejects_nul_before_native_admission(module, invalid_path, tmp_path):
+    from contextlib import contextmanager
+    from types import FunctionType, SimpleNamespace
+
+    namespace = dict(module._replace_atomic_state_file.__globals__)
+    namespace["os"] = SimpleNamespace(**dict(vars(module.os), name="nt"))
+    replace = FunctionType(module._replace_atomic_state_file.__code__, namespace)
+    source = tmp_path / ("source\0" if invalid_path == "source" else "source")
+    destination = tmp_path / ("destination\0" if invalid_path == "destination" else "destination")
+    with pytest.raises(ValueError, match="embedded null character"):
+        replace(source, destination)
+    implementation = module._open_atomic_state_file.__wrapped__
+    read_namespace = dict(implementation.__globals__)
+    read_namespace["os"] = namespace["os"]
+    open_state = contextmanager(FunctionType(implementation.__code__, read_namespace))
+    with pytest.raises(ValueError, match="embedded null character"):
+        with open_state(source if invalid_path == "source" else destination):
+            pytest.fail("invalid filename must not open a reader")
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows readonly destination contract")
+@pytest.mark.parametrize("module", (cc_common, codex_common, core_claude_wake))
+def test_atomic_state_rename_does_not_bypass_readonly_destination(module, tmp_path):
+    import stat
+
+    source, destination = tmp_path / "source.tmp", tmp_path / "destination.json"
+    source.write_text("new", encoding="utf-8")
+    destination.write_text("old", encoding="utf-8")
+    destination.chmod(stat.S_IREAD)
+    try:
+        with pytest.raises(OSError):
+            module._replace_atomic_state_file(source, destination)
+        assert source.read_text(encoding="utf-8") == "new"
+        assert destination.read_text(encoding="utf-8") == "old"
+    finally:
+        destination.chmod(stat.S_IWRITE)
+
+
+@pytest.mark.parametrize("module", (cc_common, codex_common))
+@pytest.mark.parametrize("content", (b"not-json", b'"\xff"'))
+def test_atomic_state_read_errors_close_reader(module, content, tmp_path, monkeypatch):
+    from contextlib import contextmanager
+
+    monkeypatch.setattr(module, "SESSIONS_DIR", tmp_path)
+    (tmp_path / "session.json").write_bytes(content)
+    original_open, readers = module._open_atomic_state_file, []
+
+    @contextmanager
+    def observe(path):
+        with original_open(path) as reader:
+            readers.append(reader)
+            yield reader
+
+    monkeypatch.setattr(module, "_open_atomic_state_file", observe)
+    assert module._read_session_state("session") is None
+    assert len(readers) == 1 and readers[0].closed
+    assert module._read_session_state("missing") is None
+    assert len(readers) == 1
+
+
+@pytest.mark.parametrize("module", (cc_common, codex_common, core_claude_wake))
+@pytest.mark.parametrize("failure_phase", ("native_open", "descriptor_transfer", "text_wrapper", "actual_text_wrapper"))
+def test_atomic_state_native_failure_closes_only_owned_resource(module, failure_phase, tmp_path):
+    import builtins
+    import ctypes
+    from ctypes import wintypes
+    from types import FunctionType, SimpleNamespace
+    from contextlib import contextmanager
+
+    closed_handles, closed_descriptors, actual_descriptors = [], [], []
+    failure = OSError(13, "injected native boundary failure")
+
+    def create(*_args):
+        return ctypes.c_void_p(-1).value if failure_phase == "native_open" else 123
+
+    def close(handle):
+        closed_handles.append(handle)
+        return True
+
+    def transfer(handle, flags):
+        assert handle == 123
+        if failure_phase == "descriptor_transfer":
+            raise failure
+        if failure_phase == "actual_text_wrapper":
+            descriptor = module.os.open(tmp_path / "reader", module.os.O_CREAT | module.os.O_RDWR, 0o600)
+            actual_descriptors.append(descriptor)
+            return descriptor
+        return 17
+
+    def wrap(descriptor, mode, *, encoding, closefd):
+        assert (mode, encoding, closefd) == ("r", "utf-8", False)
+        if failure_phase == "actual_text_wrapper":
+            assert descriptor == actual_descriptors[0]
+            return module.os.fdopen(descriptor, mode, encoding="invalid-state-reader-codec", closefd=closefd)
+        assert descriptor == 17
+        raise failure
+
+    def close_descriptor(descriptor):
+        closed_descriptors.append(descriptor)
+        if failure_phase == "actual_text_wrapper":
+            module.os.close(descriptor)
+
+    native = SimpleNamespace(
+        WinDLL=lambda *_args, **_kwargs: SimpleNamespace(CreateFileW=create, CloseHandle=close),
+        c_void_p=ctypes.c_void_p, get_last_error=lambda: 5, WinError=lambda _code: failure,
+        wintypes=wintypes,
+    )
+    def isolated_import(name, *args, **kwargs):
+        if name == "ctypes":
+            return native
+        if name == "msvcrt":
+            return SimpleNamespace(open_osfhandle=transfer)
+        return builtins.__import__(name, *args, **kwargs)
+
+    implementation = module._open_atomic_state_file.__wrapped__
+    namespace = dict(implementation.__globals__)
+    namespace["__builtins__"] = dict(vars(builtins), __import__=isolated_import)
+    namespace["os"] = SimpleNamespace(**dict(
+        vars(module.os), name="nt", O_BINARY=getattr(module.os, "O_BINARY", 0x8000),
+        fdopen=wrap, close=close_descriptor,
+    ))
+    open_state = contextmanager(FunctionType(implementation.__code__, namespace))
+    with pytest.raises((OSError, LookupError)) as caught:
+        with open_state(Path("unused.json")):
+            pytest.fail("failed native open must not yield a reader")
+    if failure_phase == "actual_text_wrapper":
+        assert isinstance(caught.value, LookupError)
+        with pytest.raises(OSError):
+            module.os.fstat(actual_descriptors[0])
+    else:
+        assert caught.value is failure
+    assert closed_handles == ([123] if failure_phase == "descriptor_transfer" else [])
+    assert closed_descriptors == (
+        actual_descriptors if failure_phase == "actual_text_wrapper"
+        else [17] if failure_phase == "text_wrapper" else []
+    )
+
+
+@pytest.mark.parametrize("module", (cc_common, codex_common))
+@pytest.mark.parametrize("phase", ("temporary_write", "atomic_replace"))
+@pytest.mark.parametrize("mode", ("native_codes", "noninteger_codes", "stderr_failure"))
+def test_session_state_write_failure_is_sanitized_and_preserves_state(
+    module, phase, mode, tmp_path, monkeypatch, capsys,
+):
+    from types import SimpleNamespace
+
+    canonical = tmp_path / "private-session.json"
+    canonical.write_text('{"old":true}', encoding="utf-8")
+    failure = PermissionError(13, "private-marker", str(canonical))
+    failure.winerror = 267
+    if mode == "noninteger_codes":
+        failure.errno, failure.winerror = True, "private-marker"
+
+    class StatePath(type(tmp_path)):
+        def write_text(self, *args, **kwargs):
+            if phase == "temporary_write":
+                raise failure
+            return super().write_text(*args, **kwargs)
+
+    def replace(*_args, **_kwargs):
+        raise failure
+
+    class BrokenStderr:
+        def write(self, _text):
+            raise OSError("private-marker")
+
+    monkeypatch.setattr(module, "SESSIONS_DIR", StatePath(tmp_path))
+    monkeypatch.setattr(module, "_replace_atomic_state_file", replace)
+    if mode == "stderr_failure":
+        monkeypatch.setattr(module, "sys", SimpleNamespace(**dict(vars(module.sys), stderr=BrokenStderr())))
+
+    assert module._write_session_state_locked("private-session", {"new": "private-marker"}) is False
+    assert canonical.read_text(encoding="utf-8") == '{"old":true}'
+    assert list(tmp_path.glob("*.tmp")) == []
+    output = capsys.readouterr()
+    assert output.out == ""
+    if mode == "stderr_failure":
+        assert output.err == ""
+    else:
+        codes = "errno=None winerror=None" if mode == "noninteger_codes" else "errno=13 winerror=267"
+        assert output.err == (
+            f"pallium hook: session_state_write_failed phase={phase} "
+            f"error=PermissionError {codes}\n"
+        )
+    assert "private-marker" not in output.err
+    assert "private-session" not in output.err
+    assert str(tmp_path) not in output.err
 
 
 @pytest.mark.parametrize("module", (cc_common, codex_common))

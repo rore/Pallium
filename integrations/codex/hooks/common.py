@@ -21,6 +21,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable
 
@@ -901,11 +902,99 @@ def _sweep_old_session_pins() -> None:
         pass
 
 
+@contextmanager
+def _open_atomic_state_file(path: Path):
+    if os.name != "nt":
+        with path.open("r", encoding="utf-8") as stream:
+            yield stream
+        return
+    filename = os.fspath(path)
+    if "\0" in filename:
+        raise ValueError("embedded null character")
+    import ctypes
+    from ctypes import wintypes
+    import msvcrt
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    create = kernel.CreateFileW
+    create.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                       wintypes.LPVOID, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+    create.restype = wintypes.HANDLE
+    close = kernel.CloseHandle
+    close.argtypes = [wintypes.HANDLE]
+    close.restype = wintypes.BOOL
+    # Atomic replacement must not be blocked by an ordinary state reader.
+    handle = create(filename, 0x80000000, 0x1 | 0x2 | 0x4, None, 3, 0x80, None)
+    if handle == ctypes.c_void_p(-1).value:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        descriptor = msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY)
+    except BaseException:
+        close(handle)
+        raise
+    try:
+        with os.fdopen(descriptor, "r", encoding="utf-8", closefd=False) as stream:
+            yield stream
+    finally:
+        os.close(descriptor)
+
+
+def _replace_atomic_state_file(source: Path, destination: Path) -> None:
+    if os.name != "nt":
+        os.replace(source, destination)
+        return
+    import ctypes
+    from ctypes import wintypes
+
+    source_name, destination_name = os.fspath(source), os.fspath(destination)
+    if "\0" in source_name or "\0" in destination_name:
+        raise ValueError("embedded null character")
+    destination_name = os.path.abspath(destination_name)
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    create = kernel.CreateFileW
+    create.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                       wintypes.LPVOID, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+    create.restype = wintypes.HANDLE
+    close = kernel.CloseHandle
+    close.argtypes = [wintypes.HANDLE]
+    close.restype = wintypes.BOOL
+    rename = kernel.SetFileInformationByHandle
+    rename.argtypes = [wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD]
+    rename.restype = wintypes.BOOL
+
+    class RenameInfo(ctypes.Structure):
+        _fields_ = [("Flags", wintypes.DWORD), ("RootDirectory", wintypes.HANDLE),
+                    ("FileNameLength", wintypes.DWORD), ("FileName", wintypes.WCHAR * 1)]
+
+    filename = destination_name.encode("utf-16-le", errors="surrogatepass")
+    buffer = ctypes.create_string_buffer(ctypes.sizeof(RenameInfo) + len(filename) + 2)
+    info = ctypes.cast(buffer, ctypes.POINTER(RenameInfo)).contents
+    info.Flags, info.RootDirectory, info.FileNameLength = 3, None, len(filename)
+    ctypes.memmove(ctypes.addressof(buffer) + RenameInfo.FileName.offset, filename, len(filename))
+    # DELETE access; rename the source entry itself, including a reparse point.
+    handle = create(source_name, 0x10000, 7, None, 3, 0x80 | 0x00200000, None)
+    if handle == ctypes.c_void_p(-1).value:
+        raise ctypes.WinError(ctypes.get_last_error())
+    failure = None
+    try:
+        if not rename(handle, 22, buffer, len(buffer)):
+            failure = ctypes.WinError(ctypes.get_last_error())
+    finally:
+        if not close(handle):
+            raise ctypes.WinError(ctypes.get_last_error())
+    if failure is not None:
+        if failure.winerror in {1, 50, 87}:
+            # Preserve the original platform semantics when the extended call is rejected.
+            os.replace(source_name, destination_name)
+        else:
+            raise failure
+
+
 def _read_session_state(session_id: str) -> dict[str, Any] | None:
     try:
-        data = json.loads(
-            (SESSIONS_DIR / f"{session_id}.json").read_text(encoding="utf-8")
-        )
+        with _open_atomic_state_file(SESSIONS_DIR / f"{session_id}.json") as stream:
+            text = stream.read()
+        data = json.loads(text)
     except (json.JSONDecodeError, OSError, ValueError):
         return None
     return data if isinstance(data, dict) else None
@@ -979,7 +1068,7 @@ def _update_session_state(
             f".{session_id}.{os.getpid()}.{uuid.uuid4().hex}.tmp"
         )
         temporary.write_text(json.dumps(updated), encoding="utf-8")
-        os.replace(temporary, SESSIONS_DIR / f"{session_id}.json")
+        _replace_atomic_state_file(temporary, SESSIONS_DIR / f"{session_id}.json")
         return True
     except (OSError, TypeError, ValueError):
         return False
@@ -2376,12 +2465,24 @@ def build_work_trace_metadata(turn_data: TurnData) -> dict | None:
 def _write_session_state_locked(session_id: str, state: dict[str, Any]) -> bool:
     """Atomically persist state while the caller owns the session lock."""
     temporary: Path | None = None
+    phase = "temporary_write"
     try:
         temporary = SESSIONS_DIR / f".{session_id}.{os.getpid()}.{uuid.uuid4().hex}.tmp"
         temporary.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
-        os.replace(temporary, SESSIONS_DIR / f"{session_id}.json")
+        phase = "atomic_replace"
+        _replace_atomic_state_file(temporary, SESSIONS_DIR / f"{session_id}.json")
         return True
-    except (OSError, TypeError, ValueError):
+    except (OSError, TypeError, ValueError) as exc:
+        try:
+            errno = exc.errno if type(getattr(exc, "errno", None)) is int else None
+            winerror = exc.winerror if type(getattr(exc, "winerror", None)) is int else None
+            print(
+                f"pallium hook: session_state_write_failed phase={phase} "
+                f"error={type(exc).__name__} errno={errno} winerror={winerror}",
+                file=sys.stderr,
+            )
+        except Exception:
+            pass
         return False
     finally:
         if temporary is not None:

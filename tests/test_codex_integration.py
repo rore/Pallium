@@ -597,7 +597,9 @@ def test_codex_setup_deploys_and_removes_skill(
     setup_codex._install_skill()
     assert "- Reconcile work/state; keep late findings." in (skill_dir / "SKILL.md").read_text(encoding="utf-8")
     assert not stale.exists()
-    setup_codex._install_skill()
+    with monkeypatch.context() as identical:
+        identical.setattr(Path, "rename", lambda *_args, **_kwargs: pytest.fail("identical skill must not be renamed"))
+        setup_codex._install_skill()
     assert {
         item.relative_to(skill_dir): item.read_bytes()
         for item in skill_dir.rglob("*")
@@ -606,6 +608,78 @@ def test_codex_setup_deploys_and_removes_skill(
 
     setup_codex._remove_skill()
     assert not skill_dir.exists()
+
+
+@pytest.mark.parametrize("change", ("bytes", "missing", "extra_file", "extra_directory", "file_kind", "directory_kind"))
+def test_codex_skill_reinstall_replaces_nonidentical_complete_tree(monkeypatch, tmp_path, change):
+    source, installed = tmp_path / "source", tmp_path / "installed"
+    source.mkdir()
+    (source / "SKILL.md").write_bytes(b"managed")
+    (source / "reference.txt").write_bytes(b"same-size")
+    (source / "empty").mkdir()
+    monkeypatch.setattr(setup_codex, "_codex_skill_src", lambda: source / "SKILL.md")
+    monkeypatch.setattr(setup_codex, "_codex_skill_dir", lambda: installed)
+    setup_codex._install_skill()
+    reference = installed / "reference.txt"
+    if change == "bytes":
+        reference.write_bytes(b"different")
+        source_stat = (source / "reference.txt").stat()
+        os.utime(reference, ns=(source_stat.st_atime_ns, source_stat.st_mtime_ns))
+    elif change == "missing":
+        reference.unlink()
+    elif change == "extra_file":
+        (installed / "extra").write_bytes(b"extra")
+    elif change == "extra_directory":
+        (installed / "extra").mkdir()
+    elif change == "file_kind":
+        reference.unlink()
+        reference.mkdir()
+    else:
+        (installed / "empty").rmdir()
+        (installed / "empty").write_bytes(b"wrong kind")
+    setup_codex._install_skill()
+    assert {item.relative_to(installed) for item in installed.rglob("*")} == {
+        item.relative_to(source) for item in source.rglob("*")
+    }
+    assert reference.read_bytes() == b"same-size"
+    assert (installed / "empty").is_dir()
+    setup_codex._remove_skill()
+    assert not installed.exists()
+
+
+def test_codex_skill_tree_comparison_rejects_reparse_root_before_traversal(monkeypatch, tmp_path):
+    import stat
+
+    class ReparseRoot:
+        def lstat(self):
+            return SimpleNamespace(st_mode=stat.S_IFDIR, st_file_attributes=0x400)
+
+        def iterdir(self):
+            pytest.fail("reparse root must not be traversed")
+
+    monkeypatch.setattr(setup_codex, "stat", SimpleNamespace(**dict(vars(stat), FILE_ATTRIBUTE_REPARSE_POINT=0x400)))
+    assert not setup_codex._same_skill_tree(tmp_path, ReparseRoot())
+
+
+def test_codex_skill_reinstall_replaces_link_without_touching_target(monkeypatch, tmp_path):
+    source, installed = tmp_path / "source", tmp_path / "installed"
+    source.mkdir()
+    (source / "SKILL.md").write_bytes(b"managed")
+    (source / "reference.txt").write_bytes(b"reference")
+    monkeypatch.setattr(setup_codex, "_codex_skill_src", lambda: source / "SKILL.md")
+    monkeypatch.setattr(setup_codex, "_codex_skill_dir", lambda: installed)
+    setup_codex._install_skill()
+    reference = installed / "reference.txt"
+    reference.unlink()
+    try:
+        reference.symlink_to(source / "reference.txt")
+    except OSError as error:
+        if getattr(error, "winerror", None) == 1314:
+            pytest.skip("native symlink privilege unavailable")
+        raise
+    setup_codex._install_skill()
+    assert not reference.is_symlink() and reference.read_bytes() == b"reference"
+    assert (source / "reference.txt").read_bytes() == b"reference"
 
 
 def test_codex_skill_historical_lookup_documents_scope_params() -> None:
@@ -1334,6 +1408,9 @@ def test_codex_readiness_public_reader_serializes_setup(monkeypatch, tmp_path):
         if writer.ident is not None:
             writer.join(5)
     assert not reader.is_alive() and not writer.is_alive()
+    for error in errors:
+        if isinstance(error, BaseException):
+            raise error
     assert not errors, errors
     assert reads[0]["state"] == "verified"
     assert published == ["definition"] and writes[0][0] is True

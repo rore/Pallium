@@ -12,6 +12,8 @@ import threading
 import time
 from typing import Callable, TypeVar
 
+from core.errors import ImmediateTransactionBusyError
+
 MAX_RESERVATIONS = 256
 WAKE_RETRY_COOLDOWN_SECONDS = 60
 # The old writer escaped each astral character as two six-character escapes.
@@ -122,7 +124,11 @@ class CodexWakeRegistry:
         try:
             return self._relay.codex_wake_transition(operation, **kwargs)
         except Exception as exc:
-            logger.warning("codex_wake_transition_failed operation=%s error_type=%s", operation, type(exc).__name__)
+            stage = getattr(exc, "acquisition_stage", None) if isinstance(exc, ImmediateTransactionBusyError) else None
+            if type(stage) is not str or stage not in ImmediateTransactionBusyError.ACQUISITION_STAGES:
+                stage = "unknown"
+            logger.warning("codex_wake_transition_failed operation=%s error_type=%s acquisition_stage=%s",
+                           operation, type(exc).__name__, stage)
             # A commit/return error can be ambiguous. Never launch from its
             # return value; the next operation reads the durable authority.
             return None
