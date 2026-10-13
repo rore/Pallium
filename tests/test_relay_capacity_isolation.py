@@ -1440,10 +1440,13 @@ def test_relay_and_diagnostics_survive_saturated_memory_worker_capacity(tmp_path
 @pytest.mark.parametrize("failure", [None, "callback", "schedule"])
 def test_codex_operation_tracking_settles_after_event_loop_closes(tmp_path, monkeypatch, failure):
     from contextlib import ExitStack
+    import json
+    import time
     from app import dependencies, main as app_main
 
     started, release, finished = threading.Event(), threading.Event(), threading.Event()
     worker_threads, outcomes = [], []
+    readiness = {}
     original_router, original_dispatch = dependencies.create_router, anyio.to_thread.run_sync
     callback_error = ValueError("controlled callback failure")
     schedule_error = RuntimeError("controlled open-loop scheduling failure")
@@ -1514,6 +1517,14 @@ def test_codex_operation_tracking_settles_after_event_loop_closes(tmp_path, monk
 
     async def cancel_http_request():
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            # Qualify steady-state worker settlement separately from first-route setup.
+            began = time.monotonic()
+            warmup = await client.post("/relay/turn", json={})
+            readiness["warmup_seconds"] = time.monotonic() - began
+            assert warmup.status_code == 422, warmup.text
+            assert not started.is_set() and not finished.is_set()
+            assert worker_threads == [] and outcomes == []
+            assert app.state._wait_for_operations(0)
             request = asyncio.create_task(client.post("/relay/turn", json={
                 "runtime": "codex", "session_ref": "loop-close-target",
                 "container_ref": "git:example.test/loop-close", "actor_ref": "capacity-user",
@@ -1545,6 +1556,10 @@ def test_codex_operation_tracking_settles_after_event_loop_closes(tmp_path, monk
         for worker in worker_threads:
             worker.join(5)
         cleanup.close()
+        print("pallium closed-loop readiness: " + json.dumps(readiness), file=sys.stderr)
+        (tmp_path / "closed-loop-readiness.json").write_text(
+            json.dumps(readiness), encoding="utf-8",
+        )
 
 
 def test_operation_tracking_covers_cancellation_and_failure_boundaries(tmp_path, monkeypatch) -> None:
