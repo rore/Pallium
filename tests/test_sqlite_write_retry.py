@@ -425,8 +425,13 @@ class TestImmediateTransactionRetry:
     def test_relay_acquisition_retains_native_wait_without_outer_backoff(self, storage, monkeypatch, failure):
         from storage import sqlite_queue
         sessions, attempts, bodies = [], [], []
-        sleep = MagicMock()
-        monkeypatch.setattr(sqlite_queue, "time", SimpleNamespace(**{**vars(sqlite_queue.time), "sleep": sleep}))
+        clock = [0.0]
+        def advance(seconds):
+            clock[0] += seconds
+        sleep = MagicMock(side_effect=advance)
+        monkeypatch.setattr(sqlite_queue, "time", SimpleNamespace(
+            **{**vars(sqlite_queue.time), "monotonic": lambda: clock[0], "sleep": sleep},
+        ))
 
         def factory():
             session, connection = MagicMock(), MagicMock()
