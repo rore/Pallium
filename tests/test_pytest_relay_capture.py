@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import threading
 from types import SimpleNamespace
 import weakref
 
@@ -159,6 +160,170 @@ def test_provider_registry_does_not_retain_provider():
         assert list(state.providers.items()) == []
     finally:
         state.close()
+
+
+def test_real_sessionmaker_api_preserves_commit_rollback_and_configuration(tmp_path):
+    from sqlalchemy import Column, Integer, MetaData, String, Table, create_engine, select
+    from sqlalchemy.orm import sessionmaker
+
+    engine = create_engine("sqlite:///" + str(tmp_path / "factory.db"))
+    metadata = MetaData()
+    rows = Table("entries", metadata, Column("id", Integer, primary_key=True), Column("value", String))
+    metadata.create_all(engine)
+    factory = sessionmaker(engine, expire_on_commit=False)
+
+    class Provider:
+        _relay_session_factory = factory
+        _relay_engine = engine
+
+    provider, state = Provider(), plugin.Capture()
+    try:
+        state.attach(provider)
+        observed = provider._relay_session_factory
+        assert observed.kw is factory.kw and observed.class_ is factory.class_
+        observed.configure(info={"configured": True})
+        assert factory.kw["info"] == {"configured": True}
+        with observed.begin() as session:
+            session.execute(rows.insert().values(id=1, value="café 東京"))
+        failure = RuntimeError("controlled rollback")
+        with pytest.raises(RuntimeError) as caught:
+            with observed.begin() as session:
+                session.execute(rows.insert().values(id=2, value="rolled back"))
+                raise failure
+        assert caught.value is failure
+        assert list(state.tail) == []  # Direct .begin() is the unchanged original path.
+        with observed(info={"per_call": True}) as session:
+            assert session.info == {"configured": True, "per_call": True}
+            assert session.execute(select(rows).order_by(rows.c.id)).all() == [(1, "café 東京")]
+        assert [record["stage"] for record in state.tail] == ["factory_entered", "factory_settled"]
+    finally:
+        state.close()
+        engine.dispose()
+    assert provider._relay_session_factory is factory
+
+
+def _native_capture(tmp_path, session_type=None):
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.orm import Session, sessionmaker
+    from storage.sqlite_queue import SQLiteQueueMixin
+
+    engine = create_engine("sqlite:///" + str(tmp_path / "holder.db"))
+    with engine.begin() as connection:
+        connection.execute(text("CREATE TABLE entries (id INTEGER PRIMARY KEY, value TEXT)"))
+
+    class Provider(SQLiteQueueMixin):
+        def __init__(self):
+            self._relay_engine = engine
+            self._relay_session_factory = sessionmaker(engine, class_=session_type or Session)
+            self._relay_writer_lock = threading.Lock()
+
+    state = plugin.Capture()
+    state.install(Provider, SimpleNamespace(create_router=lambda *a, **k: k))
+    return state, Provider(), engine
+
+
+@pytest.mark.parametrize("rollback", [False, True])
+def test_native_first_write_ends_only_after_commit_or_rollback(tmp_path, rollback):
+    from sqlalchemy import text
+    state, provider, engine = _native_capture(tmp_path)
+    failure = RuntimeError("controlled body rollback")
+    try:
+        try:
+            with provider._begin_low_priority_relay_write() as session:
+                session.connection().execute(text("SAVEPOINT before_write"))
+                session.connection().execute(text("INSERT INTO entries VALUES (1, 'private-payload')"))
+                session.connection().execute(text("ROLLBACK TO SAVEPOINT before_write"))
+                assert len(state.active_holders) == 1  # Savepoint rollback does not release the writer.
+                session.connection().execute(text("INSERT INTO entries VALUES (1, 'private-payload')"))
+                assert len(state.active_holders) == 1
+                state.record(state.provider_owner(provider), "acquisition_refusal", failure)
+                assert len(state.failures[-1]["active_holders"]) == 1
+                if rollback:
+                    raise failure
+        except RuntimeError as error:
+            assert rollback and error is failure
+        assert state.active_holders == {} and state.low_priority.get() is None
+        stages = [row["stage"] for row in state.tail]
+        assert "low_priority_first_write" in stages
+        assert ("native_rollback_returned" if rollback else "native_commit_returned") in stages
+        assert len(state.failures[-1]["active_holders"]) == 1  # Later cleanup cannot erase origin.
+        with engine.connect() as connection:
+            assert connection.execute(text("SELECT count(*) FROM entries")).scalar_one() == int(not rollback)
+        assert "private-payload" not in json.dumps(list(state.tail))
+    finally:
+        callback = state.listeners[0][1]
+        state.listeners.insert(0, (lambda: object(), callback))  # A failed removal must not stop cleanup.
+        state.close()
+        from sqlalchemy import event
+        assert not event.contains(engine, "after_cursor_execute", callback)
+        engine.dispose()
+
+
+@pytest.mark.parametrize("close_failure", [False, True])
+def test_failed_native_commit_keeps_holder_until_actual_close(tmp_path, close_failure):
+    from sqlalchemy import text
+    from sqlalchemy.exc import OperationalError
+    from sqlalchemy.orm import Session
+
+    failure = RuntimeError("controlled close failure")
+
+    class ClosingSession(Session):
+        allow_close = not close_failure
+        def close(self):
+            if not self.allow_close:
+                raise failure
+            return super().close()
+
+    state, provider, engine = _native_capture(tmp_path, ClosingSession)
+    token = state.low_priority.set((provider._relay_capture_provider_id, state.provider_owner(provider)))
+    session = provider._relay_session_factory()
+    try:
+        connection = session.connection(execution_options={"isolation_level": "AUTOCOMMIT"})
+        connection.execute(text("BEGIN DEFERRED"))
+        connection.execute(text("INSERT INTO entries VALUES (1, 'private-payload')"))
+        with pytest.raises(OperationalError) as caught:
+            connection.execute(text("COMMIT INVALID"))
+        state.record(state.provider_owner(provider), "commit_refusal", caught.value)
+        assert len(state.active_holders) == len(state.failures[-1]["active_holders"]) == 1
+        assert "native_commit_returned" not in [row["stage"] for row in state.tail]
+        if close_failure:
+            with pytest.raises(RuntimeError) as caught:
+                session.close()
+            assert caught.value is failure and len(state.active_holders) == 1
+        session.allow_close = True
+        session.close()
+        assert state.active_holders == {}
+        assert "session_close_returned" in [row["stage"] for row in state.tail]
+        with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as fresh:
+            fresh.execute(text("BEGIN IMMEDIATE"))
+            assert fresh.execute(text("SELECT count(*) FROM entries")).scalar_one() == 0
+            fresh.execute(text("ROLLBACK"))
+    finally:
+        session.allow_close = True
+        session.close()
+        state.low_priority.reset(token)
+        state.close()
+        engine.dispose()
+
+
+def test_live_holder_overflow_is_explicit_and_never_evicts_origin(tmp_path):
+    state, provider, engine = _native_capture(tmp_path)
+    token = state.low_priority.set((provider._relay_capture_provider_id, state.provider_owner(provider)))
+    try:
+        for identifier in range(16):
+            state.active_holders[(0, identifier)] = {"connection": identifier}
+        # One real successful DML cannot silently evict the sixteen existing identities.
+        from sqlalchemy import text
+        with provider._begin_low_priority_relay_write() as session:
+            session.connection().execute(text("INSERT INTO entries VALUES (1, 'private-payload')"))
+        state.record(state.provider_owner(provider), "refusal", RuntimeError())
+        assert len(state.active_holders) == 16 and state.holder_overflow == 1
+        assert state.failures[-1]["observed_low_priority_coverage_complete"] is False
+        assert state.failures[-1]["holder_overflow"] == 1
+    finally:
+        state.low_priority.reset(token)
+        state.close()
+        engine.dispose()
 
 
 @pytest.mark.parametrize("phase", ["setup", "call", "teardown"])

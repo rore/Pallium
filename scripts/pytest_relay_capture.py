@@ -2,6 +2,8 @@
 
 Observations include their own overhead; CPU intervals compare one thread only.
 No captured value participates in application admission or deadline decisions.
+Writer coverage is only marked low-priority contexts; direct .begin() and external
+writers remain unobserved.
 """
 from collections import deque
 from contextlib import contextmanager
@@ -24,23 +26,29 @@ class Capture:
     def __init__(self):
         self.owner = ContextVar("relay_capture_owner", default=("unknown", None))
         self.operation = ContextVar("relay_capture_operation", default=None)
+        self.low_priority = ContextVar("relay_capture_low_priority", default=None)
         self.lock = threading.Lock()
         self.tail, self.failures = deque(maxlen=128), deque(maxlen=16)
         self.dropped = self.failure_dropped = self.sequence = 0
         self.providers = weakref.WeakKeyDictionary()
         self.original_factories = weakref.WeakKeyDictionary()
+        self.connection_ids = weakref.WeakKeyDictionary()
+        self.active_holders = {}
+        self.holder_overflow = 0
+        self.listeners = []
         self.bundles = deque(maxlen=16)
         self.bundle_dropped = 0
         self.restore = []
         self.closed = False
 
-    def record(self, owner, stage, error=None):
+    def record(self, owner, stage, error=None, **identities):
         try:
             if self.closed:
                 return
             row = {"owner_scope": owner[0], "owner_item": owner[1], "stage": stage,
                    "operation": self.operation.get(), "thread": threading.get_ident(),
                    "wall_ns": time.monotonic_ns(), "thread_cpu_ns": time.thread_time_ns()}
+            row.update(identities)
             if error is not None:
                 from core.errors import ImmediateTransactionBusyError
                 label = getattr(error, "acquisition_stage", None)
@@ -65,6 +73,9 @@ class Capture:
                     self.dropped += 1
                 self.tail.append(row)
                 if error is not None:
+                    row["active_holders"] = [dict(value) for value in self.active_holders.values()]
+                    row["observed_low_priority_coverage_complete"] = self.holder_overflow == 0
+                    row["holder_overflow"] = self.holder_overflow
                     if len(self.failures) == self.failures.maxlen:
                         self.failure_dropped += 1
                     self.failures.append(dict(row))
@@ -83,35 +94,120 @@ class Capture:
         with self.lock:
             self.providers[provider] = owner
         factory = provider._relay_session_factory
+        with self.lock:
+            self.sequence += 1
+            provider_id = self.sequence
 
         def observed_factory(*args, **kwargs):
-            self.record(owner, "factory_entered")
+            self.record(owner, "factory_entered", provider=provider_id)
             try:
                 session = factory(*args, **kwargs)
             except BaseException as error:
-                self.record(owner, "factory_error", error)
+                self.record(owner, "factory_error", error, provider=provider_id)
                 raise
             finally:
-                self.record(owner, "factory_settled")
+                self.record(owner, "factory_settled", provider=provider_id)
             try:
                 connection = session.connection
+                connections = []
 
                 def observed_connection(*args, **kwargs):
-                    self.record(owner, "connection_entered")
+                    identifier = None
+                    self.record(owner, "connection_entered", provider=provider_id)
                     try:
-                        return connection(*args, **kwargs)
+                        result = connection(*args, **kwargs)
+                        try:
+                            identifier = self.connection_id(result)
+                            key = (provider_id, identifier)
+                            if key not in connections:
+                                connections.append(key)
+                        except Exception:
+                            pass
+                        return result
                     except BaseException as error:
-                        self.record(owner, "connection_error", error)
+                        self.record(owner, "connection_error", error, provider=provider_id)
                         raise
                     finally:
-                        self.record(owner, "connection_settled")
+                        self.record(owner, "connection_settled", provider=provider_id, connection=identifier)
                 session.connection = observed_connection
+                close = getattr(session, "close", None)
+                if callable(close):
+                    def observed_close(*args, **kwargs):
+                        try:
+                            result = close(*args, **kwargs)
+                        except BaseException as error:
+                            self.record(owner, "session_close_error", error, provider=provider_id)
+                            raise
+                        for key in connections:
+                            self.settle_holder(owner, key, "session_close_returned")
+                        return result
+                    session.close = observed_close
             except Exception:
                 pass
             return session
-        provider._relay_session_factory = observed_factory
+        class ObservedFactory:
+            def __call__(self, *args, **kwargs):
+                return observed_factory(*args, **kwargs)
+
+            def __getattr__(self, name):
+                # In particular, .begin() keeps the original context manager.
+                # Its internal factory calls intentionally have no timing stamps.
+                return getattr(factory, name)
+
+        provider._relay_session_factory = ObservedFactory()
         with self.lock:
             self.original_factories[provider] = factory
+        engine = getattr(provider, "_relay_engine", None)
+        from sqlalchemy import event
+        from sqlalchemy.engine import Engine
+        if isinstance(engine, Engine):
+            def native_returned(conn, _cursor, statement, _params, _context, _many):
+                marker = self.low_priority.get()
+                if self.closed or marker is None or marker[0] != provider_id:
+                    return
+                try:
+                    normalized = statement.strip().upper()
+                    operation = normalized.split(None, 1)[0]
+                    key = (provider_id, self.connection_id(conn))
+                    if operation in ("INSERT", "UPDATE", "DELETE", "REPLACE"):
+                        with self.lock:
+                            if key in self.active_holders:
+                                return
+                            if len(self.active_holders) == 16:
+                                self.holder_overflow += 1
+                                return
+                            self.active_holders[key] = {
+                                "provider": provider_id, "connection": key[1],
+                                "owner_scope": owner[0], "owner_item": owner[1],
+                                "thread": threading.get_ident(), "first_write_ns": time.monotonic_ns()}
+                        self.record(owner, "low_priority_first_write", provider=provider_id, connection=key[1])
+                    elif normalized in ("COMMIT", "ROLLBACK"):
+                        self.settle_holder(owner, key, "native_" + operation.lower() + "_returned")
+                except Exception:
+                    pass
+            event.listen(engine, "after_cursor_execute", native_returned)
+            self.listeners.append((weakref.ref(engine), native_returned))
+        # The marker is resolved by the immutable provider identity, not the active test.
+        provider._relay_capture_provider_id = provider_id
+
+    def connection_id(self, connection):
+        with self.lock:
+            identifier = self.connection_ids.get(connection)
+            if identifier is None:
+                self.sequence += 1
+                identifier = self.sequence
+                self.connection_ids[connection] = identifier
+            return identifier
+
+    def settle_holder(self, owner, key, stage):
+        try:
+            with self.lock:
+                holder = self.active_holders.pop(key, None)
+            if holder is not None:
+                self.record(owner, stage, provider=key[0], connection=key[1],
+                            first_write_ns=holder["first_write_ns"])
+        except Exception:
+            pass
 
     def install(self, provider_type, dependencies):
         def replace(target, name, value):
@@ -133,19 +229,44 @@ class Capture:
             @contextmanager
             def begin(provider, *args, **kwargs):
                 owner = self.provider_owner(provider)
-                self.record(owner, stage + "_entered")
+                try:
+                    provider_id = getattr(provider, "_relay_capture_provider_id", None)
+                except Exception:
+                    provider_id = None
+                self.record(owner, stage + "_entered", provider=provider_id)
                 try:
                     with delegate(provider, *args, **kwargs) as session:
-                        self.record(owner, stage + "_acquired")
+                        self.record(owner, stage + "_acquired", provider=provider_id)
                         yield session
                 except BaseException as error:
-                    self.record(owner, stage + "_error", error)
+                    self.record(owner, stage + "_error", error, provider=provider_id)
                     raise
                 finally:
-                    self.record(owner, stage + "_settled")
+                    self.record(owner, stage + "_settled", provider=provider_id)
             return begin
         for name, stage in (("_begin_relay_immediate", "outer"), ("_begin_immediate_for", "inner")):
             replace(provider_type, name, wrap_begin(getattr(provider_type, name), stage))
+        if hasattr(provider_type, "_begin_low_priority_relay_write"):
+            low = provider_type._begin_low_priority_relay_write
+
+            @contextmanager
+            def low_priority(provider, *args, **kwargs):
+                token = None
+                try:
+                    marker = (getattr(provider, "_relay_capture_provider_id", None), self.provider_owner(provider))
+                    token = self.low_priority.set(marker)
+                except Exception:
+                    pass
+                try:
+                    with low(provider, *args, **kwargs) as session:
+                        yield session
+                finally:
+                    if token is not None:
+                        try:
+                            self.low_priority.reset(token)
+                        except Exception:
+                            pass
+            replace(provider_type, "_begin_low_priority_relay_write", low_priority)
 
         original_router = dependencies.create_router
 
@@ -211,6 +332,8 @@ class Capture:
                 data = {"item": item, "failed_phases": phases,
                         "tail": list(self.tail), "dropped": self.dropped,
                         "failures": list(self.failures), "failure_dropped": self.failure_dropped,
+                        "active_holders": [dict(value) for value in self.active_holders.values()],
+                        "holder_overflow": self.holder_overflow,
                         "before": before, "after": after}
                 if len(self.bundles) == self.bundles.maxlen:
                     self.bundle_dropped += 1
@@ -220,16 +343,36 @@ class Capture:
 
     def close(self):
         self.closed = True
+        from sqlalchemy import event
+        for reference, callback in self.listeners:
+            engine = reference()
+            if engine is not None:
+                try:
+                    event.remove(engine, "after_cursor_execute", callback)
+                except Exception:
+                    pass
+        self.listeners.clear()
         for provider, factory in list(self.original_factories.items()):
-            provider._relay_session_factory = factory
+            try:
+                provider._relay_session_factory = factory
+            except Exception:
+                pass
+            try:
+                if hasattr(provider, "_relay_capture_provider_id"):
+                    del provider._relay_capture_provider_id
+            except Exception:
+                pass
         self.original_factories.clear()
         for reference, name, old in reversed(self.restore):
             target = reference()
             if target is not None:
-                if old is _MISSING:
-                    delattr(target, name)
-                else:
-                    setattr(target, name, old)
+                try:
+                    if old is _MISSING:
+                        delattr(target, name)
+                    else:
+                        setattr(target, name, old)
+                except Exception:
+                    pass
         self.restore.clear()
 
 
