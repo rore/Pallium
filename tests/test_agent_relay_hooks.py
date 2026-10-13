@@ -629,6 +629,9 @@ def test_codex_exact_wake_real_http_response_delay_is_bounded_and_traceable(
         server.shutdown()
         server.server_close()
         server_thread.join(timeout=2)
+        print("pallium delayed-http stages: " + json.dumps({
+            "stages": stages[:32], "truncated": len(stages) > 32,
+        }), file=sys.stderr)
         (tmp_path / "delayed-http-stages.json").write_text(
             json.dumps(stages), encoding="utf-8",
         )
