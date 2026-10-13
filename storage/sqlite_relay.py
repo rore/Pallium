@@ -11,6 +11,7 @@ import uuid
 from dataclasses import asdict, replace
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from typing import Any, Callable
 
 from sqlalchemy import and_, case, delete, func, or_, select, update
@@ -66,6 +67,11 @@ _WAKE_SNAPSHOT_JSON_SQL = (
     "ELSE retry_not_before END, typeof(retry_not_before))) FROM ("
     + _WAKE_SNAPSHOT_ROWS_SQL + ")"
 )
+_WAKE_SNAPSHOT_ENVELOPE_SQL = (
+    "SELECT marker.id, marker.generation, "
+    "(SELECT COUNT(*) FROM relay_codex_wake_state), (" + _WAKE_SNAPSHOT_JSON_SQL + ") "
+    "FROM (SELECT 1) AS anchor LEFT JOIN relay_codex_wake_state AS marker ON marker.id=1"
+)
 
 
 def _wake_snapshot_rows(cursor):
@@ -76,7 +82,11 @@ def _wake_snapshot_rows(cursor):
             raise
         cursor.execute(_WAKE_SNAPSHOT_ROWS_SQL)
         return cursor.fetchall()
-    decoded = json.loads(cursor.fetchone()[0])
+    return _decode_wake_snapshot_rows(cursor.fetchone()[0])
+
+
+def _decode_wake_snapshot_rows(encoded):
+    decoded = json.loads(encoded)
     if not isinstance(decoded, list):
         raise ValueError("invalid persisted Codex wake authority")
     rows = []
@@ -93,6 +103,11 @@ def _wake_snapshot_rows(cursor):
             row[-1] = float(row[-1])
         rows.append(tuple(row))
     return rows
+
+
+def _wake_snapshot_envelope(cursor):
+    cursor.execute(_WAKE_SNAPSHOT_ENVELOPE_SQL)
+    return cursor.fetchone()
 
 
 def _now(value: datetime | None = None) -> datetime:
@@ -473,15 +488,24 @@ class SQLiteRelayMixin:
     def relay_codex_wake_snapshot(self):
         with self._relay_session_factory() as db:
             db.connection().exec_driver_sql("BEGIN")  # One consistent marker/row snapshot.
-            marker = db.execute(select(RelayCodexWakeStateRecord.generation).where(
-                RelayCodexWakeStateRecord.id == 1
-            )).first()
             cursor = db.connection().connection.driver_connection.cursor()
             try:
-                rows = _wake_snapshot_rows(cursor)
+                try:
+                    marker_id, generation, marker_count, encoded = _wake_snapshot_envelope(cursor)
+                except sqlite3.OperationalError as error:
+                    if str(error) not in ("no such function: json_group_array", "no such function: json_array"):
+                        raise
+                    marker = db.execute(select(RelayCodexWakeStateRecord.generation).where(
+                        RelayCodexWakeStateRecord.id == 1
+                    )).first()
+                    cursor.execute(_WAKE_SNAPSHOT_ROWS_SQL)
+                    rows, marker_count = cursor.fetchall(), None
+                else:
+                    marker = None if marker_id is None else SimpleNamespace(generation=generation)
+                    rows = _decode_wake_snapshot_rows(encoded)
             finally:
                 cursor.close()
-            items = self._validate_wake_authority(db, marker, rows=rows)
+            items = self._validate_wake_authority(db, marker, rows=rows, marker_count=marker_count)
             return marker is not None, items
 
     def relay_codex_trial_native_suppressed(self, endpoint_id: str) -> bool:
@@ -683,14 +707,15 @@ class SQLiteRelayMixin:
                 "uncertainty_reason": "evidence_incomplete" if uncertainty_evidence != "complete" else "retry_held" if unresolved else None,
             }
 
-    def _validate_wake_authority(self, db, marker, rows=None):
+    def _validate_wake_authority(self, db, marker, rows=None, marker_count=None):
         if rows is None:
             rows = db.execute(select(*(
                 getattr(RelayCodexWakeReservationRecord, name)
                 for name in CodexWakeReservation.__dataclass_fields__
             )).limit(MAX_RESERVATIONS + 1)).all()
         items = tuple(self._wake_item(row) for row in rows)
-        if (db.scalar(select(func.count()).select_from(RelayCodexWakeStateRecord)) != (1 if marker is not None else 0)
+        if ((marker_count if marker_count is not None else
+             db.scalar(select(func.count()).select_from(RelayCodexWakeStateRecord))) != (1 if marker is not None else 0)
             or len(items) > MAX_RESERVATIONS
             or (marker is None and items)
             or (marker is not None and (type(marker.generation) is not int or not 0 <= marker.generation < 2**63))

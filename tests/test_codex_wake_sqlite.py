@@ -107,21 +107,23 @@ def test_http_delivery_projection_reads_fresh_endpoint_once(
     assert registry.initialize(old_owner_drained=True)
     reservation = _reserve(registry, _send(relay))
     endpoint = reservation.recipient_endpoint_id
+    fallback_attempts = []
     if authority_transport != "json":
         from storage import sqlite_relay
-        original_rows = sqlite_relay._wake_snapshot_rows
+        original_envelope = sqlite_relay._wake_snapshot_envelope
         missing = "json_array" if authority_transport == "missing_array" else "json_group_array"
         class MissingJSONCursor:
             def __init__(self, cursor):
                 self.cursor = cursor
             def execute(self, statement):
-                if statement == sqlite_relay._WAKE_SNAPSHOT_JSON_SQL:
+                if statement == sqlite_relay._WAKE_SNAPSHOT_ENVELOPE_SQL:
+                    fallback_attempts.append(True)
                     raise sqlite3.OperationalError(f"no such function: {missing}")
                 return self.cursor.execute(statement)
             def __getattr__(self, name):
                 return getattr(self.cursor, name)
-        monkeypatch.setattr(sqlite_relay, "_wake_snapshot_rows",
-            lambda cursor: original_rows(MissingJSONCursor(cursor)))
+        monkeypatch.setattr(sqlite_relay, "_wake_snapshot_envelope",
+            lambda cursor: original_envelope(MissingJSONCursor(cursor)))
     with sqlite3.connect(database) as db:
         db.execute("DELETE FROM relay_endpoint_generations WHERE endpoint_id=?", (endpoint,))
         if generation is not None:
@@ -175,6 +177,7 @@ def test_http_delivery_projection_reads_fresh_endpoint_once(
         claim = http.post("/relay/turn", json={"runtime": "codex", "session_ref": "target",
             "wake_delivery_id": reservation.delivery_id, **SCOPE})
         assert claim.status_code == 200, claim.text
+        assert len(fallback_attempts) == (0 if authority_transport == "json" else 2)
         delivery, = claim.json()["deliveries"]
         assert delivery["delivery_id"] == reservation.delivery_id and delivery["attempts"] == 1
         assert projected == [delivery["activation"]]
@@ -653,9 +656,32 @@ def test_http_committed_generation_preserves_current_authority_boundaries(
 def test_http_fresh_authority_observation_does_not_wait_for_native_owner(
     relay_store, tmp_path, monkeypatch, phase,
 ):
+    import sys
+    import time
+    import anyio
+    from collections import deque
     from concurrent.futures import ThreadPoolExecutor
     from app import dependencies
 
+    arrival = deque(maxlen=32)
+
+    def record(stage):
+        arrival.append({'stage': stage, 'at': time.perf_counter(), 'thread': threading.get_ident()})
+
+    original_run_sync = anyio.to_thread.run_sync
+
+    async def observe_run_sync(function, *args, **kwargs):
+        record('runner_submitted')
+        def run(*values):
+            record('worker_entered')
+            try:
+                return function(*values)
+            finally:
+                record('worker_finished')
+        return await original_run_sync(run, *args, **kwargs)
+
+    if phase == 'preclaim':
+        monkeypatch.setattr(anyio.to_thread, 'run_sync', observe_run_sync)
     relay, storage, _ = relay_store
     registry = _registry(relay, tmp_path / 'legacy')
     assert registry.initialize(old_owner_drained=True)
@@ -668,6 +694,7 @@ def test_http_fresh_authority_observation_does_not_wait_for_native_owner(
         key = 'relay_turn_snapshot_callback' if phase == 'preclaim' else 'relay_activation_callback'
         original = kwargs[key]
         def observation(*args):
+            record('observation_entered')
             entered.set()
             value = original(*args)
             if phase == 'preclaim':
@@ -687,11 +714,21 @@ def test_http_fresh_authority_observation_does_not_wait_for_native_owner(
                 gate_errors.append('native owner gate watchdog expired')
     holder = threading.Thread(target=hold_native_owner, name='test-native-owner')
     with TestClient(app) as http, ThreadPoolExecutor(max_workers=1) as pool:
+        request = None
+
+        def post(*args, **kwargs):
+            record('request_entered')
+            try:
+                return http.post(*args, **kwargs)
+            finally:
+                record('request_finished')
+
         holder.start()
         try:
             assert held.wait(2)
             if phase == 'preclaim':
-                request = pool.submit(http.post, '/relay/turn', json={
+                record('request_submitted')
+                request = pool.submit(post, '/relay/turn', json={
                     'runtime': 'codex', 'session_ref': 'target',
                     'wake_delivery_id': reservation.delivery_id, **SCOPE,
                 })
@@ -711,8 +748,17 @@ def test_http_fresh_authority_observation_does_not_wait_for_native_owner(
                     except TimeoutError:
                         pass
         finally:
-            release.set()
-            holder.join(5)
+            try:
+                if phase == 'preclaim':
+                    done = request is not None and request.done()
+                    error = request.exception() if done and not request.cancelled() else None
+                    print('fresh authority arrival: ' + json.dumps({
+                        'events': list(arrival), 'future_done': done,
+                        'future_error_type': type(error).__name__ if error else None,
+                    }), file=sys.stderr)
+            finally:
+                release.set()
+                holder.join(5)
         response = request.result(5)
         assert not holder.is_alive() and not gate_errors, gate_errors
         assert response.status_code == 200, response.text
@@ -796,7 +842,7 @@ def test_persistent_observation_preserves_endpoint_canonicalization_and_full_val
 @pytest.mark.parametrize("count, damage", [
     (0, None), (1, None), (50, None), (256, None),
     (257, "overflow"), (50, "unrelated"), (1, "absent_marker"),
-    (1, "high_water"), (0, "extra_marker"),
+    (1, "high_water"), (0, "extra_marker"), (0, "absent_marker"),
 ])
 def test_authority_reads_preserve_all_fields_without_global_orm_hydration(
     relay_store, tmp_path, count, damage,
@@ -806,6 +852,7 @@ def test_authority_reads_preserve_all_fields_without_global_orm_hydration(
     from storage.sqlite_schema import RelayCodexWakeReservationRecord, RelayCodexWakeStateRecord
 
     relay, storage, database = relay_store
+    invalid = damage is not None and not (count == 0 and damage == "absent_marker")
     items = tuple(CodexWakeReservation(
         recipient_endpoint_id=f"relay-session-{index:032x}",
         delivery_id=f"relay-delivery-{index:032x}",
@@ -853,29 +900,31 @@ def test_authority_reads_preserve_all_fields_without_global_orm_hydration(
     event.listen(storage._relay_engine, "checkout", observe_checkout)
     event.listen(storage._relay_engine, "checkin", observe_checkin)
     try:
-        if damage:
+        if invalid:
             with pytest.raises(ValueError, match="invalid persisted Codex wake authority"):
                 relay.codex_wake_snapshot()
         else:
             initialized, observed = relay.codex_wake_snapshot()
-            assert initialized is True  # The empty generation-zero marker is present.
+            assert initialized is (damage != "absent_marker")
             assert set(observed) == set(items)
             assert len(observed) == count
-        assert len(statements) == 3, statements
+        assert [statement.split()[0] for statement in statements] == ["BEGIN"], statements
+        assert sum(statement.lstrip().upper().startswith("SELECT") for statement in raw_statements) == 1
         assert sum("LIMIT" in statement and "relay_codex_wake_reservations" in statement
                    for statement in raw_statements) == 1
         assert hydrated == [], hydrated
         # All unrelated rows remain validated during a write transition too.
         statements.clear()
         hydrated.clear()
-        if damage:
+        if invalid:
             with pytest.raises(ValueError, match="invalid persisted Codex wake authority"):
                 storage.relay_codex_wake_transition(operation="release", reservations=())
         else:
-            assert storage.relay_codex_wake_transition(operation="release", reservations=()) == ()
+            released = storage.relay_codex_wake_transition(operation="release", reservations=())
+            assert released == (None if damage == "absent_marker" else ())
         assert [statement.split()[0] for statement in statements] == [
             "PRAGMA", "BEGIN", "SELECT", "SELECT", "SELECT",
-            "ROLLBACK" if damage else "COMMIT", "PRAGMA",
+            "ROLLBACK" if invalid else "COMMIT", "PRAGMA",
         ], statements
         assert hydrated == ["RelayCodexWakeStateRecord"] * (damage != "absent_marker"), hydrated
     finally:
@@ -886,6 +935,50 @@ def test_authority_reads_preserve_all_fields_without_global_orm_hydration(
     registry = _registry(relay, tmp_path / "absent-legacy")
     assert set(registry.reservations_if_usable()) == (set() if damage else set(items))
     assert registry.usable is (damage is None)
+
+
+@pytest.mark.parametrize("generation, valid", [(0, True), (7, True), (1.5, False), ("invalid", False), (None, False), (b"\x00", False)])
+def test_authority_envelope_preserves_native_marker_generation(relay_store, generation, valid):
+    relay, _, database = relay_store
+    with sqlite3.connect(database) as db:
+        # A corrupted schema permits NULL/BLOB values that healthy constraints forbid.
+        db.execute("DROP TABLE relay_codex_wake_state")
+        db.execute("CREATE TABLE relay_codex_wake_state(id INTEGER PRIMARY KEY, generation)")
+        db.execute("INSERT INTO relay_codex_wake_state VALUES(1, ?)", (generation,))
+    if valid:
+        assert relay.codex_wake_snapshot() == (True, ())
+    else:
+        with pytest.raises(ValueError, match="invalid persisted Codex wake authority"):
+            relay.codex_wake_snapshot()
+
+
+@pytest.mark.parametrize("error", ["no such function: json_array", "no such function: json_group_array", "database disk image is malformed"])
+def test_authority_envelope_fallback_keeps_global_validation(relay_store, monkeypatch, error):
+    from storage import sqlite_relay
+    relay, _, database = relay_store
+    item = CodexWakeReservation("relay-session-" + "1" * 32, "relay-delivery-" + "1" * 32,
+                               "target-東京", SCOPE["container_ref"], 1, "reserved",
+                               retry_not_before=1.0000000000000002)
+    with sqlite3.connect(database) as db:
+        db.execute("INSERT INTO relay_codex_wake_state VALUES(1, 1)")
+        db.execute("INSERT INTO relay_codex_wake_reservations (" + ", ".join(asdict(item)) +
+                   ") VALUES(?,?,?,?,?,?,?,?)", tuple(asdict(item).values()))
+    attempted = []
+    def unavailable(_cursor):
+        attempted.append(True)
+        raise sqlite3.OperationalError(error)
+    monkeypatch.setattr(sqlite_relay, "_wake_snapshot_envelope", unavailable)
+    if error.startswith("no such function:"):
+        assert relay.codex_wake_snapshot() == (True, (item,))
+        with sqlite3.connect(database) as db:
+            db.execute("INSERT INTO relay_codex_wake_state VALUES(2, 0)")
+        with pytest.raises(ValueError, match="invalid persisted Codex wake authority"):
+            relay.codex_wake_snapshot()
+        assert len(attempted) == 2
+    else:
+        with pytest.raises(sqlite3.OperationalError, match=error):
+            relay.codex_wake_snapshot()
+        assert len(attempted) == 1
 
 
 def test_http_exact_claim_uses_fresh_authority_and_committed_generation(

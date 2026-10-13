@@ -226,12 +226,13 @@ def test_nullable_legacy_retry_deadline_recovers_and_hook_acks(http_wake, monkey
 @pytest.mark.parametrize("moved", [False, True])
 @pytest.mark.parametrize("restart", [False, True])
 def test_unloaded_hook_claim_failure_recovers_original_and_backlog(
-    client, http_wake, monkeypatch, tmp_path, capsys, fault, moved, restart,
+    client, http_wake, monkeypatch, tmp_path, capsys, fault, moved, restart, request,
 ):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
     from app.dependencies import build_router
 
+    test_request = request
     http, relay, registry, service, desktop, _, workers = http_wake
     now = [datetime(2030, 9, 5, tzinfo=timezone.utc)]
     _freeze_clock(monkeypatch, now)
@@ -311,6 +312,9 @@ def test_unloaded_hook_claim_failure_recovers_original_and_backlog(
         http.close()
         http = TestClient(app)
         run_hook = _hook_runner(http, monkeypatch, "notLoaded", events, tmp_path)
+        if moved and fault == "ack-response":
+            assert relay._store is client.app.state.pallium_service._storage
+            _observe_relay_busy_acquisition(relay._store, monkeypatch, test_request, tmp_path)
     send("claim-failure-backlog", "backlog-marker-東京")
     journey = (http, relay, registry, service, desktop, None, workers)
     if fault != "ack-response":

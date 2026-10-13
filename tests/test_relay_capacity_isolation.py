@@ -1562,6 +1562,60 @@ def test_codex_operation_tracking_settles_after_event_loop_closes(tmp_path, monk
         )
 
 
+def test_capacity_limiter_reserves_released_token_for_waiting_borrower() -> None:
+    import anyio
+
+    async def exercise():
+        limiter = anyio.CapacityLimiter(4)
+        held = []
+        newcomer, waiting_borrower = object(), object()
+        started, awakened, settle = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        newcomer_acquired = False
+        task = None
+
+        async def waiter():
+            started.set()
+            await limiter.acquire_on_behalf_of(waiting_borrower)
+            try:
+                awakened.set()
+                await settle.wait()
+            finally:
+                limiter.release_on_behalf_of(waiting_borrower)
+
+        try:
+            for _ in range(4):
+                borrower = object()
+                await limiter.acquire_on_behalf_of(borrower)
+                held.append(borrower)
+            task = asyncio.create_task(waiter())
+            await started.wait()
+            assert limiter.statistics().tasks_waiting == 1
+            limiter.release_on_behalf_of(held.pop())
+            newcomer_refused = False
+            try:
+                limiter.acquire_on_behalf_of_nowait(newcomer)
+            except anyio.WouldBlock:
+                newcomer_refused = True
+            else:
+                newcomer_acquired = True
+            await awakened.wait()
+            assert limiter.borrowed_tokens == limiter.total_tokens == 4
+            assert newcomer_refused
+            assert limiter.statistics().tasks_waiting == 0
+        finally:
+            settle.set()
+            if newcomer_acquired:
+                limiter.release_on_behalf_of(newcomer)
+            for borrower in held:
+                limiter.release_on_behalf_of(borrower)
+            if task is not None:
+                await task
+            assert limiter.borrowed_tokens == 0
+            assert limiter.statistics().tasks_waiting == 0
+
+    anyio.run(exercise, backend="asyncio")
+
+
 def test_operation_tracking_covers_cancellation_and_failure_boundaries(tmp_path, monkeypatch) -> None:
     from app import dependencies
 
