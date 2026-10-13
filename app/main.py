@@ -211,7 +211,7 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
     query_stats = QueryStats(metrics_store=metrics_store)
     try:
         with startup_stage("build_service"):
-            build_result = build_service(resolved_config, routing_overrides=routing_overrides, query_stats=query_stats, metrics_store=metrics_store)
+            build_result = build_service(resolved_config, routing_overrides=routing_overrides, query_stats=query_stats, metrics_store=metrics_store, storage=early_storage)
     except BaseException:
         if early_storage is not None:
             early_storage.close()
@@ -225,7 +225,10 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
             return
         resources_closed = True
         with contextlib.ExitStack() as cleanup_stack:
-            for provider in (service._storage, early_storage):
+            providers = (service._storage, early_storage)
+            for index, provider in enumerate(providers):
+                if any(provider is previous for previous in providers[:index]):
+                    continue
                 if isinstance(provider, SQLiteStorageProvider):
                     cleanup_stack.callback(provider.close)
             cleanup_stack.callback(service.close)

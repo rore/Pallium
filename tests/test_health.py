@@ -40,6 +40,121 @@ async def _wait_for_health(client, predicate, *, timeout: float = 5.0):
             await asyncio.sleep(.01)
 
 
+@pytest.mark.parametrize("metrics_failure", [False, True])
+def test_app_reuses_startup_storage_and_closes_it_once(monkeypatch, test_db_url, metrics_failure):
+    from app import dependencies, main
+
+    providers, closed = [], []
+    original_builder = main.build_storage_provider
+    original_metrics = main.MetricsStore
+
+    def build(config):
+        storage = original_builder(config)
+        original_close = storage.close
+
+        def close():
+            closed.append(storage)
+            original_close()
+
+        storage.close = close
+        providers.append(storage)
+        return storage
+
+    def metrics(factory):
+        if metrics_failure:
+            raise RuntimeError("planned optional metrics failure")
+        return original_metrics(factory)
+
+    monkeypatch.setattr(main, "build_storage_provider", build)
+    monkeypatch.setattr(dependencies, "build_storage_provider", build)
+    monkeypatch.setattr(main, "MetricsStore", metrics)
+    built = main.create_app(_no_vector_config(test_db_url))
+    try:
+        assert len(providers) == 1
+        assert built.state.pallium_service._storage is providers[0]
+        if metrics_failure:
+            assert built.state.metrics_store is None
+        else:
+            assert built.state.metrics_store._session_factory is providers[0]._session_factory
+        with TestClient(built) as client:
+            assert client.get("/health").status_code == 200
+            assert client.post("/query", json={"text": "startup ownership"}).status_code == 200
+            assert client.get("/relay/sessions", params={"container_ref": "startup-ownership"}).status_code == 200
+    finally:
+        built.state._close_constructed()
+    assert closed == providers
+
+
+def test_app_falls_back_when_early_storage_creation_fails(monkeypatch, test_db_url):
+    from app import dependencies, main
+
+    providers, closed = [], []
+    original_builder = dependencies.build_storage_provider
+
+    def build(config):
+        storage = original_builder(config)
+        original_close = storage.close
+        storage.close = lambda: closed.append(storage) or original_close()
+        providers.append(storage)
+        return storage
+
+    def fail_early(_config):
+        raise RuntimeError("planned early provider failure")
+
+    monkeypatch.setattr(main, "build_storage_provider", fail_early)
+    monkeypatch.setattr(dependencies, "build_storage_provider", build)
+    built = main.create_app(_no_vector_config(test_db_url))
+    try:
+        assert providers == [built.state.pallium_service._storage]
+        assert built.state.metrics_store is None
+        with TestClient(built) as client:
+            assert client.get("/health").status_code == 200
+            assert client.post("/query", json={"text": "fallback ownership"}).status_code == 200
+            assert client.get("/relay/sessions", params={"container_ref": "fallback-ownership"}).status_code == 200
+    finally:
+        built.state._close_constructed()
+    assert closed == providers
+
+
+@pytest.mark.parametrize("borrowed", [False, True])
+@pytest.mark.parametrize("failure", [False, True])
+def test_service_builder_preserves_storage_ownership(monkeypatch, test_db_url, borrowed, failure):
+    from app import dependencies
+
+    config = _no_vector_config(test_db_url)
+    storage = dependencies.build_storage_provider(config)
+    original_close = storage.close
+    close_calls, factory_calls = [], []
+    storage.close = lambda: close_calls.append(storage) or original_close()
+
+    def build(_config):
+        factory_calls.append(_config)
+        return storage
+
+    monkeypatch.setattr(dependencies, "build_storage_provider", build)
+    if failure:
+        def fail_build(*_args, **_kwargs):
+            raise RuntimeError("planned service build failure")
+        monkeypatch.setattr(dependencies, "_build_service_from_storage", fail_build)
+    result = None
+    try:
+        kwargs = {"storage": storage} if borrowed else {}
+        if failure:
+            with pytest.raises(RuntimeError, match="planned service build failure"):
+                dependencies.build_service(config, **kwargs)
+        else:
+            result = dependencies.build_service(config, **kwargs)
+            assert result.storage is storage and result.service._storage is storage
+        assert factory_calls == ([] if borrowed else [config])
+        assert close_calls == ([storage] if failure and not borrowed else [])
+    finally:
+        if result is not None:
+            result.service.close()
+        if not close_calls:
+            storage.close()
+    assert close_calls == [storage]
+
+
 @pytest.mark.asyncio
 async def test_production_factory_keeps_http_responsive_during_build(monkeypatch, client) -> None:
     import httpx
@@ -277,7 +392,7 @@ async def test_production_factory_constructor_failure_closes_acquired_storage(
     monkeypatch, test_db_url: str,
 ) -> None:
     import httpx
-    from app import main
+    from app import dependencies, main
 
     config = _no_vector_config(test_db_url)
     create_app = main.create_app
@@ -304,7 +419,7 @@ async def test_production_factory_constructor_failure_closes_acquired_storage(
         raise RuntimeError("planned constructor failure")
 
     monkeypatch.setattr(main, "build_storage_provider", tracked_storage_builder)
-    monkeypatch.setattr(main, "build_service", fail_service_build)
+    monkeypatch.setattr(dependencies, "_build_service_from_storage", fail_service_build)
     monkeypatch.setattr(main, "create_app", lambda *_args, **_kwargs: create_app(config))
     application = main.app()
     async with application.router.lifespan_context(application):
@@ -351,7 +466,7 @@ async def test_production_factory_runtime_setup_failure_closes_app_resources(
             try:
                 original_close()
             finally:
-                if len(storage_close_calls) == 2:
+                if len(storage_close_calls) == 1:
                     resources_closed.set()
 
         storage.close = close
@@ -403,7 +518,7 @@ async def test_production_factory_runtime_setup_failure_closes_app_resources(
         assert len(builder_threads) == 1
         assert builder_threads[0] != loop_thread
         assert len(inner_apps) == 1
-        assert len(acquired_storage) == 2
+        assert len(acquired_storage) == 1
         assert sorted(map(id, storage_close_calls)) == sorted(map(id, acquired_storage))
         assert len(service_close_calls) == 1
         assert health.status_code == 503
@@ -865,7 +980,7 @@ async def test_production_factory_closes_resources_after_rebuild_thread_start_fa
             assert len(built_apps) == 1
             assert len(service_close_calls) == 1
             assert service_close_calls == [built_apps[0].state.pallium_service]
-            assert len(storages) == 2
+            assert len(storages) == 1
             assert set(storage_close_calls) == {id(storage) for storage in storages}
             assert all(storage_close_calls[id(storage)] == 1 for storage in storages)
 

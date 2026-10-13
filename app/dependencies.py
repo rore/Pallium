@@ -361,17 +361,22 @@ def build_service(
     enable_vector: bool = True,
     query_stats: QueryStats | None = None,
     metrics_store=None,
+    storage: StorageProvider | None = None,
 ) -> BuildResult:
+    """Build with caller-owned storage, or create and own storage on failure."""
     resolved_config = config or AppConfig.from_env()
-    with startup_stage("service_storage"):
-        storage = build_storage_provider(resolved_config)
+    owns_storage = storage is None
+    if owns_storage:
+        with startup_stage("service_storage"):
+            storage = build_storage_provider(resolved_config)
     try:
         return _build_service_from_storage(
             resolved_config, storage, routing_overrides,
             enable_vector=enable_vector, query_stats=query_stats, metrics_store=metrics_store,
         )
     except BaseException:
-        storage.close()
+        if owns_storage:
+            storage.close()
         raise
 
 
