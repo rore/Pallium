@@ -376,30 +376,45 @@ async def test_production_factory_runtime_setup_failure_closes_app_resources(
 
     monkeypatch.setattr(main, "build_storage_provider", tracked_storage_builder)
     monkeypatch.setattr("app.dependencies.build_storage_provider", tracked_storage_builder)
-    monkeypatch.setattr(main, "create_app", capture_created_app)
+    # Exclude database construction from the runtime-cleanup watchdog.
+    inner = await asyncio.to_thread(capture_created_app)
+    loop_thread = threading.get_ident()
+    builder_threads = []
+
+    def delegate_inner(*_args, **_kwargs):
+        builder_threads.append(threading.get_ident())
+        return inner
+
+    monkeypatch.setattr(main, "create_app", delegate_inner)
     monkeypatch.setattr(main, "start_claude_wake_reconciler", fail_runtime_setup)
     application = main.app()
-    async with application.router.lifespan_context(application):
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=application), base_url="http://test",
-        ) as client:
-            assert await asyncio.to_thread(resources_closed.wait, 5), "runtime setup failure did not close all acquired SQLite storage"
-            health, health_body = await _wait_for_health(
-                client, lambda body: bool(body.get("initialization_error")),
-            )
-            status = await client.get("/status")
-            query = await client.post("/query", json={"text": "after runtime failure"})
+    try:
+        async with application.router.lifespan_context(application):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=application), base_url="http://test",
+            ) as client:
+                assert await asyncio.to_thread(resources_closed.wait, 5), "runtime setup failure did not close all acquired SQLite storage"
+                health, health_body = await _wait_for_health(
+                    client, lambda body: bool(body.get("initialization_error")),
+                )
+                status = await client.get("/status")
+                query = await client.post("/query", json={"text": "after runtime failure"})
 
-    assert len(inner_apps) == 1
-    assert len(acquired_storage) == 2
-    assert sorted(map(id, storage_close_calls)) == sorted(map(id, acquired_storage))
-    assert len(service_close_calls) == 1
-    assert health.status_code == 503
-    assert health_body["initialized"] is False
-    assert health_body["ready"] is False
-    assert status.json()["initialized"] is False
-    assert status.json()["ready"] is False
-    assert query.status_code == 503
+        assert len(builder_threads) == 1
+        assert builder_threads[0] != loop_thread
+        assert len(inner_apps) == 1
+        assert len(acquired_storage) == 2
+        assert sorted(map(id, storage_close_calls)) == sorted(map(id, acquired_storage))
+        assert len(service_close_calls) == 1
+        assert health.status_code == 503
+        assert health_body["initialized"] is False
+        assert health_body["ready"] is False
+        assert status.json()["initialized"] is False
+        assert status.json()["ready"] is False
+        assert query.status_code == 503
+
+    finally:
+        await asyncio.to_thread(inner.state._close_constructed)
 
 
 @pytest.mark.asyncio
@@ -630,7 +645,16 @@ async def test_production_factory_drains_real_rebuild_inventory_before_storage_c
         with storage._session_factory() as session:
             return session.execute(text("SELECT 1")).scalar_one()
 
-    monkeypatch.setattr(main, "create_app", build_inner)
+    # Exclude database construction from the inventory-arrival watchdog.
+    inner = await asyncio.to_thread(build_inner)
+    loop_thread = threading.get_ident()
+    builder_threads = []
+
+    def delegate_inner(*_args, **_kwargs):
+        builder_threads.append(threading.get_ident())
+        return inner
+
+    monkeypatch.setattr(main, "create_app", delegate_inner)
     application = main.app()
     owner = None
     request_shutdown = asyncio.Event()
@@ -645,6 +669,8 @@ async def test_production_factory_drains_real_rebuild_inventory_before_storage_c
         owner = asyncio.create_task(own_lifespan())
         await asyncio.wait_for(lifespan_entered.wait(), timeout=5)
         assert await asyncio.to_thread(inventory_started.wait, 3), "real rebuild inventory did not start"
+        assert builder_threads and builder_threads[0] != loop_thread
+        assert len(builder_threads) == 1
         assert pre_checkpoint == [True]
         assert worker_threads[0].name == "vector-rebuild"
         assert worker_threads[0].is_alive()
@@ -716,6 +742,9 @@ async def test_production_factory_drains_real_rebuild_inventory_before_storage_c
         request_shutdown.set()
         if owner is not None:
             await asyncio.wait_for(owner, timeout=5)
+        if (not any(worker.is_alive() for worker in worker_threads)
+                and not any(reconciler._thread.is_alive() for reconciler in wake_reconcilers)):
+            await asyncio.to_thread(inner.state._close_constructed)
 
 
 @pytest.mark.asyncio
