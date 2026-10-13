@@ -2127,6 +2127,8 @@ def test_registration_rejects_wrong_or_spoofed_pipe_server_image(retained, monke
     "failed-wrong-id", "failed-wrong-version", "empty-items",
     "extra-items", "wrong-item", "nonstring-text", "rpc-error", "wrong-id", "wrong-version"])
 def test_native_state_read_contract_failure_releases_without_transport(http_wake, monkeypatch, fault, client):
+    from collections import deque
+    import itertools
     import traceback
 
     http, _, registry, service, desktop, send, _ = http_wake
@@ -2134,6 +2136,65 @@ def test_native_state_read_contract_failure_releases_without_transport(http_wake
     executor = pallium_service._relay_trace_executor
     original_trace_job = pallium_service._run_relay_trace_job
     trace_jobs = []
+    provider = http_wake[1]._store
+    assert provider is pallium_service._storage
+    boundaries = deque(maxlen=128)
+    boundary_lock = threading.Lock()
+    boundary_context = threading.local()
+    context_ids = itertools.count(1)
+    boundary_count = 0
+
+    def boundary(stage):
+        nonlocal boundary_count
+        stamp = {"stage": stage, "wall_ns": time.monotonic_ns(),
+                 "thread_cpu_ns": time.thread_time_ns(), "thread": threading.get_ident(),
+                 "context": getattr(boundary_context, "identifier", None)}
+        with boundary_lock:
+            boundary_count += 1
+            boundaries.append(stamp)
+
+    def observe_acquisition(delegate, stage, *args, **kwargs):
+        @contextmanager
+        def observed():
+            previous = getattr(boundary_context, "identifier", None)
+            if stage == "outer":
+                boundary_context.identifier = next(context_ids)
+            boundary(stage + "_entered")
+            try:
+                with delegate(*args, **kwargs) as session:
+                    boundary(stage + "_acquired")
+                    yield session
+            finally:
+                boundary(stage + "_settled")
+                if stage == "outer":
+                    boundary_context.identifier = previous
+        return observed()
+
+    original_outer, original_inner = provider._begin_relay_immediate, provider._begin_immediate_for
+    monkeypatch.setattr(provider, "_begin_relay_immediate",
+                        lambda *args, **kwargs: observe_acquisition(original_outer, "outer", *args, **kwargs))
+    monkeypatch.setattr(provider, "_begin_immediate_for",
+                        lambda *args, **kwargs: observe_acquisition(original_inner, "inner", *args, **kwargs))
+    original_factory = provider._relay_session_factory
+
+    def observed_factory(*args, **kwargs):
+        boundary("factory_entered")
+        try:
+            session = original_factory(*args, **kwargs)
+        finally:
+            boundary("factory_settled")
+        original_connection = session.connection
+
+        def observed_connection(*args, **kwargs):
+            boundary("connection_entered")
+            try:
+                return original_connection(*args, **kwargs)
+            finally:
+                boundary("connection_settled")
+        session.connection = observed_connection
+        return session
+
+    monkeypatch.setattr(provider, "_relay_session_factory", observed_factory)
 
     def observed_trace_job(writer, event):
         job = {"stage": event.get("stage"), "state": "running"}
@@ -2193,27 +2254,37 @@ def test_native_state_read_contract_failure_releases_without_transport(http_wake
             envelope["jsonrpc"] = "1.0"
         return envelope
     monkeypatch.setattr(desktop, "read", read)
-    send()
-    assert desktop.owners == [] and registry.reservations() == ()
-    assert service.retained_registration is None
-    sentinel = executor.submit(lambda: None)
     try:
-        sentinel.result(timeout=2)
-    except TimeoutError as exc:
-        frames = sys._current_frames()
-        diagnostics = {
-            "sentinel_running": sentinel.running(), "sentinel_done": sentinel.done(),
-            "queued": executor._work_queue.qsize(), "jobs": [job.copy() for job in trace_jobs[-8:]],
-            "alive_trace_threads": sum(thread.is_alive() and thread.name.startswith("relay-trace")
-                                       for thread in threading.enumerate()),
-            "owned_threads": [{
-                "name": thread.name, "ident": thread.ident, "alive": thread.is_alive(),
-                "stack": traceback.format_stack(frames[thread.ident], limit=12)
-                if thread.ident in frames else [],
-            } for thread in tuple(executor._threads)],
-        }
-        raise TimeoutError(diagnostics) from exc
-    response = http.get("/relay/messages/retained-journey", params=SCOPE)
-    assert response.status_code == 200, (response.status_code, response.text, dict(response.headers))
-    delivery = response.json()["deliveries"][0]
-    assert delivery["state"] == "pending" and delivery["attempts"] == 0
+        send()
+        assert desktop.owners == [] and registry.reservations() == ()
+        assert service.retained_registration is None
+        sentinel = executor.submit(lambda: None)
+        try:
+            sentinel.result(timeout=2)
+        except TimeoutError as exc:
+            frames = sys._current_frames()
+            diagnostics = {
+                "sentinel_running": sentinel.running(), "sentinel_done": sentinel.done(),
+                "queued": executor._work_queue.qsize(), "jobs": [job.copy() for job in trace_jobs[-8:]],
+                "alive_trace_threads": sum(thread.is_alive() and thread.name.startswith("relay-trace")
+                                           for thread in threading.enumerate()),
+                "owned_threads": [{
+                    "name": thread.name, "ident": thread.ident, "alive": thread.is_alive(),
+                    "stack": traceback.format_stack(frames[thread.ident], limit=12)
+                    if thread.ident in frames else [],
+                } for thread in tuple(executor._threads)],
+            }
+            raise TimeoutError(diagnostics) from exc
+        response = http.get("/relay/messages/retained-journey", params=SCOPE)
+        assert response.status_code == 200, (response.status_code, response.text, dict(response.headers))
+        delivery = response.json()["deliveries"][0]
+        assert delivery["state"] == "pending" and delivery["attempts"] == 0
+    except BaseException:
+        try:
+            with boundary_lock:
+                metadata = {"events": list(boundaries), "dropped": max(0, boundary_count - len(boundaries)),
+                            "qualification": "Observer-inclusive; compare CPU stamps only within the same thread."}
+            print("retained_release_partition=" + json.dumps(metadata), file=sys.stderr)
+        except BaseException:
+            pass
+        raise

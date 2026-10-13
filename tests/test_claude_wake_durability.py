@@ -9,7 +9,7 @@ import threading
 import time
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
-from types import SimpleNamespace
+from types import FunctionType, SimpleNamespace
 from urllib.parse import urlsplit
 
 import pytest
@@ -1483,7 +1483,11 @@ def test_posix_capacity_reclaims_only_provably_absent_endpoints(tmp_path: Path, 
         endpoint.write_text("present", encoding="utf-8")
     registry = ClaudeWakeRegistry(state_dir=state_dir)
     assert _register(registry, state_dir, {**PAYLOAD, "socket_path": str(endpoint)}, "old")
-    monkeypatch.setattr(wake.os, "name", "posix")
+    endpoint_probe = ClaudeWakeRegistry._endpoint_is_provably_absent
+    namespace = dict(endpoint_probe.__globals__)
+    namespace["os"] = SimpleNamespace(**dict(vars(wake.os), name="posix"))
+    monkeypatch.setattr(ClaudeWakeRegistry, "_endpoint_is_provably_absent",
+                        staticmethod(FunctionType(endpoint_probe.__code__, namespace)))
     monkeypatch.setattr(registry, "probe", lambda *_args, **_kwargs: pytest.fail("capacity cleanup must not admit a turn"))
     assert _register(registry, state_dir, {**PAYLOAD, "session_ref": "new"}, "new") is accepted
     assert [candidate["session_ref"] for candidate in registry.recovery_candidates()] == (["new"] if accepted else [PAYLOAD["session_ref"]])
@@ -1502,7 +1506,11 @@ def test_windows_capacity_reclaims_only_file_not_found(tmp_path: Path, monkeypat
     state_dir = tmp_path / "wake"
     registry = ClaudeWakeRegistry(state_dir=state_dir)
     assert _register(registry, state_dir, {**PAYLOAD, "socket_path": r"\\.\pipe\old"}, "old")
-    monkeypatch.setattr(wake.os, "name", "nt")
+    endpoint_probe = ClaudeWakeRegistry._endpoint_is_provably_absent
+    namespace = dict(endpoint_probe.__globals__)
+    namespace["os"] = SimpleNamespace(**dict(vars(wake.os), name="nt"))
+    monkeypatch.setattr(ClaudeWakeRegistry, "_endpoint_is_provably_absent",
+                        staticmethod(FunctionType(endpoint_probe.__code__, namespace)))
     monkeypatch.setitem(sys.modules, "pywintypes", SimpleNamespace(error=PipeError))
     monkeypatch.setitem(sys.modules, "winerror", SimpleNamespace(ERROR_FILE_NOT_FOUND=2))
     monkeypatch.setitem(sys.modules, "win32pipe", SimpleNamespace(WaitNamedPipe=lambda *_: (_ for _ in ()).throw(PipeError(code))))

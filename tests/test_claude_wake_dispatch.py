@@ -836,6 +836,10 @@ def test_relay_messages_response_does_not_wait_for_claude_transport(
                     for worker in scheduled[:4] if worker.ident in frames
                 },
             }
+            try:
+                print("claude_transport_arrival=" + json.dumps(diagnostics), file=sys.stderr)
+            except Exception:
+                pass
         assert arrived, diagnostics
         assert worker_threads[0].is_alive()
     finally:
