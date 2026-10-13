@@ -6,11 +6,6 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
-    inputs:
-      relay_capture:
-        description: Capture bounded Relay failure diagnostics in the full matrix
-        type: boolean
-        default: false
   schedule:
     # Nightly full run (incl. the full Windows matrix). Off-peak, off :00.
     - cron: "17 6 * * *"
@@ -112,7 +107,7 @@ jobs:
         run: python -c "import mcp; import app.mcp.server"
 
       - name: Run tests
-        run: python -m pytest tests/ -x -q --durations=20 ${{ github.event_name == 'workflow_dispatch' && inputs.relay_capture == true && '-p scripts.pytest_relay_capture' || '' }}
+        run: python -m pytest tests/ -x -q --durations=20
 
   # Fast Windows regression for full-lane PRs and pushes. Runs only the
   # Windows-sensitive hotspots (process mgmt, subprocess hooks, file I/O,
@@ -207,10 +202,10 @@ jobs:
         run: pip install -e ".[dev,vector,mcp]"
 
       - name: Run process-sensitive tests serially
-        run: python -m pytest tests/test_restart_service.py tests/test_structural_work_refs_e2e.py tests/test_stable_actor_identity_e2e.py tests/test_service_launcher_lifecycle.py tests/test_service.py::test_windows_stop_verifier_executes_new_and_legacy_launcher_parsers tests/test_codex_retained_wake.py::test_session_start_lock_budget_claims_emits_and_acks_once -x -q -n 0 --durations=20 ${{ github.event_name == 'workflow_dispatch' && inputs.relay_capture == true && '-p scripts.pytest_relay_capture' || '' }}
+        run: python -m pytest tests/test_restart_service.py tests/test_structural_work_refs_e2e.py tests/test_stable_actor_identity_e2e.py tests/test_service_launcher_lifecycle.py tests/test_service.py::test_windows_stop_verifier_executes_new_and_legacy_launcher_parsers tests/test_codex_retained_wake.py::test_session_start_lock_budget_claims_emits_and_acks_once -x -q -n 0 --durations=20
 
       - name: Run remaining tests
-        run: python -m pytest tests/ -x -q --ignore=tests/test_restart_service.py --ignore=tests/test_structural_work_refs_e2e.py --ignore=tests/test_stable_actor_identity_e2e.py --ignore=tests/test_service_launcher_lifecycle.py --deselect=tests/test_service.py::test_windows_stop_verifier_executes_new_and_legacy_launcher_parsers --deselect=tests/test_codex_retained_wake.py::test_session_start_lock_budget_claims_emits_and_acks_once --durations=20 ${{ github.event_name == 'workflow_dispatch' && inputs.relay_capture == true && '-p scripts.pytest_relay_capture' || '' }}
+        run: python -m pytest tests/ -x -q --ignore=tests/test_restart_service.py --ignore=tests/test_structural_work_refs_e2e.py --ignore=tests/test_stable_actor_identity_e2e.py --ignore=tests/test_service_launcher_lifecycle.py --deselect=tests/test_service.py::test_windows_stop_verifier_executes_new_and_legacy_launcher_parsers --deselect=tests/test_codex_retained_wake.py::test_session_start_lock_budget_claims_emits_and_acks_once --durations=20
 
   nightly-slow-smoke:
     if: github.event_name == 'schedule'

@@ -155,16 +155,18 @@ def world(tmp_path, monkeypatch):
     config = replace(_test_config(tmp_path), relay_sqlite_url=f"sqlite:///{tmp_path / 'relay.db'}")
     app = create_app(config)
     storage = app.state.pallium_service._storage
-    http = TestClient(app)  # No live reconciliation lifecycle; native boundary is fake.
-    registry = app.state.codex_wake_registry
-    assert registry.initialize(old_owner_drained=True)
-    for session in ("sender", "target"):
-        assert http.post("/relay/turn", json={"runtime": "codex", "session_ref": session, **SCOPE}).status_code == 200
+    http = None
     try:
+        http = TestClient(app)  # No live reconciliation lifecycle; native boundary is fake.
+        registry = app.state.codex_wake_registry
+        assert registry.initialize(old_owner_drained=True)
+        for session in ("sender", "target"):
+            assert http.post("/relay/turn", json={"runtime": "codex", "session_ref": session, **SCOPE}).status_code == 200
         yield http, storage, registry, native
     finally:
         try:
-            http.close()
+            if http is not None:
+                http.close()
         finally:
             try:
                 app.state.pallium_service.close()
