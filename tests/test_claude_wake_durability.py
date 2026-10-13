@@ -488,9 +488,12 @@ def test_accepted_inflight_rehydrates_without_elapsed_time_release(tmp_path: Pat
 @pytest.mark.parametrize("native_outcome", ["accepted", "uncertain"])
 def test_restricted_resume_fences_inflight_until_normal_turn_ack(
     client: TestClient, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture, native_outcome: str,
+    request: pytest.FixtureRequest, tmp_path: Path,
 ) -> None:
     from tests.test_claude_code_integration import _load_claude_hook
+    from tests.test_codex_wake_retry_edges import _observe_relay_busy_acquisition
 
+    _observe_relay_busy_acquisition(client.app.state.pallium_service._storage, monkeypatch, request, tmp_path)
     common = _load_claude_hook("common", monkeypatch)
     registry = client.app.state.claude_wake_registry
     wake_dir = registry._state_dir

@@ -27,6 +27,109 @@ def _freeze_clock(monkeypatch, now):
     monkeypatch.setattr(sqlite_relay, "_now", controlled_now)
 
 
+def _observe_relay_busy_acquisition(provider, monkeypatch, request, tmp_path):
+    import json
+    import time
+    from collections import deque
+    from contextlib import contextmanager
+    from itertools import count
+    from pathlib import Path
+    from sqlalchemy import event
+
+    events, context_ids, begin_ids = deque(maxlen=128), count(1), count(1)
+    local, buffer_lock = threading.local(), threading.Lock()
+    total, closed = 0, False
+    original_outer = provider._begin_relay_immediate
+    original_inner = provider._begin_immediate_for
+
+    def record(phase, **values):
+        nonlocal total
+        row = {"phase": phase, "thread": threading.get_ident(),
+               "at": time.perf_counter(), **values}
+        # Only diagnostic-buffer access uses this lock; delegates run outside it.
+        with buffer_lock:
+            if not closed:
+                total += 1
+                events.append(row)
+
+    @contextmanager
+    def observe(delegate, phase, *args, **kwargs):
+        previous = getattr(local, "context_id", None)
+        if phase == "relay":
+            local.context_id = next(context_ids)
+            local.last_begin_id = None
+        context_id = getattr(local, "context_id", None)
+        if context_id is None:
+            with delegate(*args, **kwargs) as db:
+                yield db
+            return
+        record(phase + "_entered", context=context_id)
+        try:
+            with delegate(*args, **kwargs) as db:
+                record(phase + "_acquired", context=context_id)
+                try:
+                    yield db
+                finally:
+                    record(phase + "_body_finished", context=context_id)
+        except BaseException as exc:
+            origins, cause, native, seen = [], exc, [], set()
+            tb = exc.__traceback__
+            while tb is not None:
+                if Path(tb.tb_frame.f_code.co_filename).name == "sqlite_queue.py":
+                    origins.append({"function": tb.tb_frame.f_code.co_name, "line": tb.tb_lineno})
+                tb = tb.tb_next
+            while cause is not None and id(cause) not in seen:
+                seen.add(id(cause))
+                original = getattr(cause, "orig", cause)
+                if getattr(original, "sqlite_errorcode", None) is not None:
+                    native.append({"code": original.sqlite_errorcode,
+                                   "name": getattr(original, "sqlite_errorname", None)})
+                cause = cause.__cause__ or cause.__context__
+            record(phase + "_error", context=context_id, last_begin=getattr(local, "last_begin_id", None),
+                   error_type=type(exc).__name__, origins=origins, native=native)
+            raise
+        finally:
+            record(phase + "_settled", context=context_id)
+            if phase == "relay":
+                local.context_id = previous
+
+    def before_begin(conn, cursor, statement, parameters, context, many):
+        if closed:
+            return
+        context_id = getattr(local, "context_id", None)
+        if context_id is not None and statement.strip().upper() == "BEGIN IMMEDIATE":
+            local.last_begin_id = next(begin_ids)
+            record("begin_entered", context=context_id, begin=local.last_begin_id)
+
+    def after_begin(conn, cursor, statement, parameters, context, many):
+        if closed:
+            return
+        context_id = getattr(local, "context_id", None)
+        if context_id is not None and statement.strip().upper() == "BEGIN IMMEDIATE":
+            record("begin_returned", context=context_id, begin=local.last_begin_id)
+
+    event.listen(provider._relay_engine, "before_cursor_execute", before_begin)
+    event.listen(provider._relay_engine, "after_cursor_execute", after_begin)
+    monkeypatch.setattr(provider, "_begin_relay_immediate",
+                        lambda *args, **kwargs: observe(original_outer, "relay", *args, **kwargs))
+    monkeypatch.setattr(provider, "_begin_immediate_for",
+                        lambda *args, **kwargs: observe(original_inner, "native_and_setup", *args, **kwargs))
+
+    def finish():
+        nonlocal closed
+        # Fixture-owned workers may still dispatch; leave callbacks inert until disposal.
+        with buffer_lock:
+            closed = True
+            metadata = json.dumps({"events": list(events), "dropped": max(0, total - len(events)),
+                                   "qualification": "Observer-inclusive, including callback work before the post-BEGIN deadline check."})
+        try:
+            (tmp_path / "busy-acquisition.json").write_text(metadata, encoding="utf-8")
+        finally:
+            print("relay busy acquisition: " + metadata, file=sys.stderr)
+
+    request.addfinalizer(finish)
+
+
 def test_retry_deadline_clamps_once_across_rollback_restart_and_due_wake(
     http_wake, monkeypatch,
 ):
@@ -234,9 +337,10 @@ def test_unloaded_hook_claim_failure_recovers_original_and_backlog(
 
 @pytest.mark.parametrize("moved", [False, True])
 def test_expired_claim_survives_repeated_lost_notifications_and_scope_move(
-    http_wake, monkeypatch, tmp_path, capsys, moved,
+    http_wake, monkeypatch, tmp_path, capsys, moved, request,
 ):
     http, relay, registry, service, desktop, send, workers = http_wake
+    _observe_relay_busy_acquisition(relay._store, monkeypatch, request, tmp_path)
     now = [datetime(2030, 9, 5, tzinfo=timezone.utc)]
     _freeze_clock(monkeypatch, now)
     sender_scope = dict(SCOPE)

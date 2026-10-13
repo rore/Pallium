@@ -297,7 +297,8 @@ async def test_retry_limit_applies_only_to_typed_startup_unavailability(monkeypa
                 raise bridge.ShadowUnavailable("startup-unavailable")
 
         def ready(self):
-            return {"status": "ready"}
+            return {"status": "ready", "connected": self.continuity is not None,
+                    "source_exited": False}
 
         def register(self, _metadata):
             self.continuity = "b" * 64
@@ -335,6 +336,8 @@ async def test_retry_limit_applies_only_to_typed_startup_unavailability(monkeypa
 async def test_retry_deadline_and_shutdown_bound_startup_retries(monkeypatch, termination):
     epochs, attempts = [1], []
     waiting = threading.Event()
+    admitted_ready, ready_responses = threading.Event(), []
+    disposed, disposal_epochs = threading.Event(), []
     workers, entered = [], []
 
     class ObservedWorker(lifecycle.InventoryWorker):
@@ -356,7 +359,12 @@ async def test_retry_deadline_and_shutdown_bound_startup_retries(monkeypatch, te
                 raise bridge.ShadowUnavailable("startup-unavailable")
 
         def ready(self):
-            return {"status": "ready"}
+            result = {"status": "ready", "connected": self.continuity is not None,
+                      "source_exited": False}
+            if self.continuity is not None and self.epoch == 1:
+                ready_responses.append(dict(result))
+                admitted_ready.set()
+            return result
 
         def register(self, _metadata):
             self.continuity = "c" * 64
@@ -366,7 +374,8 @@ async def test_retry_deadline_and_shutdown_bound_startup_retries(monkeypatch, te
             return self.epoch == epochs[0]
 
         def dispose(self):
-            pass
+            disposal_epochs.append(epochs[0])
+            disposed.set()
 
     monkeypatch.setattr(lifecycle, "RECONNECT_MAX_ATTEMPTS", 12)
     monkeypatch.setattr(lifecycle, "RECONNECT_WINDOW_SECONDS", .025)
@@ -376,7 +385,13 @@ async def test_retry_deadline_and_shutdown_bound_startup_retries(monkeypatch, te
     server = _protocol_server(monkeypatch, Native)
 
     async def exercise(session):
-        await _actual_status(session, "first")
+        assert not (await _actual_status(session, "first")).isError
+        assert await asyncio.to_thread(admitted_ready.wait, .5)
+        if ready_responses[0].get("connected") is not True:
+            assert await asyncio.to_thread(disposed.wait, .5)
+            assert disposal_epochs == [1] and workers[0].stop_event.is_set()
+        assert ready_responses[0].get("connected") is True
+        assert ready_responses[0].get("source_exited") is False
         epochs[0] = 2
         assert await asyncio.to_thread(waiting.wait, .5)
         if termination == "deadline":
@@ -387,11 +402,13 @@ async def test_retry_deadline_and_shutdown_bound_startup_retries(monkeypatch, te
     assert 1 <= len(attempts) <= 12
     assert attempts == [{"epoch": 1}] * len(attempts)
     assert all(value - entered[0] < .025 for value in entered)
+    assert disposal_epochs == [2]
 
 
 @pytest.mark.asyncio
 async def test_unresolved_old_channel_prevents_replacement(monkeypatch):
     epochs, clients = [1], []
+    disposal_epochs = []
 
     class Native:
         def __init__(self, *args, **kwargs):
@@ -402,7 +419,8 @@ async def test_unresolved_old_channel_prevents_replacement(monkeypatch):
             clients.append(self)
 
         def ready(self):
-            return {"status": "ready"}
+            return {"status": "ready", "connected": self.continuity is not None,
+                    "source_exited": False}
 
         def register(self, _metadata):
             self.continuity = "d" * 64
@@ -412,18 +430,21 @@ async def test_unresolved_old_channel_prevents_replacement(monkeypatch):
             return self.epoch == epochs[0]
 
         def dispose(self):
+            disposal_epochs.append(epochs[0])
+            assert epochs[0] == 2, "baseline readiness disposed before service replacement"
             self.disposals += 1
             self.unresolved = True
 
     server = _protocol_server(monkeypatch, Native)
 
     async def exercise(session):
-        await _actual_status(session, "first")
+        assert not (await _actual_status(session, "first")).isError
         epochs[0] = 2
         await asyncio.sleep(.05)
 
     await _serve_protocol(server, exercise)
     assert len(clients) == 1 and clients[0].disposals == 1
+    assert disposal_epochs == [2]
 
 
 @pytest.mark.asyncio
@@ -439,7 +460,8 @@ async def test_capability_change_stops_auto_recovery_but_fresh_request_can_regis
             clients.append(self)
 
         def ready(self):
-            return {"status": "ready"}
+            return {"status": "ready", "connected": self.continuity is not None,
+                    "source_exited": False}
 
         def register(self, _metadata):
             if self.epoch != epochs[0]:
@@ -569,7 +591,8 @@ async def test_busy_auto_reconnect_recovers_without_a_fresh_call(monkeypatch, bu
         def ready(self):
             if busy_stage == "ready" and 0 < clients.index(self) <= busy_count:
                 return {"status": "unavailable", "reason": "busy"}
-            return {"status": "ready"}
+            return {"status": "ready", "connected": self.continuity is not None,
+                    "source_exited": False}
 
         def register(self, metadata):
             calls.append((self, dict(metadata)))
@@ -1142,7 +1165,8 @@ async def test_mcp_cancellation_after_retained_admission_does_not_replay(monkeyp
             clients.append(self)
 
         def ready(self):
-            return {"status": "ready"}
+            return {"status": "ready", "connected": self.continuity is not None,
+                    "source_exited": False}
 
         def register(self, metadata):
             registrations.append(dict(metadata))
