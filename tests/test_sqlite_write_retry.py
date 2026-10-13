@@ -219,9 +219,12 @@ class TestImmediateTransactionRetry:
         local.acquire.assert_called_once()
         local.release.assert_called_once()
 
-    @pytest.mark.parametrize("boundary", ["local_refusal", "local_expired", "setup_expired", "begin_expired", "pause_does_not_fit", "second_pause_does_not_fit"])
+    @pytest.mark.parametrize("boundary", ["local_refusal", "local_expired", "setup_expired", "begin_expired", "pause_does_not_fit", "second_pause_does_not_fit", "setup_expired_last", "begin_expired_last"])
     def test_relay_acquisition_deadline_refuses_without_replaying_work(self, storage, monkeypatch, boundary):
         from storage import sqlite_queue
+        if boundary.endswith("_last"):
+            monkeypatch.setattr(storage, "_RELAY_IMMEDIATE_ATTEMPTS", 1)
+            boundary = boundary.removesuffix("_last")
         clock, attempts, bodies, sleeps, sessions = [0.0], [], [], [], []
         local = MagicMock()
         def admit(*, timeout):
@@ -256,9 +259,15 @@ class TestImmediateTransactionRetry:
             sessions.append((session, connection))
             return session
         storage._relay_session_factory = factory
-        with pytest.raises(ImmediateTransactionBusyError, match="database is locked"):
+        with pytest.raises(ImmediateTransactionBusyError, match="database is locked") as refusal:
             with storage._begin_relay_immediate():
                 bodies.append(1)
+        assert refusal.value.acquisition_stage == {
+            "local_refusal": "local_gate", "local_expired": "pre_attempt_deadline",
+            "setup_expired": "setup_deadline", "begin_expired": "late_begin",
+            "pause_does_not_fit": "backoff_no_fit", "second_pause_does_not_fit": "backoff_no_fit",
+        }[boundary]
+        assert refusal.value.args == ("database is locked (immediate transaction retry exhausted)",)
         assert bodies == []
         expected = {"begin_expired": 1, "pause_does_not_fit": 1, "second_pause_does_not_fit": 2}.get(boundary, 0)
         assert len(attempts) == expected
@@ -451,8 +460,11 @@ class TestImmediateTransactionRetry:
                 if failure == "body":
                     raise ValueError("controlled body refusal")
         if failure == "locked_all":
-            with pytest.raises(ImmediateTransactionBusyError, match="database is locked"):
+            import sqlite3
+            with pytest.raises(ImmediateTransactionBusyError, match="database is locked") as refusal:
                 acquire()
+            assert refusal.value.acquisition_stage == "retry_exhausted"
+            assert refusal.value.__cause__.orig.sqlite_errorcode == sqlite3.SQLITE_BUSY
         elif failure == "nontransient":
             with pytest.raises(SAOperationalError, match="no such table"):
                 acquire()
@@ -507,6 +519,11 @@ class TestImmediateTransactionRetry:
         assert "COMMIT" not in statements
 
     def test_immediate_transaction_busy_has_a_stable_error(self, storage):
+        legacy = ImmediateTransactionBusyError("legacy", 7)
+        annotated = ImmediateTransactionBusyError("legacy", 7, acquisition_stage="retry_exhausted")
+        assert legacy.args == annotated.args == ("legacy", 7)
+        assert str(legacy) == str(annotated) == str(RuntimeError("legacy", 7))
+        assert legacy.acquisition_stage is None and annotated.acquisition_stage == "retry_exhausted"
         session = MagicMock()
         connection = MagicMock()
         session.connection.return_value = connection

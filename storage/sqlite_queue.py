@@ -107,7 +107,7 @@ class SQLiteQueueMixin:
         """Bounded write acquisition for short Relay transactions."""
         deadline = time.monotonic() + self._RELAY_IMMEDIATE_ACQUISITION_SECONDS
         if not self._relay_writer_lock.acquire(timeout=max(0, deadline - time.monotonic())):
-            raise ImmediateTransactionBusyError("database is locked (immediate transaction retry exhausted)")
+            raise ImmediateTransactionBusyError("database is locked (immediate transaction retry exhausted)", acquisition_stage="local_gate")
         try:
             # Charge local contention and native retries to the same allowance.
             with self._begin_immediate_for(
@@ -175,9 +175,10 @@ class SQLiteQueueMixin:
         busy_timeout_ms = busy_timeout_ms or self._IMMEDIATE_BUSY_TIMEOUT_MS
         if busy_backoff_seconds is None:
             busy_backoff_seconds = self._IMMEDIATE_BACKOFF_SECONDS
+        first_deadline_stage = None
         for attempt in range(attempts):
             if acquisition_deadline is not None and time.monotonic() >= acquisition_deadline:
-                raise ImmediateTransactionBusyError("database is locked (immediate transaction retry exhausted)")
+                raise ImmediateTransactionBusyError("database is locked (immediate transaction retry exhausted)", acquisition_stage=first_deadline_stage or "pre_attempt_deadline")
             session = session_factory()
             try:
                 conn = session.connection(execution_options={"isolation_level": "AUTOCOMMIT"})
@@ -185,7 +186,7 @@ class SQLiteQueueMixin:
                 if acquisition_deadline is not None:
                     remaining_ms = int((acquisition_deadline - time.monotonic()) * 1000)
                     if remaining_ms <= 0:
-                        raise ImmediateTransactionBusyError("database is locked (immediate transaction retry exhausted)")
+                        raise ImmediateTransactionBusyError("database is locked (immediate transaction retry exhausted)", acquisition_stage="setup_deadline")
                     native_timeout_ms = min(native_timeout_ms, remaining_ms)
                 conn.execute(text(f"PRAGMA busy_timeout={native_timeout_ms}"))
                 conn.execute(text("BEGIN IMMEDIATE"))
@@ -194,7 +195,7 @@ class SQLiteQueueMixin:
                         conn.execute(text("ROLLBACK"))
                     except Exception:
                         pass
-                    raise ImmediateTransactionBusyError("database is locked (immediate transaction retry exhausted)")
+                    raise ImmediateTransactionBusyError("database is locked (immediate transaction retry exhausted)", acquisition_stage="late_begin")
                 break
             except BaseException as exc:
                 if conn is not None:
@@ -207,8 +208,11 @@ class SQLiteQueueMixin:
                 conn = None
                 if not isinstance(exc, Exception) or not is_transient_error(exc):
                     raise
+                stage = getattr(exc, "acquisition_stage", None)
+                if stage in ("setup_deadline", "late_begin") and first_deadline_stage is None:
+                    first_deadline_stage = stage
                 if attempt == attempts - 1:
-                    raise ImmediateTransactionBusyError("database is locked (immediate transaction retry exhausted)") from exc
+                    raise ImmediateTransactionBusyError("database is locked (immediate transaction retry exhausted)", acquisition_stage=first_deadline_stage or "retry_exhausted") from exc
                 original = getattr(exc, "orig", exc)
                 backoff = (busy_backoff_seconds
                            if isinstance(original, sqlite3.OperationalError)
@@ -217,7 +221,7 @@ class SQLiteQueueMixin:
                 if backoff:
                     pause = backoff * (attempt + 1)
                     if acquisition_deadline is not None and time.monotonic() + pause > acquisition_deadline:
-                        raise ImmediateTransactionBusyError("database is locked (immediate transaction retry exhausted)") from exc
+                        raise ImmediateTransactionBusyError("database is locked (immediate transaction retry exhausted)", acquisition_stage=first_deadline_stage or "backoff_no_fit") from exc
                     time.sleep(pause)
         assert session is not None and conn is not None
         try:

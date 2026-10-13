@@ -779,10 +779,13 @@ def create_router(
         try:
             try:
                 result = operation()
-            except ImmediateTransactionBusyError:
+            except ImmediateTransactionBusyError as exc:
+                stage = getattr(exc, "acquisition_stage", None)
+                if type(stage) is not str or stage not in ImmediateTransactionBusyError.ACQUISITION_STAGES:
+                    stage = "unknown"
                 logger.warning(
-                    "relay operation=%s outcome=busy duration_ms=%d",
-                    operation_name, int((time.monotonic() - started) * 1000),
+                    "relay operation=%s outcome=busy duration_ms=%d acquisition_stage=%s",
+                    operation_name, int((time.monotonic() - started) * 1000), stage,
                 )
                 raise
             elapsed_ms = int((time.monotonic() - started) * 1000)

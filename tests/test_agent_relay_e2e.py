@@ -1324,9 +1324,10 @@ def test_turn_reports_backlog_and_only_claims_rendered_deliveries(client):
     assert delivered == ["backlog-0", "backlog-1", "backlog-2"]
 
 
-def test_relay_busy_is_retryable_and_does_not_expose_sqlite_details(client, relay_storage, monkeypatch, caplog):
+@pytest.mark.parametrize("stage", [None, "setup_deadline", "untrusted-private-marker", []])
+def test_relay_busy_is_retryable_and_does_not_expose_sqlite_details(client, relay_storage, monkeypatch, caplog, stage):
     def busy_transaction():
-        raise ImmediateTransactionBusyError("database is locked")
+        raise ImmediateTransactionBusyError("database is locked", acquisition_stage=stage)
 
     monkeypatch.setattr(relay_storage, "_begin_relay_immediate", busy_transaction)
     response = client.post("/relay/turn", json={"runtime": "codex", "session_ref": "busy", **SCOPE})
@@ -1334,6 +1335,8 @@ def test_relay_busy_is_retryable_and_does_not_expose_sqlite_details(client, rela
     assert response.headers["retry-after"] == "1"
     assert response.json()["detail"] == {"code": "relay_busy", "retryable": True}
     assert "relay operation=turn outcome=busy" in caplog.text
+    assert "acquisition_stage=" + ("setup_deadline" if stage == "setup_deadline" else "unknown") in caplog.text
+    assert "untrusted-private-marker" not in caplog.text
     assert SCOPE["container_ref"] not in caplog.text
     assert "actor-ref" not in caplog.text
 
