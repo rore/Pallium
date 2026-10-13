@@ -683,7 +683,8 @@ def test_codex_hooks_import_cleanly_as_subprocess(
         " if parsed.scheme != 'http' or parsed.hostname != 'localhost' or parsed.path not in {'/relay/turn', '/query', '/item-and-query'}:\n"
         "  return _deny('urlopen ' + url)(request, *args, **kwargs)\n"
         " return io.BytesIO(b'{}')\n"
-        "urllib.request.urlopen = _urlopen\n",
+        "urllib.request.urlopen = _urlopen\n"
+        "urllib.request.OpenerDirector.open = lambda self, request, *args, **kwargs: _urlopen(request, *args, **kwargs)\n",
         encoding="utf-8",
     )
     child_env = {

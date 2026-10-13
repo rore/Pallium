@@ -146,7 +146,7 @@ def test_relay_helpers_are_bounded_control_safe_and_use_requested_deadline(monke
         observed.append(timeout)
         raise TimeoutError
 
-    monkeypatch.setattr(common.urllib.request, "urlopen", timeout)
+    monkeypatch.setattr(common, "_urlopen", timeout)
     assert common.relay_request("POST", "/relay/turn", {}, timeout=0.75) is None
     assert observed == [0.75]
     error = capsys.readouterr().err
@@ -2181,7 +2181,7 @@ def test_hook_deadline_clamps_requests_and_skips_when_exhausted(
         observed.append(timeout)
         raise TimeoutError
 
-    monkeypatch.setattr(common.urllib.request, "urlopen", timeout)
+    monkeypatch.setattr(common, "_urlopen", timeout)
     assert common.relay_request("POST", "/relay/turn", {}, timeout=3.0) is None
     assert observed == [1.5]
 
@@ -2230,7 +2230,7 @@ def test_relay_ack_batch_stops_at_shared_deadline(
         now[0] = 0.71
         return Response()
 
-    monkeypatch.setattr(common.urllib.request, "urlopen", respond)
+    monkeypatch.setattr(common, "_urlopen", respond)
     second = {
         **DELIVERY,
         "delivery_id": "relay-delivery-2",

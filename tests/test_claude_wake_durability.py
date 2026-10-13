@@ -132,6 +132,53 @@ def test_compatibility_writer_keeps_legacy_rows_and_disables_deferred_publicatio
 
 def test_compatibility_qualified_close_preserves_replacement_and_pending_intent(tmp_path, monkeypatch):
     from tests.test_claude_code_integration import _load_claude_hook
+    import core.claude_wake as wake
+
+    canonical = tmp_path / "capabilities.json"
+    temporary = tmp_path / "capabilities.json.tmp"
+    intent_path = _intent_path(tmp_path, PAYLOAD["session_ref"])
+    phases = []
+    original_write, original_replace = Path.write_text, wake.os.replace
+    original_acquire = wake._acquire_intent_lock
+
+    def observe(phase, callback, *args, **kwargs):
+        entry = {"phase": phase, "started": time.monotonic(),
+                 "thread_id": threading.get_ident(), "path_length": len(str(args[0]))}
+        if len(phases) < 64:
+            phases.append(entry)
+        try:
+            result = callback(*args, **kwargs)
+            entry["ok"] = True
+            if phase == "acquire":
+                entry["acquired"] = result is not None
+            return result
+        except BaseException as error:
+            entry.update(ok=False, error_type=type(error).__name__,
+                         errno=getattr(error, "errno", None), winerror=getattr(error, "winerror", None))
+            raise
+        finally:
+            entry["finished"] = time.monotonic()
+
+    def write(path, *args, **kwargs):
+        if path == temporary:
+            return observe("write", original_write, path, *args, **kwargs)
+        return original_write(path, *args, **kwargs)
+
+    def replace(source, destination, *args, **kwargs):
+        if Path(source) == temporary and Path(destination) == canonical:
+            return observe("replace", original_replace, source, destination, *args, **kwargs)
+        return original_replace(source, destination, *args, **kwargs)
+
+    def acquire(path):
+        if path == intent_path:
+            return observe("acquire", original_acquire, path)
+        return original_acquire(path)
+
+    private_os = SimpleNamespace(**vars(wake.os))
+    private_os.replace = replace
+    monkeypatch.setattr(wake, "os", private_os)
+    monkeypatch.setattr(wake, "_acquire_intent_lock", acquire)
+    monkeypatch.setattr(Path, "write_text", write)
 
     registry = _modern_admission_fixture(tmp_path)
     common = _load_claude_hook("common", monkeypatch)
@@ -152,7 +199,18 @@ def test_compatibility_qualified_close_preserves_replacement_and_pending_intent(
     }), encoding="utf-8")
     assert not registry.close(**{key: PAYLOAD[key] for key in ("runtime", "session_ref", "container_ref")}, intent_id="old-close")
     tokens = []
-    assert registry.probe(**{key: PAYLOAD[key] for key in ("runtime", "session_ref", "container_ref")}, transport=lambda _path, token: tokens.append(token) or True)
+    original_attempt = registry.attempt
+
+    def attempt(*args, **kwargs):
+        result = original_attempt(*args, **kwargs)
+        phases.append({"phase": "attempt", "outcome": result.outcome, "reason": result.reason})
+        return result
+
+    monkeypatch.setattr(registry, "attempt", attempt)
+    try:
+        assert registry.probe(**{key: PAYLOAD[key] for key in ("runtime", "session_ref", "container_ref")}, transport=lambda _path, token: tokens.append(token) or True), phases
+    finally:
+        (tmp_path / "canonical-publication-diagnostics.json").write_text(json.dumps(phases), encoding="utf-8")
     assert tokens == ["new-token"]
 
 

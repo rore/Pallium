@@ -29,6 +29,304 @@ from app.dependencies import build_router
 SCOPE = {"container_ref": "git:example.test/wake-東京"}
 
 
+@pytest.mark.parametrize("generation", [None, 7])
+@pytest.mark.parametrize("sql_shape", ["joined_scope", "expiry_no_returning"])
+def test_http_exact_claim_avoids_redundant_writer_reads(
+    relay_store, tmp_path, monkeypatch, generation, sql_shape,
+):
+    from sqlalchemy import event
+    from app import dependencies
+
+    relay, storage, database = relay_store
+    registry = _registry(relay, tmp_path / "legacy")
+    assert registry.initialize(old_owner_drained=True)
+    reservation = _reserve(registry, _send(relay))
+    with sqlite3.connect(database) as db:
+        db.execute("DELETE FROM relay_endpoint_generations WHERE endpoint_id=?",
+                   (reservation.recipient_endpoint_id,))
+        if generation is not None:
+            db.execute("INSERT INTO relay_endpoint_generations(endpoint_id,generation) VALUES (?,?)",
+                       (reservation.recipient_endpoint_id, generation))
+    statements = []
+    original_router = dependencies.create_router
+
+    def observe_sql(_connection, _cursor, statement, *_args):
+        statements.append(statement)
+
+    def observe_router(service, **kwargs):
+        target = kwargs["relay_service"]
+        original_turn = target.turn
+        def turn(*args, **kw):
+            event.listen(storage._relay_engine, "before_cursor_execute", observe_sql)
+            try:
+                return original_turn(*args, **kw)
+            finally:
+                event.remove(storage._relay_engine, "before_cursor_execute", observe_sql)
+        monkeypatch.setattr(target, "turn", turn)
+        return original_router(service, **kwargs)
+
+    monkeypatch.setattr(dependencies, "create_router", observe_router)
+    monkeypatch.setattr(dependencies, "current_platform", lambda: "windows")
+    app = FastAPI()
+    app.include_router(build_router(SimpleNamespace(), relay_storage=storage, codex_wake_registry=registry))
+    with TestClient(app) as http:
+        claim = http.post("/relay/turn", json={"runtime": "codex", "session_ref": "target",
+            "wake_delivery_id": reservation.delivery_id, **SCOPE})
+        assert claim.status_code == 200, claim.text
+        session = claim.json()["session"]
+        assert session["endpoint_id"] == reservation.recipient_endpoint_id
+        assert session["container_ref"] == SCOPE["container_ref"]
+        assert session["scope_generation"] == (generation or 0)
+        delivery, = claim.json()["deliveries"]
+        assert delivery["delivery_id"] == reservation.delivery_id and delivery["attempts"] == 1
+        ack = http.post("/relay/deliveries/ack", json={"delivery_id": delivery["delivery_id"],
+            "claim_token": delivery["claim_token"], **SCOPE})
+        assert ack.status_code == 200, ack.text
+        observed, = http.get(f"/relay/messages/{delivery['message_id']}", params=SCOPE).json()["deliveries"]
+        assert observed["state"] == "delivered" and observed["attempts"] == 1
+    if sql_shape == "joined_scope":
+        lookups = [sql for sql in statements if sql.lstrip().upper().startswith("SELECT")
+                   and ("FROM relay_sessions" in sql or "FROM relay_endpoint_generations" in sql)]
+        assert len(lookups) == 1 and "LEFT OUTER JOIN relay_endpoint_generations" in lookups[0], lookups
+    else:
+        expiry, = [sql for sql in statements if sql.lstrip().startswith("UPDATE relay_deliveries")
+                   and "relay_messages.expires_at" in sql]
+        assert "RETURNING" not in expiry.upper(), expiry
+
+
+@pytest.mark.parametrize("generation", [None, 7])
+@pytest.mark.parametrize("authority_transport", ["json", "missing_array", "missing_group"])
+def test_http_delivery_projection_reads_fresh_endpoint_once(
+    relay_store, tmp_path, monkeypatch, generation, authority_transport,
+):
+    from sqlalchemy import event
+    from app import dependencies
+
+    relay, storage, database = relay_store
+    registry = _registry(relay, tmp_path / "legacy")
+    assert registry.initialize(old_owner_drained=True)
+    reservation = _reserve(registry, _send(relay))
+    endpoint = reservation.recipient_endpoint_id
+    if authority_transport != "json":
+        from storage import sqlite_relay
+        original_rows = sqlite_relay._wake_snapshot_rows
+        missing = "json_array" if authority_transport == "missing_array" else "json_group_array"
+        class MissingJSONCursor:
+            def __init__(self, cursor):
+                self.cursor = cursor
+            def execute(self, statement):
+                if statement == sqlite_relay._WAKE_SNAPSHOT_JSON_SQL:
+                    raise sqlite3.OperationalError(f"no such function: {missing}")
+                return self.cursor.execute(statement)
+            def __getattr__(self, name):
+                return getattr(self.cursor, name)
+        monkeypatch.setattr(sqlite_relay, "_wake_snapshot_rows",
+            lambda cursor: original_rows(MissingJSONCursor(cursor)))
+    with sqlite3.connect(database) as db:
+        db.execute("DELETE FROM relay_endpoint_generations WHERE endpoint_id=?", (endpoint,))
+        if generation is not None:
+            db.execute("INSERT INTO relay_endpoint_generations(endpoint_id,generation) VALUES (?,?)", (endpoint, generation))
+    statements, projected, views = [], [], []
+    original_router = dependencies.create_router
+
+    def observe_sql(_connection, _cursor, statement, *_args):
+        if statement.lstrip().upper().startswith("SELECT"):
+            statements.append(statement)
+
+    def observe_router(service, **kwargs):
+        original_view = kwargs["relay_service"].session_view_by_endpoint
+        def view(endpoint_id):
+            result = original_view(endpoint_id)
+            views.append(result)
+            return result
+        monkeypatch.setattr(kwargs["relay_service"], "session_view_by_endpoint", view)
+        original_admission = kwargs["relay_turn_admission_callback"]
+        def admission(request, result, captured):
+            original_admission(request, result, captured)
+            with sqlite3.connect(database) as db:
+                db.execute("UPDATE relay_sessions SET container_ref=?,title=?,alias=? WHERE id=?",
+                    ("git:example.test/current-東京", "Post-admission title", "fresh", endpoint))
+                db.execute("DELETE FROM relay_endpoint_generations WHERE endpoint_id=?", (endpoint,))
+                if generation is not None:
+                    db.execute("INSERT INTO relay_endpoint_generations(endpoint_id,generation) VALUES (?,?)", (endpoint, generation))
+        kwargs["relay_turn_admission_callback"] = admission
+        original_factory = kwargs["relay_activation_callback_factory"]
+        def factory(actual_callback):
+            projector = original_factory(actual_callback)
+            def project(row):
+                if "recipient_endpoint_id" not in row:
+                    return projector(row)
+                event.listen(storage._relay_engine, "before_cursor_execute", observe_sql)
+                try:
+                    result = projector(row)
+                    projected.append(result)
+                    return result
+                finally:
+                    event.remove(storage._relay_engine, "before_cursor_execute", observe_sql)
+            return project
+        kwargs["relay_activation_callback_factory"] = factory
+        return original_router(service, **kwargs)
+
+    monkeypatch.setattr(dependencies, "create_router", observe_router)
+    monkeypatch.setattr(dependencies, "current_platform", lambda: "windows")
+    app = FastAPI()
+    app.include_router(build_router(SimpleNamespace(), relay_storage=storage, codex_wake_registry=registry))
+    with TestClient(app) as http:
+        claim = http.post("/relay/turn", json={"runtime": "codex", "session_ref": "target",
+            "wake_delivery_id": reservation.delivery_id, **SCOPE})
+        assert claim.status_code == 200, claim.text
+        delivery, = claim.json()["deliveries"]
+        assert delivery["delivery_id"] == reservation.delivery_id and delivery["attempts"] == 1
+        assert projected == [delivery["activation"]]
+        assert len(views) == 1
+        assert views[0]["container_ref"] == "git:example.test/current-東京"
+        assert views[0]["title"] == "Post-admission title" and views[0]["alias"] == "fresh"
+        assert views[0]["scope_generation"] == (generation or 0)
+        assert delivery["activation"]["availability"] == "attempt_inflight"
+        ack = http.post("/relay/deliveries/ack", json={"delivery_id": delivery["delivery_id"],
+            "claim_token": delivery["claim_token"], **SCOPE})
+        assert ack.status_code == 200, ack.text
+        observed, = http.get(f"/relay/messages/{delivery['message_id']}", params=SCOPE).json()["deliveries"]
+        assert observed["state"] == "delivered" and observed["attempts"] == 1
+    assert len(statements) == 1, statements
+
+
+@pytest.mark.parametrize("generation", [None, 7])
+@pytest.mark.parametrize("state", ["idle", "busy", "closed", "dormant", "moved"])
+def test_endpoint_view_preserves_current_session_fields_and_generation(
+    relay_store, generation, state,
+):
+    from sqlalchemy import event
+
+    relay, storage, database = relay_store
+    endpoint = _send(relay)["recipient_endpoint_id"]
+    now = datetime.now(timezone.utc)
+    container = "git:example.test/moved-東京" if state == "moved" else SCOPE["container_ref"]
+    seen = now - timedelta(days=2) if state == "dormant" else now
+    with sqlite3.connect(database) as db:
+        db.execute("UPDATE relay_sessions SET container_ref=?,title=?,alias=?,state=?,last_seen_at=?,closed_at=? WHERE id=?",
+            (container, "Fresh title 東京", "current", "closed" if state == "closed" else "busy" if state == "busy" else "idle",
+             seen.strftime("%Y-%m-%d %H:%M:%S.%f"), now.strftime("%Y-%m-%d %H:%M:%S.%f") if state == "closed" else None, endpoint))
+        db.execute("DELETE FROM relay_endpoint_generations WHERE endpoint_id=?", (endpoint,))
+        if generation is not None:
+            db.execute("INSERT INTO relay_endpoint_generations(endpoint_id,generation) VALUES (?,?)", (endpoint, generation))
+    expected, = relay.list_sessions(runtime="codex", session_ref="target", container_ref=container,
+        include_inactive=True, now=now)
+    statements = []
+    def observe_sql(_connection, _cursor, statement, *_args):
+        statements.append(statement)
+    event.listen(storage._relay_engine, "before_cursor_execute", observe_sql)
+    try:
+        current = relay.session_view_by_endpoint(endpoint, now=now)
+    finally:
+        event.remove(storage._relay_engine, "before_cursor_execute", observe_sql)
+    assert current == expected
+    assert current["scope_generation"] == (generation or 0)
+    assert len(statements) == 1 and "LEFT OUTER JOIN" in statements[0]
+    assert "relay_messages" not in statements[0]
+    assert relay.session_scope_by_endpoint(endpoint) == {
+        "runtime": "codex", "session_ref": "target", "container_ref": container,
+    }
+
+
+def test_endpoint_view_missing_endpoint_and_legacy_provider_fallback(relay_store, monkeypatch):
+    from core.relay import RelayNotFoundError
+
+    relay, storage, _ = relay_store
+    endpoint = _send(relay)["recipient_endpoint_id"]
+    now = datetime.now(timezone.utc)
+    expected = relay.session_view_by_endpoint(endpoint, now=now)
+    monkeypatch.setattr(storage, "relay_session_view_by_endpoint", None)
+    assert relay.session_view_by_endpoint(endpoint, now=now) == expected
+    missing = "relay-session-" + "0" * 32
+    with pytest.raises(RelayNotFoundError):
+        relay.session_view_by_endpoint(missing)
+    with pytest.raises(ValueError):
+        relay.session_view_by_endpoint("invalid")
+    monkeypatch.undo()
+    with pytest.raises(RelayNotFoundError):
+        relay.session_view_by_endpoint(missing)
+
+
+@pytest.mark.parametrize("damage", ["wrong_endpoint", "container", "session", "runtime"])
+def test_endpoint_view_refuses_provider_identity_or_malformed_scope(relay_store, monkeypatch, damage):
+    from core.relay import RelayNotFoundError
+
+    relay, storage, database = relay_store
+    endpoint = _send(relay)["recipient_endpoint_id"]
+    if damage == "wrong_endpoint":
+        current = relay.session_view_by_endpoint(endpoint)
+        monkeypatch.setattr(storage, "relay_session_view_by_endpoint",
+            lambda *_args, **_kwargs: {**current, "endpoint_id": "relay-session-" + "0" * 32})
+    else:
+        column = {"container": "container_ref", "session": "session_ref", "runtime": "runtime"}[damage]
+        value = {"container": " " + SCOPE["container_ref"], "session": " target ", "runtime": "invalid"}[damage]
+        with sqlite3.connect(database) as db:
+            db.execute(f"UPDATE relay_sessions SET {column}=? WHERE id=?", (value, endpoint))
+    with pytest.raises((ValueError, RelayNotFoundError)):
+        relay.session_view_by_endpoint(endpoint)
+
+
+@pytest.mark.parametrize("column,value,valid", [
+    ("retry_not_before", None, True), ("retry_not_before", float("nan"), True),
+    ("retry_not_before", 1.2345678901234567, True),
+    ("retry_not_before", 1700000000.1234567, True), ("retry_not_before", 5e-324, True),
+    ("retry_not_before", 1.7976931348623157e308, True),
+    ("retry_not_before", float("inf"), False), ("retry_not_before", float("-inf"), False),
+    ("retry_not_before", "invalid", False), ("retry_not_before", b"invalid", False),
+    ("generation", 1.25, False), ("generation", "invalid", False),
+    ("correlated_claim_attempts", 1.25, False), ("correlated_claim_attempts", "invalid", False),
+    ("session_ref", "target-東京-😀", True), ("session_ref", "target\0東京", False),
+    ("session_ref", b"target", False), ("outcome", b"reserved", False),
+])
+def test_authority_snapshot_preserves_native_types_and_exact_retry_values(relay_store, tmp_path, column, value, valid):
+    from storage.sqlite_relay import _WAKE_SNAPSHOT_ROWS_SQL
+
+    relay, _, database = relay_store
+    item = CodexWakeReservation("relay-session-" + "1" * 32, "relay-delivery-" + "1" * 32,
+        "target", SCOPE["container_ref"], 1)
+    values = asdict(item)
+    values[column] = value
+    with sqlite3.connect(database) as db:
+        db.execute("INSERT INTO relay_codex_wake_state(id,generation) VALUES(1,1)")
+        db.execute("INSERT INTO relay_codex_wake_reservations (" + ",".join(values) + ") VALUES (" +
+            ",".join("?" for _ in values) + ")", tuple(values.values()))
+        raw, = db.execute(_WAKE_SNAPSHOT_ROWS_SQL).fetchall()
+    expected = CodexWakeReservation(*raw)
+    assert CodexWakeRegistry._valid_item(expected) is valid
+    if valid:
+        initialized, observed = relay.codex_wake_snapshot()
+        assert initialized and observed == (expected,)
+        assert type(observed[0].retry_not_before) is type(expected.retry_not_before)
+    else:
+        with pytest.raises((ValueError, sqlite3.OperationalError)):
+            relay.codex_wake_snapshot()
+    registry = _registry(relay, tmp_path / "legacy")
+    assert registry.reservations_if_usable() == ((expected,) if valid else ())
+    assert registry.usable is valid
+
+
+@pytest.mark.parametrize("encoded", ["{}", "[[1]]", '[[' + ','.join(['null'] * 8) + ',"unknown"]]',
+    '[[' + ','.join(['null'] * 7) + ',1.25,"real"]]'])
+def test_authority_aggregate_refuses_malformed_shape_or_storage_tag(encoded):
+    from storage.sqlite_relay import _wake_snapshot_rows
+    cursor = SimpleNamespace(execute=lambda _statement: None, fetchone=lambda: (encoded,))
+    with pytest.raises(ValueError):
+        _wake_snapshot_rows(cursor)
+
+
+@pytest.mark.parametrize("error", ["JSON cannot hold BLOB values", "disk I/O error", "no such function: other"])
+def test_authority_aggregate_does_not_fallback_on_data_or_other_sql_failure(error):
+    from storage.sqlite_relay import _wake_snapshot_rows
+    attempted = []
+    def execute(statement):
+        attempted.append(statement)
+        raise sqlite3.OperationalError(error)
+    with pytest.raises(sqlite3.OperationalError, match=error):
+        _wake_snapshot_rows(SimpleNamespace(execute=execute))
+    assert len(attempted) == 1
+
+
 def test_http_ack_release_validates_current_authority_once(relay_store, tmp_path, monkeypatch):
     relay, storage, _ = relay_store
     registry = _registry(relay, tmp_path / 'legacy')
@@ -534,7 +832,14 @@ def test_authority_reads_preserve_all_fields_without_global_orm_hydration(
         elif damage == "extra_marker":
             db.execute("INSERT INTO relay_codex_wake_state (id, generation) VALUES (2, 0)")
 
-    hydrated, statements = [], []
+    hydrated, statements, raw_statements = [], [], []
+
+    def observe_checkout(connection, *_args):
+        connection.set_trace_callback(raw_statements.append)
+
+    def observe_checkin(connection, *_args):
+        if connection is not None:
+            connection.set_trace_callback(None)
 
     def observe_load(_session, row):
         if isinstance(row, (RelayCodexWakeReservationRecord, RelayCodexWakeStateRecord)):
@@ -545,6 +850,8 @@ def test_authority_reads_preserve_all_fields_without_global_orm_hydration(
 
     event.listen(Session, "loaded_as_persistent", observe_load)
     event.listen(storage._relay_engine, "before_cursor_execute", observe_sql)
+    event.listen(storage._relay_engine, "checkout", observe_checkout)
+    event.listen(storage._relay_engine, "checkin", observe_checkin)
     try:
         if damage:
             with pytest.raises(ValueError, match="invalid persisted Codex wake authority"):
@@ -554,9 +861,9 @@ def test_authority_reads_preserve_all_fields_without_global_orm_hydration(
             assert initialized is True  # The empty generation-zero marker is present.
             assert set(observed) == set(items)
             assert len(observed) == count
-        assert len(statements) == 4, statements
+        assert len(statements) == 3, statements
         assert sum("LIMIT" in statement and "relay_codex_wake_reservations" in statement
-                   for statement in statements) == 1
+                   for statement in raw_statements) == 1
         assert hydrated == [], hydrated
         # All unrelated rows remain validated during a write transition too.
         statements.clear()
@@ -572,6 +879,8 @@ def test_authority_reads_preserve_all_fields_without_global_orm_hydration(
         ], statements
         assert hydrated == ["RelayCodexWakeStateRecord"] * (damage != "absent_marker"), hydrated
     finally:
+        event.remove(storage._relay_engine, "checkout", observe_checkout)
+        event.remove(storage._relay_engine, "checkin", observe_checkin)
         event.remove(Session, "loaded_as_persistent", observe_load)
         event.remove(storage._relay_engine, "before_cursor_execute", observe_sql)
     registry = _registry(relay, tmp_path / "absent-legacy")
@@ -677,7 +986,7 @@ def test_http_response_projection_uses_fresh_authority_and_distinct_health(
             elif authority == "scope_unavailable":
                 def absent(_endpoint):
                     raise RelayNotFoundError("scope unavailable after admission")
-                monkeypatch.setattr(route_relay, "session_scope_by_endpoint", absent)
+                monkeypatch.setattr(route_relay, "session_view_by_endpoint", absent)
             changed.append(authority)
 
         kwargs["relay_turn_admission_callback"] = change_after_admission

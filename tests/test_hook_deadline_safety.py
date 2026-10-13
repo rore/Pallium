@@ -172,7 +172,7 @@ def test_slow_response_body_cannot_outlive_deadline(
             return self.thread.is_alive()
 
     monkeypatch.setattr(common.threading, "Thread", DeadlineThread)
-    monkeypatch.setattr(common.urllib.request, "urlopen", lambda *_a, **_k: BlockingResponse())
+    monkeypatch.setattr(common, "_urlopen", lambda *_a, **_k: BlockingResponse())
     try:
         if request_kind == "pallium":
             result = common.pallium_request("GET", "/health")

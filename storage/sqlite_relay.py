@@ -25,6 +25,7 @@ from core.relay import (
     RelayNotFoundError,
 )
 from redaction import redact_sensitive
+from core.errors import ImmediateTransactionBusyError
 from core.codex_wake import (
     CodexWakeRegistry, CodexWakeReservation, MAX_RESERVATIONS,
     WAKE_RETRY_COOLDOWN_SECONDS, retry_cooldown_elapsed,
@@ -54,6 +55,44 @@ _TRACE_EVIDENCE = frozenset(
     {"submission_attempted", "transport_accepted", "payload_admitted"}
 )
 _TRACE_REDACTED_REASON = "[REDACTED: diagnostic reason omitted]"
+_WAKE_SNAPSHOT_ROWS_SQL = (
+    "SELECT " + ", ".join(CodexWakeReservation.__dataclass_fields__)
+    + f" FROM relay_codex_wake_reservations LIMIT {MAX_RESERVATIONS + 1}"
+)
+_WAKE_SNAPSHOT_JSON_SQL = (
+    "SELECT json_group_array(json_array("
+    + ", ".join(list(CodexWakeReservation.__dataclass_fields__)[:-1])
+    + ", CASE WHEN typeof(retry_not_before)='real' THEN printf('%!.26g', retry_not_before) "
+    "ELSE retry_not_before END, typeof(retry_not_before))) FROM ("
+    + _WAKE_SNAPSHOT_ROWS_SQL + ")"
+)
+
+
+def _wake_snapshot_rows(cursor):
+    try:
+        cursor.execute(_WAKE_SNAPSHOT_JSON_SQL)
+    except sqlite3.OperationalError as error:
+        if str(error) not in ("no such function: json_group_array", "no such function: json_array"):
+            raise
+        cursor.execute(_WAKE_SNAPSHOT_ROWS_SQL)
+        return cursor.fetchall()
+    decoded = json.loads(cursor.fetchone()[0])
+    if not isinstance(decoded, list):
+        raise ValueError("invalid persisted Codex wake authority")
+    rows = []
+    for row in decoded:
+        if not isinstance(row, list) or len(row) != 9:
+            raise ValueError("invalid persisted Codex wake authority")
+        kind = row.pop()
+        expected_type = ({"null": type(None), "integer": int, "real": str, "text": str}.get(kind)
+                         if isinstance(kind, str) else None)
+        if expected_type is None or type(row[-1]) is not expected_type:
+            raise ValueError("invalid persisted Codex wake authority")
+        if kind == "real":
+            # SQLite JSON rounds REALs; the tagged decimal preserves retry/CAS equality.
+            row[-1] = float(row[-1])
+        rows.append(tuple(row))
+    return rows
 
 
 def _now(value: datetime | None = None) -> datetime:
@@ -425,6 +464,8 @@ class SQLiteRelayMixin:
 
     @staticmethod
     def _wake_item(row):
+        if isinstance(row, tuple):
+            return CodexWakeReservation(*row)
         return CodexWakeReservation(**{
             name: getattr(row, name) for name in CodexWakeReservation.__dataclass_fields__
         })
@@ -435,7 +476,12 @@ class SQLiteRelayMixin:
             marker = db.execute(select(RelayCodexWakeStateRecord.generation).where(
                 RelayCodexWakeStateRecord.id == 1
             )).first()
-            items = self._validate_wake_authority(db, marker)
+            cursor = db.connection().connection.driver_connection.cursor()
+            try:
+                rows = _wake_snapshot_rows(cursor)
+            finally:
+                cursor.close()
+            items = self._validate_wake_authority(db, marker, rows=rows)
             return marker is not None, items
 
     def relay_codex_trial_native_suppressed(self, endpoint_id: str) -> bool:
@@ -1428,14 +1474,19 @@ class SQLiteRelayMixin:
                         "restored": reusable and delivery.state == "delivered",
                         "has_more": False, "remaining_count": 0,
                     }
-            registered = self._relay_session(
-                db, container_ref=container_ref, runtime=runtime, session_ref=session_ref
-            )
-            generation_row = (
-                db.get(RelayEndpointGenerationRecord, registered.id)
-                if registered is not None
-                else None
-            )
+            current_scope = db.execute(
+                select(RelaySessionRecord, RelayEndpointGenerationRecord)
+                .outerjoin(
+                    RelayEndpointGenerationRecord,
+                    RelayEndpointGenerationRecord.endpoint_id == RelaySessionRecord.id,
+                )
+                .where(
+                    RelaySessionRecord.container_ref == container_ref,
+                    RelaySessionRecord.runtime == runtime,
+                    RelaySessionRecord.session_ref == session_ref,
+                )
+            ).one_or_none()
+            registered, generation_row = current_scope if current_scope is not None else (None, None)
             generation = int(generation_row.generation) if generation_row is not None else 0
             if previous_container_ref is not None:
                 if previous_endpoint_id is None or previous_scope_generation is None:
@@ -1512,6 +1563,7 @@ class SQLiteRelayMixin:
                     ),
                 )
                 .values(state="expired", claim_token=None)
+                .execution_options(synchronize_session=False)
             )
 
             eligible_query = (
@@ -1817,6 +1869,26 @@ class SQLiteRelayMixin:
                 "session_ref": session.session_ref,
                 "container_ref": session.container_ref,
             }
+
+    def relay_session_view_by_endpoint(
+        self, endpoint_id: str, *, recent_seconds: int, now: datetime | None = None,
+    ) -> dict[str, Any]:
+        with self._relay_session_factory() as db:
+            current = db.execute(
+                select(RelaySessionRecord, RelayEndpointGenerationRecord)
+                .outerjoin(
+                    RelayEndpointGenerationRecord,
+                    RelayEndpointGenerationRecord.endpoint_id == RelaySessionRecord.id,
+                )
+                .where(RelaySessionRecord.id == endpoint_id)
+            ).one_or_none()
+            if current is None:
+                raise RelayNotFoundError("relay endpoint not found")
+            session, generation = current
+            return _session_view(
+                session, _now(now), recent_seconds,
+                int(generation.generation) if generation is not None else 0,
+            )
 
     def relay_work_ref_participant_counts(
         self, *, work_refs: list[str], now: datetime, recent_seconds: int
@@ -2848,7 +2920,7 @@ class SQLiteRelayMixin:
                 scope_generation=event.get("scope_generation"),
                 recorded_at=event.get("recorded_at"),
             )
-        except (KeyError, TypeError, ValueError):
+        except (KeyError, TypeError, ValueError, ImmediateTransactionBusyError):
             return False
         return bool(result.get("recorded") or result.get("duplicate"))
 

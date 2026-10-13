@@ -1351,6 +1351,31 @@ def derive_actor_ref(
         _cache_identity_context(session_id, context, actor_ref=actor_ref,
                                 expected_container_ref=expected_container_ref)
     return actor_ref
+
+
+class _LazyHTTPSHandler(urllib.request.HTTPSHandler):
+    """Keep standard TLS verification, initializing it only for HTTPS."""
+
+    def __init__(self):
+        urllib.request.AbstractHTTPHandler.__init__(self)
+        self._context = None
+        self._https_initialized = False
+
+    def https_open(self, request):
+        if not self._https_initialized:
+            super().__init__(debuglevel=self._debuglevel)
+            self._https_initialized = True
+        return super().https_open(request)
+
+
+def _build_opener(*handlers):
+    return urllib.request.build_opener(*handlers, _LazyHTTPSHandler())
+
+
+def _urlopen(request, *, timeout):
+    return _build_opener().open(request, timeout=timeout)
+
+
 def pallium_request(
     method: str,
     path: str,
@@ -1374,7 +1399,7 @@ def pallium_request(
         return None
     try:
         def request_json():
-            with urllib.request.urlopen(req, timeout=request_timeout) as resp:
+            with _urlopen(req, timeout=request_timeout) as resp:
                 return json.loads(resp.read().decode("utf-8"))
 
         return _run_before_deadline(request_json, deadline)
@@ -1406,7 +1431,7 @@ def relay_request(
     started = time.monotonic()
     try:
         def request_json():
-            with urllib.request.urlopen(req, timeout=request_timeout) as resp:
+            with _urlopen(req, timeout=request_timeout) as resp:
                 return json.loads(resp.read().decode("utf-8"))
 
         return _run_before_deadline(request_json, deadline)

@@ -10,9 +10,10 @@ import sys
 import threading
 import time
 from collections import Counter
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -21,12 +22,14 @@ from app.config import AppConfig
 from app.main import create_app
 from storage.vector_index import VectorIndexConfig
 from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
+from tests.relay_hook_journey import hook_claim_emit_ack as _hook_claim_emit_ack
 
 
 @pytest.mark.slow
 @pytest.mark.parametrize("caller_count", [24, 50])
 def test_concurrent_http_hook_journeys_keep_exact_delivery_lifecycle(
     tmp_path, monkeypatch, caller_count, _isolated=False, _synchronized_hooks=False, _diagnostics=None, _timing_only=False,
+    _process_hooks=False, _server_only=False, _external_base_url=None,
 ) -> None:
     if _diagnostics is None:
         mode = os.environ.get('PALLIUM_RELAY_LOAD_DIAGNOSTICS')
@@ -46,16 +49,77 @@ patch = pytest.MonkeyPatch()
 try:
     test_concurrent_http_hook_journeys_keep_exact_delivery_lifecycle(
         Path(sys.argv[1]), patch, int(sys.argv[2]), _isolated=True,
-        _synchronized_hooks=sys.argv[3] == '1', _diagnostics=sys.argv[4] == '1', _timing_only=sys.argv[5] == '1')
+        _synchronized_hooks=sys.argv[3] == '1', _diagnostics=sys.argv[4] == '1', _timing_only=sys.argv[5] == '1', _process_hooks=sys.argv[6] == '1')
 finally:
     patch.undo()
 """
         child = subprocess.run(
-            [sys.executable, "-B", "-c", program, str(tmp_path), str(caller_count), str(int(_synchronized_hooks)), str(int(_diagnostics)), str(int(_timing_only))],
+            [sys.executable, "-B", "-c", program, str(tmp_path), str(caller_count), str(int(_synchronized_hooks)), str(int(_diagnostics)), str(int(_timing_only)), str(int(_process_hooks))],
             cwd=Path(__file__).resolve().parents[1],
-            capture_output=True, text=True, encoding="utf-8", timeout=120,
+            capture_output=True, text=True, encoding="utf-8", timeout=300 if _process_hooks else 120,
         )
         assert child.returncode == 0, child.stdout + child.stderr
+        return
+    if (_process_hooks
+            and not _server_only and _external_base_url is None):
+        program = """
+import logging.config
+import sys
+from pathlib import Path
+import pytest
+from app.runtime_logging import build_uvicorn_log_config
+from tests.test_relay_load_smoke import test_concurrent_http_hook_journeys_keep_exact_delivery_lifecycle
+logging.config.dictConfig(build_uvicorn_log_config(component='api'))
+patch = pytest.MonkeyPatch()
+try:
+    test_concurrent_http_hook_journeys_keep_exact_delivery_lifecycle(
+        Path(sys.argv[1]), patch, int(sys.argv[2]), _isolated=True,
+        _synchronized_hooks=True, _diagnostics=False, _server_only=True)
+finally:
+    patch.undo()
+"""
+        ready_path = tmp_path / "server-ready.json"
+        with (tmp_path / "server.stdout.log").open("w", encoding="utf-8") as stdout, \
+                (tmp_path / "server.stderr.log").open("w", encoding="utf-8") as stderr:
+            server_process = subprocess.Popen(
+                [sys.executable, "-B", "-c", program, str(tmp_path), str(caller_count)],
+                stdin=subprocess.PIPE, stdout=stdout, stderr=stderr, text=True, encoding="utf-8",
+            )
+            try:
+                deadline = time.monotonic() + 35
+                while not ready_path.exists():
+                    assert server_process.poll() is None, "private server exited before readiness"
+                    assert time.monotonic() < deadline, "private server did not become ready"
+                    time.sleep(0.01)
+                base_url = json.loads(ready_path.read_text(encoding="utf-8"))["base_url"]
+                test_concurrent_http_hook_journeys_keep_exact_delivery_lifecycle(
+                    tmp_path, monkeypatch, caller_count, _isolated=True,
+                    _synchronized_hooks=_synchronized_hooks, _diagnostics=False, _process_hooks=True,
+                    _external_base_url=base_url,
+                )
+            finally:
+                try:
+                    if server_process.poll() is None:
+                        assert server_process.stdin is not None
+                        server_process.stdin.write("stop\n")
+                        server_process.stdin.flush()
+                except BrokenPipeError:
+                    pass  # The exit status below still rejects an abnormal server exit.
+                finally:
+                    try:
+                        server_process.wait(timeout=30)
+                    except subprocess.TimeoutExpired:
+                        server_process.kill()
+                        server_process.wait(timeout=5)
+                        raise
+                assert server_process.returncode == 0, (tmp_path / "server.stderr.log").read_text(encoding="utf-8")
+                server_evidence = json.loads((tmp_path / "server-http-evidence.json").read_text(encoding="utf-8"))
+                assert server_evidence["server_settled"] and server_evidence["native_workers_settled"]
+                evidence_path = tmp_path / "mixed-http-evidence.json"
+                if evidence_path.exists():
+                    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+                    evidence["separate_server"] = server_evidence
+                    evidence_path.write_text(json.dumps(evidence, indent=2), encoding="utf-8")
         return
     from app import codex_bridge_pipe, codex_wake, dependencies
     from core.relay_activation import ActivationAttemptResult
@@ -67,6 +131,7 @@ finally:
 
     workers, native_attempts, statements, sqlite_errors, hook_calls = [], [], [], [], []
     phases, health_samples, emissions, results, fanout_stacks = [], [], {}, [], {}
+    process_entries, process_release = [], []
     operation_spans, stage_spans, writer_spans = [], [], []
     sql_spans, transaction_spans = [], []
     active_operations, active_stages, active_transactions = {}, {}, {}
@@ -270,7 +335,7 @@ finally:
     monkeypatch.setattr(codex_bridge_pipe, "start_retained_service", InertRetainedTransport)
     monkeypatch.setattr(codex_bridge_pipe, "retained_wake_enabled", lambda: True)
     # Keep actual FastMCP initialization and its logging setup in this witness.
-    app = create_app(AppConfig(
+    app = None if _external_base_url is not None else create_app(AppConfig(
         storage_backend="sqlite",
         sqlite_url=f"sqlite:///{tmp_path / 'main.db'}",
         relay_sqlite_url=f"sqlite:///{tmp_path / 'relay.db'}",
@@ -280,7 +345,8 @@ finally:
     ))
     assert logging.getLogger().handlers
     assert all(type(handler).__name__ != "RichHandler" for handler in logging.getLogger().handlers)
-    assert app.state.codex_wake_registry.initialize(old_owner_drained=True)
+    if app is not None:
+        assert app.state.codex_wake_registry.initialize(old_owner_drained=True)
 
     async def observed_app(scope, receive, send):
         if not _diagnostics:
@@ -337,7 +403,7 @@ finally:
     monkeypatch.setattr(common, "SESSIONS_DIR", tmp_path / "hook-sessions")
     monkeypatch.setattr(common, "STATE_DIR", tmp_path / "hook-state")
     original_request = common.relay_request
-    original_urlopen = common.urllib.request.urlopen
+    original_urlopen = common._urlopen
 
     def hook_reference(path, payload):
         identity = payload.get("session_ref") if path == "/relay/turn" else payload.get("delivery_id")
@@ -370,7 +436,7 @@ finally:
 
     if _diagnostics:
         monkeypatch.setattr(common, "relay_request", observe_hook_request)
-        monkeypatch.setattr(common.urllib.request, "urlopen", observe_urlopen)
+        monkeypatch.setattr(common, "_urlopen", observe_urlopen)
         event.listen(Engine, "before_cursor_execute", observe_sql)
         event.listen(Engine, "after_cursor_execute", after_sql)
         event.listen(Engine, "handle_error", observe_sql_error)
@@ -409,32 +475,7 @@ finally:
                 return response.json()
 
             def hook_claim_emit_ack(index, message):
-                began = time.perf_counter()
-                delivery = message["deliveries"][0]
-                claimed = common.relay_turn(
-                    "codex", f"mixed-target-{index}", scope["container_ref"],
-                    max_chars=1000, wake_delivery_id=delivery["delivery_id"],
-                )
-                phases.append({"index": index, "phase": "hook_claim",
-                               "seconds": time.perf_counter() - began,
-                               "status": "returned" if claimed is not None else "refused"})
-                assert claimed is not None, (index, "hook claim refused")
-                claimed_delivery, = claimed["deliveries"]
-                assert claimed_delivery["delivery_id"] == delivery["delivery_id"]
-                assert claimed_delivery["message_id"] == message["message_id"]
-                assert claimed_delivery["attempts"] == 1
-                rendered, emitted = common.format_relay(claimed["deliveries"])
-                assert emitted == [claimed_delivery]
-                assert f"message_id: {message['message_id']}" in rendered
-                assert f"delivery_id: {delivery['delivery_id']}" in rendered
-                # Per-caller emission is observable before the hook owns its ACK.
-                emissions[index] = (message["message_id"], delivery["delivery_id"])
-                began = time.perf_counter()
-                confirmed = common.acknowledge_relay(emitted, container_ref=scope["container_ref"])
-                phases.append({"index": index, "phase": "hook_ack",
-                               "seconds": time.perf_counter() - began,
-                               "status": "confirmed" if confirmed == emitted else "refused"})
-                assert confirmed == emitted, (index, "hook ACK refused")
+                return _hook_claim_emit_ack(common, index, message, scope, phases, emissions)
 
             async def prepare_message(index):
                 message = await request(index, "send", "POST", "/relay/messages", json={
@@ -472,6 +513,86 @@ finally:
                 return await readback(index, message)
 
             async def synchronized_burst():
+                if _process_hooks:
+                    assert _external_base_url is not None and not (_diagnostics or _timing_only)
+                    directory = tmp_path / "hook-processes"
+                    directory.mkdir()
+                    release_path = directory / "release.json"
+                    children, streams = [], []
+                    try:
+                        ready_deadline = time.monotonic() + 60
+                        for index in range(caller_count):
+                            assert time.monotonic() < ready_deadline, "hook startup allowance exhausted"
+                            stdout = (directory / f"{index}.stdout.log").open("w", encoding="utf-8")
+                            stderr = (directory / f"{index}.stderr.log").open("w", encoding="utf-8")
+                            streams.extend((stdout, stderr))
+                            children.append(subprocess.Popen([
+                                sys.executable, "-B", str(Path(__file__).with_name("relay_hook_journey.py")), str(index), str(directory),
+                                str(Path(__file__).resolve().parents[1] / "integrations/codex/hooks/common.py"),
+                                base_url, str(common.SESSIONS_DIR), str(common.STATE_DIR),
+                            ], stdout=stdout, stderr=stderr))
+                        while not all((directory / f"{i}.ready").exists() for i in range(caller_count)):
+                            assert all(child.poll() is None for child in children), "hook child exited before readiness"
+                            assert time.monotonic() < ready_deadline, "hook children did not become ready"
+                            await asyncio.sleep(.01)
+                        assert all(child.poll() is None for child in children)
+                        messages = await asyncio.gather(
+                            *(prepare_message(i) for i in range(caller_count)), return_exceptions=True)
+                        assert not any(isinstance(message, BaseException) for message in messages), messages
+                        for index, message in enumerate(messages):
+                            assignment_path = directory / f"{index}.assignment.json"
+                            pending_assignment = assignment_path.with_suffix('.tmp')
+                            pending_assignment.write_text(
+                                json.dumps({"scope": scope, "message": message}), encoding="utf-8")
+                            pending_assignment.replace(assignment_path)
+                        assignment_deadline = time.monotonic() + 10
+                        while not all((directory / f"{i}.assignment-ready").exists() for i in range(caller_count)):
+                            assert all(child.poll() is None for child in children), "hook child exited before assignment readiness"
+                            assert time.monotonic() < assignment_deadline, "hook assignments did not become ready"
+                            await asyncio.sleep(.01)
+                        pending = release_path.with_suffix('.tmp')
+                        released = time.perf_counter()
+                        pending.write_text(json.dumps({"released": released}), encoding="utf-8")
+                        pending.replace(release_path)
+                        process_release.append(released)
+                        result_deadline = time.monotonic() + 30
+                        while not all((directory / f"{i}.result.json").exists() for i in range(caller_count)):
+                            assert all(child.poll() in (None, 0) for child in children), "hook child exited abnormally"
+                            assert time.monotonic() < result_deadline, "hook children did not report results"
+                            await asyncio.sleep(.01)
+                        completed = []
+                        for index, message in enumerate(messages):
+                            result = json.loads((directory / f"{index}.result.json").read_text(encoding="utf-8"))
+                            process_entries.append(result["entered"])
+                            phases.extend(result["phases"])
+                            emissions.update({int(key): tuple(value) for key, value in result["emissions"].items()})
+                            completed.append(await readback(index, message) if result["success"] else
+                                AssertionError((index, result["error_type"], result["error"])))
+                        return completed
+                    finally:
+                        teardown_deadline = time.monotonic() + 30
+                        while any(child.poll() is None for child in children) and time.monotonic() < teardown_deadline:
+                            await asyncio.sleep(.01)
+                        unsettled = [child for child in children if child.poll() is None]
+                        kill_errors = []
+                        for child in unsettled:
+                            try:
+                                child.kill()
+                            except OSError as error:
+                                kill_errors.append((child.pid, type(error).__name__))
+                        kill_deadline, wait_errors = time.monotonic() + 5, []
+                        try:
+                            for child in children:
+                                try:
+                                    child.wait(timeout=max(0, kill_deadline - time.monotonic()))
+                                except subprocess.TimeoutExpired:
+                                    wait_errors.append(child.pid)
+                        finally:
+                            for stream in streams:
+                                stream.close()
+                        assert not unsettled and not kill_errors and not wait_errors and all(
+                            child.returncode == 0 for child in children), (
+                                "hook children failed settlement", kill_errors, wait_errors)
                 messages = await asyncio.gather(
                     *(prepare_message(i) for i in range(caller_count)), return_exceptions=True,
                 )
@@ -569,16 +690,31 @@ finally:
     with socket.socket() as reservation:
         reservation.bind(("127.0.0.1", 0))
         port = reservation.getsockname()[1]
+    server_settled = False
     try:
-        with ScratchServer(observed_app, "127.0.0.1", port) as server:
+        owner = (ScratchServer(observed_app, "127.0.0.1", port) if app is not None
+                 else nullcontext(SimpleNamespace(base_url=_external_base_url)))
+        with owner as server:
             monkeypatch.setattr(common, "PALLIUM_BASE_URL", server.base_url)
             try:
-                asyncio.run(exercise(server.base_url))
+                if _server_only:
+                    ready_path = tmp_path / "server-ready.json"
+                    ready_path.with_suffix(".tmp").write_text(
+                        json.dumps({"base_url": server.base_url}), encoding="utf-8")
+                    ready_path.with_suffix(".tmp").replace(ready_path)
+                    assert sys.stdin.readline().strip() == "stop"
+                else:
+                    asyncio.run(exercise(server.base_url))
             finally:
                 for worker in workers:
                     worker.join(5)
                 assert all(not worker.is_alive() for worker in workers)
-                app.state.pallium_service._relay_trace_executor.submit(lambda: None).result(2)
+                if app is not None:
+                    app.state.pallium_service._relay_trace_executor.submit(lambda: None).result(2)
+        if _server_only:
+            assert server._thread is not None and not server._thread.is_alive()
+            assert app.state._wait_for_operations(0)
+            server_settled = True
     finally:
         fanout = False
         if _diagnostics:
@@ -609,10 +745,14 @@ finally:
             "native_workers": len(workers), "emissions": len(emissions),
             "successful_journeys": sum(not isinstance(result, BaseException) for result in results),
             "root_log_handlers": [type(handler).__name__ for handler in logging.getLogger().handlers],
+            "server_settled": server_settled,
+            "native_workers_settled": all(not worker.is_alive() for worker in workers),
+            "hook_process_release": process_release[0] if process_release else None,
+            "hook_process_entry_spread_ms": 1000 * (max(process_entries) - min(process_entries)) if process_entries else None,
             "bounded_stacks_during_fanout": fanout_stacks,
             "bounded_stacks_after_drain": stacks,
         }
-        (tmp_path / "mixed-http-evidence.json").write_text(json.dumps(evidence, indent=2), encoding="utf-8")
+        (tmp_path / ("server-http-evidence.json" if _server_only else "mixed-http-evidence.json")).write_text(json.dumps(evidence, indent=2), encoding="utf-8")
         print("mixed_http_summary=" + json.dumps({key: evidence[key] for key in (
             "callers", "sql_statements", "sqlite_errors", "native_attempts", "native_workers",
             "emissions", "successful_journeys", "root_log_handlers",
@@ -720,3 +860,10 @@ def test_relay_control_plane_survives_reasonable_concurrent_ingest_load(
             assert health_latency < 0.5
 
     asyncio.run(asyncio.wait_for(exercise(), timeout=20))
+
+
+@pytest.mark.slow
+def test_synchronized_hook_processes_keep_exact_delivery_lifecycle(tmp_path, monkeypatch):
+    test_concurrent_http_hook_journeys_keep_exact_delivery_lifecycle(
+        tmp_path, monkeypatch, 50, _synchronized_hooks=True, _process_hooks=True, _diagnostics=False,
+    )

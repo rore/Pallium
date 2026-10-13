@@ -354,6 +354,57 @@ def test_trace_paging_freezes_later_appends(relay):
         )
 
 
+@pytest.mark.parametrize("consumer", ["trace", "cleanup"])
+def test_busy_correctness_gate_refuses_optional_trace_before_database_admission(
+    relay, monkeypatch, consumer,
+):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from api.routes import create_router
+
+    storage, service, _ = relay
+    message = _message(service)
+    trace_event = {"attempt_id": "relay-activation-" + "7" * 32,
+                   "delivery_id": message["deliveries"][0]["delivery_id"], "stage": "prepared"}
+    sessions = []
+    original_factory = storage._relay_session_factory
+
+    def session_factory(*args, **kwargs):
+        sessions.append(True)
+        return original_factory(*args, **kwargs)
+
+    assert storage._relay_writer_lock.acquire(blocking=False)
+    try:
+        with monkeypatch.context() as observed:
+            observed.setattr(storage, "_relay_session_factory", session_factory)
+            result = (storage.relay_record_trace_event(trace_event) if consumer == "trace"
+                      else storage.relay_cleanup_trace())
+    finally:
+        storage._relay_writer_lock.release()
+
+    assert storage.relay_record_trace_event(trace_event) is True
+    app = FastAPI()
+    app.include_router(create_router(SimpleNamespace(), relay_service=service))
+    with TestClient(app) as http:
+        scope = {"container_ref": "git:test"}
+        claim = http.post("/relay/turn", json={"runtime": "codex", "session_ref": "receiver", **scope})
+        assert claim.status_code == 200, claim.text
+        delivery, = claim.json()["deliveries"]
+        assert delivery["delivery_id"] == trace_event["delivery_id"] and delivery["attempts"] == 1
+        ack = http.post("/relay/deliveries/ack", json={"delivery_id": delivery["delivery_id"],
+                        "claim_token": delivery["claim_token"], **scope})
+        assert ack.status_code == 200, ack.text
+        retained = http.get(f"/relay/messages/{message['message_id']}", params=scope)
+        assert retained.status_code == 200, retained.text
+        actual, = retained.json()["deliveries"]
+        assert actual["state"] == "delivered" and actual["attempts"] == 1
+        trace = http.get(f"/relay/messages/{message['message_id']}/trace")
+        assert trace.status_code == 200, trace.text
+        assert len(trace.json()["events"]) == 1
+    assert result is False if consumer == "trace" else result == 0
+    assert sessions == [], "optional writer inspected the database while correctness gate was occupied"
+
+
 def test_trace_bound_checks_do_not_reserve_the_correctness_writer(relay):
     import sys
     import traceback

@@ -124,6 +124,8 @@ class SQLiteQueueMixin:
     @contextmanager
     def _begin_low_priority_relay_write(self):
         """Let correctness writes win while diagnostics inspect their bounds."""
+        if self._relay_writer_lock.locked():
+            raise ImmediateTransactionBusyError("correctness writer is active")
         session = self._relay_session_factory()
         conn = session.connection(execution_options={"isolation_level": "AUTOCOMMIT"})
         try:
