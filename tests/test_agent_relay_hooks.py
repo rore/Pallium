@@ -146,7 +146,7 @@ def test_relay_helpers_are_bounded_control_safe_and_use_requested_deadline(monke
         observed.append(timeout)
         raise TimeoutError
 
-    monkeypatch.setattr(common.urllib.request, "urlopen", timeout)
+    monkeypatch.setattr(common, "_urlopen", timeout)
     assert common.relay_request("POST", "/relay/turn", {}, timeout=0.75) is None
     assert observed == [0.75]
     error = capsys.readouterr().err
@@ -518,18 +518,56 @@ def test_codex_exact_wake_real_http_response_delay_is_bounded_and_traceable(
 
     response_finished = threading.Event()
 
+    import anyio
+    from core.relay import RelayService
+
+    stages = []
+    original_run_sync = anyio.to_thread.run_sync
+    original_turn = RelayService.turn
+
+    async def observe_run_sync(operation, *args, **kwargs):
+        span = {"stage": "worker", "submitted": time.monotonic()}
+        stages.append(span)
+        def observed(*worker_args):
+            span.update(entered=time.monotonic(), thread_id=threading.get_ident())
+            try:
+                return operation(*worker_args)
+            finally:
+                span["returned"] = time.monotonic()
+        try:
+            return await original_run_sync(observed, *args, **kwargs)
+        finally:
+            span["await_finished"] = time.monotonic()
+
+    def observe_turn(service, *args, **kwargs):
+        span = {"stage": "durable_turn", "entered": time.monotonic(),
+                "thread_id": threading.get_ident()}
+        stages.append(span)
+        try:
+            return original_turn(service, *args, **kwargs)
+        finally:
+            span["returned"] = time.monotonic()
+
+    monkeypatch.setattr(anyio.to_thread, "run_sync", observe_run_sync)
+    monkeypatch.setattr(RelayService, "turn", observe_turn)
+
     class Server(ThreadingHTTPServer):
         daemon_threads = True
 
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self):
             body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+            span = {"stage": "forward", "path": self.path, "entered": time.monotonic()}
+            stages.append(span)
             response = client.request(
                 "POST", self.path, content=body,
                 headers={"content-type": self.headers.get("Content-Type", "application/json")},
             )
+            span["returned"] = time.monotonic()
             if self.path == "/relay/turn":
+                span["delay_entered"] = time.monotonic()
                 time.sleep(response_delay)
+                span["delay_finished"] = time.monotonic()
             try:
                 self.send_response(response.status_code)
                 self.send_header("Content-Type", "application/json")
@@ -548,6 +586,7 @@ def test_codex_exact_wake_real_http_response_delay_is_bounded_and_traceable(
             except (ConnectionAbortedError, BrokenPipeError, OSError):
                 pass
             finally:
+                span["send_finished"] = time.monotonic()
                 if self.path == "/relay/turn":
                     response_finished.set()
 
@@ -590,6 +629,12 @@ def test_codex_exact_wake_real_http_response_delay_is_bounded_and_traceable(
         server.shutdown()
         server.server_close()
         server_thread.join(timeout=2)
+        print("pallium delayed-http stages: " + json.dumps({
+            "stages": stages[:32], "truncated": len(stages) > 32,
+        }), file=sys.stderr)
+        (tmp_path / "delayed-http-stages.json").write_text(
+            json.dumps(stages), encoding="utf-8",
+        )
 
     trace_response = client.get(f"/relay/messages/{message_id}/trace")
     assert trace_response.status_code == 200, trace_response.text
@@ -2126,7 +2171,7 @@ def test_hook_deadline_clamps_requests_and_skips_when_exhausted(
         observed.append(timeout)
         raise TimeoutError
 
-    monkeypatch.setattr(common.urllib.request, "urlopen", timeout)
+    monkeypatch.setattr(common, "_urlopen", timeout)
     assert common.relay_request("POST", "/relay/turn", {}, timeout=3.0) is None
     assert observed == [1.5]
 
@@ -2175,7 +2220,7 @@ def test_relay_ack_batch_stops_at_shared_deadline(
         now[0] = 0.71
         return Response()
 
-    monkeypatch.setattr(common.urllib.request, "urlopen", respond)
+    monkeypatch.setattr(common, "_urlopen", respond)
     second = {
         **DELIVERY,
         "delivery_id": "relay-delivery-2",

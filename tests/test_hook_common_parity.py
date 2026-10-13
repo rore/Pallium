@@ -25,6 +25,161 @@ cc_common = _load_module(str(ROOT / "integrations" / "claude-code" / "hooks" / "
 codex_common = _load_module(str(ROOT / "integrations" / "codex" / "hooks" / "common.py"), "codex_common_parity")
 
 
+@pytest.mark.parametrize("module", (cc_common, codex_common))
+@pytest.mark.parametrize("path", ("/ok", "/redirect", "/missing"))
+def test_plain_http_hook_request_does_not_initialize_tls(module, path, monkeypatch):
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    initialized, routes = [], []
+    original_init = module.urllib.request.HTTPSHandler.__init__
+
+    def initialize(handler, *args, **kwargs):
+        initialized.append(True)
+        return original_init(handler, *args, **kwargs)
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            route = module.urllib.parse.urlsplit(self.path).path
+            routes.append(route)
+            self.send_response(302 if route == "/redirect" else 404 if route == "/missing" else 200)
+            if route == "/redirect":
+                self.send_header("Location", "/ok")
+            self.end_headers()
+            self.wfile.write(b'{"ok":true}')
+
+        def log_message(self, *_args):
+            pass
+
+    monkeypatch.setattr(module.urllib.request.HTTPSHandler, "__init__", initialize)
+    monkeypatch.setattr(module.urllib.request, "_opener", None)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    try:
+        monkeypatch.setattr(module, "PALLIUM_BASE_URL", f"http://127.0.0.1:{server.server_port}")
+        result = module.relay_request("GET", path, {}, timeout=0.75)
+        assert result == (None if path == "/missing" else {"ok": True})
+        assert routes == (["/redirect", "/ok"] if path == "/redirect" else [path])
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(2)
+    assert not thread.is_alive()
+    assert initialized == []
+
+
+
+@pytest.mark.parametrize("module", (cc_common, codex_common))
+def test_https_hook_opener_lazily_keeps_standard_verification(module, monkeypatch):
+    import http.client
+    import ssl
+
+    initialized, observed = [], []
+    original_init = module.urllib.request.HTTPSHandler.__init__
+
+    def initialize(handler, *args, **kwargs):
+        initialized.append(True)
+        return original_init(handler, *args, **kwargs)
+
+    def open_https(handler, request):
+        context = http.client.HTTPSConnection("example.invalid", context=handler._context)._context
+        observed.append((context.verify_mode, context.check_hostname,
+                         handler._debuglevel, handler.parent, request.full_url))
+        raise module.urllib.error.URLError("verified transport refusal")
+
+    monkeypatch.setattr(module.urllib.request.HTTPSHandler, "__init__", initialize)
+    monkeypatch.setattr(module.urllib.request.HTTPSHandler, "https_open", open_https)
+    build = getattr(module, "_build_opener", module.urllib.request.build_opener)
+    opener = build()
+    before_https = len(initialized)
+    handler = next(item for item in opener.handlers if isinstance(item, module.urllib.request.HTTPSHandler))
+    handler.set_http_debuglevel(3)
+    request = module.urllib.request.Request("https://example.invalid/verified")
+    with pytest.raises(module.urllib.error.URLError, match="verified transport refusal"):
+        handler.https_open(request)
+    assert observed == [(ssl.CERT_REQUIRED, True, 3, opener, request.full_url)]
+    assert len(initialized) == 1
+    assert before_https == 0
+
+
+
+@pytest.mark.parametrize("module", (cc_common, codex_common))
+def test_http_hook_redirect_uses_verified_https_transport(module, monkeypatch):
+    import http.client
+    import io
+    import ssl
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from urllib.response import addinfourl
+
+    observed = []
+    destination = "https://example.invalid/verified"
+
+    def https_open(handler, request):
+        context = http.client.HTTPSConnection("example.invalid", context=handler._context)._context
+        observed.append((request.full_url, context.verify_mode, context.check_hostname))
+        response = addinfourl(io.BytesIO(b'{"ok":true}'), {}, request.full_url, 200)
+        response.msg = "OK"
+        return response
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(302)
+            self.send_header("Location", destination)
+            self.end_headers()
+
+        def log_message(self, *_args):
+            pass
+
+    monkeypatch.setattr(module.urllib.request.HTTPSHandler, "https_open", https_open)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    try:
+        monkeypatch.setattr(module, "PALLIUM_BASE_URL", f"http://127.0.0.1:{server.server_port}")
+        assert module.relay_request("GET", "/redirect", {}, timeout=0.75) == {"ok": True}
+        assert observed == [(destination, ssl.CERT_REQUIRED, True)]
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(2)
+    assert not thread.is_alive()
+
+
+
+@pytest.mark.parametrize("module", (cc_common, codex_common))
+def test_failed_https_initialization_remains_retryable(module, monkeypatch):
+    import http.client
+    import ssl
+
+    calls = []
+    original_init = module.urllib.request.HTTPSHandler.__init__
+
+    def initialize(handler, *args, **kwargs):
+        calls.append(True)
+        if len(calls) == 1:
+            raise OSError("trust initialization failed")
+        return original_init(handler, *args, **kwargs)
+
+    monkeypatch.setattr(module.urllib.request.HTTPSHandler, "__init__", initialize)
+    def https_open(handler, _request):
+        context = http.client.HTTPSConnection("example.invalid", context=handler._context)._context
+        return context.verify_mode, context.check_hostname
+
+    monkeypatch.setattr(module.urllib.request.HTTPSHandler, "https_open", https_open)
+    opener = module._build_opener()
+    handler = next(item for item in opener.handlers if isinstance(item, module._LazyHTTPSHandler))
+    request = module.urllib.request.Request("https://example.invalid/verified")
+    with pytest.raises(OSError, match="trust initialization failed"):
+        handler.https_open(request)
+    assert handler._context is None
+    assert not handler._https_initialized
+    assert handler.https_open(request) == (ssl.CERT_REQUIRED, True)
+    assert handler._https_initialized
+    assert len(calls) == 2
+
+
 class TestCommonParity:
     def test_read_turn_signature_matches(self):
         cc_sig = inspect.signature(cc_common.read_turn)
@@ -658,7 +813,7 @@ def test_relay_get_encodes_query_without_body(monkeypatch, module):
         observed["timeout"] = timeout
         return Response()
 
-    monkeypatch.setattr(module.urllib.request, "urlopen", open_request)
+    monkeypatch.setattr(module, "_urlopen", open_request)
     result = module.relay_request(
         "GET",
         "/relay/sessions/work-refs",

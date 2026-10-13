@@ -2343,8 +2343,8 @@ def test_busy_queue_claims_at_hook_execution_without_stale_receipt_or_duplicate_
     monkeypatch.setattr(hook, "pallium_request", pallium_request)
     monkeypatch.setattr(hook._common, "pallium_request", pallium_request)
     monkeypatch.setattr(
-        hook._common.urllib.request,
-        "urlopen",
+        hook._common,
+        "_urlopen",
         lambda *_args, **_kwargs: pytest.fail("caller-surface test escaped to live HTTP"),
     )
     monkeypatch.setattr(hook, "emit_context", lambda text, _: contexts.append(text))
