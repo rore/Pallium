@@ -317,20 +317,20 @@ async def test_production_factory_keeps_mcp_lifespan_on_one_task(monkeypatch, te
 
 @pytest.mark.asyncio
 async def test_production_factory_rejects_second_active_lifespan_without_second_build(
-    monkeypatch, test_db_url: str,
+    monkeypatch, client,
 ) -> None:
     from app import main
 
     build_started, release_build = threading.Event(), threading.Event()
     build_calls = []
-    create_app = main.create_app
+    built = client.app
 
     def held_builder(*_args, **_kwargs):
         build_calls.append(True)
         build_started.set()
         if not release_build.wait(5):
             raise AssertionError("test did not release the held app build")
-        return create_app(_no_vector_config(test_db_url))
+        return built
 
     monkeypatch.setattr(main, "create_app", held_builder)
     application = main.app()

@@ -961,7 +961,10 @@ def test_owner_response_allows_hook_claim_ack_before_return(http_wake):
     assert registry.reservations() == ()
 
 @pytest.mark.parametrize("loss", ["source", "desktop", "channel", "epoch", "unresolved"])
-def test_connection_loss_defers_without_owner(http_wake, loss):
+def test_connection_loss_defers_without_owner(http_wake, loss, monkeypatch):
+    from collections import deque
+    import gc
+
     _, _, registry, service, desktop, send, _ = http_wake
     if loss == "source":
         service.source.gone = True
@@ -973,8 +976,79 @@ def test_connection_loss_defers_without_owner(http_wake, loss):
         registry.retained_service = bridge.RetainedService(Path("new-epoch"))
     else:
         desktop.unresolved = True
-    send()
-    assert desktop.owners == [] and registry.reservations() == ()
+    releases, collections = deque(maxlen=8), deque(maxlen=64)
+    release_count, collection_count = [0], [0]
+    starts, stops = [0, 0, 0], [0, 0, 0]
+    original_release = registry.release_generation
+
+    def stamp():
+        return {"wall_ns": time.monotonic_ns(), "thread_cpu_ns": time.thread_time_ns(),
+                "thread": threading.get_ident()}
+
+    def record_release(entry_wall, entry_cpu, entry_thread, exit_wall, exit_cpu, exit_thread,
+                       *, result=None, error_type=None):
+        try:
+            release_count[0] += 2
+            releases.append({"phase": "entered", "wall_ns": entry_wall,
+                             "thread_cpu_ns": entry_cpu, "thread": entry_thread})
+            releases.append({"phase": "exited", "wall_ns": exit_wall,
+                             "thread_cpu_ns": exit_cpu, "thread": exit_thread,
+                             "result": result if type(result) is bool else None,
+                             "error_type": error_type})
+        except BaseException:
+            pass
+
+    def observed_release(reservation):
+        entry_wall = time.monotonic_ns()
+        entry_cpu = time.thread_time_ns()
+        entry_thread = threading.get_ident()
+        try:
+            result = original_release(reservation)
+        except BaseException as error:
+            exit_wall = time.monotonic_ns()
+            exit_cpu = time.thread_time_ns()
+            exit_thread = threading.get_ident()
+            record_release(entry_wall, entry_cpu, entry_thread, exit_wall, exit_cpu, exit_thread,
+                           error_type=type(error).__name__)
+            raise
+        exit_wall = time.monotonic_ns()
+        exit_cpu = time.thread_time_ns()
+        exit_thread = threading.get_ident()
+        record_release(entry_wall, entry_cpu, entry_thread, exit_wall, exit_cpu, exit_thread, result=result)
+        return result
+
+    def observed_collection(phase, info):
+        generation = info.get("generation")
+        if phase not in {"start", "stop"} or type(generation) is not int or not 0 <= generation < 3:
+            return
+        (starts if phase == "start" else stops)[generation] += 1
+        collection_count[0] += 1
+        collections.append({"phase": phase, "generation": generation,
+                            "collected": info.get("collected", 0),
+                            "uncollectable": info.get("uncollectable", 0), **stamp()})
+
+    try:
+        with monkeypatch.context() as observed:
+            # Restore absence of an instance override rather than assigning a bound method back.
+            observed.setitem(vars(registry), "release_generation", observed_release)
+            gc.callbacks.append(observed_collection)
+            try:
+                send()
+                assert desktop.owners == [] and registry.reservations() == ()
+            finally:
+                gc.callbacks.remove(observed_collection)
+    except BaseException:
+        try:
+            print("connection_loss_release_gc=" + json.dumps({
+                "release": list(releases), "release_dropped": max(0, release_count[0] - len(releases)),
+                "gc": list(collections), "gc_dropped": max(0, collection_count[0] - len(collections)),
+                "gc_starts": starts, "gc_stops": stops,
+                "gc_unmatched": [start - stop for start, stop in zip(starts, stops)],
+                "qualification": "Observer-inclusive; GC overlap does not establish latency causation.",
+            }), file=sys.stderr)
+        except BaseException:
+            pass
+        raise
 
 @pytest.mark.parametrize("change", [{"epoch": "wrong"}, {"sequence": True}, {"thread_ref": ""},
     {"turn_ref": "x" * 256}, {"endpoint": "not-a-pipe"}, {"extra": "data"}])
