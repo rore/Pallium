@@ -1351,21 +1351,43 @@ def test_crashed_intent_lock_owner_allows_hook_publication_and_http_recovery(
     path = _intent_path(state_dir, PAYLOAD["session_ref"])
     registry = ClaudeWakeRegistry(state_dir=state_dir)
     monkeypatch.setattr(registry, "register", timed_sync("registry", registry.register))
-    script = (
-        "import sys; from pathlib import Path; "
-        "from core.claude_wake import _acquire_intent_lock; "
-        "lock=_acquire_intent_lock(Path(sys.argv[1])); "
-        "print('locked' if lock else 'failed',flush=True); "
-        "sys.stdin.read()"
-    )
+    ready = tmp_path / "intent-owner-ready"
+    script = """
+import os, sys
+from pathlib import Path
+path = Path(sys.argv[1]).with_suffix(".lock")
+path.parent.mkdir(parents=True, exist_ok=True)
+with path.open("a+b") as lock:
+    lock.seek(0, os.SEEK_END)
+    if lock.tell() == 0:
+        lock.write(b"0")
+        lock.flush()
+    lock.seek(0)
+    if sys.platform == "win32":
+        import msvcrt
+        msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+    else:
+        import fcntl
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    Path(sys.argv[2]).write_text("locked", encoding="utf-8")
+    print("locked", flush=True)
+    sys.stdin.read()
+"""
     process = subprocess.Popen(
-        [sys.executable, "-c", script, str(path)],
+        [sys.executable, "-c", script, str(path), str(ready)],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         text=True,
     )
     try:
         assert process.stdout is not None
-        assert process.stdout.readline() == "locked\n"
+        startup_deadline = time.monotonic() + 5
+        while not ready.exists() and process.poll() is None and time.monotonic() < startup_deadline:
+            time.sleep(0.01)
+        assert ready.exists(), (
+            process.stderr.read() if process.poll() is not None and process.stderr is not None
+            else "child did not acquire the real intent lock before startup timeout"
+        )
+        assert process.poll() is None, "intent lock owner exited before the caller journey"
         monkeypatch.setenv("PALLIUM_CLAUDE_WAKE_DIR", str(state_dir))
         common = _load_claude_hook("common", monkeypatch)
         common.CLAUDE_WAKE_DIR = state_dir
