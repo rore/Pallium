@@ -1180,7 +1180,14 @@ def test_registration_idle_boundary_is_fail_closed(idle, expected) -> None:
 def test_session_start_delivers_and_acks_relay_before_orientation(
     monkeypatch: pytest.MonkeyPatch, capsys, tmp_path: Path,
 ) -> None:
+    from itertools import count
+
     start = _load_claude_hook("session_start", monkeypatch)
+    real_time = start.relay_turn.__globals__["time"]
+    native_monotonic = real_time.monotonic
+    relay_time = SimpleNamespace(**vars(real_time))
+    relay_time.monotonic = count(step=.001).__next__
+    monkeypatch.setitem(start.relay_turn.__globals__, "time", relay_time)
     monkeypatch.setitem(
         start.relay_turn.__globals__, "SESSIONS_DIR", tmp_path / "sessions"
     )
@@ -1243,6 +1250,12 @@ def test_session_start_delivers_and_acks_relay_before_orientation(
     assert acknowledgements == [([delivery], {
         "container_ref": "git:example/repo",
     })]
+    assert relay_time.sleep is real_time.sleep
+    assert start.relay_turn.__globals__["HookDeadline"](0).clock is native_monotonic
+    active_deadline = start.relay_turn.__globals__["hook_deadline"]()
+    if active_deadline is not None:
+        assert active_deadline.clock is native_monotonic
+    assert real_time.monotonic is native_monotonic
 
 
 def test_claude_reconciler_is_lifespan_owned_and_stops_on_repeated_apps(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

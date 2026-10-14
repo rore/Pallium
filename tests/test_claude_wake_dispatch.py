@@ -1618,14 +1618,17 @@ def test_create_app_preserves_new_intent_during_old_cleanup(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
     old_state: str, new_state: str, lost_http: bool,
 ) -> None:
+    from itertools import count
     from concurrent.futures import ThreadPoolExecutor
     from contextlib import nullcontext
 
     from fastapi.testclient import TestClient
 
     import app.claude_wake as wake
+    import core.claude_wake as wake_registry_module
     from app.config import AppConfig
     from app.main import create_app
+    import storage.sqlite_queue as sqlite_queue
     from storage.vector_index import VectorIndexConfig
     from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
     from tests.test_claude_code_integration import _load_claude_hook
@@ -1661,6 +1664,14 @@ def test_create_app_preserves_new_intent_during_old_cleanup(
 
     with TestClient(app, client=("127.0.0.1", 50000)) as http:
         common = _load_claude_hook("common", monkeypatch)
+        real_time = wake_registry_module.time
+        native_monotonic = real_time.monotonic
+        registry_time = SimpleNamespace(**vars(real_time))
+        registry_time.monotonic = count(step=.001).__next__
+        monkeypatch.setattr(wake_registry_module, "time", registry_time)
+        hook_time = SimpleNamespace(**vars(common.time))
+        hook_time.monotonic = count(step=.001).__next__
+        monkeypatch.setattr(common, "time", hook_time)
         common.CLAUDE_WAKE_DIR = wake_dir
         common.CLAUDE_WAKE_INTENTS_DIR = wake_dir / "intents"
         stages: list[dict[str, object]] = []
@@ -1846,6 +1857,14 @@ def test_create_app_preserves_new_intent_during_old_cleanup(
         assert delivery["state"] == "pending"
         assert delivery["claim_token"] is None and delivery["receipt"] is None
         assert delivery["attempts"] == 0
+        assert real_time.monotonic is native_monotonic
+        assert time.monotonic is native_monotonic
+        assert registry_time.sleep is real_time.sleep
+        assert hook_time.sleep is real_time.sleep
+        assert app.state.claude_wake_registry._clock is native_monotonic
+        assert app.state._claude_wake_reconciler._clock is native_monotonic
+        assert common.HookDeadline(0).clock is native_monotonic
+        assert sqlite_queue.time.monotonic is native_monotonic
 
 def test_expired_claim_rewakes_once_after_real_app_restart(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str],
