@@ -21,31 +21,6 @@ def test_ci_cancels_only_the_same_event_and_ref() -> None:
     assert "cancel-in-progress: true" in WORKFLOW
 
 
-def test_cpu_gc_profile_is_explicit_manual_and_cannot_replace_merge_qualification() -> None:
-    import yaml
-
-    workflow = yaml.load(WORKFLOW, Loader=yaml.BaseLoader)
-    option = workflow["on"]["workflow_dispatch"]["inputs"]["cpu_gc_profile"]
-    assert option["type"] == "boolean" and option["default"] == "false"
-    manual = "github.event_name == 'workflow_dispatch' && inputs.cpu_gc_profile"
-    jobs = workflow["jobs"]
-    assert jobs["cpu-gc-profile"]["if"] == manual
-    assert jobs["select"]["if"] == "${{ !(" + manual + ") }}"
-    assert jobs["result"]["if"] == "always() && !(" + manual + ")"
-    assert "cpu-gc-profile" not in jobs["result"]["needs"]
-    for name in ("focused", "test", "windows-smoke", "windows-full"):
-        assert jobs[name]["needs"] == "select"
-    assert jobs["nightly-slow-smoke"]["if"] == "github.event_name == 'schedule'"
-    profiling = jobs["cpu-gc-profile"]
-    assert profiling["runs-on"] == "ubuntu-latest" and profiling["timeout-minutes"] == "25"
-    assert profiling["permissions"] == {"contents": "read"}
-    assert WORKFLOW.count("pip install py-spy==0.4.2") == 1
-    assert "PYTEST_ADDOPTS" not in WORKFLOW
-    upload = next(step for step in profiling["steps"] if step.get("uses") == "actions/upload-artifact@v4")
-    assert upload["if"] == "always()" and upload["with"]["retention-days"] == "3"
-    assert upload["with"]["path"] == "${{ runner.temp }}/cpu-gc-profile/"
-
-
 def test_every_event_reports_selection_and_policy_is_trusted() -> None:
     assert "paths-ignore:" not in WORKFLOW
     assert "  workflow_dispatch:" in WORKFLOW

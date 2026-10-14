@@ -321,7 +321,7 @@ Agent technical review: /root/architecture_check, clean nonimplementer source/pl
 
 **Exceptions:** None
 
-**State:** Ready for review
+**State:** Blocked or returned to planning
 <!-- agent-workflow:end -->
 
 ## Applicability and initialization
@@ -1111,3 +1111,11 @@ Focused qualification passed 29 tests in 41.03 seconds, including the actual nes
 ### Isolated profiling candidate — ordinary qualification 2026-10-14
 
 The frozen ordinary configured-four-worker full passed 7,140 tests, with45 skipped and2 xfailed, in373.79 seconds. Private60f5c5aca45e471f977c6852cc7070ed stdout SHA256 DC388AB74AEC43E1F93065B3593D39511A983BD599FAE04259F031F4CC0D51FA; all105 sampled owned identities drained, stderr/network guards empty, master and four workers used the private AnyIO4.14.2 overlay. Profiling was disabled. Focused and full logs, process/runtime proofs and the full runner are preserved in build/service-performance-20261012/ci-cpu-gc-profile-qualification. Selector chose full and returned0; workflow check has no blocking failures and retains existing shadow-review/commit-history advisories. No production/dependency/installed changes were made by this profiling candidate. This is compatibility qualification only; hosted admission/readiness causes remain open. Root proceeds after independent actual-result review to publication and the single already-approved profile-only hosted run.
+
+### Single hosted CPU/GC observation — incomplete outcome and retirement scope
+
+The explicitly approved single profile run38525238279 on d5a975fd completed with sampler exit2 and actual pytest exit2. No tests ran in1216.33 seconds; interruption occurred while bringing up workers. The artifact marks usable=false/incomplete=true and contains no CPU stacks or accepted calibration. Worker gw0 has only its initial manifest; other workers have partial GC summaries with dropped spans. This is failure of the observation setup, not evidence of a product runtime cause. The completed ordinary PR separately failed its Linux3.13 recovery assertion; Linux3.12 and Windows smoke passed. No cause is inferred across these runs.
+
+Root authorizes retirement after preserving the exact temporary source and artifacts: restore .github/workflows/ci.yml and tests/test_ci_workflow.py to exact07c00c86 content, remove only scripts/ci_cpu_gc_profile.py and tests/test_ci_cpu_gc_profile.py, and update this record. Production, dependency, retained-test and health-fixture content remain unchanged. Architecture reviews the actual removal and exact-source evidence reuse. No additional capture, profiler expansion, deadline/assertion change, speculative runtime patch, merge or installed deployment is included. This removes investigation scaffolding; it is not a repair or completion claim.
+
+Independent incident and architecture review found zero phase/failure records in all five profile metadata files. The pinned sampler duration is sample-count based, so an incomplete native sample can prevent its nominal duration check; the separate wall watchdog stopped the run. This establishes a tool limitation, not the particular blocking call or product cause. Partial startup GC spans cannot explain or exclude the separate product failures. Evidence and retired source manifest SHA256 D3538AAF2AA21669BBA88633826F75268F2F4B1FCC8116BB043B3EA564CFD54F. Root verified both restored workflow files have an empty diff against07c00c86; retained source107B and health0B remain unchanged. Reuse the accepted capture-disabled full for unchanged product content and exact prior workflow-contract evidence; no new full, repeated capture or passing-rerun claim. The unresolved blocker is evidence needed to justify a runtime correction, not absent human authorization. PR remains unmerged; installed environment unchanged.

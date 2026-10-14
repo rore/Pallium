@@ -6,11 +6,6 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
-    inputs:
-      cpu_gc_profile:
-        description: One isolated Linux 3.12 CPU/GC diagnostic (not merge qualification)
-        type: boolean
-        default: false
   schedule:
     # Nightly full run (incl. the full Windows matrix). Off-peak, off :00.
     - cron: "17 6 * * *"
@@ -21,7 +16,6 @@ concurrency:
 
 jobs:
   select:
-    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.cpu_gc_profile) }}
     runs-on: ubuntu-latest
     outputs:
       lane: ${{ steps.plan.outputs.lane }}
@@ -241,37 +235,10 @@ jobs:
           tests/test_relay_load_smoke.py
           -m slow -n 0 -q --durations=20
 
-  cpu-gc-profile:
-    if: github.event_name == 'workflow_dispatch' && inputs.cpu_gc_profile
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Install isolated profiling dependencies
-        run: |
-          pip install -e ".[dev,vector,mcp]"
-          pip install py-spy==0.4.2
-          py-spy --version
-      - name: Profile the unchanged configured four-worker suite once
-        run: python scripts/ci_cpu_gc_profile.py --run "$RUNNER_TEMP/cpu-gc-profile"
-      - name: Preserve sanitized diagnostic evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: linux312-cpu-gc-profile
-          path: ${{ runner.temp }}/cpu-gc-profile/
-          if-no-files-found: error
-          retention-days: 3
-
   result:
     name: CI result
     needs: [select, focused, test, windows-smoke, windows-full, nightly-slow-smoke]
-    if: always() && !(github.event_name == 'workflow_dispatch' && inputs.cpu_gc_profile)
+    if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Require every selected lane to succeed
