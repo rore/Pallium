@@ -322,11 +322,18 @@ def test_native_tool_failure_reopens_same_registration_for_hook_delivery(
 def test_drained_read_timeout_reopens_same_registration_for_hook_delivery(
         http_wake, retained, monkeypatch, capsys, tmp_path):
     from app import codex_bridge_pipe as bridge
-    http, _, registry, service, first, send, _ = http_wake
+    http, relay, registry, service, first, send, workers = http_wake
     _, _, natives = retained
     events = []
     hook = _hook_runner(http, monkeypatch, "notLoaded", events, tmp_path)
+
+    # Keep the initial prepared fence so the first recovery must resume it.
+    release = registry.release_generation
+    monkeypatch.setattr(registry, "release_generation", lambda reservation: False)
     _defer_on_state_timeout(http_wake, retained, bridge)
+    monkeypatch.setattr(registry, "release_generation", release)
+    reservations = registry.reservations()
+    assert len(reservations) == 1 and reservations[0].outcome == "prepared"
     assert first.owners == []
     assert http.get("/relay/messages/retained-journey", params={"container_ref": "git:example.test/retained-東京"}).json()["deliveries"][0]["state"] == "pending"
 
@@ -348,8 +355,21 @@ def test_drained_read_timeout_reopens_same_registration_for_hook_delivery(
         return desktop
 
     monkeypatch.setattr(bridge, "_DesktopIO", reconnect)
+
+    candidates = relay.wake_candidates
+    worker_count = len(workers)
+
+    def candidates_after_resume(*args, **kwargs):
+        if kwargs.get("include_coalesced"):
+            assert len(workers) == worker_count + 1
+            workers[-1].join(2)
+            assert not workers[-1].is_alive()
+        return candidates(*args, **kwargs)
+
+    monkeypatch.setattr(relay, "wake_candidates", candidates_after_resume)
     recover(http_wake)
     assert len(natives) == 2 and service.retained_registration is not None
+    monkeypatch.setattr(relay, "wake_candidates", candidates)
     recover(http_wake)
 
     assert len(natives) == 3

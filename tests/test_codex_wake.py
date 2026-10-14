@@ -1815,6 +1815,68 @@ def test_recovery_log_correlates_without_free_form_identifiers(
     assert "SECRET" not in message
     assert len(scheduled) == 1
 
+
+def test_recovery_sweep_skips_snapshotted_fence_and_dispatches_new_candidate(monkeypatch):
+    from app import dependencies
+
+    reserved = {
+        "delivery_id": "reserved-delivery",
+        "recipient_endpoint_id": "relay-session-" + "a" * 32,
+        "recipient_runtime": "codex",
+        "recipient_session_ref": "reserved-session",
+        "state": "pending",
+        **SCOPE,
+    }
+    unreserved = {
+        **reserved,
+        "delivery_id": "new-delivery",
+        "recipient_endpoint_id": "relay-session-" + "b" * 32,
+        "recipient_session_ref": "new-session",
+    }
+
+    class Relay:
+        def codex_trial_native_suppressed(self, _endpoint_id):
+            return False
+
+        def wake_candidates(self, delivery_id=None, include_coalesced=False):
+            if delivery_id is None:
+                assert include_coalesced
+            return [item for item in (reserved, unreserved)
+                    if delivery_id in (None, item["delivery_id"])]
+
+    registry = CodexWakeRegistry()
+    reservation = registry.reserve(
+        recipient_endpoint_id=reserved["recipient_endpoint_id"],
+        delivery_id=reserved["delivery_id"],
+        session_ref=reserved["recipient_session_ref"],
+        container_ref=SCOPE["container_ref"],
+    )
+    assert reservation is not None
+    reconciled = []
+    scheduled = []
+    monkeypatch.setattr(
+        dependencies,
+        "reconcile_codex_relay_wake_reservations",
+        lambda _relay, *, registry, reservations, trace_callback: reconciled.append(
+            (registry, reservations)
+        ),
+    )
+    monkeypatch.setattr(
+        dependencies,
+        "schedule_codex_relay_wake",
+        lambda result, _scope, **_kwargs: scheduled.append(
+            result["deliveries"][0]["delivery_id"]
+        ),
+    )
+
+    dependencies.recover_expired_relay_wakes(
+        Relay(), ClaudeWakeRegistry(), codex_registry=registry
+    )
+
+    assert reconciled == [(registry, (reservation,))]
+    assert scheduled == ["new-delivery"]
+
+
 def test_concurrent_recovery_sweep_does_not_duplicate_busy_wake(monkeypatch) -> None:
     from app import dependencies
     from core.claude_wake import ClaudeWakeRegistry
@@ -4650,7 +4712,7 @@ def test_restart_trace_association_is_http_visible_without_second_native_submiss
             relay.record_trace_event, event
         ),
     )
-    assert len(workers) == 3 and workers[1:] == [None, None]
+    assert len(workers) == 2 and workers[1:] == [None]
     assert len(native_calls) == 1
     status = route_b.get(
         f"/relay/messages/{second_message['message_id']}", params=scope
