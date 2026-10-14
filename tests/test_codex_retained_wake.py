@@ -2121,12 +2121,96 @@ def test_registration_rejects_wrong_or_spoofed_pipe_server_image(retained, monke
     assert natives[0].closed and natives[0].owners == []
 
 
+def _make_gc_overlap_observer(clock, *, max_events=64):
+    events = []
+    starts = []
+    status = {"dropped": False, "unmatched": False, "clockfail": False}
+
+    def observe(phase, info):
+        try:
+            generation = info.get("generation")
+            if type(generation) is not int or phase not in {"start", "stop"}:
+                status["unmatched"] = True
+                return
+            ident = threading.get_ident()
+            try:
+                wall_ns = clock.perf_counter_ns()
+                cpu_ns = clock.thread_time_ns()
+            except BaseException:
+                wall_ns = cpu_ns = None
+                status["clockfail"] = True
+            if len(events) < max_events:
+                events.append((phase, generation, ident, wall_ns, cpu_ns))
+            else:
+                status["dropped"] = True
+            if phase == "start":
+                if len(starts) < max_events:
+                    starts.append((generation, ident))
+                else:
+                    status["dropped"] = True
+            else:
+                for index in range(len(starts) - 1, -1, -1):
+                    if starts[index] == (generation, ident):
+                        del starts[index]
+                        break
+                else:
+                    status["unmatched"] = True
+        except BaseException:
+            status["clockfail"] = True
+
+    return observe, events, starts, status
+
+
+def _remove_exact_gc_observer(callbacks, observer):
+    for index, callback in enumerate(callbacks):
+        if callback is observer:
+            del callbacks[index]
+            return True
+    return False
+
+
+def test_gc_overlap_observer_is_bounded_and_preserves_callbacks():
+    existing = lambda *_: None
+    callbacks = [existing]
+    observer, events, starts, status = _make_gc_overlap_observer(time, max_events=2)
+    callbacks.append(observer)
+    with pytest.raises(RuntimeError, match="preserve caller error"):
+        try:
+            observer("start", {"generation": 1})
+            observer("stop", {"generation": 1})
+            observer("stop", {"generation": 2})
+            observer("start", {"generation": 3})
+            observer("stop", {"generation": 3})
+            raise RuntimeError("preserve caller error")
+        finally:
+            assert _remove_exact_gc_observer(callbacks, observer)
+    assert callbacks == [existing]
+    assert len(events) == 2 and status["dropped"]
+    assert status["unmatched"] and starts == []
+
+    class BrokenClock:
+        @staticmethod
+        def perf_counter_ns():
+            raise RuntimeError("clock unavailable")
+
+        @staticmethod
+        def thread_time_ns():
+            return 1
+
+    broken, broken_events, broken_starts, broken_status = _make_gc_overlap_observer(BrokenClock())
+    broken("start", {"generation": 0})
+    broken("stop", {"generation": 0})
+    assert broken_status["clockfail"] and broken_events[0][3:] == (None, None)
+    assert broken_starts == []
+
+
 @pytest.mark.parametrize("fault", ["success-int", "missing-success", "old-mcp", "old-mcp-error",
     "failed-missing-items", "failed-empty-items", "failed-extra-items", "failed-wrong-item",
     "failed-nonstring-text", "failed-public-content", "failed-public-iserror-false",
     "failed-wrong-id", "failed-wrong-version", "empty-items",
     "extra-items", "wrong-item", "nonstring-text", "rpc-error", "wrong-id", "wrong-version"])
 def test_native_state_read_contract_failure_releases_without_transport(http_wake, monkeypatch, fault, client):
+    import gc
     import traceback
 
     http, _, registry, service, desktop, send, _ = http_wake
@@ -2193,8 +2277,57 @@ def test_native_state_read_contract_failure_releases_without_transport(http_wake
             envelope["jsonrpc"] = "1.0"
         return envelope
     monkeypatch.setattr(desktop, "read", read)
-    send()
-    assert desktop.owners == [] and registry.reservations() == ()
+    observe_gc, gc_events, gc_starts, gc_observer_status = _make_gc_overlap_observer(time)
+    gc_observer_status.update({
+        "coverage_start_ns": None, "coverage_end_ns": None,
+        "installed": False, "removed": False, "coverageerror": False,
+    })
+    try:
+        gc.callbacks.append(observe_gc)
+        gc_observer_status["installed"] = True
+        gc_observer_status["coverage_start_ns"] = time.perf_counter_ns()
+    except BaseException:
+        gc_observer_status["coverageerror"] = True
+
+    gc_observation_finished = False
+
+    def finish_gc_observation():
+        nonlocal gc_observation_finished
+        if gc_observation_finished:
+            return
+        gc_observation_finished = True
+        try:
+            gc_observer_status["coverage_end_ns"] = time.perf_counter_ns()
+        except BaseException:
+            gc_observer_status["coverageerror"] = True
+        try:
+            if gc_observer_status["installed"]:
+                gc_observer_status["removed"] = _remove_exact_gc_observer(gc.callbacks, observe_gc)
+                if not gc_observer_status["removed"]:
+                    gc_observer_status["coverageerror"] = True
+        except BaseException:
+            gc_observer_status["coverageerror"] = True
+
+    def emit_gc_diagnostic():
+        try:
+            if gc_starts:
+                gc_observer_status["unmatched"] = True
+            print("retained_wake_gc_overlap=" + json.dumps({
+                "events": gc_events,
+                **gc_observer_status,
+            }, separators=(",", ":")))
+        except BaseException:
+            pass
+
+    try:
+        send()
+        assert desktop.owners == [] and registry.reservations() == ()
+    except BaseException:
+        finish_gc_observation()
+        emit_gc_diagnostic()
+        raise
+    finally:
+        finish_gc_observation()
     assert service.retained_registration is None
     sentinel = executor.submit(lambda: None)
     try:

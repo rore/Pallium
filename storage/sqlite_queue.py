@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+import threading
 import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -45,7 +46,7 @@ logger = logging.getLogger(__name__)
 
 def _relay_timing_start():
     try:
-        return time.perf_counter_ns(), time.thread_time_ns()
+        return time.perf_counter_ns(), time.thread_time_ns(), threading.get_ident()
     except BaseException:
         return None
 
@@ -57,10 +58,16 @@ def _relay_timing_finish(timings, name, started):
         timings["timing_available"] = 0
         return
     try:
-        wall = time.perf_counter_ns() - started[0]
-        thread_cpu = time.thread_time_ns() - started[1]
+        wall_ended = time.perf_counter_ns()
+        thread_cpu_ended = time.thread_time_ns()
+        wall = wall_ended - started[0]
+        thread_cpu = thread_cpu_ended - started[1]
         timings[f"{name}_wall_ns"] += wall
         timings[f"{name}_thread_cpu_ns"] += thread_cpu
+        spans = timings.get("phase_spans")
+        if isinstance(spans, list) and len(spans) < 32:
+            spans.append((timings["attempts"], name, started[2], started[0], wall_ended,
+                          started[1], thread_cpu_ended))
     except BaseException:
         timings["timing_available"] = 0
 
@@ -75,9 +82,11 @@ def _log_relay_acquisition_failure(stage, timings, total_started):
         total_thread_cpu = total[1] - total_started[1]
     try:
         logger.warning(
-            "relay_immediate_acquisition_failed stage=%s attempts=%d timing_available=%d local_gate_wall_ns=%d local_gate_thread_cpu_ns=%d session_factory_wall_ns=%d session_factory_thread_cpu_ns=%d session_connection_wall_ns=%d session_connection_thread_cpu_ns=%d busy_timeout_pragma_wall_ns=%d busy_timeout_pragma_thread_cpu_ns=%d begin_immediate_wall_ns=%d begin_immediate_thread_cpu_ns=%d total_wall_ns=%d total_thread_cpu_ns=%d",
-            stage, timings["attempts"], timings["timing_available"], timings["local_gate_wall_ns"],
-            timings["local_gate_thread_cpu_ns"], timings["session_factory_wall_ns"],
+            "relay_immediate_acquisition_failed stage=%s attempts=%d timing_available=%d phase_spans=%s local_gate_wall_ns=%d local_gate_thread_cpu_ns=%d session_factory_wall_ns=%d session_factory_thread_cpu_ns=%d session_connection_wall_ns=%d session_connection_thread_cpu_ns=%d busy_timeout_pragma_wall_ns=%d busy_timeout_pragma_thread_cpu_ns=%d begin_immediate_wall_ns=%d begin_immediate_thread_cpu_ns=%d total_wall_ns=%d total_thread_cpu_ns=%d",
+            stage, timings["attempts"], timings["timing_available"],
+            ";".join(".".join(map(str, span)) for span in timings["phase_spans"]),
+            timings["local_gate_wall_ns"], timings["local_gate_thread_cpu_ns"],
+            timings["session_factory_wall_ns"],
             timings["session_factory_thread_cpu_ns"], timings["session_connection_wall_ns"],
             timings["session_connection_thread_cpu_ns"], timings["busy_timeout_pragma_wall_ns"],
             timings["busy_timeout_pragma_thread_cpu_ns"], timings["begin_immediate_wall_ns"],
@@ -155,6 +164,7 @@ class SQLiteQueueMixin:
         phase_timings = {
             "attempts": 0,
             "timing_available": 1,
+            "phase_spans": [],
             "local_gate_wall_ns": 0,
             "local_gate_thread_cpu_ns": 0,
             "session_factory_wall_ns": 0,
