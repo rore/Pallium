@@ -219,6 +219,109 @@ class TestImmediateTransactionRetry:
         local.acquire.assert_called_once()
         local.release.assert_called_once()
 
+    @pytest.mark.parametrize("diagnostic_failure", [None, "clock", "logger"])
+    def test_relay_acquisition_failure_logs_phases_after_cleanup(self, storage, monkeypatch, diagnostic_failure):
+        import logging
+
+        from storage import sqlite_queue
+
+        clock = [0.0]
+        monotonic_calls = []
+
+        def monotonic():
+            monotonic_calls.append(clock[0])
+            return clock[0]
+
+        real_time = sqlite_queue.time
+        def broken_clock():
+            raise RuntimeError("diagnostic clock failure")
+
+        monkeypatch.setattr(sqlite_queue, "time", SimpleNamespace(
+            **{
+                **vars(real_time),
+                "monotonic": monotonic,
+                **({"perf_counter_ns": broken_clock} if diagnostic_failure == "clock" else {}),
+            },
+        ))
+        session = storage._relay_session_factory()
+        original_connection = session.connection
+        original_close = session.close
+        original_instance = dict(session.__dict__)
+        state = {"closed": False, "emitted_after_cleanup": False}
+        messages = []
+
+        def connection(**kwargs):
+            result = original_connection(**kwargs)
+            clock[0] = 0.46
+            return result
+
+        def close():
+            original_close()
+            state["closed"] = True
+
+        session.connection = connection
+        session.close = close
+        monkeypatch.setattr(storage, "_relay_session_factory", lambda: session)
+
+        class Capture(logging.Handler):
+            def emit(self, record):
+                messages.append(record.getMessage())
+                state["emitted_after_cleanup"] = (
+                    state["closed"] and not storage._relay_writer_lock.locked()
+                )
+                if diagnostic_failure == "logger":
+                    raise RuntimeError("diagnostic logger failure")
+
+        handler = Capture()
+        sqlite_queue.logger.addHandler(handler)
+        try:
+            with pytest.raises(ImmediateTransactionBusyError) as refusal:
+                with storage._begin_relay_immediate():
+                    pytest.fail("setup deadline should refuse before yielding")
+        finally:
+            sqlite_queue.logger.removeHandler(handler)
+            for name in ("connection", "close"):
+                if name in original_instance:
+                    session.__dict__[name] = original_instance[name]
+                else:
+                    session.__dict__.pop(name, None)
+
+        assert refusal.value.acquisition_stage == "setup_deadline"
+        assert state == {"closed": True, "emitted_after_cleanup": True}
+        assert monotonic_calls == [0.0, 0.0, 0.0, 0.46, 0.46]
+        if diagnostic_failure != "logger":
+            assert len(messages) == 1
+            assert "stage=setup_deadline" in messages[0] and "attempts=1" in messages[0]
+            expected_availability = 0 if diagnostic_failure == "clock" else 1
+            assert f"timing_available={expected_availability}" in messages[0]
+            if diagnostic_failure != "clock":
+                assert "session_connection_wall_ns=" in messages[0]
+                assert "session_connection_thread_cpu_ns=" in messages[0]
+            assert str(storage._engine.url.database) not in messages[0]
+        assert not storage._relay_writer_lock.locked()
+
+    def test_relay_successful_acquisition_does_not_log_timing(self, storage, monkeypatch, caplog):
+        import logging
+
+        from storage import sqlite_queue
+
+        monotonic_calls = []
+
+        def monotonic():
+            monotonic_calls.append(None)
+            return 0.0
+
+        monkeypatch.setattr(sqlite_queue, "time", SimpleNamespace(
+            **{**vars(sqlite_queue.time), "monotonic": monotonic},
+        ))
+        caplog.set_level(logging.WARNING, logger=sqlite_queue.__name__)
+
+        with storage._begin_relay_immediate() as session:
+            assert session.execute(text("SELECT 1")).scalar_one() == 1
+
+        assert len(monotonic_calls) == 5
+        assert "relay_immediate_acquisition_failed" not in caplog.text
+
     @pytest.mark.parametrize("boundary", ["local_refusal", "local_expired", "setup_expired", "begin_expired", "pause_does_not_fit", "second_pause_does_not_fit", "setup_expired_last", "begin_expired_last"])
     def test_relay_acquisition_deadline_refuses_without_replaying_work(self, storage, monkeypatch, boundary):
         from storage import sqlite_queue
