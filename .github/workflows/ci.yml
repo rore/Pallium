@@ -6,6 +6,12 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      profile_linux:
+        description: Capture Python stacks during the Linux test matrix
+        type: boolean
+        required: false
+        default: false
   schedule:
     # Nightly full run (incl. the full Windows matrix). Off-peak, off :00.
     - cron: "17 6 * * *"
@@ -106,8 +112,173 @@ jobs:
       - name: Verify MCP test dependency
         run: python -c "import mcp; import app.mcp.server"
 
+      - name: Install Linux stack sampler
+        if: github.event_name == 'workflow_dispatch' && inputs.profile_linux
+        run: |
+          python -m venv "$RUNNER_TEMP/py-spy-venv"
+          "$RUNNER_TEMP/py-spy-venv/bin/python" -m pip install py-spy==0.4.2
+
       - name: Run tests
+        if: github.event_name != 'workflow_dispatch' || !inputs.profile_linux
         run: python -m pytest tests/ -x -q --durations=20
+
+      - name: Capture Linux Python stacks
+        if: github.event_name == 'workflow_dispatch' && inputs.profile_linux
+        env:
+          CAPTURE_DIR: ${{ runner.temp }}/linux-python-stacks
+        run: |
+          python - <<'PY'
+          from datetime import datetime, timezone
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import re
+          import signal
+          import subprocess
+          import sys
+          import time
+
+          capture_dir = Path(os.environ["CAPTURE_DIR"])
+          capture_dir.mkdir(parents=True, exist_ok=False)
+          private_dir = capture_dir.parent / "linux-python-stacks-private"
+          private_dir.mkdir(parents=True, exist_ok=False)
+          profile = capture_dir / "python-stacks.speedscope.json"
+          raw_profile = private_dir / "raw.speedscope.json"
+          status_path = private_dir / "pytest-status.json"
+          launcher = private_dir / "run_pytest.py"
+          pytest_command = [sys.executable, "-m", "pytest", "tests/", "-x", "-q", "--durations=20"]
+          launcher.write_text(
+              "import json, subprocess, sys\n"
+              "from pathlib import Path\n"
+              f"command = {pytest_command!r}\n"
+              "result = subprocess.run(command, check=False)\n"
+              f"Path({str(status_path)!r}).write_text("
+              "json.dumps({'pytest_exit': result.returncode}) + '\\n', encoding='utf-8')\n"
+              "raise SystemExit(result.returncode)\n",
+              encoding="utf-8",
+          )
+          sampler_command = [
+              os.path.join(os.environ["RUNNER_TEMP"], "py-spy-venv", "bin", "py-spy"),
+              "record", "--format", "speedscope", "--rate", "5",
+              "--subprocesses", "--threads", "--idle", "--nonblocking",
+              "--output", str(raw_profile), "--", sys.executable, str(launcher),
+          ]
+          started = datetime.now(timezone.utc)
+          monotonic_start = time.monotonic()
+          process = None
+          sampler_exit = None
+          timed_out = False
+          drained = False
+          sanitize_error = None
+
+          def sanitize_speedscope(document):
+              frames = document.get("shared", {}).get("frames")
+              profiles = document.get("profiles")
+              if not isinstance(frames, list) or not isinstance(profiles, list):
+                  raise ValueError("unrecognized speedscope structure")
+              for frame in frames:
+                  name = frame.get("name") if isinstance(frame, dict) else None
+                  if not isinstance(name, str):
+                      raise ValueError("unrecognized speedscope frame")
+                  match = re.fullmatch(r"process ([0-9]+):.*", name, flags=re.DOTALL)
+                  if match:
+                      frame["name"] = f"process {match.group(1)}"
+                      continue
+                  match = re.fullmatch(r"thread \(([0-9]+)\):.*", name, flags=re.DOTALL)
+                  if match:
+                      frame["name"] = f"thread ({match.group(1)})"
+              for profile_item in profiles:
+                  name = profile_item.get("name") if isinstance(profile_item, dict) else None
+                  match = re.fullmatch(
+                      r"Process ([0-9]+) Thread ([0-9]+)(?: .*)?", name, flags=re.DOTALL
+                  ) if isinstance(name, str) else None
+                  if not match:
+                      raise ValueError("unrecognized speedscope profile label")
+                  profile_item["name"] = f"Process {match.group(1)} Thread {match.group(2)}"
+              return document
+
+          def group_has_live_process(pgid):
+              for stat_path in Path("/proc").glob("[0-9]*/stat"):
+                  try:
+                      stat = stat_path.read_text()
+                      fields = stat[stat.rfind(")") + 2:].split()
+                      if int(fields[2]) == pgid and fields[0] != "Z":
+                          return True
+                  except (OSError, ValueError, IndexError):
+                      continue
+              return False
+
+          def drain_group(pgid):
+              for sig, delay in ((signal.SIGTERM, 1), (signal.SIGKILL, 1)):
+                  if not group_has_live_process(pgid):
+                      return True
+                  try:
+                      os.killpg(pgid, sig)
+                  except ProcessLookupError:
+                      return True
+                  time.sleep(delay)
+              return not group_has_live_process(pgid)
+
+          try:
+              process = subprocess.Popen(sampler_command, start_new_session=True)
+              try:
+                  sampler_exit = process.wait(timeout=1800)
+              except subprocess.TimeoutExpired:
+                  timed_out = True
+                  os.kill(process.pid, signal.SIGINT)
+                  try:
+                      sampler_exit = process.wait(timeout=10)
+                  except subprocess.TimeoutExpired:
+                      drain_group(process.pid)
+                      sampler_exit = process.wait(timeout=5)
+          finally:
+              if process is not None:
+                  drained = drain_group(process.pid)
+              try:
+                  if raw_profile.is_file():
+                      sanitized = sanitize_speedscope(json.loads(raw_profile.read_text(encoding="utf-8")))
+                      profile.write_text(json.dumps(sanitized), encoding="utf-8")
+              except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+                  sanitize_error = type(exc).__name__
+              finally:
+                  raw_profile.unlink(missing_ok=True)
+              ended = datetime.now(timezone.utc)
+              pytest_status = json.loads(status_path.read_text()) if status_path.is_file() else None
+              metadata = {
+                  "sampler": subprocess.run(
+                      [os.path.join(os.environ["RUNNER_TEMP"], "py-spy-venv", "bin", "py-spy"), "--version"],
+                      capture_output=True, text=True,
+                  ).stdout.strip(),
+                  "python": sys.version,
+                  "pytest_command": pytest_command,
+                  "sampler_command": sampler_command,
+                  "started_utc": started.isoformat(),
+                  "ended_utc": ended.isoformat(),
+                  "elapsed_seconds": time.monotonic() - monotonic_start,
+                  "sampler_exit": sampler_exit,
+                  "pytest_status": pytest_status,
+                  "watchdog_timed_out": timed_out,
+                  "owned_process_group_drained": drained,
+                  "sanitizer_error": sanitize_error,
+                  "profile_bytes": profile.stat().st_size if profile.is_file() else 0,
+                  "profile_sha256": hashlib.sha256(profile.read_bytes()).hexdigest() if profile.is_file() else None,
+              }
+              (capture_dir / "capture.json").write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
+
+          if (sampler_exit != 0 or pytest_status is None or pytest_status.get("pytest_exit") != 0
+                  or timed_out or not drained or sanitize_error is not None or metadata["profile_bytes"] == 0):
+              raise SystemExit(1)
+          PY
+
+      - name: Preserve Linux stack capture
+        if: always() && github.event_name == 'workflow_dispatch' && inputs.profile_linux
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-python-stacks-${{ matrix.python-version }}
+          path: ${{ runner.temp }}/linux-python-stacks/
+          if-no-files-found: warn
+          retention-days: 3
 
   # Fast Windows regression for full-lane PRs and pushes. Runs only the
   # Windows-sensitive hotspots (process mgmt, subprocess hooks, file I/O,

@@ -7,6 +7,8 @@ import sys
 import textwrap
 from pathlib import Path
 
+import pytest
+
 
 WORKFLOW = (Path(__file__).parents[1] / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
 
@@ -55,6 +57,85 @@ def test_required_linux_lane_cannot_skip_mcp_tests() -> None:
     assert 'pip install -e ".[dev,vector,mcp]"' in linux
     assert 'python -c "import mcp; import app.mcp.server"' in linux
     assert "--durations=20" in linux
+
+
+def test_manual_linux_stack_capture_is_opt_in_and_preserves_test_status() -> None:
+    dispatch = WORKFLOW.split("  workflow_dispatch:\n", 1)[1].split("  schedule:\n", 1)[0]
+    assert "profile_linux:" in dispatch
+    assert "type: boolean" in dispatch
+    assert "default: false" in dispatch
+
+    linux = _job("test", "windows-smoke")
+    assert "pip install py-spy==0.4.2" in linux
+    assert "if: github.event_name == 'workflow_dispatch' && inputs.profile_linux" in linux
+    assert "if: github.event_name != 'workflow_dispatch' || !inputs.profile_linux" in linux
+    assert "run: python -m pytest tests/ -x -q --durations=20" in linux
+    for option in (
+        '"--format", "speedscope"',
+        '"--rate", "5"',
+        '"--subprocesses"',
+        '"--threads"',
+        '"--idle"',
+        '"--nonblocking"',
+    ):
+        assert option in linux
+    assert '"--native"' not in linux
+    assert "process.wait(timeout=1800)" in linux
+    assert "'pytest_exit': result.returncode" in linux
+    assert 'pytest_status.get("pytest_exit") != 0' in linux
+    assert "sampler_exit != 0" in linux
+    assert "drain_group(process.pid)" in linux
+    assert "if: always() && github.event_name == 'workflow_dispatch' && inputs.profile_linux" in linux
+    assert "retention-days: 3" in linux
+    assert "path: ${{ runner.temp }}/linux-python-stacks/" in linux
+    assert "profile_linux" not in _job("windows-smoke", "windows-full")
+
+
+def test_manual_linux_stack_capture_redacts_sampler_labels() -> None:
+    linux = _job("test", "windows-smoke")
+    capture_step = linux.split("      - name: Capture Linux Python stacks\n", 1)[1]
+    script = capture_step.split("        run: |\n", 1)[1].split("\n          PY\n", 1)[0]
+    script = textwrap.dedent(script)
+    sanitizer_source = script[
+        script.index("def sanitize_speedscope(document):"):
+        script.index("\ndef group_has_live_process", script.index("def sanitize_speedscope(document):"))
+    ]
+    namespace = {"re": re}
+    exec(sanitizer_source, namespace)
+    sanitize = namespace["sanitize_speedscope"]
+
+    document = {
+        "shared": {
+            "frames": [
+                {"name": 'process 416:"/private/worktree credential=private-marker\npytest"', "file": "/private/source.py"},
+                {"name": "thread (411): MainThread private-marker"},
+                {"name": "run", "file": "app/service.py", "line": 42},
+            ]
+        },
+        "profiles": [
+            {
+                "name": 'Process 416 Thread 411 "MainThread private-marker"',
+                "unit": "seconds",
+                "samples": [[0, 1, 2]],
+                "weights": [0.2],
+            }
+        ],
+    }
+    sanitized = sanitize(document)
+
+    assert sanitized["shared"]["frames"][0] == {"name": "process 416", "file": "/private/source.py"}
+    assert sanitized["shared"]["frames"][1]["name"] == "thread (411)"
+    assert sanitized["shared"]["frames"][2] == {"name": "run", "file": "app/service.py", "line": 42}
+    assert sanitized["profiles"][0] == {
+        "name": "Process 416 Thread 411",
+        "unit": "seconds",
+        "samples": [[0, 1, 2]],
+        "weights": [0.2],
+    }
+    assert "private-marker" not in json.dumps(sanitized)
+
+    with pytest.raises(ValueError, match="unrecognized speedscope profile label"):
+        sanitize({"shared": {"frames": []}, "profiles": [{"name": "unknown private-marker"}]})
 
 
 def test_windows_smoke_installs_mcp_for_actual_logging_regression() -> None:
