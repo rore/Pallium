@@ -3162,6 +3162,13 @@ def test_relay_turn_callback_rearms_only_after_success(client) -> None:
 def test_relay_turn_logs_correlated_service_and_route_ready_timing(client, caplog, monkeypatch) -> None:
     import re
     import time
+    from api import routes
+
+    native_monotonic = time.monotonic
+    clock = [0.0]
+    local_time = SimpleNamespace(**vars(time))
+    local_time.monotonic = lambda: clock[0]
+    monkeypatch.setattr(routes, "time", local_time)
 
     callbacks, events = [], []
     app = FastAPI()
@@ -3170,6 +3177,7 @@ def test_relay_turn_logs_correlated_service_and_route_ready_timing(client, caplo
     def successful_turn(**request):
         # This test measures route logging; adjacent tests exercise actual SQLite claims.
         events.append("turn")
+        clock[0] += .25
         return {
             "session": {
                 "endpoint_id": "relay-session-" + "a" * 32,
@@ -3185,7 +3193,7 @@ def test_relay_turn_logs_correlated_service_and_route_ready_timing(client, caplo
     def delayed_callback(request, result):
         events.append("callback")
         callbacks.append((request, result))
-        time.sleep(0.01)
+        clock[0] += .125
 
     app.include_router(create_router(
         client.app.state.pallium_service,
@@ -3215,7 +3223,8 @@ def test_relay_turn_logs_correlated_service_and_route_ready_timing(client, caplo
     assert match, records[0]
     service_ms, route_ready_ms = map(int, match.groups())
     assert route_ready_ms >= service_ms
-    assert route_ready_ms >= 10
+    assert (service_ms, route_ready_ms) == (250, 375)
+    assert clock[0] == .375 and time.monotonic is native_monotonic
     assert SCOPE["container_ref"] not in records[0]
 
     caplog.clear()
