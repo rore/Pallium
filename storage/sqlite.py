@@ -6,7 +6,7 @@ import sqlite3
 import threading
 import time
 import uuid
-from contextlib import contextmanager, nullcontext
+from contextlib import closing, contextmanager, nullcontext
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, TypeVar
@@ -208,7 +208,7 @@ class SQLiteStorageProvider(
             }
         }
         try:
-            with sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True) as connection:
+            with closing(sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)) as connection, connection:
                 tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
                 relay_tables = (set(required) | set(optional)) & tables
                 required_relay_tables = set(required) & tables

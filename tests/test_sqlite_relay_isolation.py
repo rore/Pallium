@@ -25,6 +25,62 @@ def _dispose(*stores):
             store._relay_engine.dispose()
 
 
+@pytest.mark.parametrize("outcome", ["success", "schema_refusal", "sqlite_error"])
+def test_relay_schema_validation_closes_owned_connection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcome: str,
+) -> None:
+    from types import SimpleNamespace
+
+    import storage.sqlite as storage_sqlite
+
+    database = tmp_path / "relay.db"
+    if outcome == "sqlite_error":
+        database.write_bytes(b"not a sqlite database")
+    else:
+        connection = sqlite3.connect(database)
+        if outcome == "schema_refusal":
+            connection.execute("CREATE TABLE relay_sessions (id TEXT)")
+        connection.close()
+
+    connections = []
+    close_calls = [0]
+
+    class TrackedConnection(sqlite3.Connection):
+        def close(self):
+            close_calls[0] += 1
+            super().close()
+
+    native_connect = sqlite3.connect
+
+    def connect(*args, **kwargs):
+        kwargs["factory"] = TrackedConnection
+        connection = native_connect(*args, **kwargs)
+        connections.append(connection)
+        return connection
+
+    monkeypatch.setattr(storage_sqlite, "sqlite3", SimpleNamespace(connect=connect, Error=sqlite3.Error))
+    database_url = f"sqlite:///{database.as_posix()}"
+
+    try:
+        if outcome == "success":
+            SQLiteStorageProvider._validate_relay_schema(database_url)
+        elif outcome == "schema_refusal":
+            with pytest.raises(RuntimeError, match="Relay schema is incomplete"):
+                SQLiteStorageProvider._validate_relay_schema(database_url)
+        else:
+            with pytest.raises(RuntimeError, match="cannot inspect existing Relay database") as caught:
+                SQLiteStorageProvider._validate_relay_schema(database_url)
+            assert isinstance(caught.value.__cause__, sqlite3.DatabaseError)
+
+        assert len(connections) == 1
+        assert close_calls == [1]
+        with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+            connections[0].execute("SELECT 1")
+    finally:
+        for connection in connections:
+            sqlite3.Connection.close(connection)
+
+
 def _pragma(path: Path, name: str):
     import sqlite3
     with sqlite3.connect(path) as connection:
