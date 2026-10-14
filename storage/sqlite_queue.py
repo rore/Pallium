@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import json
-import logging
 import sqlite3
-import threading
 import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -40,60 +38,6 @@ from storage.sqlite_schema import (
     ThreadProcessingLeaseRecord,
     insert_lexical_fts_row,
 )
-
-logger = logging.getLogger(__name__)
-
-
-def _relay_timing_start():
-    try:
-        return time.perf_counter_ns(), time.thread_time_ns(), threading.get_ident()
-    except BaseException:
-        return None
-
-
-def _relay_timing_finish(timings, name, started):
-    if timings is None:
-        return
-    if started is None:
-        timings["timing_available"] = 0
-        return
-    try:
-        wall_ended = time.perf_counter_ns()
-        thread_cpu_ended = time.thread_time_ns()
-        wall = wall_ended - started[0]
-        thread_cpu = thread_cpu_ended - started[1]
-        timings[f"{name}_wall_ns"] += wall
-        timings[f"{name}_thread_cpu_ns"] += thread_cpu
-        spans = timings.get("phase_spans")
-        if isinstance(spans, list) and len(spans) < 32:
-            spans.append((timings["attempts"], name, started[2], started[0], wall_ended,
-                          started[1], thread_cpu_ended))
-    except BaseException:
-        timings["timing_available"] = 0
-
-
-def _log_relay_acquisition_failure(stage, timings, total_started):
-    if type(stage) is not str or stage not in ImmediateTransactionBusyError.ACQUISITION_STAGES:
-        stage = "unknown"
-    total = _relay_timing_start()
-    total_wall = total_thread_cpu = 0
-    if total_started is not None and total is not None:
-        total_wall = total[0] - total_started[0]
-        total_thread_cpu = total[1] - total_started[1]
-    try:
-        logger.warning(
-            "relay_immediate_acquisition_failed stage=%s attempts=%d timing_available=%d phase_spans=%s local_gate_wall_ns=%d local_gate_thread_cpu_ns=%d session_factory_wall_ns=%d session_factory_thread_cpu_ns=%d session_connection_wall_ns=%d session_connection_thread_cpu_ns=%d busy_timeout_pragma_wall_ns=%d busy_timeout_pragma_thread_cpu_ns=%d begin_immediate_wall_ns=%d begin_immediate_thread_cpu_ns=%d total_wall_ns=%d total_thread_cpu_ns=%d",
-            stage, timings["attempts"], timings["timing_available"],
-            ";".join(".".join(map(str, span)) for span in timings["phase_spans"]),
-            timings["local_gate_wall_ns"], timings["local_gate_thread_cpu_ns"],
-            timings["session_factory_wall_ns"],
-            timings["session_factory_thread_cpu_ns"], timings["session_connection_wall_ns"],
-            timings["session_connection_thread_cpu_ns"], timings["busy_timeout_pragma_wall_ns"],
-            timings["busy_timeout_pragma_thread_cpu_ns"], timings["begin_immediate_wall_ns"],
-            timings["begin_immediate_thread_cpu_ns"], total_wall, total_thread_cpu,
-        )
-    except BaseException:
-        pass
 
 _CONTAINER_SCOPED_SUPERSESSION_TYPES = frozenset({
     "constraint_memory",
@@ -161,61 +105,21 @@ class SQLiteQueueMixin:
     @contextmanager
     def _begin_relay_immediate(self):
         """Bounded write acquisition for short Relay transactions."""
-        phase_timings = {
-            "attempts": 0,
-            "timing_available": 1,
-            "phase_spans": [],
-            "local_gate_wall_ns": 0,
-            "local_gate_thread_cpu_ns": 0,
-            "session_factory_wall_ns": 0,
-            "session_factory_thread_cpu_ns": 0,
-            "session_connection_wall_ns": 0,
-            "session_connection_thread_cpu_ns": 0,
-            "busy_timeout_pragma_wall_ns": 0,
-            "busy_timeout_pragma_thread_cpu_ns": 0,
-            "begin_immediate_wall_ns": 0,
-            "begin_immediate_thread_cpu_ns": 0,
-        }
-        total_started = _relay_timing_start()
-        if total_started is None:
-            phase_timings["timing_available"] = 0
         deadline = time.monotonic() + self._RELAY_IMMEDIATE_ACQUISITION_SECONDS
-        gate_started = _relay_timing_start()
-        gate_acquired = self._relay_writer_lock.acquire(timeout=max(0, deadline - time.monotonic()))
-        _relay_timing_finish(phase_timings, "local_gate", gate_started)
-        if not gate_acquired:
-            error = ImmediateTransactionBusyError(
-                "database is locked (immediate transaction retry exhausted)", acquisition_stage="local_gate"
-            )
-            _log_relay_acquisition_failure(error.acquisition_stage, phase_timings, total_started)
-            raise error
-        acquisition_failure_stage = None
-        acquisition_entered = False
+        if not self._relay_writer_lock.acquire(timeout=max(0, deadline - time.monotonic())):
+            raise ImmediateTransactionBusyError("database is locked (immediate transaction retry exhausted)", acquisition_stage="local_gate")
         try:
-            try:
-                # Charge local contention and native retries to the same allowance.
-                with self._begin_immediate_for(
-                    self._relay_session_factory,
-                    attempts=self._RELAY_IMMEDIATE_ATTEMPTS,
-                    busy_timeout_ms=self._RELAY_IMMEDIATE_BUSY_TIMEOUT_MS,
-                    busy_backoff_seconds=0,
-                    acquisition_deadline=deadline,
-                    phase_timings=phase_timings,
-                ) as session:
-                    acquisition_entered = True
-                    yield session
-            except ImmediateTransactionBusyError as exc:
-                if not acquisition_entered:
-                    stage = getattr(exc, "acquisition_stage", None)
-                    acquisition_failure_stage = (
-                        stage if type(stage) is str and stage in ImmediateTransactionBusyError.ACQUISITION_STAGES
-                        else "unknown"
-                    )
-                raise
+            # Charge local contention and native retries to the same allowance.
+            with self._begin_immediate_for(
+                self._relay_session_factory,
+                attempts=self._RELAY_IMMEDIATE_ATTEMPTS,
+                busy_timeout_ms=self._RELAY_IMMEDIATE_BUSY_TIMEOUT_MS,
+                busy_backoff_seconds=0,
+                acquisition_deadline=deadline,
+            ) as session:
+                yield session
         finally:
             self._relay_writer_lock.release()
-            if acquisition_failure_stage is not None:
-                _log_relay_acquisition_failure(acquisition_failure_stage, phase_timings, total_started)
 
     @contextmanager
     def _begin_low_priority_relay_write(self):
@@ -253,7 +157,6 @@ class SQLiteQueueMixin:
         busy_timeout_ms: int | None = None,
         busy_backoff_seconds: float | None = None,
         acquisition_deadline: float | None = None,
-        phase_timings: dict[str, int] | None = None,
     ):
         """Start a transaction with BEGIN IMMEDIATE for exclusive claim operations.
 
@@ -276,35 +179,17 @@ class SQLiteQueueMixin:
         for attempt in range(attempts):
             if acquisition_deadline is not None and time.monotonic() >= acquisition_deadline:
                 raise ImmediateTransactionBusyError("database is locked (immediate transaction retry exhausted)", acquisition_stage=first_deadline_stage or "pre_attempt_deadline")
-            if phase_timings is not None:
-                phase_timings["attempts"] = attempt + 1
-            factory_started = _relay_timing_start() if phase_timings is not None else None
+            session = session_factory()
             try:
-                session = session_factory()
-            finally:
-                _relay_timing_finish(phase_timings, "session_factory", factory_started)
-            try:
-                connection_started = _relay_timing_start() if phase_timings is not None else None
-                try:
-                    conn = session.connection(execution_options={"isolation_level": "AUTOCOMMIT"})
-                finally:
-                    _relay_timing_finish(phase_timings, "session_connection", connection_started)
+                conn = session.connection(execution_options={"isolation_level": "AUTOCOMMIT"})
                 native_timeout_ms = busy_timeout_ms
                 if acquisition_deadline is not None:
                     remaining_ms = int((acquisition_deadline - time.monotonic()) * 1000)
                     if remaining_ms <= 0:
                         raise ImmediateTransactionBusyError("database is locked (immediate transaction retry exhausted)", acquisition_stage="setup_deadline")
                     native_timeout_ms = min(native_timeout_ms, remaining_ms)
-                pragma_started = _relay_timing_start() if phase_timings is not None else None
-                try:
-                    conn.execute(text(f"PRAGMA busy_timeout={native_timeout_ms}"))
-                finally:
-                    _relay_timing_finish(phase_timings, "busy_timeout_pragma", pragma_started)
-                begin_started = _relay_timing_start() if phase_timings is not None else None
-                try:
-                    conn.execute(text("BEGIN IMMEDIATE"))
-                finally:
-                    _relay_timing_finish(phase_timings, "begin_immediate", begin_started)
+                conn.execute(text(f"PRAGMA busy_timeout={native_timeout_ms}"))
+                conn.execute(text("BEGIN IMMEDIATE"))
                 if acquisition_deadline is not None and time.monotonic() >= acquisition_deadline:
                     try:
                         conn.execute(text("ROLLBACK"))

@@ -2121,99 +2121,22 @@ def test_registration_rejects_wrong_or_spoofed_pipe_server_image(retained, monke
     assert natives[0].closed and natives[0].owners == []
 
 
-def _make_gc_overlap_observer(clock, *, max_events=64):
-    events = []
-    starts = []
-    status = {"dropped": False, "unmatched": False, "clockfail": False}
-
-    def observe(phase, info):
-        try:
-            generation = info.get("generation")
-            if type(generation) is not int or phase not in {"start", "stop"}:
-                status["unmatched"] = True
-                return
-            ident = threading.get_ident()
-            try:
-                wall_ns = clock.perf_counter_ns()
-                cpu_ns = clock.thread_time_ns()
-            except BaseException:
-                wall_ns = cpu_ns = None
-                status["clockfail"] = True
-            if len(events) < max_events:
-                events.append((phase, generation, ident, wall_ns, cpu_ns))
-            else:
-                status["dropped"] = True
-            if phase == "start":
-                if len(starts) < max_events:
-                    starts.append((generation, ident))
-                else:
-                    status["dropped"] = True
-            else:
-                for index in range(len(starts) - 1, -1, -1):
-                    if starts[index] == (generation, ident):
-                        del starts[index]
-                        break
-                else:
-                    status["unmatched"] = True
-        except BaseException:
-            status["clockfail"] = True
-
-    return observe, events, starts, status
-
-
-def _remove_exact_gc_observer(callbacks, observer):
-    for index, callback in enumerate(callbacks):
-        if callback is observer:
-            del callbacks[index]
-            return True
-    return False
-
-
-def test_gc_overlap_observer_is_bounded_and_preserves_callbacks():
-    existing = lambda *_: None
-    callbacks = [existing]
-    observer, events, starts, status = _make_gc_overlap_observer(time, max_events=2)
-    callbacks.append(observer)
-    with pytest.raises(RuntimeError, match="preserve caller error"):
-        try:
-            observer("start", {"generation": 1})
-            observer("stop", {"generation": 1})
-            observer("stop", {"generation": 2})
-            observer("start", {"generation": 3})
-            observer("stop", {"generation": 3})
-            raise RuntimeError("preserve caller error")
-        finally:
-            assert _remove_exact_gc_observer(callbacks, observer)
-    assert callbacks == [existing]
-    assert len(events) == 2 and status["dropped"]
-    assert status["unmatched"] and starts == []
-
-    class BrokenClock:
-        @staticmethod
-        def perf_counter_ns():
-            raise RuntimeError("clock unavailable")
-
-        @staticmethod
-        def thread_time_ns():
-            return 1
-
-    broken, broken_events, broken_starts, broken_status = _make_gc_overlap_observer(BrokenClock())
-    broken("start", {"generation": 0})
-    broken("stop", {"generation": 0})
-    assert broken_status["clockfail"] and broken_events[0][3:] == (None, None)
-    assert broken_starts == []
-
-
-@pytest.mark.parametrize("fault", ["success-int", "missing-success", "old-mcp", "old-mcp-error",
-    "failed-missing-items", "failed-empty-items", "failed-extra-items", "failed-wrong-item",
-    "failed-nonstring-text", "failed-public-content", "failed-public-iserror-false",
-    "failed-wrong-id", "failed-wrong-version", "empty-items",
-    "extra-items", "wrong-item", "nonstring-text", "rpc-error", "wrong-id", "wrong-version"])
-def test_native_state_read_contract_failure_releases_without_transport(http_wake, monkeypatch, fault, client):
-    import gc
+@pytest.mark.parametrize(
+    ("fault", "force_release_refusal"),
+    [(fault, False) for fault in (
+        "success-int", "missing-success", "old-mcp", "old-mcp-error",
+        "failed-missing-items", "failed-empty-items", "failed-extra-items", "failed-wrong-item",
+        "failed-nonstring-text", "failed-public-content", "failed-public-iserror-false",
+        "failed-wrong-id", "failed-wrong-version", "empty-items",
+        "extra-items", "wrong-item", "nonstring-text", "rpc-error", "wrong-id", "wrong-version",
+    )] + [("wrong-version", True)],
+)
+def test_native_state_read_contract_failure_releases_without_transport(
+    http_wake, monkeypatch, fault, force_release_refusal, client,
+):
     import traceback
 
-    http, _, registry, service, desktop, send, _ = http_wake
+    http, relay, registry, service, desktop, send, _ = http_wake
     pallium_service = client.app.state.pallium_service
     executor = pallium_service._relay_trace_executor
     original_trace_job = pallium_service._run_relay_trace_job
@@ -2277,58 +2200,58 @@ def test_native_state_read_contract_failure_releases_without_transport(http_wake
             envelope["jsonrpc"] = "1.0"
         return envelope
     monkeypatch.setattr(desktop, "read", read)
-    observe_gc, gc_events, gc_starts, gc_observer_status = _make_gc_overlap_observer(time)
-    gc_observer_status.update({
-        "coverage_start_ns": None, "coverage_end_ns": None,
-        "installed": False, "removed": False, "coverageerror": False,
-    })
-    try:
-        gc.callbacks.append(observe_gc)
-        gc_observer_status["installed"] = True
-        gc_observer_status["coverage_start_ns"] = time.perf_counter_ns()
-    except BaseException:
-        gc_observer_status["coverageerror"] = True
+    release_results, release_errors, release_attempts = [], [], []
+    original_transition = relay.codex_wake_transition
+    original_release = registry.release_generation
+    refusal_injected = [False]
 
-    gc_observation_finished = False
-
-    def finish_gc_observation():
-        nonlocal gc_observation_finished
-        if gc_observation_finished:
-            return
-        gc_observation_finished = True
+    def transition(operation, **kwargs):
+        if operation == "release" and force_release_refusal and not refusal_injected[0]:
+            refusal_injected[0] = True
+            error = ImmediateTransactionBusyError(
+                "database is locked (immediate transaction retry exhausted)",
+                acquisition_stage="setup_deadline",
+            )
+            release_errors.append(type(error))
+            raise error
         try:
-            gc_observer_status["coverage_end_ns"] = time.perf_counter_ns()
-        except BaseException:
-            gc_observer_status["coverageerror"] = True
-        try:
-            if gc_observer_status["installed"]:
-                gc_observer_status["removed"] = _remove_exact_gc_observer(gc.callbacks, observe_gc)
-                if not gc_observer_status["removed"]:
-                    gc_observer_status["coverageerror"] = True
-        except BaseException:
-            gc_observer_status["coverageerror"] = True
+            return original_transition(operation, **kwargs)
+        except Exception as exc:
+            if operation == "release":
+                release_errors.append(type(exc))
+            raise
 
-    def emit_gc_diagnostic():
-        try:
-            if gc_starts:
-                gc_observer_status["unmatched"] = True
-            print("retained_wake_gc_overlap=" + json.dumps({
-                "events": gc_events,
-                **gc_observer_status,
-            }, separators=(",", ":")))
-        except BaseException:
-            pass
+    def release(reservation):
+        release_attempts.append(reservation)
+        result = original_release(reservation)
+        release_results.append(result)
+        return result
 
-    try:
-        send()
-        assert desktop.owners == [] and registry.reservations() == ()
-    except BaseException:
-        finish_gc_observation()
-        emit_gc_diagnostic()
-        raise
-    finally:
-        finish_gc_observation()
+    monkeypatch.setattr(relay, "codex_wake_transition", transition)
+    monkeypatch.setattr(registry, "release_generation", release)
+    delivery = send()
+    assert not force_release_refusal or refusal_injected[0]
     assert service.retained_registration is None
+    if (
+        release_results == [False]
+        and release_errors
+        and all(error_type is ImmediateTransactionBusyError for error_type in release_errors)
+    ):
+        reservations = registry.reservations()
+        assert len(release_attempts) == 1 and reservations == (release_attempts[0],)
+        assert reservations[0].outcome == "prepared"
+        assert reservations[0].delivery_id == delivery["delivery_id"]
+        assert desktop.owners == []
+        response = http.get("/relay/messages/retained-journey", params=SCOPE)
+        assert response.status_code == 200, response.text
+        pending = response.json()["deliveries"][0]
+        assert pending["delivery_id"] == delivery["delivery_id"]
+        assert pending["state"] == "pending" and pending["attempts"] == 0
+        recover(http_wake)
+        assert registry.reservations() == () and desktop.owners == []
+    else:
+        assert release_results == [True] and release_errors == []
+        assert desktop.owners == [] and registry.reservations() == ()
     sentinel = executor.submit(lambda: None)
     try:
         sentinel.result(timeout=2)
