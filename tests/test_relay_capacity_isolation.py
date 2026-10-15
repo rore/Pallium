@@ -1555,11 +1555,109 @@ def test_codex_operation_tracking_settles_after_event_loop_closes(tmp_path, monk
             loop.close()
         for worker in worker_threads:
             worker.join(5)
+        app.state._wait_for_operations()
         cleanup.close()
         print("pallium closed-loop readiness: " + json.dumps(readiness), file=sys.stderr)
         (tmp_path / "closed-loop-readiness.json").write_text(
             json.dumps(readiness), encoding="utf-8",
         )
+
+
+def test_closed_loop_cleanup_drains_before_storage_close_on_callback_entry_assertion(
+    tmp_path, monkeypatch,
+):
+    """The cleanup path drains a real worker when callback entry never occurs."""
+    from app import dependencies, main as app_main
+
+    worker_gate = threading.Event()
+    worker_gate_timed_out = threading.Event()
+    worker_entered = threading.Event()
+    worker_finished = threading.Event()
+    drain_entered = threading.Event()
+    drain_entry_worker_finished = []
+    close_observations = []
+    app_ref = {}
+
+    original_router = dependencies.create_router
+
+    def hold_callback_until_drain(service, **kwargs):
+        callback = kwargs["relay_turn_callback"]
+
+        def held_callback(*args, **callback_kwargs):
+            worker_entered.set()
+            if not worker_gate.wait(5):
+                worker_gate_timed_out.set()
+                raise AssertionError("cleanup did not release the tracked callback")
+            try:
+                return callback(*args, **callback_kwargs)
+            finally:
+                worker_finished.set()
+
+        kwargs["relay_turn_callback"] = held_callback
+        return original_router(service, **kwargs)
+
+    original_factory = app_main.build_storage_provider
+
+    def observe_storage_factory(*args, **kwargs):
+        storage = original_factory(*args, **kwargs)
+        original_close = storage.close
+
+        def observe_close():
+            close_observations.append((drain_entered.is_set(), worker_finished.is_set()))
+            if not drain_entered.is_set():
+                # Keep the control safe on the unfixed path while preserving the
+                # evidence that storage teardown started before the operation drain.
+                worker_gate.set()
+                wait = app_ref.get("wait")
+                if wait is not None:
+                    wait()
+            return original_close()
+
+        storage.close = observe_close
+        return storage
+
+    original_create_app = create_app
+
+    def capture_app(*args, **kwargs):
+        app = original_create_app(*args, **kwargs)
+        original_wait = app.state._wait_for_operations
+        app_ref["wait"] = original_wait
+
+        def observe_wait(*wait_args, **wait_kwargs):
+            if not wait_args and not wait_kwargs:
+                drain_entered.set()
+                drain_entry_worker_finished.append(worker_finished.is_set())
+                worker_gate.set()
+            return original_wait(*wait_args, **wait_kwargs)
+
+        app.state._wait_for_operations = observe_wait
+        return app
+
+    monkeypatch.setattr(dependencies, "create_router", hold_callback_until_drain)
+    monkeypatch.setattr(app_main, "build_storage_provider", observe_storage_factory)
+    monkeypatch.setattr(sys.modules[__name__], "create_app", capture_app)
+    nested_tmp_path = tmp_path / "early-callback-assertion"
+    nested_tmp_path.mkdir()
+
+    try:
+        with pytest.raises(AssertionError) as failure:
+            test_codex_operation_tracking_settles_after_event_loop_closes(
+                nested_tmp_path, monkeypatch, None,
+            )
+    finally:
+        worker_gate.set()
+        wait = app_ref.get("wait")
+        if wait is not None:
+            wait()
+
+    assert failure.traceback[-1].name == "cancel_http_request"
+    assert worker_entered.is_set()
+    assert not worker_gate_timed_out.is_set()
+    assert worker_finished.is_set()
+    assert drain_entered.is_set()
+    assert drain_entry_worker_finished == [False]
+    assert close_observations
+    assert all(drained and finished for drained, finished in close_observations)
 
 
 def test_capacity_limiter_reserves_released_token_for_waiting_borrower() -> None:

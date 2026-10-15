@@ -2356,6 +2356,21 @@ def test_configured_actor_hook_registers_and_delivers_across_git_containers(
     advance_empty_optional_lookup: bool, hold_pin_reader: bool,
 ):
     """Relay delivery crosses containers and configured actor metadata."""
+    from itertools import count
+    from types import SimpleNamespace
+    import time
+
+    from storage import sqlite_queue
+
+    original_monotonic = time.monotonic
+    private_time = SimpleNamespace(**vars(time))
+    private_time.monotonic = count(step=0.001).__next__
+    monkeypatch.setattr(sqlite_queue, "time", private_time)
+    assert sqlite_queue.time is not time
+    assert sqlite_queue.time.sleep is time.sleep
+    assert time.monotonic is original_monotonic
+
+    # This functional test checks delivery; acquisition-deadline behavior is covered separately.
     # This test drives an ordinary turn; native wake/trace workers have separate coverage.
     monkeypatch.setattr("app.dependencies.schedule_claude_relay_wake", lambda *_args, **_kwargs: None)
     hook = _load(f"stable_actor_{runtime}", relative)
