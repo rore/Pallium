@@ -596,11 +596,16 @@ def test_retained_maintenance_failure_logs_bounded_category_once(retained, monke
     assert service.custody is None
 
 @pytest.fixture
-def http_wake(client, retained, monkeypatch):
+def http_wake(client, retained, monkeypatch, tmp_path):
+    from tests.codex_wake_setup import initialize_empty_wake_registry
+
     storage = client.app.state.pallium_service._storage
     relay = RelayService(storage)
     registry = CodexWakeRegistry(relay_service=relay)
-    assert registry.initialize(old_owner_drained=True)
+    initialize_empty_wake_registry(
+        registry, relay, storage, expected_database=tmp_path / "test-relay.db",
+        legacy=None, monkeypatch=monkeypatch,
+    )
     service, desktop = register(retained)
     registry.retained_service = service
     workers = []

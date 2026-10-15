@@ -5301,7 +5301,12 @@ def test_http_ack_after_validation_serializes_with_native_start_and_releases_fen
 )
 def test_http_scope_move_reads_current_endpoint_activation_and_historical_delivery(
     client, tmp_path, monkeypatch, native_outcome: str, durable_outcome: str,
+    *, force_move_refusal=False,
 ) -> None:
+    import time
+    from core.errors import ImmediateTransactionBusyError
+
+    native_sleep = time.sleep
     registry_root = tmp_path / native_outcome
     registry = _sqlite_wake_registry(
         client.app.state.pallium_service._storage, registry_root,
@@ -5360,8 +5365,10 @@ def test_http_scope_move_reads_current_endpoint_activation_and_historical_delive
         native_write.assert_called_once()
 
     delivery = sent["deliveries"][0]
-    assert registry.snapshot(endpoint_id).outcome == durable_outcome
-    moved = route.post("/relay/turn", json={
+    initial = registry.snapshot(endpoint_id)
+    assert initial.outcome == durable_outcome
+    relay = RelayService(storage)
+    move = {
         "runtime": "codex",
         "session_ref": "target",
         "max_chars": 1,
@@ -5370,13 +5377,64 @@ def test_http_scope_move_reads_current_endpoint_activation_and_historical_delive
         "previous_endpoint_id": endpoint_id,
         "previous_scope_generation": 0,
         **new,
-    })
+    }
+    original_turn = storage.relay_turn
+    attempts = []
+
+    def observed_turn(**kwargs):
+        attempt = {}
+        attempts.append(attempt)
+        try:
+            if force_move_refusal and len(attempts) == 1:
+                attempt["forced"] = True
+                raise ImmediateTransactionBusyError("controlled precommit move refusal", acquisition_stage="setup_deadline")
+            result = original_turn(**kwargs)
+        except Exception as error:
+            attempt["error"] = error
+            raise
+        attempt["result"] = result
+        return result
+
+    with monkeypatch.context() as move_patch, patch("app.codex_wake._popen", native_write):
+        move_patch.setattr(storage, "relay_turn", observed_turn)
+        deadline = time.monotonic() + 5
+        moved = route.post("/relay/turn", json=move)
+        assert not force_move_refusal or attempts[0].get("forced") is True
+        expected_attempts = 1
+        if (moved.status_code == 503 and len(attempts) == 1
+                and type(attempts[0].get("error")) is ImmediateTransactionBusyError):
+            assert moved.json() == {"detail": {"code": "relay_busy", "retryable": True}}
+            retry_after = moved.headers.get("Retry-After", "")
+            assert retry_after.isascii() and retry_after.isdecimal()
+            delay = int(retry_after)
+            assert delay < deadline - time.monotonic()
+            current = relay.session_view_by_endpoint(endpoint_id)
+            assert (current["endpoint_id"], current["runtime"], current["session_ref"],
+                    current["container_ref"], current["scope_generation"], current["destination_health"]) == (
+                        endpoint_id, "codex", "target", old["container_ref"], 0, "active",
+                    )
+            assert registry.snapshot(endpoint_id) == initial
+            historical, = route.get(f"/relay/messages/{sent['message_id']}", params=source).json()["deliveries"]
+            assert (historical["delivery_id"], historical["recipient_endpoint_id"],
+                    historical["recipient_container_ref"], historical["state"], historical["attempts"]) == (
+                        delivery["delivery_id"], endpoint_id, old["container_ref"], "pending", 0,
+                    )
+            assert native_write.call_count == 1
+            native_sleep(delay)
+            assert time.monotonic() < deadline
+            moved = route.post("/relay/turn", json=move)
+            expected_attempts = 2
+        assert len(attempts) == expected_attempts and "error" not in attempts[-1]
+        assert isinstance(attempts[-1].get("result"), dict)
+        native_write.assert_called_once()
+    assert storage.relay_turn == original_turn
     assert moved.status_code == 200 and moved.json()["deliveries"] == []
+    assert moved.json()["session"]["endpoint_id"] == endpoint_id
+    assert moved.json()["session"]["scope_generation"] == 1
 
     from app.dependencies import recover_expired_relay_wakes
     from core.claude_wake import ClaudeWakeRegistry
 
-    relay = RelayService(storage)
     assert codex_wake.reconcile_codex_relay_wake_reservations(
         relay, registry=registry
     ) == 0
@@ -5419,6 +5477,12 @@ def test_http_scope_move_reads_current_endpoint_activation_and_historical_delive
     assert status["activation"]["qualification"] == "qualified"
     assert status["activation"]["fallback"] == "next_natural_turn"
     assert restarted.snapshot(endpoint_id).outcome == durable_outcome
+
+
+def test_http_scope_move_recovers_proven_precommit_refusal(client, tmp_path, monkeypatch):
+    test_http_scope_move_reads_current_endpoint_activation_and_historical_delivery(
+        client, tmp_path, monkeypatch, "ambiguous", "uncertain", force_move_refusal=True,
+    )
 
 
 def test_exact_claim_survives_lost_callback_and_rearms_once_after_lease(
