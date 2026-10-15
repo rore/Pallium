@@ -700,6 +700,7 @@ def test_http_fresh_authority_observation_does_not_wait_for_native_owner(
     reservation = _reserve(registry, _send(relay))
     captured, gate_errors = [], []
     entered, observed, held, release = (threading.Event() for _ in range(4))
+    callback_release = threading.Event()
     original_router = dependencies.create_router
 
     def observe_router(service, **kwargs):
@@ -708,6 +709,7 @@ def test_http_fresh_authority_observation_does_not_wait_for_native_owner(
         def observation(*args):
             record('observation_entered')
             entered.set()
+            assert callback_release.wait(5), 'observation preparation gate was not released'
             value = original(*args)
             if phase == 'preclaim':
                 captured.append(value)
@@ -735,9 +737,7 @@ def test_http_fresh_authority_observation_does_not_wait_for_native_owner(
             finally:
                 record('request_finished')
 
-        holder.start()
         try:
-            assert held.wait(2)
             if phase == 'preclaim':
                 record('request_submitted')
                 request = pool.submit(post, '/relay/turn', json={
@@ -748,7 +748,10 @@ def test_http_fresh_authority_observation_does_not_wait_for_native_owner(
                 request = pool.submit(http.get, '/relay/sessions', params={
                     'runtime': 'codex', 'session_ref': 'target', **SCOPE,
                 })
-            assert entered.wait(2), 'actual observation callback was not entered'
+            assert entered.wait(5), 'actual observation callback was not entered'
+            holder.start()
+            assert held.wait(2)
+            callback_release.set()
             progressed = observed.wait(1)
             completed_while_held = None
             if phase == 'projection':
@@ -769,8 +772,12 @@ def test_http_fresh_authority_observation_does_not_wait_for_native_owner(
                         'future_error_type': type(error).__name__ if error else None,
                     }), file=sys.stderr)
             finally:
+                callback_release.set()
                 release.set()
-                holder.join(5)
+                if holder.ident is not None:
+                    holder.join(5)
+                    if holder.is_alive():
+                        holder.join()
         response = request.result(5)
         assert not holder.is_alive() and not gate_errors, gate_errors
         assert response.status_code == 200, response.text
