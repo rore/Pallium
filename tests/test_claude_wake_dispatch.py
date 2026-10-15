@@ -1840,10 +1840,69 @@ def test_create_app_preserves_new_intent_during_old_cleanup(
             send_http.set()
             recovery_ready.set()
 
-        sent = http.post("/relay/messages", json={
+        from contextlib import contextmanager
+        from sqlalchemy import select
+        from core.errors import ImmediateTransactionBusyError
+        from storage.sqlite_schema import RelayMessageRecord, RelayDeliveryRecord
+
+        storage = app.state.pallium_service._storage
+        begin = storage._begin_relay_immediate
+        send = storage.relay_send
+        local = threading.local()
+        attempts = []
+
+        def observe_send(*args, **kwargs):
+            local.active = True
+            try:
+                return send(*args, **kwargs)
+            finally:
+                local.active = False
+
+        @contextmanager
+        def observe_begin():
+            if not getattr(local, "active", False):
+                with begin() as db:
+                    yield db
+                return
+            attempt = {"acquired": False}
+            attempts.append(attempt)
+            try:
+                with begin() as db:
+                    attempt["acquired"] = True
+                    yield db
+            except BaseException as error:
+                attempt["error"] = error
+                raise
+
+        body = {
             "sender_runtime": "codex", "sender_session_ref": "sender",
             "recipient": "claude-code:" + session, "payload": "preserved transition \u2713", **scope,
-        })
+        }
+        calls_before = list(calls)
+        with storage._relay_engine.connect() as db:
+            assert db.execute(select(RelayMessageRecord.id)).all() == []
+            assert db.execute(select(RelayDeliveryRecord.id)).all() == []
+        with monkeypatch.context() as admission:
+            admission.setattr(storage, "relay_send", observe_send)
+            admission.setattr(storage, "_begin_relay_immediate", observe_begin)
+            deadline = time.monotonic() + 5
+            sent = http.post("/relay/messages", json=body)
+            if sent.status_code == 503:
+                assert len(attempts) == 1 and attempts[0]["acquired"] is False
+                assert type(attempts[0].get("error")) is ImmediateTransactionBusyError
+                assert sent.json() == {"detail": {"code": "relay_busy", "retryable": True}}
+                with storage._relay_engine.connect() as db:
+                    assert db.execute(select(RelayMessageRecord.id)).all() == []
+                    assert db.execute(select(RelayDeliveryRecord.id)).all() == []
+                assert calls == calls_before
+                delay = sent.headers.get("Retry-After", "")
+                assert delay.isascii() and delay.isdecimal()
+                assert 0 < int(delay) < deadline - time.monotonic()
+                time.sleep(int(delay))
+                assert time.monotonic() < deadline
+                sent = http.post("/relay/messages", json=body)
+            assert len(attempts) in (1, 2)
+            assert attempts[-1]["acquired"] is True and "error" not in attempts[-1]
         assert sent.status_code == 200
         if new_state == "idle":
             assert wake_called.wait(timeout=1)
@@ -2185,12 +2244,78 @@ def test_rw007_stop_batches_recursive_stop_and_deterministic_recovery(
         return response.json() if response.content else None
 
     def acknowledge(deliveries, **_kwargs):
+        import time
+        from contextlib import contextmanager
+        from sqlalchemy import select
+        from core.errors import ImmediateTransactionBusyError
+        from storage.sqlite_schema import RelayDeliveryRecord
+
+        storage = client.app.state.pallium_service._storage
+        begin, ack = storage._begin_relay_immediate, storage.relay_ack
+        local = threading.local()
+        attempts = []
+
+        def observe_ack(*args, **kwargs):
+            local.active = True
+            try:
+                return ack(*args, **kwargs)
+            finally:
+                local.active = False
+
+        @contextmanager
+        def observe_begin():
+            if not getattr(local, "active", False):
+                with begin() as db:
+                    yield db
+                return
+            attempt = {"acquired": False}
+            attempts.append(attempt)
+            try:
+                with begin() as db:
+                    attempt["acquired"] = True
+                    yield db
+            except BaseException as error:
+                attempt["error"] = error
+                raise
+
+        def authority():
+            columns = [column for column in RelayDeliveryRecord.__table__.columns
+                       if column.name not in {"trace_version", "trace_truncated", "trace_pruned"}]
+            with storage._relay_engine.connect() as db:
+                return db.execute(select(*columns).order_by(RelayDeliveryRecord.id)).all()
+
         for item in deliveries:
-            response = http.post("/relay/deliveries/ack", json={
+            attempts.clear()
+            body = {
                 "delivery_id": item["delivery_id"],
                 "claim_token": item["claim_token"],
                 **scope,
-            })
+            }
+            before = authority()
+            with monkeypatch.context() as admission:
+                admission.setattr(storage, "relay_ack", observe_ack)
+                admission.setattr(storage, "_begin_relay_immediate", observe_begin)
+                deadline = time.monotonic() + 5
+                response = http.post("/relay/deliveries/ack", json=body)
+                if response.status_code == 503:
+                    assert len(attempts) == 1 and attempts[0]["acquired"] is False
+                    assert type(attempts[0].get("error")) is ImmediateTransactionBusyError
+                    assert response.json() == {"detail": {"code": "relay_busy", "retryable": True}}
+                    assert authority() == before
+                    current = next(row for row in before if row.id == item["delivery_id"])
+                    assert (current.state, current.claim_token, current.attempts) == ("claimed", item["claim_token"], 1)
+                    lease = current.lease_expires_at
+                    assert lease is not None
+                    delay = response.headers.get("Retry-After", "")
+                    assert delay.isascii() and delay.isdecimal()
+                    assert 0 < int(delay) < deadline - time.monotonic()
+                    time.sleep(int(delay))
+                    assert time.monotonic() < deadline
+                    assert authority() == before
+                    assert lease.replace(tzinfo=timezone.utc) > datetime.now(timezone.utc)
+                    response = http.post("/relay/deliveries/ack", json=body)
+                assert len(attempts) in (1, 2)
+                assert attempts[-1]["acquired"] is True and "error" not in attempts[-1]
             assert response.status_code == 200
         return deliveries
 
