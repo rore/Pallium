@@ -922,8 +922,86 @@ def test_restricted_claude_prompt_still_delivers_and_acks_pending_relay(
     })
     assert sent.status_code == 200
 
+    from sqlalchemy import select
+    from storage.sqlite_schema import (RelayDeliveryRecord, RelaySessionRecord,
+                                       RelayEndpointGenerationRecord, RelaySessionWorkRefRecord)
+    from storage.sqlite_queue import ImmediateTransactionBusyError
+
+    def authority():
+        delivery_columns = [column for column in RelayDeliveryRecord.__table__.columns
+                            if column.name not in {"trace_version", "trace_truncated", "trace_pruned"}]
+        with provider._relay_engine.connect() as db:
+            return tuple(db.execute(select(*columns).order_by(*keys)).all() for columns, keys in (
+                (delivery_columns, (RelayDeliveryRecord.id,)),
+                (tuple(RelaySessionRecord.__table__.columns), (RelaySessionRecord.id,)),
+                (tuple(RelayEndpointGenerationRecord.__table__.columns), (RelayEndpointGenerationRecord.endpoint_id,)),
+                (tuple(RelaySessionWorkRefRecord.__table__.columns),
+                 (RelaySessionWorkRefRecord.endpoint_id, RelaySessionWorkRefRecord.work_ref, RelaySessionWorkRefRecord.origin)),
+            ))
+
+    turn = provider.relay_turn
+    begin = provider._begin_relay_immediate
+    local = threading.local()
+
+    def observe_turn(*args, **kwargs):
+        local.active = True
+        try:
+            return turn(*args, **kwargs)
+        finally:
+            local.active = False
+
+    @contextmanager
+    def observe_begin():
+        if not getattr(local, "active", False):
+            with begin() as db:
+                yield db
+            return
+        attempt = {"acquired": False}
+        local.attempts.append(attempt)
+        try:
+            with begin() as db:
+                attempt["acquired"] = True
+                yield db
+        except BaseException as error:
+            attempt["error"] = error
+            raise
+
     def relay(method, path, body, **_kwargs):
-        response = client.request(method, path, json=body)
+        if path == "/relay/turn":
+            before = authority()
+            # Only a proved pre-transaction refusal can replay this claiming request.
+            attempts = []
+
+            def request_turn(*args, **kwargs):
+                local.attempts = attempts
+                return observe_turn(*args, **kwargs)
+
+            with monkeypatch.context() as admission:
+                admission.setattr(provider, "relay_turn", request_turn)
+                admission.setattr(provider, "_begin_relay_immediate", observe_begin)
+                deadline = time.monotonic() + 5
+                response = client.request(method, path, json=body)
+                if response.status_code == 503:
+                    assert len(attempts) == 1 and attempts[0]["acquired"] is False
+                    assert type(attempts[0].get("error")) is ImmediateTransactionBusyError
+                    assert response.json() == {"detail": {"code": "relay_busy", "retryable": True}}
+                    assert authority() == before
+                    assert len(before[0]) == 1
+                    delivery = before[0][0]
+                    assert (delivery.message_id, delivery.state, delivery.attempts,
+                            delivery.claim_token, delivery.lease_expires_at) == (
+                        sent.json()["message_id"], "pending", 0, None, None)
+                    delay = response.headers.get("Retry-After", "")
+                    assert delay.isascii() and delay.isdecimal()
+                    assert 0 < int(delay) < deadline - time.monotonic()
+                    time.sleep(int(delay))
+                    assert time.monotonic() < deadline
+                    assert authority() == before
+                    response = client.request(method, path, json=body)
+                assert len(attempts) in (1, 2)
+                assert attempts[-1]["acquired"] is True and "error" not in attempts[-1]
+        else:
+            response = client.request(method, path, json=body)
         stages.append({"stage": "relay_http", "path": path, "status": response.status_code,
                        "finished": time.perf_counter()})
         assert response.status_code == 200, response.text

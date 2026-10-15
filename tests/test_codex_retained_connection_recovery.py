@@ -237,10 +237,21 @@ def _defer_on_state_timeout(http_wake, retained, bridge, *, unresolved=False, na
     _, _, natives = retained
     first.state = "notLoaded"
     original_read = first.read
+    original_dispatch = service.dispatch
+    had_retained_registration = service.retained_registration is not None
+    dispatch_completed = threading.Event()
+    read_faults = []
+
+    def dispatch(*args, **kwargs):
+        try:
+            return original_dispatch(*args, **kwargs)
+        finally:
+            dispatch_completed.set()
 
     def timeout_read(deadline):
         request = first.writes[-1]
         if request.get("params", {}).get("tool") == "read_thread":
+            read_faults.append(request)
             if native_failure:
                 envelope = original_read(deadline)
                 envelope["result"] = {"success": False, "contentItems": [
@@ -252,7 +263,12 @@ def _defer_on_state_timeout(http_wake, retained, bridge, *, unresolved=False, na
         return original_read(deadline)
 
     first.read = timeout_read
-    send()
+    service.dispatch = dispatch
+    try:
+        send(dispatch_completed=dispatch_completed)
+        assert len(read_faults) == int(had_retained_registration)
+    finally:
+        service.dispatch = original_dispatch
     return http, service, first, natives
 
 

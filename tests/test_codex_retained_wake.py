@@ -639,7 +639,7 @@ def http_wake(client, retained, monkeypatch, tmp_path):
     assert time.monotonic is native_monotonic
     body = {"sender_runtime": "claude-code", "sender_session_ref": "sender", "recipient": f"codex:{TARGET}",
             "message_id": "retained-journey", "payload": "private-payload-東京", **SCOPE}
-    def send():
+    def send(*, dispatch_completed=None):
         deadline = time.monotonic() + 2.0
         response = http.post("/relay/messages", json=body)
         try:
@@ -659,6 +659,8 @@ def http_wake(client, retained, monkeypatch, tmp_path):
                 if time.monotonic() < deadline:
                     response = http.post("/relay/messages", json=body)
         assert response.status_code == 200, response.text
+        if dispatch_completed is not None:
+            assert dispatch_completed.wait(5), "native setup dispatch did not complete"
         for worker in workers:
             worker.join(2)
             assert not worker.is_alive(), "native wake blocked hook/registry"
