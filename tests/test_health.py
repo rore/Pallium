@@ -1851,3 +1851,164 @@ class TestStatusSnapshot:
         assert body["snapshot"]["enabled"] is True
         assert body["snapshot"]["snapshot_count"] == 0
         assert body["snapshot"]["last_snapshot_at"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure_phase", ["runtime", "mcp"])
+async def test_production_failure_keeps_outer_launch_token_for_supervisor(
+    monkeypatch, test_db_url, tmp_path, caplog, failure_phase,
+):
+    import json
+    import os
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from types import SimpleNamespace
+    import httpx
+    from app import main, supervisor
+
+    home, nonce = tmp_path / "home", "private-launch-owner"
+    monkeypatch.setenv("PALLIUM_HOME", str(home))
+    monkeypatch.setenv("PALLIUM_API_LAUNCH_TOKEN", nonce)
+    token = home / "run" / "api_token"
+    create = main.create_app
+    write = main._write_launch_token
+    writes, closed, fault_entries = [], [], []
+    failure = RuntimeError("planned owned initialization failure")
+
+    def write_token():
+        path = write()
+        writes.append(path)
+        return path
+
+    def fail_runtime(*_args, **_kwargs):
+        fault_entries.append("runtime")
+        raise failure
+
+    @contextlib.asynccontextmanager
+    async def fail_mcp(_manager):
+        fault_entries.append("mcp")
+        raise failure
+        yield
+
+    monkeypatch.setattr(main, "_write_launch_token", write_token)
+    async with _prebuilt_production_inner(monkeypatch, lambda: create(_no_vector_config(test_db_url))) as inner:
+        storage = inner.state.pallium_service._storage
+        close = storage.close
+        storage.close = lambda: closed.append(storage) or close()
+        if failure_phase == "runtime":
+            monkeypatch.setattr(main, "start_claude_wake_reconciler", fail_runtime)
+        else:
+            manager = pytest.importorskip("mcp.server.streamable_http_manager")
+            monkeypatch.setattr(manager.StreamableHTTPSessionManager, "run", fail_mcp)
+        application = main.app()
+        async with application.router.lifespan_context(application):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=application), base_url="http://test",
+            ) as client:
+                health, body = await _wait_for_health(client, lambda value: value.get("status") == "failed")
+            await asyncio.wait_for(asyncio.shield(application.state._owner), 5)
+            assert fault_entries == [failure_phase]
+            assert len([record for record in caplog.records
+                        if record.name == "app.main" and record.exc_info
+                        and record.exc_info[1] is failure]) == 1
+            assert closed == [storage], "failed initialization must close storage before fallback"
+            assert health.status_code == 503 and body["initialized"] is False and body["ready"] is False
+            assert token.is_file(), "inner failure removed the live outer launch token"
+            assert json.loads(token.read_text(encoding="utf-8")) == {"nonce": nonce, "pid": os.getpid()}
+            assert writes == [token], "production inner must not overwrite the outer token"
+            requests = []
+
+            class FailedHealth(BaseHTTPRequestHandler):
+                def do_GET(self):
+                    requests.append(self.path)
+                    self.send_response(health.status_code)
+                    self.send_header("Content-Length", str(len(health.content)))
+                    self.end_headers()
+                    self.wfile.write(health.content)
+
+                def log_message(self, *_args):
+                    pass
+
+            def no_startup_sleep(_seconds):
+                pytest.fail("verified terminal failure consumed the startup wait policy")
+
+            server = ThreadingHTTPServer(("127.0.0.1", 0), FailedHealth)
+            reader = threading.Thread(target=server.serve_forever)
+            started = False
+            try:
+                reader.start()
+                started = True
+                assert await asyncio.to_thread(
+                    supervisor._wait_for_api, "127.0.0.1", server.server_port,
+                    timeout=120, sleep_fn=no_startup_sleep, process=SimpleNamespace(poll=lambda: None),
+                    expected_nonce=nonce, run_dir=home / "run",
+                ) is False
+                assert requests == ["/health"]
+                assert token.is_file()
+            finally:
+                try:
+                    if started:
+                        server.shutdown()
+                finally:
+                    try:
+                        server.server_close()
+                    finally:
+                        if reader.ident is not None:
+                            reader.join()
+            assert not reader.is_alive()
+        assert not token.exists(), "outer shutdown must remove its launch token"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure_phase", ["none", "runtime", "mcp"])
+async def test_eager_lifespan_owns_and_removes_launch_token(
+    monkeypatch, test_db_url, tmp_path, failure_phase,
+):
+    import json
+    import os
+    from app import main
+
+    home, nonce = tmp_path / "home", "private-eager-owner"
+    monkeypatch.setenv("PALLIUM_HOME", str(home))
+    monkeypatch.setenv("PALLIUM_API_LAUNCH_TOKEN", nonce)
+    token = home / "run" / "api_token"
+    inner = await asyncio.to_thread(main.create_app, _no_vector_config(test_db_url))
+    storage = inner.state.pallium_service._storage
+    write, close = main._write_launch_token, storage.close
+    writes, closed = [], []
+    failure = RuntimeError("planned eager initialization failure")
+
+    def write_token():
+        path = write()
+        writes.append(path)
+        return path
+
+    def fail_runtime(*_args, **_kwargs):
+        raise failure
+
+    @contextlib.asynccontextmanager
+    async def fail_mcp(_manager):
+        raise failure
+        yield
+
+    monkeypatch.setattr(main, "_write_launch_token", write_token)
+    storage.close = lambda: closed.append(storage) or close()
+    try:
+        if failure_phase == "runtime":
+            monkeypatch.setattr(main, "start_claude_wake_reconciler", fail_runtime)
+        elif failure_phase == "mcp":
+            manager = pytest.importorskip("mcp.server.streamable_http_manager")
+            monkeypatch.setattr(manager.StreamableHTTPSessionManager, "run", fail_mcp)
+        if failure_phase == "none":
+            async with inner.router.lifespan_context(inner):
+                assert token.is_file()
+                assert json.loads(token.read_text(encoding="utf-8")) == {"nonce": nonce, "pid": os.getpid()}
+        else:
+            with pytest.raises(RuntimeError) as error:
+                async with inner.router.lifespan_context(inner):
+                    pytest.fail("planned eager failure did not occur")
+            assert error.value is failure
+        assert writes == [token]
+        assert not token.exists(), "eager lifespan must remove its own token"
+        assert closed == [storage], "eager cleanup must close storage before fallback"
+    finally:
+        await asyncio.to_thread(inner.state._close_constructed)

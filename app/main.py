@@ -324,7 +324,9 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
     async def app_lifespan(app_instance: FastAPI) -> AsyncIterator[None]:
         lifespan_started = time.monotonic()
         logger.info("startup stage=lifespan outcome=start pid=%s", os.getpid())
-        token_path = _write_launch_token()
+        # The production wrapper owns its token until its initializer settles.
+        token_path = (None if getattr(app_instance.state, "_production_bootstrap", False)
+                      else _write_launch_token())
         app_instance.state._launch_token_path = token_path
         stop = rebuild_coordinator = None
         claude_wake_reconciler = shadow_service = inventory_service = retained_service = relay_service = None
