@@ -676,7 +676,150 @@ def test_unusable_claude_credentials_revoke_exact_wake(
             return result
         return acquire
 
-    monkeypatch.setattr(common, "_acquire_file_lock", observe_lock(common._acquire_file_lock, "publisher_lock"))
+    publisher_lock = common._acquire_file_lock
+    if unusable == "encoded_overflow":
+        from types import FunctionType
+
+        operations = []
+        phases = []
+        dropped_operations = 0
+        active = [True]
+        call_started_wall = [None]
+        call_started_cpu = [None]
+
+        def measure(label, operation):
+            nonlocal dropped_operations
+            if not active[0]:
+                return operation()
+            try:
+                started_wall = time.perf_counter_ns()
+                started_cpu = time.thread_time_ns()
+            except BaseException:
+                return operation()
+            try:
+                return operation()
+            finally:
+                try:
+                    record = {
+                        "label": label,
+                        "wall_ns": time.perf_counter_ns() - started_wall,
+                        "thread_cpu_ns": time.thread_time_ns() - started_cpu,
+                    }
+                    if len(operations) < 64:
+                        operations.append(record)
+                    else:
+                        dropped_operations += 1
+                except BaseException:
+                    pass
+
+        class TimedPath:
+            def __init__(self, path):
+                self.path = path
+
+            @property
+            def parent(self):
+                return TimedPath(self.path.parent)
+
+            def mkdir(self, *args, **kwargs):
+                return measure("parent_mkdir", lambda: self.path.mkdir(*args, **kwargs))
+
+            def __fspath__(self):
+                return os.fspath(self.path)
+
+        class TimedFile:
+            def __init__(self, handle):
+                self.handle = handle
+
+            def __getattr__(self, name):
+                return getattr(self.handle, name)
+
+            def seek(self, *args, **kwargs):
+                return measure("file_seek", lambda: self.handle.seek(*args, **kwargs))
+
+            def tell(self):
+                return measure("file_tell", self.handle.tell)
+
+            def write(self, *args, **kwargs):
+                return measure("file_write", lambda: self.handle.write(*args, **kwargs))
+
+            def flush(self):
+                return measure("file_flush", self.handle.flush)
+
+            def close(self):
+                return measure("file_close", self.handle.close)
+
+        def timed_open(path, *args, **kwargs):
+            handle = measure("file_open", lambda: open(path, *args, **kwargs))
+            try:
+                return TimedFile(handle)
+            except BaseException:
+                return handle
+
+        def record_lock_phase(phase, error=None):
+            try:
+                if len(phases) < 16:
+                    now_wall = time.perf_counter_ns()
+                    now_cpu = time.thread_time_ns()
+                    elapsed_wall = now_wall - call_started_wall[0] if call_started_wall[0] is not None else 0
+                    elapsed_cpu = now_cpu - call_started_cpu[0] if call_started_cpu[0] is not None else 0
+                    measured_wall = sum(item["wall_ns"] for item in operations)
+                    phases.append({
+                        "phase": phase, "elapsed_wall_ns": elapsed_wall,
+                        "thread_cpu_ns": elapsed_cpu,
+                        "prior_operation_wall_ns": measured_wall,
+                        "operation_count": len(operations),
+                        "unattributed_residual_wall_ns": elapsed_wall - measured_wall,
+                    })
+            except BaseException:
+                pass
+            common._report_session_state_failure(phase, error)
+
+        namespace = dict(publisher_lock.__globals__)
+        namespace["open"] = timed_open
+        namespace["_report_session_state_failure"] = record_lock_phase
+        measured_publisher_lock = FunctionType(
+            publisher_lock.__code__, namespace, publisher_lock.__name__,
+            publisher_lock.__defaults__, publisher_lock.__closure__,
+        )
+        measured_publisher_lock.__kwdefaults__ = publisher_lock.__kwdefaults__
+
+        def observe_publisher_lock(*args, **kwargs):
+            nonlocal dropped_operations
+            try:
+                operations.clear()
+                phases.clear()
+                dropped_operations = 0
+                active[0] = True
+                started_wall = time.perf_counter_ns()
+                started_cpu = time.thread_time_ns()
+            except BaseException:
+                started_wall = started_cpu = None
+            call_started_wall[0] = started_wall
+            call_started_cpu[0] = started_cpu
+            result = None
+            try:
+                result = measured_publisher_lock(TimedPath(args[0]), *args[1:], **kwargs)
+                return result
+            finally:
+                active[0] = False
+                try:
+                    elapsed_wall = time.perf_counter_ns() - started_wall if started_wall is not None else 0
+                    elapsed_cpu = time.thread_time_ns() - started_cpu if started_cpu is not None else 0
+                    measured_wall = sum(item["wall_ns"] for item in operations)
+                    stages.append({
+                        "stage": "publisher_lock", "acquired": result is not None,
+                        "elapsed_ms": elapsed_wall / 1_000_000,
+                        "thread_cpu_ms": elapsed_cpu / 1_000_000,
+                        "phases": list(phases), "operations": list(operations),
+                        "operations_dropped": dropped_operations,
+                        "whole_call_unattributed_residual_ms": (elapsed_wall - measured_wall) / 1_000_000,
+                    })
+                except BaseException:
+                    pass
+
+        monkeypatch.setattr(common, "_acquire_file_lock", observe_publisher_lock)
+    else:
+        monkeypatch.setattr(common, "_acquire_file_lock", observe_lock(publisher_lock, "publisher_lock"))
     monkeypatch.setattr(wake, "_acquire_intent_lock", observe_lock(wake._acquire_intent_lock, "registry_lock"))
     original_publish = common._write_wake_intent
 
@@ -697,11 +840,21 @@ def test_unusable_claude_credentials_revoke_exact_wake(
     monkeypatch.setattr(common.urllib.request, "build_opener", lambda *_: SimpleNamespace(open=open_request))
     session_ref, container_ref = "restricted-✓", "git:example/π"
     other_container = "git:example/other"
-    assert client.post("/relay/turn", json={"runtime": "claude-code", "session_ref": session_ref, "container_ref": container_ref}).status_code == 200
-    assert common.register_claude_wake(session_ref, container_ref, idle=True), statuses
-    assert statuses[-1][1] == 204, statuses
-    assert common.register_claude_wake(session_ref, other_container, idle=True)
-    assert statuses[-1][1] == 204, statuses
+    try:
+        assert client.post("/relay/turn", json={"runtime": "claude-code", "session_ref": session_ref, "container_ref": container_ref}).status_code == 200
+        assert common.register_claude_wake(session_ref, container_ref, idle=True), statuses
+        assert statuses[-1][1] == 204, statuses
+        assert common.register_claude_wake(session_ref, other_container, idle=True)
+        assert statuses[-1][1] == 204, statuses
+    except BaseException:
+        if unusable == "encoded_overflow":
+            try:
+                diagnostic = json.dumps({"case": unusable, "http_statuses": statuses, "stages": stages})
+                (tmp_path / "credential-revocation-stages.json").write_text(diagnostic, encoding="utf-8")
+                print(f"credential-revocation-stages={diagnostic}", file=sys.stderr)
+            except Exception:
+                pass
+        raise
 
     def activation() -> dict:
         rows = client.get("/relay/sessions", params={"container_ref": container_ref, "include_inactive": "true"}).json()
