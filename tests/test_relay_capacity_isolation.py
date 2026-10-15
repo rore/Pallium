@@ -1826,21 +1826,33 @@ def test_operation_tracking_covers_cancellation_and_failure_boundaries(tmp_path,
                 asyncio.create_task(client.post("/relay/turn", json=payload(f"active-{index}")))
                 for index in range(4)
             ]
-            assert await asyncio.to_thread(four_started.wait, 1)
-            queued = asyncio.create_task(
-                client.post("/relay/turn", json=payload("cancelled-while-queued"))
-            )
-            await asyncio.sleep(0.05)
-            queued.cancel()
-            with pytest.raises(asyncio.CancelledError):
-                await queued
-            queued_barrier = await _start_operation_barrier(app)
-            await _assert_barrier_waiting(queued_barrier)
-            relay_release.set()
-            responses = await asyncio.wait_for(asyncio.gather(*active), 3)
-            assert all(response.status_code == 200 for response in responses)
-            assert await asyncio.wait_for(queued_barrier, 1)
-            assert started_count == 4
+            queued = queued_barrier = None
+            try:
+                assert await asyncio.to_thread(four_started.wait, 1)
+                queued = asyncio.create_task(
+                    client.post("/relay/turn", json=payload("cancelled-while-queued"))
+                )
+                await asyncio.sleep(0.05)
+                queued.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await queued
+                queued_barrier = await _start_operation_barrier(app)
+                await _assert_barrier_waiting(queued_barrier)
+                relay_release.set()
+                responses = await asyncio.wait_for(asyncio.gather(*active), 3)
+                assert all(response.status_code == 200 for response in responses)
+                assert await asyncio.wait_for(queued_barrier, 1)
+                assert started_count == 4
+            finally:
+                relay_release.set()
+                owned = [*active, *(task for task in (queued, queued_barrier) if task is not None)]
+                for task in owned:
+                    if not task.done():
+                        task.cancel()
+                try:
+                    await asyncio.wait_for(asyncio.gather(*owned, return_exceptions=True), 3)
+                finally:
+                    assert await asyncio.to_thread(app.state._wait_for_operations, 3)
 
             native_release, three_native_started = threading.Event(), threading.Event()
             native_calls = []
@@ -1924,4 +1936,75 @@ def test_operation_tracking_covers_cancellation_and_failure_boundaries(tmp_path,
     try:
         asyncio.run(exercise())
     finally:
+        # The bounded phase cleanup may itself fail; storage still needs its drain.
+        app.state._wait_for_operations()
         app.state.pallium_service._storage.close()
+
+
+def test_operation_tracking_early_failure_drains_before_storage_close(tmp_path, monkeypatch) -> None:
+    native_asyncio, native_threading = asyncio, threading
+    drain_entered = threading.Event()
+    first_phase_events, close_observations, drain_gate_observations = [], [], []
+    app_ref = {}
+    original_create_app = create_app
+
+    def observe_app(*args, **kwargs):
+        app = original_create_app(*args, **kwargs)
+        storage = app.state.pallium_service._storage
+        original_wait, original_close = app.state._wait_for_operations, storage.close
+        app_ref["wait"] = original_wait
+
+        def observe_wait(*args, **kwargs):
+            if len(first_phase_events) == 2 and first_phase_events[1].is_set():
+                drain_entered.set()
+                drain_gate_observations.append(first_phase_events[0].is_set())
+            return original_wait(*args, **kwargs)
+
+        def observe_close():
+            close_observations.append((drain_entered.is_set(), original_wait(0)))
+            # Rescue RED after retaining its wrong teardown ordering.
+            if not drain_entered.is_set() and first_phase_events:
+                first_phase_events[0].set()
+                original_wait()
+            return original_close()
+
+        app.state._wait_for_operations, storage.close = observe_wait, observe_close
+        return app
+
+    def event():
+        value = native_threading.Event()
+        first_phase_events.append(value)
+        return value
+
+    async def force_first_phase_assertion(func, /, *args, **kwargs):
+        if (len(first_phase_events) >= 2 and getattr(func, "__self__", None) is first_phase_events[1]
+                and args == (1,) and not kwargs):
+            assert len(first_phase_events) == 2
+            assert await native_asyncio.to_thread(func, 5)
+            assert not first_phase_events[0].is_set()
+            app_ref["tracked_at_failure"] = not app_ref["wait"](0)
+            return False
+        return await native_asyncio.to_thread(func, *args, **kwargs)
+
+    monkeypatch.setattr(sys.modules[__name__], "create_app", observe_app)
+    monkeypatch.setattr(sys.modules[__name__], "threading", SimpleNamespace(**{
+        **vars(native_threading), "Event": event,
+    }))
+    monkeypatch.setattr(sys.modules[__name__], "asyncio", SimpleNamespace(**{
+        **vars(native_asyncio), "to_thread": force_first_phase_assertion,
+    }))
+    try:
+        with pytest.raises(AssertionError) as failure:
+            test_operation_tracking_covers_cancellation_and_failure_boundaries(tmp_path, monkeypatch)
+    finally:
+        if first_phase_events:
+            first_phase_events[0].set()
+        if "wait" in app_ref:
+            app_ref["wait"]()
+
+    assert "four_started.wait" in str(failure.traceback[-1].statement)
+    assert len(first_phase_events) == 2
+    assert app_ref["tracked_at_failure"]
+    assert drain_entered.is_set()
+    assert drain_gate_observations and all(drain_gate_observations)
+    assert close_observations and all(drained and finished for drained, finished in close_observations)
