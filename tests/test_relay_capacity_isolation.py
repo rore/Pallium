@@ -1639,6 +1639,23 @@ def test_closed_loop_cleanup_drains_before_storage_close_on_callback_entry_asser
     nested_tmp_path = tmp_path / "early-callback-assertion"
     nested_tmp_path.mkdir()
 
+    original_to_thread = asyncio.to_thread
+    test_asyncio = SimpleNamespace(**vars(asyncio))
+
+    async def synchronize_callback_entry(func, /, *args, **kwargs):
+        if (
+            getattr(func, "__name__", None) == "wait"
+            and isinstance(getattr(func, "__self__", None), threading.Event)
+            and args == (1,)
+            and not kwargs
+        ):
+            assert await original_to_thread(worker_entered.wait, 5)
+            return False
+        return await original_to_thread(func, *args, **kwargs)
+
+    test_asyncio.to_thread = synchronize_callback_entry
+    monkeypatch.setattr(sys.modules[__name__], "asyncio", test_asyncio)
+
     try:
         with pytest.raises(AssertionError) as failure:
             test_codex_operation_tracking_settles_after_event_loop_closes(

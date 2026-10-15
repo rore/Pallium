@@ -272,7 +272,15 @@ def test_unloaded_hook_claim_failure_recovers_original_and_backlog(
         monkeypatch.setattr(hook, "relay_request", lose_claim_response)
     else:
         monkeypatch.setattr(hook, "acknowledge_relay", fail_ack)
-    desktop.on_owner = lambda request: run_hook(request["params"]["arguments"]["prompt"])
+    owner_finished = threading.Event()
+
+    def on_owner(request):
+        try:
+            run_hook(request["params"]["arguments"]["prompt"])
+        finally:
+            owner_finished.set()
+
+    desktop.on_owner = on_owner
 
     def send(message_id, payload):
         response = http.post("/relay/messages", json={
@@ -281,6 +289,9 @@ def test_unloaded_hook_claim_failure_recovers_original_and_backlog(
             "payload": payload, **sender_scope,
         })
         assert response.status_code == 200, response.text
+        if message_id == "claim-failure-original":
+            # Synchronize real hook work before checking worker settlement below.
+            assert owner_finished.wait(5), "first owner hook did not finish"
         for worker in workers:
             worker.join(2)
             assert not worker.is_alive()

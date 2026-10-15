@@ -2154,8 +2154,23 @@ def test_claude_stop_emits_unicode_to_utf8_stderr_buffer(monkeypatch):
     assert "review → ✓" in output.buffer.getvalue().decode("utf-8")
 
 
-def test_storage_budget_reserves_notice_without_dropping_claim(client):
+def test_storage_budget_reserves_notice_without_dropping_claim(client, monkeypatch):
     common = _load("claude_boundary_format", "integrations/claude-code/hooks/common.py")
+    from itertools import count
+    from types import SimpleNamespace
+    import time
+
+    from storage import sqlite_queue
+
+    # This character-budget journey must not depend on host admission setup speed.
+    original_monotonic = time.monotonic
+    private_time = SimpleNamespace(**vars(time))
+    private_time.monotonic = count(step=0.001).__next__
+    monkeypatch.setattr(sqlite_queue, "time", private_time)
+    assert sqlite_queue.time is not time
+    assert sqlite_queue.time.sleep is time.sleep
+    assert time.monotonic is original_monotonic
+
     scope = {"container_ref": "git:example/repo", "actor_ref": "actor"}
     sender = "s" * 255
     target = "t" * 255
