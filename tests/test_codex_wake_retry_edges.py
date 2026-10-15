@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 import sqlite3
 import sys
@@ -5,7 +6,7 @@ import threading
 
 import pytest
 
-from core.codex_wake import CodexWakeRegistry
+from core.codex_wake import CodexWakeRegistry, WAKE_RETRY_COOLDOWN_SECONDS
 from core.relay import RELAY_CLAIM_LEASE_SECONDS
 from tests.test_codex_retained_wake import (
     SCOPE, TARGET, _hook_runner, http_wake, recover, retained as retained_fixture,
@@ -486,12 +487,40 @@ def test_expired_claim_clock_rollback_clamps_without_replaying_active_lease(
 
 @pytest.mark.parametrize("change", ["working", "unknown", "closed", "claim", "acked", "unresolved"])
 def test_expired_claim_retry_still_obeys_target_claim_ack_and_custody_guards(
-    http_wake, monkeypatch, change,
+    http_wake, monkeypatch, change, *, force_initial_refusal=False,
 ):
     http, relay, registry, service, desktop, send, _ = http_wake
     now = [datetime(2030, 9, 5, tzinfo=timezone.utc)]
     _freeze_clock(monkeypatch, now)
-    first = send()
+    with monkeypatch.context() as setup_patch:
+        attempts = _observe_transition_attempts(
+            http_wake, setup_patch, "begin_native_attempt", force_refusal=force_initial_refusal,
+        )
+        releases = _observe_transition_attempts(http_wake, setup_patch, "release")
+        first = send()
+        assert not force_initial_refusal or attempts[0].get("forced") is True
+        if _single_typed_transition_refusal(attempts):
+            prepared = attempts[0]["reservation"]
+            assert prepared.outcome == "prepared"
+            assert len(releases) == 1 and releases[0]["reservations"] == (prepared,)
+            assert "error_type" not in releases[0] and releases[0].get("result") == (prepared,)
+            assert relay.codex_wake_snapshot() == (True, ())
+            assert prepared.delivery_id == first["delivery_id"] and desktop.owners == []
+            pending, = http.get("/relay/messages/retained-journey", params=SCOPE).json()["deliveries"]
+            assert pending["state"] == "pending" and pending["attempts"] == 0
+            recover(http_wake)
+            assert len(attempts) == 2 and attempts[1]["reservation"] == replace(
+                prepared, generation=prepared.generation + 1,
+            )
+        else:
+            assert len(attempts) == 1 and "error_type" not in attempts[0]
+            assert releases == []
+        assert "error_type" not in attempts[-1]
+        uncertain = replace(attempts[-1]["reservation"], outcome="uncertain",
+                            retry_not_before=now[0].timestamp() + WAKE_RETRY_COOLDOWN_SECONDS)
+        assert attempts[-1].get("result") == uncertain
+        assert len(desktop.owners) == 1
+        assert registry.snapshot(first["recipient_endpoint_id"]) == uncertain
     claim = http.post("/relay/turn", json={
         "runtime": "codex", "session_ref": TARGET, **SCOPE,
     })
@@ -533,6 +562,12 @@ def test_expired_claim_retry_still_obeys_target_claim_ack_and_custody_guards(
         assert service.retained_registration is None
     observed = http.get("/relay/messages/retained-journey", params=SCOPE).json()["deliveries"][0]
     assert observed["state"] == ("delivered" if change == "acked" else "claimed")
+
+
+def test_expired_claim_guards_recover_initial_native_refusal(http_wake, monkeypatch):
+    test_expired_claim_retry_still_obeys_target_claim_ack_and_custody_guards(
+        http_wake, monkeypatch, "closed", force_initial_refusal=True,
+    )
 
 
 def test_concurrent_expired_claim_recovery_spends_one_new_generation(http_wake, monkeypatch):

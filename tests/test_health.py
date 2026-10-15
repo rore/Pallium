@@ -40,6 +40,26 @@ async def _wait_for_health(client, predicate, *, timeout: float = 5.0):
             await asyncio.sleep(.01)
 
 
+@contextlib.asynccontextmanager
+async def _prebuilt_production_inner(monkeypatch, builder):
+    """Keep native database preparation outside the lifecycle under test."""
+    from app import main
+
+    inner = await asyncio.to_thread(builder)
+    loop_thread, delegate_threads = threading.get_ident(), []
+
+    def delegate(*_args, **_kwargs):
+        delegate_threads.append(threading.get_ident())
+        return inner
+
+    monkeypatch.setattr(main, "create_app", delegate)
+    try:
+        yield inner
+        assert len(delegate_threads) == 1 and delegate_threads[0] != loop_thread
+    finally:
+        await asyncio.to_thread(inner.state._close_constructed)
+
+
 @pytest.mark.parametrize("metrics_failure", [False, True])
 def test_app_reuses_startup_storage_and_closes_it_once(monkeypatch, test_db_url, metrics_failure):
     from app import dependencies, main
@@ -292,7 +312,6 @@ async def test_production_factory_keeps_mcp_lifespan_on_one_task(monkeypatch, te
 
     manager = pytest.importorskip("mcp.server.streamable_http_manager")
     create_app = main.create_app
-    monkeypatch.setattr(main, "create_app", lambda *_args, **_kwargs: create_app(_no_vector_config(test_db_url)))
     lifecycle_tasks = []
 
     @contextlib.asynccontextmanager
@@ -304,15 +323,16 @@ async def test_production_factory_keeps_mcp_lifespan_on_one_task(monkeypatch, te
             lifecycle_tasks.append(("exit", asyncio.current_task()))
 
     monkeypatch.setattr(manager.StreamableHTTPSessionManager, "run", run)
-    application = main.app()
-    async with application.router.lifespan_context(application):
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=application), base_url="http://test",
-        ) as client:
-            await _wait_for_health(client, lambda body: body.get("initialized") is True)
+    async with _prebuilt_production_inner(monkeypatch, lambda: create_app(_no_vector_config(test_db_url))):
+        application = main.app()
+        async with application.router.lifespan_context(application):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=application), base_url="http://test",
+            ) as client:
+                await _wait_for_health(client, lambda body: body.get("initialized") is True)
 
-    assert [phase for phase, _task in lifecycle_tasks] == ["enter", "exit"]
-    assert lifecycle_tasks[0][1] is lifecycle_tasks[1][1]
+        assert [phase for phase, _task in lifecycle_tasks] == ["enter", "exit"]
+        assert lifecycle_tasks[0][1] is lifecycle_tasks[1][1]
 
 
 @pytest.mark.asyncio
@@ -365,26 +385,26 @@ async def test_production_factory_degraded_provider_keeps_query_operational(
     from app import main
 
     create_app = main.create_app
-    monkeypatch.setattr(
-        main, "create_app", lambda *_args, **_kwargs: create_app(_failed_embedding_config(test_db_url)),
-    )
-    application = main.app()
-    async with application.router.lifespan_context(application):
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=application), base_url="http://test",
-        ) as client:
-            health, body = await _wait_for_health(
-                client, lambda state: state.get("initialized") is True,
-            )
-            status = await client.get("/status")
-            query = await client.post("/query", json={"text": "startup probe"})
+    async with _prebuilt_production_inner(
+        monkeypatch, lambda: create_app(_failed_embedding_config(test_db_url)),
+    ):
+        application = main.app()
+        async with application.router.lifespan_context(application):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=application), base_url="http://test",
+            ) as client:
+                health, body = await _wait_for_health(
+                    client, lambda state: state.get("initialized") is True,
+                )
+                status = await client.get("/status")
+                query = await client.post("/query", json={"text": "startup probe"})
 
-    assert health.status_code == 200
-    assert body["status"] == "degraded"
-    assert body["ready"] is False
-    assert status.json()["initialized"] is True
-    assert status.json()["ready"] is False
-    assert query.status_code == 200
+        assert health.status_code == 200
+        assert body["status"] == "degraded"
+        assert body["ready"] is False
+        assert status.json()["initialized"] is True
+        assert status.json()["ready"] is False
+        assert query.status_code == 200
 
 
 @pytest.mark.asyncio
@@ -399,10 +419,11 @@ async def test_production_factory_constructor_failure_closes_acquired_storage(
     storage_builder = main.build_storage_provider
     acquired_storage, close_calls = [], []
     storage_closed = threading.Event()
+    storage = await asyncio.to_thread(storage_builder, config)
+    fallback_close = storage.close
 
     def tracked_storage_builder(_config):
-        storage = storage_builder(config)
-        original_close = storage.close
+        original_close = fallback_close
 
         def close():
             close_calls.append(storage)
@@ -418,30 +439,34 @@ async def test_production_factory_constructor_failure_closes_acquired_storage(
     def fail_service_build(*_args, **_kwargs):
         raise RuntimeError("planned constructor failure")
 
-    monkeypatch.setattr(main, "build_storage_provider", tracked_storage_builder)
-    monkeypatch.setattr(dependencies, "_build_service_from_storage", fail_service_build)
-    monkeypatch.setattr(main, "create_app", lambda *_args, **_kwargs: create_app(config))
-    application = main.app()
-    async with application.router.lifespan_context(application):
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=application), base_url="http://test",
-        ) as client:
-            assert await asyncio.to_thread(storage_closed.wait, 5), "constructor failure leaked its acquired SQLite storage"
-            health, health_body = await _wait_for_health(
-                client, lambda body: bool(body.get("initialization_error")),
-            )
-            status = await client.get("/status")
-            query = await client.post("/query", json={"text": "after constructor failure"})
+    try:
+        monkeypatch.setattr(main, "build_storage_provider", tracked_storage_builder)
+        monkeypatch.setattr(dependencies, "_build_service_from_storage", fail_service_build)
+        monkeypatch.setattr(main, "create_app", lambda *_args, **_kwargs: create_app(config))
+        application = main.app()
+        async with application.router.lifespan_context(application):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=application), base_url="http://test",
+            ) as client:
+                assert await asyncio.to_thread(storage_closed.wait, 5), "constructor failure leaked its acquired SQLite storage"
+                health, health_body = await _wait_for_health(
+                    client, lambda body: bool(body.get("initialization_error")),
+                )
+                status = await client.get("/status")
+                query = await client.post("/query", json={"text": "after constructor failure"})
 
-    assert len(acquired_storage) == 1
-    assert close_calls == acquired_storage
-    assert health.status_code == 503
-    assert health_body["initialized"] is False
-    assert health_body["ready"] is False
-    assert status.json()["initialized"] is False
-    assert status.json()["ready"] is False
-    assert query.status_code == 503
+        assert len(acquired_storage) == 1
+        assert close_calls == acquired_storage
+        assert health.status_code == 503
+        assert health_body["initialized"] is False
+        assert health_body["ready"] is False
+        assert status.json()["initialized"] is False
+        assert status.json()["ready"] is False
+        assert query.status_code == 503
 
+    finally:
+        if not storage_closed.is_set():
+            await asyncio.to_thread(fallback_close)
 
 @pytest.mark.asyncio
 async def test_production_factory_runtime_setup_failure_closes_app_resources(
@@ -935,61 +960,61 @@ async def test_production_factory_closes_resources_after_rebuild_thread_start_fa
         built_apps.append(built)
         return built
 
-    monkeypatch.setattr(main, "create_app", build_inner)
-    thread_starts = []
-    real_thread_start = threading.Thread.start
+    async with _prebuilt_production_inner(monkeypatch, build_inner):
+        thread_starts = []
+        real_thread_start = threading.Thread.start
 
-    def fail_rebuild_start(thread):
-        if thread.name == "vector-rebuild":
-            thread_starts.append(thread)
-            raise RuntimeError("planned vector rebuild thread start failure")
-        return real_thread_start(thread)
+        def fail_rebuild_start(thread):
+            if thread.name == "vector-rebuild":
+                thread_starts.append(thread)
+                raise RuntimeError("planned vector rebuild thread start failure")
+            return real_thread_start(thread)
 
-    monkeypatch.setattr(threading.Thread, "start", fail_rebuild_start)
-    application = main.app()
-    owner = None
-    request_shutdown = asyncio.Event()
-    lifespan_entered = asyncio.Event()
+        monkeypatch.setattr(threading.Thread, "start", fail_rebuild_start)
+        application = main.app()
+        owner = None
+        request_shutdown = asyncio.Event()
+        lifespan_entered = asyncio.Event()
 
-    async def own_lifespan():
-        async with application.router.lifespan_context(application):
-            lifespan_entered.set()
-            await request_shutdown.wait()
+        async def own_lifespan():
+            async with application.router.lifespan_context(application):
+                lifespan_entered.set()
+                await request_shutdown.wait()
 
-    try:
-        owner = asyncio.create_task(own_lifespan())
-        await asyncio.wait_for(lifespan_entered.wait(), timeout=5)
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=application), base_url="http://test",
-        ) as client:
-            health, body = await _wait_for_health(
-                client, lambda value: value.get("initialization_error") == "service_initialization_failed",
-            )
-            status = await client.get("/status")
-            query = await client.post("/query", json={"text": "failed startup probe"})
-            assert health.status_code == 503
-            assert body["status"] == "failed"
-            assert body["initialized"] is False and body["ready"] is False
-            assert status.status_code == 503
-            assert status.json()["initialized"] is False and status.json()["ready"] is False
-            assert query.status_code == 503
+        try:
+            owner = asyncio.create_task(own_lifespan())
+            await asyncio.wait_for(lifespan_entered.wait(), timeout=5)
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=application), base_url="http://test",
+            ) as client:
+                health, body = await _wait_for_health(
+                    client, lambda value: value.get("initialization_error") == "service_initialization_failed",
+                )
+                status = await client.get("/status")
+                query = await client.post("/query", json={"text": "failed startup probe"})
+                assert health.status_code == 503
+                assert body["status"] == "failed"
+                assert body["initialized"] is False and body["ready"] is False
+                assert status.status_code == 503
+                assert status.json()["initialized"] is False and status.json()["ready"] is False
+                assert query.status_code == 503
 
-            assert len(thread_starts) == 1
-            assert thread_starts[0].name == "vector-rebuild"
-            assert thread_starts[0].ident is None and not thread_starts[0].is_alive()
-            assert len(built_apps) == 1
-            assert len(service_close_calls) == 1
-            assert service_close_calls == [built_apps[0].state.pallium_service]
-            assert len(storages) == 1
-            assert set(storage_close_calls) == {id(storage) for storage in storages}
-            assert all(storage_close_calls[id(storage)] == 1 for storage in storages)
+                assert len(thread_starts) == 1
+                assert thread_starts[0].name == "vector-rebuild"
+                assert thread_starts[0].ident is None and not thread_starts[0].is_alive()
+                assert len(built_apps) == 1
+                assert len(service_close_calls) == 1
+                assert service_close_calls == [built_apps[0].state.pallium_service]
+                assert len(storages) == 1
+                assert set(storage_close_calls) == {id(storage) for storage in storages}
+                assert all(storage_close_calls[id(storage)] == 1 for storage in storages)
 
-        request_shutdown.set()
-        await asyncio.wait_for(owner, timeout=5)
-    finally:
-        request_shutdown.set()
-        if owner is not None:
-            await asyncio.wait_for(owner, timeout=5)
+            request_shutdown.set()
+            await asyncio.wait_for(asyncio.shield(owner), timeout=5)
+        finally:
+            request_shutdown.set()
+            if owner is not None:
+                await asyncio.gather(owner, return_exceptions=True)
 
 
 @pytest.mark.asyncio
@@ -1016,7 +1041,7 @@ async def test_production_factory_shutdown_settles_held_build_before_close(
             build_started.set()
             if not release_build.wait(5):
                 raise AssertionError("test did not release the held app build")
-            built = create_app(_no_vector_config(test_db_url))
+            built = delegate(*_args, **_kwargs)
             original_close = built.state.pallium_service.close
 
             def counted_close():
@@ -1029,52 +1054,54 @@ async def test_production_factory_shutdown_settles_held_build_before_close(
         finally:
             build_finished.set()
 
-    monkeypatch.setattr(main, "create_app", held_builder)
-    monkeypatch.setattr(FastAPI, "__call__", observe_inner_scope)
-    application = main.app()
-    owner = None
-    request_shutdown = asyncio.Event()
-    lifespan_entered = asyncio.Event()
+    async with _prebuilt_production_inner(monkeypatch, lambda: create_app(_no_vector_config(test_db_url))):
+        delegate = main.create_app
+        monkeypatch.setattr(main, "create_app", held_builder)
+        monkeypatch.setattr(FastAPI, "__call__", observe_inner_scope)
+        application = main.app()
+        owner = None
+        request_shutdown = asyncio.Event()
+        lifespan_entered = asyncio.Event()
 
-    async def own_lifespan():
-        async with application.router.lifespan_context(application):
-            lifespan_entered.set()
-            await request_shutdown.wait()
+        async def own_lifespan():
+            async with application.router.lifespan_context(application):
+                lifespan_entered.set()
+                await request_shutdown.wait()
 
-    try:
-        owner = asyncio.create_task(own_lifespan())
-        await asyncio.wait_for(lifespan_entered.wait(), timeout=5)
-        assert await asyncio.to_thread(build_started.wait, 2), "app lifespan did not start construction"
-        request_shutdown.set()
-        loop_pulse = asyncio.Event()
-        asyncio.get_running_loop().call_soon(loop_pulse.set)
-        await asyncio.wait_for(loop_pulse.wait(), timeout=1)
-        assert not owner.done(), "shutdown abandoned or bypassed the held build"
-        assert not build_finished.is_set()
-        assert close_after_build == [], "shutdown closed resources while construction was still held"
+        try:
+            owner = asyncio.create_task(own_lifespan())
+            await asyncio.wait_for(lifespan_entered.wait(), timeout=5)
+            assert await asyncio.to_thread(build_started.wait, 2), "app lifespan did not start construction"
+            request_shutdown.set()
+            loop_pulse = asyncio.Event()
+            asyncio.get_running_loop().call_soon(loop_pulse.set)
+            await asyncio.wait_for(loop_pulse.wait(), timeout=1)
+            assert not owner.done(), "shutdown abandoned or bypassed the held build"
+            assert not build_finished.is_set()
+            assert close_after_build == [], "shutdown closed resources while construction was still held"
 
-        release_build.set()
-        await asyncio.wait_for(owner, timeout=5)
-        assert build_finished.is_set()
-        assert len(built_apps) == 1
-        assert close_after_build == [True]
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=application), base_url="http://test",
-        ) as client:
-            health = await client.get("/health")
-            status = await client.get("/status")
-            query = await client.post("/query", json={"text": "after shutdown"})
-        assert health.json()["initialized"] is False
-        assert health.json()["ready"] is False
-        assert status.json()["initialized"] is False
-        assert status.json()["ready"] is False
-        assert query.status_code == 503
-        assert inner_scope_types == [], "post-shutdown request was delegated to the settled app"
-    finally:
-        release_build.set()
-        request_shutdown.set()
-        if owner is not None:
-            await asyncio.wait_for(owner, timeout=5)
+            release_build.set()
+            await asyncio.wait_for(asyncio.shield(owner), timeout=5)
+            assert build_finished.is_set()
+            assert len(built_apps) == 1
+            assert close_after_build == [True]
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=application), base_url="http://test",
+            ) as client:
+                health = await client.get("/health")
+                status = await client.get("/status")
+                query = await client.post("/query", json={"text": "after shutdown"})
+            assert health.json()["initialized"] is False
+            assert health.json()["ready"] is False
+            assert status.json()["initialized"] is False
+            assert status.json()["ready"] is False
+            assert query.status_code == 503
+            assert inner_scope_types == [], "post-shutdown request was delegated to the settled app"
+        finally:
+            release_build.set()
+            request_shutdown.set()
+            if owner is not None:
+                await asyncio.gather(owner, return_exceptions=True)
 
 
 @pytest.mark.asyncio
@@ -1190,131 +1217,131 @@ async def test_production_factory_drains_claude_wake_thread_before_storage_close
     def unexpected_missing_drain(_registry):
         raise AssertionError("old source unexpectedly called a drain helper it does not own")
 
-    monkeypatch.setattr(main, "create_app", build_inner)
-    monkeypatch.setattr(main, "start_claude_wake_reconciler", start_reconciler)
-    monkeypatch.setattr(claude_wake, "recover_claude_relay_wakes", lambda *_args, **_kwargs: None)
-    if actual_drain is None:
-        monkeypatch.setattr(main, "drain_claude_relay_wakes", unexpected_missing_drain, raising=False)
-    else:
-        monkeypatch.setattr(main, "drain_claude_relay_wakes", observe_actual_drain)
-    monkeypatch.setattr(PalliumService, "enqueue_relay_trace_event", gated_enqueue)
-    monkeypatch.setattr("app.claude_wake.claude_wake_transport", fake_transport)
-    application = main.app()
-    owner = None
-    request_shutdown = asyncio.Event()
-    lifespan_entered = asyncio.Event()
+    async with _prebuilt_production_inner(monkeypatch, build_inner):
+        monkeypatch.setattr(main, "start_claude_wake_reconciler", start_reconciler)
+        monkeypatch.setattr(claude_wake, "recover_claude_relay_wakes", lambda *_args, **_kwargs: None)
+        if actual_drain is None:
+            monkeypatch.setattr(main, "drain_claude_relay_wakes", unexpected_missing_drain, raising=False)
+        else:
+            monkeypatch.setattr(main, "drain_claude_relay_wakes", observe_actual_drain)
+        monkeypatch.setattr(PalliumService, "enqueue_relay_trace_event", gated_enqueue)
+        monkeypatch.setattr("app.claude_wake.claude_wake_transport", fake_transport)
+        application = main.app()
+        owner = None
+        request_shutdown = asyncio.Event()
+        lifespan_entered = asyncio.Event()
 
-    async def own_lifespan():
-        async with application.router.lifespan_context(application):
-            lifespan_entered.set()
-            await request_shutdown.wait()
+        async def own_lifespan():
+            async with application.router.lifespan_context(application):
+                lifespan_entered.set()
+                await request_shutdown.wait()
 
-    try:
-        owner = asyncio.create_task(own_lifespan())
-        await asyncio.wait_for(lifespan_entered.wait(), timeout=5)
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=application, client=("127.0.0.1", 50000)),
-            base_url="http://test",
-        ) as client:
-            _health, health_body = await _wait_for_health(
-                client, lambda body: body.get("initialized") is True,
-            )
-            assert health_body["ready"] is True
-            scope = {"container_ref": "git:example/repo"}
-            for runtime, session_ref in (("codex", "startup-sender"), ("claude-code", "startup-target")):
-                response = await client.post("/relay/turn", json={
-                    "runtime": runtime, "session_ref": session_ref, **scope,
-                })
-                assert response.status_code == 200, response.text
-            registry = created_apps[0].state.claude_wake_registry
-            assert registry is not None and registry._state_dir is not None
-            registration = {
-                "runtime": "claude-code", "session_ref": "startup-target",
-                "container_ref": scope["container_ref"], "socket_path": "fake-native-endpoint",
-                "token": "test-only-token", "idle": True, "intent_id": "test-only-registration",
-            }
-            registration_path = registry._intent_path(
-                registration["runtime"], registration["session_ref"], registration["container_ref"],
-            )
-            assert registration_path is not None
-            assert registration_path.parent == registry._state_dir / "intents"
-            write_json_atomic(registration_path, registration)
-            assert registration_path.is_file()
-            registered = await client.post("/internal/claude-wake/register", json=registration)
-            assert registered.status_code == 204, registered.text
-            sent = await client.post("/relay/messages", json={
-                "sender_runtime": "codex", "sender_session_ref": "startup-sender",
-                "recipient": "claude-code:startup-target", "payload": "test-only wake", **scope,
-            })
-            assert sent.status_code == 200, sent.text
-            message_id = sent.json()["message_id"]
-            delivery_id = sent.json()["deliveries"][0]["delivery_id"]
-            assert await asyncio.to_thread(gate_started.wait, 5), "Relay HTTP did not schedule the held Claude wake"
-            assert len(created_apps) == 1
-            assert len(scheduled_threads) == 1
-            wake_thread = scheduled_threads[0]
-            assert wake_thread.name == "pallium-claude-wake" and wake_thread.is_alive()
-            readback = await client.get(f"/relay/messages/{message_id}", params=scope)
-            assert readback.status_code == 200
-            assert readback.json()["deliveries"][0]["delivery_id"] == delivery_id
-            assert readback.json()["deliveries"][0]["state"] == "pending"
-
-            request_shutdown.set()
-            _health, health_body = await _wait_for_health(
-                client, lambda body: body.get("initialized") is False,
-            )
-            assert await asyncio.to_thread(producers_settled.wait, 5), "direct producer threads did not settle"
-            async with asyncio.timeout(5):
-                while not (drain_started.is_set() or service_close_started.is_set()):
-                    await asyncio.sleep(0)
-            assert direct_producer_threads
-            assert all(not thread.is_alive() for thread in direct_producer_threads)
-            assert scheduled_threads[0] not in direct_producer_threads
-            assert scheduled_threads[0].is_alive(), "held wake thread settled before the drain boundary"
-            assert not service_close_started.is_set(), "service close began before wake drainage completed"
-            assert storage_close_calls == []
-            assert service_close_calls == []
-
-            status = await client.get("/status")
-            query = await client.post("/query", json={"text": "during wake drainage"})
-            assert health_body["ready"] is False
-            assert status.json()["initialized"] is False
-            assert status.json()["ready"] is False
-            assert query.status_code == 503
-            assert not owner.done(), "shutdown returned before the scheduled wake thread settled"
-            assert wake_thread.is_alive()
-            assert storage_close_calls == []
-            assert service_close_calls == []
-            with created_apps[0].state.pallium_service._storage._session_factory() as session:
-                assert session.execute(text("SELECT 1")).scalar_one() == 1
-
-            release_gate.set()
-            await asyncio.wait_for(owner, timeout=8)
-            await asyncio.to_thread(wake_thread.join, 2)
-            assert not wake_thread.is_alive()
-            assert trace_finished.wait(1)
-            assert storage_close_calls == [created_apps[0].state.pallium_service._storage]
-            assert service_close_calls == [created_apps[0].state.pallium_service]
-            assert close_order_witnesses == [
-                ("service", (False,), True),
-                ("storage", (False,), True),
-            ]
-            health = await client.get("/health")
-            status = await client.get("/status")
-            assert health.json()["initialized"] is False
-            assert health.json()["ready"] is False
-            assert status.json()["initialized"] is False
-            assert status.json()["ready"] is False
-    finally:
-        release_gate.set()
-        request_shutdown.set()
         try:
-            if owner is not None:
-                await asyncio.wait_for(owner, timeout=8)
+            owner = asyncio.create_task(own_lifespan())
+            await asyncio.wait_for(lifespan_entered.wait(), timeout=5)
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=application, client=("127.0.0.1", 50000)),
+                base_url="http://test",
+            ) as client:
+                _health, health_body = await _wait_for_health(
+                    client, lambda body: body.get("initialized") is True,
+                )
+                assert health_body["ready"] is True
+                scope = {"container_ref": "git:example/repo"}
+                for runtime, session_ref in (("codex", "startup-sender"), ("claude-code", "startup-target")):
+                    response = await client.post("/relay/turn", json={
+                        "runtime": runtime, "session_ref": session_ref, **scope,
+                    })
+                    assert response.status_code == 200, response.text
+                registry = created_apps[0].state.claude_wake_registry
+                assert registry is not None and registry._state_dir is not None
+                registration = {
+                    "runtime": "claude-code", "session_ref": "startup-target",
+                    "container_ref": scope["container_ref"], "socket_path": "fake-native-endpoint",
+                    "token": "test-only-token", "idle": True, "intent_id": "test-only-registration",
+                }
+                registration_path = registry._intent_path(
+                    registration["runtime"], registration["session_ref"], registration["container_ref"],
+                )
+                assert registration_path is not None
+                assert registration_path.parent == registry._state_dir / "intents"
+                write_json_atomic(registration_path, registration)
+                assert registration_path.is_file()
+                registered = await client.post("/internal/claude-wake/register", json=registration)
+                assert registered.status_code == 204, registered.text
+                sent = await client.post("/relay/messages", json={
+                    "sender_runtime": "codex", "sender_session_ref": "startup-sender",
+                    "recipient": "claude-code:startup-target", "payload": "test-only wake", **scope,
+                })
+                assert sent.status_code == 200, sent.text
+                message_id = sent.json()["message_id"]
+                delivery_id = sent.json()["deliveries"][0]["delivery_id"]
+                assert await asyncio.to_thread(gate_started.wait, 5), "Relay HTTP did not schedule the held Claude wake"
+                assert len(created_apps) == 1
+                assert len(scheduled_threads) == 1
+                wake_thread = scheduled_threads[0]
+                assert wake_thread.name == "pallium-claude-wake" and wake_thread.is_alive()
+                readback = await client.get(f"/relay/messages/{message_id}", params=scope)
+                assert readback.status_code == 200
+                assert readback.json()["deliveries"][0]["delivery_id"] == delivery_id
+                assert readback.json()["deliveries"][0]["state"] == "pending"
+
+                request_shutdown.set()
+                _health, health_body = await _wait_for_health(
+                    client, lambda body: body.get("initialized") is False,
+                )
+                assert await asyncio.to_thread(producers_settled.wait, 5), "direct producer threads did not settle"
+                async with asyncio.timeout(5):
+                    while not (drain_started.is_set() or service_close_started.is_set()):
+                        await asyncio.sleep(0)
+                assert direct_producer_threads
+                assert all(not thread.is_alive() for thread in direct_producer_threads)
+                assert scheduled_threads[0] not in direct_producer_threads
+                assert scheduled_threads[0].is_alive(), "held wake thread settled before the drain boundary"
+                assert not service_close_started.is_set(), "service close began before wake drainage completed"
+                assert storage_close_calls == []
+                assert service_close_calls == []
+
+                status = await client.get("/status")
+                query = await client.post("/query", json={"text": "during wake drainage"})
+                assert health_body["ready"] is False
+                assert status.json()["initialized"] is False
+                assert status.json()["ready"] is False
+                assert query.status_code == 503
+                assert not owner.done(), "shutdown returned before the scheduled wake thread settled"
+                assert wake_thread.is_alive()
+                assert storage_close_calls == []
+                assert service_close_calls == []
+                with created_apps[0].state.pallium_service._storage._session_factory() as session:
+                    assert session.execute(text("SELECT 1")).scalar_one() == 1
+
+                release_gate.set()
+                await asyncio.wait_for(asyncio.shield(owner), timeout=8)
+                await asyncio.to_thread(wake_thread.join, 2)
+                assert not wake_thread.is_alive()
+                assert trace_finished.wait(1)
+                assert storage_close_calls == [created_apps[0].state.pallium_service._storage]
+                assert service_close_calls == [created_apps[0].state.pallium_service]
+                assert close_order_witnesses == [
+                    ("service", (False,), True),
+                    ("storage", (False,), True),
+                ]
+                health = await client.get("/health")
+                status = await client.get("/status")
+                assert health.json()["initialized"] is False
+                assert health.json()["ready"] is False
+                assert status.json()["initialized"] is False
+                assert status.json()["ready"] is False
         finally:
-            for worker in dict.fromkeys(scheduled_threads):
-                await asyncio.to_thread(worker.join, 3)
-                assert not worker.is_alive(), "test-owned Claude wake thread did not settle"
+            release_gate.set()
+            request_shutdown.set()
+            try:
+                if owner is not None:
+                    await asyncio.gather(owner, return_exceptions=True)
+            finally:
+                for worker in dict.fromkeys(scheduled_threads):
+                    await asyncio.to_thread(worker.join, 3)
+                    assert not worker.is_alive(), "test-owned Claude wake thread did not settle"
 
 
 class TestHealthNoVector:
