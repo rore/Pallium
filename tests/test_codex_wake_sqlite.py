@@ -516,11 +516,46 @@ def test_actual_native_closure_rechecks_claim_committed_after_state_observation(
 
 @pytest.mark.parametrize('outcome', ['prepared', 'accepted', 'uncertain'])
 def test_http_exact_claim_generation_is_the_durable_native_fence(
-    relay_store, tmp_path, monkeypatch, outcome,
+    relay_store, tmp_path, monkeypatch, outcome, *, force_setup_refusal=False,
 ):
+    from core.errors import ImmediateTransactionBusyError
+
     relay, storage, database = relay_store
-    registry = _registry(relay, tmp_path / 'legacy')
-    assert registry.initialize(old_owner_drained=True)
+    legacy = tmp_path / 'legacy'
+    assert not legacy.exists()
+    registry = _registry(relay, legacy)
+    original_initialize = relay.codex_wake_initialize
+    attempts = []
+
+    def observe_initialize(reservations):
+        assert reservations == ()
+        attempt = {}
+        attempts.append(attempt)
+        try:
+            if force_setup_refusal and len(attempts) == 1:
+                raise ImmediateTransactionBusyError('controlled empty setup refusal', acquisition_stage='setup_deadline')
+            result = original_initialize(reservations)
+        except Exception as error:
+            attempt['error'] = error
+            raise
+        attempt['result'] = result
+        return result
+
+    # Empty offline setup may repeat only a proven precommit acquisition refusal.
+    with monkeypatch.context() as setup_patch:
+        setup_patch.setattr(relay, 'codex_wake_initialize', observe_initialize)
+        initialized = registry.initialize(old_owner_drained=True)
+        if initialized is False and len(attempts) == 1 and type(attempts[0].get('error')) is ImmediateTransactionBusyError:
+            assert relay.codex_wake_snapshot() == (False, ())
+            assert not legacy.exists() and database == tmp_path / 'relay.db'
+            with sqlite3.connect(database) as db:
+                assert db.execute('SELECT count(*) FROM relay_sessions').fetchone() == (0,)
+                assert db.execute('SELECT count(*) FROM relay_deliveries').fetchone() == (0,)
+            initialized = registry.initialize(old_owner_drained=True)
+        assert initialized is True
+        assert attempts[-1] == {'result': True}
+        assert len(attempts) == 1 or (len(attempts) == 2 and type(attempts[0].get('error')) is ImmediateTransactionBusyError)
+    assert relay.codex_wake_initialize == original_initialize
     reservation = _reserve(registry, _send(relay))
     if outcome != 'prepared':
         reservation = registry.begin_native_attempt(reservation)
@@ -578,6 +613,12 @@ def test_http_exact_claim_generation_is_the_durable_native_fence(
         final, = retained.json()['deliveries']
         assert (final['delivery_id'], final['state'], final['attempts']) == (claimed['delivery_id'], 'delivered', 2)
         assert correlations == [], 'built-in persistent exact claims must not duplicate committed generation authority'
+
+
+def test_http_exact_claim_generation_recovers_empty_setup_refusal(relay_store, tmp_path, monkeypatch):
+    test_http_exact_claim_generation_is_the_durable_native_fence(
+        relay_store, tmp_path, monkeypatch, 'accepted', force_setup_refusal=True,
+    )
 
 
 @pytest.mark.parametrize('change', ['replacement', 'unrelated_corruption', 'callback_failure', 'exhausted_generation'])

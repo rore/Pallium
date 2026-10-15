@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -50,13 +51,36 @@ def _register(client):
         assert response.status_code == 200, response.text
 
 
+def _register_held_writer_setup(client):
+    """Prepare the read contract through the API's bounded retryable-busy path."""
+    deadline = time.monotonic() + 5
+    for runtime, session in (("codex", "sender"), ("claude-code", "receiver")):
+        body = {"runtime": runtime, "session_ref": session, **SCOPE}
+        response = client.post("/relay/turn", json=body)
+        if response.status_code == 503:
+            try:
+                detail = response.json().get("detail")
+            except (ValueError, AttributeError):
+                detail = None
+            retry_after = response.headers.get("Retry-After", "")
+            if (isinstance(detail, dict) and detail.get("code") == "relay_busy"
+                    and detail.get("retryable") is True
+                    and retry_after.isascii() and retry_after.isdecimal()):
+                delay = int(retry_after)
+                if delay < deadline - time.monotonic():
+                    time.sleep(delay)
+                    if time.monotonic() < deadline:
+                        response = client.post("/relay/turn", json=body)
+        assert response.status_code == 200, response.text
+
+
 @pytest.mark.parametrize("state", ["pending", "claimed", "delivered"])
 @pytest.mark.parametrize("expiry", [60, None], ids=["finite", "durable"])
 def test_unexpired_status_and_trace_succeed_while_private_relay_writer_is_held(
     relay_client, state, expiry
 ):
     client, _, relay_path = relay_client
-    _register(client)
+    _register_held_writer_setup(client)
     sent = _send(client, expiry=expiry)
     assert sent.status_code == 200, sent.text
     message = sent.json()

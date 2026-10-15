@@ -671,6 +671,42 @@ def recover(journey):
         worker.join(2)
         assert not worker.is_alive()
 
+
+def _observe_transition_attempts(journey, monkeypatch, operation, *, force_refusal=False):
+    """Observe one journey's bounded transition; recovery stays explicit in its test."""
+    assert operation in {"release", "retry"}
+    relay = journey[1]
+    original = relay.codex_wake_transition
+    attempts = []
+
+    def transition(actual_operation, **kwargs):
+        if actual_operation != operation:
+            return original(actual_operation, **kwargs)
+        attempt = {"reservation": kwargs.get("reservation"),
+                   "reservations": kwargs.get("reservations", ())}
+        attempts.append(attempt)
+        try:
+            if force_refusal and len(attempts) == 1:
+                attempt["forced"] = True
+                raise ImmediateTransactionBusyError(
+                    "controlled transition refusal",
+                    acquisition_stage="setup_deadline" if operation == "release" else "late_begin",
+                )
+            result = original(actual_operation, **kwargs)
+        except Exception as error:
+            attempt["error_type"] = type(error)
+            raise
+        attempt["result"] = result
+        return result
+
+    monkeypatch.setattr(relay, "codex_wake_transition", transition)
+    return attempts
+
+
+def _single_typed_transition_refusal(attempts):
+    return (len(attempts) == 1 and "result" not in attempts[0]
+            and attempts[0].get("error_type") is ImmediateTransactionBusyError)
+
 @pytest.mark.parametrize("state", ["working", "unknown", "future", None, [], {}])
 def test_pending_busy_or_unknown_releases_and_recovers(
     http_wake, state, monkeypatch, force_release_refusal=False,
@@ -1029,8 +1065,13 @@ def test_owner_response_allows_hook_claim_ack_before_return(http_wake):
     assert registry.reservations() == ()
 
 @pytest.mark.parametrize("loss", ["source", "desktop", "channel", "epoch", "unresolved"])
-def test_connection_loss_defers_without_owner(http_wake, loss):
-    _, _, registry, service, desktop, send, _ = http_wake
+def test_connection_loss_defers_without_owner(
+    http_wake, loss, monkeypatch, force_refusal=False,
+):
+    http, _, registry, service, desktop, send, _ = http_wake
+    attempts = _observe_transition_attempts(
+        http_wake, monkeypatch, "release", force_refusal=force_refusal,
+    )
     if loss == "source":
         service.source.gone = True
     elif loss == "desktop":
@@ -1041,8 +1082,32 @@ def test_connection_loss_defers_without_owner(http_wake, loss):
         registry.retained_service = bridge.RetainedService(Path("new-epoch"))
     else:
         desktop.unresolved = True
-    send()
+    delivery = send()
+    assert not force_refusal or attempts[0].get("forced") is True
+    if _single_typed_transition_refusal(attempts):
+        expected = attempts[0]["reservations"]
+        assert len(expected) == 1 and registry.reservations() == expected
+        assert expected[0].outcome == "prepared"
+        assert expected[0].delivery_id == delivery["delivery_id"]
+        assert expected[0].container_ref == SCOPE["container_ref"]
+        assert expected[0].retry_not_before is None and desktop.owners == []
+        response = http.get("/relay/messages/retained-journey", params=SCOPE)
+        assert response.status_code == 200, response.text
+        pending = response.json()["deliveries"][0]
+        assert pending["delivery_id"] == delivery["delivery_id"]
+        assert pending["state"] == "pending" and pending["attempts"] == 0
+        recover(http_wake)
+    else:
+        assert len(attempts) == 1 and "error_type" not in attempts[0]
+        assert len(attempts[0]["reservations"]) == 1
+        assert attempts[0].get("result") == attempts[0]["reservations"]
     assert desktop.owners == [] and registry.reservations() == ()
+
+
+def test_connection_loss_release_refusal_recovers_without_owner(http_wake, monkeypatch):
+    test_connection_loss_defers_without_owner(
+        http_wake, "unresolved", monkeypatch, force_refusal=True,
+    )
 
 @pytest.mark.parametrize("change", [{"epoch": "wrong"}, {"sequence": True}, {"thread_ref": ""},
     {"turn_ref": "x" * 256}, {"endpoint": "not-a-pipe"}, {"extra": "data"}])

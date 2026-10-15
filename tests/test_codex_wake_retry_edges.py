@@ -9,6 +9,7 @@ from core.codex_wake import CodexWakeRegistry
 from core.relay import RELAY_CLAIM_LEASE_SECONDS
 from tests.test_codex_retained_wake import (
     SCOPE, TARGET, _hook_runner, http_wake, recover, retained as retained_fixture,
+    _observe_transition_attempts, _single_typed_transition_refusal,
 )
 
 
@@ -165,11 +166,16 @@ def test_retry_deadline_clamps_once_across_rollback_restart_and_due_wake(
     assert len(desktop.owners) == 2
 
 
-def test_due_retry_reads_moved_scope_and_hook_acks_same_delivery(http_wake, monkeypatch, tmp_path):
+def test_due_retry_reads_moved_scope_and_hook_acks_same_delivery(
+    http_wake, monkeypatch, tmp_path, force_refusal=False,
+):
     http, relay, registry, _, desktop, send, _ = http_wake
     now = [datetime(2030, 9, 5, tzinfo=timezone.utc)]
     _freeze_clock(monkeypatch, now)
     delivery = send()
+    initial = registry.snapshot(delivery["recipient_endpoint_id"])
+    assert initial is not None and initial.outcome == "uncertain"
+    assert len(desktop.owners) == 1
     now[0] += timedelta(seconds=61)
     moved_scope = {"container_ref": "git:example.test/retry-current-scope"}
     moved = http.post("/relay/turn", json={
@@ -179,7 +185,25 @@ def test_due_retry_reads_moved_scope_and_hook_acks_same_delivery(http_wake, monk
         "previous_scope_generation": 0, **moved_scope,
     })
     assert moved.status_code == 200 and moved.json()["deliveries"] == []
+    attempts = _observe_transition_attempts(
+        http_wake, monkeypatch, "retry", force_refusal=force_refusal,
+    )
     recover(http_wake)
+    assert not force_refusal or attempts[0].get("forced") is True
+    if _single_typed_transition_refusal(attempts):
+        assert attempts[0]["reservation"] == initial
+        assert registry.snapshot(initial.recipient_endpoint_id) == initial
+        assert initial.container_ref == SCOPE["container_ref"]
+        assert len(desktop.owners) == 1
+        response = http.get("/relay/messages/retained-journey", params=moved_scope)
+        assert response.status_code == 200, response.text
+        pending = response.json()["deliveries"][0]
+        assert pending["delivery_id"] == delivery["delivery_id"]
+        assert pending["state"] == "pending" and pending["attempts"] == 0
+        recover(http_wake)
+    else:
+        assert len(attempts) == 1 and "error_type" not in attempts[0]
+        assert isinstance(attempts[0].get("result"), type(initial))
     reservation = registry.snapshot(delivery["recipient_endpoint_id"])
     assert reservation is not None and reservation.container_ref == moved_scope["container_ref"]
     assert len(desktop.owners) == 2
@@ -196,6 +220,14 @@ def test_due_retry_reads_moved_scope_and_hook_acks_same_delivery(http_wake, monk
     current = http.get("/relay/messages/retained-journey", params=moved_scope)
     assert current.status_code == 200
     assert current.json()["deliveries"][0]["state"] == "delivered"
+
+
+def test_due_retry_refusal_preserves_authority_then_hook_acks_moved_delivery(
+    http_wake, monkeypatch, tmp_path,
+):
+    test_due_retry_reads_moved_scope_and_hook_acks_same_delivery(
+        http_wake, monkeypatch, tmp_path, force_refusal=True,
+    )
 
 
 def test_nullable_legacy_retry_deadline_recovers_and_hook_acks(http_wake, monkeypatch, tmp_path):

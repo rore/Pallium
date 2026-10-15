@@ -191,7 +191,7 @@ def test_tcp_ack_receipt_precedes_owned_callback_and_shutdown_drains(
                 message = client.post("/relay/messages", json={
                     "sender_runtime": "codex", "sender_session_ref": "sender",
                     "recipient": "codex:target", "payload": payload, **scope,
-                })
+                }, timeout=5)
                 assert message.status_code == 200, message.text
                 sent.append(message.json())
             first = sent[0]["deliveries"][0]
