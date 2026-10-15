@@ -1023,18 +1023,47 @@ def test_recovery_terminal_reads_never_release_or_reschedule_inflight(
 def test_online_close_removes_only_exact_durable_capability_and_intent(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    diagnostic_path = Path(
+        os.environ.get("PALLIUM_PR312_DIAGNOSTIC_FILE", "")
+        or (tmp_path / "direct-register-stages.json")
+    )
+    observations: list[dict[str, object]] = []
+    capture_active = [False]
+    capture_complete = [True]
+    target_state = ["not_started"]
+
+    def mark_capture_incomplete() -> None:
+        capture_complete[0] = False
+
+    def write_receipt() -> None:
+        try:
+            existing = json.loads(diagnostic_path.read_text(encoding="utf-8"))
+            if not isinstance(existing, dict):
+                existing = {}
+        except FileNotFoundError:
+            existing = {}
+        except BaseException:
+            mark_capture_incomplete()
+            existing = {}
+        try:
+            diagnostic_path.parent.mkdir(parents=True, exist_ok=True)
+            existing.update({
+                "case": "second_direct_registration",
+                "target_state": target_state[0],
+                "capture_complete": capture_complete[0],
+                "observations": observations,
+            })
+            diagnostic_path.write_text(json.dumps(existing), encoding="utf-8")
+        except BaseException:
+            mark_capture_incomplete()
+
+    write_receipt()
     from tests.test_claude_wake_registration import _client
     import core.claude_wake as wake
 
     registry = ClaudeWakeRegistry(state_dir=tmp_path)
     other = {**PAYLOAD, "session_ref": "other"}
     assert _register(registry, tmp_path, PAYLOAD, "open")
-    observations: list[dict[str, object]] = []
-    capture_active = [False]
-    capture_complete = [True]
-
-    def mark_capture_incomplete() -> None:
-        capture_complete[0] = False
 
     def record(stage: str, **fields: object) -> None:
         if not capture_active[0]:
@@ -1123,24 +1152,18 @@ def test_online_close_removes_only_exact_durable_capability_and_intent(
         capture.setattr(registry, "register", observe_result("register_return", registry.register))
         try:
             capture_active[0] = True
+            target_state[0] = "started"
+            write_receipt()
             record("rehydration_state", refused=registry._rehydration_refused)
             assert _register(registry, tmp_path, other, "other-open")
         except BaseException:
-            capture_active[0] = False
-            try:
-                (tmp_path / "direct-register-stages.json").write_text(
-                    json.dumps({
-                        "case": "second_direct_registration",
-                        "capture_complete": capture_complete[0],
-                        "observations": observations,
-                    }),
-                    encoding="utf-8",
-                )
-            except BaseException:
-                pass
+            target_state[0] = "failed"
             raise
+        else:
+            target_state[0] = "passed"
         finally:
             capture_active[0] = False
+            write_receipt()
     closed = {
         "runtime": "claude-code", "session_ref": PAYLOAD["session_ref"],
         "container_ref": PAYLOAD["container_ref"],

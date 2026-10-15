@@ -101,6 +101,29 @@ def test_retained_hook_deadline_runs_once_in_each_windows_lane() -> None:
     assert f"--deselect={node}" in full
 
 
+def test_pr312_windows_diagnostic_keeps_parallel_selection_and_target_receipt() -> None:
+    full = _job("windows-full", "nightly-slow-smoke")
+    assert 'python-version: ["3.12", "3.13"]' in full
+    assert 'diagnostic_failfast: "-x"' in full
+    assert 'diagnostic_failfast: ""' in full
+    assert 'timeout-minutes: ${{ matrix.pr312_diagnostic == true && 60 || 360 }}' in full
+    assert 'continue-on-error: ${{ matrix.pr312_diagnostic == true }}' in full
+    assert 'if: ${{ !cancelled() && ((matrix.pr312_diagnostic == true && steps.install_dependencies.outcome == \'success\') || success()) }}' in full
+
+    remaining = full.split("      - name: Run remaining tests\n", 1)[1].split(
+        "\n      - name: Record PR312 remaining-suite outcome", 1
+    )[0]
+    assert "python -m pytest tests/ ${{ matrix.diagnostic_failfast }} -q" in remaining
+    assert "--ignore=tests/test_restart_service.py" in remaining
+    assert "--deselect=tests/test_codex_retained_wake.py::test_session_start_lock_budget_claims_emits_and_acks_once" in remaining
+    assert "timeout-minutes: ${{ matrix.pr312_diagnostic == true && 45 || 360 }}" in remaining
+    assert "--junitxml \"$env:RUNNER_TEMP/pr312-durable-register-evidence/junit.xml\"" in full
+    assert "path: ${{ runner.temp }}/pr312-durable-register-evidence/" in full
+    assert "if-no-files-found: error" in full
+    assert "target_state = \"not_started\"" in full
+    assert "target_state -eq \"started\" -or $data.target_state -eq \"not_started\"" in full
+
+
 def test_nightly_slow_smoke_is_bounded_and_hermetic() -> None:
     nightly = _job("nightly-slow-smoke", "result")
     assert "if: github.event_name == 'schedule'" in nightly
