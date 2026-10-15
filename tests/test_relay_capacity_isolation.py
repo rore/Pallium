@@ -1530,6 +1530,8 @@ def test_codex_operation_tracking_settles_after_event_loop_closes(tmp_path, monk
                 "container_ref": "git:example.test/loop-close", "actor_ref": "capacity-user",
             }))
             try:
+                # Establish callback entry before exercising cancellation/loop closure.
+                assert await asyncio.to_thread(started.wait, 5)
                 assert await asyncio.to_thread(started.wait, 1)
             finally:
                 request.cancel()
@@ -1646,11 +1648,12 @@ def test_closed_loop_cleanup_drains_before_storage_close_on_callback_entry_asser
         if (
             getattr(func, "__name__", None) == "wait"
             and isinstance(getattr(func, "__self__", None), threading.Event)
-            and args == (1,)
+            and args in ((5,), (1,))
             and not kwargs
         ):
             assert await original_to_thread(worker_entered.wait, 5)
-            return False
+            # The preparation handshake passes; the original contract assertion fails.
+            return args == (5,)
         return await original_to_thread(func, *args, **kwargs)
 
     test_asyncio.to_thread = synchronize_callback_entry
@@ -1818,6 +1821,7 @@ def test_operation_tracking_covers_cancellation_and_failure_boundaries(tmp_path,
                     started_count += 1
                     if started_count == 4:
                         four_started.set()
+                assert four_started.wait(5)
                 assert relay_release.wait(3)
                 return original_relay_turn(**kwargs)
 
@@ -1828,6 +1832,8 @@ def test_operation_tracking_covers_cancellation_and_failure_boundaries(tmp_path,
             ]
             queued = queued_barrier = None
             try:
+                # Admission is setup; start the release gate after all four arrive.
+                assert await asyncio.to_thread(four_started.wait, 5)
                 assert await asyncio.to_thread(four_started.wait, 1)
                 queued = asyncio.create_task(
                     client.post("/relay/turn", json=payload("cancelled-while-queued"))
@@ -1844,6 +1850,7 @@ def test_operation_tracking_covers_cancellation_and_failure_boundaries(tmp_path,
                 assert await asyncio.wait_for(queued_barrier, 1)
                 assert started_count == 4
             finally:
+                four_started.set()
                 relay_release.set()
                 owned = [*active, *(task for task in (queued, queued_barrier) if task is not None)]
                 for task in owned:

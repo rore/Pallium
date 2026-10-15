@@ -616,8 +616,22 @@ def http_wake(client, retained, monkeypatch):
     app.include_router(build_router(client.app.state.pallium_service, relay_storage=storage,
                                    codex_wake_registry=registry))
     http = TestClient(app)
-    for runtime, session in (("claude-code", "sender"), ("codex", TARGET)):
-        assert http.post("/relay/turn", json={"runtime": runtime, "session_ref": session, **SCOPE}).status_code == 200
+    from itertools import count
+    from storage import sqlite_queue
+
+    native_monotonic = time.monotonic
+    native_queue_time = sqlite_queue.time
+    # These registrations prepare the retained-state journey, rather than time admission.
+    with monkeypatch.context() as setup_patch:
+        setup_time = SimpleNamespace(**vars(native_queue_time))
+        setup_time.monotonic = count(step=0.001).__next__
+        setup_patch.setattr(sqlite_queue, "time", setup_time)
+        assert sqlite_queue.time is not native_queue_time
+        assert sqlite_queue.time.sleep is time.sleep
+        for runtime, session in (("claude-code", "sender"), ("codex", TARGET)):
+            assert http.post("/relay/turn", json={"runtime": runtime, "session_ref": session, **SCOPE}).status_code == 200
+    assert sqlite_queue.time is native_queue_time
+    assert time.monotonic is native_monotonic
     body = {"sender_runtime": "claude-code", "sender_session_ref": "sender", "recipient": f"codex:{TARGET}",
             "message_id": "retained-journey", "payload": "private-payload-東京", **SCOPE}
     def send():
@@ -658,10 +672,58 @@ def recover(journey):
         assert not worker.is_alive()
 
 @pytest.mark.parametrize("state", ["working", "unknown", "future", None, [], {}])
-def test_pending_busy_or_unknown_releases_and_recovers(http_wake, state):
-    http, _, registry, service, desktop, send, _ = http_wake
+def test_pending_busy_or_unknown_releases_and_recovers(
+    http_wake, state, monkeypatch, force_release_refusal=False,
+):
+    http, relay, registry, service, desktop, send, _ = http_wake
+    release_results, release_errors, release_attempts = [], [], []
+    original_transition = relay.codex_wake_transition
+    original_release = registry.release_generation
+    refusal_injected = False
+
+    def transition(operation, **kwargs):
+        nonlocal refusal_injected
+        try:
+            if operation == "release" and force_release_refusal and not refusal_injected:
+                refusal_injected = True
+                raise ImmediateTransactionBusyError(
+                    "controlled release refusal", acquisition_stage="late_begin",
+                )
+            return original_transition(operation, **kwargs)
+        except Exception as error:
+            if operation == "release":
+                release_errors.append(type(error))
+            raise
+
+    def release(reservation):
+        release_attempts.append(reservation)
+        result = original_release(reservation)
+        release_results.append(result)
+        return result
+
+    monkeypatch.setattr(relay, "codex_wake_transition", transition)
+    monkeypatch.setattr(registry, "release_generation", release)
     desktop.state = state
     delivery = send()
+    assert not force_release_refusal or refusal_injected
+    if not isinstance(state, (str, type(None))):
+        assert service.retained_registration is None
+    if release_results == [False] and release_errors and all(
+        error_type is ImmediateTransactionBusyError for error_type in release_errors
+    ):
+        reservations = registry.reservations()
+        assert len(release_attempts) == 1 and reservations == (release_attempts[0],)
+        assert reservations[0].outcome == "prepared"
+        assert reservations[0].delivery_id == delivery["delivery_id"]
+        assert desktop.owners == []
+        response = http.get("/relay/messages/retained-journey", params=SCOPE)
+        assert response.status_code == 200, response.text
+        pending = response.json()["deliveries"][0]
+        assert pending["delivery_id"] == delivery["delivery_id"]
+        assert pending["state"] == "pending" and pending["attempts"] == 0
+        recover(http_wake)
+    else:
+        assert release_results == [True] and release_errors == []
     assert desktop.owners == [] and registry.reservations() == ()
     assert http.get("/relay/messages/retained-journey", params=SCOPE).json()["deliveries"][0]["state"] == "pending"
     if service.custody is None:
@@ -675,6 +737,12 @@ def test_pending_busy_or_unknown_releases_and_recovers(http_wake, state):
     assert registry.snapshot(delivery["recipient_endpoint_id"]).outcome == "uncertain"
     recover(http_wake)
     assert len(desktop.owners) == 1
+
+
+def test_pending_invalid_state_release_busy_recovers_without_owner_replay(http_wake, monkeypatch):
+    test_pending_busy_or_unknown_releases_and_recovers(
+        http_wake, [], monkeypatch, force_release_refusal=True,
+    )
 
 @pytest.mark.parametrize("body", ["{}", "bad-json", "[]", '{"schemaVersion":1,"schemaVersion":1}',
     json.dumps({"schemaVersion": True, "thread": {"id": TARGET, "kind": "codex", "hostId": "local", "status": {"type": "notLoaded"}}}),

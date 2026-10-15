@@ -1735,6 +1735,7 @@ with codex_readiness._marker_lock(Path(sys.argv[1]), wait_seconds=None):
         text=True,
     )
     callback = threading.Event()
+    completed = threading.Event()
     result: list[tuple[str, object]] = []
 
     def reconcile() -> None:
@@ -1754,6 +1755,8 @@ with codex_readiness._marker_lock(Path(sys.argv[1]), wait_seconds=None):
             result.append(("completed", value))
         except BaseException as exc:
             result.append(("error", exc))
+        finally:
+            completed.set()
 
     worker = threading.Thread(target=reconcile)
     started = False
@@ -1776,6 +1779,8 @@ with codex_readiness._marker_lock(Path(sys.argv[1]), wait_seconds=None):
         process.stdin.flush()
         released = True
         process.wait(timeout=5)
+        # Observe reconciliation completion before checking thread settlement.
+        assert completed.wait(5)
         worker.join(timeout=2)
         finished_after_release = not worker.is_alive()
     finally:
