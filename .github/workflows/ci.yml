@@ -1,4 +1,4 @@
-name: CI
+name: PR312 native cause diagnostic (not release qualification)
 
 on:
   push:
@@ -86,10 +86,14 @@ jobs:
     needs: select
     if: needs.select.outputs.lane == 'full'
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.12", "3.13"]
+        python-version: ["3.12.15"]
+    env:
+      PIP_CONSTRAINT: ${{ github.workspace }}/.github/ci/pr312-native-linux312-constraints.txt
+      PALLIUM_PR312_NATIVE_CAUSE_DIR: ${{ runner.temp }}/pr312-native-cause
     steps:
       - uses: actions/checkout@v4
 
@@ -100,14 +104,65 @@ jobs:
           cache: pip
           cache-dependency-path: pyproject.toml
 
+      - name: Prepare native cause receipts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path $env:PALLIUM_PR312_NATIVE_CAUSE_DIR -Force | Out-Null
+          foreach ($operation in @("initialize", "reserve")) {
+            '{"preparation":"ready","target_state":"not_started","outcome":null}' | Set-Content -LiteralPath (Join-Path $env:PALLIUM_PR312_NATIVE_CAUSE_DIR "$operation.json") -Encoding utf8
+          }
+
       - name: Install dependencies
         run: pip install -e ".[dev,vector,mcp]"
 
       - name: Verify MCP test dependency
         run: python -c "import mcp; import app.mcp.server"
 
+      - name: Record installed distributions
+        run: python -c "import importlib.metadata as m; print('\n'.join(sorted(d.metadata['Name']+'=='+d.version for d in m.distributions() if d.metadata['Name'].lower().replace('_','-')!='pallium')))" > "${{ runner.temp }}/pr312-native-cause/installed.txt"
+
+      - name: Record Python and SQLite versions
+        run: python -c "import json,sys,sqlite3; print(json.dumps({'python':sys.version.split()[0],'sqlite':sqlite3.sqlite_version}))" > "${{ runner.temp }}/pr312-native-cause/runtime.json"
+
       - name: Run tests
-        run: python -m pytest tests/ -x -q --durations=20
+        id: remaining_tests
+        timeout-minutes: 45
+        run: python -m pytest tests/ -q -n 4 --durations=20 --junitxml "${{ runner.temp }}/pr312-native-cause/junit.xml"
+
+      - name: Record native cause completion
+        if: always()
+        shell: pwsh
+        env:
+          REMAINING_OUTCOME: ${{ steps.remaining_tests.outcome }}
+        run: |
+          $receipt = Join-Path $env:PALLIUM_PR312_NATIVE_CAUSE_DIR "initialize.json"
+          try { $data = Get-Content -LiteralPath $receipt -Raw | ConvertFrom-Json } catch {
+            $data = [pscustomobject]@{ preparation = "unknown"; target_state = "incomplete"; outcome = $null }
+          }
+          $boundedLoss = $data.dropped_errors -gt 0 -or @($data.errors | Where-Object { $_.chain_truncated -eq $true }).Count -gt 0
+          $missing = @("outcome", "outcome_scope", "operation", "started", "returned", "failed", "errors", "dropped_errors") | Where-Object { $_ -notin $data.psobject.Properties.Name }
+          $complete = @($missing).Count -eq 0 -and $data.target_state -eq "completed" -and $data.outcome -in @("passed", "failed") -and $data.outcome_scope -eq "test_body_before_fixture_teardown" -and $data.operation -eq "initialize" -and $data.started -gt 0 -and $data.started -eq $data.returned + $data.failed -and $data.failed -eq @($data.errors).Count + $data.dropped_errors -and -not $boundedLoss
+          $data | Add-Member -Force -NotePropertyName capture_complete -NotePropertyValue $complete
+          $data | Add-Member -Force -NotePropertyName bounded_loss -NotePropertyValue $boundedLoss
+          $data | Add-Member -Force -NotePropertyName junit_present -NotePropertyValue (Test-Path -LiteralPath (Join-Path $env:PALLIUM_PR312_NATIVE_CAUSE_DIR "junit.xml"))
+          $data | Add-Member -Force -NotePropertyName remaining_suite -NotePropertyValue $env:REMAINING_OUTCOME
+          $data | ConvertTo-Json -Depth 16 | Set-Content -LiteralPath $receipt -Encoding utf8
+
+      - name: Upload native cause evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr312-native-cause-linux-${{ matrix.python-version }}
+          path: ${{ runner.temp }}/pr312-native-cause/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Require complete native cause capture
+        if: always()
+        shell: pwsh
+        run: |
+          $data = Get-Content -LiteralPath (Join-Path $env:PALLIUM_PR312_NATIVE_CAUSE_DIR "initialize.json") -Raw | ConvertFrom-Json
+          if ($data.capture_complete -ne $true -or $data.junit_present -ne $true) { throw "Native cause capture incomplete" }
 
   # Fast Windows regression for full-lane PRs and pushes. Runs only the
   # Windows-sensitive hotspots (process mgmt, subprocess hooks, file I/O,
@@ -115,7 +170,7 @@ jobs:
   # The full Windows matrix runs in `windows-full` on push-to-main + nightly.
   windows-smoke:
     needs: select
-    if: needs.select.outputs.lane == 'full'
+    if: needs.select.outputs.lane == 'full' && false
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -172,10 +227,14 @@ jobs:
     needs: select
     if: needs.select.outputs.lane == 'full' && github.event_name != 'pull_request'
     runs-on: windows-latest
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.12", "3.13"]
+        python-version: ["3.12.10"]
+    env:
+      PIP_CONSTRAINT: ${{ github.workspace }}/.github/ci/pr312-native-windows312-constraints.txt
+      PALLIUM_PR312_NATIVE_CAUSE_DIR: ${{ runner.temp }}/pr312-native-cause
     steps:
       - uses: actions/checkout@v4
 
@@ -198,14 +257,77 @@ jobs:
             }
           }
 
+      - name: Prepare native cause receipts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path $env:PALLIUM_PR312_NATIVE_CAUSE_DIR -Force | Out-Null
+          foreach ($operation in @("initialize", "reserve")) {
+            '{"preparation":"ready","target_state":"not_started","outcome":null}' | Set-Content -LiteralPath (Join-Path $env:PALLIUM_PR312_NATIVE_CAUSE_DIR "$operation.json") -Encoding utf8
+          }
+
       - name: Install dependencies
+        id: install_dependencies
         run: pip install -e ".[dev,vector,mcp]"
 
+      - name: Record installed distributions
+        run: python -c "import importlib.metadata as m; print('\n'.join(sorted(d.metadata['Name']+'=='+d.version for d in m.distributions() if d.metadata['Name'].lower().replace('_','-')!='pallium')))" > "${{ runner.temp }}/pr312-native-cause/installed.txt"
+
+      - name: Record Python and SQLite versions
+        run: python -c "import json,sys,sqlite3; print(json.dumps({'python':sys.version.split()[0],'sqlite':sqlite3.sqlite_version}))" > "${{ runner.temp }}/pr312-native-cause/runtime.json"
+
       - name: Run process-sensitive tests serially
+        id: serial_tests
+        continue-on-error: true
         run: python -m pytest tests/test_restart_service.py tests/test_structural_work_refs_e2e.py tests/test_stable_actor_identity_e2e.py tests/test_service_launcher_lifecycle.py tests/test_service.py::test_windows_stop_verifier_executes_new_and_legacy_launcher_parsers tests/test_codex_retained_wake.py::test_session_start_lock_budget_claims_emits_and_acks_once -x -q -n 0 --durations=20
 
       - name: Run remaining tests
-        run: python -m pytest tests/ -x -q --ignore=tests/test_restart_service.py --ignore=tests/test_structural_work_refs_e2e.py --ignore=tests/test_stable_actor_identity_e2e.py --ignore=tests/test_service_launcher_lifecycle.py --deselect=tests/test_service.py::test_windows_stop_verifier_executes_new_and_legacy_launcher_parsers --deselect=tests/test_codex_retained_wake.py::test_session_start_lock_budget_claims_emits_and_acks_once --durations=20
+        id: remaining_tests
+        timeout-minutes: 45
+        if: ${{ !cancelled() && steps.install_dependencies.outcome == 'success' }}
+        run: python -m pytest tests/ -q -n 4 --ignore=tests/test_restart_service.py --ignore=tests/test_structural_work_refs_e2e.py --ignore=tests/test_stable_actor_identity_e2e.py --ignore=tests/test_service_launcher_lifecycle.py --deselect=tests/test_service.py::test_windows_stop_verifier_executes_new_and_legacy_launcher_parsers --deselect=tests/test_codex_retained_wake.py::test_session_start_lock_budget_claims_emits_and_acks_once --durations=20 --junitxml "${{ runner.temp }}/pr312-native-cause/junit.xml"
+
+      - name: Record native cause completion
+        if: always()
+        shell: pwsh
+        env:
+          SERIAL_OUTCOME: ${{ steps.serial_tests.outcome }}
+          REMAINING_OUTCOME: ${{ steps.remaining_tests.outcome }}
+        run: |
+          $receipt = Join-Path $env:PALLIUM_PR312_NATIVE_CAUSE_DIR "reserve.json"
+          try { $data = Get-Content -LiteralPath $receipt -Raw | ConvertFrom-Json } catch {
+            $data = [pscustomobject]@{ preparation = "unknown"; target_state = "incomplete"; outcome = $null }
+          }
+          $boundedLoss = $data.dropped_errors -gt 0 -or @($data.errors | Where-Object { $_.chain_truncated -eq $true }).Count -gt 0
+          $missing = @("outcome", "outcome_scope", "operation", "started", "returned", "failed", "errors", "dropped_errors") | Where-Object { $_ -notin $data.psobject.Properties.Name }
+          $complete = @($missing).Count -eq 0 -and $data.target_state -eq "completed" -and $data.outcome -in @("passed", "failed") -and $data.outcome_scope -eq "test_body_before_fixture_teardown" -and $data.operation -eq "reserve" -and $data.started -gt 0 -and $data.started -eq $data.returned + $data.failed -and $data.failed -eq @($data.errors).Count + $data.dropped_errors -and -not $boundedLoss
+          $data | Add-Member -Force -NotePropertyName capture_complete -NotePropertyValue $complete
+          $data | Add-Member -Force -NotePropertyName bounded_loss -NotePropertyValue $boundedLoss
+          $data | Add-Member -Force -NotePropertyName junit_present -NotePropertyValue (Test-Path -LiteralPath (Join-Path $env:PALLIUM_PR312_NATIVE_CAUSE_DIR "junit.xml"))
+          $data | Add-Member -Force -NotePropertyName serial_preflight -NotePropertyValue $env:SERIAL_OUTCOME
+          $data | Add-Member -Force -NotePropertyName remaining_suite -NotePropertyValue $env:REMAINING_OUTCOME
+          $data | ConvertTo-Json -Depth 16 | Set-Content -LiteralPath $receipt -Encoding utf8
+
+      - name: Upload native cause evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr312-native-cause-windows-${{ matrix.python-version }}
+          path: ${{ runner.temp }}/pr312-native-cause/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Preserve diagnostic test failures
+        if: always()
+        shell: pwsh
+        env:
+          SERIAL_OUTCOME: ${{ steps.serial_tests.outcome }}
+          REMAINING_OUTCOME: ${{ steps.remaining_tests.outcome }}
+        run: |
+          if ($env:SERIAL_OUTCOME -ne "success" -or $env:REMAINING_OUTCOME -ne "success") {
+            throw "Diagnostic test failure: serial=$env:SERIAL_OUTCOME remaining=$env:REMAINING_OUTCOME"
+          }
+          $data = Get-Content -LiteralPath (Join-Path $env:PALLIUM_PR312_NATIVE_CAUSE_DIR "reserve.json") -Raw | ConvertFrom-Json
+          if ($data.capture_complete -ne $true -or $data.junit_present -ne $true) { throw "Native cause capture incomplete" }
 
   nightly-slow-smoke:
     if: github.event_name == 'schedule'
@@ -245,6 +367,7 @@ jobs:
         env:
           RESULTS: ${{ toJSON(needs) }}
           EVENT: ${{ github.event_name }}
+          PR312_NATIVE_CAUSE_DIAGNOSTIC: "true"
         run: |
           python - <<'PY'
           import json, os
@@ -257,10 +380,11 @@ jobs:
           assert lane in {"docs", "governance", "full"}, "missing or invalid lane"
           event = os.environ["EVENT"]
           assert event not in {"schedule", "workflow_dispatch"} or lane == "full", "scheduled/manual runs must be full"
+          diagnostic = os.environ.get("PR312_NATIVE_CAUSE_DIAGNOSTIC") == "true"
           expected = {
               "focused": lane != "full",
               "test": lane == "full",
-              "windows-smoke": lane == "full",
+              "windows-smoke": lane == "full" and not diagnostic,
               "windows-full": lane == "full" and event != "pull_request",
               "nightly-slow-smoke": event == "schedule",
           }

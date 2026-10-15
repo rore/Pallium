@@ -23,6 +23,7 @@ from core.errors import ImmediateTransactionBusyError
 from core.relay import RelayService
 from tests.test_codex_mcp_desktop_bridge import _serve_protocol
 from tests.test_agent_relay_hooks import _load
+from tests.relay_native_cause_diagnostic import capture_native_cause
 
 SCOPE = {"container_ref": "git:example.test/retained-東京"}
 TARGET = "target-session"
@@ -1645,6 +1646,7 @@ async def test_fresh_runtime_request_reenrolls_after_service_epoch_change(monkey
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("busy_stage", ["ready", "register"])
+@capture_native_cause
 async def test_accepted_mcp_worker_recovers_pending_http_wake_after_service_replacement(
     client, monkeypatch, tmp_path, http_wake, capsys, busy_stage,
 ):

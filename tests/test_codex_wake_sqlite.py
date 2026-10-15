@@ -21,6 +21,7 @@ from app.main import create_app
 from app.config import AppConfig
 from storage.vector_index import VectorIndexConfig
 from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
+from tests.relay_native_cause_diagnostic import capture_native_cause
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from app.dependencies import build_router
@@ -1179,6 +1180,7 @@ def test_http_projection_factory_preserves_overrides_and_error_fallback(
     "outcome", "replacement", "attempt_conflict", "unrelated_corruption",
     "commit_before", "commit_after", "endpoint", "delivery", "session", "container",
 ])
+@capture_native_cause
 def test_http_claim_correlation_uses_fresh_identity_and_preserves_authority(
     relay_store, tmp_path, monkeypatch, change,
 ):

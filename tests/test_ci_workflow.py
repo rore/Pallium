@@ -123,13 +123,14 @@ def test_explicit_ci_test_paths_exist() -> None:
     for relative in re.findall(r"(?m)^\s+(tests/\S+)$", WORKFLOW):
         assert (root / relative).exists(), relative
 
-def _gate(jobs: dict, event: str) -> subprocess.CompletedProcess:
+def _gate(jobs: dict, event: str, *, diagnostic: bool = False) -> subprocess.CompletedProcess:
     block = _job("result")
     assert "if: always()" in block
     assert "needs: [select, focused, test, windows-smoke, windows-full, nightly-slow-smoke]" in block
     code = textwrap.dedent(block.split("python - <<'PY'\n", 1)[1].rsplit("          PY", 1)[0])
     return subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
-                          env={**os.environ, "RESULTS": json.dumps(jobs), "EVENT": event})
+                          env={**os.environ, "RESULTS": json.dumps(jobs), "EVENT": event,
+                               "PR312_NATIVE_CAUSE_DIAGNOSTIC": str(diagnostic).lower()})
 
 
 def _results(lane: str, event: str) -> dict:
@@ -162,6 +163,27 @@ def test_aggregate_gate_accepts_only_complete_successful_required_lanes() -> Non
     assert _gate(jobs, "pull_request").returncode != 0
     assert _gate(_results("docs", "schedule"), "schedule").returncode != 0
     assert _gate(_results("docs", "workflow_dispatch"), "workflow_dispatch").returncode != 0
+
+
+def test_native_cause_diagnostic_requires_both_original_failed_lanes() -> None:
+    jobs = _results("full", "workflow_dispatch")
+    jobs["windows-smoke"]["result"] = "skipped"
+    assert _gate(jobs, "workflow_dispatch", diagnostic=True).returncode == 0
+    for job in ("test", "windows-full"):
+        for outcome in ("failure", "skipped", "cancelled"):
+            broken = json.loads(json.dumps(jobs))
+            broken[job]["result"] = outcome
+            assert _gate(broken, "workflow_dispatch", diagnostic=True).returncode != 0
+    linux, windows = _job("test", "windows-smoke"), _job("windows-full", "nightly-slow-smoke")
+    assert 'python-version: ["3.12.15"]' in linux
+    assert 'python-version: ["3.12.10"]' in windows
+    for block in (linux, windows):
+        assert "PIP_CONSTRAINT:" in block
+        assert "if: always()" in block and "actions/upload-artifact@v4" in block
+        assert "--junitxml" in block and "tests/ -q -n 4" in block
+    assert "continue-on-error: true" in windows
+    assert "!cancelled() && steps.install_dependencies.outcome == 'success'" in windows
+    assert '$env:SERIAL_OUTCOME -ne "success" -or $env:REMAINING_OUTCOME -ne "success"' in windows
 
 
 def test_selection_step_uses_trusted_policy_and_full_fallback(tmp_path: Path) -> None:
