@@ -480,19 +480,36 @@ def test_failed_snapshot_read_is_unknown_and_bounded(world, path, monkeypatch):
 
 
 @pytest.mark.parametrize("path", VIEWS)
-def test_status_does_not_take_native_guard_or_mutate_delivery(world, path):
+def test_status_does_not_take_native_guard_or_mutate_delivery(world, path, monkeypatch):
     _, delivery = _send(world, "uncertain")
     http, _, registry, native = world
     before = registry.reservations()
     baseline_native = len(native)
     release, held = threading.Event(), threading.Event()
+    real_guard, forbidden_acquisitions = registry._lock, []
+
+    class ObserveNativeGuard:
+        def acquire(self, *args, **kwargs):
+            if threading.current_thread() is not owner:
+                forbidden_acquisitions.append(threading.get_ident())
+                raise AssertionError("status attempted native initiation ownership")
+            return real_guard.acquire(*args, **kwargs)
+
+        def release(self):
+            return real_guard.release()
+
+        def __enter__(self):
+            self.acquire()
+            return self
+
+        def __exit__(self, *_args):
+            self.release()
+
     def own_native():
         with registry._lock:
             held.set()
             release.wait()
     owner = threading.Thread(target=own_native, daemon=True)
-    owner.start()
-    assert held.wait(1)
     # Separate caller avoids a hanging test if health accidentally takes the guard.
     result, errors, phases, done = [], [], [], threading.Event()
     def observe():
@@ -510,31 +527,41 @@ def test_status_does_not_take_native_guard_or_mutate_delivery(world, path):
         finally:
             done.set()
     reader = threading.Thread(target=observe, daemon=True)
-    phases.append(("reader_start", time.monotonic()))
-    reader.start()
-    try:
-        completed = done.wait(2)
-        diagnostics = None
-        if not completed:
-            frames = sys._current_frames()
-            threads = sorted(threading.enumerate(), key=lambda thread: (
-                thread not in (reader, owner),
-                not any(name in thread.name.lower() for name in ("anyio", "portal")),
-            ))[:12]
-            diagnostics = {
-                "phases": list(phases), "errors": list(errors),
-                "stacks": {
-                    f"{thread.name}:{thread.ident}": "".join(traceback.format_stack(frames[thread.ident], limit=12))[-4096:]
-                    for thread in threads if thread.ident in frames
-                },
-            }
-        assert completed, f"status waited for native initiation ownership: {diagnostics}"
-        assert not errors, errors
-        assert result[0]["unresolved_uncertain_count"] == 1
-    finally:
-        release.set()
-        owner.join(2)
-        reader.join(2)
+    reader_started = False
+    with monkeypatch.context() as guard_patch:
+        guard_patch.setattr(registry, "_lock", ObserveNativeGuard())
+        owner.start()
+        try:
+            assert held.wait(1)
+            phases.append(("reader_start", time.monotonic()))
+            reader.start()
+            reader_started = True
+            # Completion is orchestration; the proxy directly detects forbidden guard use.
+            completed = done.wait(5)
+            diagnostics = None
+            if not completed:
+                frames = sys._current_frames()
+                threads = sorted(threading.enumerate(), key=lambda thread: (
+                    thread not in (reader, owner),
+                    not any(name in thread.name.lower() for name in ("anyio", "portal")),
+                ))[:12]
+                diagnostics = {
+                    "phases": list(phases), "errors": list(errors),
+                    "stacks": {
+                        f"{thread.name}:{thread.ident}": "".join(traceback.format_stack(frames[thread.ident], limit=12))[-4096:]
+                        for thread in threads if thread.ident in frames
+                    },
+                }
+            assert not forbidden_acquisitions, forbidden_acquisitions
+            assert completed, f"status observation did not complete: {diagnostics}"
+            assert not errors, errors
+            assert result[0]["unresolved_uncertain_count"] == 1
+        finally:
+            release.set()
+            owner.join()
+            if reader_started:
+                reader.join()
+    assert registry._lock is real_guard
     assert not owner.is_alive() and not reader.is_alive()
     assert registry.reservations() == before and len(native) == baseline_native
     status = http.get(f"/relay/messages/{delivery['message_id']}", params=SCOPE).json()["deliveries"][0]

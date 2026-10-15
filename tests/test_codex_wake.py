@@ -3772,11 +3772,12 @@ def test_exclusive_trial_rejects_endpoint_scope_generation_aba_before_action(cli
 
 
 def test_crash_after_claim_rewakes_and_actual_codex_hook_delivers_once(
-    client, monkeypatch: pytest.MonkeyPatch, tmp_path, capsys,
+    client, monkeypatch: pytest.MonkeyPatch, tmp_path, capsys, *, force_setup_refusal=False,
 ) -> None:
     import storage.sqlite_relay as sqlite_relay
     from app.dependencies import recover_expired_relay_wakes
     from integrations.codex.hooks import user_prompt_submit as hook
+    from tests.codex_wake_setup import initialize_empty_wake_registry
 
     clock = [datetime(2030, 9, 5, tzinfo=timezone.utc)]
 
@@ -3788,7 +3789,11 @@ def test_crash_after_claim_rewakes_and_actual_codex_hook_delivers_once(
     storage = client.app.state.pallium_service._storage
     relay = RelayService(storage)
     registry_root = tmp_path / "wake-registry"
-    registry = _sqlite_wake_registry(storage, registry_root)
+    registry = CodexWakeRegistry(relay_service=relay, legacy_state_dir=registry_root)
+    initialize_empty_wake_registry(
+        registry, relay, storage, expected_database=tmp_path / "test-relay.db", legacy=registry_root,
+        monkeypatch=monkeypatch, force_refusal=force_setup_refusal,
+    )
     workers = []
     native_prompts = []
     retry_launched = threading.Event()
@@ -3967,6 +3972,12 @@ def test_crash_after_claim_rewakes_and_actual_codex_hook_delivers_once(
     assert relay.turn(
         runtime="codex", session_ref="crash-target", **SCOPE
     )["deliveries"] == []
+
+
+def test_crash_after_claim_hook_recovers_empty_setup_refusal(client, monkeypatch, tmp_path, capsys):
+    test_crash_after_claim_rewakes_and_actual_codex_hook_delivers_once(
+        client, monkeypatch, tmp_path, capsys, force_setup_refusal=True,
+    )
 
 
 def test_late_exact_hook_claim_is_correlated_before_expired_wake_sweep(
