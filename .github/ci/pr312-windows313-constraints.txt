@@ -1,5 +1,6 @@
-# Exact external distributions from the preserved PR312 Windows 3.13.15 CI install.
-# Source: ci-312-b84a-retry-windows313-job-116080354686.raw, SHA256 7cc19a5ae94f5a3b1bee56bf715128b98ec8cb803202a14f0c76623be92b7df8.
+# Exact external distributions from standard Windows 3.13.15 job 116273636571.
+# Source: hosted-run-38690039186/windows-full-3.13-job-116273636571.endpoint.log,
+# SHA256 57124F13E3D2D5833B58F3032E94353A08C750C3AAF1DD75AB63978DB954EBA0.
 annotated-doc==0.0.5
 annotated-types==0.8.0
 anyio==4.15.1
@@ -11,7 +12,7 @@ colorama==0.4.6
 cryptography==50.0.2
 execnet==2.1.2
 fastapi==0.143.1
-filelock==4.1.2
+filelock==4.2.0
 flatbuffers==25.12.19
 fsspec==2026.9.0
 grimp==3.17

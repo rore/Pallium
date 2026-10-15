@@ -1020,13 +1020,127 @@ def test_recovery_terminal_reads_never_release_or_reschedule_inflight(
     assert status(fresh["message_id"])["state"] == "pending"
 
 
-def test_online_close_removes_only_exact_durable_capability_and_intent(tmp_path: Path) -> None:
+def test_online_close_removes_only_exact_durable_capability_and_intent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from tests.test_claude_wake_registration import _client
+    import core.claude_wake as wake
 
     registry = ClaudeWakeRegistry(state_dir=tmp_path)
     other = {**PAYLOAD, "session_ref": "other"}
     assert _register(registry, tmp_path, PAYLOAD, "open")
-    assert _register(registry, tmp_path, other, "other-open")
+    observations: list[dict[str, object]] = []
+    capture_active = [False]
+    capture_complete = [True]
+
+    def mark_capture_incomplete() -> None:
+        capture_complete[0] = False
+
+    def record(stage: str, **fields: object) -> None:
+        if not capture_active[0]:
+            return
+        try:
+            if len(observations) >= 16:
+                mark_capture_incomplete()
+                return
+            observations.append({"stage": stage, **fields})
+        except BaseException:
+            mark_capture_incomplete()
+
+    def observe_result(stage: str, operation):
+        def observed(*args, **kwargs):
+            try:
+                result = operation(*args, **kwargs)
+            except BaseException:
+                record(stage, outcome="raised")
+                raise
+            record(stage, outcome="true" if result else "false")
+            return result
+
+        return observed
+
+    original_lock = wake._acquire_intent_lock
+
+    def observe_lock(path: Path):
+        try:
+            started = time.perf_counter_ns()
+        except BaseException:
+            mark_capture_incomplete()
+            started = None
+        result = None
+        outcome = "raised"
+        try:
+            result = original_lock(path)
+            outcome = "acquired" if result is not None else "returned_none"
+            return result
+        finally:
+            try:
+                elapsed = time.perf_counter_ns() - started if started is not None else None
+                if elapsed is None:
+                    mark_capture_incomplete()
+                record("scoped_intent_lock", outcome=outcome, elapsed_ns=elapsed)
+            except BaseException:
+                mark_capture_incomplete()
+
+    original_read = registry._read_intent_locked
+
+    def observe_intent_read(runtime: str, session_ref: str, container_ref: str):
+        try:
+            intent = original_read(runtime, session_ref, container_ref)
+        except BaseException:
+            record("intent_read", outcome="raised")
+            raise
+        try:
+            present = intent is not None
+            id_matches = present and intent.get("intent_id") == "other-open"
+            record(
+                "intent_read", outcome="returned", present=present,
+                id_matches=id_matches,
+            )
+        except BaseException:
+            mark_capture_incomplete()
+        return intent
+
+    with monkeypatch.context() as capture:
+        capture.setattr(wake, "_acquire_intent_lock", observe_lock)
+        capture.setattr(registry, "_read_intent_locked", observe_intent_read)
+        capture.setattr(
+            registry, "_intent_matches",
+            observe_result("intent_payload_match", registry._intent_matches),
+        )
+        capture.setattr(
+            registry, "_ensure_capacity_locked",
+            observe_result("capacity", registry._ensure_capacity_locked),
+        )
+        capture.setattr(
+            registry, "_write_canonical_locked",
+            observe_result("canonical_write", registry._write_canonical_locked),
+        )
+        capture.setattr(
+            registry, "_clear_unusable_locked",
+            observe_result("clear_unusable", registry._clear_unusable_locked),
+        )
+        capture.setattr(registry, "register", observe_result("register_return", registry.register))
+        try:
+            capture_active[0] = True
+            record("rehydration_state", refused=registry._rehydration_refused)
+            assert _register(registry, tmp_path, other, "other-open")
+        except BaseException:
+            capture_active[0] = False
+            try:
+                (tmp_path / "direct-register-stages.json").write_text(
+                    json.dumps({
+                        "case": "second_direct_registration",
+                        "capture_complete": capture_complete[0],
+                        "observations": observations,
+                    }),
+                    encoding="utf-8",
+                )
+            except BaseException:
+                pass
+            raise
+        finally:
+            capture_active[0] = False
     closed = {
         "runtime": "claude-code", "session_ref": PAYLOAD["session_ref"],
         "container_ref": PAYLOAD["container_ref"],
