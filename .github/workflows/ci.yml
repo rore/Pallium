@@ -93,7 +93,6 @@ jobs:
         python-version: ["3.12.15"]
     env:
       PIP_CONSTRAINT: ${{ github.workspace }}/.github/ci/pr312-native-linux312-constraints.txt
-      PALLIUM_PR312_NATIVE_CAUSE_DIR: ${{ runner.temp }}/pr312-native-cause
     steps:
       - uses: actions/checkout@v4
 
@@ -106,7 +105,10 @@ jobs:
 
       - name: Prepare native cause receipts
         shell: pwsh
+        env:
+          PALLIUM_PR312_NATIVE_CAUSE_DIR: ${{ runner.temp }}/pr312-native-cause
         run: |
+          "PALLIUM_PR312_NATIVE_CAUSE_DIR=$env:PALLIUM_PR312_NATIVE_CAUSE_DIR" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           New-Item -ItemType Directory -Path $env:PALLIUM_PR312_NATIVE_CAUSE_DIR -Force | Out-Null
           foreach ($operation in @("initialize", "reserve")) {
             '{"preparation":"ready","target_state":"not_started","outcome":null}' | Set-Content -LiteralPath (Join-Path $env:PALLIUM_PR312_NATIVE_CAUSE_DIR "$operation.json") -Encoding utf8
@@ -234,7 +236,6 @@ jobs:
         python-version: ["3.12.10"]
     env:
       PIP_CONSTRAINT: ${{ github.workspace }}/.github/ci/pr312-native-windows312-constraints.txt
-      PALLIUM_PR312_NATIVE_CAUSE_DIR: ${{ runner.temp }}/pr312-native-cause
     steps:
       - uses: actions/checkout@v4
 
@@ -259,7 +260,10 @@ jobs:
 
       - name: Prepare native cause receipts
         shell: pwsh
+        env:
+          PALLIUM_PR312_NATIVE_CAUSE_DIR: ${{ runner.temp }}/pr312-native-cause
         run: |
+          "PALLIUM_PR312_NATIVE_CAUSE_DIR=$env:PALLIUM_PR312_NATIVE_CAUSE_DIR" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           New-Item -ItemType Directory -Path $env:PALLIUM_PR312_NATIVE_CAUSE_DIR -Force | Out-Null
           foreach ($operation in @("initialize", "reserve")) {
             '{"preparation":"ready","target_state":"not_started","outcome":null}' | Set-Content -LiteralPath (Join-Path $env:PALLIUM_PR312_NATIVE_CAUSE_DIR "$operation.json") -Encoding utf8

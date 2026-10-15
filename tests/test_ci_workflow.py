@@ -179,6 +179,10 @@ def test_native_cause_diagnostic_requires_both_original_failed_lanes() -> None:
     assert 'python-version: ["3.12.10"]' in windows
     for block in (linux, windows):
         assert "PIP_CONSTRAINT:" in block
+        assert "runner.temp" not in block.split("    steps:", 1)[0]
+        preparation = block.split("      - name: Prepare native cause receipts", 1)[1].split("      - name: Install dependencies", 1)[0]
+        assert "        env:\n          PALLIUM_PR312_NATIVE_CAUSE_DIR: ${{ runner.temp }}/pr312-native-cause" in preparation
+        assert 'Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append' in preparation
         assert "if: always()" in block and "actions/upload-artifact@v4" in block
         assert "--junitxml" in block and "tests/ -q -n 4" in block
     assert "continue-on-error: true" in windows
