@@ -88,7 +88,7 @@ def relay_storage(client):
     return client.app.state.pallium_service._storage
 
 
-def test_alias_transfer_reply_and_lifecycle(client):
+def test_alias_transfer_reply_and_lifecycle(client, monkeypatch):
     _turn(client, "claude-code", "sender")
     _turn(client, "codex", "review-old", title="review")
     _turn(client, "codex", "review-new", title="review")
@@ -118,10 +118,23 @@ def test_alias_transfer_reply_and_lifecycle(client):
         client, "codex", "review-old", "claude-code:sender", "reply one",
         in_reply_to=old["message_id"],
     ).json()
-    reply2 = _send(
-        client, "claude-code", "sender", "codex:review-old", "reply two",
-        in_reply_to=reply1["message_id"],
-    ).json()
+    from itertools import count
+    from types import SimpleNamespace
+    from storage import sqlite_queue
+
+    # This send exercises reply-chain behavior; native admission deadlines are separate.
+    native_queue_time = sqlite_queue.time
+    with monkeypatch.context() as reply_patch:
+        reply_time = SimpleNamespace(**vars(native_queue_time))
+        reply_time.monotonic = count(step=0.001).__next__
+        reply_patch.setattr(sqlite_queue, "time", reply_time)
+        response = _send(
+            client, "claude-code", "sender", "codex:review-old", "reply two",
+            in_reply_to=reply1["message_id"],
+        )
+    assert sqlite_queue.time is native_queue_time
+    assert response.status_code == 200, response.text
+    reply2 = response.json()
     reply3 = _send(
         client, "codex", "review-old", "claude-code:sender", "reply three",
         in_reply_to=reply2["message_id"],
