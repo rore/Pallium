@@ -821,10 +821,20 @@ def test_claim_correlation_rejects_mismatched_or_ambiguous_results() -> None:
 def test_http_reconciliation_prunes_full_registry_and_wakes_replacement_once(
     client, monkeypatch: pytest.MonkeyPatch, tmp_path,
 ) -> None:
+    import time
+    from contextlib import contextmanager
+    from sqlalchemy import select
     import storage.sqlite_relay as sqlite_relay
     from dataclasses import asdict
     from core.codex_wake import MAX_RESERVATIONS
+    from core.errors import ImmediateTransactionBusyError
+    from storage.sqlite_schema import (
+        RelayMessageRecord, RelayDeliveryRecord, RelaySessionRecord,
+        RelaySessionWorkRefRecord, RelayEndpointGenerationRecord,
+        RelayCodexWakeStateRecord, RelayCodexWakeReservationRecord,
+    )
 
+    native_sleep = time.sleep
     clock = [datetime(2030, 1, 1, tzinfo=timezone.utc)]
 
     def controlled_now(value=None):
@@ -860,7 +870,19 @@ def test_http_reconciliation_prunes_full_registry_and_wakes_replacement_once(
         assert response.status_code == 200
         endpoints[name] = response.json()["session"]["endpoint_id"]
 
-    def send(name: str, *, expiry=None) -> dict:
+    def authority():
+        values = []
+        with storage._relay_engine.connect() as db:
+            for model in (RelayMessageRecord, RelayDeliveryRecord, RelaySessionRecord,
+                          RelaySessionWorkRefRecord, RelayEndpointGenerationRecord,
+                          RelayCodexWakeStateRecord, RelayCodexWakeReservationRecord):
+                columns = [column for column in model.__table__.columns
+                           if column.name not in {"trace_version", "trace_truncated", "trace_pruned"}]
+                values.append(tuple(db.execute(select(*columns).order_by(
+                    *model.__table__.primary_key.columns)).all()))
+        return tuple(values), tuple(native_prompts)
+
+    def send(name: str, *, expiry=None, retry_busy=False) -> dict:
         body = {
             "sender_runtime": "claude-code",
             "sender_session_ref": "sender",
@@ -872,7 +894,59 @@ def test_http_reconciliation_prunes_full_registry_and_wakes_replacement_once(
             body["expires_in_seconds"] = expiry
         else:
             body["expires_in_seconds"] = None
-        response = route.post("/relay/messages", json=body)
+        if not retry_busy:
+            response = route.post("/relay/messages", json=body)
+            assert response.status_code == 200, response.text
+            return response.json()
+
+        begin, original_send = storage._begin_relay_immediate, storage.relay_send
+        local, attempts = threading.local(), []
+
+        def observe_send(*args, **kwargs):
+            local.active = True
+            try:
+                return original_send(*args, **kwargs)
+            finally:
+                local.active = False
+
+        @contextmanager
+        def observe_begin():
+            if not getattr(local, "active", False):
+                with begin() as db:
+                    yield db
+                return
+            attempt = {"acquired": False}
+            attempts.append(attempt)
+            try:
+                with begin() as db:
+                    attempt["acquired"] = True
+                    yield db
+            except BaseException as error:
+                attempt["error"] = error
+                raise
+
+        before = authority()
+        with monkeypatch.context() as admission:
+            admission.setattr(storage, "relay_send", observe_send)
+            admission.setattr(storage, "_begin_relay_immediate", observe_begin)
+            deadline = time.monotonic() + 5
+            response = route.post("/relay/messages", json=body)
+            expected_attempts = 1
+            if response.status_code == 503:
+                assert len(attempts) == 1 and attempts[0]["acquired"] is False
+                assert type(attempts[0].get("error")) is ImmediateTransactionBusyError
+                assert response.json() == {"detail": {"code": "relay_busy", "retryable": True}}
+                assert authority() == before
+                delay = response.headers.get("Retry-After", "")
+                assert delay.isascii() and delay.isdecimal()
+                assert 0 < int(delay) < deadline - time.monotonic()
+                native_sleep(int(delay))
+                assert time.monotonic() < deadline
+                assert authority() == before
+                response = route.post("/relay/messages", json=body)
+                expected_attempts = 2
+            assert len(attempts) == expected_attempts
+            assert attempts[-1]["acquired"] is True and "error" not in attempts[-1]
         assert response.status_code == 200, response.text
         return response.json()
 
@@ -988,25 +1062,30 @@ def test_http_reconciliation_prunes_full_registry_and_wakes_replacement_once(
         )
         assert status.status_code == 200
         assert status.json()["deliveries"][0]["state"] == expected
-    replacement = send("delivered")
-    queued_behind_it = send("delivered")
-    for worker in workers:
-        if worker is not None:
-            worker.join(timeout=2)
-            assert not worker.is_alive()
-    assert len(native_prompts) == 1
-    assert native_prompts[0] == (
-        "delivered",
-        codex_wake._wake_prompt(replacement["deliveries"][0]["delivery_id"]),
-    )
-    assert registry.snapshot(endpoints["delivered"]).delivery_id == (
-        replacement["deliveries"][0]["delivery_id"]
-    )
-    queued_status = route.get(
-        f"/relay/messages/{queued_behind_it['message_id']}", params=scope
-    )
-    assert queued_status.status_code == 200
-    assert queued_status.json()["deliveries"][0]["state"] == "pending"
+    try:
+        replacement = send("delivered")
+        queued_behind_it = send("delivered", retry_busy=True)
+        for worker in workers:
+            if worker is not None:
+                worker.join(timeout=2)
+                assert not worker.is_alive()
+        assert len(native_prompts) == 1
+        assert native_prompts[0] == (
+            "delivered",
+            codex_wake._wake_prompt(replacement["deliveries"][0]["delivery_id"]),
+        )
+        assert registry.snapshot(endpoints["delivered"]).delivery_id == (
+            replacement["deliveries"][0]["delivery_id"]
+        )
+        queued_status = route.get(
+            f"/relay/messages/{queued_behind_it['message_id']}", params=scope
+        )
+        assert queued_status.status_code == 200
+        assert queued_status.json()["deliveries"][0]["state"] == "pending"
+    finally:
+        for worker in workers:
+            if worker is not None:
+                worker.join()
 
 def test_reconciliation_generation_cas_preserves_newer_fence(tmp_path) -> None:
     registry = CodexWakeRegistry()
