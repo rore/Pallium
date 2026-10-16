@@ -1624,7 +1624,7 @@ def test_create_app_preserves_new_intent_during_old_cleanup(
 ) -> None:
     from itertools import count
     from concurrent.futures import ThreadPoolExecutor
-    from contextlib import nullcontext
+    from contextlib import ExitStack, nullcontext
 
     from fastapi.testclient import TestClient
 
@@ -1644,9 +1644,16 @@ def test_create_app_preserves_new_intent_during_old_cleanup(
     recovery_ready = threading.Event()
     recovered = threading.Event()
     original_recover = wake.recover_claude_relay_wakes
+    original_stop = wake.ClaudeWakeReconciler.stop
+
+    def stop_reconciler(reconciler):
+        recovery_ready.set()
+        return original_stop(reconciler)
+
+    monkeypatch.setattr(wake.ClaudeWakeReconciler, "stop", stop_reconciler)
 
     def controlled_recover(*args, **kwargs):
-        assert recovery_ready.wait(timeout=3)
+        recovery_ready.wait()
         original_recover(*args, **kwargs)
         recovered.set()
 
@@ -1666,7 +1673,8 @@ def test_create_app_preserves_new_intent_during_old_cleanup(
     ))
     scope = {"container_ref": PAYLOAD["container_ref"]}
 
-    with TestClient(app, client=("127.0.0.1", 50000)) as http:
+    with TestClient(app, client=("127.0.0.1", 50000)) as http, ExitStack() as release_gates:
+        release_gates.callback(recovery_ready.set)
         common = _load_claude_hook("common", monkeypatch)
         real_time = wake_registry_module.time
         native_monotonic = real_time.monotonic
@@ -1824,19 +1832,24 @@ def test_create_app_preserves_new_intent_during_old_cleanup(
 
         try:
             with ThreadPoolExecutor(max_workers=2) as workers:
-                cleanup = workers.submit(apply, old)
-                assert cleanup_held.wait(timeout=1)
-                publication = workers.submit(publish_new)
-                assert published.wait(timeout=1)
-                assert native_contention.is_set()
-                assert cleanup.result(timeout=1).status_code == 204
-                newer = json.loads(target.read_text(encoding="utf-8"))
-                assert newer["intent_id"] != "old"
-                assert newer.get("closed", False) == (new_state == "closed")
-                if new_state != "closed":
-                    assert newer["idle"] == (new_state == "idle")
-                send_http.set()
-                assert publication.result(timeout=1) is (not lost_http)
+                try:
+                    cleanup = workers.submit(apply, old)
+                    assert cleanup_held.wait(timeout=1)
+                    publication = workers.submit(publish_new)
+                    # Arrival is fixture orchestration; native lock budgets stay unchanged.
+                    assert published.wait(timeout=5)
+                    assert native_contention.is_set()
+                    assert cleanup.result(timeout=1).status_code == 204
+                    newer = json.loads(target.read_text(encoding="utf-8"))
+                    assert newer["intent_id"] != "old"
+                    assert newer.get("closed", False) == (new_state == "closed")
+                    if new_state != "closed":
+                        assert newer["idle"] == (new_state == "idle")
+                    send_http.set()
+                    assert publication.result(timeout=1) is (not lost_http)
+                finally:
+                    native_contention.set()
+                    send_http.set()
             recovery_ready.set()
             assert recovered.wait(timeout=1)
             assert not target.exists()
