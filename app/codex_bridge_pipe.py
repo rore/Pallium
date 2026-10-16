@@ -14,7 +14,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from types import SimpleNamespace
+from types import SimpleNamespace, TracebackType
 
 MAX_MESSAGE = 32 * 1024
 EXCHANGE_SECONDS = 3.0
@@ -2265,6 +2265,41 @@ def _read_tool_schema_valid(tools: object) -> bool:
 
 class RetainedService(InventoryService):
     """Normal source-channel custody. Trial authority and files are never consulted."""
+
+    def _record_failure(self, exc: Exception) -> None:
+        # Retained source loops have no trial failure context; keep terminal
+        # attribution without exposing exception text or changing teardown.
+        try:
+            category = getattr(exc, "category", None)
+        except Exception:
+            category = None
+        category = category if type(category) is str and category in _INVENTORY_FAILURE_CATEGORIES else "unexpected"
+        origin_line = 0
+        try:
+            trace = exc.__traceback__
+            for _ in range(32):
+                if trace is None:
+                    break
+                if type(trace) is not TracebackType:
+                    origin_line = 0
+                    break
+                if trace.tb_frame.f_code.co_filename == __file__:
+                    line = trace.tb_lineno
+                    if type(line) is not int or not 0 < line <= 100000:
+                        origin_line = 0
+                        break
+                    origin_line = line
+                trace = trace.tb_next
+            else:
+                if trace is not None:
+                    origin_line = 0
+        except Exception:
+            origin_line = 0
+        try:
+            _log.warning("codex_retained_terminal_failure timestamp=%s stage=source-loop category=%s origin_line=%d",
+                         datetime.now(timezone.utc).isoformat(), category, origin_line)
+        except Exception:
+            pass  # Diagnostics must not replace the source-loop failure.
 
     def __init__(self, directory: Path):
         super().__init__(directory)

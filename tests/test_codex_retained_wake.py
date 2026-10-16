@@ -456,10 +456,12 @@ def test_inherited_stop_timeout_invalidates_enrollment_evidence(client, retained
 
 
 def test_conclusive_source_channel_eof_clears_registration_while_source_is_alive(
-    retained, monkeypatch,
+    retained, monkeypatch, caplog,
 ):
+    monkeypatch.setattr(bridge._log, "handlers", [*bridge._log.handlers, caplog.handler])
     service, request, natives = retained
     source = service.source
+    service.ready_deadline = time.monotonic() + bridge.GRANT_SECONDS
     observations = []
     w = service.w
     w.con.FILE_FLAG_OVERLAPPED = 4
@@ -489,6 +491,7 @@ def test_conclusive_source_channel_eof_clears_registration_while_source_is_alive
                 return {**request, "continuity": None}
             assert service.retained_registration is not None
             assert not source.gone and service.source is source
+            assert not source.closed
             raise bridge.ShadowUnavailable("transport-failed")
         def write(self, response, deadline):
             assert response["status"] == "registered"
@@ -507,14 +510,40 @@ def test_conclusive_source_channel_eof_clears_registration_while_source_is_alive
     assert observations == [(None, None, False, False)]
     assert len(natives) == 1 and natives[0].closed and not natives[0].owners
     assert not service.unresolved and not source.gone
+    assert not any(record.msg.startswith("codex_retained_terminal_failure ")
+                   for record in caplog.records)
 
 
 @pytest.mark.parametrize("failure_at", ["accept", "read"])
+@pytest.mark.parametrize("broken_sink", [False, True])
 def test_inherited_source_io_unresolved_invalidates_enrollment_evidence(
-    client, retained, monkeypatch, caplog, failure_at,
+    client, retained, monkeypatch, caplog, failure_at, broken_sink,
 ):
     monkeypatch.setattr(bridge._log, "handlers", [*bridge._log.handlers, caplog.handler])
     service, request, _ = retained
+    events = []
+    original_warning = bridge._log.warning
+    original_stop = service.stop_event.set
+    original_drop = service._drop
+
+    def warning(message, *args, **kwargs):
+        if message.startswith("codex_retained_terminal_failure "):
+            events.append("terminal")
+            if broken_sink:
+                raise OSError("private-sink-sentinel")
+        return original_warning(message, *args, **kwargs)
+
+    def stop():
+        events.append("stop")
+        return original_stop()
+
+    def drop(*args, **kwargs):
+        events.append("drop")
+        return original_drop(*args, **kwargs)
+
+    monkeypatch.setattr(bridge._log, "warning", warning)
+    monkeypatch.setattr(service.stop_event, "set", stop)
+    monkeypatch.setattr(service, "_drop", drop)
     assert service._process(request, service.source, 0, float("inf"))["status"] == "registered"
     client.app.state.codex_wake_registry.retained_service = service
     monkeypatch.setattr(bridge, "_retained", [])
@@ -568,10 +597,163 @@ def test_inherited_source_io_unresolved_invalidates_enrollment_evidence(
         assert records[0].exc_info is None
         assert records[0].created > 0
     assert "private-error-sentinel" not in caplog.text
+    terminal = [record for record in caplog.records
+                if record.msg.startswith("codex_retained_terminal_failure ")]
+    assert len(terminal) == (0 if broken_sink else 1)
+    if terminal:
+        timestamp, category, origin_line = terminal[0].args
+        assert bridge.datetime.fromisoformat(timestamp).utcoffset().total_seconds() == 0
+        assert category == "transport-failed" and terminal[0].exc_info is None
+        assert type(origin_line) is int and 0 < origin_line <= 100000
+    terminal_index = events.index("terminal")
+    assert events[terminal_index:terminal_index + 2] == ["terminal", "stop"]
+    assert events[-1] == "drop"
     assert service.unresolved and service.enrollment_diagnostics() is None
     for path in ("/status", "/dashboard/api/relay/summary"):
         enrollment = client.get(path).json()["relay_wake"]["native_enrollment"]
         assert enrollment["state"] == "unavailable"
+
+
+@pytest.mark.parametrize("case,expected", [
+    ("safe", "deadline"), ("unknown", "unexpected"), ("missing", "unexpected"),
+    ("nonstring", "unexpected"), ("hostile", "unexpected"),
+])
+def test_retained_terminal_failure_category_is_bounded(tmp_path, monkeypatch, caplog, case, expected):
+    monkeypatch.setattr(bridge._log, "handlers", [caplog.handler])
+    service = bridge.RetainedService(tmp_path)
+
+    class HostileCategory(Exception):
+        @property
+        def category(self):
+            raise OSError("private-category-sentinel")
+
+    error = {
+        "safe": bridge.ShadowUnavailable("deadline"),
+        "unknown": bridge.ShadowUnavailable("private-category-sentinel"),
+        "missing": RuntimeError("private-message-sentinel"),
+        "nonstring": SimpleNamespace(category=[]),
+        "hostile": HostileCategory("private-message-sentinel"),
+    }[case]
+    before = service.enrollment_diagnostics()
+    service._record_failure(error)
+    records = [record for record in caplog.records
+               if record.msg.startswith("codex_retained_terminal_failure ")]
+    assert len(records) == 1
+    timestamp, category, origin_line = records[0].args
+    assert category == expected and records[0].exc_info is None
+    assert origin_line == 0
+    assert bridge.datetime.fromisoformat(timestamp).utcoffset().total_seconds() == 0
+    assert "private" not in caplog.text
+    assert not service.stop_event.is_set()
+    assert service.enrollment_diagnostics() == before
+
+
+def test_retained_terminal_generic_failure_records_only_module_line(tmp_path, monkeypatch, caplog):
+    import inspect
+
+    monkeypatch.setattr(bridge._log, "handlers", [caplog.handler])
+    service = bridge.RetainedService(tmp_path)
+    source, first_line = inspect.getsourcelines(bridge.InventoryService._run)
+    expected_line = next(first_line + index for index, line in enumerate(source)
+                         if line.strip() == "self.w = _native()")
+
+    def native_failure():
+        raise RuntimeError("private-native-sentinel")
+
+    monkeypatch.setattr(bridge, "_native", native_failure)
+    service._run()
+    records = [record for record in caplog.records
+               if record.msg.startswith("codex_retained_terminal_failure ")]
+    assert len(records) == 1 and records[0].args[1:] == ("unexpected", expected_line)
+    assert records[0].exc_info is None
+    assert "private" not in caplog.text and bridge.__file__ not in caplog.text
+    assert service.stop_event.is_set() and service.custody is None
+
+
+@pytest.mark.parametrize("case", ["absent", "foreign", "hostile", "invalid", "truncated"])
+def test_retained_terminal_unknown_origin_is_zero(tmp_path, monkeypatch, caplog, case):
+    import inspect
+    from types import TracebackType
+
+    monkeypatch.setattr(bridge._log, "handlers", [caplog.handler])
+    service = bridge.RetainedService(tmp_path)
+
+    class UnsafeTrace(Exception):
+        def __getattribute__(self, name):
+            if name == "__traceback__":
+                if case == "invalid":
+                    return SimpleNamespace(tb_lineno=123, tb_next=None)
+                raise OSError("private-trace-sentinel")
+            return super().__getattribute__(name)
+
+    error = RuntimeError("private-message-sentinel")
+    if case in {"hostile", "invalid"}:
+        error = UnsafeTrace("private-message-sentinel")
+    elif case == "foreign":
+        try:
+            raise error
+        except RuntimeError as caught:
+            error = caught
+    elif case == "truncated":
+        namespace = {}
+        exec(compile("def fail():\n    raise RuntimeError('private-message-sentinel')\n", bridge.__file__, "exec"), namespace)
+        try:
+            namespace["fail"]()
+        except RuntimeError as caught:
+            error = caught
+            local = caught.__traceback__.tb_next
+        frame = inspect.currentframe()
+        tail = None
+        for _ in range(33):
+            tail = TracebackType(tail, frame, frame.f_lasti, frame.f_lineno)
+        error.__traceback__ = TracebackType(tail, local.tb_frame, local.tb_lasti, local.tb_lineno)
+    before = service.enrollment_diagnostics()
+    service._record_failure(error)
+    records = [record for record in caplog.records
+               if record.msg.startswith("codex_retained_terminal_failure ")]
+    assert len(records) == 1 and records[0].args[1:] == ("unexpected", 0)
+    assert records[0].exc_info is None
+    assert "private" not in caplog.text and bridge.__file__ not in caplog.text
+    assert not service.stop_event.is_set() and service.enrollment_diagnostics() == before
+
+
+@pytest.mark.parametrize("lines,expected", [
+    ([1], 1), ([100000], 100000), ([0], 0), ([100001], 0),
+    ([7] * 32, 7), ([7] * 33, 0), ([3, 5, 9], 9),
+])
+def test_retained_terminal_origin_bounds(tmp_path, monkeypatch, caplog, lines, expected):
+    from types import TracebackType
+
+    monkeypatch.setattr(bridge._log, "handlers", [caplog.handler])
+    service = bridge.RetainedService(tmp_path)
+    namespace = {}
+    exec(compile("def anchor():\n    import sys\n    return sys._getframe()\n", bridge.__file__, "exec"), namespace)
+    frame = namespace["anchor"]()
+    trace = None
+    for line in reversed(lines):
+        trace = TracebackType(trace, frame, frame.f_lasti, line)
+    error = RuntimeError("private-message-sentinel")
+    error.__traceback__ = trace
+    service._record_failure(error)
+    records = [record for record in caplog.records
+               if record.msg.startswith("codex_retained_terminal_failure ")]
+    assert len(records) == 1 and records[0].args[1:] == ("unexpected", expected)
+    assert records[0].exc_info is None
+    assert "private" not in caplog.text and bridge.__file__ not in caplog.text
+    assert not service.stop_event.is_set()
+
+
+def test_retained_terminal_diagnostic_clock_failure_does_not_change_state(tmp_path, monkeypatch):
+    service = bridge.RetainedService(tmp_path)
+    before = service.enrollment_diagnostics()
+
+    def unavailable(*_args):
+        raise OSError("private-clock-sentinel")
+
+    monkeypatch.setattr(bridge, "datetime", SimpleNamespace(now=unavailable))
+    service._record_failure(RuntimeError("private-message-sentinel"))
+    assert not service.stop_event.is_set()
+    assert service.enrollment_diagnostics() == before
 
 
 @pytest.mark.parametrize("category,expected", [("peer-gone", "peer-gone"), ("private-category-sentinel", "unavailable")])
