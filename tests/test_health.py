@@ -590,7 +590,7 @@ async def test_production_factory_serves_lexical_and_relay_before_vector_ready(
     reconcile_started, release_reconcile, reconcile_finished = threading.Event(), threading.Event(), threading.Event()
     reconcile_done_events = []
 
-    def gated_reconcile(_service, *, reconcile_done=None, **_kwargs):
+    def gated_reconcile(_service, *, reconcile_done=None, owned_threads=None, **_kwargs):
         stop = threading.Event()
         reconcile_done_events.append(reconcile_done)
 
@@ -603,45 +603,48 @@ async def test_production_factory_serves_lexical_and_relay_before_vector_ready(
             finally:
                 reconcile_finished.set()
 
-        threading.Thread(target=run, daemon=True, name="test-vector-reconcile").start()
+        worker = threading.Thread(target=run, daemon=True, name="test-vector-reconcile")
+        if owned_threads is not None:
+            owned_threads.append(worker)
+        worker.start()
         return stop
 
     create_app = main.create_app
     monkeypatch.setattr(main, "_start_reconcile_thread", gated_reconcile)
-    monkeypatch.setattr(main, "create_app", lambda *_args, **_kwargs: create_app(config))
-    application = main.app()
-    try:
-        async with application.router.lifespan_context(application):
-            async with httpx.AsyncClient(
-                transport=httpx.ASGITransport(app=application), base_url="http://test",
-            ) as client:
-                _health, health_body = await _wait_for_health(
-                    client, lambda body: body.get("initialized") is True,
-                )
-                assert await asyncio.to_thread(reconcile_started.wait, 2), "vector reconciliation did not start"
-                assert len(reconcile_done_events) == 1 and not reconcile_done_events[0].is_set()
-                status = await client.get("/status")
-                query = await client.post("/query", json={"text": "startup probe"})
-                relay = await client.get("/relay/sessions", params={"container_ref": "startup-probe"})
-                assert health_body["ready"] is False
-                assert status.json()["initialized"] is True
-                assert status.json()["ready"] is False
-                assert query.status_code == 200
-                assert relay.status_code == 200
+    async with _prebuilt_production_inner(monkeypatch, lambda: create_app(config)):
+        application = main.app()
+        try:
+            async with application.router.lifespan_context(application):
+                async with httpx.AsyncClient(
+                    transport=httpx.ASGITransport(app=application), base_url="http://test",
+                ) as client:
+                    _health, health_body = await _wait_for_health(
+                        client, lambda body: body.get("initialized") is True,
+                    )
+                    assert await asyncio.to_thread(reconcile_started.wait, 2), "vector reconciliation did not start"
+                    assert len(reconcile_done_events) == 1 and not reconcile_done_events[0].is_set()
+                    status = await client.get("/status")
+                    query = await client.post("/query", json={"text": "startup probe"})
+                    relay = await client.get("/relay/sessions", params={"container_ref": "startup-probe"})
+                    assert health_body["ready"] is False
+                    assert status.json()["initialized"] is True
+                    assert status.json()["ready"] is False
+                    assert query.status_code == 200
+                    assert relay.status_code == 200
 
-                release_reconcile.set()
-                assert await asyncio.to_thread(reconcile_finished.wait, 2), "vector reconciliation did not settle"
-                _health, health_body = await _wait_for_health(
-                    client, lambda body: body.get("ready") is True,
-                )
-                status = await client.get("/status")
-                assert health_body["initialized"] is True
-                assert status.json()["initialized"] is True
-                assert status.json()["ready"] is True
-    finally:
-        release_reconcile.set()
-        if reconcile_started.is_set():
-            assert await asyncio.to_thread(reconcile_finished.wait, 2), "test reconcile worker did not settle"
+                    release_reconcile.set()
+                    assert await asyncio.to_thread(reconcile_finished.wait, 2), "vector reconciliation did not settle"
+                    _health, health_body = await _wait_for_health(
+                        client, lambda body: body.get("ready") is True,
+                    )
+                    status = await client.get("/status")
+                    assert health_body["initialized"] is True
+                    assert status.json()["initialized"] is True
+                    assert status.json()["ready"] is True
+        finally:
+            release_reconcile.set()
+            if reconcile_started.is_set():
+                assert await asyncio.to_thread(reconcile_finished.wait, 2), "test reconcile worker did not settle"
 
 
 @pytest.mark.asyncio

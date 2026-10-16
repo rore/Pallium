@@ -671,9 +671,11 @@ def http_wake(client, retained, monkeypatch, tmp_path):
         assert not worker.is_alive()
     http.close()
 
-def recover(journey):
+def recover(journey, *, hook_completed=None):
     _, relay, registry, _, _, _, workers = journey
     recover_expired_relay_wakes(relay, ClaudeWakeRegistry(), codex_registry=registry)
+    if hook_completed is not None:
+        assert hook_completed.wait(5), "recovery hook did not complete"
     for worker in workers:
         worker.join(2)
         assert not worker.is_alive()
@@ -1948,8 +1950,17 @@ async def test_accepted_mcp_worker_recovers_pending_http_wake_after_service_repl
         assert desktop is not None
         events = []
         hook = _hook_runner(http, monkeypatch, "notLoaded", events, tmp_path)
-        desktop.on_owner = lambda request: hook(request["params"]["arguments"]["prompt"])
-        recover((http, relay, registry, replacement, desktop, send, wake_workers))
+        hook_completed = threading.Event()
+
+        def on_owner(request):
+            try:
+                return hook(request["params"]["arguments"]["prompt"])
+            finally:
+                hook_completed.set()
+
+        desktop.on_owner = on_owner
+        recover((http, relay, registry, replacement, desktop, send, wake_workers),
+                hook_completed=hook_completed)
 
         delivered = http.get("/relay/messages/retained-journey", params=SCOPE).json()["deliveries"][0]
         assert delivered["delivery_id"] == pending["delivery_id"] and delivered["state"] == "delivered"
@@ -1964,6 +1975,8 @@ async def test_accepted_mcp_worker_recovers_pending_http_wake_after_service_repl
     try:
         await _serve_protocol(server, exercise)
     finally:
+        for worker in wake_workers:
+            await asyncio.to_thread(worker.join)
         original._drop()
         if replacement is not None:
             replacement._drop()
