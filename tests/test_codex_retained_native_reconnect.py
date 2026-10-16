@@ -493,6 +493,7 @@ def test_terminal_owned_api_is_replaced_and_same_native_source_reenrolls(monkeyp
     monkeypatch.setenv("WEB_CONCURRENCY", "1")
     monkeypatch.setattr(AppConfig, "from_env", staticmethod(lambda: _no_vector_config()))
     processes, nonces, epochs, desktops, receipts = [], [], [], [], []
+    cleanup_errors = []
     source = storage = None
     proof = None
     saved_fences = None
@@ -530,11 +531,21 @@ def test_terminal_owned_api_is_replaced_and_same_native_source_reenrolls(monkeyp
         nonces.append(kwargs["env"]["PALLIUM_API_LAUNCH_TOKEN"])
         return child
 
-    def stop_child(child, **_kwargs):
-        if child.poll() is None:
-            child.stdin.write("stop\n")
+    def stop_child(child, command="stop\n", timeout=8, **_kwargs):
+        try:
+            if child.poll() is not None:
+                return
+            child.stdin.write(command)
             child.stdin.flush()
-            child.wait(timeout=8)
+            child.wait(timeout=timeout)
+        except Exception as exc:
+            cleanup_errors.append(exc)
+            try:
+                child.terminate()
+                child.wait(timeout=5)
+            except Exception as terminate_error:
+                cleanup_errors.append(terminate_error)
+                raise
 
     def qualified(*args, **kwargs):
         result = supervisor._wait_for_api(*args, **kwargs)
@@ -624,35 +635,66 @@ def test_terminal_owned_api_is_replaced_and_same_native_source_reenrolls(monkeyp
         if evidence:
             Path(evidence, "native-supervisor-transition.json").write_text(json.dumps(receipts))
     finally:
-        if source is not None and source.poll() is None:
-            source.stdin.write(json.dumps({"stop": True}) + "\n")
-            source.stdin.flush()
-            source.wait(timeout=5)
+        test_error = sys.exception()
+        if source is not None:
+            try:
+                stop_child(source, json.dumps({"stop": True}) + "\n", timeout=5)
+            except Exception:
+                pass
         for child in processes:
-            stop_child(child)
+            try:
+                stop_child(child)
+            except Exception:
+                pass
             if child.stdin:
-                child.stdin.close()
+                try:
+                    child.stdin.close()
+                except Exception as exc:
+                    cleanup_errors.append(exc)
         if source is not None:
             for stream in (source.stdin, source.stdout, source.stderr):
                 if stream:
-                    stream.close()
+                    try:
+                        stream.close()
+                    except Exception as exc:
+                        cleanup_errors.append(exc)
         for desktop in desktops:
-            desktop.close()
-        if storage is not None:
-            storage.close()
+            try:
+                desktop.close()
+            except Exception as exc:
+                cleanup_errors.append(exc)
+        children_exited = all(child.poll() is not None for child in processes) and (
+            source is None or source.poll() is not None)
+        if storage is not None and children_exited:
+            try:
+                storage.close()
+            except Exception as exc:
+                cleanup_errors.append(exc)
         evidence = os.environ.get("PALLIUM_CONTROL_DIR")
         if evidence:
-            artifact_dir = Path(evidence) / "native-supervisor-existing-artifacts"
-            artifact_dir.mkdir(exist_ok=True)
-            for index, child in enumerate(processes):
-                for artifact in (test_root / f"api-{index}.log", directory / f"exit-{child.pid}.json"):
-                    if artifact.exists():
-                        shutil.copyfile(artifact, artifact_dir / artifact.name)
-        assert test_root.resolve().parent == temp_parent.resolve()
-        assert test_root.resolve().is_relative_to(repo.resolve())
-        assert test_root.name.startswith("native-owned-api-")
-        if test_root.exists():
-            shutil.rmtree(test_root)
+            try:
+                artifact_dir = Path(evidence) / "native-supervisor-existing-artifacts"
+                artifact_dir.mkdir(exist_ok=True)
+                for index, child in enumerate(processes):
+                    for artifact in (test_root / f"api-{index}.log", directory / f"exit-{child.pid}.json"):
+                        if artifact.exists():
+                            shutil.copyfile(artifact, artifact_dir / artifact.name)
+            except Exception as exc:
+                cleanup_errors.append(exc)
+        try:
+            assert test_root.resolve().parent == temp_parent.resolve()
+            assert test_root.resolve().is_relative_to(repo.resolve())
+            assert test_root.name.startswith("native-owned-api-")
+            if test_root.exists() and children_exited and not cleanup_errors:
+                shutil.rmtree(test_root)
+        except Exception as exc:
+            cleanup_errors.append(exc)
+        if cleanup_errors:
+            note = "bounded test cleanup errors: " + "; ".join(map(str, cleanup_errors))
+            if test_error is not None:
+                test_error.add_note(note)
+            else:
+                raise AssertionError(note) from cleanup_errors[0]
 
 
 @native
