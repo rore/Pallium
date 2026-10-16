@@ -547,7 +547,7 @@ def test_codex_hook_records_unavailable_after_committed_http_claim(
 )
 def test_codex_exact_wake_real_http_response_delay_is_bounded_and_traceable(
     client, monkeypatch, tmp_path, capsys, response_delay, fragmented,
-    expected_state, should_emit, delay_refresh,
+    expected_state, should_emit, delay_refresh, ack_response_delay=0.0,
 ):
     """Exercise actual hook urllib and /relay/turn through delayed loopback HTTP."""
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -589,6 +589,7 @@ def test_codex_exact_wake_real_http_response_delay_is_bounded_and_traceable(
         monkeypatch.setattr(SQLiteRelayMixin, "relay_refresh_structural_work_refs", slow_refresh)
 
     response_finished = threading.Event()
+    ack_handlers = []
 
     import anyio
     from core.relay import RelayService
@@ -628,6 +629,8 @@ def test_codex_exact_wake_real_http_response_delay_is_bounded_and_traceable(
 
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self):
+            if self.path == "/relay/deliveries/ack":
+                ack_handlers.append(threading.current_thread())
             body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
             span = {"stage": "forward", "path": self.path, "entered": time.monotonic()}
             stages.append(span)
@@ -639,6 +642,11 @@ def test_codex_exact_wake_real_http_response_delay_is_bounded_and_traceable(
             if self.path == "/relay/turn":
                 span["delay_entered"] = time.monotonic()
                 time.sleep(response_delay)
+                span["delay_finished"] = time.monotonic()
+            elif self.path == "/relay/deliveries/ack" and ack_response_delay:
+                assert response.status_code == 200, response.text
+                span["delay_entered"] = time.monotonic()
+                time.sleep(ack_response_delay)
                 span["delay_finished"] = time.monotonic()
             try:
                 self.send_response(response.status_code)
@@ -701,6 +709,11 @@ def test_codex_exact_wake_real_http_response_delay_is_bounded_and_traceable(
         server.shutdown()
         server.server_close()
         server_thread.join(timeout=2)
+        for handler in ack_handlers:
+            handler.join(timeout=3)
+            settled = not handler.is_alive()
+            handler.join()
+            assert settled
         print("pallium delayed-http stages: " + json.dumps({
             "stages": stages[:32], "truncated": len(stages) > 32,
         }), file=sys.stderr)
@@ -739,12 +752,34 @@ def test_codex_exact_wake_real_http_response_delay_is_bounded_and_traceable(
         else:
             assert 0 <= request_event["elapsed_ms"] < 1800
         assert json.loads(captured.out)["hookSpecificOutput"]["additionalContext"].count(delivery_id) == 1
-        assert any(event["stage"] == "delivery_acked" for event in wake_events)
+        diagnostics = {
+            "stages": stages[:32], "stages_truncated": len(stages) > 32,
+            "wake_events": wake_events[:16], "events_truncated": len(wake_events) > 16,
+            "stderr": captured.err[:4000], "stderr_truncated": len(captured.err) > 4000,
+        }
+        if ack_response_delay:
+            ack_span, = [span for span in stages if span.get("path") == "/relay/deliveries/ack"]
+            assert ack_span["delay_finished"] - ack_span["delay_entered"] >= ack_response_delay
+            assert "send_finished" in ack_span and len(ack_handlers) == 1
+            assert any(event["stage"] == "hook_failed" and event.get("reason") == "ack_failed"
+                       for event in wake_events), diagnostics
+            assert not any(event["stage"] == "delivery_acked" for event in wake_events), diagnostics
+        else:
+            assert any(event["stage"] == "delivery_acked" for event in wake_events), diagnostics
     else:
         assert 1800 <= request_event["elapsed_ms"] < 2400
         assert not any(event["stage"] == "payload_emitted" for event in wake_events)
         assert any(event.get("reason") == "relay_unavailable" for event in wake_events)
         assert json.loads(captured.out)["decision"] == "block"
+
+
+def test_codex_exact_wake_late_ack_response_keeps_durable_delivery_without_confirmation(
+    client, monkeypatch, tmp_path, capsys,
+):
+    test_codex_exact_wake_real_http_response_delay_is_bounded_and_traceable(
+        client, monkeypatch, tmp_path, capsys, 0.0, False, "delivered", True, False,
+        ack_response_delay=0.65,
+    )
 
 
 @pytest.mark.parametrize("exact_wake", [True, False])

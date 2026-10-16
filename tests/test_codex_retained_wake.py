@@ -968,7 +968,101 @@ def test_pending_busy_or_unknown_releases_and_recovers(
         assert service._process(request, service.source, 1, float("inf"))["status"] == "registered"
         desktop = service.custody
     desktop.state = "notLoaded"
-    recover(http_wake)
+    from sqlalchemy import select
+    from storage.sqlite_schema import (
+        RelayAliasRecord, RelayCodexWakeReservationRecord, RelayCodexWakeStateRecord,
+        RelayDeliveryRecord, RelayMessageRecord, RelaySessionRecord, RelaySessionWorkRefRecord,
+    )
+
+    storage = relay._store
+    workers = http_wake[6]
+    attempts, acquisitions = [], []
+    local = threading.local()
+    begin = storage._begin_relay_immediate
+
+    def authority():
+        with storage._relay_engine.connect() as db:
+            return tuple(db.execute(select(*[
+                column for column in model.__table__.columns
+                if column.name not in {"trace_version", "trace_truncated", "trace_pruned"}
+            ]).order_by(*model.__table__.primary_key.columns)).all() for model in (
+                RelayMessageRecord, RelayDeliveryRecord, RelaySessionRecord, RelayAliasRecord,
+                RelaySessionWorkRefRecord, RelayCodexWakeStateRecord, RelayCodexWakeReservationRecord,
+            ))
+
+    def native_state():
+        return (service.epoch, service.source, service.desktop, service.custody,
+                service.retained_registration, desktop.closed, desktop.unresolved,
+                tuple(desktop.writes), tuple(desktop.owners), tuple(workers))
+
+    def observe_reserve(operation, **kwargs):
+        if operation != "reserve":
+            return transition(operation, **kwargs)
+        attempt = {"values": dict(kwargs["values"])}
+        attempts.append(attempt)
+        local.reserve = True
+        try:
+            attempt["result"] = transition(operation, **kwargs)
+            return attempt["result"]
+        except BaseException as error:
+            attempt["error"] = error
+            raise
+        finally:
+            local.reserve = False
+
+    @contextmanager
+    def observe_begin():
+        if not getattr(local, "reserve", False):
+            with begin() as db:
+                yield db
+            return
+        acquired = {"acquired": False}
+        acquisitions.append(acquired)
+        try:
+            with begin() as db:
+                acquired["acquired"] = True
+                yield db
+        except BaseException as error:
+            acquired["error"] = error
+            raise
+
+    # A refused reservation can defer this functional recovery without spending a native attempt.
+    before, native_before = authority(), native_state()
+    assert relay.codex_wake_snapshot() == (True, ())
+    with monkeypatch.context() as admission:
+        admission.setattr(relay, "codex_wake_transition", observe_reserve)
+        admission.setattr(storage, "_begin_relay_immediate", observe_begin)
+        recover(http_wake)
+        if not desktop.owners:
+            assert len(attempts) == len(acquisitions) == 1
+            assert "result" not in attempts[0] and acquisitions[0]["acquired"] is False
+            assert type(attempts[0].get("error")) is ImmediateTransactionBusyError
+            assert acquisitions[0].get("error") is attempts[0]["error"]
+            assert attempts[0]["values"] == {
+                "recipient_endpoint_id": delivery["recipient_endpoint_id"],
+                "delivery_id": delivery["delivery_id"], "session_ref": TARGET, **SCOPE,
+            }
+            assert authority() == before and native_state() == native_before
+            assert relay.codex_wake_snapshot() == (True, ())
+            pending, = http.get("/relay/messages/retained-journey", params=SCOPE).json()["deliveries"]
+            assert pending["delivery_id"] == delivery["delivery_id"]
+            assert pending["state"] == "pending" and pending["attempts"] == 0
+            with storage._relay_engine.connect() as db:
+                row = db.execute(select(RelayDeliveryRecord.__table__).where(
+                    RelayDeliveryRecord.id == delivery["delivery_id"],
+                )).one()
+            assert row.claim_token is row.claimed_at is row.lease_expires_at is None
+            assert authority() == before and native_state() == native_before
+            recover(http_wake)
+            assert len(attempts) == len(acquisitions) == 2
+        assert acquisitions[-1]["acquired"] is True and "error" not in acquisitions[-1]
+        reserved = attempts[-1].get("result")
+        assert reserved is not None and reserved.outcome == "prepared"
+        assert attempts[-1]["values"] == {
+            "recipient_endpoint_id": delivery["recipient_endpoint_id"],
+            "delivery_id": delivery["delivery_id"], "session_ref": TARGET, **SCOPE,
+        }
+        assert reserved.generation == before[5][0].generation + 1
     assert len(desktop.owners) == 1
     assert registry.snapshot(delivery["recipient_endpoint_id"]).outcome == "uncertain"
     recover(http_wake)
