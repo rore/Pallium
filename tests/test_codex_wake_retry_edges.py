@@ -418,6 +418,10 @@ def test_unloaded_hook_claim_failure_recovers_original_and_backlog(
                     assert not force_backlog_refusal or attempts[0].get("forced") is True
             assert response.status_code == 200, response.text
             if message_id == "claim-failure-original":
+                for worker in workers:
+                    worker.join(5)
+                    assert not worker.is_alive()
+                recover(http_wake)  # Model the omitted production sweep after initial settlement.
                 # Synchronize real hook work before checking worker settlement below.
                 assert owner_finished.wait(5), "first owner hook did not finish"
             for worker in workers:

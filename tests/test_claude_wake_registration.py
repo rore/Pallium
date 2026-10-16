@@ -700,7 +700,18 @@ def test_unusable_claude_credentials_revoke_exact_wake(
     assert client.post("/relay/turn", json={"runtime": "claude-code", "session_ref": session_ref, "container_ref": container_ref}).status_code == 200
     assert common.register_claude_wake(session_ref, container_ref, idle=True), statuses
     assert statuses[-1][1] == 204, statuses
-    assert common.register_claude_wake(session_ref, other_container, idle=True)
+    # This valid prerequisite prepares exact revocation; native admission has separate coverage.
+    from itertools import count
+    native_hook_time, native_registry_time = common.time, wake.time
+    with monkeypatch.context() as registration:
+        hook_time = SimpleNamespace(**vars(native_hook_time))
+        hook_time.monotonic = count(step=.001).__next__
+        registry_time = SimpleNamespace(**vars(native_registry_time))
+        registry_time.monotonic = count(step=.001).__next__
+        registration.setattr(common, "time", hook_time)
+        registration.setattr(wake, "time", registry_time)
+        assert common.register_claude_wake(session_ref, other_container, idle=True)
+    assert common.time is native_hook_time and wake.time is native_registry_time
     assert statuses[-1][1] == 204, statuses
 
     def activation() -> dict:

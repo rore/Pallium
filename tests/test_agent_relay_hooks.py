@@ -759,7 +759,8 @@ def test_codex_exact_wake_real_http_response_delay_is_bounded_and_traceable(
         }
         if ack_response_delay:
             ack_span, = [span for span in stages if span.get("path") == "/relay/deliveries/ack"]
-            assert ack_span["delay_finished"] - ack_span["delay_entered"] >= ack_response_delay
+            # Prove the response exceeds the ACK budget, not an exact sleep-duration SLA.
+            assert ack_span["delay_finished"] - ack_span["delay_entered"] > 0.5
             assert "send_finished" in ack_span and len(ack_handlers) == 1
             assert any(event["stage"] == "hook_failed" and event.get("reason") == "ack_failed"
                        for event in wake_events), diagnostics

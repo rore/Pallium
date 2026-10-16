@@ -1545,7 +1545,15 @@ def test_windows_capacity_reclaims_only_file_not_found(tmp_path: Path, monkeypat
     monkeypatch.setitem(sys.modules, "winerror", SimpleNamespace(ERROR_FILE_NOT_FOUND=2))
     monkeypatch.setitem(sys.modules, "win32pipe", SimpleNamespace(WaitNamedPipe=lambda *_: (_ for _ in ()).throw(PipeError(code))))
     monkeypatch.setattr(registry, "probe", lambda *_args, **_kwargs: pytest.fail("capacity cleanup must not admit a turn"))
-    assert _register(registry, state_dir, {**PAYLOAD, "session_ref": "new", "socket_path": r"\\.\pipe\new"}, "new") is accepted
+    # Exercise capacity policy independently of its separately covered lock-admission deadline.
+    from itertools import count
+    native_registry_time = wake.time
+    with monkeypatch.context() as admission:
+        registry_time = SimpleNamespace(**vars(native_registry_time))
+        registry_time.monotonic = count(step=.001).__next__
+        admission.setattr(wake, "time", registry_time)
+        assert _register(registry, state_dir, {**PAYLOAD, "session_ref": "new", "socket_path": r"\\.\pipe\new"}, "new") is accepted
+    assert wake.time is native_registry_time
     assert [candidate["session_ref"] for candidate in registry.recovery_candidates()] == (["new"] if accepted else [PAYLOAD["session_ref"]])
 
 

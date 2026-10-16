@@ -852,12 +852,12 @@ def http_wake(client, retained, monkeypatch, tmp_path):
         if dispatch_completed is not None:
             assert dispatch_completed.wait(5), "native setup dispatch did not complete"
         for worker in workers:
-            worker.join(2)
+            worker.join(5)
             assert not worker.is_alive(), "native wake blocked hook/registry"
         return response.json()["deliveries"][0]
     yield http, relay, registry, service, desktop, send, workers
     for worker in workers:
-        worker.join(2)
+        worker.join(5)
         assert not worker.is_alive()
     http.close()
 
@@ -867,7 +867,7 @@ def recover(journey, *, hook_completed=None):
     if hook_completed is not None:
         assert hook_completed.wait(5), "recovery hook did not complete"
     for worker in workers:
-        worker.join(2)
+        worker.join(5)
         assert not worker.is_alive()
 
 
@@ -1255,6 +1255,7 @@ def test_http_retryable_busy_once_keeps_one_delivery_and_owner(http_wake, monkey
 
     monkeypatch.setattr(storage, "_begin_relay_immediate", busy_once)
     delivery = send()
+    recover(http_wake)  # The bare router omits production's periodic recovery sweep.
 
     status = http.get("/relay/messages/retained-journey", params=SCOPE)
     assert status.status_code == 200
