@@ -1,5 +1,17 @@
 # Service-wide performance investigation and correction
 
+## Reopened real-team wake-to-payload boundary investigation — 2026-10-16
+
+The prior PR312 objective passed exact-head qualification, merged as e0e08303f11c56d655c0801d3fa0782afb520302 and is installed with AnyIO4.14.2. Its one-message normal-hook payload/ACK acceptance remains valid evidence for that exact journey, not proof that every team session wakes or emits. The human now explicitly directs tracing actual failed team deliveries, finding wake-to-payload loss, repairing a demonstrated cause and verifying across real team sessions. Root owns the canonical roadmap, live traces/recipient-turn collection and the15-recipient boundary matrix. This reopened work reuses exact identity agent-workflow:service-performance (resolved by the trusted checker), its existing High/Large expanded shape and all completed history; no competing record or baseline rewrite.
+
+Operating/applicability/risk/behavioral-integrity/Redline Python guidance and actual policy were read before this checkpoint. This is normal non-exempt implementation investigation: hooks, runtime, durable Relay authority and this Work Record cannot use the documentation exemption. Current actions are read-only diagnosis plus this record. Exact production paths and checkpoints derive from evidence before any source edit: app/integrations runtime paths are gray/watch, and core/relay, storage/sqlite_relay, API or schema changes would be red with architecture/persistence/API review as applicable. No boundary or caller-visible requirement change is presumed; protected behavior contracts remain unchanged. Independent clean-context team_wake_boundary_review reviews the concrete causal fix/control plan before implementation. High/Large remains conservative because native wake, hook emission, durable claim/ACK and independently observable team outcomes span distinct failure boundaries.
+
+Reused checkout C:/Users/I347041/.codex/worktrees/pr312-fixture-final/Pallium was clean at qualified bb7a592d. New isolated branch fix/relay-team-wake-payload starts from installed merge e0e08303; all ignored qualification/control/raw evidence remains in place. Do not modify primary/installed checkouts, configuration, Desktop, tools, databases or live processes. No resend, receive, manual ACK, deadline/assertion weakening or speculative clock fix. Human repair/team-verification authorization is established; absence of demonstrated cause and independent plan acceptance gates code, not a new permission request.
+
+Initial exact cases: relaydev message86fa255b53584bca8abc4344350cff40/delivery693a3ffb600c4a2da7428816d5ae6938 was claimed at10:42:43.761UTC with no ACK before lease expiry; paldev1 message10fb6da14bd14dfdbcd1dd95ab36d118/deliveryddc454c47e844fd193bb7ad4f0886557 remains prepared/attempt0 in root's trace. Installed pallium.log219023/219055 records owner-result timeouts10:42:20.970/10:42:40.365 with remembered registration/custody, then both reopened as stopped with registration/custody false from10:44:15. These establish distinct observed boundaries, not a common holder/load/cause or payload-emission failure. Root's cohort also contains acknowledged sessions and four with no new recipient turn sinceOct12; absent turns alone do not establish native activation outcome.
+
+Next bounded work: retain sanitized exact-ID log receipts and correlate native wake submission/result, actual recipient turn, hook start/deadline, exact claim, emission/stdout/injection and ACK. Compare successful and failed cohort paths using root's saved matrix without duplicate live queries. Inspect only connected installed source/history and actual recipient hook/rollout records. State each observed/missing boundary explicitly; preserve original payload privacy. Report the concrete fault or exact missing fact and a minimal discriminating isolated control before any source edit. No test or new CI execution is authorized by this checkpoint alone. Return the structured state to planning while the new evidence is established; no claim that the completed deployment was undone or that the historical physical delay is known.
+
 ## Production launch-token ownership — pre-edit checkpoint 2026-10-16
 
 Fresh final-launch-owner-checks ran actual import-linter with pyproject.toml/no-cache:8 contracts kept/0 broken, existing single baselined ignored import unchanged. Fresh backend report has0 violations; no reused runtime boundary report. Selector requires full82 whole-change paths. Redline advisory1 retains whole-PR sizefail75files/12972lines and unsatisfied shadow checkpoints; workflow advisory1 has0 failed blocking predicates and retains checkpoint/commit-order findings. These are not clean passes. Local exact WR+app/main.py+tests/test_health.py commit/final committed review follows; current adbc CI continues as prior-head evidence, with no publication/new qualification or installation of this product fix yet.
@@ -397,7 +409,7 @@ Agent technical review: /root/architecture_check, clean nonimplementer source/pl
 
 **Exceptions:** None
 
-**State:** Ready for review
+**State:** Blocked or returned to planning
 <!-- agent-workflow:end -->
 
 ### Final adbc Windows preparation boundaries — pre-edit checkpoint 2026-10-16
