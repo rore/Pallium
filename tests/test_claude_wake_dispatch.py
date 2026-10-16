@@ -1439,7 +1439,11 @@ def test_restart_and_claim_recovery_deliver_once_on_user_prompt(
     transport.assert_not_called()
 
     prompt = _load_claude_hook("user_prompt_submit", monkeypatch)
-    monkeypatch.setitem(prompt.relay_turn.__globals__, "SESSIONS_DIR", tmp_path / "hook-sessions")
+    session_dir = tmp_path / "hook-sessions"
+    session_dir.mkdir()
+    (session_dir / "target.lock").write_bytes(b"0")
+    assert not (session_dir / "target.json").exists()
+    monkeypatch.setitem(prompt.relay_turn.__globals__, "SESSIONS_DIR", session_dir)
     monkeypatch.setattr(prompt, "resolve_container_ref", lambda *_: scope["container_ref"])
     monkeypatch.setattr(prompt, "derive_actor_ref", lambda *_: "local")
     monkeypatch.setattr(prompt, "check_dedup", lambda *_: False)
