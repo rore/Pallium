@@ -1519,7 +1519,14 @@ def test_posix_capacity_reclaims_only_provably_absent_endpoints(tmp_path: Path, 
     monkeypatch.setattr(ClaudeWakeRegistry, "_endpoint_is_provably_absent",
                         staticmethod(FunctionType(endpoint_probe.__code__, namespace)))
     monkeypatch.setattr(registry, "probe", lambda *_args, **_kwargs: pytest.fail("capacity cleanup must not admit a turn"))
-    assert _register(registry, state_dir, {**PAYLOAD, "session_ref": "new"}, "new") is accepted
+    from itertools import count
+    native_registry_time = wake.time
+    with monkeypatch.context() as admission:
+        registry_time = SimpleNamespace(**vars(native_registry_time))
+        registry_time.monotonic = count(step=.001).__next__
+        admission.setattr(wake, "time", registry_time)
+        assert _register(registry, state_dir, {**PAYLOAD, "session_ref": "new"}, "new") is accepted
+    assert wake.time is native_registry_time
     assert [candidate["session_ref"] for candidate in registry.recovery_candidates()] == (["new"] if accepted else [PAYLOAD["session_ref"]])
 
 
