@@ -11,7 +11,7 @@ import subprocess
 import threading
 import time
 import uuid
-from weakref import WeakValueDictionary
+from weakref import WeakSet, WeakValueDictionary
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
@@ -32,12 +32,33 @@ _scheduled_session_generations: dict[tuple[int, str, str], int] = {}
 _scheduled_session_delivery_ids: dict[tuple[int, str, str], str] = {}
 _scheduled_session_attempt_ids: dict[tuple[int, str, str], str] = {}
 _scheduled_lock = threading.Lock()
+_closing_registries = WeakSet()
+_workers: set[tuple[int, threading.Thread]] = set()
 _registry_lock = threading.Lock()
 _default_registry: CodexWakeRegistry | None = None
 _default_registry_dir: Path | None = None
 _database_guards: WeakValueDictionary = WeakValueDictionary()
 logger = logging.getLogger(__name__)
 _popen = subprocess.Popen
+
+
+def stop_codex_relay_wake_admission(registry: CodexWakeRegistry) -> None:
+    """Prevent this app's registry from starting another native wake worker."""
+    with _scheduled_lock:
+        _closing_registries.add(registry)
+
+
+def drain_codex_relay_wakes(registry: CodexWakeRegistry) -> None:
+    """Join owned workers through their final durable and trace operations."""
+    registry_id = id(registry)
+    with _scheduled_lock:
+        workers = [worker for owner, worker in _workers if owner == registry_id]
+    if threading.current_thread() in workers:
+        raise RuntimeError("Cannot drain Codex wake workers from a wake worker")
+    for worker in workers:
+        worker.join()
+    with _scheduled_lock:
+        _workers.difference_update((registry_id, worker) for worker in workers)
 
 
 def get_codex_wake_registry(state_dir: Path | None = None) -> CodexWakeRegistry:
@@ -152,6 +173,9 @@ def reconcile_codex_relay_wake_reservations(
 ) -> int:
     """Remove terminal fences and atomically replace expired wake claims."""
     registry = registry or get_codex_wake_registry()
+    with _scheduled_lock:
+        if registry in _closing_registries:
+            return 0
     candidates = registry.reservations() if reservations is None else reservations
     if registry.persistent:
         reconciled = 0
@@ -412,13 +436,19 @@ def _schedule_reserved_codex_relay_wake(
     wake_key = (id(registry), reservation.session_ref, reservation.container_ref)
     attempt_id = f"relay-activation-{uuid.uuid4().hex}"
     with _scheduled_lock:
-        if (_scheduled_session_generations.get(wake_key) == reservation.generation
+        closing = registry in _closing_registries
+        if not closing and (_scheduled_session_generations.get(wake_key) == reservation.generation
                 and _scheduled_session_delivery_ids.get(wake_key) == reservation.delivery_id):
             return None
-        _scheduled_delivery_ids.add(reservation.delivery_id)
-        _scheduled_session_delivery_ids[wake_key] = reservation.delivery_id
-        _scheduled_session_generations[wake_key] = reservation.generation
-        _scheduled_session_attempt_ids[wake_key] = attempt_id
+        if not closing:
+            _scheduled_delivery_ids.add(reservation.delivery_id)
+            _scheduled_session_delivery_ids[wake_key] = reservation.delivery_id
+            _scheduled_session_generations[wake_key] = reservation.generation
+            _scheduled_session_attempt_ids[wake_key] = attempt_id
+    if closing:
+        if reservation.outcome == "prepared":
+            registry.release_generation(reservation)
+        return None
     _emit_trace(
         trace_callback, attempt_id, reservation.delivery_id,
         reservation.recipient_endpoint_id, "prepared",
@@ -428,9 +458,22 @@ def _schedule_reserved_codex_relay_wake(
         args=(reservation, registry, attempt_id, trace_callback),
         daemon=True,
     )
+    closing = False
     try:
-        worker.start()
-    except RuntimeError:
+        with _scheduled_lock:
+            if registry in _closing_registries:
+                closing = True
+            else:
+                _workers.difference_update(
+                    (owner, old) for owner, old in tuple(_workers) if not old.is_alive()
+                )
+                _workers.add((id(registry), worker))
+                try:
+                    worker.start()
+                except Exception:
+                    _workers.discard((id(registry), worker))
+                    raise
+    except Exception:
         if reservation.outcome == "prepared":
             registry.release_generation(reservation)
         _clear_schedule(reservation, registry)
@@ -440,6 +483,18 @@ def _schedule_reserved_codex_relay_wake(
             ActivationAttemptResult(
                 "deferred", "worker_start_failed",
                 native_retry_safe=reservation.outcome == "prepared",
+            ),
+        )
+        return None
+    if closing:
+        if reservation.outcome == "prepared":
+            registry.release_generation(reservation)
+        _clear_schedule(reservation, registry)
+        _emit_trace(
+            trace_callback, attempt_id, reservation.delivery_id,
+            reservation.recipient_endpoint_id, "completed",
+            ActivationAttemptResult(
+                "deferred", "shutdown", native_retry_safe=reservation.outcome == "prepared",
             ),
         )
         return None
@@ -492,6 +547,10 @@ def schedule_codex_relay_wake(
         return None
 
     registry = registry or get_codex_wake_registry()
+
+    with _scheduled_lock:
+        if registry in _closing_registries:
+            return None
 
     def still_pending() -> bool:
         if relay_service is None:

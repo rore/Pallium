@@ -1949,6 +1949,8 @@ class InventoryService:
                                 peer.close()
                         peer = None
         except Exception as exc:
+            if self.retained:
+                self._terminal_failure = True
             self._record_failure(exc)
             self.stop_event.set()
             try:
@@ -2301,9 +2303,13 @@ class RetainedService(InventoryService):
         except Exception:
             pass  # Diagnostics must not replace the source-loop failure.
 
-    def __init__(self, directory: Path):
+    def __init__(self, directory: Path, *, on_terminal=None):
         super().__init__(directory)
         self.retained = True
+        self._on_terminal = on_terminal
+        self._explicit_stop = threading.Event()
+        self._terminal_failure = False
+        self._terminal_notified = False
         self._custody_lock = threading.RLock()
         self.ancestors = []
         self.read_tool = False
@@ -2409,6 +2415,7 @@ class RetainedService(InventoryService):
             )
 
     def stop(self) -> None:
+        self._explicit_stop.set()
         self.stop_event.set()
         self._clear_registration()
         super().stop()
@@ -2418,9 +2425,30 @@ class RetainedService(InventoryService):
     def _run(self) -> None:
         try:
             super()._run()
+        except Exception as exc:
+            self.unresolved = True
+            self._terminal_failure = True
+            # Preserve native locals in an escaping teardown's traceback.
+            _retained.append((self, exc))
+            try:
+                self._record_failure(exc)
+            except Exception:
+                pass
+            raise
         finally:
-            if self.unresolved:
-                self._invalidate_enrollment_diagnostics()
+            try:
+                if self.unresolved:
+                    self._invalidate_enrollment_diagnostics()
+            except Exception:
+                pass
+            finally:
+                if (self._terminal_failure and not self._explicit_stop.is_set()
+                        and not self._terminal_notified and self._on_terminal is not None):
+                    self._terminal_notified = True
+                    try:
+                        self._on_terminal()
+                    except Exception:
+                        pass  # A closed server loop must not replace the native failure.
 
     def _registration_identity(self, desktop, ancestors):
         policy = desktop.policy
@@ -2812,7 +2840,7 @@ class RetainedService(InventoryService):
             ), reservation
 
 
-def start_retained_service() -> RetainedService | None:
+def start_retained_service(*, on_terminal=None) -> RetainedService | None:
     if not retained_wake_enabled() or not native_available():
         return None
     try:
@@ -2821,6 +2849,6 @@ def start_retained_service() -> RetainedService | None:
             return None
         directory = retained_directory(port=int(port))
         _secure_directory(_native(), directory, _self_sid(_native()))
-        return RetainedService(directory).start()
+        return RetainedService(directory, on_terminal=on_terminal).start()
     except Exception:
         return None

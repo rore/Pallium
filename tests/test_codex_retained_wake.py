@@ -463,6 +463,8 @@ def test_conclusive_source_channel_eof_clears_registration_while_source_is_alive
     source = service.source
     service.ready_deadline = time.monotonic() + bridge.GRANT_SECONDS
     observations = []
+    terminal_notifications = []
+    service._on_terminal = lambda: terminal_notifications.append(True)
     w = service.w
     w.con.FILE_FLAG_OVERLAPPED = 4
     for name, value in dict(PIPE_ACCESS_DUPLEX=1, PIPE_TYPE_MESSAGE=2,
@@ -508,6 +510,7 @@ def test_conclusive_source_channel_eof_clears_registration_while_source_is_alive
     monkeypatch.setattr(bridge, "_PipeIO", SourceIO)
     service._run()
     assert observations == [(None, None, False, False)]
+    assert terminal_notifications == []
     assert len(natives) == 1 and natives[0].closed and not natives[0].owners
     assert not service.unresolved and not source.gone
     assert not any(record.msg.startswith("codex_retained_terminal_failure ")
@@ -525,6 +528,10 @@ def test_inherited_source_io_unresolved_invalidates_enrollment_evidence(
     original_warning = bridge._log.warning
     original_stop = service.stop_event.set
     original_drop = service._drop
+    notifications = []
+    def terminal_callback():
+        notifications.append((events[-1], service.stop_event.is_set(), service.unresolved))
+    service._on_terminal = terminal_callback
 
     def warning(message, *args, **kwargs):
         if message.startswith("codex_retained_terminal_failure "):
@@ -608,6 +615,7 @@ def test_inherited_source_io_unresolved_invalidates_enrollment_evidence(
     terminal_index = events.index("terminal")
     assert events[terminal_index:terminal_index + 2] == ["terminal", "stop"]
     assert events[-1] == "drop"
+    assert notifications == [("drop", True, True)]
     assert service.unresolved and service.enrollment_diagnostics() is None
     for path in ("/status", "/dashboard/api/relay/summary"):
         enrollment = client.get(path).json()["relay_wake"]["native_enrollment"]
@@ -2335,6 +2343,73 @@ def test_retained_service_failure_keeps_existing_http_lifecycle_live(monkeypatch
     assert registry.retained_service is None
     assert calls == (["start"] if fault == "start" else ["start", "stop"])
     assert "private-" not in caplog.text
+
+
+@pytest.mark.parametrize("explicit_stop", [False, True])
+@pytest.mark.parametrize("escape_cleanup", [False, True])
+@pytest.mark.parametrize("broken_callback", [False, True])
+def test_terminal_listener_notifies_only_after_unwind(
+    tmp_path, monkeypatch, explicit_stop, escape_cleanup, broken_callback,
+):
+    events = []
+    fault = RuntimeError("private-source-loop-fault")
+    close_fault = RuntimeError("private-cleanup-fault")
+    service = bridge.RetainedService(tmp_path)
+    retained_resources = []
+    notification_states = []
+    monkeypatch.setattr(bridge, "_retained", retained_resources)
+
+    def native():
+        events.append("native")
+        raise fault
+
+    def drop():
+        events.append("drop")
+        if escape_cleanup:
+            raise close_fault
+
+    def notify():
+        notification_states.append((events[-1], service._terminal_failure))
+        events.append("notify")
+        if broken_callback:
+            raise RuntimeError("private-callback-fault")
+
+    monkeypatch.setattr(bridge, "_native", native)
+    monkeypatch.setattr(service, "_drop", drop)
+    service._on_terminal = notify
+    if explicit_stop:
+        service.stop()
+        assert service._explicit_stop.is_set() and service.stop_event.is_set()
+        events.clear()
+    for _ in range(2):
+        if escape_cleanup:
+            with pytest.raises(RuntimeError) as caught:
+                service._run()
+            assert caught.value is close_fault
+        else:
+            service._run()
+    assert events.count("notify") == (0 if explicit_stop else 1)
+    assert notification_states == ([] if explicit_stop else [("drop", True)])
+    assert service._terminal_failure
+    if escape_cleanup:
+        assert service.unresolved
+        assert retained_resources == [(service, close_fault), (service, close_fault)]
+        assert close_fault.__traceback__ is not None
+
+
+def test_terminal_notification_survives_diagnostic_invalidation_failure(tmp_path, monkeypatch):
+    service = bridge.RetainedService(tmp_path)
+    fault = RuntimeError("private-cleanup-fault")
+    notifications = []
+    monkeypatch.setattr(bridge, "_retained", [])
+    monkeypatch.setattr(bridge, "_native", lambda: (_ for _ in ()).throw(fault))
+    monkeypatch.setattr(service, "_drop", lambda: (_ for _ in ()).throw(fault))
+    monkeypatch.setattr(service, "_invalidate_enrollment_diagnostics",
+                        lambda: (_ for _ in ()).throw(ValueError("private-diagnostic-fault")))
+    service._on_terminal = lambda: notifications.append(True)
+    with pytest.raises(RuntimeError) as caught:
+        service._run()
+    assert caught.value is fault and service.unresolved and notifications == [True]
 
 
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 import hashlib
@@ -33,6 +34,18 @@ from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
 SCOPE = {
     "container_ref": "git:example.test/wake",
 }
+
+
+class _CapturedWakeThread:
+    """No native thread: callers retain args and run the target manually."""
+    def start(self):
+        pass
+
+    def is_alive(self):
+        return False
+
+    def join(self):
+        pass
 
 
 def test_codex_test_clock_patches_do_not_change_shared_time(monkeypatch):
@@ -83,7 +96,7 @@ def _log_fp(value: str) -> str:
 
 
 @pytest.fixture(autouse=True)
-def isolated_codex_registry(monkeypatch: pytest.MonkeyPatch) -> CodexWakeRegistry:
+def isolated_codex_registry(monkeypatch: pytest.MonkeyPatch) -> Iterator[CodexWakeRegistry]:
     # This module exercises the legacy queue transport; retained mode has its own suite.
     monkeypatch.setattr("app.codex_bridge_pipe.retained_wake_enabled", lambda: False)
     registry = CodexWakeRegistry()
@@ -91,7 +104,11 @@ def isolated_codex_registry(monkeypatch: pytest.MonkeyPatch) -> CodexWakeRegistr
     process.communicate.return_value = (None, "")
     monkeypatch.setattr(codex_wake, "get_codex_wake_registry", lambda *_args, **_kwargs: registry)
     monkeypatch.setattr(codex_wake, "_popen", lambda *_args, **_kwargs: process)
-    return registry
+    try:
+        yield registry
+    finally:
+        codex_wake.stop_codex_relay_wake_admission(registry)
+        codex_wake.drain_codex_relay_wakes(registry)
 
 
 def setup_function() -> None:
@@ -100,6 +117,99 @@ def setup_function() -> None:
     codex_wake._scheduled_session_generations.clear()
     codex_wake._scheduled_session_delivery_ids.clear()
     codex_wake._scheduled_session_attempt_ids.clear()
+
+
+@pytest.mark.parametrize("phase", ["reserved", "prepared_trace"])
+@pytest.mark.parametrize("outcome", ["prepared", "uncertain"])
+def test_closing_admission_releases_only_unspent_exact_generation(monkeypatch, phase, outcome):
+    registry = CodexWakeRegistry()
+    reservation = registry.reserve(
+        recipient_endpoint_id="relay-session-" + "a" * 32,
+        delivery_id="relay-delivery-" + "b" * 32,
+        session_ref="target-session", container_ref=SCOPE["container_ref"],
+    )
+    assert reservation is not None
+    if outcome == "uncertain":
+        reservation = registry.begin_native_attempt(reservation)
+        assert reservation is not None
+    native = []
+    monkeypatch.setattr(codex_wake, "_popen", lambda *a, **kw: native.append(True))
+    releases = []
+    release = registry.release_generation
+    def exact_release(current):
+        assert not codex_wake._scheduled_lock.locked()
+        releases.append(current)
+        return release(current)
+    monkeypatch.setattr(registry, "release_generation", exact_release)
+    if phase == "reserved":
+        codex_wake.stop_codex_relay_wake_admission(registry)
+    def trace(event):
+        if event["stage"] == "prepared":
+            codex_wake.stop_codex_relay_wake_admission(registry)
+    assert codex_wake._schedule_reserved_codex_relay_wake(
+        reservation, registry, trace_callback=trace,
+    ) is None
+    codex_wake.drain_codex_relay_wakes(registry)
+    assert native == []
+    assert releases == ([reservation] if outcome == "prepared" else [])
+    assert registry.snapshot(reservation.recipient_endpoint_id) == (
+        None if outcome == "prepared" else reservation)
+
+
+def test_codex_drain_waits_for_final_trace_and_isolates_other_registry(monkeypatch):
+    registry, other = CodexWakeRegistry(), CodexWakeRegistry()
+    entered, release, drained = threading.Event(), threading.Event(), threading.Event()
+    errors = []
+    monkeypatch.setattr(codex_wake, "_DEBOUNCE_SECONDS", 0)
+    def trace(event):
+        if event["stage"] == "completed":
+            with pytest.raises(RuntimeError, match="Cannot drain Codex"):
+                codex_wake.drain_codex_relay_wakes(registry)
+            entered.set()
+            assert release.wait(5)
+    worker = codex_wake.schedule_codex_relay_wake(_delivery(), SCOPE, registry=registry, trace_callback=trace)
+    assert worker is not None
+    def drain():
+        try:
+            codex_wake.drain_codex_relay_wakes(registry)
+            drained.set()
+        except BaseException as exc:
+            errors.append(exc)
+    owner = threading.Thread(target=drain)
+    try:
+        assert entered.wait(5)
+        codex_wake.stop_codex_relay_wake_admission(registry)
+        codex_wake.drain_codex_relay_wakes(other)
+        owner.start()
+        assert not drained.wait(.05) and worker.is_alive()
+        assert codex_wake.schedule_codex_relay_wake(_delivery("other"), SCOPE, registry=registry) is None
+    finally:
+        release.set()
+        worker.join()
+        if owner.ident is not None:
+            owner.join()
+    assert drained.is_set() and errors == [] and not worker.is_alive()
+    codex_wake.drain_codex_relay_wakes(registry)
+
+
+def test_codex_failed_worker_start_cleans_before_return(monkeypatch):
+    registry = CodexWakeRegistry()
+    events = []
+    original_thread = threading.Thread
+    class FailedThread(original_thread):
+        def start(self):
+            raise RuntimeError("test worker start failure")
+    monkeypatch.setattr(codex_wake, "threading", SimpleNamespace(
+        **{**{name: getattr(threading, name) for name in dir(threading) if not name.startswith("__")},
+           "Thread": FailedThread},
+    ))
+    assert codex_wake.schedule_codex_relay_wake(
+        _delivery(), SCOPE, registry=registry, trace_callback=events.append,
+    ) is None
+    assert [event["stage"] for event in events] == ["prepared", "completed"]
+    assert events[-1]["reason"] == "worker_start_failed"
+    assert registry.reservations() == ()
+    assert not any(owner == id(registry) for owner, _ in codex_wake._workers)
 
 
 def test_delivery_specific_wake_prompt_is_truthful_and_narrow() -> None:
@@ -1594,7 +1704,7 @@ def test_interleaved_wake_logs_correlate_without_free_form_identifiers(
     with patch("app.codex_wake.threading.Thread") as thread:
         thread.side_effect = lambda **kwargs: (
             workers.append(kwargs["args"]),
-            type("Worker", (), {"start": lambda self: None})(),
+            _CapturedWakeThread(),
         )[1]
         for delivery_id, container_ref in zip(deliveries, containers):
             result = _delivery(delivery_id)
@@ -1805,7 +1915,7 @@ def test_busy_wakes_coalesce_and_turn_observation_does_not_rearm(monkeypatch, ou
     monkeypatch.setattr(codex_wake.time, "sleep", lambda _: None)
     native = ("queued", None, 0) if outcome == "queued" else ("ambiguous", "timeout", None)
     with patch("app.codex_wake.threading.Thread") as thread, patch("app.codex_wake._start_launch", return_value=(None, native)) as wake:
-        thread.side_effect = lambda **kwargs: (workers.append(kwargs["args"]), type("Worker", (), {"start": lambda self: None})())[1]
+        thread.side_effect = lambda **kwargs: (workers.append(kwargs["args"]), _CapturedWakeThread())[1]
         _schedule(_delivery())
         _schedule(_delivery("delivery-2"))
         assert len(workers) == 1
@@ -1829,7 +1939,7 @@ def test_busy_wake_holds_earliest_trigger_without_blind_retry(
     ):
         thread.side_effect = lambda **kwargs: (
             workers.append(kwargs["args"]),
-            type("Worker", (), {"start": lambda self: None})(),
+            _CapturedWakeThread(),
         )[1]
         _schedule(_delivery())
         codex_wake._wake_after_debounce(*workers[0])
@@ -1987,7 +2097,7 @@ def test_concurrent_recovery_sweep_does_not_duplicate_busy_wake(monkeypatch) -> 
     ):
         thread.side_effect = lambda **kwargs: (
             workers.append(kwargs["args"]),
-            type("Worker", (), {"start": lambda self: None})(),
+            _CapturedWakeThread(),
         )[1]
         _schedule(_delivery())
         codex_wake._wake_after_debounce(*workers[0])
@@ -2022,7 +2132,7 @@ def test_turn_observation_during_queued_submission_does_not_release(
     with patch("app.codex_wake.threading.Thread") as thread:
         thread.side_effect = lambda **kwargs: (
             workers.append(kwargs["args"]),
-            type("Worker", (), {"start": lambda self: None})(),
+            _CapturedWakeThread(),
         )[1]
         _schedule(delivery)
 
@@ -2052,7 +2162,7 @@ def test_pre_submit_failure_releases_without_marking_unreachable(monkeypatch) ->
     with patch("app.codex_wake.threading.Thread") as thread:
         thread.side_effect = lambda **kwargs: (
             workers.append(kwargs["args"]),
-            type("Worker", (), {"start": lambda self: None})(),
+            _CapturedWakeThread(),
         )[1]
         codex_wake.schedule_codex_relay_wake(
             _delivery(), SCOPE, on_unreachable=unreachable.append
@@ -2072,7 +2182,7 @@ def test_unexpected_native_exception_retains_owner(monkeypatch) -> None:
     ) as wake:
         thread.side_effect = lambda **kwargs: (
             workers.append(kwargs["args"]),
-            type("Worker", (), {"start": lambda self: None})(),
+            _CapturedWakeThread(),
         )[1]
         _schedule(_delivery())
         codex_wake._wake_after_debounce(*workers[0])
@@ -2277,7 +2387,7 @@ def test_no_hook_completion_preserves_delivery_until_real_hook_recovery(
     with patch("app.codex_wake.threading.Thread") as thread:
         thread.side_effect = lambda **kwargs: (
             workers.append(kwargs["args"]),
-            type("Worker", (), {"start": lambda self: None})(),
+            _CapturedWakeThread(),
         )[1]
         for runtime, session in (("claude-code", "sender"), ("codex", "target")):
             assert route.post("/relay/turn", json={
@@ -2617,7 +2727,7 @@ def test_busy_queue_recovery_stays_single_flight_and_competing_hook_blocks_overt
     with patch("app.codex_wake.threading.Thread") as thread:
         thread.side_effect = lambda **kwargs: (
             workers.append(kwargs["args"]),
-            type("Worker", (), {"start": lambda self: None})(),
+            _CapturedWakeThread(),
         )[1]
         sent = route.post("/relay/messages", json={
             "sender_runtime": "claude-code",

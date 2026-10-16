@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import logging
 import sys
 
@@ -12,6 +13,55 @@ from app.runtime_logging import build_uvicorn_log_config
 from app.supervisor import run_supervisor
 
 logger = logging.getLogger(__name__)
+
+
+def _serve(*, host: str, port: int, reload: bool) -> None:
+    options = dict(factory=True, host=host, port=port, reload=reload,
+                   log_config=build_uvicorn_log_config(component="api"))
+    config = uvicorn.Config("app.main:app", **options)
+    if reload or config.workers > 1:
+        uvicorn.run("app.main:app", **options)
+        return
+
+    class OwnedServer(uvicorn.Server):
+        exit_requested = False
+        main_loop_entered = False
+
+        def request_exit(self) -> None:
+            if self.exit_requested:
+                return
+            self.exit_requested = True
+            if self.main_loop_entered:
+                self.should_exit = True
+
+        async def main_loop(self) -> None:
+            # Uvicorn 0.34 skips lifespan shutdown for should_exit during startup.
+            self.main_loop_entered = True
+            if self.exit_requested:
+                self.should_exit = True
+            await super().main_loop()
+
+    server = OwnedServer(config)
+
+    def owned_factory():
+        from app.main import app
+
+        loop = asyncio.get_running_loop()
+
+        def request_exit() -> None:
+            loop.call_soon_threadsafe(server.request_exit)
+
+        return app(on_retained_terminal=request_exit)
+
+    config.app = owned_factory
+    try:
+        server.run()
+    except KeyboardInterrupt:
+        pass
+    if not server.started:
+        from uvicorn.main import STARTUP_FAILURE
+
+        raise SystemExit(STARTUP_FAILURE)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -62,14 +112,7 @@ def run(args: list[str] | None = None) -> int:
         os.environ["PALLIUM_SERVICE_PORT"] = str(parsed.port)
         if "PALLIUM_BASE_URL" not in os.environ:
             os.environ["PALLIUM_BASE_URL"] = f"http://{parsed.host}:{parsed.port}"
-        uvicorn.run(
-            "app.main:app",
-            factory=True,
-            host=parsed.host,
-            port=parsed.port,
-            reload=parsed.reload,
-            log_config=build_uvicorn_log_config(component="api"),
-        )
+        _serve(host=parsed.host, port=parsed.port, reload=parsed.reload)
         return 0
     if parsed.mode == "mcp":
         try:

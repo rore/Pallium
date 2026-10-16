@@ -60,6 +60,108 @@ async def _prebuilt_production_inner(monkeypatch, builder):
         await asyncio.to_thread(inner.state._close_constructed)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("held_stage", ["prepared", "completed", "worker_start_failed"])
+async def test_production_codex_shutdown_settles_pretracking_and_worker_tail(
+    monkeypatch, test_db_url, held_stage,
+):
+    import httpx
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+    from app import main, codex_wake, dependencies, codex_bridge_pipe
+    from core.service import PalliumService
+
+    entered, release, finished = threading.Event(), threading.Event(), threading.Event()
+    closed, workers = [], []
+    real_enqueue = PalliumService.enqueue_relay_trace_event
+    real_schedule = codex_wake.schedule_codex_relay_wake
+    monkeypatch.setattr(dependencies, "schedule_codex_relay_wake", real_schedule)
+    monkeypatch.setattr(codex_bridge_pipe, "retained_wake_enabled", lambda: False)
+    monkeypatch.setattr(codex_wake, "_DEBOUNCE_SECONDS", 0)
+    process = MagicMock(returncode=0)
+    process.communicate.return_value = (None, "")
+    monkeypatch.setattr(codex_wake, "_popen", lambda *a, **kw: process)
+    if held_stage == "worker_start_failed":
+        class FailedThread(threading.Thread):
+            def start(self):
+                raise RuntimeError("private-start-fault")
+        monkeypatch.setattr(codex_wake, "threading", SimpleNamespace(
+            **{**{name: getattr(threading, name) for name in dir(threading) if not name.startswith("__")},
+               "Thread": FailedThread}))
+
+    def enqueue(service, writer, event):
+        selected = (event.get("stage") == held_stage or
+                    held_stage == "worker_start_failed" and event.get("reason") == held_stage)
+        if selected:
+            entered.set()
+            assert release.wait(8)
+            try:
+                return real_enqueue(service, writer, event)
+            finally:
+                finished.set()
+        return real_enqueue(service, writer, event)
+    monkeypatch.setattr(PalliumService, "enqueue_relay_trace_event", enqueue)
+
+    async with _prebuilt_production_inner(
+        monkeypatch, lambda: create_app(_no_vector_config(test_db_url)),
+    ) as inner:
+        assert inner.state.codex_wake_registry.initialize(old_owner_drained=True)
+        storage = inner.state.pallium_service._storage
+        close = storage.close
+        def close_storage():
+            try:
+                assert finished.is_set()
+                assert inner.state._wait_for_operations(timeout=0)
+                assert all(not worker.is_alive() for worker in workers)
+                closed.append(True)
+            finally:
+                close()
+        monkeypatch.setattr(storage, "close", close_storage)
+        def schedule(*args, **kwargs):
+            worker = real_schedule(*args, **kwargs)
+            if worker is not None:
+                workers.append(worker)
+            return worker
+        monkeypatch.setattr(dependencies, "schedule_codex_relay_wake", schedule)
+        application = main.app()
+        stop, entered_lifespan = asyncio.Event(), asyncio.Event()
+        async def own():
+            async with application.router.lifespan_context(application):
+                entered_lifespan.set()
+                await stop.wait()
+        owner = asyncio.create_task(own())
+        sending = None
+        try:
+            await asyncio.wait_for(entered_lifespan.wait(), 5)
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=application), base_url="http://test") as http:
+                await _wait_for_health(http, lambda body: body.get("initialized") is True)
+                scope = {"container_ref": "git:example.test/owned-codex"}
+                for runtime, session in (("claude-code", "sender"), ("codex", "target")):
+                    response = await http.post("/relay/turn", json={"runtime": runtime, "session_ref": session, **scope})
+                    assert response.status_code == 200
+                sending = asyncio.create_task(http.post("/relay/messages", json={
+                    "sender_runtime": "claude-code", "sender_session_ref": "sender",
+                    "recipient": "codex:target", "payload": "owned shutdown", **scope,
+                }))
+                assert await asyncio.to_thread(entered.wait, 5)
+                stop.set()
+                await _wait_for_health(http, lambda body: body.get("initialized") is False)
+                assert not owner.done() and closed == []
+                release.set()
+                response = await asyncio.wait_for(sending, 5)
+                assert response.status_code == 200
+                await asyncio.wait_for(owner, 5)
+                assert closed == [True]
+                registry = inner.state.codex_wake_registry
+                assert codex_wake.schedule_codex_relay_wake(response.json(), scope, registry=registry) is None
+        finally:
+            release.set()
+            stop.set()
+            if sending is not None:
+                await sending
+            await owner
+
+
 @pytest.mark.parametrize("metrics_failure", [False, True])
 def test_app_reuses_startup_storage_and_closes_it_once(monkeypatch, test_db_url, metrics_failure):
     from app import dependencies, main
