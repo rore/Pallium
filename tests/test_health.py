@@ -68,11 +68,32 @@ async def test_production_codex_shutdown_settles_pretracking_and_worker_tail(
     import httpx
     from types import SimpleNamespace
     from unittest.mock import MagicMock
-    from app import main, codex_wake, dependencies, codex_bridge_pipe
+    from app import main, run as app_run, codex_wake, dependencies, codex_bridge_pipe
     from core.service import PalliumService
 
     entered, release, finished = threading.Event(), threading.Event(), threading.Event()
     closed, workers = [], []
+    servers, callbacks = [], []
+    real_run, real_app = app_run.uvicorn.Server.run, main.app
+    real_wait = app_run.uvicorn.Server._wait_tasks_to_complete
+    draining = threading.Event()
+    monkeypatch.setenv("WEB_CONCURRENCY", "1")
+
+    def run(server):
+        servers.append(server)
+        return real_run(server)
+
+    def owned_app(*, on_retained_terminal):
+        callbacks.append(on_retained_terminal)
+        return real_app(on_retained_terminal=on_retained_terminal)
+
+    async def wait_for_tasks(server):
+        draining.set()
+        await real_wait(server)
+
+    monkeypatch.setattr(app_run.uvicorn.Server, "run", run)
+    monkeypatch.setattr(app_run.uvicorn.Server, "_wait_tasks_to_complete", wait_for_tasks)
+    monkeypatch.setattr(main, "app", owned_app)
     real_enqueue = PalliumService.enqueue_relay_trace_event
     real_schedule = codex_wake.schedule_codex_relay_wake
     monkeypatch.setattr(dependencies, "schedule_codex_relay_wake", real_schedule)
@@ -123,17 +144,17 @@ async def test_production_codex_shutdown_settles_pretracking_and_worker_tail(
                 workers.append(worker)
             return worker
         monkeypatch.setattr(dependencies, "schedule_codex_relay_wake", schedule)
-        application = main.app()
-        stop, entered_lifespan = asyncio.Event(), asyncio.Event()
-        async def own():
-            async with application.router.lifespan_context(application):
-                entered_lifespan.set()
-                await stop.wait()
-        owner = asyncio.create_task(own())
+        # The supported host drains whole HTTP tasks before lifespan shutdown.
+        serving = asyncio.create_task(asyncio.to_thread(
+            app_run._serve, host="127.0.0.1", port=0, reload=False,
+        ))
         sending = None
         try:
-            await asyncio.wait_for(entered_lifespan.wait(), 5)
-            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=application), base_url="http://test") as http:
+            async with asyncio.timeout(5):
+                while not servers or not servers[0].started:
+                    await asyncio.sleep(.01)
+            port = servers[0].servers[0].sockets[0].getsockname()[1]
+            async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as http:
                 await _wait_for_health(http, lambda body: body.get("initialized") is True)
                 scope = {"container_ref": "git:example.test/owned-codex"}
                 for runtime, session in (("claude-code", "sender"), ("codex", "target")):
@@ -144,22 +165,24 @@ async def test_production_codex_shutdown_settles_pretracking_and_worker_tail(
                     "recipient": "codex:target", "payload": "owned shutdown", **scope,
                 }))
                 assert await asyncio.to_thread(entered.wait, 5)
-                stop.set()
-                await _wait_for_health(http, lambda body: body.get("initialized") is False)
-                assert not owner.done() and closed == []
+                callbacks[0]()
+                assert await asyncio.to_thread(draining.wait, 5)
+                assert servers[0].should_exit
+                assert not serving.done() and closed == []
                 release.set()
                 response = await asyncio.wait_for(sending, 5)
                 assert response.status_code == 200
-                await asyncio.wait_for(owner, 5)
+                await asyncio.wait_for(asyncio.shield(serving), 5)
                 assert closed == [True]
                 registry = inner.state.codex_wake_registry
                 assert codex_wake.schedule_codex_relay_wake(response.json(), scope, registry=registry) is None
         finally:
             release.set()
-            stop.set()
+            if callbacks and not serving.done():
+                callbacks[0]()
             if sending is not None:
                 await sending
-            await owner
+            await serving
 
 
 @pytest.mark.parametrize("metrics_failure", [False, True])

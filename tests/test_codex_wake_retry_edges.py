@@ -683,17 +683,32 @@ def test_expired_claim_guards_recover_initial_native_refusal(http_wake, monkeypa
 
 def test_concurrent_expired_claim_recovery_spends_one_new_generation(http_wake, monkeypatch):
     import traceback
+    from itertools import count
+    from types import SimpleNamespace
+    from storage import sqlite_queue
     from tests import test_codex_retained_wake as wake_fixture
 
     http, _, registry, _, desktop, send, workers = http_wake
     now = [datetime(2030, 9, 5, tzinfo=timezone.utc)]
     _freeze_clock(monkeypatch, now)
     first = send()
-    response = http.post("/relay/turn", json={
-        "runtime": "codex", "session_ref": TARGET, **SCOPE,
-    })
-    assert response.status_code == 200, response.text
+    assert len(desktop.owners) == 1
     initial = registry.snapshot(first["recipient_endpoint_id"])
+    assert initial is not None and initial.delivery_id == first["delivery_id"]
+    assert initial.outcome == "uncertain"
+    # This claim prepares the concurrency journey; native deadline coverage is separate.
+    native_queue_time = sqlite_queue.time
+    with monkeypatch.context() as claim_patch:
+        claim_time = SimpleNamespace(**vars(native_queue_time))
+        claim_time.monotonic = count(step=0.001).__next__
+        claim_patch.setattr(sqlite_queue, "time", claim_time)
+        response = http.post("/relay/turn", json={
+            "runtime": "codex", "session_ref": TARGET, **SCOPE,
+        })
+    assert sqlite_queue.time is native_queue_time
+    assert response.status_code == 200, response.text
+    assert response.json()["deliveries"][0]["delivery_id"] == first["delivery_id"]
+    assert registry.snapshot(first["recipient_endpoint_id"]) == initial
     now[0] += timedelta(seconds=60)
     barrier, errors = threading.Barrier(3), []
     phases = {}
@@ -731,12 +746,19 @@ def test_concurrent_expired_claim_recovery_spends_one_new_generation(http_wake, 
         finally:
             phases[threading.get_ident()] = "finished"
     threads = [threading.Thread(target=sweep) for _ in range(2)]
-    for thread in threads:
-        thread.start()
-    barrier.wait(timeout=2)
-    for thread in threads:
-        thread.join(3)
-        assert not thread.is_alive(), timeout_diagnostics()
-    assert errors == []
-    assert len(desktop.owners) == 2
-    assert registry.snapshot(first["recipient_endpoint_id"]).generation > initial.generation
+    try:
+        for thread in threads:
+            thread.start()
+        barrier.wait(timeout=2)
+        for thread in threads:
+            thread.join(3)
+            assert not thread.is_alive(), timeout_diagnostics()
+        assert errors == []
+        assert len(desktop.owners) == 2
+        assert registry.snapshot(first["recipient_endpoint_id"]).generation > initial.generation
+    finally:
+        for thread in threads:
+            if thread.ident is not None:
+                thread.join()
+        for worker in workers:
+            worker.join()

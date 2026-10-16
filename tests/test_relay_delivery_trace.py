@@ -638,11 +638,15 @@ def test_claude_scheduler_coalesces_one_attempt_and_forwards_completion(relay, m
     assert endpoint
 
 
-def test_codex_scheduler_coalesces_without_starting_another_worker(relay, monkeypatch):
+def test_codex_scheduler_coalesces_without_starting_another_worker(relay, monkeypatch, request):
     _storage, service, _endpoint = relay
     first = _message(service)
     second = _message(service)
     registry = CodexWakeRegistry()
+    def drain_owned_registry():
+        codex_wake.stop_codex_relay_wake_admission(registry)
+        codex_wake.drain_codex_relay_wakes(registry)
+    request.addfinalizer(drain_owned_registry)
     events = []
 
     class ParkedThread:
@@ -650,6 +654,13 @@ def test_codex_scheduler_coalesces_without_starting_another_worker(relay, monkey
             self.kwargs = kwargs
 
         def start(self):
+            return None
+
+        # This fixture captures work without starting a native thread.
+        def is_alive(self):
+            return False
+
+        def join(self):
             return None
 
     monkeypatch.setattr(codex_wake.threading, "Thread", ParkedThread)
