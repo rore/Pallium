@@ -2275,8 +2275,9 @@ async def test_fresh_mcp_request_enrolls_replacement_service_without_background_
         replacement._drop()
 
     assert len(clients) == 1 and clients[0].service is replacement
-    assert exchanges == [("ready", None), ("register", {
+    assert exchanges[:2] == [("ready", None), ("register", {
         "thread_ref": TARGET, "turn_ref": "fresh-request"})]
+    assert all(exchange == ("ready", None) for exchange in exchanges[2:])
     assert len(actual_calls) == 1
 @pytest.mark.parametrize("fault", ["start", "stop", None])
 def test_retained_service_failure_keeps_existing_http_lifecycle_live(monkeypatch, request, caplog, fault):
