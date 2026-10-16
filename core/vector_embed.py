@@ -168,7 +168,7 @@ class VectorEmbedder:
         except Exception:
             self._logger.warning("Vector index save failed; reconciliation will catch gaps", exc_info=True)
 
-    def reconcile(self, batch_size: int = 50) -> int:
+    def reconcile(self, batch_size: int = 50, *, raise_errors: bool = False) -> int:
         """Find and fix mismatches between SQLite vector entries and usearch index.
 
         Forward direction: embed SQLite entries missing from usearch (batch-bounded).
@@ -240,4 +240,6 @@ class VectorEmbedder:
             return total_changed
         except Exception:
             self._logger.warning("Vector reconciliation failed; will retry next cycle", exc_info=True)
+            if raise_errors:
+                raise
             return 0

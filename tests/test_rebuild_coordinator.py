@@ -87,6 +87,7 @@ def _make_stub_provider(dimensions=8):
 
 def _make_stub_storage(entries: list[IndexEntry]):
     storage = MagicMock()
+    storage.list_raw_source_vector_backfill_page = None
 
     def page(index_type, *, after_id=None, limit=None):
         effective_limit = limit or 128
@@ -107,7 +108,9 @@ def _make_stub_storage(entries: list[IndexEntry]):
 
 def _make_coordinator(tmp_path: Path, entries: list[IndexEntry], **kwargs):
     """Helper to create a coordinator with stubs and a real index path."""
-    storage = _make_stub_storage(entries)
+    storage = kwargs.pop("storage", None)
+    if storage is None:
+        storage = _make_stub_storage(entries)
     provider = _make_stub_provider(dimensions=kwargs.pop("dimensions", 8))
     holder = VectorIndexHolder()
     index_path = tmp_path / "live.usearch"
@@ -227,6 +230,99 @@ class TestRebuildCoordinator:
         assert status["status"] == "completed"
         assert status["entries_processed"] == 4
         assert status["progress_percent"] == 100.0
+
+    def test_stop_before_preparation_skips_work_and_reports_interrupted(self, tmp_path: Path):
+        coordinator, _, _, _ = _make_coordinator(tmp_path, [])
+        coordinator._stop_event.set()
+        prepare = MagicMock()
+        rebuild = MagicMock()
+        coordinator._start_or_resume = prepare
+        coordinator._rebuild_loop = rebuild
+
+        coordinator.run_sync()
+
+        prepare.assert_not_called()
+        rebuild.assert_not_called()
+        assert coordinator.status()["status"] == "interrupted"
+        assert not coordinator._state_path.exists()
+
+    def test_stop_after_thread_start_failure_skips_unstarted_join(self, tmp_path: Path, monkeypatch):
+        coordinator, _, _, _ = _make_coordinator(tmp_path, [])
+
+        def fail_start(_thread):
+            raise RuntimeError("thread start failed")
+
+        monkeypatch.setattr(threading.Thread, "start", fail_start)
+        with pytest.raises(RuntimeError, match="thread start failed"):
+            coordinator.start()
+
+        assert coordinator._thread is not None
+        assert coordinator._thread.ident is None
+        coordinator.stop()
+        assert coordinator._stop_event.is_set()
+        assert not coordinator._thread.is_alive()
+
+    def test_stop_after_preparation_without_checkpoint_skips_rebuild(self, tmp_path: Path):
+        coordinator, _, _, _ = _make_coordinator(tmp_path, [])
+        prepare = MagicMock(side_effect=coordinator._stop_event.set)
+        rebuild = MagicMock()
+        coordinator._start_or_resume = prepare
+        coordinator._rebuild_loop = rebuild
+
+        coordinator.run_sync()
+
+        prepare.assert_called_once_with()
+        rebuild.assert_not_called()
+        assert coordinator.status()["status"] == "interrupted"
+        assert not coordinator._state_path.exists()
+
+    def test_stop_after_preparation_preserves_durable_checkpoint(self, tmp_path: Path):
+        coordinator, _, _, _ = _make_coordinator(tmp_path, [])
+        prepare = coordinator._start_or_resume
+        rebuild = MagicMock()
+        checkpoint_bytes: list[bytes] = []
+
+        def prepare_then_stop() -> None:
+            prepare()
+            checkpoint_bytes.append(coordinator._state_path.read_bytes())
+            coordinator._stop_event.set()
+
+        coordinator._start_or_resume = prepare_then_stop
+        coordinator._rebuild_loop = rebuild
+
+        coordinator.run_sync()
+
+        rebuild.assert_not_called()
+        assert coordinator.status()["status"] == "interrupted"
+        assert len(checkpoint_bytes) == 1
+        assert coordinator._state_path.read_bytes() == checkpoint_bytes[0]
+
+    def test_status_reports_failure_before_checkpoint(self, tmp_path: Path):
+        coordinator, _, _, _ = _make_coordinator(tmp_path, [])
+        coordinator._start_or_resume = MagicMock(side_effect=RuntimeError("private failure detail"))
+
+        coordinator.run_sync()
+
+        status = coordinator.status()
+        assert status is not None
+        assert status["status"] == "failed"
+        assert status["active"] is False
+        assert "private failure detail" not in str(status)
+
+    def test_status_reports_failure_when_checkpoint_save_fails(self, tmp_path: Path, monkeypatch):
+        coordinator, _, _, _ = _make_coordinator(tmp_path, [])
+
+        def fail_save(self, path):
+            raise OSError("private checkpoint path")
+
+        monkeypatch.setattr(RebuildCheckpoint, "save", fail_save)
+        coordinator.run_sync()
+
+        status = coordinator.status()
+        assert status is not None
+        assert status["status"] == "failed"
+        assert status["active"] is False
+        assert "private checkpoint path" not in str(status)
 
     def test_resume_from_checkpoint(self, tmp_path: Path):
         """Rebuild resumes from a prior checkpoint after simulated crash."""
@@ -366,6 +462,14 @@ class TestRebuildCoordinator:
             ("message", "", "source_item.content", "source", None, None, False, "source_item", "source_item", "vector"),
             ("message", "é" * 39, "source_item.content", "source", None, None, False, "source_item", "source_item", "vector"),
             ("message", "é" * 40, "source_item.content", "source", None, None, True, "source_item", "source_item", "vector"),
+            ("message", "\x00" * 39, "source_item.content", "source", None, None, False, "source_item", "source_item", "vector"),
+            ("message", "\x00" * 40, "source_item.content", "source", None, None, True, "source_item", "source_item", "vector"),
+            ("message", "\x00" + "😀" * 38, "source_item.content", "source", None, None, False, "source_item", "source_item", "vector"),
+            ("message", "\x00" + "😀" * 39, "source_item.content", "source", None, None, True, "source_item", "source_item", "vector"),
+            ("message", "界" * 39 + "\x00", "source_item.content", "source", None, None, True, "source_item", "source_item", "vector"),
+            ("message", "e\u0301\x00" * 13, "source_item.content", "source", None, None, False, "source_item", "source_item", "vector"),
+            ("message", "e\u0301\x00" * 13 + "\n", "source_item.content", "source", None, None, True, "source_item", "source_item", "vector"),
+            ("message", "😀\x00界\x00" * 10, "source_item.content", "source", None, None, True, "source_item", "source_item", "vector"),
             ("assistant_output", "é" * 40, "source_item.content", "source", None, None, True, "source_item", "source_item", "vector"),
             ("tool_use_summary", "é" * 40, "source_item.content", "source", None, None, False, "source_item", "source_item", "vector"),
             ("message", "é" * 40, "wrong.view", "source", None, None, False, "source_item", "source_item", "vector"),
@@ -479,6 +583,7 @@ class TestRebuildCoordinator:
                 entries = [entry for entry in entries if entry.id > after_id]
             return entries[:limit] if limit is not None else entries
         storage.list_index_entries_by_type_page.side_effect = page
+        storage.list_raw_source_vector_backfill_page = None
         storage.get_source_item.return_value = source
         storage.get_memory_object.side_effect = KeyError
         storage.find_index_entry.side_effect = lambda **kwargs: next(
@@ -763,6 +868,69 @@ class TestFullLifecycle:
         assert all(r > 0 for r in query_results)
         assert len(query_results) == 50
 
+    def test_stop_without_timeout_waits_for_worker_and_preserves_checkpoint(self, tmp_path: Path):
+        entries = [_make_entry("e-0")]
+        coordinator, _, _, provider = _make_coordinator(tmp_path, entries, batch_size=1)
+        entered = threading.Event()
+        release = threading.Event()
+
+        def blocked_embed(texts, **kwargs):
+            entered.set()
+            assert release.wait(timeout=10)
+            return [[0.1] * 8 for _ in texts]
+
+        provider.embed.side_effect = blocked_embed
+        coordinator.start()
+        thread = coordinator._thread
+        try:
+            assert thread is not None
+            assert entered.wait(timeout=10)
+            coordinator.stop(timeout=0)
+            assert thread.is_alive()
+        finally:
+            release.set()
+            coordinator.stop(timeout=None)
+
+        assert thread is not None
+        assert not thread.is_alive()
+        status = coordinator.status()
+        assert status is not None
+        assert status["status"] == "interrupted"
+        checkpoint = RebuildCheckpoint.load(Path(f"{tmp_path / 'live.usearch'}.rebuild_state.json"))
+        assert checkpoint is not None
+        assert checkpoint.status == "in_progress"
+
+    def test_stop_without_timeout_waits_during_inventory(self, tmp_path: Path):
+        coordinator, holder, storage, _ = _make_coordinator(tmp_path, [])
+        entered = threading.Event()
+        release = threading.Event()
+
+        def blocked_inventory(index_type, *, after_id=None, limit=None):
+            entered.set()
+            assert release.wait(timeout=10)
+            return []
+
+        storage.list_index_entries_by_type_page.side_effect = blocked_inventory
+        coordinator.start()
+        thread = coordinator._thread
+        try:
+            assert thread is not None
+            assert entered.wait(timeout=10)
+            coordinator.stop(timeout=0)
+            assert thread.is_alive()
+        finally:
+            release.set()
+            coordinator.stop(timeout=None)
+
+        assert thread is not None
+        assert not thread.is_alive()
+        assert not holder.is_available
+        status = coordinator.status()
+        assert status is not None
+        assert status["status"] == "interrupted"
+        checkpoint = RebuildCheckpoint.load(Path(f"{tmp_path / 'live.usearch'}.rebuild_state.json"))
+        assert checkpoint is None
+
     def test_on_swap_callback_resets_reconcile(self, tmp_path: Path):
         """Verify the on_swap_callback mechanism works for reconcile state reset."""
         index_path = tmp_path / "live.usearch"
@@ -793,3 +961,261 @@ class TestFullLifecycle:
 
         assert callback_invocations == ["reset"]
         assert holder.index.entry_count() == 1
+
+
+def _create_raw_inventory_source(storage, source_id, *, content="é" * 40,
+                                 artifact_kind="message", vector_id=None,
+                                 lexical_view="source_item.content", target_kind="source_item"):
+    source = SourceItem(id=source_id, source_type="chat_message", source_id=source_id,
+                        content_type="text/plain", content=content, artifact_kind=artifact_kind)
+    storage.create_source_item(source)
+    storage.create_index_entry(IndexEntry(id=f"lex-{source_id}", target_kind=target_kind,
+        target_id=source_id, index_type="lexical", text_view=content, text_view_name=lexical_view))
+    if vector_id is not None:
+        storage.create_index_entry(IndexEntry(id=vector_id, target_kind="source_item",
+            target_id=source_id, index_type="vector", text_view=content,
+            text_view_name="source_content.embedding"))
+    return source
+
+
+class TestFilteredRawSourceInventory:
+
+    @pytest.mark.parametrize("short_count", [127, 128, 129])
+    def test_boolean_nul_scan_advances_across_short_candidates(self, tmp_path, monkeypatch, short_count):
+        from sqlalchemy import event
+        from storage.sqlite import SQLiteStorageProvider
+        storage = SQLiteStorageProvider(f"sqlite:///{tmp_path / 'nul.db'}")
+        try:
+            selects = []
+            event.listen(storage._engine, "before_cursor_execute",
+                lambda conn, cursor, statement, parameters, context, executemany:
+                    selects.append(statement) if statement.lstrip().upper().startswith("SELECT") else None)
+            monkeypatch.setattr(storage, "get_source_item",
+                lambda *a: pytest.fail("boolean check hydrated a source DTO"))
+            assert raw_source_vector_backfill_needed(storage) is False
+            assert len(selects) == 2
+            for i in range(short_count):
+                _create_raw_inventory_source(storage, f"a-{i:03d}", content="é" * 18 + "\x00" + "é" * 20)
+            selects.clear()
+            assert raw_source_vector_backfill_needed(storage) is False
+            assert len(selects) == 2
+            assert "content" not in selects[-1].split("FROM", 1)[0]
+            _create_raw_inventory_source(storage, "z-valid", content="é" * 19 + "\x00" + "é" * 20)
+            selects.clear()
+            assert raw_source_vector_backfill_needed(storage) is True
+            assert len(selects) == 2
+            assert "content" not in selects[-1].split("FROM", 1)[0]
+            _create_raw_inventory_source(storage, "zz-ordinary", content="東京" * 20)
+            selects.clear()
+            assert raw_source_vector_backfill_needed(storage) is True
+            assert len(selects) == 1
+        finally:
+            storage.close()
+
+    @pytest.mark.parametrize("failure", [None, ValueError("query failed")])
+    def test_broken_optimized_page_does_not_fall_back(self, tmp_path, monkeypatch, failure):
+        from storage.sqlite import SQLiteStorageProvider
+        storage = SQLiteStorageProvider(f"sqlite:///{tmp_path / 'broken.db'}")
+        try:
+            coordinator, _, _, _ = _make_coordinator(tmp_path, [], storage=storage)
+            def page(**kwargs):
+                if isinstance(failure, Exception):
+                    raise failure
+                return failure
+            def forbidden_fallback(*args, **kwargs):
+                pytest.fail("A broken optimized query must not silently fall back")
+            monkeypatch.setattr(storage, "list_raw_source_vector_backfill_page", page)
+            monkeypatch.setattr(storage, "list_index_entries_by_type_page", forbidden_fallback)
+            with pytest.raises(ValueError if isinstance(failure, Exception) else TypeError):
+                coordinator._inventory_raw_source_vectors()
+        finally:
+            storage.close()
+
+    @pytest.mark.parametrize("missing_tail", [False, True])
+    def test_sqlite_inventory_hydrates_only_missing_sources(self, tmp_path, monkeypatch, missing_tail):
+        from sqlalchemy import event
+        from storage.sqlite import SQLiteStorageProvider
+        storage = SQLiteStorageProvider(f"sqlite:///{tmp_path / 'inventory.db'}")
+        try:
+            for i in range(16):
+                _create_raw_inventory_source(storage, f"source-{i:02d}",
+                    vector_id=None if missing_tail and i == 15 else f"vector-{i:02d}")
+            coordinator, _, _, _ = _make_coordinator(tmp_path, [], storage=storage)
+            hydrated, statements = [], []
+            original_get = storage.get_source_item
+            def get_source(source_id):
+                hydrated.append(source_id)
+                return original_get(source_id)
+            def capture(_conn, _cursor, statement, _params, _context, _many):
+                statements.append(statement.split()[0])
+            monkeypatch.setattr(storage, "get_source_item", get_source)
+            event.listen(storage._engine, "before_cursor_execute", capture)
+            try:
+                assert coordinator._inventory_raw_source_vectors() == int(missing_tail)
+            finally:
+                event.remove(storage._engine, "before_cursor_execute", capture)
+            assert hydrated == (["source-15"] if missing_tail else [])
+            assert statements.count("SELECT") <= (4 if missing_tail else 1)
+            assert storage.count_index_entries_by_type("vector") == 16
+            assert coordinator._inventory_raw_source_vectors() == 0
+        finally:
+            storage.close()
+
+    def test_candidate_pages_preserve_eligibility_and_duplicates(self, tmp_path):
+        from core.indexing import SOURCE_ITEM_CONTENT_TEXT_VIEW, SOURCE_ITEM_VECTOR_TEXT_VIEW
+        from sqlalchemy import select
+        from storage.sqlite import SQLiteStorageProvider
+        from storage.sqlite_schema import IndexEntryRecord
+        storage = SQLiteStorageProvider(f"sqlite:///{tmp_path / 'states.db'}")
+        try:
+            _create_raw_inventory_source(storage, "a-document", artifact_kind="document")
+            _create_raw_inventory_source(storage, "b-short", content="é" * 39)
+            _create_raw_inventory_source(storage, "b-short-nul", content="é" * 18 + "\x00" + "é" * 20)
+            _create_raw_inventory_source(storage, "c-null", artifact_kind=None)
+            _create_raw_inventory_source(storage, "d-view", lexical_view="other")
+            _create_raw_inventory_source(storage, "e-kind", target_kind="memory_object")
+            _create_raw_inventory_source(storage, "f-existing", vector_id="vector-f-1")
+            storage.create_index_entry(IndexEntry(id="vector-f-2", target_kind="source_item",
+                target_id="f-existing", index_type="vector", text_view="é" * 40,
+                text_view_name=SOURCE_ITEM_VECTOR_TEXT_VIEW))
+            _create_raw_inventory_source(storage, "g-eligible", artifact_kind="assistant_output")
+            storage.create_index_entry(IndexEntry(id="lex-g-eligible-2", target_kind="source_item",
+                target_id="g-eligible", index_type="lexical", text_view="é" * 40,
+                text_view_name=SOURCE_ITEM_CONTENT_TEXT_VIEW))
+            _create_raw_inventory_source(storage, "h-unicode", content="東京" * 20)
+            _create_raw_inventory_source(storage, "i-nul", content="é" * 19 + "\x00" + "é" * 20)
+            storage.create_index_entry(IndexEntry(id="vector-h-other", target_kind="source_item",
+                target_id="h-unicode", index_type="vector", text_view="東京" * 20, text_view_name="other"))
+            storage.create_index_entry(IndexEntry(id="lex-0-orphan", target_kind="source_item",
+                target_id="absent", index_type="lexical", text_view="x" * 40,
+                text_view_name=SOURCE_ITEM_CONTENT_TEXT_VIEW))
+            ids, cursor = [], None
+            while True:
+                page = storage.list_raw_source_vector_backfill_page(
+                    lexical_text_view_name=SOURCE_ITEM_CONTENT_TEXT_VIEW,
+                    vector_text_view_name=SOURCE_ITEM_VECTOR_TEXT_VIEW, after_id=cursor, limit=1)
+                if not page:
+                    break
+                ids.append(page[0].id)
+                cursor = page[-1].id
+            assert ids == ["lex-b-short", "lex-b-short-nul", "lex-g-eligible",
+                           "lex-g-eligible-2", "lex-h-unicode", "lex-i-nul"]
+            coordinator, _, _, _ = _make_coordinator(tmp_path, [], storage=storage, batch_size=1)
+            assert coordinator._inventory_raw_source_vectors() == 3
+            assert coordinator._inventory_raw_source_vectors() == 0
+            with storage._engine.connect() as conn:
+                targets = conn.execute(select(IndexEntryRecord.target_id).where(
+                    IndexEntryRecord.index_type == "vector",
+                    IndexEntryRecord.text_view_name == SOURCE_ITEM_VECTOR_TEXT_VIEW)).scalars().all()
+            assert targets.count("g-eligible") == targets.count("h-unicode") == targets.count("i-nul") == 1
+            assert "b-short" not in targets and "b-short-nul" not in targets
+            assert targets.count("f-existing") == 2
+        finally:
+            storage.close()
+
+    @pytest.mark.parametrize("race", ["delete", "ineligible", "vector"])
+    def test_candidate_is_rechecked_after_selection(self, tmp_path, monkeypatch, race):
+        from sqlalchemy import delete, update
+        from storage.sqlite import SQLiteStorageProvider
+        from storage.sqlite_schema import SourceItemRecord
+        storage = SQLiteStorageProvider(f"sqlite:///{tmp_path / 'race.db'}")
+        try:
+            _create_raw_inventory_source(storage, "source")
+            original_page = storage.list_raw_source_vector_backfill_page
+            raced = False
+            def page(**kwargs):
+                nonlocal raced
+                result = original_page(**kwargs)
+                if result and not raced:
+                    raced = True
+                    if race == "vector":
+                        storage.create_index_entry(IndexEntry(id="raced-vector", target_kind="source_item",
+                            target_id="source", index_type="vector", text_view="é" * 40,
+                            text_view_name="source_content.embedding"))
+                    else:
+                        with storage._engine.begin() as conn:
+                            statement = delete(SourceItemRecord) if race == "delete" else update(
+                                SourceItemRecord).values(artifact_kind="document")
+                            conn.execute(statement.where(SourceItemRecord.id == "source"))
+                return result
+            monkeypatch.setattr(storage, "list_raw_source_vector_backfill_page", page)
+            coordinator, _, _, _ = _make_coordinator(tmp_path, [], storage=storage)
+            assert coordinator._inventory_raw_source_vectors() == 0
+            assert raced
+            assert storage.count_index_entries_by_type("vector") == int(race == "vector")
+        finally:
+            storage.close()
+
+    @pytest.mark.parametrize("when", ["before", "hydration"])
+    def test_stopped_inventory_does_not_prepare_or_publish(self, tmp_path, monkeypatch, when):
+        from storage.sqlite import SQLiteStorageProvider
+        storage = SQLiteStorageProvider(f"sqlite:///{tmp_path / 'stop.db'}")
+        try:
+            for name in ("a", "b"):
+                _create_raw_inventory_source(storage, name)
+            coordinator, holder, _, provider = _make_coordinator(tmp_path, [], storage=storage)
+            old = VectorIndex.create_empty(coordinator._index_path, dimensions=8, model_name="test-model")
+            old.add("old", [0.1] * 8)
+            old.save()
+            holder.swap(old)
+            original_get, hydrated = storage.get_source_item, []
+            def get_source(source_id):
+                result = original_get(source_id)
+                hydrated.append(source_id)
+                coordinator.stop(timeout=0)
+                return result
+            monkeypatch.setattr(storage, "get_source_item", get_source)
+            if when == "before":
+                coordinator.stop(timeout=0)
+            coordinator.run_sync()
+            assert hydrated == ([] if when == "before" else ["a"])
+            assert storage.count_index_entries_by_type("vector") == 0
+            assert holder.index is old and holder.index.known_entry_ids() == frozenset({"old"})
+            assert coordinator._shadow_index is None and not coordinator._state_path.exists()
+            provider.embed.assert_not_called()
+            # Terminal-state integration is supplied by the separately owned startup slice.
+            assert coordinator.status()["status"] == "interrupted"
+        finally:
+            storage.close()
+
+    def test_final_inventory_insert_cancel_resumes_before_old_cursor(self, tmp_path, monkeypatch):
+        from dataclasses import replace
+        from core import rebuild_coordinator as module
+        from storage.sqlite import SQLiteStorageProvider
+        storage = SQLiteStorageProvider(f"sqlite:///{tmp_path / 'resume.db'}")
+        try:
+            _create_raw_inventory_source(storage, "old", vector_id="z-old")
+            coordinator, holder, _, _ = _make_coordinator(tmp_path, [], storage=storage)
+            coordinator._start_or_resume()
+            assert coordinator._process_one_batch() == 1
+            coordinator._shadow_index.save()
+            checkpoint_bytes = coordinator._state_path.read_bytes()
+            shadow = coordinator._shadow_dir / "index.usearch"
+            shadow_files = (shadow, Path(f"{shadow}.idmap.json"), Path(f"{shadow}.meta.json"))
+            shadow_bytes = [path.read_bytes() for path in shadow_files]
+            assert RebuildCheckpoint.load(coordinator._state_path).last_processed_entry_id == "z-old"
+            _create_raw_inventory_source(storage, "new")
+            interrupted, _, _, _ = _make_coordinator(tmp_path, [], storage=storage)
+            original_build, original_create = module.build_index_entry, storage.create_index_entry
+            def build(**kwargs):
+                return replace(original_build(**kwargs), id="a-repaired")
+            def create(entry):
+                original_create(entry)
+                interrupted.stop(timeout=0)
+            with monkeypatch.context() as patch:
+                patch.setattr(module, "build_index_entry", build)
+                patch.setattr(storage, "create_index_entry", create)
+                interrupted.run_sync()
+            assert storage.find_index_entry("source_item", "new", "vector", "source_content.embedding").id == "a-repaired"
+            assert interrupted._shadow_index is None
+            assert interrupted._state_path.read_bytes() == checkpoint_bytes
+            assert [path.read_bytes() for path in shadow_files] == shadow_bytes
+            resumed, resumed_holder, _, _ = _make_coordinator(tmp_path, [], storage=storage)
+            resumed.run_sync()
+            assert resumed.status()["status"] == "completed"
+            assert resumed_holder.index.known_entry_ids() == frozenset({"a-repaired", "z-old"})
+            assert resumed.status()["entries_total"] == 2
+            assert resumed.status()["entries_processed"] == 2
+            assert not resumed._state_path.exists()
+        finally:
+            storage.close()

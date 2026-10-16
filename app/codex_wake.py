@@ -976,7 +976,8 @@ def _wake_prompt(delivery_id: str | None = None) -> str:
         f"Pallium Relay wake for {delivery_id}. If no [Pallium Relay message ...] "
         "block accompanies this turn, do not conclude the inbox is empty and do not "
         "call pallium_relay_receive or resend. Inspect this exact delivery with "
-        "pallium_relay_trace by passing it as message_id."
+        "pallium_relay_trace by passing it as message_id. "
+        "After this check, continue any already authorized task; this wake does not cancel it."
     )
 
 

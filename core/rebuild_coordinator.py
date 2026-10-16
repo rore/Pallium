@@ -143,6 +143,7 @@ class RebuildCoordinator:
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._checkpoint: RebuildCheckpoint | None = None
+        self._terminal_status: str | None = None
         self._shadow_index: VectorIndex | None = None
         self._state_path = Path(f"{self._index_path}.rebuild_state.json")
         self._shadow_dir = Path(f"{self._index_path}.rebuild")
@@ -156,10 +157,10 @@ class RebuildCoordinator:
         )
         self._thread.start()
 
-    def stop(self, timeout: float = 5.0) -> None:
+    def stop(self, timeout: float | None = 5.0) -> None:
         """Signal stop and wait for thread to finish."""
         self._stop_event.set()
-        if self._thread is not None:
+        if self._thread is not None and self._thread.ident is not None:
             self._thread.join(timeout=timeout)
 
     def run_sync(self) -> None:
@@ -169,10 +170,20 @@ class RebuildCoordinator:
     def status(self) -> dict | None:
         """Return current rebuild status for /status endpoint."""
         if self._checkpoint is None:
-            return None
+            if self._terminal_status is None:
+                return None
+            return {
+                "active": False,
+                "status": self._terminal_status,
+                "reason": self._reason,
+                "progress_percent": 0.0,
+                "entries_processed": 0,
+                "entries_total": 0,
+                "started_at": "",
+            }
         return {
-            "active": self._checkpoint.status == "in_progress",
-            "status": self._checkpoint.status,
+            "active": self._terminal_status is None and self._checkpoint.status == "in_progress",
+            "status": self._terminal_status or self._checkpoint.status,
             "reason": self._reason,
             "progress_percent": round(
                 self._checkpoint.entry_count_processed / max(self._checkpoint.entry_count_total, 1) * 100, 1
@@ -203,13 +214,23 @@ class RebuildCoordinator:
 
     def _run_safe(self) -> None:
         try:
+            if self._stop_event.is_set():
+                self._terminal_status = "interrupted"
+                return
             self._start_or_resume()
+            if self._stop_event.is_set():
+                self._terminal_status = "interrupted"
+                return
             self._rebuild_loop()
         except Exception:
             logger.error("Rebuild failed", exc_info=True)
+            self._terminal_status = "failed"
             if self._checkpoint is not None:
                 self._checkpoint.status = "failed"
-                self._checkpoint.save(self._state_path)
+                try:
+                    self._checkpoint.save(self._state_path)
+                except Exception:
+                    logger.error("Could not persist failed rebuild checkpoint", exc_info=True)
 
     def _start_or_resume(self) -> None:
         """Initialize or resume from checkpoint."""
@@ -220,21 +241,27 @@ class RebuildCoordinator:
                 existing.entry_count_processed, existing.entry_count_total,
             )
             added = self._inventory_raw_source_vectors()
+            if self._stop_event.is_set():
+                return
             self._checkpoint = existing
-            if added:
+            total = self._storage.count_index_entries_by_type(VECTOR_INDEX_TYPE)
+            reset_needed = bool(added) or total != existing.entry_count_total
+            if reset_needed:
                 self._checkpoint.last_processed_entry_id = None
                 self._checkpoint.entry_count_processed = 0
-                self._checkpoint.entry_count_total = self._storage.count_index_entries_by_type(VECTOR_INDEX_TYPE)
+                self._checkpoint.entry_count_total = total
                 self._create_shadow_index()
             shadow_index_path = self._shadow_dir / "index.usearch"
-            if not added and shadow_index_path.exists() and Path(f"{shadow_index_path}.meta.json").exists():
+            if not reset_needed and shadow_index_path.exists() and Path(f"{shadow_index_path}.meta.json").exists():
                 self._shadow_index = VectorIndex.load(shadow_index_path)
-            elif not added:
+            elif not reset_needed:
                 self._checkpoint.last_processed_entry_id = None
                 self._checkpoint.entry_count_processed = 0
                 self._create_shadow_index()
         else:
             self._inventory_raw_source_vectors()
+            if self._stop_event.is_set():
+                return
             total = self._storage.count_index_entries_by_type(VECTOR_INDEX_TYPE)
             self._checkpoint = RebuildCheckpoint(
                 status="in_progress",
@@ -258,12 +285,26 @@ class RebuildCoordinator:
         after_id: str | None = None
         created = 0
         while True:
-            batch = self._storage.list_index_entries_by_type_page(
-                "lexical", after_id=after_id, limit=self._batch_size,
-            )
+            if self._stop_event.is_set():
+                return created
+            optimized = getattr(self._storage, "list_raw_source_vector_backfill_page", None)
+            if callable(optimized):
+                batch = optimized(
+                    lexical_text_view_name=SOURCE_ITEM_CONTENT_TEXT_VIEW,
+                    vector_text_view_name=SOURCE_ITEM_VECTOR_TEXT_VIEW,
+                    after_id=after_id, limit=self._batch_size,
+                )
+                if not isinstance(batch, list):
+                    raise TypeError("Raw-source vector inventory page must be a list")
+            else:
+                batch = self._storage.list_index_entries_by_type_page(
+                    "lexical", after_id=after_id, limit=self._batch_size,
+                )
             if not batch:
                 return created
             for lexical_entry in batch:
+                if self._stop_event.is_set():
+                    return created
                 if (
                     lexical_entry.target_kind != "source_item"
                     or lexical_entry.text_view_name != SOURCE_ITEM_CONTENT_TEXT_VIEW
@@ -273,6 +314,8 @@ class RebuildCoordinator:
                     source_item = self._storage.get_source_item(lexical_entry.target_id)
                 except KeyError:
                     continue
+                if self._stop_event.is_set():
+                    return created
                 text = source_item_embedding_text(source_item)
                 if text is None or self._storage.find_index_entry(
                     target_kind="source_item",
@@ -281,6 +324,8 @@ class RebuildCoordinator:
                     text_view_name=SOURCE_ITEM_VECTOR_TEXT_VIEW,
                 ) is not None:
                     continue
+                if self._stop_event.is_set():
+                    return created
                 entry = build_index_entry(
                     target_kind="source_item",
                     target_id=source_item.id,
@@ -317,7 +362,10 @@ class RebuildCoordinator:
                 return
             if self._stop_event.wait(0.01):
                 logger.info("Rebuild stopped by signal at %d entries", self._checkpoint.entry_count_processed)
+                self._terminal_status = "interrupted"
                 return
+        if self._stop_event.is_set() and self._checkpoint.status == "in_progress":
+            self._terminal_status = "interrupted"
 
     def _process_one_batch(self) -> int:
         """Process one batch of entries. Returns count processed (0 = done)."""

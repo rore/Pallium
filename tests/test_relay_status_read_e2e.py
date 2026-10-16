@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import sqlite3
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
@@ -49,13 +51,36 @@ def _register(client):
         assert response.status_code == 200, response.text
 
 
+def _register_held_writer_setup(client):
+    """Prepare the read contract through the API's bounded retryable-busy path."""
+    deadline = time.monotonic() + 5
+    for runtime, session in (("codex", "sender"), ("claude-code", "receiver")):
+        body = {"runtime": runtime, "session_ref": session, **SCOPE}
+        response = client.post("/relay/turn", json=body)
+        if response.status_code == 503:
+            try:
+                detail = response.json().get("detail")
+            except (ValueError, AttributeError):
+                detail = None
+            retry_after = response.headers.get("Retry-After", "")
+            if (isinstance(detail, dict) and detail.get("code") == "relay_busy"
+                    and detail.get("retryable") is True
+                    and retry_after.isascii() and retry_after.isdecimal()):
+                delay = int(retry_after)
+                if delay < deadline - time.monotonic():
+                    time.sleep(delay)
+                    if time.monotonic() < deadline:
+                        response = client.post("/relay/turn", json=body)
+        assert response.status_code == 200, response.text
+
+
 @pytest.mark.parametrize("state", ["pending", "claimed", "delivered"])
 @pytest.mark.parametrize("expiry", [60, None], ids=["finite", "durable"])
 def test_unexpired_status_and_trace_succeed_while_private_relay_writer_is_held(
     relay_client, state, expiry
 ):
     client, _, relay_path = relay_client
-    _register(client)
+    _register_held_writer_setup(client)
     sent = _send(client, expiry=expiry)
     assert sent.status_code == 200, sent.text
     message = sent.json()
@@ -281,21 +306,31 @@ def test_expired_status_rereads_ack_committed_before_writer_acquisition(
     paused = threading.Event()
     resume = threading.Event()
     reads = []
+    original_begin = storage._begin_relay_immediate
 
-    def pause_writer(connection, cursor, statement, parameters, context, many):
-        if "FROM relay_messages" in statement and parameters == (sent["message_id"],):
-            reads.append(connection)
-        if statement == "BEGIN IMMEDIATE" and not paused.is_set():
+    @contextmanager
+    def pause_before_writer_acquisition():
+        # Let ACK win before status owns either local or SQLite writer admission.
+        if not paused.is_set():
             paused.set()
             assert resume.wait(10), "ACK did not release expiry writer"
+        with original_begin() as session:
+            yield session
 
-    event.listen(storage._relay_engine, "before_cursor_execute", pause_writer)
+    monkeypatch.setattr(storage, "_begin_relay_immediate", pause_before_writer_acquisition)
+
+    def observe_reads(connection, cursor, statement, parameters, context, many):
+        if "FROM relay_messages" in statement and parameters == (sent["message_id"],):
+            reads.append(connection)
+
+    event.listen(storage._relay_engine, "before_cursor_execute", observe_reads)
     try:
         with ThreadPoolExecutor(max_workers=1) as pool:
             pending = pool.submit(client.get, f"/relay/messages/{sent['message_id']}", params=SCOPE)
             try:
                 assert paused.wait(10), "expired status never reached writer fallback"
                 assert len(reads) == 1
+                assert not storage._relay_writer_lock.locked()
                 ack = client.post("/relay/deliveries/ack", json={
                     "delivery_id": delivery["delivery_id"],
                     "claim_token": delivery["claim_token"], **SCOPE,
@@ -309,7 +344,7 @@ def test_expired_status_rereads_ack_committed_before_writer_acquisition(
             assert reads[0] is not reads[1]
     finally:
         resume.set()
-        event.remove(storage._relay_engine, "before_cursor_execute", pause_writer)
+        event.remove(storage._relay_engine, "before_cursor_execute", observe_reads)
     returned = response.json()["deliveries"][0]
     assert returned["state"] == "delivered"
     assert returned["delivered_at"] is not None

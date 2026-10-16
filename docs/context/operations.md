@@ -55,6 +55,29 @@ backfill check and lifespan initialization. A completed stage only means that
 call returned; verify health and `embedding_provider_ok` separately. Delays before
 these markers are not attributed by them.
 
+The production ASGI factory binds before heavyweight service construction. One
+owned task builds the service off the HTTP loop, enters the MCP/runtime lifespan,
+and owns its exit. Embedded `create_app` remains the eager builder. This improves
+responsiveness during initialization; it does not promise less initialization work.
+
+`/health` and `/status` distinguish `initialized` from `ready`. Before construction
+and runtime/MCP entry finish, both are false and operational HTTP/MCP/WebSocket
+access is refused without reading partial resources. After safe initialization,
+lexical and Relay access are available while `ready` remains false during vector
+bootstrap or rebuild. A successful bounded first reconciliation batch (at most50,
+not historical convergence) and completion of any required rebuild establish
+readiness. Provider-unavailable initialization retains HTTP200 degraded health,
+initialized access and `ready: false`; vector bootstrap failures expose a safe
+category without hiding failure behind a completed thread or absent checkpoint.
+
+Supervisor startup success requires initialized, nonfatal HTTP as well as its
+existing ownership checks, including nonce, legacy and missing-token-grace paths.
+It does not require vector readiness; CLI full-search readiness remains stricter.
+Shutdown revokes delegation/readiness before waiting off-loop for actual owned
+worker termination and tracked operations, then closes service/storage. A bounded
+worker stop timeout alone does not establish settlement. This lifecycle does not
+reload existing MCP processes or qualify their installed versions.
+
 Relay registry reads and post-persistence callbacks run through the existing
 tracked worker runner, so their SQLite or native I/O cannot block the HTTP event
 loop. Non-Codex activation does not consult Codex authority. Queue diagnostics
@@ -398,7 +421,8 @@ another storage backend is configured.
 |----------|-------|---------|
 | `/health` | `status: ok` | Lifespan complete, vector index ready (or intentionally off). |
 | `/health` | `status: initializing` (503) | Still starting — schema initialization / vector load in progress. |
-| `/health` | `status: degraded` (200) | Reachable but **impaired**: vector was expected but the embedding provider failed to initialize. See `degraded_reasons`. |
+| `/health` | `status: degraded` (200) | Reachable but **impaired**: embedding-provider initialization or vector bootstrap/rebuild failed. Inspect `degraded_reasons` and `initialization_error`. |
+| `/health`, `/status` | `initialized`, `ready` | Initialized resources can serve safe operations; `ready` remains false until required initialization and vector bootstrap finish successfully. HTTP 200 alone does not establish readiness. |
 | `/status` | `vector_expected` | Config intends vector search to run. |
 | `/status` | `embedding_provider_ok` | `false` = vector expected but the embedding provider did not load. |
 | `/status` | `ingestion.status` | `degraded` = an enabled package declares a provider credential that did not resolve. `issues` names the package, provider, and configured environment-variable name, never the secret. |

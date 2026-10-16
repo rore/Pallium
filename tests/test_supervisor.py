@@ -683,8 +683,19 @@ def test_api_rapid_restart_budget_triggers_shutdown():
 # ---------------------------------------------------------------------------
 
 import json as _json
+import http.client as _http_client
+import socket as _socket
+import threading as _threading
+import time as _time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from threading import Thread
 
-from app.supervisor import _wait_for_api, _generate_launch_token, _start_api_with_retry
+from app.supervisor import (
+    _probe_initialized_health,
+    _wait_for_api,
+    _generate_launch_token,
+    _start_api_with_retry,
+)
 
 
 def _stub_socket_factory(connect_results: list[bool]):
@@ -721,6 +732,7 @@ def test_wait_for_api_succeeds_when_token_matches(tmp_path, monkeypatch):
 
     # TCP succeeds on first try
     monkeypatch.setattr("socket.socket", _stub_socket_factory([True]))
+    monkeypatch.setattr("app.supervisor._probe_initialized_health", lambda *_args, **_kwargs: True, raising=False)
 
     times = iter([0.0, 0.1, 0.2])
     clock = lambda: next(times, 0.5)
@@ -817,12 +829,12 @@ def test_wait_for_api_orphan_then_token_cleanup_must_not_grace_through(tmp_path,
 
 
 def test_wait_for_api_falls_back_after_grace_when_token_missing(tmp_path, monkeypatch):
-    """No token file (e.g. older child not implementing token write) →
-    after grace period, trust TCP alone (back-compat)."""
+    """Missing-token grace still requires a healthy initialized HTTP response."""
     run_dir = tmp_path / "run"
     run_dir.mkdir()  # but no api_token file
 
     monkeypatch.setattr("socket.socket", _stub_socket_factory([True] * 100))
+    monkeypatch.setattr("app.supervisor._probe_initialized_health", lambda *_args, **_kwargs: True, raising=False)
 
     # Each clock() call jumps far enough that grace period elapses on the
     # second iteration after TCP starts succeeding.
@@ -843,8 +855,9 @@ def test_wait_for_api_falls_back_after_grace_when_token_missing(tmp_path, monkey
 
 
 def test_wait_for_api_no_self_id_legacy_path(tmp_path, monkeypatch):
-    """Without expected_nonce/run_dir, behavior is legacy: TCP success → True."""
+    """Without a token identity, the legacy path still requires initialized HTTP."""
     monkeypatch.setattr("socket.socket", _stub_socket_factory([True]))
+    monkeypatch.setattr("app.supervisor._probe_initialized_health", lambda *_args, **_kwargs: True, raising=False)
     result = _wait_for_api(
         "127.0.0.1", 19999, timeout=5.0, sleep_fn=lambda _: None,
     )
@@ -868,13 +881,13 @@ def test_wait_for_api_returns_false_when_process_dies(tmp_path, monkeypatch):
 
 
 def test_wait_for_api_handles_corrupt_token_file(tmp_path, monkeypatch):
-    """Garbled token file → treated as 'absent', falls back via grace period.
-    Avoids supervisor wedging on a partially-written file from a crashed write."""
+    """Garbled token uses grace, then still requires initialized HTTP health."""
     run_dir = tmp_path / "run"
     run_dir.mkdir()
     (run_dir / "api_token").write_text("not valid json {{{", encoding="utf-8")
 
     monkeypatch.setattr("socket.socket", _stub_socket_factory([True] * 100))
+    monkeypatch.setattr("app.supervisor._probe_initialized_health", lambda *_args, **_kwargs: True, raising=False)
 
     t = [0.0]
     def clock():
@@ -890,6 +903,245 @@ def test_wait_for_api_handles_corrupt_token_file(tmp_path, monkeypatch):
         clock=clock,
     )
     assert result is True, "corrupt JSON → treated as absent, grace fallback applies"
+
+
+@pytest.mark.parametrize("identity", ["nonce", "legacy", "grace", "corrupt_grace"])
+def test_wait_for_api_requires_initialized_http_after_tcp(identity, tmp_path, monkeypatch):
+    """TCP plus any existing identity route is insufficient while HTTP is initializing."""
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    kwargs = {}
+    if identity == "nonce":
+        nonce = "expected-token"
+        (run_dir / "api_token").write_text(_json.dumps({"nonce": nonce}), encoding="utf-8")
+        kwargs.update(expected_nonce=nonce, run_dir=run_dir)
+    elif identity in {"grace", "corrupt_grace"}:
+        if identity == "corrupt_grace":
+            (run_dir / "api_token").write_text("not json", encoding="utf-8")
+        kwargs.update(expected_nonce="missing-token", run_dir=run_dir, grace_period=0.0)
+
+    monkeypatch.setattr("socket.socket", _stub_socket_factory([True] * 10))
+    probes = []
+    monkeypatch.setattr(
+        "app.supervisor._probe_initialized_health",
+        lambda *_args, **_kwargs: probes.append(True) or False,
+        raising=False,
+    )
+    ticks = iter(range(100))
+    result = _wait_for_api(
+        "127.0.0.1", 19999, timeout=10.0, sleep_fn=lambda _: None,
+        clock=lambda: next(ticks) * 0.6, **kwargs,
+    )
+
+    assert result is False
+    assert probes, "a TCP/ownership candidate must be checked through HTTP"
+
+
+@pytest.mark.parametrize(
+    ("status_code", "health", "expected"),
+    [
+        (503, {"status": "initializing", "initialized": True}, True),
+        (200, {"status": "degraded", "initialized": True}, True),
+        (200, {"status": "ok"}, True),
+        (503, {"status": "initializing", "initialized": False}, False),
+        (200, {"status": "unknown"}, False),
+        (200, {"status": []}, False),
+        (200, {"status": "ok", "initialized": None}, False),
+        (200, {"status": "ok", "padding": "x" * (65 * 1024)}, False),
+    ],
+)
+def test_health_probe_accepts_only_initialized_or_legacy_healthy_http(
+    status_code, health, expected, monkeypatch,
+):
+    body = _json.dumps(health).encode("utf-8")
+    real_connection = _http_client.HTTPConnection
+    real_timer = _threading.Timer
+    timeouts = []
+    timers = []
+    timer_delays = []
+
+    def make_connection(host, port, *, timeout):
+        timeouts.append(timeout)
+        return real_connection(host, port, timeout=timeout)
+
+    def make_timer(*args, **kwargs):
+        timer_delays.append(args[0])
+        timer = real_timer(*args, **kwargs)
+        timers.append(timer)
+        return timer
+
+    class HealthHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            assert self.path == "/health"
+            self.send_response(status_code)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), HealthHandler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    monkeypatch.setattr("app.supervisor.http.client.HTTPConnection", make_connection)
+    monkeypatch.setattr("app.supervisor.threading.Timer", make_timer)
+    try:
+        assert _probe_initialized_health("127.0.0.1", server.server_port, 1.0) is expected
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=1.0)
+    assert timeouts == [1.0]
+    assert len(timer_delays) == 1 and 0 < timer_delays[0] <= timeouts[0]
+    assert len(timers) == 1 and not timers[0].is_alive()
+
+
+@pytest.mark.parametrize("phase", ["headers", "body"])
+def test_health_probe_enforces_total_deadline_on_trickled_http(phase):
+    response_body = _json.dumps({"status": "ok", "padding": "x" * 100}).encode()
+    headers = (
+        b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: "
+        + str(len(response_body)).encode()
+        + b"\r\nConnection: close\r\n\r\n"
+    )
+    listener = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    port = listener.getsockname()[1]
+
+    def serve_slowly():
+        try:
+            client, _ = listener.accept()
+            with client:
+                client.recv(4096)
+                if phase == "headers":
+                    for byte in headers:
+                        client.sendall(bytes([byte]))
+                        _time.sleep(0.01)
+                    client.sendall(response_body)
+                else:
+                    client.sendall(headers)
+                    for byte in response_body:
+                        client.sendall(bytes([byte]))
+                        _time.sleep(0.01)
+        except OSError:
+            pass
+
+    thread = Thread(target=serve_slowly, daemon=True)
+    thread.start()
+    started = _time.monotonic()
+    try:
+        assert _probe_initialized_health("127.0.0.1", port, 0.12) is False
+        assert _time.monotonic() - started < 0.9
+    finally:
+        listener.close()
+        thread.join(timeout=1.0)
+    assert not thread.is_alive()
+
+
+@pytest.mark.parametrize("fence", ["deadline", "stop", "process"])
+def test_wait_for_api_rechecks_fences_after_health_probe(fence, tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    elapsed = [0.0]
+    stop = SimpleNamespace(requested=False)
+    process = SimpleNamespace(returncode=None)
+    process.poll = lambda: process.returncode
+
+    def accept_then_trip_fence(*_args, **_kwargs):
+        if fence == "deadline":
+            elapsed[0] = 3.0
+        elif fence == "stop":
+            stop.requested = True
+        else:
+            process.returncode = 1
+        return True
+
+    monkeypatch.setattr("socket.socket", _stub_socket_factory([True]))
+    monkeypatch.setattr("app.supervisor._probe_initialized_health", accept_then_trip_fence)
+    nonce = "owned-token"
+    (tmp_path / "api_token").write_text(_json.dumps({"nonce": nonce}), encoding="utf-8")
+    result = _wait_for_api(
+        "127.0.0.1", 19999, timeout=2.0, sleep_fn=lambda _: None,
+        process=process, stop=stop, expected_nonce=nonce,
+        run_dir=tmp_path, clock=lambda: elapsed[0],
+    )
+
+    assert result is False
+
+
+@pytest.mark.parametrize("scenario", [
+    "owned", "foreign", "missing", "legacy", "nonce_changed", "stopped", "exited",
+    "initializing", "degraded", "malformed",
+])
+def test_wait_for_api_terminal_failure_requires_owned_nonce(scenario, tmp_path):
+    from types import SimpleNamespace
+
+    nonce = "terminal-failure-owner"
+    token_path = tmp_path / "api_token"
+    if scenario not in {"missing", "legacy"}:
+        token_path.write_text(_json.dumps({"nonce": "foreign" if scenario == "foreign" else nonce}))
+    health = {"status": "failed", "initialized": False, "ready": False,
+              "initialization_error": "service_initialization_failed"}
+    status_code = 503
+    if scenario == "initializing":
+        health = {"status": "initializing", "initialized": False, "ready": False}
+    elif scenario == "degraded":
+        health = {"status": "degraded", "initialized": True, "ready": False}
+        status_code = 200
+    elif scenario == "malformed":
+        health["ready"] = True
+    process = SimpleNamespace(returncode=None)
+    process.poll = lambda: process.returncode
+    stop = SimpleNamespace(requested=False)
+    elapsed, sleeps, requests = [0.0], [], []
+
+    class HealthHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            requests.append(self.path)
+            if scenario == "nonce_changed":
+                token_path.write_text(_json.dumps({"nonce": "replacement"}))
+            elif scenario == "stopped":
+                stop.requested = True
+            elif scenario == "exited":
+                process.returncode = 1
+            body = _json.dumps(health).encode()
+            self.send_response(status_code)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_args):
+            pass
+
+    def advance(seconds):
+        sleeps.append(seconds)
+        elapsed[0] += seconds
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), HealthHandler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        result = _wait_for_api(
+            "127.0.0.1", server.server_port, timeout=2, sleep_fn=advance,
+            process=process, stop=stop, expected_nonce=None if scenario == "legacy" else nonce,
+            run_dir=tmp_path, grace_period=0, clock=lambda: elapsed[0],
+        )
+        assert result is (scenario == "degraded")
+        if scenario == "owned":
+            assert requests == ["/health"]
+            assert sleeps == [], "terminal owned failure must not consume the startup budget"
+        elif scenario == "degraded":
+            assert requests == ["/health"]
+            assert sleeps == []
+        elif scenario not in {"stopped", "exited"}:
+            assert elapsed[0] == 2, "unverified or nonterminal response must retain the wait policy"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=1)
+    assert not thread.is_alive()
 
 
 def test_generate_launch_token_is_unique():
@@ -1064,6 +1316,7 @@ def test_startup_budget_preserves_real_probe_fencing(tmp_path, monkeypatch, capl
         return result
 
     monkeypatch.setattr("socket.socket", ProbeSocket)
+    monkeypatch.setattr("app.supervisor._probe_initialized_health", lambda *_args, **_kwargs: True)
     monkeypatch.setattr("app.supervisor._kill_tree", lambda proc, **_kw: killed.append(proc))
     caplog.set_level("INFO")
     result = _start_api_with_retry(

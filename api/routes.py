@@ -8,7 +8,7 @@ import time
 from collections.abc import Awaitable
 from typing import Any, Callable
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request
 from fastapi.responses import Response
 from pydantic import ValidationError
 
@@ -689,6 +689,7 @@ def create_router(
     relay_turn_admission_callback: Callable[[dict[str, Any], dict[str, Any], CodexWakeReservation | None], None] | None = None,
     relay_ack_callback: Callable[[dict[str, Any], dict[str, str]], None] | None = None,
     relay_activation_callback: Callable[[dict[str, Any]], dict[str, object]] | None = None,
+    relay_activation_callback_factory: Callable[[Callable], Callable] | None = None,
     relay_runner: Callable[[Callable[[], Any]], Awaitable[Any]] | None = None,
     relay_codex_runner: Callable[[Callable[[], Any]], Awaitable[Any]] | None = None,
     diagnostic_runner: Callable[[Callable[[], Any]], Awaitable[Any]] | None = None,
@@ -701,11 +702,13 @@ def create_router(
             raise HTTPException(status_code=501, detail="relay is not supported by the configured storage")
         return relay_service
 
-    def _project_relay_activation(value: object) -> object:
-        if relay_activation_callback is None:
+    def _project_relay_activation(value: object, callback=None) -> object:
+        if callback is None:
+            callback = relay_activation_callback
+        if callback is None:
             return value
         if isinstance(value, list):
-            return [_project_relay_activation(item) for item in value]
+            return [_project_relay_activation(item, callback) for item in value]
         if not isinstance(value, dict):
             return value
         result = dict(value)
@@ -715,12 +718,12 @@ def create_router(
             and ("endpoint_id" in result or "id" in result or "recipient_endpoint_id" in result)
         ):
             try:
-                result["activation"] = relay_activation_callback(result)
+                result["activation"] = callback(result)
             except Exception:
                 logger.exception("Relay activation projection failed")
         for key in ("session", "participants", "deliveries"):
             if key in result:
-                result[key] = _project_relay_activation(result[key])
+                result[key] = _project_relay_activation(result[key], callback)
         return result
 
     def _has_codex_runtime(value: object) -> bool:
@@ -749,42 +752,58 @@ def create_router(
 
         return await anyio.to_thread.run_sync(operation, abandon_on_cancel=False)
 
-    async def _relay_call(operation_name: str, operation, *, codex=False):
-        started = time.monotonic()
+    relay_errors = (RelayNotFoundError, RelayConflictError, RelayUnavailableError,
+                    ImmediateTransactionBusyError, ValueError)
 
-        def observed_operation():
+    def _relay_http_error(exc):
+        if isinstance(exc, RelayNotFoundError):
+            return HTTPException(status_code=404, detail="relay entity not found in the requested scope")
+        if isinstance(exc, RelayConflictError):
+            detail = str(exc)
+            if detail.startswith("association_limit:"):
+                detail = {"code": "association_limit", "message": detail.partition(":")[2].strip()}
+            return HTTPException(status_code=409, detail=detail)
+        if isinstance(exc, RelayUnavailableError):
+            return HTTPException(status_code=501, detail=str(exc))
+        if isinstance(exc, ImmediateTransactionBusyError):
+            return HTTPException(
+                status_code=503,
+                detail={"code": "relay_busy", "retryable": True},
+                headers={"Retry-After": "1"},
+            )
+        return HTTPException(status_code=422, detail=str(exc))
+
+    def _relay_sync_call(operation_name: str, operation, *, started=None):
+        if started is None:
+            started = time.monotonic()
+        try:
             try:
                 result = operation()
-            except ImmediateTransactionBusyError:
+            except ImmediateTransactionBusyError as exc:
+                stage = getattr(exc, "acquisition_stage", None)
+                if type(stage) is not str or stage not in ImmediateTransactionBusyError.ACQUISITION_STAGES:
+                    stage = "unknown"
                 logger.warning(
-                    "relay operation=%s outcome=busy duration_ms=%d",
-                    operation_name, int((time.monotonic() - started) * 1000),
+                    "relay operation=%s outcome=busy duration_ms=%d acquisition_stage=%s",
+                    operation_name, int((time.monotonic() - started) * 1000), stage,
                 )
                 raise
             elapsed_ms = int((time.monotonic() - started) * 1000)
             if elapsed_ms >= 100:
                 logger.warning("relay operation=%s outcome=slow duration_ms=%d", operation_name, elapsed_ms)
             return result
+        except relay_errors as exc:
+            raise _relay_http_error(exc) from exc
 
+    async def _relay_call(operation_name: str, operation, *, codex=False):
+        started = time.monotonic()
         try:
-            return await _run_relay_operation(observed_operation, codex=codex)
-        except RelayNotFoundError as exc:
-            raise HTTPException(status_code=404, detail="relay entity not found in the requested scope") from exc
-        except RelayConflictError as exc:
-            detail = str(exc)
-            if detail.startswith("association_limit:"):
-                detail = {"code": "association_limit", "message": detail.partition(":")[2].strip()}
-            raise HTTPException(status_code=409, detail=detail) from exc
-        except RelayUnavailableError as exc:
-            raise HTTPException(status_code=501, detail=str(exc)) from exc
-        except ImmediateTransactionBusyError as exc:
-            raise HTTPException(
-                status_code=503,
-                detail={"code": "relay_busy", "retryable": True},
-                headers={"Retry-After": "1"},
-            ) from exc
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
+            return await _run_relay_operation(
+                lambda: _relay_sync_call(operation_name, operation, started=started),
+                codex=codex,
+            )
+        except relay_errors as exc:
+            raise _relay_http_error(exc) from exc
 
     @router.post("/relay/turn", response_model=RelayTurnResponse)
     async def relay_turn(request: RelayTurnRequest):
@@ -795,15 +814,68 @@ def create_router(
         relay_request = dict(request_data)
         relay_request["exact_delivery_id"] = relay_request.pop("wake_delivery_id", None)
         reservation = None
-        if request.wake_delivery_id is not None and relay_turn_snapshot_callback is not None:
-            try:
-                reservation = await _run_relay_operation(lambda: relay_turn_snapshot_callback(request_data), codex=request.runtime == "codex")
-            except Exception:
-                logger.warning("Relay turn wake snapshot unavailable")
-        if reservation is not None:
-            relay_request["codex_wake_endpoint_id"] = reservation.recipient_endpoint_id
-            relay_request["codex_wake_generation"] = reservation.generation
         try:
+            if request.runtime == "codex" and request.wake_delivery_id is not None:
+                def exact_turn_operation():
+                    nonlocal service_ms
+                    captured = None
+                    if relay_turn_snapshot_callback is not None:
+                        try:
+                            captured = relay_turn_snapshot_callback(request_data)
+                        except Exception:
+                            logger.warning("Relay turn wake snapshot unavailable")
+                    if captured is not None:
+                        relay_request["codex_wake_endpoint_id"] = captured.recipient_endpoint_id
+                        relay_request["codex_wake_generation"] = captured.generation
+                    service_started = time.monotonic()
+                    try:
+                        result = _relay_sync_call("turn", lambda: _relay().turn(**relay_request))
+                    finally:
+                        service_ms = int((time.monotonic() - service_started) * 1000)
+                    if relay_turn_callback is not None:
+                        try:
+                            relay_turn_callback(request_data, result)
+                        except Exception:
+                            logger.exception("Relay turn callback failed after admission")
+                    if relay_turn_admission_callback is not None:
+                        try:
+                            relay_turn_admission_callback(request_data, result, captured)
+                        except Exception:
+                            logger.exception("Relay turn admission callback failed after admission")
+                    if relay_activation_callback is None:
+                        return result
+
+                    def project_response():
+                        callback = relay_activation_callback
+                        if relay_activation_callback_factory is not None:
+                            try:
+                                prepared = relay_activation_callback_factory(callback)
+                                if not callable(prepared):
+                                    raise TypeError("activation factory returned a non-callable projector")
+                                callback = prepared
+                            except Exception:
+                                logger.exception("Relay activation projector preparation failed")
+                        return _project_relay_activation(result, callback)
+
+                    return _relay_sync_call("activation_projection", project_response)
+
+                try:
+                    projected = await _run_relay_operation(exact_turn_operation, codex=True)
+                except relay_errors as exc:
+                    raise _relay_http_error(exc) from exc
+                outcome = "ready"
+                return projected
+            if request.wake_delivery_id is not None and relay_turn_snapshot_callback is not None:
+                try:
+                    reservation = await _run_relay_operation(
+                        lambda: relay_turn_snapshot_callback(request_data),
+                        codex=request.runtime == "codex",
+                    )
+                except Exception:
+                    logger.warning("Relay turn wake snapshot unavailable")
+            if reservation is not None:
+                relay_request["codex_wake_endpoint_id"] = reservation.recipient_endpoint_id
+                relay_request["codex_wake_generation"] = reservation.generation
             service_started = time.monotonic() if started is not None else None
             try:
                 result = await _relay_call("turn", lambda: _relay().turn(**relay_request))
@@ -1016,26 +1088,30 @@ def create_router(
             ),
         )
 
+    async def _complete_relay_ack(result, scope, callback_name):
+        try:
+            await _run_relay_operation(
+                lambda: relay_ack_callback(result, scope),
+                codex=result.get("recipient_runtime") not in {"claude-code", "opencode"},
+            )
+        except Exception:
+            logger.exception("%s failed after persistence", callback_name)
+
     @router.post("/relay/deliveries/ack", response_model=RelayAckResponse)
-    async def relay_ack(request: RelayAckRequest):
+    async def relay_ack(request: RelayAckRequest, background_tasks: BackgroundTasks):
         result = await _relay_call("ack", lambda: _relay().acknowledge(**request.model_dump()))
         if relay_ack_callback is not None:
-            try:
-                await _run_relay_operation(lambda: relay_ack_callback(result, {
-                    "container_ref": request.container_ref,
-                }), codex=result.get("recipient_runtime") not in {"claude-code", "opencode"})
-            except Exception:
-                logger.exception("Relay ACK callback failed after persistence")
+            # Response-owned cleanup still drains before ASGI lifespan shutdown.
+            background_tasks.add_task(_complete_relay_ack, result,
+                                      {"container_ref": request.container_ref}, "Relay ACK callback")
         return result
 
     @router.post("/relay/deliveries/mcp-ack", response_model=RelayAckResponse)
-    async def relay_mcp_ack(request: RelayMcpAckRequest):
+    async def relay_mcp_ack(request: RelayMcpAckRequest, background_tasks: BackgroundTasks):
         result = await _relay_call("mcp_ack", lambda: _relay().ack_by_receipt(**request.model_dump()))
         if relay_ack_callback is not None:
-            try:
-                await _run_relay_operation(lambda: relay_ack_callback(result, {"container_ref": request.container_ref}), codex=result.get("recipient_runtime") not in {"claude-code", "opencode"})
-            except Exception:
-                logger.exception("Relay MCP ACK callback failed after persistence")
+            background_tasks.add_task(_complete_relay_ack, result,
+                                      {"container_ref": request.container_ref}, "Relay MCP ACK callback")
         return result
 
     @router.post("/internal/claude-wake/register", status_code=204)

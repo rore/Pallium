@@ -345,12 +345,12 @@ class TestAtomicWrite:
         sessions = tmp_state / "sessions"
         sessions.mkdir(parents=True)
 
-        original_replace = common.os.replace
+        original_replace = common._replace_atomic_state_file
         call_count = {"n": 0}
         def failing_replace(src, dst):
             call_count["n"] += 1
             raise OSError("simulated rename failure")
-        monkeypatch.setattr(common.os, "replace", failing_replace)
+        monkeypatch.setattr(common, "_replace_atomic_state_file", failing_replace)
 
         assert common.pin_container("s1", "container-a") is False
 
@@ -360,7 +360,7 @@ class TestAtomicWrite:
         assert call_count["n"] == 1
 
         # Restore
-        monkeypatch.setattr(common.os, "replace", original_replace)
+        monkeypatch.setattr(common, "_replace_atomic_state_file", original_replace)
 
 
 # --- Sweep ---
@@ -435,7 +435,7 @@ class TestIdentityCache:
         monkeypatch.setattr(common.subprocess, "run", run)
         assert common.pin_container("s1", "git:example/repo", source="startup") is True
 
-        assert common.derive_actor_ref(str(root), "s1") == "משתמש"
+        assert common.derive_actor_ref(str(root), "s1", "git:example/repo") == "משתמש"
         assert common.resolve_container_ref(str(root), "s1", True) == "git:example/repo"
         assert common.derive_actor_ref(str(root), "s1") == "משתמש"
         assert calls == [("git", "config", "user.name")]

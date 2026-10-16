@@ -153,7 +153,7 @@ def test_slow_response_body_cannot_outlive_deadline(
         def read(self):
             consumed.extend(b"{")
             started.set()
-            release.wait(2)
+            release.wait()
             return bytes(consumed) + b"}"
 
     class DeadlineThread:
@@ -184,7 +184,9 @@ def test_slow_response_body_cannot_outlive_deadline(
         assert workers[0].is_alive()
     finally:
         release.set()
-        workers[0].join(1)
+        for worker in workers:
+            worker.join(1)
+            assert not worker.is_alive()
 
 
 @pytest.mark.parametrize("operation", ("register", "close"))

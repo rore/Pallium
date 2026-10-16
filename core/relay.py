@@ -734,6 +734,30 @@ class RelayService:
             raise RelayUnavailableError("relay endpoint scope lookup is not supported")
         return resolve(endpoint_id)
 
+    def session_view_by_endpoint(
+        self, endpoint_id: str, *, now: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Read the exact endpoint's fresh session view, including scope generation."""
+        endpoint_id = _opaque(endpoint_id, "endpoint_id", maximum=46)
+        if not _ENDPOINT_ID_RE.fullmatch(endpoint_id):
+            raise ValueError("endpoint_id must be a canonical Relay endpoint")
+        query = getattr(self._store, "relay_session_view_by_endpoint", None)
+        if callable(query):
+            view = query(endpoint_id, recent_seconds=RELAY_RECENT_SECONDS, now=now)
+            # Keep the scope validation previously performed by list_sessions.
+            if (view.get("endpoint_id") != endpoint_id
+                    or self._scope(view["container_ref"]) != view["container_ref"]
+                    or validate_runtime(view["runtime"]) != view["runtime"]
+                    or _opaque(view["session_ref"], "session_ref") != view["session_ref"]):
+                raise RelayNotFoundError("relay endpoint scope not found")
+            return view
+        scope = self.session_scope_by_endpoint(endpoint_id)
+        matches = [row for row in self.list_sessions(**scope, include_inactive=True, now=now)
+                   if row.get("endpoint_id") == endpoint_id]
+        if len(matches) != 1:
+            raise RelayNotFoundError("relay endpoint not found")
+        return matches[0]
+
     def codex_wake_reservation_state(
         self, *, delivery_id: str
     ) -> dict[str, Any]:

@@ -278,6 +278,8 @@ class SQLiteRetentionMixin:
                     durable_types=durable_types,
                     working_types=working_types,
                     orphan_delete_types=orphan_delete_types,
+                    lease=lease,
+                    lease_now=lease_now,
                 )
                 stats = self._merge_retention_stats(stats, chunk_stats)
                 remaining = max(0, remaining - chunk_stats.deleted_source_items)
@@ -399,41 +401,81 @@ class SQLiteRetentionMixin:
         durable_types: frozenset[str],
         working_types: frozenset[str],
         orphan_delete_types: frozenset[str],
+        lease: RetentionLease | None = None,
+        lease_now: datetime | None = None,
     ) -> tuple[RetentionRunStats, int]:
         if delete_limit <= 0 or scan_limit <= 0:
             return RetentionRunStats(), 0
 
-        def _do(session):
-            maintenance_record, candidates = self._next_source_retention_candidates_in_session(session, now=now, limit=scan_limit)
-            stats = RetentionRunStats()
-            deleted_sources = 0
-            scanned_count = 0
-            last_scanned_record: SourceItemRecord | None = None
-            for record in candidates:
-                scanned_count += 1
-                last_scanned_record = record
-                if not self._source_item_raw_ttl_expired(record, now=now):
-                    if deleted_sources >= delete_limit:
+        for _ in range(self._LOCKED_MAX_RETRIES):
+            # Classification must neither initialize the marker nor acquire a writer.
+            def _prepare(scan):
+                marker, candidates = self._next_source_retention_candidates_in_session(scan, now=now, limit=scan_limit)
+                marker_present = marker is not None
+                cursor_time = marker.source_scan_cursor_created_at if marker else None
+                cursor_id = marker.source_scan_cursor_id if marker else None
+                prepared_stats = RetentionRunStats()
+                scanned_count = 0
+                last_scanned_key = None
+                deletable_ids = []
+                for record in candidates:
+                    scanned_count += 1
+                    last_scanned_key = (record.created_at, record.id)
+                    if not self._source_item_raw_ttl_expired(record, now=now) or self._source_item_has_active_lease(record, now=now):
+                        continue
+                    if self._source_item_is_protected(scan, record.id, now=now, durable_types=durable_types, working_types=working_types):
+                        prepared_stats = self._merge_retention_stats(prepared_stats, RetentionRunStats(skipped_protected_source_items=1))
+                        continue
+                    deletable_ids.append(record.id)
+                    if len(deletable_ids) >= delete_limit:
                         break
-                    continue
-                if self._source_item_has_active_lease(record, now=now):
-                    if deleted_sources >= delete_limit:
-                        break
-                    continue
-                if self._source_item_is_protected(session, record.id, now=now, durable_types=durable_types, working_types=working_types):
-                    stats = self._merge_retention_stats(stats, RetentionRunStats(skipped_protected_source_items=1))
-                    if deleted_sources >= delete_limit:
-                        break
-                    continue
-                stats = self._merge_retention_stats(stats, self._delete_source_item_cascade_in_session(session, record.id, durable_types=durable_types, working_types=working_types, orphan_delete_types=orphan_delete_types))
-                deleted_sources += 1
-                if deleted_sources >= delete_limit:
-                    break
-            if last_scanned_record is not None:
-                self._set_source_scan_cursor_in_session(maintenance_record, last_scanned_record)
-            return stats, scanned_count
+                return marker_present, cursor_time, cursor_id, prepared_stats, scanned_count, last_scanned_key, deletable_ids
 
-        return self._with_retry(_do)
+            marker_present, cursor_time, cursor_id, prepared_stats, scanned_count, last_scanned_key, deletable_ids = self._with_retry(_prepare)
+
+            def _do(session):
+                # First DML owns the writer, even if the marker has not been created.
+                guarded = session.execute(update(MaintenanceStateRecord).where(
+                    MaintenanceStateRecord.key == RETENTION_MAINTENANCE_KEY,
+                    MaintenanceStateRecord.source_scan_cursor_created_at == cursor_time,
+                    MaintenanceStateRecord.source_scan_cursor_id == cursor_id,
+                ).values(source_scan_cursor_id=cursor_id))
+                if guarded.rowcount != (1 if marker_present else 0):
+                    return None
+                current = session.get(MaintenanceStateRecord, RETENTION_MAINTENANCE_KEY)
+                if not marker_present and current is not None:
+                    return None
+                if lease is not None and not self._retention_lease_owned_in_session(
+                    session, worker_id=lease.claimed_by, claimed_at=lease.claimed_at,
+                    now=lease_now or utc_now(), allow_expired=False,
+                ):
+                    raise RetentionLeaseLostError("retention lease lost before source deletion")
+                maintenance_record = current or self._ensure_maintenance_state_record_in_session(session, RETENTION_MAINTENANCE_KEY, now)
+                records = session.scalars(select(SourceItemRecord).where(
+                    SourceItemRecord.id.in_(deletable_ids),
+                )).all() if deletable_ids else []
+                fresh = {record.id: record for record in records}
+                stats = prepared_stats
+                for source_id in deletable_ids:
+                    record = fresh.get(source_id)
+                    if (record is None or record.processing_status not in {"completed", "failed", "skipped"}
+                            or not self._source_item_raw_ttl_expired(record, now=now)
+                            or self._source_item_has_active_lease(record, now=now)):
+                        continue
+                    if self._source_item_is_protected(session, record.id, now=now, durable_types=durable_types, working_types=working_types):
+                        stats = self._merge_retention_stats(stats, RetentionRunStats(skipped_protected_source_items=1))
+                        continue
+                    stats = self._merge_retention_stats(stats, self._delete_source_item_cascade_in_session(session, record.id, durable_types=durable_types, working_types=working_types, orphan_delete_types=orphan_delete_types))
+                if last_scanned_key is not None:
+                    maintenance_record.source_scan_cursor_created_at, maintenance_record.source_scan_cursor_id = last_scanned_key
+                elif cursor_time is not None and cursor_id:
+                    self._clear_source_scan_cursor_in_session(maintenance_record)
+                return stats, scanned_count
+
+            result = self._with_retry(_do)
+            if result is not None:
+                return result
+        raise RuntimeError("source retention cursor changed repeatedly during preparation")
 
     def _run_debug_metadata_stripping_chunk(
         self,
@@ -535,12 +577,12 @@ class SQLiteRetentionMixin:
         *,
         now: datetime,
         limit: int,
-    ) -> tuple[MaintenanceStateRecord, list[SourceItemRecord]]:
-        maintenance_record = self._ensure_maintenance_state_record_in_session(session, RETENTION_MAINTENANCE_KEY, now)
+    ) -> tuple[MaintenanceStateRecord | None, list[SourceItemRecord]]:
+        maintenance_record = session.get(MaintenanceStateRecord, RETENTION_MAINTENANCE_KEY)
         if limit <= 0:
             return maintenance_record, []
-        cursor_created_at = self._normalize_datetime(maintenance_record.source_scan_cursor_created_at)
-        cursor_id = maintenance_record.source_scan_cursor_id
+        cursor_created_at = self._normalize_datetime(maintenance_record.source_scan_cursor_created_at) if maintenance_record else None
+        cursor_id = maintenance_record.source_scan_cursor_id if maintenance_record else None
         statement = (
             select(SourceItemRecord)
             .where(SourceItemRecord.processing_status.in_(("completed", "failed", "skipped")))
@@ -554,9 +596,6 @@ class SQLiteRetentionMixin:
                 )
             )
         records = session.scalars(statement.limit(limit)).all()
-        if not records and cursor_created_at is not None and cursor_id:
-            self._clear_source_scan_cursor_in_session(maintenance_record)
-            return maintenance_record, []
         return maintenance_record, records
 
     @staticmethod

@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 import sqlite3
 import sys
@@ -5,10 +6,11 @@ import threading
 
 import pytest
 
-from core.codex_wake import CodexWakeRegistry
+from core.codex_wake import CodexWakeRegistry, WAKE_RETRY_COOLDOWN_SECONDS
 from core.relay import RELAY_CLAIM_LEASE_SECONDS
 from tests.test_codex_retained_wake import (
     SCOPE, TARGET, _hook_runner, http_wake, recover, retained as retained_fixture,
+    _observe_transition_attempts, _single_typed_transition_refusal,
 )
 
 
@@ -25,6 +27,109 @@ def _freeze_clock(monkeypatch, now):
         return current if current.tzinfo is not None else current.replace(tzinfo=timezone.utc)
 
     monkeypatch.setattr(sqlite_relay, "_now", controlled_now)
+
+
+def _observe_relay_busy_acquisition(provider, monkeypatch, request, tmp_path):
+    import json
+    import time
+    from collections import deque
+    from contextlib import contextmanager
+    from itertools import count
+    from pathlib import Path
+    from sqlalchemy import event
+
+    events, context_ids, begin_ids = deque(maxlen=128), count(1), count(1)
+    local, buffer_lock = threading.local(), threading.Lock()
+    total, closed = 0, False
+    original_outer = provider._begin_relay_immediate
+    original_inner = provider._begin_immediate_for
+
+    def record(phase, **values):
+        nonlocal total
+        row = {"phase": phase, "thread": threading.get_ident(),
+               "at": time.perf_counter(), **values}
+        # Only diagnostic-buffer access uses this lock; delegates run outside it.
+        with buffer_lock:
+            if not closed:
+                total += 1
+                events.append(row)
+
+    @contextmanager
+    def observe(delegate, phase, *args, **kwargs):
+        previous = getattr(local, "context_id", None)
+        if phase == "relay":
+            local.context_id = next(context_ids)
+            local.last_begin_id = None
+        context_id = getattr(local, "context_id", None)
+        if context_id is None:
+            with delegate(*args, **kwargs) as db:
+                yield db
+            return
+        record(phase + "_entered", context=context_id)
+        try:
+            with delegate(*args, **kwargs) as db:
+                record(phase + "_acquired", context=context_id)
+                try:
+                    yield db
+                finally:
+                    record(phase + "_body_finished", context=context_id)
+        except BaseException as exc:
+            origins, cause, native, seen = [], exc, [], set()
+            tb = exc.__traceback__
+            while tb is not None:
+                if Path(tb.tb_frame.f_code.co_filename).name == "sqlite_queue.py":
+                    origins.append({"function": tb.tb_frame.f_code.co_name, "line": tb.tb_lineno})
+                tb = tb.tb_next
+            while cause is not None and id(cause) not in seen:
+                seen.add(id(cause))
+                original = getattr(cause, "orig", cause)
+                if getattr(original, "sqlite_errorcode", None) is not None:
+                    native.append({"code": original.sqlite_errorcode,
+                                   "name": getattr(original, "sqlite_errorname", None)})
+                cause = cause.__cause__ or cause.__context__
+            record(phase + "_error", context=context_id, last_begin=getattr(local, "last_begin_id", None),
+                   error_type=type(exc).__name__, origins=origins, native=native)
+            raise
+        finally:
+            record(phase + "_settled", context=context_id)
+            if phase == "relay":
+                local.context_id = previous
+
+    def before_begin(conn, cursor, statement, parameters, context, many):
+        if closed:
+            return
+        context_id = getattr(local, "context_id", None)
+        if context_id is not None and statement.strip().upper() == "BEGIN IMMEDIATE":
+            local.last_begin_id = next(begin_ids)
+            record("begin_entered", context=context_id, begin=local.last_begin_id)
+
+    def after_begin(conn, cursor, statement, parameters, context, many):
+        if closed:
+            return
+        context_id = getattr(local, "context_id", None)
+        if context_id is not None and statement.strip().upper() == "BEGIN IMMEDIATE":
+            record("begin_returned", context=context_id, begin=local.last_begin_id)
+
+    event.listen(provider._relay_engine, "before_cursor_execute", before_begin)
+    event.listen(provider._relay_engine, "after_cursor_execute", after_begin)
+    monkeypatch.setattr(provider, "_begin_relay_immediate",
+                        lambda *args, **kwargs: observe(original_outer, "relay", *args, **kwargs))
+    monkeypatch.setattr(provider, "_begin_immediate_for",
+                        lambda *args, **kwargs: observe(original_inner, "native_and_setup", *args, **kwargs))
+
+    def finish():
+        nonlocal closed
+        # Fixture-owned workers may still dispatch; leave callbacks inert until disposal.
+        with buffer_lock:
+            closed = True
+            metadata = json.dumps({"events": list(events), "dropped": max(0, total - len(events)),
+                                   "qualification": "Observer-inclusive, including callback work before the post-BEGIN deadline check."})
+        try:
+            (tmp_path / "busy-acquisition.json").write_text(metadata, encoding="utf-8")
+        finally:
+            print("relay busy acquisition: " + metadata, file=sys.stderr)
+
+    request.addfinalizer(finish)
 
 
 def test_retry_deadline_clamps_once_across_rollback_restart_and_due_wake(
@@ -62,11 +167,16 @@ def test_retry_deadline_clamps_once_across_rollback_restart_and_due_wake(
     assert len(desktop.owners) == 2
 
 
-def test_due_retry_reads_moved_scope_and_hook_acks_same_delivery(http_wake, monkeypatch, tmp_path):
+def test_due_retry_reads_moved_scope_and_hook_acks_same_delivery(
+    http_wake, monkeypatch, tmp_path, force_refusal=False,
+):
     http, relay, registry, _, desktop, send, _ = http_wake
     now = [datetime(2030, 9, 5, tzinfo=timezone.utc)]
     _freeze_clock(monkeypatch, now)
     delivery = send()
+    initial = registry.snapshot(delivery["recipient_endpoint_id"])
+    assert initial is not None and initial.outcome == "uncertain"
+    assert len(desktop.owners) == 1
     now[0] += timedelta(seconds=61)
     moved_scope = {"container_ref": "git:example.test/retry-current-scope"}
     moved = http.post("/relay/turn", json={
@@ -76,7 +186,25 @@ def test_due_retry_reads_moved_scope_and_hook_acks_same_delivery(http_wake, monk
         "previous_scope_generation": 0, **moved_scope,
     })
     assert moved.status_code == 200 and moved.json()["deliveries"] == []
+    attempts = _observe_transition_attempts(
+        http_wake, monkeypatch, "retry", force_refusal=force_refusal,
+    )
     recover(http_wake)
+    assert not force_refusal or attempts[0].get("forced") is True
+    if _single_typed_transition_refusal(attempts):
+        assert attempts[0]["reservation"] == initial
+        assert registry.snapshot(initial.recipient_endpoint_id) == initial
+        assert initial.container_ref == SCOPE["container_ref"]
+        assert len(desktop.owners) == 1
+        response = http.get("/relay/messages/retained-journey", params=moved_scope)
+        assert response.status_code == 200, response.text
+        pending = response.json()["deliveries"][0]
+        assert pending["delivery_id"] == delivery["delivery_id"]
+        assert pending["state"] == "pending" and pending["attempts"] == 0
+        recover(http_wake)
+    else:
+        assert len(attempts) == 1 and "error_type" not in attempts[0]
+        assert isinstance(attempts[0].get("result"), type(initial))
     reservation = registry.snapshot(delivery["recipient_endpoint_id"])
     assert reservation is not None and reservation.container_ref == moved_scope["container_ref"]
     assert len(desktop.owners) == 2
@@ -93,6 +221,14 @@ def test_due_retry_reads_moved_scope_and_hook_acks_same_delivery(http_wake, monk
     current = http.get("/relay/messages/retained-journey", params=moved_scope)
     assert current.status_code == 200
     assert current.json()["deliveries"][0]["state"] == "delivered"
+
+
+def test_due_retry_refusal_preserves_authority_then_hook_acks_moved_delivery(
+    http_wake, monkeypatch, tmp_path,
+):
+    test_due_retry_reads_moved_scope_and_hook_acks_same_delivery(
+        http_wake, monkeypatch, tmp_path, force_refusal=True,
+    )
 
 
 def test_nullable_legacy_retry_deadline_recovers_and_hook_acks(http_wake, monkeypatch, tmp_path):
@@ -123,12 +259,13 @@ def test_nullable_legacy_retry_deadline_recovers_and_hook_acks(http_wake, monkey
 @pytest.mark.parametrize("moved", [False, True])
 @pytest.mark.parametrize("restart", [False, True])
 def test_unloaded_hook_claim_failure_recovers_original_and_backlog(
-    client, http_wake, monkeypatch, tmp_path, capsys, fault, moved, restart,
+    client, http_wake, monkeypatch, tmp_path, capsys, fault, moved, restart, request,
 ):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
     from app.dependencies import build_router
 
+    test_request = request
     http, relay, registry, service, desktop, _, workers = http_wake
     now = [datetime(2030, 9, 5, tzinfo=timezone.utc)]
     _freeze_clock(monkeypatch, now)
@@ -168,7 +305,15 @@ def test_unloaded_hook_claim_failure_recovers_original_and_backlog(
         monkeypatch.setattr(hook, "relay_request", lose_claim_response)
     else:
         monkeypatch.setattr(hook, "acknowledge_relay", fail_ack)
-    desktop.on_owner = lambda request: run_hook(request["params"]["arguments"]["prompt"])
+    owner_finished = threading.Event()
+
+    def on_owner(request):
+        try:
+            run_hook(request["params"]["arguments"]["prompt"])
+        finally:
+            owner_finished.set()
+
+    desktop.on_owner = on_owner
 
     def send(message_id, payload):
         response = http.post("/relay/messages", json={
@@ -177,6 +322,9 @@ def test_unloaded_hook_claim_failure_recovers_original_and_backlog(
             "payload": payload, **sender_scope,
         })
         assert response.status_code == 200, response.text
+        if message_id == "claim-failure-original":
+            # Synchronize real hook work before checking worker settlement below.
+            assert owner_finished.wait(5), "first owner hook did not finish"
         for worker in workers:
             worker.join(2)
             assert not worker.is_alive()
@@ -208,6 +356,9 @@ def test_unloaded_hook_claim_failure_recovers_original_and_backlog(
         http.close()
         http = TestClient(app)
         run_hook = _hook_runner(http, monkeypatch, "notLoaded", events, tmp_path)
+        if moved and fault == "ack-response":
+            assert relay._store is client.app.state.pallium_service._storage
+            _observe_relay_busy_acquisition(relay._store, monkeypatch, test_request, tmp_path)
     send("claim-failure-backlog", "backlog-marker-東京")
     journey = (http, relay, registry, service, desktop, None, workers)
     if fault != "ack-response":
@@ -234,9 +385,10 @@ def test_unloaded_hook_claim_failure_recovers_original_and_backlog(
 
 @pytest.mark.parametrize("moved", [False, True])
 def test_expired_claim_survives_repeated_lost_notifications_and_scope_move(
-    http_wake, monkeypatch, tmp_path, capsys, moved,
+    http_wake, monkeypatch, tmp_path, capsys, moved, request,
 ):
     http, relay, registry, service, desktop, send, workers = http_wake
+    _observe_relay_busy_acquisition(relay._store, monkeypatch, request, tmp_path)
     now = [datetime(2030, 9, 5, tzinfo=timezone.utc)]
     _freeze_clock(monkeypatch, now)
     sender_scope = dict(SCOPE)
@@ -335,12 +487,40 @@ def test_expired_claim_clock_rollback_clamps_without_replaying_active_lease(
 
 @pytest.mark.parametrize("change", ["working", "unknown", "closed", "claim", "acked", "unresolved"])
 def test_expired_claim_retry_still_obeys_target_claim_ack_and_custody_guards(
-    http_wake, monkeypatch, change,
+    http_wake, monkeypatch, change, *, force_initial_refusal=False,
 ):
     http, relay, registry, service, desktop, send, _ = http_wake
     now = [datetime(2030, 9, 5, tzinfo=timezone.utc)]
     _freeze_clock(monkeypatch, now)
-    first = send()
+    with monkeypatch.context() as setup_patch:
+        attempts = _observe_transition_attempts(
+            http_wake, setup_patch, "begin_native_attempt", force_refusal=force_initial_refusal,
+        )
+        releases = _observe_transition_attempts(http_wake, setup_patch, "release")
+        first = send()
+        assert not force_initial_refusal or attempts[0].get("forced") is True
+        if _single_typed_transition_refusal(attempts):
+            prepared = attempts[0]["reservation"]
+            assert prepared.outcome == "prepared"
+            assert len(releases) == 1 and releases[0]["reservations"] == (prepared,)
+            assert "error_type" not in releases[0] and releases[0].get("result") == (prepared,)
+            assert relay.codex_wake_snapshot() == (True, ())
+            assert prepared.delivery_id == first["delivery_id"] and desktop.owners == []
+            pending, = http.get("/relay/messages/retained-journey", params=SCOPE).json()["deliveries"]
+            assert pending["state"] == "pending" and pending["attempts"] == 0
+            recover(http_wake)
+            assert len(attempts) == 2 and attempts[1]["reservation"] == replace(
+                prepared, generation=prepared.generation + 1,
+            )
+        else:
+            assert len(attempts) == 1 and "error_type" not in attempts[0]
+            assert releases == []
+        assert "error_type" not in attempts[-1]
+        uncertain = replace(attempts[-1]["reservation"], outcome="uncertain",
+                            retry_not_before=now[0].timestamp() + WAKE_RETRY_COOLDOWN_SECONDS)
+        assert attempts[-1].get("result") == uncertain
+        assert len(desktop.owners) == 1
+        assert registry.snapshot(first["recipient_endpoint_id"]) == uncertain
     claim = http.post("/relay/turn", json={
         "runtime": "codex", "session_ref": TARGET, **SCOPE,
     })
@@ -382,6 +562,12 @@ def test_expired_claim_retry_still_obeys_target_claim_ack_and_custody_guards(
         assert service.retained_registration is None
     observed = http.get("/relay/messages/retained-journey", params=SCOPE).json()["deliveries"][0]
     assert observed["state"] == ("delivered" if change == "acked" else "claimed")
+
+
+def test_expired_claim_guards_recover_initial_native_refusal(http_wake, monkeypatch):
+    test_expired_claim_retry_still_obeys_target_claim_ack_and_custody_guards(
+        http_wake, monkeypatch, "closed", force_initial_refusal=True,
+    )
 
 
 def test_concurrent_expired_claim_recovery_spends_one_new_generation(http_wake, monkeypatch):

@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import os
 import secrets
 import signal
+import socket
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -188,6 +191,78 @@ def build_snapshot_command(interval_seconds: int) -> list[str]:
 
 
 _API_START_TIMEOUT_SECONDS = 120.0
+_API_HEALTH_BODY_MAX_BYTES = 64 * 1024
+
+
+def _probe_initialized_health(
+    host: str, port: int, timeout: float, *, fail_fast: bool = False,
+) -> bool | None:
+    """Accept initialized health; optionally distinguish terminal startup failure."""
+    if timeout <= 0:
+        return False
+    deadline = time.monotonic() + timeout
+    connection = http.client.HTTPConnection(host, port, timeout=timeout)
+    watchdog: threading.Timer | None = None
+    try:
+        connection.request("GET", "/health")
+        remaining = deadline - time.monotonic()
+        probe_socket = connection.sock
+        if remaining <= 0 or probe_socket is None:
+            return False
+        probe_socket.settimeout(remaining)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+
+        def abort_at_deadline() -> None:
+            # Per-read socket timeouts reset; close trickled responses at the absolute deadline.
+            try:
+                probe_socket.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            probe_socket.close()
+
+        timer = threading.Timer(remaining, abort_at_deadline)
+        timer.daemon = True
+        timer.start()
+        watchdog = timer
+        response = connection.getresponse()
+        body = response.read(_API_HEALTH_BODY_MAX_BYTES + 1)
+        if len(body) > _API_HEALTH_BODY_MAX_BYTES:
+            return False
+        health = json.loads(body.decode("utf-8"))
+        if not isinstance(health, dict):
+            return False
+        status = health.get("status")
+        initialized = health.get("initialized")
+        if not isinstance(status, str):
+            return False
+        if (
+            fail_fast and response.status == 503 and status == "failed"
+            and initialized is False and health.get("ready") is False
+            and health.get("initialization_error") == "service_initialization_failed"
+            and time.monotonic() < deadline
+        ):
+            return None
+        if initialized is True:
+            valid = (response.status == 503 and status == "initializing") or (
+                response.status == 200 and status in {"ok", "degraded"}
+            )
+        else:
+            # Older servers have no initialized field; accept only explicit healthy HTTP 200.
+            valid = (
+                "initialized" not in health
+                and response.status == 200
+                and status in {"ok", "degraded"}
+            )
+        return valid and time.monotonic() < deadline
+    except (http.client.HTTPException, OSError, RuntimeError, UnicodeDecodeError, ValueError):
+        return False
+    finally:
+        if watchdog is not None:
+            watchdog.cancel()
+            watchdog.join()
+        connection.close()
 
 
 def _wait_for_api(
@@ -203,7 +278,7 @@ def _wait_for_api(
     grace_period: float = 3.0,
     clock: Callable[[], float] = time.monotonic,
 ) -> bool:
-    """Block until the API server accepts connections, or timeout/crash.
+    """Block until the owned API reports initialized health, or timeout/crash.
 
     Returns True if the API became ready, False if it exited or timed out.
 
@@ -239,29 +314,47 @@ def _wait_for_api(
             sleep_fn(0.5)
             continue
 
-        # TCP succeeded.
+        # TCP succeeded; preserve the token/legacy/grace ownership gate first.
+        verified_owned = False
         if expected_nonce is None or run_dir is None:
-            return True  # legacy / no self-id requested
-
-        token_path = run_dir / "api_token"
-        token_match = _check_token(token_path, expected_nonce)
-        if token_match is True:
-            return True
-        if token_match is False:
-            # Mismatched nonce — definitive proof of a foreign bind. Never
-            # trust the missing-token grace path after seeing this; if the
-            # orphan deletes the file mid-probe, we must not silently accept.
-            foreign_bind_seen = True
+            candidate = True  # legacy / no self-id requested
         else:
-            # token_match is None: file absent or unreadable. Apply the grace
-            # period only if we have NOT seen a foreign-bind marker.
-            if not foreign_bind_seen:
+            token_match = _check_token(run_dir / "api_token", expected_nonce)
+            candidate = token_match is True
+            verified_owned = candidate and process is not None and process.poll() is None
+            if token_match is False:
+                # Never let a later missing token launder a foreign bind through grace.
+                foreign_bind_seen = True
+            elif not candidate and not foreign_bind_seen:
                 now = clock()
                 if tcp_first_seen is None:
                     tcp_first_seen = now
-                elif now - tcp_first_seen >= grace_period:
-                    return True
-        sleep_fn(0.5)
+                else:
+                    candidate = now - tcp_first_seen >= grace_period
+
+        if candidate:
+            remaining = deadline - clock()
+            health = (
+                _probe_initialized_health(host, port, min(1.0, remaining), fail_fast=verified_owned)
+                if remaining > 0 else False
+            )
+            if health is None and verified_owned:
+                if (
+                    clock() < deadline
+                    and not (stop is not None and getattr(stop, "requested", False))
+                    and process.poll() is None
+                    and _check_token(run_dir / "api_token", expected_nonce) is True
+                ):
+                    return False
+            if health:
+                # HTTP can block; recheck every startup fence before accepting.
+                if clock() < deadline and not (stop is not None and getattr(stop, "requested", False)):
+                    if process is None or process.poll() is None:
+                        return True
+        remaining = deadline - clock()
+        if remaining <= 0:
+            return False
+        sleep_fn(min(0.5, remaining))
     return False
 
 

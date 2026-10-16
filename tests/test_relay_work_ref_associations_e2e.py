@@ -433,28 +433,44 @@ def test_participant_container_filter_applies_before_pagination(client):
     assert filtered.status_code == 200, filtered.text
     assert [row["session_ref"] for row in filtered.json()["participants"]] == ["target"]
 
-def test_participant_lookup_keeps_page_full_during_concurrent_final_detach(client):
+def test_participant_lookup_keeps_page_full_during_concurrent_final_detach(client, monkeypatch):
+    from itertools import count
+    from types import SimpleNamespace
+    import time
+    from storage import sqlite_queue
+
     for index in range(6):
         session = f"worker-{index}"
         _turn(client, session=session)
         assert _attach(client, FEATURE, session=session).status_code == 200
     storage = client.app.state.pallium_service._storage
     relay = RelayService(storage)
-    detached = False
+    entered = detached = False
+    native_time = sqlite_queue.time
+    native_monotonic = time.monotonic
 
     def detach_before_participant_projection(
         _conn, _cursor, statement, _parameters, _context, _executemany
     ):
-        nonlocal detached
-        if detached or "relay_session_work_refs" not in statement:
+        nonlocal entered, detached
+        if entered or "relay_session_work_refs" not in statement:
             return
+        entered = True
+        # This interleaving needs a completed detach, independent of host setup speed.
+        private_time = SimpleNamespace(**vars(native_time))
+        private_time.monotonic = count(step=0.001).__next__
+        with monkeypatch.context() as detach_patch:
+            detach_patch.setattr(sqlite_queue, "time", private_time)
+            assert private_time.sleep is time.sleep and time.monotonic is native_monotonic
+            result = relay.detach_work_ref(
+                runtime="codex",
+                session_ref="worker-5",
+                container_ref=CONTAINER,
+                **FEATURE,
+            )
+        assert sqlite_queue.time is native_time and time.monotonic is native_monotonic
+        assert result["detached"] is True and result["work_refs"] == []
         detached = True
-        relay.detach_work_ref(
-            runtime="codex",
-            session_ref="worker-5",
-            container_ref=CONTAINER,
-            **FEATURE,
-        )
 
     event.listen(
         storage._relay_engine,
@@ -473,7 +489,7 @@ def test_participant_lookup_keeps_page_full_during_concurrent_final_detach(clien
             detach_before_participant_projection,
         )
 
-    assert detached is True
+    assert entered is True and detached is True
     assert response.status_code == 200, response.text
     participants = response.json()["participants"]
     assert len(participants) == 5

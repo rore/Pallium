@@ -46,7 +46,8 @@ def client(test_db_url: str, monkeypatch: pytest.MonkeyPatch) -> Iterator[TestCl
             )
         )
     service = app.state.pallium_service
-    storages.append(service._storage)
+    if all(storage is not service._storage for storage in storages):
+        storages.append(service._storage)
     http = TestClient(app)
     with ExitStack() as cleanup:
         for storage in reversed(storages):

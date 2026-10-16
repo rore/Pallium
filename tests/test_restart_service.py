@@ -462,6 +462,7 @@ def test_legacy_task_passes_unicode_working_directory_exactly(tmp_path: Path) ->
         task_shape="legacy",
         port=21988,
         working_directory=working_directory,
+        readiness_timeout_seconds=10.0,
     )
 
     assert result.returncode == 0, _output(result)

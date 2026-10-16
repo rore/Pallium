@@ -15,6 +15,15 @@ _TRANSIENT_SQLITE_ERROR_SUBSTRINGS = (
 class ImmediateTransactionBusyError(RuntimeError):
     """A bounded SQLite immediate-transaction acquisition did not succeed."""
 
+    ACQUISITION_STAGES = frozenset({
+        "local_gate", "pre_attempt_deadline", "setup_deadline", "late_begin",
+        "retry_exhausted", "backoff_no_fit",
+    })
+
+    def __init__(self, *args, acquisition_stage=None):
+        super().__init__(*args)
+        self.acquisition_stage = acquisition_stage
+
 
 def is_transient_error(exc: Exception) -> bool:
     """Check if an exception is a transient error worth retrying.

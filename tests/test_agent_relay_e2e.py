@@ -246,7 +246,8 @@ def test_drive_directory_prose_redaction_send_reply_lifecycle(client, monkeypatc
         for worker in workers:
             worker.join(2)
             assert not worker.is_alive(), "reply wake worker did not finish"
-        service._relay_trace_executor.submit(lambda: None).result(timeout=2)
+        # Diagnostic FIFO completion fences identity readback; it has no reply SLA.
+        service._relay_trace_executor.submit(lambda: None).result()
 
     monkeypatch.setattr(dependencies, "schedule_claude_relay_wake", capture_schedule)
     _turn(client, "claude-code", "sender")
@@ -378,7 +379,8 @@ def test_duplicate_reply_contends_with_prepared_trace_then_keeps_identity(client
     assert workers and phase["thread_ident"] != threading.get_ident(), phase
     assert phase["delivery_id"] == first.json()["deliveries"][0]["delivery_id"], phase
     assert phase["thread_name"].startswith("relay-trace"), phase
-    assert len(acquisition_errors) == 3, acquisition_errors
+    # The shared acquisition allowance can expire before all three native attempts.
+    assert 1 <= len(acquisition_errors) <= service._storage._RELAY_IMMEDIATE_ATTEMPTS, acquisition_errors
     assert all(error == {"code": sqlite3.SQLITE_BUSY, "name": "SQLITE_BUSY"}
                for error in acquisition_errors), acquisition_errors
     retained = _status(client, reply_id)
@@ -465,7 +467,13 @@ def test_scoped_codepoint_pages_reconstruct_redacted_message_body(client):
 
 
 
-def test_identity_selector_scope_and_state_errors_are_visible(client):
+def test_identity_selector_scope_and_state_errors_are_visible(client, monkeypatch, tmp_path, request):
+    import threading
+    import time
+
+    from tests.test_codex_wake_retry_edges import _observe_relay_busy_acquisition
+
+    _observe_relay_busy_acquisition(client.app.state.pallium_service._storage, monkeypatch, request, tmp_path)
     _turn(client, "claude-code", "sender")
     assert client.post("/relay/turn", json={"runtime": "other", "session_ref": "x", **SCOPE}).status_code == 422
     assert client.post("/relay/turn", json={"runtime": "codex", "session_ref": "bad\x00", **SCOPE}).status_code == 422
@@ -473,7 +481,53 @@ def test_identity_selector_scope_and_state_errors_are_visible(client):
     assert _send(client, "claude-code", "sender", "codex:@missing").status_code in (404, 409)
     assert _send(client, "claude-code", "sender", "codex").status_code == 422
     assert _send(client, "claude-code", "sender", "bad").status_code == 422
-    assert _name(client, "codex", "missing", "alias").status_code == 404
+    storage = client.app.state.pallium_service._storage
+    begin = storage._begin_relay_immediate
+    name = storage.relay_name_session
+    local = threading.local()
+    attempts = []
+
+    def observe_name(*args, **kwargs):
+        local.active = True
+        try:
+            return name(*args, **kwargs)
+        finally:
+            local.active = False
+
+    @contextmanager
+    def observe_begin():
+        if not getattr(local, "active", False):
+            with begin() as db:
+                yield db
+            return
+        attempt = {"acquired": False}
+        attempts.append(attempt)
+        try:
+            with begin() as db:
+                attempt["acquired"] = True
+                yield db
+        except BaseException as error:
+            attempt["error"] = error
+            raise
+
+    with monkeypatch.context() as admission:
+        admission.setattr(storage, "relay_name_session", observe_name)
+        admission.setattr(storage, "_begin_relay_immediate", observe_begin)
+        deadline = time.monotonic() + 5
+        missing = _name(client, "codex", "missing", "alias")
+        if missing.status_code == 503:
+            assert len(attempts) == 1 and attempts[0]["acquired"] is False
+            assert type(attempts[0].get("error")) is ImmediateTransactionBusyError
+            assert missing.json() == {"detail": {"code": "relay_busy", "retryable": True}}
+            delay = missing.headers.get("Retry-After", "")
+            assert delay.isascii() and delay.isdecimal()
+            assert 0 < int(delay) < deadline - time.monotonic()
+            time.sleep(int(delay))
+            assert time.monotonic() < deadline
+            missing = _name(client, "codex", "missing", "alias")
+        assert missing.status_code == 404
+        assert len(attempts) in (1, 2) and attempts[-1]["acquired"] is True
+        assert type(attempts[-1].get("error")) is RelayNotFoundError
     assert _status(client, "missing").status_code == 404
 
     _turn(client, "codex", "target")
@@ -1320,9 +1374,10 @@ def test_turn_reports_backlog_and_only_claims_rendered_deliveries(client):
     assert delivered == ["backlog-0", "backlog-1", "backlog-2"]
 
 
-def test_relay_busy_is_retryable_and_does_not_expose_sqlite_details(client, relay_storage, monkeypatch, caplog):
+@pytest.mark.parametrize("stage", [None, "setup_deadline", "untrusted-private-marker", []])
+def test_relay_busy_is_retryable_and_does_not_expose_sqlite_details(client, relay_storage, monkeypatch, caplog, stage):
     def busy_transaction():
-        raise ImmediateTransactionBusyError("database is locked")
+        raise ImmediateTransactionBusyError("database is locked", acquisition_stage=stage)
 
     monkeypatch.setattr(relay_storage, "_begin_relay_immediate", busy_transaction)
     response = client.post("/relay/turn", json={"runtime": "codex", "session_ref": "busy", **SCOPE})
@@ -1330,6 +1385,8 @@ def test_relay_busy_is_retryable_and_does_not_expose_sqlite_details(client, rela
     assert response.headers["retry-after"] == "1"
     assert response.json()["detail"] == {"code": "relay_busy", "retryable": True}
     assert "relay operation=turn outcome=busy" in caplog.text
+    assert "acquisition_stage=" + ("setup_deadline" if stage == "setup_deadline" else "unknown") in caplog.text
+    assert "untrusted-private-marker" not in caplog.text
     assert SCOPE["container_ref"] not in caplog.text
     assert "actor-ref" not in caplog.text
 

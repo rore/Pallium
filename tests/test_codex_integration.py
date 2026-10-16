@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import subprocess
@@ -597,7 +598,9 @@ def test_codex_setup_deploys_and_removes_skill(
     setup_codex._install_skill()
     assert "- Reconcile work/state; keep late findings." in (skill_dir / "SKILL.md").read_text(encoding="utf-8")
     assert not stale.exists()
-    setup_codex._install_skill()
+    with monkeypatch.context() as identical:
+        identical.setattr(Path, "rename", lambda *_args, **_kwargs: pytest.fail("identical skill must not be renamed"))
+        setup_codex._install_skill()
     assert {
         item.relative_to(skill_dir): item.read_bytes()
         for item in skill_dir.rglob("*")
@@ -606,6 +609,78 @@ def test_codex_setup_deploys_and_removes_skill(
 
     setup_codex._remove_skill()
     assert not skill_dir.exists()
+
+
+@pytest.mark.parametrize("change", ("bytes", "missing", "extra_file", "extra_directory", "file_kind", "directory_kind"))
+def test_codex_skill_reinstall_replaces_nonidentical_complete_tree(monkeypatch, tmp_path, change):
+    source, installed = tmp_path / "source", tmp_path / "installed"
+    source.mkdir()
+    (source / "SKILL.md").write_bytes(b"managed")
+    (source / "reference.txt").write_bytes(b"same-size")
+    (source / "empty").mkdir()
+    monkeypatch.setattr(setup_codex, "_codex_skill_src", lambda: source / "SKILL.md")
+    monkeypatch.setattr(setup_codex, "_codex_skill_dir", lambda: installed)
+    setup_codex._install_skill()
+    reference = installed / "reference.txt"
+    if change == "bytes":
+        reference.write_bytes(b"different")
+        source_stat = (source / "reference.txt").stat()
+        os.utime(reference, ns=(source_stat.st_atime_ns, source_stat.st_mtime_ns))
+    elif change == "missing":
+        reference.unlink()
+    elif change == "extra_file":
+        (installed / "extra").write_bytes(b"extra")
+    elif change == "extra_directory":
+        (installed / "extra").mkdir()
+    elif change == "file_kind":
+        reference.unlink()
+        reference.mkdir()
+    else:
+        (installed / "empty").rmdir()
+        (installed / "empty").write_bytes(b"wrong kind")
+    setup_codex._install_skill()
+    assert {item.relative_to(installed) for item in installed.rglob("*")} == {
+        item.relative_to(source) for item in source.rglob("*")
+    }
+    assert reference.read_bytes() == b"same-size"
+    assert (installed / "empty").is_dir()
+    setup_codex._remove_skill()
+    assert not installed.exists()
+
+
+def test_codex_skill_tree_comparison_rejects_reparse_root_before_traversal(monkeypatch, tmp_path):
+    import stat
+
+    class ReparseRoot:
+        def lstat(self):
+            return SimpleNamespace(st_mode=stat.S_IFDIR, st_file_attributes=0x400)
+
+        def iterdir(self):
+            pytest.fail("reparse root must not be traversed")
+
+    monkeypatch.setattr(setup_codex, "stat", SimpleNamespace(**dict(vars(stat), FILE_ATTRIBUTE_REPARSE_POINT=0x400)))
+    assert not setup_codex._same_skill_tree(tmp_path, ReparseRoot())
+
+
+def test_codex_skill_reinstall_replaces_link_without_touching_target(monkeypatch, tmp_path):
+    source, installed = tmp_path / "source", tmp_path / "installed"
+    source.mkdir()
+    (source / "SKILL.md").write_bytes(b"managed")
+    (source / "reference.txt").write_bytes(b"reference")
+    monkeypatch.setattr(setup_codex, "_codex_skill_src", lambda: source / "SKILL.md")
+    monkeypatch.setattr(setup_codex, "_codex_skill_dir", lambda: installed)
+    setup_codex._install_skill()
+    reference = installed / "reference.txt"
+    reference.unlink()
+    try:
+        reference.symlink_to(source / "reference.txt")
+    except OSError as error:
+        if getattr(error, "winerror", None) == 1314:
+            pytest.skip("native symlink privilege unavailable")
+        raise
+    setup_codex._install_skill()
+    assert not reference.is_symlink() and reference.read_bytes() == b"reference"
+    assert (source / "reference.txt").read_bytes() == b"reference"
 
 
 def test_codex_skill_historical_lookup_documents_scope_params() -> None:
@@ -1334,6 +1409,9 @@ def test_codex_readiness_public_reader_serializes_setup(monkeypatch, tmp_path):
         if writer.ident is not None:
             writer.join(5)
     assert not reader.is_alive() and not writer.is_alive()
+    for error in errors:
+        if isinstance(error, BaseException):
+            raise error
     assert not errors, errors
     assert reads[0]["state"] == "verified"
     assert published == ["definition"] and writes[0][0] is True
@@ -1622,8 +1700,9 @@ def test_codex_user_prompt_entrypoint_observes_execution_before_input(
     assert calls == ["observed", "input"]
 
 
-def test_codex_setup_reconciliation_waits_for_process_lock(
-    tmp_path: Path,
+@pytest.mark.parametrize("operation", ["setup", "uninstall"])
+def test_codex_setup_and_uninstall_wait_for_process_lock(
+    tmp_path: Path, operation: str,
 ) -> None:
     python = sys.executable
     script = str(tmp_path / "user_prompt_submit.py")
@@ -1655,45 +1734,117 @@ with codex_readiness._marker_lock(Path(sys.argv[1]), wait_seconds=None):
         stdout=subprocess.PIPE,
         text=True,
     )
-    installed = threading.Event()
-    result: list[tuple[bool, dict]] = []
+    callback = threading.Event()
+    completed = threading.Event()
+    result: list[tuple[str, object]] = []
 
     def reconcile() -> None:
-        result.append(
-            codex_readiness.reconcile_setup(
-                python=python,
-                script=script,
-                install_definition=lambda: installed.set() or True,
-                home=tmp_path,
-            )
-        )
+        try:
+            if operation == "setup":
+                value = codex_readiness.reconcile_setup(
+                    python=python,
+                    script=script,
+                    install_definition=lambda: callback.set() or True,
+                    home=tmp_path,
+                )
+            else:
+                value = codex_readiness.reconcile_uninstall(
+                    uninstall_definition=callback.set,
+                    home=tmp_path,
+                )
+            result.append(("completed", value))
+        except BaseException as exc:
+            result.append(("error", exc))
+        finally:
+            completed.set()
 
     worker = threading.Thread(target=reconcile)
+    started = False
+    released = False
+    blocked_before_release = False
+    finished_after_release = False
+    callback_before_release = False
     try:
         assert process.stdout is not None
         assert process.stdout.readline().strip() == "locked"
         worker.start()
-        worker.join(timeout=2.1)
-        assert worker.is_alive()
-        assert not installed.is_set()
+        started = True
+        # Windows LK_LOCK gives up after about ten one-second attempts.
+        worker.join(timeout=11.2 if os.name == "nt" else 2.1)
+        blocked_before_release = worker.is_alive()
+        callback_before_release = callback.is_set()
 
         assert process.stdin is not None
         process.stdin.write("\n")
         process.stdin.flush()
+        released = True
         process.wait(timeout=5)
+        # Observe reconciliation completion before checking thread settlement.
+        assert completed.wait(5)
         worker.join(timeout=2)
+        finished_after_release = not worker.is_alive()
     finally:
+        if process.poll() is None and not released and process.stdin is not None:
+            try:
+                process.stdin.write("\n")
+                process.stdin.flush()
+            except OSError:
+                pass
         if process.poll() is None:
-            process.kill()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=5)
+        if started:
+            worker.join(timeout=5)
         if process.stdin is not None:
             process.stdin.close()
         if process.stdout is not None:
             process.stdout.close()
 
     assert not worker.is_alive()
-    assert result[0][0] is True
-    assert result[0][1]["state"] == "review_required"
-    assert codex_readiness.read(tmp_path)["state"] == "review_required"
+    assert blocked_before_release, result
+    assert finished_after_release
+    assert not callback_before_release
+    assert callback.is_set()
+    assert result[0][0] == "completed", result
+    if operation == "setup":
+        assert result[0][1][0] is True
+        assert result[0][1][1]["state"] == "review_required"
+        assert codex_readiness.read(tmp_path)["state"] == "review_required"
+    else:
+        assert result[0][1] is None
+        assert not codex_readiness.marker_path(tmp_path).exists()
+
+
+def test_codex_indefinite_windows_marker_lock_propagates_other_errors(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    calls = 0
+
+    def locking(_fd: int, _mode: int, _length: int) -> None:
+        nonlocal calls
+        calls += 1
+        raise OSError(errno.EACCES, "permission denied")
+
+    monkeypatch.setattr(
+        codex_readiness,
+        "os",
+        SimpleNamespace(name="nt", SEEK_END=os.SEEK_END),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "msvcrt",
+        SimpleNamespace(LK_LOCK=1, LK_UNLCK=2, LK_NBLCK=3, locking=locking),
+    )
+
+    with pytest.raises(OSError) as raised:
+        with codex_readiness._marker_lock(tmp_path, wait_seconds=None):
+            pytest.fail("lock acquisition unexpectedly succeeded")
+
+    assert raised.value.errno == errno.EACCES
+    assert calls == 1
 
 
 def test_codex_uninstall_waits_for_observer_before_removing_marker(

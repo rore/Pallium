@@ -107,7 +107,7 @@ jobs:
         run: python -c "import mcp; import app.mcp.server"
 
       - name: Run tests
-        run: python -m pytest tests/ -x -q --durations=20
+        run: python -m pytest tests/ ${{ github.event_name != 'workflow_dispatch' && '-x' || '' }} -q --durations=20
 
   # Fast Windows regression for full-lane PRs and pushes. Runs only the
   # Windows-sensitive hotspots (process mgmt, subprocess hooks, file I/O,
@@ -143,11 +143,15 @@ jobs:
         run: pip install -e ".[dev,vector,mcp]"
 
       - name: Run process-sensitive tests serially
-        run: python -m pytest tests/test_service_launcher_lifecycle.py tests/test_service.py::test_windows_stop_verifier_executes_new_and_legacy_launcher_parsers -x -q -n 0 --durations=20
+        id: serial
+        continue-on-error: ${{ github.event_name == 'workflow_dispatch' }}
+        run: python -m pytest tests/test_service_launcher_lifecycle.py tests/test_service.py::test_windows_stop_verifier_executes_new_and_legacy_launcher_parsers tests/test_codex_retained_wake.py::test_session_start_lock_budget_claims_emits_and_acks_once ${{ github.event_name != 'workflow_dispatch' && '-x' || '' }} -q -n 0 --durations=20
 
       - name: Run Windows-sensitive tests
+        id: remaining
+        continue-on-error: ${{ github.event_name == 'workflow_dispatch' }}
         run: >
-          python -m pytest -x -q --durations=20
+          python -m pytest ${{ github.event_name != 'workflow_dispatch' && '-x' || '' }} -q --durations=20
           tests/test_supervisor.py
           tests/test_supervisor_kill_tree.py
           tests/test_codex_integration.py
@@ -166,6 +170,17 @@ jobs:
           tests/test_launch_token.py
           tests/test_config.py
           tests/test_runtime_logging.py
+
+      - name: Preserve manual selection failures
+        if: always() && github.event_name == 'workflow_dispatch'
+        shell: pwsh
+        env:
+          SERIAL: ${{ steps.serial.outcome }}
+          REMAINING: ${{ steps.remaining.outcome }}
+        run: |
+          if ($env:SERIAL -ne 'success' -or $env:REMAINING -ne 'success') {
+            throw "Manual selections failed or did not complete: serial=$env:SERIAL remaining=$env:REMAINING"
+          }
 
   # Full Windows matrix for full-lane pushes, nightly and manual runs, never on PRs.
   windows-full:
@@ -202,10 +217,25 @@ jobs:
         run: pip install -e ".[dev,vector,mcp]"
 
       - name: Run process-sensitive tests serially
-        run: python -m pytest tests/test_restart_service.py tests/test_structural_work_refs_e2e.py tests/test_stable_actor_identity_e2e.py tests/test_service_launcher_lifecycle.py tests/test_service.py::test_windows_stop_verifier_executes_new_and_legacy_launcher_parsers -x -q -n 0 --durations=20
+        id: serial
+        continue-on-error: ${{ github.event_name == 'workflow_dispatch' }}
+        run: python -m pytest tests/test_restart_service.py tests/test_structural_work_refs_e2e.py tests/test_stable_actor_identity_e2e.py tests/test_service_launcher_lifecycle.py tests/test_service.py::test_windows_stop_verifier_executes_new_and_legacy_launcher_parsers tests/test_codex_retained_wake.py::test_session_start_lock_budget_claims_emits_and_acks_once ${{ github.event_name != 'workflow_dispatch' && '-x' || '' }} -q -n 0 --durations=20
 
       - name: Run remaining tests
-        run: python -m pytest tests/ -x -q --ignore=tests/test_restart_service.py --ignore=tests/test_structural_work_refs_e2e.py --ignore=tests/test_stable_actor_identity_e2e.py --ignore=tests/test_service_launcher_lifecycle.py --deselect=tests/test_service.py::test_windows_stop_verifier_executes_new_and_legacy_launcher_parsers --durations=20
+        id: remaining
+        continue-on-error: ${{ github.event_name == 'workflow_dispatch' }}
+        run: python -m pytest tests/ ${{ github.event_name != 'workflow_dispatch' && '-x' || '' }} -q --ignore=tests/test_restart_service.py --ignore=tests/test_structural_work_refs_e2e.py --ignore=tests/test_stable_actor_identity_e2e.py --ignore=tests/test_service_launcher_lifecycle.py --deselect=tests/test_service.py::test_windows_stop_verifier_executes_new_and_legacy_launcher_parsers --deselect=tests/test_codex_retained_wake.py::test_session_start_lock_budget_claims_emits_and_acks_once --durations=20
+
+      - name: Preserve manual selection failures
+        if: always() && github.event_name == 'workflow_dispatch'
+        shell: pwsh
+        env:
+          SERIAL: ${{ steps.serial.outcome }}
+          REMAINING: ${{ steps.remaining.outcome }}
+        run: |
+          if ($env:SERIAL -ne 'success' -or $env:REMAINING -ne 'success') {
+            throw "Manual selections failed or did not complete: serial=$env:SERIAL remaining=$env:REMAINING"
+          }
 
   nightly-slow-smoke:
     if: github.event_name == 'schedule'

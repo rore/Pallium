@@ -112,6 +112,9 @@ def test_delivery_specific_wake_prompt_is_truthful_and_narrow() -> None:
     assert "do not conclude the inbox is empty" in prompt
     assert "do not call pallium_relay_receive or resend" in prompt
     assert "pallium_relay_trace" in prompt
+    assert prompt.endswith(
+        " After this check, continue any already authorized task; this wake does not cancel it."
+    )
     assert hook._RELAY_WAKE_RE.fullmatch(prompt)
     assert not hook._RELAY_WAKE_RE.fullmatch(prompt + " changed")
     assert codex_wake._wake_prompt("delivery-legacy") == hook.RELAY_WAKE_PROMPT
@@ -818,10 +821,20 @@ def test_claim_correlation_rejects_mismatched_or_ambiguous_results() -> None:
 def test_http_reconciliation_prunes_full_registry_and_wakes_replacement_once(
     client, monkeypatch: pytest.MonkeyPatch, tmp_path,
 ) -> None:
+    import time
+    from contextlib import contextmanager
+    from sqlalchemy import select
     import storage.sqlite_relay as sqlite_relay
     from dataclasses import asdict
     from core.codex_wake import MAX_RESERVATIONS
+    from core.errors import ImmediateTransactionBusyError
+    from storage.sqlite_schema import (
+        RelayMessageRecord, RelayDeliveryRecord, RelaySessionRecord,
+        RelaySessionWorkRefRecord, RelayEndpointGenerationRecord,
+        RelayCodexWakeStateRecord, RelayCodexWakeReservationRecord,
+    )
 
+    native_sleep = time.sleep
     clock = [datetime(2030, 1, 1, tzinfo=timezone.utc)]
 
     def controlled_now(value=None):
@@ -857,7 +870,19 @@ def test_http_reconciliation_prunes_full_registry_and_wakes_replacement_once(
         assert response.status_code == 200
         endpoints[name] = response.json()["session"]["endpoint_id"]
 
-    def send(name: str, *, expiry=None) -> dict:
+    def authority():
+        values = []
+        with storage._relay_engine.connect() as db:
+            for model in (RelayMessageRecord, RelayDeliveryRecord, RelaySessionRecord,
+                          RelaySessionWorkRefRecord, RelayEndpointGenerationRecord,
+                          RelayCodexWakeStateRecord, RelayCodexWakeReservationRecord):
+                columns = [column for column in model.__table__.columns
+                           if column.name not in {"trace_version", "trace_truncated", "trace_pruned"}]
+                values.append(tuple(db.execute(select(*columns).order_by(
+                    *model.__table__.primary_key.columns)).all()))
+        return tuple(values), tuple(native_prompts)
+
+    def send(name: str, *, expiry=None, retry_busy=False) -> dict:
         body = {
             "sender_runtime": "claude-code",
             "sender_session_ref": "sender",
@@ -869,7 +894,59 @@ def test_http_reconciliation_prunes_full_registry_and_wakes_replacement_once(
             body["expires_in_seconds"] = expiry
         else:
             body["expires_in_seconds"] = None
-        response = route.post("/relay/messages", json=body)
+        if not retry_busy:
+            response = route.post("/relay/messages", json=body)
+            assert response.status_code == 200, response.text
+            return response.json()
+
+        begin, original_send = storage._begin_relay_immediate, storage.relay_send
+        local, attempts = threading.local(), []
+
+        def observe_send(*args, **kwargs):
+            local.active = True
+            try:
+                return original_send(*args, **kwargs)
+            finally:
+                local.active = False
+
+        @contextmanager
+        def observe_begin():
+            if not getattr(local, "active", False):
+                with begin() as db:
+                    yield db
+                return
+            attempt = {"acquired": False}
+            attempts.append(attempt)
+            try:
+                with begin() as db:
+                    attempt["acquired"] = True
+                    yield db
+            except BaseException as error:
+                attempt["error"] = error
+                raise
+
+        before = authority()
+        with monkeypatch.context() as admission:
+            admission.setattr(storage, "relay_send", observe_send)
+            admission.setattr(storage, "_begin_relay_immediate", observe_begin)
+            deadline = time.monotonic() + 5
+            response = route.post("/relay/messages", json=body)
+            expected_attempts = 1
+            if response.status_code == 503:
+                assert len(attempts) == 1 and attempts[0]["acquired"] is False
+                assert type(attempts[0].get("error")) is ImmediateTransactionBusyError
+                assert response.json() == {"detail": {"code": "relay_busy", "retryable": True}}
+                assert authority() == before
+                delay = response.headers.get("Retry-After", "")
+                assert delay.isascii() and delay.isdecimal()
+                assert 0 < int(delay) < deadline - time.monotonic()
+                native_sleep(int(delay))
+                assert time.monotonic() < deadline
+                assert authority() == before
+                response = route.post("/relay/messages", json=body)
+                expected_attempts = 2
+            assert len(attempts) == expected_attempts
+            assert attempts[-1]["acquired"] is True and "error" not in attempts[-1]
         assert response.status_code == 200, response.text
         return response.json()
 
@@ -985,25 +1062,30 @@ def test_http_reconciliation_prunes_full_registry_and_wakes_replacement_once(
         )
         assert status.status_code == 200
         assert status.json()["deliveries"][0]["state"] == expected
-    replacement = send("delivered")
-    queued_behind_it = send("delivered")
-    for worker in workers:
-        if worker is not None:
-            worker.join(timeout=2)
-            assert not worker.is_alive()
-    assert len(native_prompts) == 1
-    assert native_prompts[0] == (
-        "delivered",
-        codex_wake._wake_prompt(replacement["deliveries"][0]["delivery_id"]),
-    )
-    assert registry.snapshot(endpoints["delivered"]).delivery_id == (
-        replacement["deliveries"][0]["delivery_id"]
-    )
-    queued_status = route.get(
-        f"/relay/messages/{queued_behind_it['message_id']}", params=scope
-    )
-    assert queued_status.status_code == 200
-    assert queued_status.json()["deliveries"][0]["state"] == "pending"
+    try:
+        replacement = send("delivered")
+        queued_behind_it = send("delivered", retry_busy=True)
+        for worker in workers:
+            if worker is not None:
+                worker.join(timeout=2)
+                assert not worker.is_alive()
+        assert len(native_prompts) == 1
+        assert native_prompts[0] == (
+            "delivered",
+            codex_wake._wake_prompt(replacement["deliveries"][0]["delivery_id"]),
+        )
+        assert registry.snapshot(endpoints["delivered"]).delivery_id == (
+            replacement["deliveries"][0]["delivery_id"]
+        )
+        queued_status = route.get(
+            f"/relay/messages/{queued_behind_it['message_id']}", params=scope
+        )
+        assert queued_status.status_code == 200
+        assert queued_status.json()["deliveries"][0]["state"] == "pending"
+    finally:
+        for worker in workers:
+            if worker is not None:
+                worker.join()
 
 def test_reconciliation_generation_cas_preserves_newer_fence(tmp_path) -> None:
     registry = CodexWakeRegistry()
@@ -1811,6 +1893,68 @@ def test_recovery_log_correlates_without_free_form_identifiers(
     assert container_ref not in message
     assert "SECRET" not in message
     assert len(scheduled) == 1
+
+
+def test_recovery_sweep_skips_snapshotted_fence_and_dispatches_new_candidate(monkeypatch):
+    from app import dependencies
+
+    reserved = {
+        "delivery_id": "reserved-delivery",
+        "recipient_endpoint_id": "relay-session-" + "a" * 32,
+        "recipient_runtime": "codex",
+        "recipient_session_ref": "reserved-session",
+        "state": "pending",
+        **SCOPE,
+    }
+    unreserved = {
+        **reserved,
+        "delivery_id": "new-delivery",
+        "recipient_endpoint_id": "relay-session-" + "b" * 32,
+        "recipient_session_ref": "new-session",
+    }
+
+    class Relay:
+        def codex_trial_native_suppressed(self, _endpoint_id):
+            return False
+
+        def wake_candidates(self, delivery_id=None, include_coalesced=False):
+            if delivery_id is None:
+                assert include_coalesced
+            return [item for item in (reserved, unreserved)
+                    if delivery_id in (None, item["delivery_id"])]
+
+    registry = CodexWakeRegistry()
+    reservation = registry.reserve(
+        recipient_endpoint_id=reserved["recipient_endpoint_id"],
+        delivery_id=reserved["delivery_id"],
+        session_ref=reserved["recipient_session_ref"],
+        container_ref=SCOPE["container_ref"],
+    )
+    assert reservation is not None
+    reconciled = []
+    scheduled = []
+    monkeypatch.setattr(
+        dependencies,
+        "reconcile_codex_relay_wake_reservations",
+        lambda _relay, *, registry, reservations, trace_callback: reconciled.append(
+            (registry, reservations)
+        ),
+    )
+    monkeypatch.setattr(
+        dependencies,
+        "schedule_codex_relay_wake",
+        lambda result, _scope, **_kwargs: scheduled.append(
+            result["deliveries"][0]["delivery_id"]
+        ),
+    )
+
+    dependencies.recover_expired_relay_wakes(
+        Relay(), ClaudeWakeRegistry(), codex_registry=registry
+    )
+
+    assert reconciled == [(registry, (reservation,))]
+    assert scheduled == ["new-delivery"]
+
 
 def test_concurrent_recovery_sweep_does_not_duplicate_busy_wake(monkeypatch) -> None:
     from app import dependencies
@@ -3094,20 +3238,45 @@ def test_relay_turn_callback_rearms_only_after_success(client) -> None:
         assert route_client.post("/relay/turn", json=body).status_code == 422
     assert len(callbacks) == 2
 
-def test_relay_turn_logs_correlated_service_and_route_ready_timing(client, caplog) -> None:
+def test_relay_turn_logs_correlated_service_and_route_ready_timing(client, caplog, monkeypatch) -> None:
     import re
     import time
+    from api import routes
 
-    callbacks = []
+    native_monotonic = time.monotonic
+    clock = [0.0]
+    local_time = SimpleNamespace(**vars(time))
+    local_time.monotonic = lambda: clock[0]
+    monkeypatch.setattr(routes, "time", local_time)
+
+    callbacks, events = [], []
     app = FastAPI()
+    relay = RelayService(client.app.state.pallium_service._storage)
+
+    def successful_turn(**request):
+        # This test measures route logging; adjacent tests exercise actual SQLite claims.
+        events.append("turn")
+        clock[0] += .25
+        return {
+            "session": {
+                "endpoint_id": "relay-session-" + "a" * 32,
+                "runtime": request["runtime"], "session_ref": request["session_ref"],
+                "container_ref": request["container_ref"], "state": "active",
+                "first_seen_at": "2026-01-01T00:00:00Z", "last_seen_at": "2026-01-01T00:00:00Z",
+            },
+            "deliveries": [], "has_more": False, "remaining_count": 0,
+        }
+
+    monkeypatch.setattr(relay, "turn", successful_turn)
 
     def delayed_callback(request, result):
+        events.append("callback")
         callbacks.append((request, result))
-        time.sleep(0.01)
+        clock[0] += .125
 
     app.include_router(create_router(
         client.app.state.pallium_service,
-        relay_service=RelayService(client.app.state.pallium_service._storage),
+        relay_service=relay,
         relay_turn_callback=delayed_callback,
     ))
     route = TestClient(app)
@@ -3123,6 +3292,7 @@ def test_relay_turn_logs_correlated_service_and_route_ready_timing(client, caplo
     assert response.status_code == 200
     assert response.json()["session"]["session_ref"] == "target"
     assert len(callbacks) == 1
+    assert events == ["turn", "callback"]
     records = [record.getMessage() for record in caplog.records if delivery_id in record.getMessage()]
     assert len(records) == 1
     match = re.fullmatch(
@@ -3132,7 +3302,8 @@ def test_relay_turn_logs_correlated_service_and_route_ready_timing(client, caplo
     assert match, records[0]
     service_ms, route_ready_ms = map(int, match.groups())
     assert route_ready_ms >= service_ms
-    assert route_ready_ms >= 10
+    assert (service_ms, route_ready_ms) == (250, 375)
+    assert clock[0] == .375 and time.monotonic is native_monotonic
     assert SCOPE["container_ref"] not in records[0]
 
     caplog.clear()
@@ -3140,6 +3311,7 @@ def test_relay_turn_logs_correlated_service_and_route_ready_timing(client, caplo
         "runtime": "codex", "session_ref": "target", **SCOPE,
     })
     assert without_wake_id.status_code == 200
+    assert events == ["turn", "callback", "turn", "callback"]
     assert not any("service_ms=" in record.getMessage() for record in caplog.records)
 
     caplog.clear()
@@ -3150,6 +3322,7 @@ def test_relay_turn_logs_correlated_service_and_route_ready_timing(client, caplo
         **SCOPE,
     })
     assert invalid.status_code == 422
+    assert events == ["turn", "callback", "turn", "callback"]
     assert not any("service_ms=" in record.getMessage() for record in caplog.records)
 
 def test_relay_turn_logs_service_time_when_exact_wake_fails(
@@ -3678,11 +3851,12 @@ def test_exclusive_trial_rejects_endpoint_scope_generation_aba_before_action(cli
 
 
 def test_crash_after_claim_rewakes_and_actual_codex_hook_delivers_once(
-    client, monkeypatch: pytest.MonkeyPatch, tmp_path, capsys,
+    client, monkeypatch: pytest.MonkeyPatch, tmp_path, capsys, *, force_setup_refusal=False,
 ) -> None:
     import storage.sqlite_relay as sqlite_relay
     from app.dependencies import recover_expired_relay_wakes
     from integrations.codex.hooks import user_prompt_submit as hook
+    from tests.codex_wake_setup import initialize_empty_wake_registry
 
     clock = [datetime(2030, 9, 5, tzinfo=timezone.utc)]
 
@@ -3694,7 +3868,11 @@ def test_crash_after_claim_rewakes_and_actual_codex_hook_delivers_once(
     storage = client.app.state.pallium_service._storage
     relay = RelayService(storage)
     registry_root = tmp_path / "wake-registry"
-    registry = _sqlite_wake_registry(storage, registry_root)
+    registry = CodexWakeRegistry(relay_service=relay, legacy_state_dir=registry_root)
+    initialize_empty_wake_registry(
+        registry, relay, storage, expected_database=tmp_path / "test-relay.db", legacy=registry_root,
+        monkeypatch=monkeypatch, force_refusal=force_setup_refusal,
+    )
     workers = []
     native_prompts = []
     retry_launched = threading.Event()
@@ -3797,10 +3975,21 @@ def test_crash_after_claim_rewakes_and_actual_codex_hook_delivers_once(
         message_id=sent["message_id"], **SCOPE
     )["deliveries"][0]["state"] == "claimed"
     reservation = registry.reservations()[0]
-    assert reservation.correlated_claim_attempts == claimed["attempts"] == 1
+    assert reservation.correlated_claim_attempts is None
+    assert claimed["attempts"] == 1
+    committed = relay.codex_wake_reservation_state(delivery_id=claimed["delivery_id"])
+    assert (
+        committed["delivery_id"], committed["recipient_endpoint_id"],
+        committed["state"], committed["stored_state"], committed["attempts"],
+        committed["codex_wake_generation"],
+    ) == (
+        reservation.delivery_id, reservation.recipient_endpoint_id,
+        "claimed", "claimed", 1, reservation.generation,
+    )
 
     registry = _sqlite_wake_registry(storage, registry_root)
-    assert registry.reservations()[0].correlated_claim_attempts == 1
+    assert registry.reservations()[0] == reservation
+    assert relay.codex_wake_reservation_state(delivery_id=claimed["delivery_id"]) == committed
     recovered_app = FastAPI()
     recovered_app.include_router(build_router(
         client.app.state.pallium_service,
@@ -3862,6 +4051,12 @@ def test_crash_after_claim_rewakes_and_actual_codex_hook_delivers_once(
     assert relay.turn(
         runtime="codex", session_ref="crash-target", **SCOPE
     )["deliveries"] == []
+
+
+def test_crash_after_claim_hook_recovers_empty_setup_refusal(client, monkeypatch, tmp_path, capsys):
+    test_crash_after_claim_rewakes_and_actual_codex_hook_delivers_once(
+        client, monkeypatch, tmp_path, capsys, force_setup_refusal=True,
+    )
 
 
 def test_late_exact_hook_claim_is_correlated_before_expired_wake_sweep(
@@ -3997,7 +4192,16 @@ def test_late_exact_hook_claim_is_correlated_before_expired_wake_sweep(
     claimed = route.get(f"/relay/messages/{sent['message_id']}", params=SCOPE).json()["deliveries"][0]
     assert (claimed["delivery_id"], claimed["state"], claimed["attempts"]) == (first_id, "claimed", 1)
     correlated = registry.reservations()[0]
-    assert correlated.correlated_claim_attempts == claimed["attempts"]
+    assert correlated == initial and correlated.correlated_claim_attempts is None
+    committed = relay.codex_wake_reservation_state(delivery_id=first_id)
+    assert (
+        committed["delivery_id"], committed["recipient_endpoint_id"],
+        committed["state"], committed["stored_state"], committed["attempts"],
+        committed["codex_wake_generation"],
+    ) == (
+        correlated.delivery_id, correlated.recipient_endpoint_id,
+        "claimed", "claimed", 1, correlated.generation,
+    )
 
     later = route.post("/relay/messages", json={
         "sender_runtime": "claude-code", "sender_session_ref": "sender",
@@ -4607,7 +4811,7 @@ def test_restart_trace_association_is_http_visible_without_second_native_submiss
             relay.record_trace_event, event
         ),
     )
-    assert len(workers) == 3 and workers[1:] == [None, None]
+    assert len(workers) == 2 and workers[1:] == [None]
     assert len(native_calls) == 1
     status = route_b.get(
         f"/relay/messages/{second_message['message_id']}", params=scope
@@ -5176,7 +5380,12 @@ def test_http_ack_after_validation_serializes_with_native_start_and_releases_fen
 )
 def test_http_scope_move_reads_current_endpoint_activation_and_historical_delivery(
     client, tmp_path, monkeypatch, native_outcome: str, durable_outcome: str,
+    *, force_move_refusal=False,
 ) -> None:
+    import time
+    from core.errors import ImmediateTransactionBusyError
+
+    native_sleep = time.sleep
     registry_root = tmp_path / native_outcome
     registry = _sqlite_wake_registry(
         client.app.state.pallium_service._storage, registry_root,
@@ -5235,8 +5444,10 @@ def test_http_scope_move_reads_current_endpoint_activation_and_historical_delive
         native_write.assert_called_once()
 
     delivery = sent["deliveries"][0]
-    assert registry.snapshot(endpoint_id).outcome == durable_outcome
-    moved = route.post("/relay/turn", json={
+    initial = registry.snapshot(endpoint_id)
+    assert initial.outcome == durable_outcome
+    relay = RelayService(storage)
+    move = {
         "runtime": "codex",
         "session_ref": "target",
         "max_chars": 1,
@@ -5245,13 +5456,64 @@ def test_http_scope_move_reads_current_endpoint_activation_and_historical_delive
         "previous_endpoint_id": endpoint_id,
         "previous_scope_generation": 0,
         **new,
-    })
+    }
+    original_turn = storage.relay_turn
+    attempts = []
+
+    def observed_turn(**kwargs):
+        attempt = {}
+        attempts.append(attempt)
+        try:
+            if force_move_refusal and len(attempts) == 1:
+                attempt["forced"] = True
+                raise ImmediateTransactionBusyError("controlled precommit move refusal", acquisition_stage="setup_deadline")
+            result = original_turn(**kwargs)
+        except Exception as error:
+            attempt["error"] = error
+            raise
+        attempt["result"] = result
+        return result
+
+    with monkeypatch.context() as move_patch, patch("app.codex_wake._popen", native_write):
+        move_patch.setattr(storage, "relay_turn", observed_turn)
+        deadline = time.monotonic() + 5
+        moved = route.post("/relay/turn", json=move)
+        assert not force_move_refusal or attempts[0].get("forced") is True
+        expected_attempts = 1
+        if (moved.status_code == 503 and len(attempts) == 1
+                and type(attempts[0].get("error")) is ImmediateTransactionBusyError):
+            assert moved.json() == {"detail": {"code": "relay_busy", "retryable": True}}
+            retry_after = moved.headers.get("Retry-After", "")
+            assert retry_after.isascii() and retry_after.isdecimal()
+            delay = int(retry_after)
+            assert delay < deadline - time.monotonic()
+            current = relay.session_view_by_endpoint(endpoint_id)
+            assert (current["endpoint_id"], current["runtime"], current["session_ref"],
+                    current["container_ref"], current["scope_generation"], current["destination_health"]) == (
+                        endpoint_id, "codex", "target", old["container_ref"], 0, "active",
+                    )
+            assert registry.snapshot(endpoint_id) == initial
+            historical, = route.get(f"/relay/messages/{sent['message_id']}", params=source).json()["deliveries"]
+            assert (historical["delivery_id"], historical["recipient_endpoint_id"],
+                    historical["recipient_container_ref"], historical["state"], historical["attempts"]) == (
+                        delivery["delivery_id"], endpoint_id, old["container_ref"], "pending", 0,
+                    )
+            assert native_write.call_count == 1
+            native_sleep(delay)
+            assert time.monotonic() < deadline
+            moved = route.post("/relay/turn", json=move)
+            expected_attempts = 2
+        assert len(attempts) == expected_attempts and "error" not in attempts[-1]
+        assert isinstance(attempts[-1].get("result"), dict)
+        native_write.assert_called_once()
+    assert storage.relay_turn == original_turn
     assert moved.status_code == 200 and moved.json()["deliveries"] == []
+    assert moved.json()["session"]["endpoint_id"] == endpoint_id
+    assert moved.json()["session"]["scope_generation"] == 1
 
     from app.dependencies import recover_expired_relay_wakes
     from core.claude_wake import ClaudeWakeRegistry
 
-    relay = RelayService(storage)
     assert codex_wake.reconcile_codex_relay_wake_reservations(
         relay, registry=registry
     ) == 0
@@ -5294,6 +5556,12 @@ def test_http_scope_move_reads_current_endpoint_activation_and_historical_delive
     assert status["activation"]["qualification"] == "qualified"
     assert status["activation"]["fallback"] == "next_natural_turn"
     assert restarted.snapshot(endpoint_id).outcome == durable_outcome
+
+
+def test_http_scope_move_recovers_proven_precommit_refusal(client, tmp_path, monkeypatch):
+    test_http_scope_move_reads_current_endpoint_activation_and_historical_delivery(
+        client, tmp_path, monkeypatch, "ambiguous", "uncertain", force_move_refusal=True,
+    )
 
 
 def test_exact_claim_survives_lost_callback_and_rearms_once_after_lease(
@@ -5523,7 +5791,9 @@ def test_old_inflight_claim_generation_cannot_unlock_replacement(
 
     monkeypatch.setattr(dependencies, "create_router", capture_router_snapshot)
 
-    async def relay_runner(operation):
+    original_turn = RelayService.turn
+
+    def replace_before_claim(self, **kwargs):
         if racing[0]:
             racing[0] = False
             old = registry.snapshot(endpoint_id)
@@ -5538,6 +5808,11 @@ def test_old_inflight_claim_generation_cannot_unlock_replacement(
             assert current is not None
             assert registry.record_outcome(current, "accepted")
             replacements.append(registry.snapshot(endpoint_id))
+        return original_turn(self, **kwargs)
+
+    monkeypatch.setattr(RelayService, "turn", replace_before_claim)
+
+    async def relay_runner(operation):
         return operation()
 
     app = FastAPI()

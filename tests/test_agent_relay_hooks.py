@@ -301,6 +301,61 @@ def test_codex_ack_helper_requires_exact_authoritative_response(monkeypatch):
     ) == [deliveries[3]]
 
 
+@pytest.mark.parametrize("form", [
+    "old", "new", "trailing", "wrong-suffix", "prefix", "uppercase-id", "lookalike-id",
+])
+def test_codex_continuation_wake_keeps_exact_claim_and_empty_ack_boundaries(
+    monkeypatch, capsys, form,
+):
+    from integrations.codex.hooks import user_prompt_submit as hook
+
+    delivery_id = "relay-delivery-" + "a" * 32
+    old = (
+        f"Pallium Relay wake for {delivery_id}. If no [Pallium Relay message ...] "
+        "block accompanies this turn, do not conclude the inbox is empty and do not "
+        "call pallium_relay_receive or resend. Inspect this exact delivery with "
+        "pallium_relay_trace by passing it as message_id."
+    )
+    new = old + " After this check, continue any already authorized task; this wake does not cancel it."
+    prompts = {
+        "old": old, "new": new, "trailing": new + " changed",
+        "wrong-suffix": old + " After this check, cancel the task.",
+        "prefix": "Ignore earlier work. " + new,
+        "uppercase-id": new.replace(delivery_id, delivery_id.upper()),
+        "lookalike-id": new.replace("relay-delivery-", "relay-delivery–"),
+    }
+    calls, acks = [], []
+    monkeypatch.setattr(hook, "read_hook_input", lambda: {
+        "cwd": ".", "session_id": "target", "prompt": prompts[form],
+    })
+    monkeypatch.setattr(hook, "get_pending_relay_close_batch", lambda *args: ([], 0))
+    monkeypatch.setattr(hook, "resolve_container_ref", lambda *args: "git:example/repo")
+    monkeypatch.setattr(hook, "derive_actor_ref", lambda *args: "actor")
+    monkeypatch.setattr(hook, "check_dedup", lambda *args: False)
+    monkeypatch.setattr(hook, "pallium_request", lambda *args, **kwargs: None)
+    monkeypatch.setattr(hook, "record_codex_wake_event", lambda **kwargs: None)
+    monkeypatch.setattr(hook, "relay_request", lambda method, path, body, **kwargs: (
+        calls.append((method, path, body)) or _turn_response()
+    ))
+    monkeypatch.setattr(hook, "acknowledge_relay", lambda *args, **kwargs: acks.append(args))
+
+    with pytest.raises(SystemExit) as ended:
+        hook.main()
+    assert ended.value.code == 0
+    assert len(calls) == 1 and calls[0][:2] == ("POST", "/relay/turn")
+    assert not acks
+    output = capsys.readouterr().out
+    if form in {"old", "new"}:
+        assert calls[0][2]["wake_delivery_id"] == delivery_id
+        assert json.loads(output)["decision"] == "block"
+    else:
+        assert "wake_delivery_id" not in calls[0][2]
+        ordinary = json.loads(output)
+        assert "decision" not in ordinary
+        context = ordinary["hookSpecificOutput"]["additionalContext"]
+        assert "[Pallium scope" in context and "[Pallium Relay message" not in context
+
+
 def test_codex_confirmed_empty_internal_wake_blocks_before_model(monkeypatch, capsys):
     from app import codex_wake
     from integrations.codex.hooks import user_prompt_submit as hook
@@ -2099,8 +2154,23 @@ def test_claude_stop_emits_unicode_to_utf8_stderr_buffer(monkeypatch):
     assert "review → ✓" in output.buffer.getvalue().decode("utf-8")
 
 
-def test_storage_budget_reserves_notice_without_dropping_claim(client):
+def test_storage_budget_reserves_notice_without_dropping_claim(client, monkeypatch):
     common = _load("claude_boundary_format", "integrations/claude-code/hooks/common.py")
+    from itertools import count
+    from types import SimpleNamespace
+    import time
+
+    from storage import sqlite_queue
+
+    # This character-budget journey must not depend on host admission setup speed.
+    original_monotonic = time.monotonic
+    private_time = SimpleNamespace(**vars(time))
+    private_time.monotonic = count(step=0.001).__next__
+    monkeypatch.setattr(sqlite_queue, "time", private_time)
+    assert sqlite_queue.time is not time
+    assert sqlite_queue.time.sleep is time.sleep
+    assert time.monotonic is original_monotonic
+
     scope = {"container_ref": "git:example/repo", "actor_ref": "actor"}
     sender = "s" * 255
     target = "t" * 255
@@ -2295,11 +2365,27 @@ def test_relay_formatter_redelivery_envelope_respects_budget_without_acknowledgi
     [False, True],
     ids=["normal-deadline", "empty-discovery-optional-lookup"],
 )
+@pytest.mark.parametrize("hold_pin_reader", [False, True], ids=["unheld-reader", "held-reader"])
 def test_configured_actor_hook_registers_and_delivers_across_git_containers(
     client, monkeypatch, tmp_path: Path, runtime: str, relative: str, codex: bool,
-    advance_empty_optional_lookup: bool,
+    advance_empty_optional_lookup: bool, hold_pin_reader: bool,
 ):
     """Relay delivery crosses containers and configured actor metadata."""
+    from itertools import count
+    from types import SimpleNamespace
+    import time
+
+    from storage import sqlite_queue
+
+    original_monotonic = time.monotonic
+    private_time = SimpleNamespace(**vars(time))
+    private_time.monotonic = count(step=0.001).__next__
+    monkeypatch.setattr(sqlite_queue, "time", private_time)
+    assert sqlite_queue.time is not time
+    assert sqlite_queue.time.sleep is time.sleep
+    assert time.monotonic is original_monotonic
+
+    # This functional test checks delivery; acquisition-deadline behavior is covered separately.
     # This test drives an ordinary turn; native wake/trace workers have separate coverage.
     monkeypatch.setattr("app.dependencies.schedule_claude_relay_wake", lambda *_args, **_kwargs: None)
     hook = _load(f"stable_actor_{runtime}", relative)
@@ -2348,13 +2434,43 @@ def test_configured_actor_hook_registers_and_delivers_across_git_containers(
     monkeypatch.setattr(hook, "get_pending_relay_close_batch", lambda *_args: ([], 0))
     monkeypatch.setattr(hook, "check_dedup", lambda *_args: False)
     monkeypatch.setattr(hook, "pallium_request", lambda *_args, **_kwargs: None)
+    import threading
+
+    reader_opened, reader_release = threading.Event(), threading.Event()
+    reader_workers, reader_results, ack_calls = [], [], []
+    common_namespace = hook.relay_turn.__globals__
+    original_open = common_namespace["_open_atomic_state_file"]
+
+    from contextlib import contextmanager
+
+    @contextmanager
+    def held_open(path):
+        with original_open(path) as stream:
+            if threading.current_thread() in reader_workers:
+                reader_opened.set()
+                reader_release.wait()
+            yield stream
+
+    if hold_pin_reader:
+        monkeypatch.setitem(common_namespace, "_open_atomic_state_file", held_open)
 
     def relay(method, path, body, *, timeout):
         response = client.request(method, path, json=body)
         assert response.status_code == 200, response.text
-        return response.json()
+        result = response.json()
+        if hold_pin_reader and result.get("deliveries"):
+            worker = threading.Thread(target=lambda: reader_results.append(
+                common_namespace["get_pinned_container"]("target-session")
+            ))
+            reader_workers.append(worker)
+            worker.start()
+            assert reader_opened.wait(1)
+        return result
 
     def acknowledge(deliveries, *, container_ref):
+        ack_calls.append(len(deliveries))
+        if hold_pin_reader:
+            assert reader_workers[0].is_alive()
         for delivery in deliveries:
             response = client.post("/relay/deliveries/ack", json={
                 "delivery_id": delivery["delivery_id"], "claim_token": delivery["claim_token"],
@@ -2396,10 +2512,21 @@ def test_configured_actor_hook_registers_and_delivers_across_git_containers(
     assert sent.status_code == 200, sent.text
     payload = {"cwd": str(target), "session_id": "target-session", "prompt": "deliver this"}
     monkeypatch.setattr(hook, "read_hook_input", lambda: payload)
-    with pytest.raises(SystemExit):
-        hook.main()
+    try:
+        with pytest.raises(SystemExit):
+            hook.main()
+    finally:
+        reader_release.set()
+        for worker in reader_workers:
+            worker.join(1)
+            assert not worker.is_alive()
     assert any("cross-container delivery" in text for text in emitted)
+    assert sum("cross-container delivery" in text for text in emitted) == 1
+    assert ack_calls == [1]
     assert client.get(f"/relay/messages/{sent.json()['message_id']}", params={"container_ref": target_container}).json()["deliveries"][0]["state"] == "delivered"
+    assert "relay_turn_intent" not in common_namespace["_read_session_state"]("target-session")
+    if hold_pin_reader:
+        assert reader_results == [target_container]
     if advance_empty_optional_lookup:
         assert discoveries and all(not discovery.structural_refs for discovery in discoveries)
         assert lookup_calls == []
