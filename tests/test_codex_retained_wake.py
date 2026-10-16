@@ -1535,6 +1535,8 @@ def test_selected_transport_actual_hook_emits_then_acks(http_wake, monkeypatch, 
     else:
         desktop.on_owner = lambda request: hook(request["params"]["arguments"]["prompt"])
     send()
+    # The bare router fixture omits the production periodic recovery sweep.
+    recover(http_wake)
     assert [e[0] for e in events] == ["emit", "ack"]
     output = json.loads(capsys.readouterr().out)
     assert output["hookSpecificOutput"]["hookEventName"] == event
