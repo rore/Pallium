@@ -1,3 +1,4 @@
+import errno
 import json
 import multiprocessing
 import os
@@ -359,7 +360,9 @@ def _reap_owned_process(process: multiprocessing.Process) -> tuple[int | None, l
     return exitcode, errors
 
 
-def _hold_windows_lock_region(lock_path: str, offset: int, result_queue, release_event) -> None:
+def _hold_windows_lock_region(
+    lock_path: str, offset: int, result_queue, release_event, wait_seconds: float = 15,
+) -> None:
     import msvcrt
 
     try:
@@ -368,7 +371,7 @@ def _hold_windows_lock_region(lock_path: str, offset: int, result_queue, release
             msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
             try:
                 result_queue.put(("locked", Path(lock_path).stat().st_size))
-                if not release_event.wait(15):
+                if not release_event.wait(wait_seconds):
                     result_queue.put(("timeout", Path(lock_path).stat().st_size))
             finally:
                 lock_file.seek(offset)
@@ -513,6 +516,101 @@ def test_windows_schema_and_pair_lock_contexts_do_not_prime_empty_files(
     assert released_owner == [("released", 0)]
     assert exitcode == 0
     assert lock_path.stat().st_size == 0
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows byte-range locks are required")
+@pytest.mark.parametrize("lock_kind", ["schema", "pair"])
+def test_windows_schema_lock_waits_through_native_retry_exhaustion(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, lock_kind: str,
+) -> None:
+    from types import SimpleNamespace
+
+    import storage.sqlite_schema as schema
+
+    database = tmp_path / "contended.db"
+    provider = SQLiteStorageProvider.__new__(SQLiteStorageProvider)
+    engine = SQLiteStorageProvider._create_engine(f"sqlite:///{database}")
+    if lock_kind == "schema":
+        lock_path = provider._schema_lock_path(engine)
+        lock_context = provider._schema_initialization_lock(engine)
+    else:
+        lock_path = database.with_name(f"{database.name}.relay-pair-init.lock")
+        lock_context = provider._relay_pair_initialization_lock(f"sqlite:///{database}")
+    lock_path.write_bytes(b"")
+    context = multiprocessing.get_context("spawn")
+    reports, release = context.Queue(), context.Event()
+    owner = context.Process(
+        target=_hold_windows_lock_region,
+        args=(str(lock_path), 0, reports, release, 45), daemon=True,
+    )
+    native = schema.msvcrt
+    attempts, exhausted, entered = [], [], []
+
+    def locking(fd, mode, size):
+        assert os.lseek(fd, 0, os.SEEK_CUR) == 0
+        attempts.append(mode)
+        try:
+            return native.locking(fd, mode, size)
+        except OSError as exc:
+            assert mode == native.LK_LOCK and exc.errno == errno.EDEADLK
+            assert not release.is_set(), "owner released before native retry exhaustion"
+            exhausted.append(exc)
+            release.set()
+            assert reports.get(timeout=15) == ("released", 0)
+            raise
+
+    monkeypatch.setattr(schema, "msvcrt", SimpleNamespace(**{**vars(native), "locking": locking}))
+    exitcode, cleanup_errors = None, []
+    try:
+        _start_hidden_owned_process(owner)
+        assert reports.get(timeout=15) == ("locked", 0)
+        with lock_context:
+            entered.append(True)
+    finally:
+        release.set()
+        if owner.pid is not None:
+            exitcode, cleanup_errors = _reap_owned_process(owner)
+        reports.close()
+        reports.join_thread()
+        engine.dispose()
+    assert not cleanup_errors and exitcode == 0
+    assert len(exhausted) == 1 and entered == [True]
+    assert attempts == [native.LK_LOCK, native.LK_LOCK, native.LK_UNLCK]
+    assert lock_path.stat().st_size == 0
+
+
+@pytest.mark.parametrize("lock_kind", ["schema", "pair"])
+@pytest.mark.parametrize("error", [
+    OSError(errno.EACCES, "denied"), InterruptedError(errno.EINTR, "interrupted"), KeyboardInterrupt(),
+], ids=["other-os-error", "interrupted", "keyboard-interrupt"])
+def test_schema_lock_preserves_other_errors_without_unowned_unlock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, lock_kind: str, error: BaseException,
+) -> None:
+    from types import SimpleNamespace
+
+    import storage.sqlite_schema as schema
+
+    attempts = []
+
+    def locking(_fd, mode, _size):
+        attempts.append(mode)
+        raise error
+
+    monkeypatch.setattr(schema, "fcntl", None)
+    monkeypatch.setattr(schema, "msvcrt", SimpleNamespace(LK_LOCK=1, LK_UNLCK=2, locking=locking))
+    provider = SQLiteStorageProvider.__new__(SQLiteStorageProvider)
+    url = f"sqlite:///{tmp_path / 'failed.db'}"
+    engine = SQLiteStorageProvider._create_engine(url)
+    lock_context = (provider._schema_initialization_lock(engine) if lock_kind == "schema"
+                    else provider._relay_pair_initialization_lock(url))
+    try:
+        with pytest.raises(type(error)) as caught:
+            with lock_context:
+                pytest.fail("unowned lock body entered")
+        assert caught.value is error
+        assert attempts == [schema.msvcrt.LK_LOCK]
+    finally:
+        engine.dispose()
 
 
 def _tables(path: Path) -> set[str]:

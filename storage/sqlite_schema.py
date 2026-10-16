@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import json
 from contextlib import contextmanager
 from pathlib import Path
@@ -1285,7 +1286,15 @@ class SQLiteSchemaMixin:
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
             return
         if msvcrt is not None:
-            msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
+            # LK_LOCK exhausts its native retry cycle; schema startup still waits for its owner.
+            while True:
+                try:
+                    lock_file.seek(0)
+                    msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
+                    break
+                except OSError as exc:
+                    if exc.errno != errno.EDEADLK:
+                        raise
             return
         raise RuntimeError("no supported file-locking implementation available for sqlite schema initialization")
 
