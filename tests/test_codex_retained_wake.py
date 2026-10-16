@@ -1867,7 +1867,9 @@ def test_natural_hook_overtakes_state_check_without_owner_attempt(http_wake, mon
 
 
 def test_queue_wait_allows_fresh_registration_and_disconnect(http_wake, retained, monkeypatch):
-    _, _, registry, service, desktop, send, _ = http_wake
+    from dataclasses import replace
+
+    http, relay, registry, service, desktop, send, workers = http_wake
     desktop.state = "idle"
     queues, checks, callback_errors = [], [], []
     class Process:
@@ -1893,10 +1895,43 @@ def test_queue_wait_allows_fresh_registration_and_disconnect(http_wake, retained
         return Process(), None
     monkeypatch.setattr(codex_wake, "_start_launch", launch)
     try:
-        send()
+        # Admission can refuse before queue-wait coverage; recovery requires proven no-attempt state.
+        with monkeypatch.context() as admission:
+            attempts = _observe_transition_attempts(http_wake, admission, "begin_native_attempt")
+            releases = _observe_transition_attempts(http_wake, admission, "release")
+            first = send()
+            if _single_typed_transition_refusal(attempts):
+                prepared = attempts[0]["reservation"]
+                assert prepared.outcome == "prepared"
+                assert len(releases) == 1 and releases[0]["reservations"] == (prepared,)
+                assert "error_type" not in releases[0] and releases[0].get("result") == (prepared,)
+                assert relay.codex_wake_snapshot() == (True, ())
+                assert prepared.delivery_id == first["delivery_id"]
+                assert queues == checks == desktop.owners == []
+                assert all(not worker.is_alive() for worker in workers)
+                pending, = http.get("/relay/messages/retained-journey", params=SCOPE).json()["deliveries"]
+                assert pending["delivery_id"] == prepared.delivery_id
+                assert pending["state"] == "pending" and pending["attempts"] == 0
+                recover(http_wake)
+                assert len(attempts) == 2 and attempts[1]["reservation"] == replace(
+                    prepared, generation=prepared.generation + 1,
+                )
+            else:
+                assert len(attempts) == 1 and "error_type" not in attempts[0]
+                assert releases == []
+            assert "error_type" not in attempts[-1]
+            spent = attempts[-1].get("result")
+            assert spent is not None and spent == replace(
+                attempts[-1]["reservation"], outcome="uncertain",
+                retry_not_before=spent.retry_not_before,
+            )
+            assert type(spent.retry_not_before) is float
     finally:
+        for worker in workers:
+            worker.join()
         for check in checks:
             check.join(3)
+            check.join()
     assert not callback_errors, callback_errors
     assert len(checks) == 1 and not checks[0].is_alive()
     assert len(queues) == 1 and desktop.owners == []
