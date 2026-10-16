@@ -1334,12 +1334,24 @@ def test_http_activation_reads_authority_once_and_fails_closed(relay_store, tmp_
     assert len(reads) == (1 if runtime == "codex" else 0)
 
 
-def test_existing_relay_database_adds_trial_endpoint_marker_without_enrolling(tmp_path):
+def test_existing_relay_database_adds_trial_endpoint_marker_without_enrolling(tmp_path, monkeypatch):
     relay_db = tmp_path / "relay.db"
     main_db = tmp_path / "main.db"
     storage = SQLiteStorageProvider(f"sqlite:///{main_db}", f"sqlite:///{relay_db}")
-    endpoint = RelayService(storage).turn(runtime="codex", session_ref="target", **SCOPE)["session"]["endpoint_id"]
-    storage.close()
+    from itertools import count
+    from storage import sqlite_queue
+
+    native_time = sqlite_queue.time
+    try:
+        # Endpoint creation prepares the old schema; acquisition deadlines have separate coverage.
+        with monkeypatch.context() as seed:
+            seed_time = SimpleNamespace(**vars(native_time))
+            seed_time.monotonic = count(step=0.001).__next__
+            seed.setattr(sqlite_queue, "time", seed_time)
+            endpoint = RelayService(storage).turn(runtime="codex", session_ref="target", **SCOPE)["session"]["endpoint_id"]
+    finally:
+        storage.close()
+    assert sqlite_queue.time is native_time
     with sqlite3.connect(relay_db) as db:
         db.execute("ALTER TABLE relay_sessions DROP COLUMN trial_enrolled")
         db.execute("DROP TABLE relay_codex_trial")

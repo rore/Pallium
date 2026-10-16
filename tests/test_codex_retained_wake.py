@@ -1958,14 +1958,25 @@ def test_relay_lock_and_scope_recovery_share_one_deadline(
 
 
 def test_natural_hook_overtakes_state_check_without_owner_attempt(http_wake, monkeypatch, capsys, tmp_path):
-    http, _, registry, _, desktop, send, _ = http_wake
+    http, _, registry, _, desktop, send, workers = http_wake
     events = []
-    desktop.on_state = _hook_runner(http, monkeypatch, "notLoaded", events, tmp_path)
-    send()
-    assert [e[0] for e in events] == ["emit", "ack"]
-    assert desktop.owners == [] and registry.reservations() == ()
-    assert http.get("/relay/messages/retained-journey", params=SCOPE).json()["deliveries"][0]["state"] == "delivered"
-    capsys.readouterr()
+    hook = _hook_runner(http, monkeypatch, "notLoaded", events, tmp_path)
+    completed = threading.Event()
+    def natural_hook():
+        try:
+            hook()
+        finally:
+            completed.set()
+    desktop.on_state = natural_hook
+    try:
+        send(dispatch_completed=completed)
+        assert [e[0] for e in events] == ["emit", "ack"]
+        assert desktop.owners == [] and registry.reservations() == ()
+        assert http.get("/relay/messages/retained-journey", params=SCOPE).json()["deliveries"][0]["state"] == "delivered"
+        capsys.readouterr()
+    finally:
+        for worker in workers:
+            worker.join()
 
 
 def test_queue_wait_allows_fresh_registration_and_disconnect(http_wake, retained, monkeypatch):
