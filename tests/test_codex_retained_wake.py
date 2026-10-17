@@ -455,8 +455,11 @@ def test_inherited_stop_timeout_invalidates_enrollment_evidence(client, retained
     assert not worker.is_alive()
 
 
+@pytest.mark.parametrize("diagnostic", ["alive", "exited", "wait-failed", "wait-error", "missing-handle",
+                                      "pid-bool", "pid-large", "creation-invalid", "hostile-pid",
+                                      "hostile-creation", "getter-error", "logger-error"])
 def test_conclusive_source_channel_eof_clears_registration_while_source_is_alive(
-    retained, monkeypatch, caplog,
+    retained, monkeypatch, caplog, capsys, diagnostic,
 ):
     monkeypatch.setattr(bridge._log, "handlers", [*bridge._log.handlers, caplog.handler])
     service, request, natives = retained
@@ -473,6 +476,29 @@ def test_conclusive_source_channel_eof_clears_registration_while_source_is_alive
         setattr(w.pipe, name, value)
     w.pipe.CreateNamedPipe = lambda *args: 91
     w.pipe.GetNamedPipeClientProcessId = lambda handle: source.pid
+    original_pid = source.pid
+    creation = "2026-01-02T03:04:05.123456+00:00"
+    waits = []
+
+    def observe(handle, timeout):
+        waits.append((handle, timeout))
+        assert (handle, timeout) == (original_pid, 0)
+        if diagnostic == "wait-error":
+            raise RuntimeError("private-native-error-sentinel")
+        return {"exited": 0, "wait-failed": 0xffffffff}.get(diagnostic, 258)
+
+    class Hostile:
+        def __str__(self):
+            raise AssertionError("diagnostic stringified private value")
+        __repr__ = __str__
+
+    class GetterError(Peer):
+        @property
+        def creation(self):
+            raise RuntimeError("private-getter-sentinel")
+
+    def logger_error(*args):
+        raise RuntimeError("private-logger-sentinel")
 
     def disconnected(handle):
         observations.append((service.retained_registration, service.custody,
@@ -494,6 +520,24 @@ def test_conclusive_source_channel_eof_clears_registration_while_source_is_alive
             assert service.retained_registration is not None
             assert not source.gone and service.source is source
             assert not source.closed
+            monkeypatch.setattr(w.event, "WaitForSingleObject", observe)
+            source.creation = creation
+            if diagnostic == "missing-handle":
+                source.handle = None
+            if diagnostic == "pid-bool":
+                source.pid = True
+            if diagnostic == "pid-large":
+                source.pid = 1 << 32
+            if diagnostic == "creation-invalid":
+                source.creation = "private-path-sentinel\nprivate-token-sentinel"
+            if diagnostic == "hostile-pid":
+                source.pid = Hostile()
+            if diagnostic == "hostile-creation":
+                source.creation = Hostile()
+            if diagnostic == "getter-error":
+                source.__class__ = GetterError
+            if diagnostic == "logger-error":
+                monkeypatch.setattr(bridge._log, "warning", logger_error)
             raise bridge.ShadowUnavailable("transport-failed")
         def write(self, response, deadline):
             assert response["status"] == "registered"
@@ -515,6 +559,21 @@ def test_conclusive_source_channel_eof_clears_registration_while_source_is_alive
     assert not service.unresolved and not source.gone
     assert not any(record.msg.startswith("codex_retained_terminal_failure ")
                    for record in caplog.records)
+    records = [record for record in caplog.records
+               if record.msg.startswith("codex_retained_source_channel_closed ")]
+    if diagnostic == "logger-error":
+        assert records == []
+    else:
+        assert len(records) == 1
+        line = records[0].getMessage()
+        expected_pid = "unknown" if diagnostic in {"pid-bool", "pid-large", "hostile-pid", "getter-error"} else str(original_pid)
+        expected_creation = "unknown" if diagnostic in {"creation-invalid", "hostile-creation", "getter-error"} else creation
+        expected_state = {"exited": "exited", "wait-failed": "unknown", "wait-error": "unknown",
+                          "missing-handle": "unknown", "getter-error": "unknown"}.get(diagnostic, "alive")
+        assert f"source_pid={expected_pid} source_creation={expected_creation} source_state={expected_state} close_cause=unknown" in line
+        assert line in capsys.readouterr().err
+        assert "private-" not in line and "thread_ref" not in line and "turn_ref" not in line
+    assert waits == ([] if diagnostic in {"missing-handle", "getter-error"} else [(original_pid, 0)])
 
 
 @pytest.mark.parametrize("fault", ["resolved", "fenced", "source-unresolved", "native-uncertain",
@@ -604,6 +663,16 @@ def test_inherited_source_io_unresolved_invalidates_enrollment_evidence(
     original_warning = bridge._log.warning
     original_stop = service.stop_event.set
     original_drop = service._drop
+    original_record = service._record_failure
+    failures = []
+    primary_error = bridge.ShadowUnavailable("transport-failed")
+    primary_error.args = ("private-error-sentinel",)
+    def no_unresolved_wait(*args):
+        pytest.fail("unresolved diagnostic waited on peer")
+    def record(error):
+        failures.append(error)
+        return original_record(error)
+    monkeypatch.setattr(service, "_record_failure", record)
     notifications = []
     def terminal_callback():
         notifications.append((events[-1], service.stop_event.is_set(), service.unresolved))
@@ -651,16 +720,16 @@ def test_inherited_source_io_unresolved_invalidates_enrollment_evidence(
             if failure_at == "read":
                 return
             self.unresolved = True
-            raise bridge.ShadowUnavailable("transport-failed")
+            monkeypatch.setattr(w.event, "WaitForSingleObject", no_unresolved_wait)
+            raise primary_error
         def read(self, _deadline):
             self.reads += 1
             if self.reads == 1:
                 assert not any("codex_retained_source_channel_closed" in record.message for record in caplog.records)
                 raise bridge.ShadowUnavailable("deadline")
             self.unresolved = True
-            error = bridge.ShadowUnavailable("transport-failed")
-            error.args = ("private-error-sentinel",)
-            raise error
+            monkeypatch.setattr(w.event, "WaitForSingleObject", no_unresolved_wait)
+            raise primary_error
         def close(self):
             pass
     monkeypatch.setattr(bridge, "_native", lambda: w)
@@ -671,11 +740,14 @@ def test_inherited_source_io_unresolved_invalidates_enrollment_evidence(
     monkeypatch.setattr(bridge, "_atomic_private", lambda *_args: None)
     monkeypatch.setattr(bridge, "_PipeIO", BrokenIO)
     service._run()
+    assert failures == [primary_error] and failures[0] is primary_error
     records = [record for record in caplog.records if "codex_retained_source_channel_closed" in record.message]
     assert len(records) == (1 if failure_at == "read" else 0)
     if records:
         message, observed_at = records[0].message.split(" observed_at=")
         assert message == "codex_retained_source_channel_closed category=transport-failed unresolved=True stopping=False"
+        observed_at, identity = observed_at.split(" source_pid=")
+        assert identity == "42 source_creation=unknown source_state=unknown close_cause=unknown"
         assert bridge.datetime.fromisoformat(observed_at).utcoffset().total_seconds() == 0
         assert records[0].exc_info is None
         assert records[0].created > 0

@@ -1965,9 +1965,29 @@ class InventoryService:
                 except ShadowUnavailable as exc:
                     if self.retained:
                         category = exc.category if exc.category in _INVENTORY_FAILURE_CATEGORIES else "unavailable"
-                        _log.warning("codex_retained_source_channel_closed category=%s unresolved=%s stopping=%s observed_at=%s",
-                                     category, io.unresolved, self.stop_event.is_set(),
-                                     datetime.now(timezone.utc).isoformat())
+                        source_pid = source_creation = source_state = "unknown"
+                        try:
+                            pid, creation = peer.pid, peer.creation
+                            if type(pid) is int and 0 < pid <= 0xffffffff:
+                                source_pid = pid
+                            if (type(creation) is str and len(creation) <= 40
+                                    and re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?(?:[+-][0-9]{2}:[0-9]{2})?", creation)):
+                                source_creation = creation
+                            if not io.unresolved and peer.handle is not None:
+                                state = self.w.event.WaitForSingleObject(peer.handle, 0)
+                                if type(state) is int:
+                                    if state == self.w.event.WAIT_OBJECT_0:
+                                        source_state = "exited"
+                                    elif state == self.w.event.WAIT_TIMEOUT:
+                                        source_state = "alive"
+                        except Exception:
+                            pass
+                        try:
+                            _log.warning("codex_retained_source_channel_closed category=%s unresolved=%s stopping=%s observed_at=%s source_pid=%s source_creation=%s source_state=%s close_cause=unknown",
+                                         category, io.unresolved, self.stop_event.is_set(),
+                                         datetime.now(timezone.utc).isoformat(), source_pid, source_creation, source_state)
+                        except Exception:
+                            pass  # Diagnostics cannot change source ownership or cleanup.
                     if io.unresolved or self.stop_event.is_set():
                         raise
                 finally:
