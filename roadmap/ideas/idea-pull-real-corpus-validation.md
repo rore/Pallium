@@ -58,7 +58,9 @@ features. It does not replace the larger product gate or relax its Done When.
 - [ ] Complete a brief agent-awareness survey and compare replies with observable
   traces. Ask what agents already knew about when/how to search, a recent example,
   alternatives used, and specific observed friction; accept unknown or defer.
-  Three requests were saved through Relay on October 17; replies are pending.
+  Three requests were saved through Relay on October 17. Native activation did
+  not deliver them; ordinary app messages were used for two recipients with no
+  active turn, preserving their settings. Receipt and replies need separate checks.
   Saved/queued is not receipt. Keep self-report separate from verified behavior;
   record survey exposure because the survey itself may change later behavior.
 - [ ] Take the next eight genuine upcoming needs, accepting 5-10 over a bounded
