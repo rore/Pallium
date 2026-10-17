@@ -1726,8 +1726,16 @@ def test_http_pre_cas_worker_exception_clears_marker_for_same_process_resume(cli
     app.include_router(build_router(client.app.state.pallium_service, relay_storage=storage,
                                    codex_wake_registry=registry))
     http = TestClient(app)
-    for session in ("sender", "target"):
-        assert http.post("/relay/turn", json={"runtime": "codex", "session_ref": session, **SCOPE}).status_code == 200
+    from storage import sqlite_queue
+    native_storage_time = sqlite_queue.time
+    with monkeypatch.context() as registration:
+        registration_time = SimpleNamespace(**vars(native_storage_time))
+        from itertools import count
+        registration_time.monotonic = count(step=0.001).__next__
+        registration.setattr(sqlite_queue, "time", registration_time)
+        for session in ("sender", "target"):
+            assert http.post("/relay/turn", json={"runtime": "codex", "session_ref": session, **SCOPE}).status_code == 200
+    assert sqlite_queue.time is native_storage_time
 
     original_begin = registry.begin_native_attempt
     fail_once = [True]
