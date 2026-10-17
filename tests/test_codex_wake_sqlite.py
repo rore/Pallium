@@ -202,11 +202,14 @@ def test_endpoint_view_preserves_current_session_fields_and_generation(
     from sqlalchemy import event
 
     relay, storage, database = relay_store
-    endpoint = _send(relay)["recipient_endpoint_id"]
+    endpoint = "relay-session-" + "a" * 32
     now = datetime.now(timezone.utc)
     container = "git:example.test/moved-東京" if state == "moved" else SCOPE["container_ref"]
     seen = now - timedelta(days=2) if state == "dormant" else now
     with sqlite3.connect(database) as db:
+        db.execute("INSERT INTO relay_sessions(id,runtime,session_ref,container_ref,first_seen_at,last_seen_at,state,trial_enrolled) VALUES (?,?,?,?,?,?,?,?)",
+            (endpoint, "codex", "target", SCOPE["container_ref"], now.strftime("%Y-%m-%d %H:%M:%S.%f"),
+             now.strftime("%Y-%m-%d %H:%M:%S.%f"), "active", 0))
         db.execute("UPDATE relay_sessions SET container_ref=?,title=?,alias=?,state=?,last_seen_at=?,closed_at=? WHERE id=?",
             (container, "Fresh title 東京", "current", "closed" if state == "closed" else "busy" if state == "busy" else "idle",
              seen.strftime("%Y-%m-%d %H:%M:%S.%f"), now.strftime("%Y-%m-%d %H:%M:%S.%f") if state == "closed" else None, endpoint))
