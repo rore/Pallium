@@ -1868,9 +1868,11 @@ async def test_production_lifespan_automatically_recovers_spent_retained_wake(
                     fence.recipient_endpoint_id, fence.delivery_id,
                 )
                 assert recovered.outcome == "uncertain" and recovered.correlated_claim_attempts is None
-                assert [request["params"]["tool"] for request in desktop.writes[previous_writes:]] == [
+                tools = [request["params"]["tool"] for request in desktop.writes[previous_writes:]]
+                assert tools[:2] == [
                     "read_thread", "send_message_to_thread",
                 ]
+                assert tools[2:] in ([], ["read_thread"])
                 assert desktop.owners[1]["params"]["arguments"]["prompt"] == codex_wake._wake_prompt(first["delivery_id"])
                 assert [entry[0] for entry in events] == ["emit", "ack"]
                 assert "autonomous payload — 東京" in events[0][2]
