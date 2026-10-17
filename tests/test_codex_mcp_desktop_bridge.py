@@ -112,6 +112,30 @@ _STDIO_CHILD = dedent(
     m._codex_retained_enabled = lambda transport: False
 
     failure = os.environ["TEST_BRIDGE_FAILURE"]
+    shutdown_entered = asyncio.Event()
+    shutdown_cancelled = asyncio.Event()
+    if failure == "shutdown-timeout":
+        original_wait_for = asyncio.wait_for
+        lifespan_waits = [0]
+        async def controlled_wait_for(awaitable, timeout):
+            lifespan_waits[0] += 1
+            if lifespan_waits[0] != 2:
+                return await original_wait_for(awaitable, timeout=timeout)
+            assert timeout == 1.0
+            shutdown = asyncio.create_task(awaitable)
+            await shutdown_entered.wait()
+            shutdown.cancel()
+            try:
+                await shutdown
+            except asyncio.CancelledError:
+                pass
+            assert shutdown_cancelled.is_set()
+            print("inert-test-shutdown-manager-cancelled", file=__import__("sys").stderr, flush=True)
+            raise TimeoutError
+        # Drive the fault without competing with the SDK's separate process-exit deadline.
+        local_asyncio = SimpleNamespace(**vars(asyncio))
+        local_asyncio.wait_for = controlled_wait_for
+        m.asyncio = local_asyncio
     if failure == "import":
         original_import = m.importlib.import_module
         def injected_import(name, package=None):
@@ -138,7 +162,11 @@ _STDIO_CHILD = dedent(
             async def injected(server):
                 yield {}
                 if failure == "shutdown-timeout":
-                    await asyncio.Future()
+                    shutdown_entered.set()
+                    try:
+                        await asyncio.Future()
+                    finally:
+                        shutdown_cancelled.set()
                 raise RuntimeError("secret shutdown failure")
             bridge.lifespan = injected
 
@@ -163,6 +191,8 @@ _STDIO_CHILD = dedent(
         return server
     m.create_server = checked_create
     m.main()
+    if failure == "shutdown-timeout":
+        assert asyncio.wait_for is original_wait_for
     print("inert-test-launcher-returned", file=__import__("sys").stderr, flush=True)
     '''
 )
@@ -264,6 +294,8 @@ async def test_real_stdio_keeps_concurrent_normal_tools_live_on_bridge_fault(
         error_log.seek(0)
         output = error_log.read()
     assert f"Pallium Codex bridge inert: {diagnostic}" in output
+    if failure == "shutdown-timeout":
+        assert "inert-test-shutdown-manager-cancelled" in output
     assert "inert-test-launcher-returned" in output
     assert "secret " not in output
     assert "private-capability-sentinel" not in output

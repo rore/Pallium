@@ -11,10 +11,12 @@ import uuid
 from dataclasses import asdict, replace
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from typing import Any, Callable
 
 from sqlalchemy import and_, case, delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import defer
 
 from core.relay import (
     RELAY_RECENT_SECONDS,
@@ -24,6 +26,7 @@ from core.relay import (
     RelayNotFoundError,
 )
 from redaction import redact_sensitive
+from core.errors import ImmediateTransactionBusyError
 from core.codex_wake import (
     CodexWakeRegistry, CodexWakeReservation, MAX_RESERVATIONS,
     WAKE_RETRY_COOLDOWN_SECONDS, retry_cooldown_elapsed,
@@ -53,6 +56,58 @@ _TRACE_EVIDENCE = frozenset(
     {"submission_attempted", "transport_accepted", "payload_admitted"}
 )
 _TRACE_REDACTED_REASON = "[REDACTED: diagnostic reason omitted]"
+_WAKE_SNAPSHOT_ROWS_SQL = (
+    "SELECT " + ", ".join(CodexWakeReservation.__dataclass_fields__)
+    + f" FROM relay_codex_wake_reservations LIMIT {MAX_RESERVATIONS + 1}"
+)
+_WAKE_SNAPSHOT_JSON_SQL = (
+    "SELECT json_group_array(json_array("
+    + ", ".join(list(CodexWakeReservation.__dataclass_fields__)[:-1])
+    + ", CASE WHEN typeof(retry_not_before)='real' THEN printf('%!.26g', retry_not_before) "
+    "ELSE retry_not_before END, typeof(retry_not_before))) FROM ("
+    + _WAKE_SNAPSHOT_ROWS_SQL + ")"
+)
+_WAKE_SNAPSHOT_ENVELOPE_SQL = (
+    "SELECT marker.id, marker.generation, "
+    "(SELECT COUNT(*) FROM relay_codex_wake_state), (" + _WAKE_SNAPSHOT_JSON_SQL + ") "
+    "FROM (SELECT 1) AS anchor LEFT JOIN relay_codex_wake_state AS marker ON marker.id=1"
+)
+
+
+def _wake_snapshot_rows(cursor):
+    try:
+        cursor.execute(_WAKE_SNAPSHOT_JSON_SQL)
+    except sqlite3.OperationalError as error:
+        if str(error) not in ("no such function: json_group_array", "no such function: json_array"):
+            raise
+        cursor.execute(_WAKE_SNAPSHOT_ROWS_SQL)
+        return cursor.fetchall()
+    return _decode_wake_snapshot_rows(cursor.fetchone()[0])
+
+
+def _decode_wake_snapshot_rows(encoded):
+    decoded = json.loads(encoded)
+    if not isinstance(decoded, list):
+        raise ValueError("invalid persisted Codex wake authority")
+    rows = []
+    for row in decoded:
+        if not isinstance(row, list) or len(row) != 9:
+            raise ValueError("invalid persisted Codex wake authority")
+        kind = row.pop()
+        expected_type = ({"null": type(None), "integer": int, "real": str, "text": str}.get(kind)
+                         if isinstance(kind, str) else None)
+        if expected_type is None or type(row[-1]) is not expected_type:
+            raise ValueError("invalid persisted Codex wake authority")
+        if kind == "real":
+            # SQLite JSON rounds REALs; the tagged decimal preserves retry/CAS equality.
+            row[-1] = float(row[-1])
+        rows.append(tuple(row))
+    return rows
+
+
+def _wake_snapshot_envelope(cursor):
+    cursor.execute(_WAKE_SNAPSHOT_ENVELOPE_SQL)
+    return cursor.fetchone()
 
 
 def _now(value: datetime | None = None) -> datetime:
@@ -424,6 +479,8 @@ class SQLiteRelayMixin:
 
     @staticmethod
     def _wake_item(row):
+        if isinstance(row, tuple):
+            return CodexWakeReservation(*row)
         return CodexWakeReservation(**{
             name: getattr(row, name) for name in CodexWakeReservation.__dataclass_fields__
         })
@@ -431,10 +488,25 @@ class SQLiteRelayMixin:
     def relay_codex_wake_snapshot(self):
         with self._relay_session_factory() as db:
             db.connection().exec_driver_sql("BEGIN")  # One consistent marker/row snapshot.
-            marker = db.get(RelayCodexWakeStateRecord, 1)
-            rows = db.scalars(select(RelayCodexWakeReservationRecord).limit(MAX_RESERVATIONS + 1)).all()
-            self._validate_wake_authority(db, marker, rows)
-            return marker is not None, tuple(self._wake_item(row) for row in rows)
+            cursor = db.connection().connection.driver_connection.cursor()
+            try:
+                try:
+                    marker_id, generation, marker_count, encoded = _wake_snapshot_envelope(cursor)
+                except sqlite3.OperationalError as error:
+                    if str(error) not in ("no such function: json_group_array", "no such function: json_array"):
+                        raise
+                    marker = db.execute(select(RelayCodexWakeStateRecord.generation).where(
+                        RelayCodexWakeStateRecord.id == 1
+                    )).first()
+                    cursor.execute(_WAKE_SNAPSHOT_ROWS_SQL)
+                    rows, marker_count = cursor.fetchall(), None
+                else:
+                    marker = None if marker_id is None else SimpleNamespace(generation=generation)
+                    rows = _decode_wake_snapshot_rows(encoded)
+            finally:
+                cursor.close()
+            items = self._validate_wake_authority(db, marker, rows=rows, marker_count=marker_count)
+            return marker is not None, items
 
     def relay_codex_trial_native_suppressed(self, endpoint_id: str) -> bool:
         """Read the endpoint tombstone and trial row from one snapshot."""
@@ -635,16 +707,22 @@ class SQLiteRelayMixin:
                 "uncertainty_reason": "evidence_incomplete" if uncertainty_evidence != "complete" else "retry_held" if unresolved else None,
             }
 
-    def _validate_wake_authority(self, db, marker, rows=None):
+    def _validate_wake_authority(self, db, marker, rows=None, marker_count=None):
         if rows is None:
-            rows = db.scalars(select(RelayCodexWakeReservationRecord).limit(MAX_RESERVATIONS + 1)).all()
-        if (db.scalar(select(func.count()).select_from(RelayCodexWakeStateRecord)) != (1 if marker is not None else 0)
-            or len(rows) > MAX_RESERVATIONS
-            or (marker is None and rows)
+            rows = db.execute(select(*(
+                getattr(RelayCodexWakeReservationRecord, name)
+                for name in CodexWakeReservation.__dataclass_fields__
+            )).limit(MAX_RESERVATIONS + 1)).all()
+        items = tuple(self._wake_item(row) for row in rows)
+        if ((marker_count if marker_count is not None else
+             db.scalar(select(func.count()).select_from(RelayCodexWakeStateRecord))) != (1 if marker is not None else 0)
+            or len(items) > MAX_RESERVATIONS
+            or (marker is None and items)
             or (marker is not None and (type(marker.generation) is not int or not 0 <= marker.generation < 2**63))
-            or any(not CodexWakeRegistry._valid_item(self._wake_item(row))
-                   or row.generation > marker.generation for row in rows)):
+            or any(not CodexWakeRegistry._valid_item(item)
+                   or item.generation > marker.generation for item in items)):
             raise ValueError("invalid persisted Codex wake authority")
+        return items
 
     def relay_codex_wake_initialize(self, *, reservations):
         with self._begin_relay_immediate() as db:
@@ -667,7 +745,7 @@ class SQLiteRelayMixin:
         result = None
         with self._begin_relay_immediate() as db:
             marker = db.get(RelayCodexWakeStateRecord, 1)
-            self._validate_wake_authority(db, marker)
+            items = self._validate_wake_authority(db, marker)
             if marker is None:
                 return None
             if operation == "reserve":
@@ -692,6 +770,26 @@ class SQLiteRelayMixin:
                 marker.generation += 1
                 result = CodexWakeReservation(**values, generation=marker.generation, outcome="prepared")
                 db.add(RelayCodexWakeReservationRecord(**asdict(result)))
+            elif operation == "correlate":
+                row = db.get(RelayCodexWakeReservationRecord, kwargs["recipient_endpoint_id"])
+                if (row is None
+                    or row.delivery_id != kwargs["delivery_id"]
+                    or row.session_ref != kwargs["session_ref"]
+                    or row.container_ref != kwargs["container_ref"]
+                    or row.generation != kwargs["expected_generation"]
+                    or row.correlated_claim_attempts not in (None, kwargs["attempts"])):
+                    return None
+                row.correlated_claim_attempts = kwargs["attempts"]
+                result = self._wake_item(row)
+            elif operation == "release_delivery":
+                expected = next((item for item in items if item.delivery_id == kwargs["delivery_id"]), None)
+                if expected is None:
+                    return None
+                row = db.get(RelayCodexWakeReservationRecord, expected.recipient_endpoint_id)
+                if row is None or self._wake_item(row) != expected:
+                    return None
+                db.delete(row)
+                result = expected
             elif operation == "release":
                 removed = []
                 for expected in kwargs["reservations"]:
@@ -759,7 +857,8 @@ class SQLiteRelayMixin:
                         "container_ref": expected.container_ref,
                     }
                     if (state["recipient_endpoint_id"] != expected.recipient_endpoint_id
-                        or state["wake_target"] != target or not _wake_retry_pending(state)):
+                        or state["wake_target"] != target or not _wake_retry_pending(state)
+                        or (state["stored_state"] == "claimed" and state["codex_wake_generation"] == expected.generation)):
                         return None
                 if operation == "retry":
                     if expected.outcome not in {"reserved", "accepted", "uncertain"} or expected.correlated_claim_attempts is not None:
@@ -804,18 +903,13 @@ class SQLiteRelayMixin:
                         if state["state"] in {"delivered", "expired", "suppressed"}:
                             db.delete(row)
                             result = ("released", expected)
-                        elif (expected.outcome == "prepared" and expected.correlated_claim_attempts is None
-                              and _wake_retry_pending(state) and state["wake_target"] == {
-                                  "runtime": "codex", "session_ref": expected.session_ref,
-                                  "container_ref": expected.container_ref,
-                              }):
-                            result = ("resume", expected)
                         elif (state["state"] == "pending" and state["stored_state"] == "claimed"
                               and state["attempts"] > 0
                               and (state["attempts"] == expected.correlated_claim_attempts
                                    or state["codex_wake_generation"] == expected.generation)
-                              and state["wake_target"] is not None
-                              and marker.generation < 2**63 - 1):
+                              and state["wake_target"] is not None):
+                            if marker.generation >= 2**63 - 1:
+                                return None
                             marker.generation += 1
                             target = state["wake_target"]
                             replacement = replace(expected, generation=marker.generation, outcome="prepared",
@@ -824,6 +918,12 @@ class SQLiteRelayMixin:
                             for name, value in asdict(replacement).items():
                                 setattr(row, name, value)
                             result = ("replaced", replacement)
+                        elif (expected.outcome == "prepared" and expected.correlated_claim_attempts is None
+                              and _wake_retry_pending(state) and state["wake_target"] == {
+                                  "runtime": "codex", "session_ref": expected.session_ref,
+                                  "container_ref": expected.container_ref,
+                              }):
+                            result = ("resume", expected)
                         elif (expected.outcome in {"reserved", "accepted", "uncertain"}
                               and expected.correlated_claim_attempts is None
                               and expected.retry_not_before is not None
@@ -853,10 +953,6 @@ class SQLiteRelayMixin:
                                      retry_not_before=_now().timestamp() + WAKE_RETRY_COOLDOWN_SECONDS)
                 elif operation == "outcome":
                     result = replace(expected, outcome=kwargs["outcome"])
-                elif operation == "correlate":
-                    if expected.correlated_claim_attempts not in (None, kwargs["attempts"]):
-                        return None
-                    result = replace(expected, correlated_claim_attempts=kwargs["attempts"])
                 else:
                     raise ValueError("unsupported Codex wake transition")
                 if operation != "reconcile":
@@ -1403,14 +1499,19 @@ class SQLiteRelayMixin:
                         "restored": reusable and delivery.state == "delivered",
                         "has_more": False, "remaining_count": 0,
                     }
-            registered = self._relay_session(
-                db, container_ref=container_ref, runtime=runtime, session_ref=session_ref
-            )
-            generation_row = (
-                db.get(RelayEndpointGenerationRecord, registered.id)
-                if registered is not None
-                else None
-            )
+            current_scope = db.execute(
+                select(RelaySessionRecord, RelayEndpointGenerationRecord)
+                .outerjoin(
+                    RelayEndpointGenerationRecord,
+                    RelayEndpointGenerationRecord.endpoint_id == RelaySessionRecord.id,
+                )
+                .where(
+                    RelaySessionRecord.container_ref == container_ref,
+                    RelaySessionRecord.runtime == runtime,
+                    RelaySessionRecord.session_ref == session_ref,
+                )
+            ).one_or_none()
+            registered, generation_row = current_scope if current_scope is not None else (None, None)
             generation = int(generation_row.generation) if generation_row is not None else 0
             if previous_container_ref is not None:
                 if previous_endpoint_id is None or previous_scope_generation is None:
@@ -1487,9 +1588,10 @@ class SQLiteRelayMixin:
                     ),
                 )
                 .values(state="expired", claim_token=None)
+                .execution_options(synchronize_session=False)
             )
 
-            rows = db.execute(
+            eligible_query = (
                 select(RelayDeliveryRecord, RelayMessageRecord)
                 .join(RelayMessageRecord, RelayMessageRecord.id == RelayDeliveryRecord.message_id)
                 .where(
@@ -1504,23 +1606,22 @@ class SQLiteRelayMixin:
                     ),
                 )
                 .order_by(RelayMessageRecord.created_at, RelayDeliveryRecord.id)
-            ).all()
-
-            eligible_rows = [
-                (delivery, message)
-                for delivery, message in rows
-                if _delivery_render_safe(delivery, message)
-                and (
-                    exact_delivery_id is None
-                    or delivery.id == exact_delivery_id
-                )
-            ]
+            )
+            eligible_count = db.execute(
+                eligible_query.with_only_columns(func.count(), maintain_column_froms=True)
+                .order_by(None)
+            ).scalar_one()
+            if exact_delivery_id is None:
+                # Sort metadata, then load payloads only for candidates we examine.
+                eligible_query = eligible_query.options(defer(RelayMessageRecord.payload)).execution_options(yield_per=16)
+            else:
+                eligible_query = eligible_query.where(RelayDeliveryRecord.id == exact_delivery_id)
             session_view = _session_view(registered, current, 24 * 60 * 60, generation)
             selected: list[tuple[RelayDeliveryRecord, RelayMessageRecord, dict[str, Any], int, str]] = []
             used = 0
 
             def response(deliveries: list[dict[str, Any]]) -> dict[str, Any]:
-                remaining = len(rows) - len(deliveries)
+                remaining = eligible_count - len(deliveries)
                 result = {
                     "session": session_view,
                     "deliveries": deliveries,
@@ -1531,60 +1632,63 @@ class SQLiteRelayMixin:
                     result.update(wake=self._opencode_wake_view(wake), restored=False)
                 return result
 
-            for delivery, message in eligible_rows:
-                token = f"relay-claim-{uuid.uuid4().hex}"
-                lease_expires_at = current + timedelta(seconds=lease_seconds)
+            with db.execute(eligible_query) as rows:
+                for delivery, message in rows:
+                    if not _delivery_render_safe(delivery, message):
+                        continue
+                    token = f"relay-claim-{uuid.uuid4().hex}"
+                    lease_expires_at = current + timedelta(seconds=lease_seconds)
 
-                def project(prefix_chars: int) -> tuple[dict[str, Any], int] | None:
-                    view = _delivery_view(
-                        delivery, message, registered.state,
-                        payload_limit=None if prefix_chars == len(message.payload) else prefix_chars,
-                    )
-                    view.update(
-                        state="claimed",
-                        claim_token=token,
-                        receipt=_delivery_receipt(token),
-                        claimed_at=_iso(current),
-                        lease_expires_at=_iso(lease_expires_at),
-                        attempts=int(delivery.attempts or 0) + 1,
-                    )
-                    attempt = view["attempts"]
-                    attempt = attempt if 1 <= attempt <= 2**53 - 1 else None
-                    view.update(
-                        claim_attempt=attempt,
-                        possible_redelivery=None if attempt is None else attempt > 1,
-                        redelivery_guidance=(
-                            "Check exact delivery_id in context/artifacts. "
-                            "Skip completed actions; if unknown, inspect target state before irreversible retry. "
-                            "Attempts do not prove emission/actions. ACK: receipt, not completion"
-                        ),
-                    )
-                    rendered_chars = len(_delivery_text(delivery, message, view)) + (2 if selected else 0)
-                    if max_chars and used + rendered_chars > max_chars:
-                        return None
-                    prospective = [*(item[2] for item in selected), view]
-                    if max_response_chars and _compact_json_chars(response(prospective)) > max_response_chars:
-                        return None
-                    return view, rendered_chars
+                    def project(prefix_chars: int) -> tuple[dict[str, Any], int] | None:
+                        view = _delivery_view(
+                            delivery, message, registered.state,
+                            payload_limit=None if prefix_chars == len(message.payload) else prefix_chars,
+                        )
+                        view.update(
+                            state="claimed",
+                            claim_token=token,
+                            receipt=_delivery_receipt(token),
+                            claimed_at=_iso(current),
+                            lease_expires_at=_iso(lease_expires_at),
+                            attempts=int(delivery.attempts or 0) + 1,
+                        )
+                        attempt = view["attempts"]
+                        attempt = attempt if 1 <= attempt <= 2**53 - 1 else None
+                        view.update(
+                            claim_attempt=attempt,
+                            possible_redelivery=None if attempt is None else attempt > 1,
+                            redelivery_guidance=(
+                                "Check exact delivery_id in context/artifacts. "
+                                "Skip completed actions; if unknown, inspect target state before irreversible retry. "
+                                "Attempts do not prove emission/actions. ACK: receipt, not completion"
+                            ),
+                        )
+                        rendered_chars = len(_delivery_text(delivery, message, view)) + (2 if selected else 0)
+                        if max_chars and used + rendered_chars > max_chars:
+                            return None
+                        prospective = [*(item[2] for item in selected), view]
+                        if max_response_chars and _compact_json_chars(response(prospective)) > max_response_chars:
+                            return None
+                        return view, rendered_chars
 
-                projected = project(len(message.payload))
-                if projected is None and not selected and len(message.payload) > 1:
-                    low, high = 1, len(message.payload) - 1
-                    while low <= high:
-                        middle = (low + high) // 2
-                        candidate = project(middle)
-                        if candidate is None:
-                            high = middle - 1
-                        else:
-                            projected = candidate
-                            low = middle + 1
-                if projected is None:
-                    continue
-                view, rendered_chars = projected
-                selected.append((delivery, message, view, rendered_chars, token))
-                used += rendered_chars
-                if max_messages and len(selected) >= max_messages:
-                    break
+                    projected = project(len(message.payload))
+                    if projected is None and not selected and len(message.payload) > 1:
+                        low, high = 1, len(message.payload) - 1
+                        while low <= high:
+                            middle = (low + high) // 2
+                            candidate = project(middle)
+                            if candidate is None:
+                                high = middle - 1
+                            else:
+                                projected = candidate
+                                low = middle + 1
+                    if projected is None:
+                        continue
+                    view, rendered_chars = projected
+                    selected.append((delivery, message, view, rendered_chars, token))
+                    used += rendered_chars
+                    if max_messages and len(selected) >= max_messages:
+                        break
 
             claimed: list[dict[str, Any]] = []
             for delivery, message, view, _, token in selected:
@@ -1790,6 +1894,26 @@ class SQLiteRelayMixin:
                 "session_ref": session.session_ref,
                 "container_ref": session.container_ref,
             }
+
+    def relay_session_view_by_endpoint(
+        self, endpoint_id: str, *, recent_seconds: int, now: datetime | None = None,
+    ) -> dict[str, Any]:
+        with self._relay_session_factory() as db:
+            current = db.execute(
+                select(RelaySessionRecord, RelayEndpointGenerationRecord)
+                .outerjoin(
+                    RelayEndpointGenerationRecord,
+                    RelayEndpointGenerationRecord.endpoint_id == RelaySessionRecord.id,
+                )
+                .where(RelaySessionRecord.id == endpoint_id)
+            ).one_or_none()
+            if current is None:
+                raise RelayNotFoundError("relay endpoint not found")
+            session, generation = current
+            return _session_view(
+                session, _now(now), recent_seconds,
+                int(generation.generation) if generation is not None else 0,
+            )
 
     def relay_work_ref_participant_counts(
         self, *, work_refs: list[str], now: datetime, recent_seconds: int
@@ -2499,6 +2623,19 @@ class SQLiteRelayMixin:
         now: datetime | None = None,
     ) -> dict[str, Any]:
         current = _now(now)
+        with self._relay_session_factory() as db:
+            # Pin message, delivery and endpoint reads to one WAL snapshot.
+            db.connection().exec_driver_sql("BEGIN")
+            message = db.get(RelayMessageRecord, message_id)
+            if message is None:
+                raise RelayNotFoundError("relay entity not found in the requested scope")
+            if _now(message.expires_at) > current:
+                return self._relay_status_in_session(
+                    db, message, current,
+                    payload_offset=offset or 0,
+                    payload_limit=page_size,
+                )
+        # Expiry cleanup needs a fresh writer transaction and identity map.
         with self._begin_relay_immediate() as db:
             message = db.get(RelayMessageRecord, message_id)
             if message is None:
@@ -2808,7 +2945,7 @@ class SQLiteRelayMixin:
                 scope_generation=event.get("scope_generation"),
                 recorded_at=event.get("recorded_at"),
             )
-        except (KeyError, TypeError, ValueError):
+        except (KeyError, TypeError, ValueError, ImmediateTransactionBusyError):
             return False
         return bool(result.get("recorded") or result.get("duplicate"))
 

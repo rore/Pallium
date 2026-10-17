@@ -7,9 +7,9 @@ import subprocess
 import sys
 import threading
 import time
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
-from types import SimpleNamespace
+from types import FunctionType, SimpleNamespace
 from urllib.parse import urlsplit
 
 import pytest
@@ -56,6 +56,284 @@ def _write_intent(root: Path, payload: dict, intent_id: str) -> None:
 def _register(registry: ClaudeWakeRegistry, root: Path, payload: dict, intent_id: str) -> bool:
     _write_intent(root, payload, intent_id)
     return registry.register(**payload, intent_id=intent_id)
+
+
+@pytest.mark.parametrize("phase", ["mkdir", "temporary_write", "atomic_replace"])
+@pytest.mark.parametrize("codes", ["native", "untrusted", "logger-failure"])
+def test_atomic_reservation_failure_reports_only_safe_metadata(
+    tmp_path, monkeypatch, caplog, phase, codes,
+):
+    import core.claude_wake as wake
+
+    registry = ClaudeWakeRegistry(state_dir=tmp_path)
+    assert _register(registry, tmp_path, PAYLOAD, "initial")
+    canonical = registry._canonical
+    before = canonical.read_bytes()
+    failure = PermissionError("private exception detail", str(canonical))
+    failure.errno = 13 if codes != "untrusted" else "private errno"
+    failure.winerror = 32 if codes != "untrusted" else True
+    native_replace = wake._replace_atomic_state_file
+
+    class FailurePath(type(tmp_path)):
+        def mkdir(self, *args, **kwargs):
+            if phase == "mkdir" and self == tmp_path:
+                raise failure
+            return super().mkdir(*args, **kwargs)
+
+        def write_text(self, *args, **kwargs):
+            if phase == "temporary_write" and self == canonical.with_name(canonical.name + ".tmp"):
+                raise failure
+            return super().write_text(*args, **kwargs)
+
+    def replace(source, destination):
+        if phase == "atomic_replace" and destination == canonical:
+            raise failure
+        return native_replace(source, destination)
+
+    transport_calls = []
+    scope = {key: PAYLOAD[key] for key in ("runtime", "session_ref", "container_ref")}
+    with monkeypatch.context() as fault:
+        fault.setattr(registry, "_canonical", FailurePath(canonical))
+        fault.setattr(wake, "_replace_atomic_state_file", replace)
+        if codes == "logger-failure":
+            def broken_log(*_args, **_kwargs):
+                raise RuntimeError("private logging failure")
+            fault.setattr(wake.logger, "warning", broken_log)
+        result = registry.attempt(**scope, transport=lambda *_: transport_calls.append(True) or True)
+    assert (result.outcome, result.reason) == ("deferred", "reservation_write_failed")
+    assert not transport_calls and canonical.read_bytes() == before
+    if codes != "logger-failure":
+        records = [record for record in caplog.records if record.name == "core.claude_wake"]
+        assert len(records) == 1
+        expected_codes = "errno=13 winerror=32" if codes == "native" else "errno=None winerror=None"
+        assert records[0].getMessage() == (
+            f"claude_wake_atomic_write_failed phase={phase} error_type=PermissionError {expected_codes}"
+        )
+        assert records[0].exc_info is None
+    assert registry.probe(**scope, transport=lambda *_: transport_calls.append(True) or True)
+    assert transport_calls == [True]
+    assert len(caplog.records) == (0 if codes == "logger-failure" else 1)
+
+
+def test_open_canonical_reader_preserves_snapshot_through_http_wake_and_ack(
+    client, tmp_path, monkeypatch,
+):
+    import core.claude_wake as wake
+
+    registry = client.app.state.claude_wake_registry
+    assert registry.persistent
+    scope = {"container_ref": PAYLOAD["container_ref"]}
+    for runtime, session in (("codex", "sender"), ("claude-code", PAYLOAD["session_ref"])):
+        assert client.post("/relay/turn", json={"runtime": runtime, "session_ref": session, **scope}).status_code == 200
+    assert _register(registry, registry._state_dir, PAYLOAD, "idle")
+    canonical = registry._canonical
+    previous = json.loads(canonical.read_text(encoding="utf-8"))
+    opened, release, notified = threading.Event(), threading.Event(), threading.Event()
+    snapshots, transport_calls = [], []
+    native_open = wake._open_atomic_state_file
+    reader_id = []
+
+    @contextmanager
+    def held_reader(path):
+        with native_open(path) as source:
+            if path == canonical and reader_id == [threading.get_ident()]:
+                opened.set()
+                release.wait()
+            yield source
+
+    def reader():
+        reader_id.append(threading.get_ident())
+        snapshots.append(registry._read_json(canonical))
+
+    def transport(*_args):
+        transport_calls.append(True)
+        notified.set()
+        return True
+
+    monkeypatch.setattr(wake, "_open_atomic_state_file", held_reader)
+    monkeypatch.setattr("app.claude_wake.claude_wake_transport", transport)
+    worker = threading.Thread(target=reader)
+    worker.start()
+    try:
+        assert opened.wait(1)
+        sent = client.post("/relay/messages", json={
+            "sender_runtime": "codex", "sender_session_ref": "sender",
+            "recipient": "claude-code:" + PAYLOAD["session_ref"],
+            "payload": "canonical reader snapshot ✓", **scope,
+        })
+        assert sent.status_code == 200, sent.text
+        assert notified.wait(1) and worker.is_alive()
+        assert json.loads(canonical.read_text(encoding="utf-8"))["registrations"][0]["state"] == "wake_inflight"
+        claimed = client.post("/relay/turn", json={
+            "runtime": "claude-code", "session_ref": PAYLOAD["session_ref"], **scope,
+        })
+        assert claimed.status_code == 200, claimed.text
+        delivery = claimed.json()["deliveries"][0]
+        assert client.post("/relay/deliveries/ack", json={
+            "delivery_id": delivery["delivery_id"], "claim_token": delivery["claim_token"], **scope,
+        }).status_code == 200
+        public = client.get(f"/relay/messages/{sent.json()['message_id']}", params=scope)
+        assert public.status_code == 200 and public.json()["deliveries"][0]["state"] == "delivered"
+        assert transport_calls == [True] and worker.is_alive()
+    finally:
+        release.set()
+        worker.join(1)
+        assert not worker.is_alive()
+    assert snapshots == [previous]
+
+
+def _modern_admission_fixture(root: Path) -> ClaudeWakeRegistry:
+    """Persist the modern row shape; hosted tests do not require Git history."""
+    registry = ClaudeWakeRegistry(state_dir=root)
+    assert _register(registry, root, PAYLOAD, "A")
+    path = root / "capabilities.json"
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    raw["registrations"][0]["admission_id"] = "A"
+    path.write_text(json.dumps(raw), encoding="utf-8")
+    before = path.read_bytes()
+    loaded = ClaudeWakeRegistry(state_dir=root)
+    assert path.read_bytes() == before
+    return loaded
+
+
+@pytest.mark.parametrize("scenario", ["remove", "transition", "replacement", "pending", "inflight"])
+def test_compatibility_reader_consumes_modern_notice_without_rewinding(tmp_path, scenario):
+    registry = _modern_admission_fixture(tmp_path)
+    scope = {key: PAYLOAD[key] for key in ("runtime", "session_ref", "container_ref")}
+    if scenario == "transition":
+        assert registry.mark_busy(**scope)
+        assert json.loads((tmp_path / "capabilities.json").read_text())["registrations"][0]["admission_id"] == "A"
+    elif scenario == "inflight":
+        assert registry.attempt(
+            **scope, delivery_id="relay-delivery-" + "a" * 32,
+            recipient_endpoint_id=ENDPOINT_ID, transport=lambda *_: True,
+        ).outcome == "accepted"
+    elif scenario == "replacement":
+        assert _register(registry, tmp_path, PAYLOAD, "B")
+        assert "admission_id" not in json.loads((tmp_path / "capabilities.json").read_text())["registrations"][0]
+    elif scenario == "pending":
+        _write_intent(tmp_path, {**PAYLOAD, "token": "replacement-token"}, "B")
+
+    identity = [*scope.values(), "A"]
+    digest = hashlib.sha256(json.dumps(identity, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
+    notice = tmp_path / "intents" / ("revoke-" + digest + ".json")
+    notice.write_text(json.dumps({**scope, "admission_id": "A", "closed": True}), encoding="utf-8")
+    registry = ClaudeWakeRegistry(state_dir=tmp_path)
+    registry.recover_intents()
+    registry.recover_intents()
+    state = registry.state_for(recipient_endpoint_id=ENDPOINT_ID, session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"])
+    assert state == ("idle" if scenario in {"replacement", "pending"} else "wake_inflight" if scenario == "inflight" else None)
+    assert not notice.exists()
+    if scenario == "pending":
+        tokens = []
+        assert registry.probe(**scope, transport=lambda _path, token: tokens.append(token) or True)
+        assert tokens == ["replacement-token"]
+    if scenario == "inflight":
+        assert not registry.probe(**scope, transport=lambda *_: pytest.fail("spent authority must not reopen"))
+        assert _register(registry, tmp_path, PAYLOAD, "B")
+        raw = json.loads((tmp_path / "capabilities.json").read_text())["registrations"][0]
+        assert raw["state"] == "wake_inflight" and "admission_id" not in raw
+
+
+def test_compatibility_writer_keeps_legacy_rows_and_disables_deferred_publication(tmp_path, monkeypatch):
+    from tests.test_claude_code_integration import _load_claude_hook
+
+    registry = ClaudeWakeRegistry(state_dir=tmp_path)
+    assert _register(registry, tmp_path, PAYLOAD, "legacy")
+    assert "admission_id" not in json.loads((tmp_path / "capabilities.json").read_text())["registrations"][0]
+    registry = _modern_admission_fixture(tmp_path)
+    common = _load_claude_hook("common", monkeypatch)
+    monkeypatch.setattr(common, "CLAUDE_WAKE_DIR", tmp_path)
+    monkeypatch.setattr(common, "CLAUDE_WAKE_INTENTS_DIR", tmp_path / "intents")
+    monkeypatch.setattr(common, "_wake_binding_matches_service", lambda: True)
+    written = []
+    monkeypatch.setattr(common, "_write_wake_intent", lambda payload: written.append(payload) or False)
+    assert common.close_claude_wake(PAYLOAD["session_ref"], PAYLOAD["container_ref"], credential_loss=True) is False
+    assert len(written) == 1 and written[0]["expected_admission_id"] == "A"
+    assert not list((tmp_path / "intents").glob("revoke-*.json"))
+    assert registry.probe(**{key: PAYLOAD[key] for key in ("runtime", "session_ref", "container_ref")}, transport=lambda *_: True)
+
+
+def test_compatibility_qualified_close_preserves_replacement_and_pending_intent(tmp_path, monkeypatch):
+    from tests.test_claude_code_integration import _load_claude_hook
+    import core.claude_wake as wake
+
+    canonical = tmp_path / "capabilities.json"
+    temporary = tmp_path / "capabilities.json.tmp"
+    intent_path = _intent_path(tmp_path, PAYLOAD["session_ref"])
+    phases = []
+    original_write, original_replace = Path.write_text, wake._replace_atomic_state_file
+    original_acquire = wake._acquire_intent_lock
+
+    def observe(phase, callback, *args, **kwargs):
+        entry = {"phase": phase, "started": time.monotonic(),
+                 "thread_id": threading.get_ident(), "path_length": len(str(args[0]))}
+        if len(phases) < 64:
+            phases.append(entry)
+        try:
+            result = callback(*args, **kwargs)
+            entry["ok"] = True
+            if phase == "acquire":
+                entry["acquired"] = result is not None
+            return result
+        except BaseException as error:
+            entry.update(ok=False, error_type=type(error).__name__,
+                         errno=getattr(error, "errno", None), winerror=getattr(error, "winerror", None))
+            raise
+        finally:
+            entry["finished"] = time.monotonic()
+
+    def write(path, *args, **kwargs):
+        if path == temporary:
+            return observe("write", original_write, path, *args, **kwargs)
+        return original_write(path, *args, **kwargs)
+
+    def replace(source, destination, *args, **kwargs):
+        if Path(source) == temporary and Path(destination) == canonical:
+            return observe("replace", original_replace, source, destination, *args, **kwargs)
+        return original_replace(source, destination, *args, **kwargs)
+
+    def acquire(path):
+        if path == intent_path:
+            return observe("acquire", original_acquire, path)
+        return original_acquire(path)
+
+    monkeypatch.setattr(wake, "_replace_atomic_state_file", replace)
+    monkeypatch.setattr(wake, "_acquire_intent_lock", acquire)
+    monkeypatch.setattr(Path, "write_text", write)
+
+    registry = _modern_admission_fixture(tmp_path)
+    common = _load_claude_hook("common", monkeypatch)
+    monkeypatch.setattr(common, "CLAUDE_WAKE_DIR", tmp_path)
+    monkeypatch.setattr(common, "CLAUDE_WAKE_INTENTS_DIR", tmp_path / "intents")
+    monkeypatch.setattr(common, "_wake_binding_matches_service", lambda: True)
+    _write_intent(tmp_path, {**PAYLOAD, "token": "new-token"}, "B")
+    intent = _intent_path(tmp_path, PAYLOAD["session_ref"])
+    pending = intent.read_bytes()
+    assert common.close_claude_wake(PAYLOAD["session_ref"], PAYLOAD["container_ref"], credential_loss=True) is False
+    assert intent.read_bytes() == pending
+    assert not list((tmp_path / "intents").glob("revoke-*.json"))
+
+    assert registry.register(**{**PAYLOAD, "token": "new-token"}, intent_id="B")
+    intent.write_text(json.dumps({
+        **{key: PAYLOAD[key] for key in ("runtime", "session_ref", "container_ref")},
+        "intent_id": "old-close", "closed": True, "expected_admission_id": "A",
+    }), encoding="utf-8")
+    assert not registry.close(**{key: PAYLOAD[key] for key in ("runtime", "session_ref", "container_ref")}, intent_id="old-close")
+    tokens = []
+    original_attempt = registry.attempt
+
+    def attempt(*args, **kwargs):
+        result = original_attempt(*args, **kwargs)
+        phases.append({"phase": "attempt", "outcome": result.outcome, "reason": result.reason})
+        return result
+
+    monkeypatch.setattr(registry, "attempt", attempt)
+    try:
+        assert registry.probe(**{key: PAYLOAD[key] for key in ("runtime", "session_ref", "container_ref")}, transport=lambda _path, token: tokens.append(token) or True), phases
+    finally:
+        (tmp_path / "canonical-publication-diagnostics.json").write_text(json.dumps(phases), encoding="utf-8")
+    assert tokens == ["new-token"]
 
 
 def test_compare_before_apply_rejects_delayed_intent_and_restart_uses_latest(tmp_path: Path) -> None:
@@ -332,9 +610,12 @@ def test_accepted_inflight_rehydrates_without_elapsed_time_release(tmp_path: Pat
 @pytest.mark.parametrize("native_outcome", ["accepted", "uncertain"])
 def test_restricted_resume_fences_inflight_until_normal_turn_ack(
     client: TestClient, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture, native_outcome: str,
+    request: pytest.FixtureRequest, tmp_path: Path,
 ) -> None:
     from tests.test_claude_code_integration import _load_claude_hook
+    from tests.test_codex_wake_retry_edges import _observe_relay_busy_acquisition
 
+    _observe_relay_busy_acquisition(client.app.state.pallium_service._storage, monkeypatch, request, tmp_path)
     common = _load_claude_hook("common", monkeypatch)
     registry = client.app.state.claude_wake_registry
     wake_dir = registry._state_dir
@@ -798,9 +1079,12 @@ def test_session_end_outage_preserves_newer_registration_intent(tmp_path: Path, 
     assert json.loads(closed_path.read_text(encoding="utf-8"))["intent_id"] == "newer"
 
 
-@pytest.mark.parametrize("startup_delay", [0.0, 1.2], ids=["normal-startup", "delayed-startup"])
+@pytest.mark.parametrize(
+    "startup_delay,exhaust_budget", [(0.0, False), (1.2, False), (0.0, True)],
+    ids=["normal-startup", "delayed-startup", "admission-refusal"],
+)
 def test_new_publisher_waits_for_registry_compare_delete(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, startup_delay: float,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, startup_delay: float, exhaust_budget: bool,
 ) -> None:
     state_dir = tmp_path / "wake"
     registry = ClaudeWakeRegistry(state_dir=state_dir)
@@ -811,6 +1095,7 @@ def test_new_publisher_waits_for_registry_compare_delete(
         json.dumps({"relay_id": "0" * 64}), encoding="utf-8"
     )
     path = _intent_path(state_dir, PAYLOAD["session_ref"])
+    before = json.loads(path.read_text(encoding="utf-8"))
     deleting = threading.Event()
     finish_delete = threading.Event()
     result: list[bool] = []
@@ -842,6 +1127,37 @@ common.CLAUDE_WAKE_DIR = Path(sys.argv[2])
 common.CLAUDE_WAKE_INTENTS_DIR = Path(sys.argv[3])
 common.PALLIUM_PORT = 65534
 common._WAKE_BINDING = {"port": 65534, "relay_id": "0" * 64, "wake_dir": str(common.CLAUDE_WAKE_DIR)}
+exhaust_budget = sys.argv[7] == "True"
+evidence = {"replace_calls": 0}
+now = [0.0]
+if exhaust_budget:
+    from types import SimpleNamespace
+    common.time = SimpleNamespace(**vars(time))
+    common.time.monotonic = lambda: now[0]
+    acquire = common._acquire_file_lock
+    def observe_acquire(path, budget):
+        result = acquire(path, budget)
+        evidence.update(budget=budget, refused=result is None, clock=now[0])
+        return result
+    common._acquire_file_lock = observe_acquire
+    common.os = SimpleNamespace(**vars(os))
+    replace = common.os.replace
+    def observe_replace(*args, **kwargs):
+        evidence["replace_calls"] += 1
+        return replace(*args, **kwargs)
+    common.os.replace = observe_replace
+else:
+    from itertools import count
+    from types import SimpleNamespace
+    # Qualify compare-delete ordering independently of parent/child scheduling latency.
+    common.time = SimpleNamespace(**vars(time))
+    common.time.monotonic = count(step=0.001).__next__
+
+def observe_contention(error):
+    if exhaust_budget:
+        evidence["errno"] = error.errno
+        now[0] = 0.101
+
 if os.name == "nt":
     import msvcrt
     native_lock = msvcrt.locking
@@ -849,9 +1165,10 @@ if os.name == "nt":
     def observe_lock(fd, mode, count):
         try:
             return native_lock(fd, mode, count)
-        except OSError:
+        except OSError as error:
             if mode == msvcrt.LK_NBLCK and not reported[0]:
                 reported[0] = True
+                observe_contention(error)
                 Path(sys.argv[5]).write_text("contended", encoding="utf-8")
                 print("contended", flush=True)
             raise
@@ -863,20 +1180,23 @@ else:
     def observe_lock(fd, operation):
         try:
             return native_lock(fd, operation)
-        except OSError:
+        except OSError as error:
             if operation & fcntl.LOCK_NB and not reported[0]:
                 reported[0] = True
+                observe_contention(error)
                 Path(sys.argv[5]).write_text("contended", encoding="utf-8")
                 print("contended", flush=True)
             raise
     fcntl.flock = observe_lock
 print("publishing", flush=True)
 print(common._write_wake_intent(json.loads(sys.argv[4])), flush=True)
+if exhaust_budget:
+    print("admission-evidence=" + json.dumps(evidence), file=sys.stderr, flush=True)
 """
         process = subprocess.Popen(
             [sys.executable, "-c", script, str(hook_dir), str(state_dir),
              str(state_dir / "intents"), json.dumps(newer),
-             str(tmp_path / "contended"), str(startup_delay)],
+             str(tmp_path / "contended"), str(startup_delay), str(exhaust_budget)],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True,
             env={**os.environ, "HOME": str(tmp_path), "USERPROFILE": str(tmp_path)},
@@ -886,6 +1206,31 @@ print(common._write_wake_intent(json.loads(sys.argv[4])), flush=True)
         while not marker.exists() and process.poll() is None and time.monotonic() < marker_deadline:
             time.sleep(0.01)
         assert marker.exists(), "child did not observe real OS lock contention before timeout"
+        if exhaust_budget:
+            import errno
+
+            output, errors = process.communicate(timeout=3)
+            assert process.returncode == 0, errors
+            assert output.splitlines() == ["publishing", "contended", "False"], errors
+            error_lines = errors.splitlines()
+            assert len(error_lines) == 2, errors
+            assert error_lines[1].startswith("admission-evidence="), errors
+            evidence = json.loads(error_lines[1].removeprefix("admission-evidence="))
+            error_class = "PermissionError" if os.name == "nt" else "BlockingIOError"
+            assert error_lines[0] == (
+                "pallium hook: session_state_write_failed phase=native_wait_exhausted "
+                f"error={error_class} errno={evidence['errno']} winerror=None"
+            ), errors
+            assert evidence["errno"] in (errno.EACCES, errno.EAGAIN), evidence
+            assert evidence["budget"] == 0.1 and evidence["clock"] == 0.101, evidence
+            assert evidence["refused"] is True and evidence["replace_calls"] == 0, evidence
+            assert worker.is_alive() and not finish_delete.is_set()
+            assert json.loads(path.read_text(encoding="utf-8")) == before
+            finish_delete.set()
+            worker.join(timeout=2)
+            assert not worker.is_alive() and result == [True]
+            assert not path.exists()
+            return
         finish_delete.set()
         output, errors = process.communicate(timeout=3)
         worker.join(timeout=2)
@@ -918,6 +1263,7 @@ def test_crashed_intent_lock_owner_allows_hook_publication_and_http_recovery(
     import contextlib
     import time
     from types import FunctionType
+    from unittest.mock import patch
 
     import anyio.from_thread
     import fastapi.routing
@@ -1005,21 +1351,43 @@ def test_crashed_intent_lock_owner_allows_hook_publication_and_http_recovery(
     path = _intent_path(state_dir, PAYLOAD["session_ref"])
     registry = ClaudeWakeRegistry(state_dir=state_dir)
     monkeypatch.setattr(registry, "register", timed_sync("registry", registry.register))
-    script = (
-        "import sys; from pathlib import Path; "
-        "from core.claude_wake import _acquire_intent_lock; "
-        "lock=_acquire_intent_lock(Path(sys.argv[1])); "
-        "print('locked' if lock else 'failed',flush=True); "
-        "sys.stdin.read()"
-    )
+    ready = tmp_path / "intent-owner-ready"
+    script = """
+import os, sys
+from pathlib import Path
+path = Path(sys.argv[1]).with_suffix(".lock")
+path.parent.mkdir(parents=True, exist_ok=True)
+with path.open("a+b") as lock:
+    lock.seek(0, os.SEEK_END)
+    if lock.tell() == 0:
+        lock.write(b"0")
+        lock.flush()
+    lock.seek(0)
+    if sys.platform == "win32":
+        import msvcrt
+        msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+    else:
+        import fcntl
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    Path(sys.argv[2]).write_text("locked", encoding="utf-8")
+    print("locked", flush=True)
+    sys.stdin.read()
+"""
     process = subprocess.Popen(
-        [sys.executable, "-c", script, str(path)],
+        [sys.executable, "-c", script, str(path), str(ready)],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         text=True,
     )
     try:
         assert process.stdout is not None
-        assert process.stdout.readline() == "locked\n"
+        startup_deadline = time.monotonic() + 5
+        while not ready.exists() and process.poll() is None and time.monotonic() < startup_deadline:
+            time.sleep(0.01)
+        assert ready.exists(), (
+            process.stderr.read() if process.poll() is not None and process.stderr is not None
+            else "child did not acquire the real intent lock before startup timeout"
+        )
+        assert process.poll() is None, "intent lock owner exited before the caller journey"
         monkeypatch.setenv("PALLIUM_CLAUDE_WAKE_DIR", str(state_dir))
         common = _load_claude_hook("common", monkeypatch)
         common.CLAUDE_WAKE_DIR = state_dir
@@ -1028,6 +1396,19 @@ def test_crashed_intent_lock_owner_allows_hook_publication_and_http_recovery(
         monkeypatch.setattr(common, "register_claude_wake", timed_sync("hook", common.register_claude_wake))
         with _client(registry) as http:
             monkeypatch.setattr(http, "post", timed_sync("http", http.post))
+            # Qualify steady-state lock refusal separately from cold router setup.
+            old_intent_before_warmup = path.read_bytes()
+            timing_origin = time.monotonic()
+            with patch.object(registry, "register", wraps=registry.register) as register:
+                warmup = http.post("/internal/claude-wake/register", json={})
+                assert warmup.status_code == 400
+                assert warmup.json()["detail"] == "invalid registration"
+                register.assert_not_called()
+            timing_origin = None
+            cold_setup_samples = list(timing_samples)
+            timing_samples.clear()
+            assert registry._registrations == {} and not registry._canonical.exists()
+            assert path.read_bytes() == old_intent_before_warmup
             started = time.monotonic()
             timing_origin = started
             rejected = http.post("/internal/claude-wake/register", json=old)
@@ -1035,6 +1416,7 @@ def test_crashed_intent_lock_owner_allows_hook_publication_and_http_recovery(
             assert rejected.status_code == 409
             assert time.monotonic() - started < 0.5, json.dumps({
                 "router_setup_probe": int(router_setup_probe), "timings": timing_samples,
+                "cold_setup": cold_setup_samples,
             })
             assert registry._registrations == {} and not registry._canonical.exists()
             assert json.loads(path.read_text(encoding="utf-8"))["intent_id"] == "old"
@@ -1077,6 +1459,7 @@ def test_crashed_intent_lock_owner_allows_hook_publication_and_http_recovery(
             timing_origin = None
             assert time.monotonic() - started < 0.5, json.dumps({
                 "router_setup_probe": int(router_setup_probe), "timings": timing_samples,
+                "cold_setup": cold_setup_samples,
             })
             assert http_requests == []
             assert registry._registrations == {} and not registry._canonical.exists()
@@ -1130,7 +1513,11 @@ def test_posix_capacity_reclaims_only_provably_absent_endpoints(tmp_path: Path, 
         endpoint.write_text("present", encoding="utf-8")
     registry = ClaudeWakeRegistry(state_dir=state_dir)
     assert _register(registry, state_dir, {**PAYLOAD, "socket_path": str(endpoint)}, "old")
-    monkeypatch.setattr(wake.os, "name", "posix")
+    endpoint_probe = ClaudeWakeRegistry._endpoint_is_provably_absent
+    namespace = dict(endpoint_probe.__globals__)
+    namespace["os"] = SimpleNamespace(**dict(vars(wake.os), name="posix"))
+    monkeypatch.setattr(ClaudeWakeRegistry, "_endpoint_is_provably_absent",
+                        staticmethod(FunctionType(endpoint_probe.__code__, namespace)))
     monkeypatch.setattr(registry, "probe", lambda *_args, **_kwargs: pytest.fail("capacity cleanup must not admit a turn"))
     assert _register(registry, state_dir, {**PAYLOAD, "session_ref": "new"}, "new") is accepted
     assert [candidate["session_ref"] for candidate in registry.recovery_candidates()] == (["new"] if accepted else [PAYLOAD["session_ref"]])
@@ -1149,7 +1536,11 @@ def test_windows_capacity_reclaims_only_file_not_found(tmp_path: Path, monkeypat
     state_dir = tmp_path / "wake"
     registry = ClaudeWakeRegistry(state_dir=state_dir)
     assert _register(registry, state_dir, {**PAYLOAD, "socket_path": r"\\.\pipe\old"}, "old")
-    monkeypatch.setattr(wake.os, "name", "nt")
+    endpoint_probe = ClaudeWakeRegistry._endpoint_is_provably_absent
+    namespace = dict(endpoint_probe.__globals__)
+    namespace["os"] = SimpleNamespace(**dict(vars(wake.os), name="nt"))
+    monkeypatch.setattr(ClaudeWakeRegistry, "_endpoint_is_provably_absent",
+                        staticmethod(FunctionType(endpoint_probe.__code__, namespace)))
     monkeypatch.setitem(sys.modules, "pywintypes", SimpleNamespace(error=PipeError))
     monkeypatch.setitem(sys.modules, "winerror", SimpleNamespace(ERROR_FILE_NOT_FOUND=2))
     monkeypatch.setitem(sys.modules, "win32pipe", SimpleNamespace(WaitNamedPipe=lambda *_: (_ for _ in ()).throw(PipeError(code))))
@@ -1249,11 +1640,41 @@ def test_recovery_health_callbacks_bind_each_exact_candidate(
     from datetime import datetime, timezone
 
     from app import claude_wake
+    from core import claude_wake as wake_core
 
     registry = ClaudeWakeRegistry(state_dir=tmp_path)
     second = {**PAYLOAD, "session_ref": "session-β"}
-    assert _register(registry, tmp_path, PAYLOAD, "first")
-    assert _register(registry, tmp_path, second, "second")
+    stages = []
+
+    def observe(stage, original):
+        def call(*args, **kwargs):
+            started = time.monotonic()
+            result, error = None, None
+            try:
+                result = original(*args, **kwargs)
+                return result
+            except BaseException as exc:
+                error = type(exc).__name__
+                raise
+            finally:
+                stages.append({
+                    "stage": stage, "elapsed_ms": (time.monotonic() - started) * 1000,
+                    "result": result if type(result) is bool else result is not None,
+                    "error": error,
+                })
+        return call
+
+    # Keep real clocks and native locks; expose only the failed setup phase.
+    with monkeypatch.context() as setup:
+        setup.setattr(wake_core, "_acquire_intent_lock", observe("intent_lock", wake_core._acquire_intent_lock))
+        for name in ("_read_intent_locked", "_intent_matches", "_write_canonical_locked", "_clear_unusable_locked", "register"):
+            setup.setattr(registry, name, observe(name, getattr(registry, name)))
+        try:
+            assert _register(registry, tmp_path, PAYLOAD, "first"), json.dumps(stages)
+            assert _register(registry, tmp_path, second, "second"), json.dumps(stages)
+        except BaseException as exc:
+            exc.add_note("Claude registration setup: " + json.dumps(stages))
+            raise
     callbacks = []
     marked: list[tuple[str, str]] = []
 

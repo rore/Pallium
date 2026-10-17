@@ -3,9 +3,10 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+import threading
 import time
 import uuid
-from contextlib import contextmanager, nullcontext
+from contextlib import closing, contextmanager, nullcontext
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, TypeVar
@@ -117,9 +118,12 @@ class SQLiteStorageProvider(
     StorageProvider,
 ):
     _RELAY_IMMEDIATE_ATTEMPTS = 3
-    _RELAY_IMMEDIATE_BUSY_TIMEOUT_MS = 100
+    # Spend the former 50/100ms outer pauses in native waits: the same 450ms allocation.
+    _RELAY_IMMEDIATE_BUSY_TIMEOUT_MS = 150
+    _RELAY_IMMEDIATE_ACQUISITION_SECONDS = 0.45
 
     def __init__(self, database_url: str, relay_database_url: str | None = None) -> None:
+        self._relay_writer_lock = threading.Lock()
         separate_relay = relay_database_url is not None and not self._same_sqlite_file(
             database_url, relay_database_url
         )
@@ -129,6 +133,7 @@ class SQLiteStorageProvider(
             else nullcontext()
         )
         with pair_lock:
+            self._validate_main_work_ref_database(database_url)
             if separate_relay:
                 self._validate_relay_database_pair(database_url, relay_database_url)
             else:
@@ -137,8 +142,12 @@ class SQLiteStorageProvider(
             self._session_factory = sessionmaker(
                 self._engine, expire_on_commit=False, class_=Session
             )
-            self._initialize_sqlite_pragmas(self._engine)
-            self._initialize_schema(include_relay=not separate_relay)
+            try:
+                self._initialize_sqlite_pragmas(self._engine)
+                self._initialize_schema(include_relay=not separate_relay)
+            except BaseException:
+                self._engine.dispose()
+                raise
             self._relay_engine = self._engine
             self._relay_session_factory = self._session_factory
             if separate_relay:
@@ -158,10 +167,6 @@ class SQLiteStorageProvider(
         lock_path = path.with_name(f"{path.name}.relay-pair-init.lock")
         lock_path.parent.mkdir(parents=True, exist_ok=True)
         with lock_path.open("a+b") as lock_file:
-            lock_file.seek(0, 2)
-            if lock_file.tell() == 0:
-                lock_file.write(b"0")
-                lock_file.flush()
             lock_file.seek(0)
             self._acquire_schema_file_lock(lock_file)
             try:
@@ -203,7 +208,7 @@ class SQLiteStorageProvider(
             }
         }
         try:
-            with sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True) as connection:
+            with closing(sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)) as connection, connection:
                 tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
                 relay_tables = (set(required) | set(optional)) & tables
                 required_relay_tables = set(required) & tables
@@ -250,6 +255,7 @@ class SQLiteStorageProvider(
         """Open an existing Relay database without running schema migrations."""
         cls._validate_relay_schema(relay_database_url, require_tables=True)
         instance = cls.__new__(cls)
+        instance._relay_writer_lock = threading.Lock()
         engine = cls._create_engine(relay_database_url)
         factory = sessionmaker(engine, expire_on_commit=False, class_=Session)
         instance._engine = instance._relay_engine = engine
@@ -279,6 +285,16 @@ class SQLiteStorageProvider(
             cursor.execute("PRAGMA busy_timeout=15000")
             cursor.close()
 
+    def _validate_main_work_ref_database(self, database_url: str) -> None:
+        path = self._sqlite_path(database_url)
+        if path is None or not path.exists():
+            return
+        connection = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
+        try:
+            self._validate_main_work_ref_state(connection.execute, allow_legacy_columns=True)
+        finally:
+            connection.close()
+
     def _initialize_sqlite_pragmas(self, engine) -> None:
         if engine.url.get_backend_name() != "sqlite":
             return
@@ -286,6 +302,8 @@ class SQLiteStorageProvider(
             with engine.connect().execution_options(
                 isolation_level="AUTOCOMMIT"
             ) as connection:
+                if engine is self._engine:
+                    self._validate_main_work_ref_state(connection.exec_driver_sql, allow_legacy_columns=True)
                 # auto_vacuum must precede WAL on a new database.
                 connection.exec_driver_sql("PRAGMA auto_vacuum=INCREMENTAL")
                 connection.exec_driver_sql("PRAGMA journal_mode=WAL")
@@ -1455,39 +1473,82 @@ class SQLiteStorageProvider(
             ).first()
             return self._to_index_entry(row) if row else None
 
+    def _raw_source_vector_backfill_statement(
+        self, *, lexical_text_view_name: str, vector_text_view_name: str,
+        require_minimum_length: bool = True,
+    ):
+        vector_entry = aliased(IndexEntryRecord)
+        matching_vector = (
+            select(vector_entry.id)
+            .where(
+                vector_entry.target_kind == "source_item",
+                vector_entry.target_id == IndexEntryRecord.target_id,
+                vector_entry.index_type == "vector",
+                vector_entry.text_view_name == vector_text_view_name,
+            )
+            .exists()
+        )
+        eligible_source = (
+            select(SourceItemRecord.id)
+            .where(
+                SourceItemRecord.id == IndexEntryRecord.target_id,
+                SourceItemRecord.artifact_kind.in_(("message", "assistant_output")),
+            )
+        )
+        if require_minimum_length:
+            eligible_source = eligible_source.where(func.length(SourceItemRecord.content) >= 40)
+        eligible_source = eligible_source.exists()
+        return (
+            select(IndexEntryRecord)
+            .where(
+                IndexEntryRecord.index_type == "lexical",
+                IndexEntryRecord.target_kind == "source_item",
+                IndexEntryRecord.text_view_name == lexical_text_view_name,
+                ~matching_vector,
+                eligible_source,
+            )
+        )
+
     def raw_source_vector_backfill_needed(
         self, *, lexical_text_view_name: str, vector_text_view_name: str,
     ) -> bool:
-        vector_entry = aliased(IndexEntryRecord)
-        statement = (
-            select(IndexEntryRecord.id)
-            .join(
-                SourceItemRecord,
-                and_(
-                    SourceItemRecord.id == IndexEntryRecord.target_id,
-                    IndexEntryRecord.target_kind == "source_item",
-                ),
-            )
-            .outerjoin(
-                vector_entry,
-                and_(
-                    vector_entry.target_kind == "source_item",
-                    vector_entry.target_id == IndexEntryRecord.target_id,
-                    vector_entry.index_type == "vector",
-                    vector_entry.text_view_name == vector_text_view_name,
-                ),
-            )
-            .where(
-                IndexEntryRecord.index_type == "lexical",
-                IndexEntryRecord.text_view_name == lexical_text_view_name,
-                SourceItemRecord.artifact_kind.in_(("message", "assistant_output")),
-                func.length(SourceItemRecord.content) >= 40,
-                vector_entry.id.is_(None),
-            )
-            .limit(1)
-        )
+        statement = self._raw_source_vector_backfill_statement(
+            lexical_text_view_name=lexical_text_view_name,
+            vector_text_view_name=vector_text_view_name,
+        ).with_only_columns(IndexEntryRecord.id).limit(1)
         with self._session_factory() as session:
-            return session.scalar(statement) is not None
+            if session.scalar(statement) is not None:
+                return True
+            # SQLite length(TEXT) stops at NUL; the driver's Python REGEXP counts Unicode codepoints.
+            source = aliased(SourceItemRecord)
+            candidates = self._raw_source_vector_backfill_statement(
+                lexical_text_view_name=lexical_text_view_name,
+                vector_text_view_name=vector_text_view_name,
+                require_minimum_length=False,
+            ).with_only_columns(IndexEntryRecord.id).join(
+                source, source.id == IndexEntryRecord.target_id,
+            ).where(
+                func.instr(source.content, "\x00") > 0,
+                source.content.regexp_match("(?s)^.{40}"),
+            ).limit(1)
+            return session.scalar(candidates) is not None
+
+    def list_raw_source_vector_backfill_page(
+        self, *, lexical_text_view_name: str, vector_text_view_name: str,
+        after_id: str | None = None, limit: int = 128,
+    ) -> list[IndexEntry]:
+        """Page missing-vector candidates; Python checks actual text eligibility."""
+        statement = self._raw_source_vector_backfill_statement(
+            lexical_text_view_name=lexical_text_view_name,
+            vector_text_view_name=vector_text_view_name,
+            require_minimum_length=False,
+        ).order_by(IndexEntryRecord.id.asc())
+        if after_id is not None:
+            statement = statement.where(IndexEntryRecord.id > after_id)
+        with self._session_factory() as session:
+            records = session.scalars(statement.limit(limit)).all()
+        return [self._to_index_entry(record) for record in records]
+
     def list_index_entries_by_type(self, index_type: str) -> list[IndexEntry]:
         with self._session_factory() as session:
             records = session.scalars(

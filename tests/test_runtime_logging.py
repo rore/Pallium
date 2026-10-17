@@ -3,10 +3,11 @@ from __future__ import annotations
 import logging
 import re
 import types
+import pytest
 
 from app.cleaner import run_cleaner
 from app.config import AppConfig
-from app.runtime_logging import emit_runtime_log
+from app.runtime_logging import emit_runtime_log, startup_stage
 from storage.vector_index import VectorIndexConfig
 from storage.base import RetentionRunStats
 from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
@@ -16,6 +17,73 @@ TIMESTAMPED_CLEANER_LINE = re.compile(
     r"^\d{4}-\d{2}-\d{2}T.+ \[cleaner\] cleaner_id=cleaner-test retention deleted_source_items=1 ",
     re.MULTILINE,
 )
+
+
+def test_uvicorn_logging_owns_root_after_actual_mcp_construction() -> None:
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    # Isolate dictConfig and FastMCP's process-wide basicConfig from pytest.
+    script = """
+import logging
+import uvicorn
+from app.runtime_logging import RuntimeLogFormatter, build_uvicorn_log_config
+from app.mcp.server import create_server
+
+uvicorn.Config('app.main:app', factory=True,
+               log_config=build_uvicorn_log_config(component='api'))
+root = logging.getLogger()
+handlers = tuple(root.handlers)
+create_server()
+assert tuple(root.handlers) == handlers, root.handlers
+assert len(handlers) == 1, handlers
+assert type(handlers[0]) is logging.StreamHandler, handlers
+assert isinstance(handlers[0].formatter, RuntimeLogFormatter)
+logging.getLogger('api.routes').warning('logging-owner-unicode-\u05e9\u05dc\u05d5\u05dd')
+httpx_logger = logging.getLogger('httpx')
+assert httpx_logger.propagate
+httpx_logger.info('httpx-info-noise-marker')
+httpx_logger.warning('httpx-warning-marker')
+"""
+    result = subprocess.run(
+        [sys.executable, "-B", "-c", script],
+        cwd=Path(__file__).resolve().parents[1],
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+        capture_output=True, timeout=30,
+    )
+    stderr = result.stderr.decode("utf-8")
+    assert result.returncode == 0, stderr
+    marker = "logging-owner-unicode-\u05e9\u05dc\u05d5\u05dd"
+    assert stderr.count(marker) == 1, stderr
+    assert "httpx-info-noise-marker" not in stderr, stderr
+    assert stderr.count("httpx-warning-marker") == 1, stderr
+    assert any(
+        re.fullmatch(r"\d{4}-\d{2}-\d{2}T.+ \[api\] " + marker, line)
+        for line in stderr.splitlines()
+    ), stderr
+
+
+@pytest.mark.parametrize("failed", [False, True])
+def test_startup_stage_logs_timing_without_exception_content(monkeypatch, caplog, failed):
+    ticks = iter([10.0, 12.5])
+    monkeypatch.setattr("app.runtime_logging.time.monotonic", lambda: next(ticks))
+    monkeypatch.setattr("app.runtime_logging.os.getpid", lambda: 123)
+    caplog.set_level(logging.INFO)
+    error = RuntimeError("sensitive-test-content")
+    try:
+        with startup_stage("service_storage"):
+            if failed:
+                raise error
+    except RuntimeError as caught:
+        assert caught is error
+    assert [record.getMessage() for record in caplog.records] == [
+        "startup stage=service_storage outcome=start pid=123",
+        f"startup stage=service_storage outcome={'failed' if failed else 'complete'} pid=123 elapsed_seconds=2.500",
+    ]
+    assert all(record.exc_info is None for record in caplog.records)
+    assert "sensitive-test-content" not in caplog.text
 
 
 class FakeRetentionService:

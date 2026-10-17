@@ -15,6 +15,7 @@ import time
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+from contextlib import closing
 from collections.abc import Callable, Mapping
 
 from app.config import AppConfig, SnapshotConfig
@@ -78,9 +79,10 @@ def create_snapshot(live_db_path: str | Mapping[str, str], snapshot_dir: Path, *
         manifest = snapshot_dir / f"pallium-{timestamp}.manifest.json"
         try:
             for role, source in paths.items():
-                src = sqlite3.connect(source, timeout=5); dst = sqlite3.connect(str(tmp[role]))
-                try: src.backup(dst, pages=pages_per_step, sleep=sleep_between)
-                finally: dst.close(); src.close()
+                with closing(sqlite3.connect(source, timeout=5)) as src, closing(
+                    sqlite3.connect(str(tmp[role]))
+                ) as dst:
+                    src.backup(dst, pages=pages_per_step, sleep=sleep_between)
                 if not _validate_snapshot(tmp[role]): raise RuntimeError(f"snapshot validation failed for {role}")
             for role in final: os.replace(str(tmp[role]), str(final[role]))
             manifest_tmp.write_text(json.dumps({"generation": timestamp}), encoding="utf-8")

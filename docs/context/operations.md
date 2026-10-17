@@ -46,6 +46,45 @@ enabled unit starts and becomes ready when the Ubuntu user session starts
 again. This is WSL qualification, not a live claim for every Linux distribution
 or for macOS.
 
+## Startup diagnostics
+
+API startup has a bounded 120-second allowance per supervisor attempt. This is
+an availability safeguard, not a startup performance target. Logs identify each
+attempt and time storage setup, embedding initialization, vector loading, the raw
+backfill check and lifespan initialization. A completed stage only means that
+call returned; verify health and `embedding_provider_ok` separately. Delays before
+these markers are not attributed by them.
+
+The production ASGI factory binds before heavyweight service construction. One
+owned task builds the service off the HTTP loop, enters the MCP/runtime lifespan,
+and owns its exit. Embedded `create_app` remains the eager builder. This improves
+responsiveness during initialization; it does not promise less initialization work.
+
+`/health` and `/status` distinguish `initialized` from `ready`. Before construction
+and runtime/MCP entry finish, both are false and operational HTTP/MCP/WebSocket
+access is refused without reading partial resources. After safe initialization,
+lexical and Relay access are available while `ready` remains false during vector
+bootstrap or rebuild. A successful bounded first reconciliation batch (at most50,
+not historical convergence) and completion of any required rebuild establish
+readiness. Provider-unavailable initialization retains HTTP200 degraded health,
+initialized access and `ready: false`; vector bootstrap failures expose a safe
+category without hiding failure behind a completed thread or absent checkpoint.
+
+Supervisor startup success requires initialized, nonfatal HTTP as well as its
+existing ownership checks, including nonce, legacy and missing-token-grace paths.
+It does not require vector readiness; CLI full-search readiness remains stricter.
+Shutdown revokes delegation/readiness before waiting off-loop for actual owned
+worker termination and tracked operations, then closes service/storage. A bounded
+worker stop timeout alone does not establish settlement. This lifecycle does not
+reload existing MCP processes or qualify their installed versions.
+
+Relay registry reads and post-persistence callbacks run through the existing
+tracked worker runner, so their SQLite or native I/O cannot block the HTTP event
+loop. Non-Codex activation does not consult Codex authority. Queue diagnostics
+use an all-row status index, including items without a use case; legacy NULL
+statuses still count as pending. The existing schema initializer installs the
+index on populated databases without a new migration command or setting.
+
 ## SQLite database operations
 
 Both SQLite files use the same lifecycle: WAL, auto_vacuum=INCREMENTAL, and a bounded connection busy timeout. Relay writes use only the Relay file, so a long ingestion transaction in the main file does not hold the Relay writer lock. Each file must still be backed up, checked, and restored as a pair; never mix files from different snapshot generations.
@@ -53,6 +92,40 @@ Both SQLite files use the same lifecycle: WAL, auto_vacuum=INCREMENTAL, and a bo
 Persistent `auto_vacuum` and WAL modes are initialized once under the schema lock on an autocommit connection. Pooled connections set only their bounded busy timeout before ordinary work. Incremental-vacuum/checkpoint maintenance temporarily fails fast and restores the connection's prior timeout, so a live reader defers truncation instead of holding a worker for the full busy window.
 
 Only the current Relay schema is supported. Keep the main and Relay SQLite files together, back up and restore them as a paired snapshot generation, and verify /health, /status, and /debug/queue/health after service restart. A partial live pair or a database missing required current Relay columns fails closed without being rewritten.
+
+### Main database work-reference projection
+
+The main database owns `PRAGMA user_version`: legacy/fresh version 0 migrates to 1
+with one atomic rebuild of `source_item_work_refs` from authoritative metadata.
+The projection table/index, rows and completion mark commit together. Failure
+rolls back that step; other schema initialization steps are not globally atomic.
+Unknown versions and incompatible source/projection schemas fail closed.
+Supported version 0 snapshots with the baseline source columns but no
+`metadata_json` first add that nullable column through the existing structural
+upgrade. Those column upgrades remain outside the atomic projection step.
+Version 1 missing metadata, missing source IDs and legacy tables missing metadata
+without the complete baseline still fail admission. Projection and repair require
+both authoritative columns before deleting rows or marking completion.
+
+Completed version 1 startup skips the metadata scan and projection rewrite.
+A missing projection table is rebuilt atomically without resetting the version;
+a missing lookup index alone is restored without rebuilding rows. Supported
+metadata updates and retention still maintain the projection incrementally.
+Out-of-band metadata/row edits no longer receive automatic repair on reopen.
+The existing private `_backfill_source_item_work_refs()` repair remains explicit,
+unconditional and version-preserving; this introduces no public repair command.
+
+Separate Relay database versions/rows are not migrated by this main step.
+Ordinary Relay startup maintenance can independently change its schema identity
+(for example, by initializing planner statistics) and invalidate a repair manifest.
+A same-file deployment shares the changed header: prior offline repair manifests
+become stale and must be regenerated through the existing stopped procedure.
+Do not bypass their identity fence. Earlier binaries retain schema compatibility
+but resume their old unconditional rebuild; they do not reset version 1. This
+release rejects unknown future versions rather than promising arbitrary downgrade.
+Installed rollout separately requires approved paired backup, version provenance
+and compatibility checks, qualified restart, and an exact rollback path. A repo
+merge or passing private test does not authorize an installed database migration.
 
 ## Relay control-plane resilience
 
@@ -271,6 +344,16 @@ Queue health is a live database query and may use up to ten seconds; health and
 status remain capped at two seconds, and every request is clipped to the one
 overall readiness deadline. The default readiness budget is three minutes; an explicit
 `-ReadinessTimeoutSeconds` value keeps its exact finite deadline.
+
+Generated Windows VBS launchers keep the service hidden, wait for its termination,
+and return its exit status to the script host. Fatal supervisor recovery exhaustion
+is a failure; requested shutdown is successful. Existing launchers are not rewritten
+by source updates or restarts. A launcher-generation change therefore needs a
+separately approved regeneration of the installed launcher/task, with its metadata
+backed up and rollback available. Verify the actual installed task's lifetime and
+failure status before claiming Task Scheduler recovery; private script-host tests
+and successful service health checks do not establish that result.
+
 For offline Relay endpoint repair, first start the upgraded service once so it creates the repair ledger, then run `scripts/restart-service.ps1 -StopOnly`. The wrapper stops the installed task without starting it again and fails if the task, listener, or managed process tree cannot be conclusively drained.
 
 Create a disposition file that classifies every live repairable delivery on the source endpoints: pending deliveries plus claimed deliveries whose finite lease has expired. An expired claim may only be `suppress`; `adopt`, active claims, missing claim tokens, and missing or malformed leases fail closed.
@@ -338,7 +421,8 @@ another storage backend is configured.
 |----------|-------|---------|
 | `/health` | `status: ok` | Lifespan complete, vector index ready (or intentionally off). |
 | `/health` | `status: initializing` (503) | Still starting — schema initialization / vector load in progress. |
-| `/health` | `status: degraded` (200) | Reachable but **impaired**: vector was expected but the embedding provider failed to initialize. See `degraded_reasons`. |
+| `/health` | `status: degraded` (200) | Reachable but **impaired**: embedding-provider initialization or vector bootstrap/rebuild failed. Inspect `degraded_reasons` and `initialization_error`. |
+| `/health`, `/status` | `initialized`, `ready` | Initialized resources can serve safe operations; `ready` remains false until required initialization and vector bootstrap finish successfully. HTTP 200 alone does not establish readiness. |
 | `/status` | `vector_expected` | Config intends vector search to run. |
 | `/status` | `embedding_provider_ok` | `false` = vector expected but the embedding provider did not load. |
 | `/status` | `ingestion.status` | `degraded` = an enabled package declares a provider credential that did not resolve. `issues` names the package, provider, and configured environment-variable name, never the secret. |

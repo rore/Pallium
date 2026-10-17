@@ -146,8 +146,10 @@ _MISSING_SCOPE_ERROR = (
 
 
 @pytest.fixture()
-def relay_app(test_db_url: str):
+def relay_app(test_db_url: str, monkeypatch: pytest.MonkeyPatch):
     from storage.vector_index import VectorIndexConfig
+    # MCP contracts do not exercise native wake workers or their trace writes.
+    monkeypatch.setattr("app.dependencies.schedule_claude_relay_wake", lambda *_args, **_kwargs: None)
     app = create_app(
         AppConfig(
             storage_backend="sqlite",
@@ -158,7 +160,14 @@ def relay_app(test_db_url: str):
         )
     )
     app.state._lifespan_complete = True
-    return app
+    service = app.state.pallium_service
+    try:
+        yield app
+    finally:
+        try:
+            service.close()
+        finally:
+            service._storage.close()
 
 
 @pytest.fixture()
@@ -848,13 +857,16 @@ class TestClaimTokenSecrecy:
             assert "safe-receipt-for-model" in text
 
     @pytest.mark.asyncio
-    async def test_receipt_present_in_mcp_result(self, monkeypatch: pytest.MonkeyPatch, asgi_post):
+    async def test_receipt_present_in_mcp_result(self, monkeypatch: pytest.MonkeyPatch, asgi_post, relay_app):
         """receipt is visible in the MCP response; delivery_id is present for ACK."""
+        from tests.test_relay_capacity_isolation import _observe_setup_writer
+
         bind_asgi_post(monkeypatch, asgi_post)
 
         # register both sessions first
-        await asgi_post("/relay/turn", {"runtime": _RUNTIME, "session_ref": _SESSION, **_SCOPE})
-        await asgi_post("/relay/turn", {"runtime": "codex", "session_ref": "tool-sender", **_SCOPE})
+        with _observe_setup_writer(relay_app.state.pallium_service._storage, monkeypatch):
+            await asgi_post("/relay/turn", {"runtime": _RUNTIME, "session_ref": _SESSION, **_SCOPE})
+            await asgi_post("/relay/turn", {"runtime": "codex", "session_ref": "tool-sender", **_SCOPE})
         await asgi_post("/relay/messages", {
             "sender_runtime": "codex", "sender_session_ref": "tool-sender",
             "recipient": f"{_RUNTIME}:{_SESSION}", "payload": "test message", **_SCOPE,
@@ -1026,16 +1038,30 @@ class TestFullLifecycle:
     async def test_two_session_isolation_unicode_and_atomic_redacted_reply(
         self, monkeypatch: pytest.MonkeyPatch, asgi_post
     ):
+        import time
+        from itertools import count
+        from types import SimpleNamespace
+        import storage.sqlite_queue as sqlite_queue
+
         bind_asgi_post(monkeypatch, asgi_post)
         session_a = "tool-session-a"
         session_b = "tool-session-b"
         sender = "tool-isolation-sender"
-        for runtime, session in (
-            (_RUNTIME, session_a),
-            (_RUNTIME, session_b),
-            ("codex", sender),
-        ):
-            await asgi_post("/relay/turn", {"runtime": runtime, "session_ref": session, **_SCOPE})
+        original_time, original_monotonic = sqlite_queue.time, time.monotonic
+        private_time = SimpleNamespace(**vars(original_time))
+        private_time.monotonic = count(step=0.001).__next__
+        # Registration is setup for isolation/redaction, without a wall-time claim.
+        with monkeypatch.context() as setup:
+            setup.setattr(sqlite_queue, "time", private_time)
+            for runtime, session in (
+                (_RUNTIME, session_a),
+                (_RUNTIME, session_b),
+                ("codex", sender),
+            ):
+                await asgi_post("/relay/turn", {"runtime": runtime, "session_ref": session, **_SCOPE})
+        assert sqlite_queue.time is original_time
+        assert time.monotonic is original_monotonic
+        assert private_time.sleep is time.sleep
         await asgi_post("/relay/messages", {
             "sender_runtime": "codex",
             "sender_session_ref": sender,

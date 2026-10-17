@@ -84,10 +84,72 @@ def test_registration_keeps_intent_when_store_unusable_marker_cannot_clear(
     assert registry.recovery_candidates() == []
     assert ClaudeWakeRegistry(state_dir=state_dir).recovery_candidates() == []
 
+def test_registration_setup_expiry_preserves_intent_before_native_acquisition(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import builtins
+    import time
+    import core.claude_wake as wake
+
+    state_dir = tmp_path / "wake"
+    registry = ClaudeWakeRegistry(state_dir=state_dir)
+    opened = {**PAYLOAD, "intent_id": "open"}
+    intent = state_dir / "intents" / _safe_session_file(PAYLOAD["runtime"], PAYLOAD["session_ref"], PAYLOAD["container_ref"])
+    intent.parent.mkdir(parents=True)
+    intent.write_text(json.dumps(opened), encoding="utf-8")
+    before = intent.read_bytes()
+    http = _client(registry)
+    now, opened_locks, native_calls = [0.0], [], []
+    private_time = SimpleNamespace(**vars(time))
+    private_time.monotonic = lambda: now[0]
+
+    def open_then_expire(path, *args, **kwargs):
+        result = builtins.open(path, *args, **kwargs)
+        if Path(path) == intent.with_suffix(".lock") and not opened_locks:
+            opened_locks.append(Path(path))
+            now[0] += .101
+        return result
+
+    if sys.platform == "win32":
+        import msvcrt as native
+        native_name = "locking"
+    else:
+        import fcntl as native
+        native_name = "flock"
+    original_native = getattr(native, native_name)
+
+    def observe_native(*args, **kwargs):
+        native_calls.append(args)
+        return original_native(*args, **kwargs)
+
+    with monkeypatch.context() as expiry:
+        expiry.setattr(wake, "time", private_time)
+        expiry.setattr(wake, "open", open_then_expire, raising=False)
+        expiry.setattr(native, native_name, observe_native)
+        response = http.post("/internal/claude-wake/register", json=opened)
+        assert response.status_code == 409
+        assert response.json()["detail"] == "registration rejected"
+        assert opened_locks == [intent.with_suffix(".lock")]
+        assert now[0] == .101 and native_calls == []
+        assert registry._registrations == {} and not registry._canonical.exists()
+        assert intent.read_bytes() == before
+    assert wake.time is time
+    assert http.post("/internal/claude-wake/register", json=opened).status_code == 204
+    assert not intent.exists()
+    assert ClaudeWakeRegistry(state_dir=state_dir).recovery_candidates()[0]["state"] == "idle"
+
+
 @pytest.mark.parametrize("replace_closed_intent", (False, True))
 def test_close_endpoint_write_failure_preserves_exact_intent_for_recovery(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, replace_closed_intent: bool,
 ) -> None:
+    import time
+    from itertools import count
+    import core.claude_wake as wake
+
+    private_time = SimpleNamespace(**vars(time))
+    private_time.monotonic = count(step=.001).__next__
+    monkeypatch.setattr(wake, "time", private_time)
     state_dir = tmp_path / "wake"
     intent = state_dir / "intents" / _safe_session_file(PAYLOAD["runtime"], PAYLOAD["session_ref"], PAYLOAD["container_ref"])
 
@@ -104,9 +166,17 @@ def test_close_endpoint_write_failure_preserves_exact_intent_for_recovery(
     closed.update(intent_id="closed", closed=True)
     write_intent(closed)
     original_write = registry._write_canonical_locked
-    monkeypatch.setattr(registry, "_write_canonical_locked", lambda *_: False)
+    writes = []
 
-    assert client.post("/internal/claude-wake/close", json=closed).status_code == 400
+    def fail_write(registrations):
+        writes.append(dict(registrations))
+        return False
+
+    monkeypatch.setattr(registry, "_write_canonical_locked", fail_write)
+
+    close_request = {key: closed[key] for key in ("runtime", "session_ref", "container_ref", "intent_id")}
+    assert client.post("/internal/claude-wake/close", json=close_request).status_code == 400
+    assert writes == [{}]
     assert json.loads(intent.read_text(encoding="utf-8")) == closed
     assert [candidate["state"] for candidate in registry.recovery_candidates()] == ["idle"]
     assert [candidate["state"] for candidate in ClaudeWakeRegistry(state_dir=state_dir).recovery_candidates()] == ["idle"]
@@ -577,8 +647,11 @@ def test_hook_helpers_use_persistent_loopback_register_and_close_routes(
     ["missing_socket", "missing_token", "empty_socket", "empty_token", "control_socket", "control_token", "long_socket", "long_token", "encoded_overflow"],
 )
 def test_unusable_claude_credentials_revoke_exact_wake(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch, unusable: str,
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, unusable: str, tmp_path: Path,
 ) -> None:
+    import time
+    import core.claude_wake as wake
+
     common = _load_claude_hook("common", monkeypatch)
     registry = client.app.state.claude_wake_registry
     wake_dir = registry._state_dir
@@ -592,6 +665,29 @@ def test_unusable_claude_credentials_revoke_exact_wake(
 
     wake_http = TestClient(client.app, client=("127.0.0.1", 50000))
     statuses = []
+    stages = []
+
+    def observe_lock(original, stage):
+        def acquire(*args, **kwargs):
+            started = time.perf_counter()
+            result = original(*args, **kwargs)
+            stages.append({"stage": stage, "acquired": result is not None,
+                           "elapsed_ms": (time.perf_counter() - started) * 1000})
+            return result
+        return acquire
+
+    monkeypatch.setattr(common, "_acquire_file_lock", observe_lock(common._acquire_file_lock, "publisher_lock"))
+    monkeypatch.setattr(wake, "_acquire_intent_lock", observe_lock(wake._acquire_intent_lock, "registry_lock"))
+    original_publish = common._write_wake_intent
+
+    def publish(payload):
+        started = time.perf_counter()
+        result = original_publish(payload)
+        stages.append({"stage": "publish", "closed": payload.get("closed") is True,
+                       "written": result, "elapsed_ms": (time.perf_counter() - started) * 1000})
+        return result
+
+    monkeypatch.setattr(common, "_write_wake_intent", publish)
 
     def open_request(request, **_kwargs):
         response = wake_http.request(request.get_method(), urlsplit(request.full_url).path, content=request.data)
@@ -633,10 +729,16 @@ def test_unusable_claude_credentials_revoke_exact_wake(
     else:
         monkeypatch.setenv("CLAUDE_CODE_MESSAGING_TOKEN", "é" * MAX_TOKEN_CHARS)
 
-    assert not common.register_claude_wake(session_ref, container_ref, idle=False)
-    assert activation()["activation"]["availability"] == "unknown", activation()
-    assert registry.state_for(recipient_endpoint_id="relay-session-" + "a" * 32, session_ref=session_ref, container_ref=other_container) == "idle"
-    assert not registry.probe(runtime="claude-code", session_ref=session_ref, container_ref=container_ref, transport=lambda *_: pytest.fail("stale native wake"))
+    try:
+        assert not common.register_claude_wake(session_ref, container_ref, idle=False), (statuses, stages)
+        final = activation()
+        assert final["activation"]["availability"] == "unknown", (final, statuses, stages)
+        assert registry.state_for(recipient_endpoint_id="relay-session-" + "a" * 32, session_ref=session_ref, container_ref=other_container) == "idle"
+        assert not registry.probe(runtime="claude-code", session_ref=session_ref, container_ref=container_ref, transport=lambda *_: pytest.fail("stale native wake"))
+    finally:
+        (tmp_path / "credential-revocation-stages.json").write_text(
+            json.dumps({"case": unusable, "http_statuses": statuses, "stages": stages}), encoding="utf-8",
+        )
 
 
 @pytest.mark.parametrize("session_ref,container_ref", [
@@ -742,7 +844,54 @@ def test_missing_credentials_retry_close_after_intent_publication_failure(
 
 def test_restricted_claude_prompt_still_delivers_and_acks_pending_relay(
     client: TestClient, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+    tmp_path: Path, request: pytest.FixtureRequest,
 ) -> None:
+    import time
+    from contextlib import contextmanager
+
+    stages: list[dict[str, object]] = []
+
+    def save_stages():
+        metadata = json.dumps({"stages": stages[:128], "truncated": max(0, len(stages) - 128)})
+        (tmp_path / "restricted-relay-admission.json").write_text(metadata, encoding="utf-8")
+        print("restricted relay admission: " + metadata, file=sys.stderr)
+
+    request.addfinalizer(save_stages)
+    provider = client.app.state.pallium_service._storage
+    original_writer = provider._begin_relay_immediate
+    original_native = provider._begin_immediate_for
+
+    @contextmanager
+    def measured_context(delegate, stage, *args, **kwargs):
+        row = {"stage": stage, "thread": threading.get_ident(), "entered": time.perf_counter()}
+        stages.append(row)
+        try:
+            with delegate(*args, **kwargs) as db:
+                row["acquired"] = time.perf_counter()
+                try:
+                    yield db
+                finally:
+                    row["body_finished"] = time.perf_counter()
+        except BaseException as exc:
+            row["error_type"] = type(exc).__name__
+            cause = exc
+            for _ in range(4):
+                original = getattr(cause, "orig", cause)
+                if getattr(original, "sqlite_errorcode", None) is not None:
+                    row.update(sqlite_code=original.sqlite_errorcode,
+                               sqlite_name=getattr(original, "sqlite_errorname", None))
+                    break
+                if cause.__cause__ is None:
+                    break
+                cause = cause.__cause__
+            raise
+        finally:
+            row["settled"] = time.perf_counter()
+
+    monkeypatch.setattr(provider, "_begin_relay_immediate",
+                        lambda: measured_context(original_writer, "writer_admission"))
+    monkeypatch.setattr(provider, "_begin_immediate_for",
+                        lambda *args, **kwargs: measured_context(original_native, "native_and_setup", *args, **kwargs))
     prompt = _load_claude_hook("user_prompt_submit", monkeypatch)
     common = sys.modules[prompt.register_claude_wake.__module__]
     wake_dir = client.app.state.claude_wake_registry._state_dir
@@ -773,8 +922,88 @@ def test_restricted_claude_prompt_still_delivers_and_acks_pending_relay(
     })
     assert sent.status_code == 200
 
+    from sqlalchemy import select
+    from storage.sqlite_schema import (RelayDeliveryRecord, RelaySessionRecord,
+                                       RelayEndpointGenerationRecord, RelaySessionWorkRefRecord)
+    from storage.sqlite_queue import ImmediateTransactionBusyError
+
+    def authority():
+        delivery_columns = [column for column in RelayDeliveryRecord.__table__.columns
+                            if column.name not in {"trace_version", "trace_truncated", "trace_pruned"}]
+        with provider._relay_engine.connect() as db:
+            return tuple(db.execute(select(*columns).order_by(*keys)).all() for columns, keys in (
+                (delivery_columns, (RelayDeliveryRecord.id,)),
+                (tuple(RelaySessionRecord.__table__.columns), (RelaySessionRecord.id,)),
+                (tuple(RelayEndpointGenerationRecord.__table__.columns), (RelayEndpointGenerationRecord.endpoint_id,)),
+                (tuple(RelaySessionWorkRefRecord.__table__.columns),
+                 (RelaySessionWorkRefRecord.endpoint_id, RelaySessionWorkRefRecord.work_ref, RelaySessionWorkRefRecord.origin)),
+            ))
+
+    turn = provider.relay_turn
+    begin = provider._begin_relay_immediate
+    local = threading.local()
+
+    def observe_turn(*args, **kwargs):
+        local.active = True
+        try:
+            return turn(*args, **kwargs)
+        finally:
+            local.active = False
+
+    @contextmanager
+    def observe_begin():
+        if not getattr(local, "active", False):
+            with begin() as db:
+                yield db
+            return
+        attempt = {"acquired": False}
+        local.attempts.append(attempt)
+        try:
+            with begin() as db:
+                attempt["acquired"] = True
+                yield db
+        except BaseException as error:
+            attempt["error"] = error
+            raise
+
     def relay(method, path, body, **_kwargs):
-        response = client.request(method, path, json=body)
+        if path == "/relay/turn":
+            before = authority()
+            # Only a proved pre-transaction refusal can replay this claiming request.
+            attempts = []
+
+            def request_turn(*args, **kwargs):
+                local.attempts = attempts
+                return observe_turn(*args, **kwargs)
+
+            with monkeypatch.context() as admission:
+                admission.setattr(provider, "relay_turn", request_turn)
+                admission.setattr(provider, "_begin_relay_immediate", observe_begin)
+                deadline = time.monotonic() + 5
+                response = client.request(method, path, json=body)
+                if response.status_code == 503:
+                    assert len(attempts) == 1 and attempts[0]["acquired"] is False
+                    assert type(attempts[0].get("error")) is ImmediateTransactionBusyError
+                    assert response.json() == {"detail": {"code": "relay_busy", "retryable": True}}
+                    assert authority() == before
+                    assert len(before[0]) == 1
+                    delivery = before[0][0]
+                    assert (delivery.message_id, delivery.state, delivery.attempts,
+                            delivery.claim_token, delivery.lease_expires_at) == (
+                        sent.json()["message_id"], "pending", 0, None, None)
+                    delay = response.headers.get("Retry-After", "")
+                    assert delay.isascii() and delay.isdecimal()
+                    assert 0 < int(delay) < deadline - time.monotonic()
+                    time.sleep(int(delay))
+                    assert time.monotonic() < deadline
+                    assert authority() == before
+                    response = client.request(method, path, json=body)
+                assert len(attempts) in (1, 2)
+                assert attempts[-1]["acquired"] is True and "error" not in attempts[-1]
+        else:
+            response = client.request(method, path, json=body)
+        stages.append({"stage": "relay_http", "path": path, "status": response.status_code,
+                       "finished": time.perf_counter()})
         assert response.status_code == 200, response.text
         return response.json()
 
@@ -795,12 +1024,21 @@ def test_restricted_claude_prompt_still_delivers_and_acks_pending_relay(
 
 
 def test_hook_enforces_encoded_body_limit_before_open(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from contextlib import closing
+
     common = _load_claude_hook("common", monkeypatch)
     wake_dir = tmp_path / "wake"
     monkeypatch.setattr(common, "CLAUDE_WAKE_DIR", wake_dir)
     monkeypatch.setattr(common, "CLAUDE_WAKE_INTENTS_DIR", wake_dir / "intents")
     monkeypatch.setenv("CLAUDE_CODE_MESSAGING_SOCKET", "socket")
     monkeypatch.setenv("CLAUDE_CODE_MESSAGING_TOKEN", "é" * MAX_TOKEN_CHARS)
+    opened = {**PAYLOAD, "session_ref": "session", "socket_path": "socket", "intent_id": "before-overflow"}
+    intent = common._wake_intent_path("claude-code", opened["session_ref"], opened["container_ref"])
+    intent.parent.mkdir(parents=True)
+    intent.write_text(json.dumps(opened), encoding="utf-8")
+    registry = ClaudeWakeRegistry(state_dir=wake_dir)
+    with closing(_client(registry)) as admitted:
+        assert admitted.post("/internal/claude-wake/register", json=opened).status_code == 204
     requested_paths: list[str] = []
 
     def unavailable_open(request, **_kwargs):
@@ -816,6 +1054,7 @@ def test_hook_enforces_encoded_body_limit_before_open(tmp_path: Path, monkeypatc
     assert requested_paths == ["/internal/claude-wake/close"]
     close_intent = common._wake_intent_path("claude-code", "session", "git:example/repo")
     assert json.loads(close_intent.read_text(encoding="utf-8"))["closed"] is True
+    assert json.loads(close_intent.read_text(encoding="utf-8"))["expected_admission_id"] is None
     assert list((wake_dir / "intents").glob("*.tmp")) == []
     restarted = ClaudeWakeRegistry(state_dir=wake_dir)
     restarted.recover_intents()
@@ -1019,7 +1258,14 @@ def test_registration_idle_boundary_is_fail_closed(idle, expected) -> None:
 def test_session_start_delivers_and_acks_relay_before_orientation(
     monkeypatch: pytest.MonkeyPatch, capsys, tmp_path: Path,
 ) -> None:
+    from itertools import count
+
     start = _load_claude_hook("session_start", monkeypatch)
+    real_time = start.relay_turn.__globals__["time"]
+    native_monotonic = real_time.monotonic
+    relay_time = SimpleNamespace(**vars(real_time))
+    relay_time.monotonic = count(step=.001).__next__
+    monkeypatch.setitem(start.relay_turn.__globals__, "time", relay_time)
     monkeypatch.setitem(
         start.relay_turn.__globals__, "SESSIONS_DIR", tmp_path / "sessions"
     )
@@ -1082,6 +1328,12 @@ def test_session_start_delivers_and_acks_relay_before_orientation(
     assert acknowledgements == [([delivery], {
         "container_ref": "git:example/repo",
     })]
+    assert relay_time.sleep is real_time.sleep
+    assert start.relay_turn.__globals__["HookDeadline"](0).clock is native_monotonic
+    active_deadline = start.relay_turn.__globals__["hook_deadline"]()
+    if active_deadline is not None:
+        assert active_deadline.clock is native_monotonic
+    assert real_time.monotonic is native_monotonic
 
 
 def test_claude_reconciler_is_lifespan_owned_and_stops_on_repeated_apps(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

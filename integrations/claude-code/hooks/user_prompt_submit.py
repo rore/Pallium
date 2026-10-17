@@ -54,7 +54,7 @@ def main() -> None:
         prompt = payload.get("prompt", "")
         has_session = isinstance(session_id, str) and bool(session_id)
         container_ref = resolve_container_ref(cwd, session_id if has_session else None, True, False)
-        actor_ref = derive_actor_ref(cwd, session_id)
+        actor_ref = derive_actor_ref(cwd, session_id, container_ref)
         if has_session:
             register_claude_wake(session_id, container_ref, idle=False)
         pending_closes, close_generation = get_pending_relay_close_batch(

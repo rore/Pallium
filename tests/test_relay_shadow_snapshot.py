@@ -362,12 +362,13 @@ def test_read_only_connection_fails_closed_when_database_is_exclusively_locked(c
     setup.execute("CREATE TABLE relay_sessions (id TEXT, runtime TEXT, session_ref TEXT, container_ref TEXT, state TEXT)")
     setup.commit()
     setup.close()
-    monkeypatch.setattr(storage, "_relay_engine", SimpleNamespace(url=SimpleNamespace(database=str(db_path))))
     lock = sqlite3.connect(db_path, timeout=0, isolation_level=None)
     try:
         lock.execute("BEGIN EXCLUSIVE")
         started = time.monotonic()
-        snapshot = _snapshot(storage, session, deadline=time.monotonic() + 1)
+        with monkeypatch.context() as locked:
+            locked.setattr(storage, "_relay_engine", SimpleNamespace(url=SimpleNamespace(database=str(db_path))))
+            snapshot = _snapshot(storage, session, deadline=time.monotonic() + 1)
         assert time.monotonic() - started < 1
         assert snapshot == {"category": "unavailable", "reason": "read_failed_or_deadline", "endpoint_valid": False}
     finally:
