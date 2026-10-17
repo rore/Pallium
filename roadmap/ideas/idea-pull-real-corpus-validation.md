@@ -47,7 +47,7 @@ features. It does not replace the larger product gate or relax its Done When.
   September 7 to five during October 3-17, across three requesting chats. Research,
   verification, missing attribution and retention limit interpretation; search and
   expansion counts are not independent tasks or verified downstream use.
-- [ ] Classify 5-8 existing genuine context-recovery episodes, including searches
+- [x] Classify 5-8 existing genuine context-recovery episodes, including searches
   and non-searches. Record the actual need, whether earlier evidence was necessary,
   what context/tool was used, observable outcome, repeated work and manual rescue.
   Separate adequate alternatives, plausible missed opportunities, capture gaps,
@@ -101,11 +101,59 @@ features. It does not replace the larger product gate or relax its Done When.
   retain the current product if adequate alternatives explain non-use. Keep
   candidate recovery, agent-visible precision and downstream task effect separate.
 
-Owner: this Session History investigation; next action is finish the retrospective
-classification and collect survey replies, then freeze upcoming cases before
+Owner: this Session History investigation; next action is collect remaining survey
+replies and freeze upcoming cases before
 search. No product implementation, installed changes or paid evaluation is
 authorized by this checklist. Detailed private prompts, transcripts, session
 identities and survey replies stay out of this public roadmap file.
+
+### October 17 retrospective episode classification
+
+Eight episodes across seven chats were selected from previously observed requests
+and lookup metadata before rereading their answers. Multiple searches for one
+need count as one episode; two episodes share a chat. The sample includes
+non-search controls and one integration-readback control, not eight demonstrated
+needs for historical evidence. It is purposive, previously inspected development
+evidence, not untouched confirmation or an adoption-rate sample.
+
+Review used currently readable/redacted request and answer records, persisted
+lookup metadata, bounded native tool-name/path/timestamp traces, existing reports,
+and separately identified agent self-reports. No inaccessible historical payload
+was recovered from native transcripts; unknown protected source sets remain
+excluded. Original caller context, delivered pages and corpus were not frozen.
+
+| Episode | Observed route | Classification and outcome limit |
+|---|---|---|
+| A: recap earlier work | Five delivered searches, 18 expansions, then Git checks | Historical recovery with reported benefit: the agent said it recovered rationale absent from its compact summary. Independent completeness/correctness and necessity are ungraded. It reported excerpt/continuation friction; this is historical feedback, not a current reproduction. |
+| B: investigate an apparently lost registration | Four delivered searches plus registry, backup and transcript investigation | Mixed historical/operational investigation. The answer found evidence of an unregistered conversational name rather than demonstrated name loss. Incomplete change history prevents an absolute historical claim; History's incremental contribution is not isolated. |
+| C: validate another alias's prior existence | One delivered search plus direct transcript checks | Appropriate historical check after one explicit user follow-up. The answer could not confirm prior registration and distinguished endpoint deliveries from alias use. This is a bounded negative finding, not proof an alias never existed; History's contribution is unisolated. |
+| D: read integration-verification responses | Two delivered searches and two expansions | The readable matches contain responses captured minutes earlier. Successful marker readback is observable, but this is integration verification, not evidence of historical-context benefit. |
+| E: recover performance-work ownership/context | Two delivered searches and one expansion, plus saved logs and attachment metadata | Mixed-source investigation. Ownership was reported from checkout metadata; the performance cause remained unresolved. No evidence attributes the decisive finding to History or establishes avoided work. |
+| F: reconstruct evaluation readiness | No History tool call; reports, roadmap, Work Records and evaluation code | Adequate documented alternative: the answer distinguishes existing tooling from missing judgeable evidence and is consistent with the reports. Several artifact reads are observable; whether History would reduce their cost is unknown. |
+| G: finish review/CI and merge active work | No History tool call; current PR/CI/review state and existing work context | Direct execution with adequate current sources. Existing completion evidence records the merge; no specific missing historical fact or repeated implementation is demonstrated. |
+| H: check coordination-linkage requirements | No History tool call; current skills, code and documentation | Appropriate source-of-truth inspection. The answer distinguishes existing guidance from gaps. Cross-repository conclusions were not independently exhaustively re-audited; a historical lookup was not shown necessary. |
+
+The three no-search cases do not establish ignorance or a proven missed
+opportunity. Two surveyed agents knew the tools/scope rules and described using
+already-sufficient context; their accounts fit observable behavior but do not
+establish motives for every turn. None of these episodes proves a current capture,
+retrieval, delivery or reasoning failure. Historical navigation complaints overlap
+completed reliability work and need a fresh reproduction before selecting a fix.
+
+The five October 3-17 search events therefore include two same-day integration
+readbacks; the other three events belong to two historical/operational needs.
+Keep verification, historical recall, query repairs and independent tasks separate.
+This classification measures observed behavior and limited observational downstream
+incorporation, not controlled downstream benefit, candidate-recovery accuracy or
+injection precision.
+
+Repeated work avoided and monetary/token savings remain unknown without a matched
+baseline. One explicit follow-up in C prompted the history check; other manual
+rescue and complete per-episode costs were not established. Do not turn observed
+artifact reads, expansions or unknown costs into measured waste or zero cost.
+The next step remains prospective frozen needs, including evidence absent from
+the repository/current conversation, alongside adequate-alternative controls.
+No ranking, navigation, capture or guidance change is selected by this review.
 
 ### October 6 readiness reconciliation
 
