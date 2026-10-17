@@ -1630,6 +1630,11 @@ def test_spent_wake_retries_after_cooldown_and_real_hook_acks_backlog(
     for worker in workers:
         worker.join(5)
         assert not worker.is_alive()
+    # The bare router has no periodic recovery loop to revisit a refused admission.
+    recover_expired_relay_wakes(relay, ClaudeWakeRegistry(), codex_registry=restarted)
+    for worker in workers:
+        worker.join(5)
+        assert not worker.is_alive()
 
     assert len(prompts) == 3  # Initial wake, recovered wake, then the next hook batch.
     assert [event[0] for event in events] == ["emit", "ack", "emit", "ack"]
