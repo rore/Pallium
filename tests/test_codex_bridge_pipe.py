@@ -402,6 +402,116 @@ def test_competing_owner_does_not_replace_manifest_or_grant(tmp_path):
             competitor.stop()
 
 
+@pytest.mark.parametrize("operation", ["accept", "read", "write"])
+@pytest.mark.parametrize("returned", [True, False], ids=["returned", "thrown"])
+@pytest.mark.parametrize("code", [535, 5])
+def test_pipe_connected_is_success_only_for_accept(monkeypatch, operation, returned, code):
+    retained, closed, forbidden_calls = [], [], []
+    monkeypatch.setattr(bridge, "_retained", retained)
+    monkeypatch.setattr(bridge, "_native_uncertain", False)
+
+    class NativeError(Exception):
+        winerror = code
+
+    class Handle:
+        def Close(self):
+            closed.append(self)
+
+    event, handle = Handle(), Handle()
+
+    def result(*_args):
+        if returned:
+            return code if operation == "accept" else (code, None)
+        raise NativeError()
+
+    def forbidden(*_args):
+        forbidden_calls.append(True)
+        pytest.fail("Completed pipe connection must not wait, query completion or cancel")
+
+    w = SimpleNamespace(
+        types=SimpleNamespace(OVERLAPPED=SimpleNamespace, error=NativeError),
+        event=SimpleNamespace(CreateEvent=lambda *_: event, WaitForSingleObject=forbidden),
+        pipe=SimpleNamespace(ConnectNamedPipe=result),
+        file=SimpleNamespace(ReadFile=result, WriteFile=result, GetOverlappedResult=forbidden, CancelIo=forbidden),
+    )
+    io = bridge._PipeIO(w, handle, threading.Event())
+    deadline = time.monotonic() + 1
+    arguments = ({"data": "β"}, deadline) if operation == "write" else (deadline,)
+    try:
+        if operation == "accept" and code == 535:
+            assert io.accept(*arguments) is None
+        else:
+            with pytest.raises(bridge.ShadowUnavailable, match="transport-failed"):
+                getattr(io, operation)(*arguments)
+        assert closed == [event] and forbidden_calls == []
+        assert not io.unresolved and not bridge._native_uncertain and retained == []
+    finally:
+        io.close()
+    assert closed == [event, handle]
+
+
+@native
+def test_retained_source_preconnected_accept_survives_real_native_round_trip(tmp_path, monkeypatch):
+    directory = bridge.prepare_inventory_service(tmp_path / "preconnected-home")
+    service = bridge.RetainedService(directory)
+    manifest_ready, connected = threading.Event(), threading.Event()
+    native_results = []
+    w = bridge._native()
+    original_publish, original_connect = bridge._atomic_private, w.pipe.ConnectNamedPipe
+
+    def publish(*args, **kwargs):
+        result = original_publish(*args, **kwargs)
+        if args[1] == directory / "active.json":
+            manifest_ready.set()
+            assert connected.wait(2), "Client must preconnect before native accept"
+        return result
+
+    def connect(*args):
+        result = original_connect(*args)
+        native_results.append(result)
+        return result
+
+    monkeypatch.setattr(bridge, "_atomic_private", publish)
+    monkeypatch.setattr(w.pipe, "ConnectNamedPipe", connect)
+    first = second = None
+    try:
+        assert service.start() is service
+        assert manifest_ready.wait(2)
+        first = bridge.NativeInventoryClient(directory / "active.json", threading.Event(), retained=True)
+        connected.set()
+        assert first.ready()["status"] == "ready"
+        assert native_results[0] == 535
+        epoch = service.epoch
+        assert service.thread.is_alive() and not service.stop_event.is_set()
+        assert not service._terminal_failure and not service.unresolved and not bridge._native_uncertain
+        first.dispose()
+        wait_until(lambda: service.source is None)
+        second = bridge.NativeInventoryClient(directory / "active.json", threading.Event(), retained=True)
+        assert second.ready()["status"] == "ready"
+        assert service.epoch == epoch and service.thread.is_alive() and not service.stop_event.is_set()
+        assert not service._terminal_failure and not service.unresolved
+    finally:
+        connected.set()
+        try:
+            if first:
+                first.dispose()
+        finally:
+            try:
+                if second:
+                    second.dispose()
+            finally:
+                try:
+                    service.stop()
+                finally:
+                    if service.thread is not None:
+                        service.thread.join()
+        assert all(not client.unresolved for client in (first, second) if client)
+        assert service.thread is not None
+        assert not service.thread.is_alive()
+        assert not service.unresolved and service.custody is None and service.source is None
+        assert not bridge._native_uncertain
+
+
 @pytest.mark.parametrize("fault", ["wait-failed", "result-incomplete"])
 def test_uncertain_native_operation_retains_buffers_and_disables_future_native_work(monkeypatch, fault):
     retained = []

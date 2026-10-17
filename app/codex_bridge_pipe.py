@@ -513,7 +513,7 @@ class _PipeIO:
         self.w, self.handle, self.stop = w, handle, stop
         self.unresolved = False
 
-    def _operation(self, operation, deadline: float, keepalive=None):
+    def _operation(self, operation, deadline: float, keepalive=None, *, connected_ok=False):
         w = self.w
         ov = w.types.OVERLAPPED()
         ov.hEvent = w.event.CreateEvent(None, True, False, None)
@@ -526,10 +526,13 @@ class _PipeIO:
             try:
                 code, buffer = operation(ov)
             except w.types.error as exc:
-                if getattr(exc, "winerror", None) == 535:  # ERROR_PIPE_CONNECTED.
+                if connected_ok and getattr(exc, "winerror", None) == 535:  # ERROR_PIPE_CONNECTED.
                     completed = True
                     return 0, None
                 raise
+            if connected_ok and code == 535:
+                completed = True
+                return 0, None
             if code not in (0, 997):  # ERROR_IO_PENDING.
                 completed = True
                 raise ShadowUnavailable("transport-failed")
@@ -580,7 +583,7 @@ class _PipeIO:
         def connect(ov):
             code = self.w.pipe.ConnectNamedPipe(self.handle, ov)
             return code or 0, None
-        self._operation(connect, deadline)
+        self._operation(connect, deadline, connected_ok=True)
 
     def read(self, deadline: float) -> dict:
         count, buffer = self._operation(
