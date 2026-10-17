@@ -1136,11 +1136,13 @@ def test_persisted_claude_d1_d2_d3_actual_hooks(
     client, monkeypatch, tmp_path, capsys,
 ) -> None:
     from itertools import count
+    import time
 
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
     from app.dependencies import build_router
+    from storage import sqlite_queue
     from tests.test_claude_code_integration import _load_claude_hook
 
     registry = ClaudeWakeRegistry()
@@ -1180,8 +1182,39 @@ def test_persisted_claude_d1_d2_d3_actual_hooks(
             hook, "derive_actor_ref", lambda *_: "local", raising=False,
         )
 
+    storage = client.app.state.pallium_service._storage
+    native_queue_time, native_monotonic = sqlite_queue.time, time.monotonic
+
     def relay(method, path, body, timeout=0.75):
-        response = http.request(method, path, json=body)
+        if method == "POST" and path == "/relay/turn":
+            original_turn = storage.relay_turn
+            qualified = []
+
+            def provider_turn(**kwargs):
+                if qualified or any(kwargs.get(field) != body.get(field) for field in (
+                    "runtime", "session_ref", "container_ref",
+                )):
+                    return original_turn(**kwargs)
+                qualified.append(True)
+                owner = threading.get_ident()
+                ticks = count(step=.001).__next__
+                turn_time = SimpleNamespace(**vars(native_queue_time))
+                turn_time.monotonic = lambda: ticks() if threading.get_ident() == owner else native_monotonic()
+                try:
+                    with monkeypatch.context() as admission:
+                        admission.setattr(sqlite_queue, "time", turn_time)
+                        return original_turn(**kwargs)
+                finally:
+                    assert sqlite_queue.time is native_queue_time
+                    assert time.monotonic is native_monotonic
+
+            with monkeypatch.context() as provider:
+                provider.setattr(storage, "relay_turn", provider_turn)
+                response = http.request(method, path, json=body)
+            assert qualified == [True]
+        else:
+            response = http.request(method, path, json=body)
+        assert sqlite_queue.time is native_queue_time
         relay_calls.append((method, path, response.status_code))
         return response.json() if response.content else None
     def register(session, container, **kwargs):
