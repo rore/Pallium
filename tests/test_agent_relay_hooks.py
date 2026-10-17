@@ -1480,14 +1480,35 @@ def test_codex_session_start_delivers_and_acks_before_orientation(monkeypatch):
 def test_codex_session_start_allows_bounded_delayed_claim_response(client, monkeypatch, tmp_path, capsys, exhausted):
     """A real delayed claim response fits the host budget; exhausted hooks do no I/O."""
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from itertools import count
     import threading
     import time
+    from types import SimpleNamespace
+    from storage import sqlite_queue
 
     monkeypatch.setitem(sys.modules, "codex_common", sys.modules.get("codex_common"))
     hook = _load("codex_session_start_delayed", "integrations/codex/hooks/session_start.py")
     scope = {"container_ref": "git:example/repo"}
-    for runtime, session in (("codex", "target-session"), ("claude-code", "sender-session")):
-        assert client.post("/relay/turn", json={"runtime": runtime, "session_ref": session, **scope}).status_code == 200
+    storage = client.app.state.pallium_service._storage
+    native_turn, native_time = storage.relay_turn, sqlite_queue.time
+    native_monotonic = time.monotonic
+
+    def initial_session(**kwargs):
+        provider_thread = threading.get_ident()
+        setup_time = SimpleNamespace(**vars(native_time))
+        logical_monotonic = count(step=.001).__next__
+        setup_time.monotonic = lambda: (logical_monotonic()
+            if threading.get_ident() == provider_thread else native_monotonic())
+        with monkeypatch.context() as admission:
+            admission.setattr(sqlite_queue, "time", setup_time)
+            return native_turn(**kwargs)
+
+    with monkeypatch.context() as setup:
+        setup.setattr(storage, "relay_turn", initial_session)
+        for runtime, session in (("codex", "target-session"), ("claude-code", "sender-session")):
+            assert client.post("/relay/turn", json={"runtime": runtime, "session_ref": session, **scope}).status_code == 200
+    assert storage.relay_turn == native_turn and sqlite_queue.time is native_time
+    assert time.monotonic is native_monotonic
     sent = client.post("/relay/messages", json={"sender_runtime": "claude-code", "sender_session_ref": "sender-session",
         "recipient": "codex:target-session", "payload": "delayed-response-東京", **scope}).json()
     paths, events = [], []

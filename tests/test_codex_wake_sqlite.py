@@ -1217,10 +1217,22 @@ def test_http_claim_correlation_uses_fresh_identity_and_preserves_authority(
     relay_store, tmp_path, monkeypatch, change,
 ):
     from app import dependencies
+    from itertools import count
+    from storage import sqlite_queue
 
     relay, storage, database = relay_store
     registry = _registry(relay, tmp_path / "legacy")
-    assert registry.initialize(old_owner_drained=True)
+    native_time = sqlite_queue.time
+    native_monotonic = native_time.monotonic
+    provider_thread = threading.get_ident()
+    setup_time = SimpleNamespace(**vars(native_time))
+    logical_monotonic = count(step=.001).__next__
+    setup_time.monotonic = lambda: (logical_monotonic()
+        if threading.get_ident() == provider_thread else native_monotonic())
+    with monkeypatch.context() as setup:
+        setup.setattr(sqlite_queue, "time", setup_time)
+        assert registry.initialize(old_owner_drained=True)
+    assert sqlite_queue.time is native_time and native_time.monotonic is native_monotonic
     reservation = _reserve(registry, _send(relay))
     current = registry.begin_native_attempt(reservation)
     assert current is not None
@@ -2364,7 +2376,8 @@ def test_explicit_empty_initialization_and_stored_claim_generation_high_water(
 @pytest.mark.parametrize("bad_input", ["corrupt", "duplicate_endpoint", "duplicate_delivery", "invalid_outcome", "invalid_generation", "unsupported_version", "over_capacity"])
 def test_invalid_legacy_import_leaves_no_marker_or_partial_rows(relay_store, tmp_path, bad_input):
     relay, _, database = relay_store
-    item = _item(_send(relay), outcome="accepted")
+    item = _item({"recipient_endpoint_id": "relay-session-" + "a" * 32,
+                  "delivery_id": "relay-delivery-" + "b" * 32}, outcome="accepted")
     path = _legacy(tmp_path / "legacy", [item])
     data = json.loads(path.read_text(encoding="utf-8"))
     if bad_input == "corrupt":

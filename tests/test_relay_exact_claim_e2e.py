@@ -16,7 +16,12 @@ SCOPE = {"container_ref": "git:example.test/relay-東京"}
 
 
 @pytest.fixture
-def exact_client(tmp_path):
+def exact_client(tmp_path, monkeypatch):
+    from itertools import count
+    import threading
+    import time
+    from storage import sqlite_queue
+
     storage = SQLiteStorageProvider(
         f"sqlite:///{tmp_path / 'main.db'}", f"sqlite:///{tmp_path / 'relay.db'}"
     )
@@ -24,10 +29,27 @@ def exact_client(tmp_path):
     app.include_router(create_router(SimpleNamespace(), relay_service=RelayService(storage)))
     try:
         with TestClient(app) as client:
-            for name in ("sender", "target", "other"):
-                assert client.post("/relay/turn", json={
-                    "runtime": "codex", "session_ref": name, **SCOPE,
-                }).status_code == 200
+            native_turn, native_time = storage.relay_turn, sqlite_queue.time
+            native_monotonic = time.monotonic
+
+            def initial_session(**kwargs):
+                provider_thread = threading.get_ident()
+                setup_time = SimpleNamespace(**vars(native_time))
+                logical_monotonic = count(step=.001).__next__
+                setup_time.monotonic = lambda: (logical_monotonic()
+                    if threading.get_ident() == provider_thread else native_monotonic())
+                with monkeypatch.context() as admission:
+                    admission.setattr(sqlite_queue, "time", setup_time)
+                    return native_turn(**kwargs)
+
+            with monkeypatch.context() as setup:
+                setup.setattr(storage, "relay_turn", initial_session)
+                for name in ("sender", "target", "other"):
+                    assert client.post("/relay/turn", json={
+                        "runtime": "codex", "session_ref": name, **SCOPE,
+                    }).status_code == 200
+            assert storage.relay_turn == native_turn and sqlite_queue.time is native_time
+            assert time.monotonic is native_monotonic
             yield client, storage
     finally:
         storage.close()
