@@ -1742,6 +1742,156 @@ def test_selected_transport_actual_hook_emits_then_acks(http_wake, monkeypatch, 
     assert len(events) == 2
 
 
+@pytest.mark.asyncio
+async def test_production_lifespan_automatically_recovers_spent_retained_wake(
+    retained, monkeypatch, tmp_path, test_db_url, capsys,
+):
+    from datetime import datetime, timedelta, timezone
+
+    from app import main
+    from app.config import AppConfig
+    from storage import sqlite_queue
+    import storage.sqlite_relay as sqlite_relay
+    from tests.codex_wake_setup import initialize_empty_wake_registry
+    from tests.test_health import _no_vector_config, _prebuilt_production_inner
+
+    service, desktop = register(retained)
+    config = _no_vector_config(test_db_url)
+    monkeypatch.setenv("PALLIUM_HOME", str(tmp_path / "production-home"))
+    monkeypatch.setenv("WEB_CONCURRENCY", "1")
+    monkeypatch.setattr(AppConfig, "from_env", staticmethod(lambda: config))
+    monkeypatch.setattr(bridge, "start_shadow_service", lambda *_a, **_k: None)
+    monkeypatch.setattr(bridge, "start_inventory_service", lambda *_a, **_k: None)
+    monkeypatch.setattr(bridge, "start_retained_service", lambda **_k: service)
+    native_queue_time, native_monotonic = sqlite_queue.time, time.monotonic
+    now = [datetime.now(timezone.utc)]
+
+    def controlled_now(value=None):
+        current = value or now[0]
+        return current if current.tzinfo is not None else current.replace(tzinfo=timezone.utc)
+
+    monkeypatch.setattr(sqlite_relay, "_now", controlled_now)
+    reconcilers, callbacks, recovery_threads, workers, recovered_fences, events, closed = [], [], [], [], [], [], []
+    emitted, recovery_completed = threading.Event(), threading.Event()
+    recover = main.recover_expired_relay_wakes
+    schedule = codex_wake._schedule_reserved_codex_relay_wake
+
+    def observe_recovery(*args, **kwargs):
+        recovery_threads.append(threading.get_ident())
+        try:
+            return recover(*args, **kwargs)
+        finally:
+            if emitted.is_set():
+                recovery_completed.set()
+
+    def start_reconciler(registry, relay, *, claim_recovery=None, trace_callback=None):
+        callbacks.append(claim_recovery)
+        reconciler = claude_wake.ClaudeWakeReconciler(
+            registry, relay, claim_recovery=claim_recovery, trace_callback=trace_callback,
+            interval_seconds=.01, claim_interval_seconds=.01,
+        )
+        reconcilers.append(reconciler)
+        reconciler.start()
+        return reconciler
+
+    def observe_schedule(*args, **kwargs):
+        worker = schedule(*args, **kwargs)
+        if worker is not None:
+            workers.append(worker)
+        return worker
+
+    monkeypatch.setattr(main, "recover_expired_relay_wakes", observe_recovery)
+    monkeypatch.setattr(main, "start_claude_wake_reconciler", start_reconciler)
+    monkeypatch.setattr(codex_wake, "_schedule_reserved_codex_relay_wake", observe_schedule)
+    async with _prebuilt_production_inner(monkeypatch, lambda: main.create_app(config)) as inner:
+        storage = inner.state.pallium_service._storage
+        registry = inner.state.codex_wake_registry
+        initialize_empty_wake_registry(
+            registry, registry._relay, storage,
+            expected_database=tmp_path / "test-relay.db", legacy=registry._path, monkeypatch=monkeypatch,
+        )
+        close_storage = storage.close
+
+        def close():
+            close_storage()
+            closed.append(True)
+
+        monkeypatch.setattr(storage, "close", close)
+        try:
+            with TestClient(main.app()) as http:
+                startup_deadline = time.monotonic() + 5
+                while http.get("/health").json().get("initialized") is not True:
+                    assert time.monotonic() < startup_deadline, "Production lifespan did not become initialized"
+                    time.sleep(.01)
+                assert inner.state._claude_wake_reconciler is reconcilers[0]
+                assert registry.retained_service is service
+                for runtime, session in (("claude-code", "sender"), ("codex", TARGET)):
+                    response = http.post("/relay/turn", json={"runtime": runtime, "session_ref": session, **SCOPE})
+                    assert response.status_code == 200, response.text
+                sent = http.post("/relay/messages", json={
+                    "sender_runtime": "claude-code", "sender_session_ref": "sender",
+                    "recipient": f"codex:{TARGET}", "message_id": "production-recovery",
+                    "payload": "autonomous payload — 東京", **SCOPE,
+                })
+                assert sent.status_code == 200, sent.text
+                for worker in workers:
+                    worker.join(5)
+                assert all(not worker.is_alive() for worker in workers)
+                first, = sent.json()["deliveries"]
+                fence = registry.snapshot(first["recipient_endpoint_id"])
+                assert fence is not None and fence.outcome == "uncertain"
+                assert fence.correlated_claim_attempts is None
+                assert fence.retry_not_before > now[0].timestamp()
+                state = http.get("/relay/messages/production-recovery", params=SCOPE).json()["deliveries"][0]
+                assert (state["state"], state["attempts"]) == ("pending", 0)
+                assert len(desktop.owners) == 1
+                hook = _hook_runner(http, monkeypatch, "notLoaded", events, tmp_path)
+
+                def owner(request):
+                    recovered_fences.append(registry.snapshot(first["recipient_endpoint_id"]))
+                    hook(request["params"]["arguments"]["prompt"])
+                    emitted.set()
+
+                desktop.on_owner = owner
+                previous_writes = len(desktop.writes)
+                assert registry.snapshot(first["recipient_endpoint_id"]) == fence
+                now[0] = datetime.fromtimestamp(fence.retry_not_before, timezone.utc) + timedelta(seconds=1)
+                assert emitted.wait(5), "Automatic recovery did not emit the expired spent wake"
+                assert recovery_completed.wait(5), "Natural recovery callback did not settle"
+                for worker in workers:
+                    worker.join(5)
+                assert all(not worker.is_alive() for worker in workers)
+                assert len(desktop.owners) == 2
+                assert len(workers) == 2
+                recovered, = recovered_fences
+                assert recovered is not None and recovered.generation > fence.generation
+                assert (recovered.recipient_endpoint_id, recovered.delivery_id) == (
+                    fence.recipient_endpoint_id, fence.delivery_id,
+                )
+                assert recovered.outcome == "uncertain" and recovered.correlated_claim_attempts is None
+                assert [request["params"]["tool"] for request in desktop.writes[previous_writes:]] == [
+                    "read_thread", "send_message_to_thread",
+                ]
+                assert desktop.owners[1]["params"]["arguments"]["prompt"] == codex_wake._wake_prompt(first["delivery_id"])
+                assert [entry[0] for entry in events] == ["emit", "ack"]
+                assert "autonomous payload — 東京" in events[0][2]
+                delivered = http.get("/relay/messages/production-recovery", params=SCOPE).json()["deliveries"][0]
+                assert (delivered["state"], delivered["attempts"]) == ("delivered", 1)
+                assert registry.reservations() == ()
+                assert callbacks[0] is reconcilers[0]._claim_recovery
+                assert recovery_threads and set(recovery_threads) == {reconcilers[0]._thread.ident}
+                assert sqlite_queue.time is native_queue_time and time.monotonic is native_monotonic
+                output = json.loads(capsys.readouterr().out)["hookSpecificOutput"]["additionalContext"]
+                assert output.count(first["delivery_id"]) == 1 and "autonomous payload — 東京" in output
+        finally:
+            for worker in workers:
+                worker.join(5)
+            assert all(not worker.is_alive() for worker in workers)
+            assert reconcilers and all(not item._thread.is_alive() for item in reconcilers)
+            assert service.stop_event.is_set() and service.retained_registration is None
+            assert closed == [True]
+
+
 @pytest.mark.parametrize("first_outcome", ["accepted", "uncertain"])
 @pytest.mark.parametrize("restart", [False, True])
 def test_spent_wake_retries_after_cooldown_and_real_hook_acks_backlog(

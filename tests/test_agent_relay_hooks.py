@@ -782,7 +782,6 @@ def test_expired_exact_hook_request_does_not_claim_then_fresh_hook_emits_and_ack
 ):
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
     import threading
-    import time
 
     from app import codex_wake
     from integrations.codex.hooks import user_prompt_submit as hook
@@ -800,6 +799,7 @@ def test_expired_exact_hook_request_does_not_claim_then_fresh_hook_emits_and_ack
     delivery_id = sent.json()["deliveries"][0]["delivery_id"]
     hook_done, late_done = threading.Event(), threading.Event()
     events, handlers, requests, times = [], [], [], {}
+    admission_order = []
 
     class Server(ThreadingHTTPServer):
         daemon_threads = True
@@ -814,10 +814,11 @@ def test_expired_exact_hook_request_does_not_claim_then_fresh_hook_emits_and_ack
             try:
                 if first:
                     assert hook_done.wait(5), "The real hook must stop waiting before admission"
+                    admission_order.append("late-admission")
                 response = client.request("POST", self.path, content=body,
                     headers={"content-type": "application/json"})
                 if first:
-                    times.update(late=time.monotonic(), status=response.status_code)
+                    times["status"] = response.status_code
                 try:
                     self.send_response(response.status_code)
                     self.send_header("Content-Type", "application/json")
@@ -847,7 +848,7 @@ def test_expired_exact_hook_request_does_not_claim_then_fresh_hook_emits_and_ack
     def record(**event):
         events.append(event)
         if event.get("stage") == "relay_request_completed" and not hook_done.is_set():
-            times["hook"] = time.monotonic()
+            admission_order.append("hook-completed")
             hook_done.set()
 
     monkeypatch.setattr(hook, "record_codex_wake_event", record)
@@ -856,7 +857,8 @@ def test_expired_exact_hook_request_does_not_claim_then_fresh_hook_emits_and_ack
         with pytest.raises(SystemExit) as exited:
             hook.main()
         assert exited.value.code == 0
-        assert late_done.wait(3) and times["late"] > times["hook"]
+        assert late_done.wait(3)
+        assert admission_order == ["hook-completed", "late-admission"]
         completed = next(event for event in events if event["stage"] == "relay_request_completed")
         assert completed["outcome"] == "unavailable" and completed["elapsed_ms"] >= 1800
         assert not any(event["stage"] in {"payload_emitted", "delivery_acked"} for event in events)

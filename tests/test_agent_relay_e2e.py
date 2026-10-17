@@ -883,34 +883,57 @@ def test_delivery_derived_reply_is_attributed_scoped_and_idempotent(client):
     assert _reply(client, claimed["delivery_id"], "תשובה → 你好", container_ref="git:other").status_code == 200
 
 
-def test_delivery_derived_reply_chain_and_boundaries(client):
-    _turn(client, "claude-code", "sender")
-    _turn(client, "codex", "target")
-    parent = _send(client, "claude-code", "sender", "codex:target", "question").json()
-    delivered = _turn(client, "codex", "target")["deliveries"][0]
-    assert _ack(client, delivered).status_code == 200
+def test_delivery_derived_reply_chain_and_boundaries(client, monkeypatch):
+    from app import dependencies
 
-    expanding = "pwd:a\n" * 2600
-    redacted_reply = _reply(
-        client, delivered["delivery_id"], expanding, expires_in_seconds=60
-    )
-    assert redacted_reply.status_code == 200
-    assert redacted_reply.json()["redacted"] is True
-    assert "payload omitted because sanitization exceeded the Relay limit" in redacted_reply.json()["payload"]
-    assert _reply(client, delivered["delivery_id"], "x" * 16001).status_code == 422
-    assert _reply(client, delivered["delivery_id"], "x", expires_in_seconds=59).status_code == 422
-    assert _reply(client, delivered["delivery_id"], "x", expires_in_seconds=604801).status_code == 422
+    service = client.app.state.pallium_service
+    workers = []
+    original_schedule = dependencies.schedule_claude_relay_wake
 
-    reply_delivery = _turn(client, "claude-code", "sender")["deliveries"][0]
-    assert "payload omitted because sanitization exceeded the Relay limit" in reply_delivery["payload"]
-    assert "pwd:a" not in reply_delivery["payload"]
-    assert _ack(client, reply_delivery).status_code == 200
-    second = _reply(client, reply_delivery["delivery_id"], "second reply")
-    assert second.status_code == 200
-    assert second.json()["sender_runtime"] == "claude-code"
-    assert second.json()["sender_session_ref"] == "sender"
-    assert second.json()["recipient"].startswith("relay-session-")
-    assert second.json()["in_reply_to"].startswith("relay-reply-")
+    def capture_schedule(*args, **kwargs):
+        worker = original_schedule(*args, **kwargs)
+        if worker is not None:
+            workers.append(worker)
+        return worker
+
+    def settle_reply_writers():
+        for worker in workers:
+            worker.join(2)
+        assert all(not worker.is_alive() for worker in workers)
+        service._relay_trace_executor.submit(lambda: None).result()
+
+    monkeypatch.setattr(dependencies, "schedule_claude_relay_wake", capture_schedule)
+    try:
+        _turn(client, "claude-code", "sender")
+        _turn(client, "codex", "target")
+        parent = _send(client, "claude-code", "sender", "codex:target", "question").json()
+        delivered = _turn(client, "codex", "target")["deliveries"][0]
+        assert _ack(client, delivered).status_code == 200
+
+        expanding = "pwd:a\n" * 2600
+        redacted_reply = _reply(
+            client, delivered["delivery_id"], expanding, expires_in_seconds=60
+        )
+        assert redacted_reply.status_code == 200
+        assert redacted_reply.json()["redacted"] is True
+        assert "payload omitted because sanitization exceeded the Relay limit" in redacted_reply.json()["payload"]
+        assert _reply(client, delivered["delivery_id"], "x" * 16001).status_code == 422
+        assert _reply(client, delivered["delivery_id"], "x", expires_in_seconds=59).status_code == 422
+        assert _reply(client, delivered["delivery_id"], "x", expires_in_seconds=604801).status_code == 422
+
+        settle_reply_writers()
+        reply_delivery = _turn(client, "claude-code", "sender")["deliveries"][0]
+        assert "payload omitted because sanitization exceeded the Relay limit" in reply_delivery["payload"]
+        assert "pwd:a" not in reply_delivery["payload"]
+        assert _ack(client, reply_delivery).status_code == 200
+        second = _reply(client, reply_delivery["delivery_id"], "second reply")
+        assert second.status_code == 200
+        assert second.json()["sender_runtime"] == "claude-code"
+        assert second.json()["sender_session_ref"] == "sender"
+        assert second.json()["recipient"].startswith("relay-session-")
+        assert second.json()["in_reply_to"].startswith("relay-reply-")
+    finally:
+        settle_reply_writers()
 
 
 def test_bare_runtime_broadcast_is_rejected_without_side_effects(client):
