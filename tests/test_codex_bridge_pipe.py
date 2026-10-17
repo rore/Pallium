@@ -402,6 +402,167 @@ def test_competing_owner_does_not_replace_manifest_or_grant(tmp_path):
             competitor.stop()
 
 
+def test_deadline_completed_message_is_delivered_once_on_fresh_read(monkeypatch):
+    first = {"verb": "ready", "sequence": 7}
+    frames = [json.dumps(first).encode(), b'{"verb":"ready","sequence":8}']
+    calls, closed = [], []
+    monkeypatch.setattr(bridge, "_native_uncertain", False)
+    monkeypatch.setattr(bridge, "_retained", [])
+    ticks = iter([0., 0., 0., 1.])
+    monkeypatch.setattr(bridge, "time", SimpleNamespace(monotonic=lambda: next(ticks, 1.)))
+    class Handle:
+        def Close(self):
+            closed.append(self)
+    handle = Handle()
+    class NativeError(Exception):
+        pass
+    def read(_handle, size, ov):
+        assert _handle is handle and size == bridge.MAX_MESSAGE + 1
+        calls.append("read")
+        return (997 if calls.count("read") == 1 else 0), frames[min(calls.count("read") - 1, 1)]
+    def wait(event, milliseconds):
+        calls.append(("wait", milliseconds))
+        return 0 if milliseconds == 100 else 258
+    def result(*args):
+        calls.append("completed")
+        return len(frames[min(calls.count("read") - 1, 1)])
+    w = SimpleNamespace(types=SimpleNamespace(OVERLAPPED=SimpleNamespace, error=NativeError),
+        event=SimpleNamespace(CreateEvent=lambda *args: Handle(), WaitForSingleObject=wait,
+                              WAIT_OBJECT_0=0, WAIT_TIMEOUT=258),
+        file=SimpleNamespace(ReadFile=read, CancelIo=lambda _handle: calls.append("cancel"),
+                             GetOverlappedResult=result))
+    io = bridge._PipeIO(w, handle, threading.Event())
+    try:
+        with pytest.raises(bridge.ShadowUnavailable) as expired:
+            io.read(.5)
+        assert expired.value.category == "deadline"
+        assert calls == ["read", ("wait", 50), "cancel", ("wait", 100), "completed"]
+        assert not io.unresolved and not bridge._native_uncertain
+        received = io.read(2.)
+        assert calls.count("read") == 1, "successful drained message was discarded and native read reissued"
+        assert received == first
+        assert io.read(2.) == {"verb": "ready", "sequence": 8}
+        assert calls.count("read") == 2
+    finally:
+        io.close()
+    assert closed[-1] is handle and len(closed) == 4
+
+
+@pytest.mark.parametrize("fault", ["stop-during-drain", "uncertain-during-drain", "unresolved-during-drain", "nondeadline",
+    "aborted", "unknown-result", "cancel-failed", "expired-replay", "stopped-replay",
+    "uncertain-replay", "unresolved-replay", "closed", "new-accept", "maximum", "over-maximum",
+    "invalid-json", "write", "accept", "desktop"])
+def test_completed_message_carryover_preserves_failure_and_connection_boundaries(monkeypatch, fault):
+    raw = b'{"value":0}'
+    if fault in {"maximum", "over-maximum"}:
+        raw += b' ' * (bridge.MAX_MESSAGE + (fault == "over-maximum") - len(raw))
+    if fault == "invalid-json":
+        raw = b'{'
+    if fault == "desktop":
+        raw = (10).to_bytes(4, "little")
+    next_raw = b'{"next":true}'
+    calls, closed, retained = [], [], []
+    stop = threading.Event()
+    monkeypatch.setattr(bridge, "_native_uncertain", False)
+    monkeypatch.setattr(bridge, "_retained", retained)
+    ticks = iter([0., 0., 0., 1.])
+    monkeypatch.setattr(bridge, "time", SimpleNamespace(monotonic=lambda: next(ticks, 1.)))
+    class Handle:
+        def Close(self):
+            closed.append(self)
+    class NativeError(Exception):
+        def __init__(self, code):
+            self.winerror = code
+    handle = Handle()
+    def read(*args):
+        calls.append("read")
+        return (997, raw) if calls.count("read") == 1 else (0, next_raw)
+    def wait(event, milliseconds):
+        if milliseconds == 100:
+            return 0
+        return 0xffffffff if fault == "nondeadline" else 258
+    def cancel(*args):
+        calls.append("cancel")
+        if fault == "stop-during-drain":
+            stop.set()
+        if fault == "uncertain-during-drain":
+            bridge._native_uncertain = True
+        if fault == "unresolved-during-drain":
+            io.unresolved = True
+        if fault == "cancel-failed":
+            raise OSError("controlled native cancel failure")
+    def result(*args):
+        if calls.count("read") <= 1:
+            if fault in {"aborted", "unknown-result"}:
+                raise NativeError(995 if fault == "aborted" else 996)
+            return len(raw)
+        return len(next_raw)
+    w = SimpleNamespace(types=SimpleNamespace(OVERLAPPED=SimpleNamespace, error=NativeError),
+        event=SimpleNamespace(CreateEvent=lambda *args: Handle(), WaitForSingleObject=wait,
+                              WAIT_OBJECT_0=0, WAIT_TIMEOUT=258),
+        file=SimpleNamespace(ReadFile=read, WriteFile=lambda *args: (997, raw),
+            CancelIo=cancel, GetOverlappedResult=result),
+        pipe=SimpleNamespace(ConnectNamedPipe=lambda *args: 997))
+    io = (bridge._DesktopIO if fault == "desktop" else bridge._PipeIO)(w, handle, stop)
+    try:
+        operation = io.write if fault == "write" else io.accept if fault == "accept" else io.read
+        with pytest.raises(bridge.ShadowUnavailable) as original:
+            operation({}, .5) if fault == "write" else operation(.5)
+        assert original.value.category == ("transport-failed" if fault == "nondeadline" else "deadline")
+        assert calls.count("cancel") == 1
+        if fault == "unresolved-during-drain":
+            assert io.unresolved and io._completed_read is None
+            return
+        if fault in {"unknown-result", "cancel-failed"}:
+            assert io.unresolved and bridge._native_uncertain and retained
+            assert io._completed_read is None and closed == []
+            return
+        assert not io.unresolved
+        if fault in {"write", "accept", "desktop"}:
+            assert io._completed_read is None
+            return
+        if fault in {"stop-during-drain", "uncertain-during-drain", "nondeadline", "aborted"}:
+            stop.clear()  # Only fake native state is reset to test the next independent read.
+            bridge._native_uncertain = False
+            assert io.read(2.) == {"next": True} and calls.count("read") == 2
+            return
+        if fault in {"expired-replay", "stopped-replay", "uncertain-replay", "unresolved-replay"}:
+            stop.set() if fault == "stopped-replay" else None
+            bridge._native_uncertain = fault == "uncertain-replay"
+            io.unresolved = fault == "unresolved-replay"
+            with pytest.raises(bridge.ShadowUnavailable) as refused:
+                io.read(.5 if fault == "expired-replay" else 2.)
+            assert refused.value.category == ("deadline" if fault == "expired-replay" else "stopped")
+            assert calls.count("read") == 1
+            if fault == "expired-replay":
+                assert io.read(2.) == {"value": 0} and calls.count("read") == 1
+            return
+        if fault == "closed":
+            io.close()
+            assert io._completed_read is None
+            return
+        if fault == "new-accept":
+            w.pipe.ConnectNamedPipe = lambda *args: 0
+            io.accept(2.)
+            assert io.read(2.) == {"next": True} and calls.count("read") == 2
+            return
+        if fault in {"over-maximum", "invalid-json"}:
+            with pytest.raises(bridge.ShadowUnavailable) as invalid:
+                io.read(2.)
+            assert invalid.value.category == ("message-limit" if fault == "over-maximum" else "invalid-message")
+        else:
+            assert len(raw) == bridge.MAX_MESSAGE and io.read(2.) == {"value": 0}
+        assert calls.count("read") == 1
+        assert io.read(2.) == {"next": True} and calls.count("read") == 2
+    finally:
+        if io.unresolved:
+            io.close()
+            assert handle not in closed
+            io.unresolved = False  # Fake handles only; no native operation exists in this control.
+        io.close()
+    assert io._completed_read is None
+
+
 @pytest.mark.parametrize("operation", ["accept", "read", "write"])
 @pytest.mark.parametrize("returned", [True, False], ids=["returned", "thrown"])
 @pytest.mark.parametrize("code", [535, 232, 5])

@@ -512,17 +512,28 @@ class _PipeIO:
     def __init__(self, w, handle, stop: threading.Event):
         self.w, self.handle, self.stop = w, handle, stop
         self.unresolved = False
+        self._completed_read = None
 
-    def _operation(self, operation, deadline: float, keepalive=None, *, connected_ok=False):
+    def _operation(self, operation, deadline: float, keepalive=None, *, connected_ok=False, retain_read=False):
+        global _native_uncertain
         w = self.w
         ov = w.types.OVERLAPPED()
         ov.hEvent = w.event.CreateEvent(None, True, False, None)
         buffer = None
         pending = False
         completed = False
+        read_deadline = False
         try:
             if self.stop.is_set() or time.monotonic() >= deadline:
                 raise ShadowUnavailable("stopped" if self.stop.is_set() else "deadline")
+            if retain_read and self._completed_read is not None:
+                if self.unresolved or _native_uncertain:
+                    _close(ov.hEvent)  # This fresh event has never been submitted to the kernel.
+                    ov.hEvent = None
+                    raise ShadowUnavailable("stopped")
+                result, self._completed_read = self._completed_read, None
+                completed = True
+                return result
             try:
                 self._operation_started = True
                 code, buffer = operation(ov)
@@ -558,7 +569,8 @@ class _PipeIO:
                 raise
             completed = True
             return count, buffer
-        except ShadowUnavailable:
+        except ShadowUnavailable as exc:
+            read_deadline = retain_read and exc.category == "deadline"
             raise
         except Exception as exc:
             # Native errors are bounded categories, never model-visible stderr.
@@ -584,14 +596,17 @@ class _PipeIO:
                     w.file.CancelIo(self.handle)
                     if w.event.WaitForSingleObject(ov.hEvent, 100) == w.event.WAIT_OBJECT_0:
                         try:
-                            w.file.GetOverlappedResult(self.handle, ov, False)
+                            count = w.file.GetOverlappedResult(self.handle, ov, False)
                             completed = True
+                            # A cancelled poll may have already consumed its message.
+                            if (read_deadline and not self.stop.is_set() and not self.unresolved
+                                    and not _native_uncertain and self._completed_read is None):
+                                self._completed_read = (count, buffer)
                         except w.types.error as exc:
                             completed = getattr(exc, "winerror", None) in {38, 109, 232, 233, 234, 995}
                 except Exception:
                     pass
                 if not completed:
-                    global _native_uncertain
                     _native_uncertain = True
                     self.unresolved = True
                     _retained.append((self, ov, buffer, keepalive))
@@ -599,6 +614,7 @@ class _PipeIO:
                 _close(ov.hEvent)
 
     def accept(self, deadline: float) -> None:
+        self._completed_read = None  # A reused server handle must not carry bytes across peers.
         def connect(ov):
             code = self.w.pipe.ConnectNamedPipe(self.handle, ov)
             return code or 0, None
@@ -607,6 +623,7 @@ class _PipeIO:
     def read(self, deadline: float) -> dict:
         count, buffer = self._operation(
             lambda ov: self.w.file.ReadFile(self.handle, MAX_MESSAGE + 1, ov), deadline,
+            retain_read=True,
         )
         if count > MAX_MESSAGE:
             raise ShadowUnavailable("message-limit")
@@ -624,6 +641,7 @@ class _PipeIO:
         if self.unresolved:
             _retained.append(self)
             return
+        self._completed_read = None
         _close(self.handle)
         self.handle = None
 

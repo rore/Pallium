@@ -507,6 +507,112 @@ def test_closed_before_accept_reuses_native_listener_for_fresh_registration(nati
 
 
 @native
+def test_completed_ready_during_native_cancel_preserves_registered_source(native_tmp_path, monkeypatch):
+    directory = bridge.prepare_inventory_service(native_tmp_path / "completed-read-home")
+    notifications, processed, drained = [], [], []
+    service = bridge.RetainedService(directory, on_terminal=lambda: notifications.append(True))
+    desktop = FakeDesktop(_response)
+    monkeypatch.setenv("CODEX_APP_TOOLS_PIPE_PATH", desktop.endpoint)
+    monkeypatch.setattr(bridge, "_process_image", lambda *_: (r"C:\TestHost\Codex.exe", "native-fixture-v1"))
+    w = bridge._native()
+    original_read, original_cancel = w.file.ReadFile, w.file.CancelIo
+    original_result, original_process = w.file.GetOverlappedResult, service._process
+    enabled, at_cancel, release_cancel = threading.Event(), threading.Event(), threading.Event()
+    pending = {}
+
+    def read(handle, size, ov):
+        code, buffer = original_read(handle, size, ov)
+        if threading.current_thread() is service.thread and enabled.is_set() and not pending:
+            assert code == 997 and size == bridge.MAX_MESSAGE + 1
+            pending.update(handle=handle, ov=ov, buffer=buffer)
+        return code, buffer
+
+    def cancel(handle):
+        if threading.current_thread() is service.thread and pending.get("handle") == handle and not at_cancel.is_set():
+            at_cancel.set()
+            assert release_cancel.wait(2), "Owned caller must release the cancellation gate"
+        return original_cancel(handle)
+
+    def result(handle, ov, wait):
+        count = original_result(handle, ov, wait)
+        if threading.current_thread() is service.thread and ov is pending.get("ov"):
+            value = bridge._json(bytes(pending["buffer"][:count]))
+            drained.append((count, value["verb"], value["sequence"]))
+        return count
+
+    def process(request, *args):
+        processed.append((request["verb"], request["sequence"]))
+        return original_process(request, *args)
+
+    monkeypatch.setattr(w.file, "ReadFile", read)
+    monkeypatch.setattr(w.file, "CancelIo", cancel)
+    monkeypatch.setattr(w.file, "GetOverlappedResult", result)
+    monkeypatch.setattr(service, "_process", process)
+    source = None
+    try:
+        assert service.start() is service
+        deadline = time.monotonic() + 2
+        while not (directory / "active.json").exists():
+            assert time.monotonic() < deadline and not service.stop_event.is_set()
+            time.sleep(.01)
+        source = subprocess.Popen([sys.executable, "-B", "-c", _SOURCE],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, encoding="utf-8")
+        first = _source_call(source, {"bootstrap": str(directory / "active.json"), "continuity": None,
+            "metadata": {"thread_ref": "race-source", "turn_ref": "before-race"}})
+        assert first["result"]["status"] == "registered" and len(first["continuity"]) == 64
+        assert service.source.pid == source.pid
+        epoch = service.epoch
+        enabled.set()
+        assert at_cancel.wait(2)
+        source.stdin.write(json.dumps({"bootstrap": str(directory / "active.json"),
+            "metadata": {"thread_ref": "race-source", "turn_ref": "after-race"}}) + "\n")
+        source.stdin.flush()
+        # Actual pending ReadFile has completed with ready bytes before actual CancelIo.
+        assert w.event.WaitForSingleObject(pending["ov"].hEvent, 1000) == w.event.WAIT_OBJECT_0
+        release_cancel.set()
+        second = json.loads(source.stdout.readline())
+        assert second["ready"]["status"] == "ready" and second["result"]["status"] == "registered"
+        assert second["continuity"] == first["continuity"]
+        assert len(drained) == 1 and drained[0][0] > 0 and drained[0][1:] == ("ready", 3)
+        assert processed == [("ready", 1), ("register", 2), ("ready", 3), ("register", 4)]
+        assert service.source.pid == source.pid and service.epoch == epoch
+        assert service.retained_registration["caller"] == ("race-source", "after-race")
+        assert service.custody is not None and service.thread.is_alive()
+        assert not service.unresolved and not service._terminal_failure and notifications == []
+    finally:
+        release_cancel.set()
+        try:
+            if source is not None:
+                try:
+                    if source.poll() is None:
+                        source.stdin.write(json.dumps({"stop": True}) + "\n")
+                        source.stdin.flush()
+                        source.wait(timeout=5)
+                    assert source.returncode == 0
+                except BaseException as failure:
+                    if source.poll() is None:
+                        try:
+                            source.terminate()
+                            source.wait(timeout=5)
+                        except Exception:
+                            failure.add_note("Owned source did not settle during cleanup")
+                    raise
+                finally:
+                    for stream in (source.stdin, source.stdout, source.stderr):
+                        stream.close()
+        finally:
+            try:
+                service.stop()
+                if service.thread is not None:
+                    service.thread.join()
+            finally:
+                desktop.close()
+    assert not service.unresolved and not bridge._native_uncertain and notifications == []
+    assert service.source is None and service.custody is None and not service.thread.is_alive()
+
+
+@native
 def test_retained_registration_continues_across_real_service_epoch(monkeypatch):
     repo = Path(__file__).resolve().parents[1]
     temp_parent = repo / "tmp"
