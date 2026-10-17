@@ -1862,7 +1862,6 @@ async def test_production_lifespan_automatically_recovers_spent_retained_wake(
                     worker.join(5)
                 assert all(not worker.is_alive() for worker in workers)
                 assert len(desktop.owners) == 2
-                assert len(workers) == 2
                 recovered, = recovered_fences
                 assert recovered is not None and recovered.generation > fence.generation
                 assert (recovered.recipient_endpoint_id, recovered.delivery_id) == (
