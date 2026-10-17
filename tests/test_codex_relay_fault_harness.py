@@ -931,6 +931,9 @@ def test_observer_preserves_real_http_hook_emission_and_ack(http_wake, monkeypat
             "payload": "observer caller-surface payload", **WAKE_SCOPE,
         })
         assert response.status_code == 200, response.text
+        for worker in http_wake[6]:
+            worker.join(5)
+            assert not worker.is_alive(), "native wake blocked hook/registry"
         return response.json()["deliveries"][0]
 
     baseline = send("observer-baseline")
