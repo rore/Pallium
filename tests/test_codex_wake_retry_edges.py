@@ -168,8 +168,9 @@ def test_retry_deadline_clamps_once_across_rollback_restart_and_due_wake(
 
 
 def test_due_retry_reads_moved_scope_and_hook_acks_same_delivery(
-    http_wake, monkeypatch, tmp_path, force_refusal=False,
+    http_wake, monkeypatch, tmp_path, force_refusal=False, force_target_refusal=False,
 ):
+    assert not (force_refusal and force_target_refusal)
     http, relay, registry, _, desktop, send, _ = http_wake
     now = [datetime(2030, 9, 5, tzinfo=timezone.utc)]
     _freeze_clock(monkeypatch, now)
@@ -186,13 +187,30 @@ def test_due_retry_reads_moved_scope_and_hook_acks_same_delivery(
         "previous_scope_generation": 0, **moved_scope,
     })
     assert moved.status_code == 200 and moved.json()["deliveries"] == []
+    targets = _observe_transition_attempts(
+        http_wake, monkeypatch, "retry_target", force_refusal=force_target_refusal,
+    )
     attempts = _observe_transition_attempts(
         http_wake, monkeypatch, "retry", force_refusal=force_refusal,
     )
+    native_before = (len(desktop.writes), len(desktop.owners))
     recover(http_wake)
-    assert not force_refusal or attempts[0].get("forced") is True
-    if _single_typed_transition_refusal(attempts):
-        assert attempts[0]["reservation"] == initial
+    assert len(targets) == 1
+    target_refused = (_single_typed_transition_refusal(targets)
+                      and targets[0].get("acquisition_stage") == "late_begin")
+    assert not force_target_refusal or (target_refused and targets[0].get("forced") is True)
+    if target_refused:
+        assert attempts == []
+        assert (len(desktop.writes), len(desktop.owners)) == native_before
+    else:
+        assert "error_type" not in targets[0]
+        assert isinstance(targets[0].get("result"), dict)
+        assert targets[0]["result"]["session_ref"] == TARGET
+        assert targets[0]["result"]["container_ref"] == moved_scope["container_ref"]
+    assert not force_refusal or (attempts and attempts[0].get("forced") is True)
+    if target_refused or _single_typed_transition_refusal(attempts):
+        refused = targets[0] if target_refused else attempts[0]
+        assert refused["reservation"] == initial
         assert registry.snapshot(initial.recipient_endpoint_id) == initial
         assert initial.container_ref == SCOPE["container_ref"]
         assert len(desktop.owners) == 1
@@ -202,6 +220,13 @@ def test_due_retry_reads_moved_scope_and_hook_acks_same_delivery(
         assert pending["delivery_id"] == delivery["delivery_id"]
         assert pending["state"] == "pending" and pending["attempts"] == 0
         recover(http_wake)
+        if target_refused:
+            assert len(targets) == 2 and "error_type" not in targets[1]
+            assert isinstance(targets[1].get("result"), dict)
+            assert targets[1]["result"]["session_ref"] == TARGET
+            assert targets[1]["result"]["container_ref"] == moved_scope["container_ref"]
+            assert len(attempts) == 1 and "error_type" not in attempts[0]
+            assert isinstance(attempts[0].get("result"), type(initial))
     else:
         assert len(attempts) == 1 and "error_type" not in attempts[0]
         assert isinstance(attempts[0].get("result"), type(initial))
@@ -228,6 +253,14 @@ def test_due_retry_refusal_preserves_authority_then_hook_acks_moved_delivery(
 ):
     test_due_retry_reads_moved_scope_and_hook_acks_same_delivery(
         http_wake, monkeypatch, tmp_path, force_refusal=True,
+    )
+
+
+def test_due_retry_target_refusal_preserves_authority_then_hook_acks_moved_delivery(
+    http_wake, monkeypatch, tmp_path,
+):
+    test_due_retry_reads_moved_scope_and_hook_acks_same_delivery(
+        http_wake, monkeypatch, tmp_path, force_target_refusal=True,
     )
 
 
