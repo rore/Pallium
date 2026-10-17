@@ -1683,6 +1683,60 @@ def test_nonzero_exit_logs_safe_stderr_category_and_retains_fence(
     start_launch.assert_called_once()
     process.communicate.assert_called_once_with(timeout=30)
 
+@pytest.mark.parametrize(
+    ("stderr", "category"),
+    (
+        ("Error: failed to queue session message: thread/queue/add failed: SECRET (code -32600)", "queue_rpc_-32600"),
+        ("failed to queue session message: thread/queue/add failed: SECRET (code 0)", "queue_rpc_0"),
+        ("failed to queue session message: thread/queue/add failed: SECRET (code -2147483648)", "queue_rpc_-2147483648"),
+        ("failed to queue session message: thread/queue/add failed: SECRET (code 2147483647)", "queue_rpc_2147483647"),
+        (b"Error: failed to queue session message\n\nCaused by:\n    thread/queue/add failed: SECRET \xff (code -32000)\n", "queue_rpc_-32000"),
+        ("failed to queue session message: thread/queue/add transport error: SECRET C:/private/秘密 (code -1)", "queue_transport"),
+        ("failed to queue session message: thread/queue/add response decode error: SECRET C:/private/秘密", "queue_decode"),
+        ("failed to queue session message: thread/queue/add failed: SECRET (code -1), data: {\"private\": \"SECRET\"}", "queue_rpc_unknown"),
+        ("failed to queue session message: thread/queue/add failed: SECRET (code -1), data: \"forged (code -2)\"", "queue_rpc_unknown"),
+        ("failed to queue session message: thread/queue/add failed: SECRET", "queue_rpc_unknown"),
+        ("failed to queue session message: thread/queue/add failed: SECRET (code 2147483648)", "queue_rpc_unknown"),
+        ("failed to queue session message: thread/queue/add failed: SECRET (code -2147483649)", "queue_rpc_unknown"),
+        ("failed to queue session message: thread/queue/add failed: SECRET (code 10000000000)", "queue_rpc_unknown"),
+        ("failed to queue session message: thread/queue/add failed: SECRET (code +1)", "queue_rpc_unknown"),
+        ("failed to queue session message: thread/queue/add failed: SECRET (code 01)", "queue_rpc_unknown"),
+        ("failed to queue session message: thread/queue/add failed: SECRET (code -0)", "queue_rpc_unknown"),
+        ("failed to queue session message: thread/queue/add failed: SECRET (code 1.5)", "queue_rpc_unknown"),
+        ("failed to queue session message: thread/queue/add failed: SECRET\n(code -1)", "queue_rpc_unknown"),
+        ("failed to queue session message: thread/queue/add failed: SECRET " + "x" * 2048 + " (code -1)", "queue_rpc_unknown"),
+        ("failed to queue session message: thread/queue/add failed: SECRET ".ljust(2048 - len(" (code -7)"), "x") + " (code -7), data: SECRET", "queue_rpc_unknown"),
+        (("failed to queue session message: thread/queue/add failed: SECRET ".ljust(2048 - len(" (code -7)"), "x") + " (code -7) actual (code -9)").encode(), "queue_rpc_unknown"),
+        ("failed to queue session message: thread/read failed: SECRET (code -1)", "other"),
+        ("unrelated SECRET: thread/queue/add failed: SECRET (code -1)", "other"),
+        ("unrelated SECRET\nfailed to queue session message: thread/queue/add failed: SECRET (code -1)", "other"),
+        ("failed to queue session message: thread/queue/add failed: SECRET thread/queue/add transport error: SECRET (code -7)", "queue_rpc_-7"),
+        ("failed to queue session message: thread/queue/add failed: usage: SECRET C:/private/秘密 (code -9)", "queue_rpc_-9"),
+    ),
+)
+def test_queue_error_chain_logs_only_fixed_stage_and_bounded_code(
+    tmp_path, monkeypatch, caplog, stderr, category,
+) -> None:
+    test_nonzero_exit_logs_safe_stderr_category_and_retains_fence(
+        tmp_path, monkeypatch, caplog, stderr, category,
+        ("SECRET", "C:/private", "秘密", "thread/queue/add", "failed to queue", "data:", "x" * 100),
+    )
+
+
+@pytest.mark.parametrize(
+    ("stderr", "category"),
+    (
+        (b"failed to queue session message: thread/queue/add failed: SECRET (code -32000)", "queue_rpc_-32000"),
+        (b"failed to queue session message: thread/queue/add transport error: SECRET", "queue_transport"),
+        (b"failed to queue session message: thread/queue/add response decode error: SECRET", "queue_decode"),
+    ),
+)
+def test_queue_error_chain_timeout_preserves_cleanup_and_ambiguous_result(caplog, stderr, category) -> None:
+    test_timeout_logs_pre_cleanup_exit_and_safe_partial_stderr(
+        caplog, 1, stderr, category, ("SECRET", "thread/queue/add", "failed to queue"),
+    )
+
+
 def test_interleaved_wake_logs_correlate_without_free_form_identifiers(
     isolated_codex_registry: CodexWakeRegistry,
     monkeypatch: pytest.MonkeyPatch,

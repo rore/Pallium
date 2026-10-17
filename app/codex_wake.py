@@ -886,6 +886,22 @@ def _stderr_category(stderr: str | bytes | None) -> str:
         stderr[:2048].decode("utf-8", errors="replace").lower()
         if isinstance(stderr, bytes) else stderr[:2048].lower()
     )
+    queue = re.match(
+        r"(?:error: )?failed to queue session message(?:: |\s+caused by:\s*)"
+        r"thread/queue/add (transport error: |response decode error: |failed: )", sample,
+    )
+    if queue is not None:
+        if queue[1] == "transport error: ":
+            return "queue_transport"
+        if queue[1] == "response decode error: ":
+            return "queue_decode"
+        detail = sample[queue.end():]
+        # Server message/data are arbitrary text. Only an unambiguous terminal code is safe.
+        code = (re.fullmatch(r"[^\r\n]* \(code (0|-?[1-9][0-9]{0,9})\)\s*", detail)
+                if len(stderr) <= 2048 and ", data:" not in detail else None)
+        if code is not None and -(1 << 31) <= int(code[1]) < (1 << 31):
+            return f"queue_rpc_{int(code[1])}"
+        return "queue_rpc_unknown"
     if "usage:" in sample or "unexpected argument" in sample:
         return "cli_usage"
     if any(term in sample for term in ("thread not found", "unknown thread", "no such thread")):
