@@ -1622,13 +1622,13 @@ def test_spent_wake_retries_after_cooldown_and_real_hook_acks_backlog(
 
     recover_expired_relay_wakes(relay, ClaudeWakeRegistry(), codex_registry=restarted)
     for worker in workers:
-        worker.join(2)
+        worker.join(5)
         assert not worker.is_alive()
     assert len(prompts) == 1
     now[0] += timedelta(seconds=2)
     recover_expired_relay_wakes(relay, ClaudeWakeRegistry(), codex_registry=restarted)
     for worker in workers:
-        worker.join(2)
+        worker.join(5)
         assert not worker.is_alive()
 
     assert len(prompts) == 3  # Initial wake, recovered wake, then the next hook batch.

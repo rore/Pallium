@@ -741,7 +741,16 @@ def test_unusable_claude_credentials_revoke_exact_wake(
         monkeypatch.setenv("CLAUDE_CODE_MESSAGING_TOKEN", "é" * MAX_TOKEN_CHARS)
 
     try:
-        assert not common.register_claude_wake(session_ref, container_ref, idle=False), (statuses, stages)
+        native_hook_time, native_registry_time = common.time, wake.time
+        with monkeypatch.context() as revocation:
+            hook_time = SimpleNamespace(**vars(native_hook_time))
+            hook_time.monotonic = count(step=.001).__next__
+            registry_time = SimpleNamespace(**vars(native_registry_time))
+            registry_time.monotonic = count(step=.001).__next__
+            revocation.setattr(common, "time", hook_time)
+            revocation.setattr(wake, "time", registry_time)
+            assert not common.register_claude_wake(session_ref, container_ref, idle=False), (statuses, stages)
+        assert common.time is native_hook_time and wake.time is native_registry_time
         final = activation()
         assert final["activation"]["availability"] == "unknown", (final, statuses, stages)
         assert registry.state_for(recipient_endpoint_id="relay-session-" + "a" * 32, session_ref=session_ref, container_ref=other_container) == "idle"
