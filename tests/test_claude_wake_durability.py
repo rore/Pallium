@@ -612,6 +612,9 @@ def test_restricted_resume_fences_inflight_until_normal_turn_ack(
     client: TestClient, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture, native_outcome: str,
     request: pytest.FixtureRequest, tmp_path: Path,
 ) -> None:
+    from itertools import count
+    from threading import get_ident
+    from storage import sqlite_queue
     from tests.test_claude_code_integration import _load_claude_hook
     from tests.test_codex_wake_retry_edges import _observe_relay_busy_acquisition
 
@@ -643,7 +646,25 @@ def test_restricted_resume_fences_inflight_until_normal_turn_ack(
     delivery = sent.json()["deliveries"][0]
     monkeypatch.setenv("CLAUDE_CODE_MESSAGING_SOCKET", "socket")
     monkeypatch.setenv("CLAUDE_CODE_MESSAGING_TOKEN", "token")
-    assert common.register_claude_wake(session_ref, scope["container_ref"], idle=True)
+    storage = client.app.state.pallium_service._storage
+    native_mark_active, native_queue_time = storage.relay_mark_active, sqlite_queue.time
+    native_monotonic = time.monotonic
+
+    def setup_mark_active(**kwargs):
+        provider_thread = get_ident()
+        logical_monotonic = count(step=.001).__next__
+        qualified_time = SimpleNamespace(**vars(native_queue_time))
+        qualified_time.monotonic = lambda: (
+            logical_monotonic() if get_ident() == provider_thread else native_monotonic())
+        with monkeypatch.context() as setup:
+            setup.setattr(sqlite_queue, "time", qualified_time)
+            return native_mark_active(**kwargs)
+
+    with monkeypatch.context() as setup:
+        setup.setattr(storage, "relay_mark_active", setup_mark_active)
+        assert common.register_claude_wake(session_ref, scope["container_ref"], idle=True)
+    assert storage.relay_mark_active == native_mark_active and sqlite_queue.time is native_queue_time
+    assert time.monotonic is native_monotonic
     native_calls = []
     attempt = registry.attempt(
         runtime="claude-code", session_ref=session_ref, container_ref=scope["container_ref"],

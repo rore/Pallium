@@ -1690,6 +1690,7 @@ def test_create_app_preserves_new_intent_during_old_cleanup(
     monkeypatch.setenv("PALLIUM_CLAUDE_WAKE_DIR", str(wake_dir))
     recovery_ready = threading.Event()
     recovered = threading.Event()
+    recovery_entered = threading.Event()
     original_recover = wake.recover_claude_relay_wakes
     original_stop = wake.ClaudeWakeReconciler.stop
 
@@ -1700,6 +1701,7 @@ def test_create_app_preserves_new_intent_during_old_cleanup(
     monkeypatch.setattr(wake.ClaudeWakeReconciler, "stop", stop_reconciler)
 
     def controlled_recover(*args, **kwargs):
+        recovery_entered.set()
         recovery_ready.wait()
         original_recover(*args, **kwargs)
         recovered.set()
@@ -1722,6 +1724,7 @@ def test_create_app_preserves_new_intent_during_old_cleanup(
 
     with TestClient(app, client=("127.0.0.1", 50000)) as http, ExitStack() as release_gates:
         release_gates.callback(recovery_ready.set)
+        assert recovery_entered.wait(timeout=5)
         common = _load_claude_hook("common", monkeypatch)
         real_time = wake_registry_module.time
         native_monotonic = real_time.monotonic
