@@ -864,10 +864,13 @@ def test_persistent_observation_preserves_endpoint_canonicalization_and_full_val
     (1, "high_water"), (0, "extra_marker"), (0, "absent_marker"),
 ])
 def test_authority_reads_preserve_all_fields_without_global_orm_hydration(
-    relay_store, tmp_path, count, damage,
+    relay_store, tmp_path, count, damage, monkeypatch,
 ):
+    from itertools import count as clock_ticks
+    import time
     from sqlalchemy import event
     from sqlalchemy.orm import Session
+    from storage import sqlite_queue
     from storage.sqlite_schema import RelayCodexWakeReservationRecord, RelayCodexWakeStateRecord
 
     relay, storage, database = relay_store
@@ -935,12 +938,21 @@ def test_authority_reads_preserve_all_fields_without_global_orm_hydration(
         # All unrelated rows remain validated during a write transition too.
         statements.clear()
         hydrated.clear()
-        if invalid:
-            with pytest.raises(ValueError, match="invalid persisted Codex wake authority"):
-                storage.relay_codex_wake_transition(operation="release", reservations=())
-        else:
-            released = storage.relay_codex_wake_transition(operation="release", reservations=())
-            assert released == (None if damage == "absent_marker" else ())
+        native_queue_time, native_monotonic = sqlite_queue.time, time.monotonic
+        # This tests substantive write validation/SQL shape, not acquisition latency.
+        with monkeypatch.context() as write_validation:
+            validation_time = SimpleNamespace(**vars(native_queue_time))
+            validation_time.monotonic = clock_ticks(step=.001).__next__
+            write_validation.setattr(sqlite_queue, "time", validation_time)
+            if invalid:
+                with pytest.raises(ValueError, match="invalid persisted Codex wake authority"):
+                    storage.relay_codex_wake_transition(operation="release", reservations=())
+            else:
+                released = storage.relay_codex_wake_transition(operation="release", reservations=())
+                assert released == (None if damage == "absent_marker" else ())
+        assert sqlite_queue.time is native_queue_time
+        assert sqlite_queue.time.monotonic is native_monotonic
+        assert time.monotonic is native_monotonic
         assert [statement.split()[0] for statement in statements] == [
             "PRAGMA", "BEGIN", "SELECT", "SELECT", "SELECT",
             "ROLLBACK" if invalid else "COMMIT", "PRAGMA",

@@ -2028,9 +2028,21 @@ def test_expired_claim_rewakes_once_after_real_app_restart(
         assert delivery["state"] == "claimed" and delivery["attempts"] == 1
 
     clock[0] += timedelta(seconds=61)
-    monkeypatch.setattr(main, "start_claude_wake_reconciler", original_start)
+    initial_recovery = threading.Event()
+
+    def start_with_recovery_readiness(*args, claim_recovery, **kwargs):
+        def observed_recovery():
+            try:
+                return claim_recovery()
+            finally:
+                initial_recovery.set()
+
+        return original_start(*args, claim_recovery=observed_recovery, **kwargs)
+
+    monkeypatch.setattr(main, "start_claude_wake_reconciler", start_with_recovery_readiness)
     app_b = create_app(config)
     with TestClient(app_b, client=("127.0.0.1", 50000)) as http_b:
+        assert initial_recovery.wait(timeout=5), "initial appB claim recovery did not complete"
         assert transport_called.wait(timeout=1)
         assert transport_calls == [(PAYLOAD["socket_path"], PAYLOAD["token"])]
         response = http_b.get(f"/relay/messages/{sent['message_id']}", params=scope)

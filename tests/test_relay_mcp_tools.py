@@ -992,10 +992,24 @@ class TestBoundedReceive:
 class TestAck:
     @pytest.mark.asyncio
     async def test_ack_with_valid_receipt(self, monkeypatch: pytest.MonkeyPatch, asgi_post):
+        import time
+        from itertools import count
+        from types import SimpleNamespace
+        from storage import sqlite_queue
+
         bind_asgi_post(monkeypatch, asgi_post)
 
-        await asgi_post("/relay/turn", {"runtime": _RUNTIME, "session_ref": _SESSION, **_SCOPE})
-        await asgi_post("/relay/turn", {"runtime": "codex", "session_ref": "ack-sender", **_SCOPE})
+        native_queue_time, native_monotonic = sqlite_queue.time, time.monotonic
+        # Endpoint registration prepares the receipt/ACK journey, not an admission SLA.
+        with monkeypatch.context() as registration:
+            registration_time = SimpleNamespace(**vars(native_queue_time))
+            registration_time.monotonic = count(step=.001).__next__
+            registration.setattr(sqlite_queue, "time", registration_time)
+            await asgi_post("/relay/turn", {"runtime": _RUNTIME, "session_ref": _SESSION, **_SCOPE})
+            await asgi_post("/relay/turn", {"runtime": "codex", "session_ref": "ack-sender", **_SCOPE})
+        assert sqlite_queue.time is native_queue_time
+        assert sqlite_queue.time.monotonic is native_monotonic
+        assert time.monotonic is native_monotonic
         await asgi_post("/relay/messages", {
             "sender_runtime": "codex", "sender_session_ref": "ack-sender",
             "recipient": f"{_RUNTIME}:{_SESSION}", "payload": "ack me", **_SCOPE,
