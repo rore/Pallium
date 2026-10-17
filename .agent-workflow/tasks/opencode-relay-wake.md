@@ -23,7 +23,7 @@ Task authorization (2026-10-07): user said "so look in the roadmap if we have a 
 **Plan review:** Agent technical review: /root/opencode_wake_design, plan at 335776b2cded74b6a9f1a50c7340959aebcfaaca, approved 2026-10-07; see ## Plan review below. The prior rejection at daf43572 is resolved by generation-fenced read-only continuation restoration and correlated native terminal release. This is separate from human approval and implementation/result review.
 **Approvals:** Approved by user 2026-10-07: "make sure we don't over complicate, keeping it simple and aligned, and e2e testing all pitfalls we know from other wakes. then i approve". Scope: the concrete plan reviewed at 335776b2, with smallest implementation, existing/native reuse, roadmap alignment and caller-surface E2E coverage of known wake pitfalls.
 **Exceptions:** —
-**State:** Blocked or returned to planning
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -195,3 +195,9 @@ Concrete scope returned for manager review before execution:
 Only preparation/read-only Git inspection and this Work Record changed in this continuation. Source working files, tests, installations and shared canonical roadmap remain untouched. State stays returned to planning solely for this concrete scope review and evidence/validation disposition.
 
 Independent follow-up scope review: /root/opencode297_resume_plan_review approved this PR297-then-PR306 sequencing after inspecting the 706ef16-to-7380d112 native diff and exact 9ed6578f correction. The reviewer explicitly narrowed the older component's blocked-callback disposal claim and accepted one successful corrected existing native lifecycle execution on the final fresh-main composition as sufficient for this specific native gate. Minimum remaining validation is the existing slow file's two caller cases, affected package, selector/governance and required full/CI disposition; no premature native replay or broad requalification. Review was read-only: no tests, production re-review or original ignored-artifact hash verification. Preserve the separate component reviews and historical full failure.
+
+## Accepted local PR297 reconciliation, 2026-10-17
+
+Manager Pallium Relay reply relay-reply-10dace19ab918878f3ca0d9481a429f159e041886cad2e2dbd43d13a7ca08b18, delivery relay-delivery-d97efd7b07944cc69da5d10ab4d83731, accepts isolated PR297 integration under this existing Work Record and reviewed 706ef16b semantics. This supersedes the PR297 scope hold above; do not leave implementation blocked solely awaiting already-received acceptance. Publication and installed changes remain unauthorized. PR306 composition/test sequencing is the separately returned scope, not presumed accepted by this PR297-only reply.
+
+Pre-merge checks on clean 66c0f871: live GitHub main and local origin/main both exactly f602753edf46d0b7a5d88bcd79725a143e311dba, published PR297 head is an ancestor (exit 0), clean merge preview tree 3a2f5083a346f8d7f92627945a42c915ed98c145, and all three component blobs equal qualified 706ef16b. The preview differs from main in only the four declared files. State resumes Ready to implement for the accepted local integration and its validation disposition, not Ready for review or final acceptance. Next action is an ordinary merge of this exact origin/main, inspect the actual result, run the non-executing whole-change selector and submit actual source/evidence disposition to the independent reviewer. No application tests are released by this preparation step.
