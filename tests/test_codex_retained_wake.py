@@ -1383,6 +1383,13 @@ def test_malformed_descriptor_release_busy_recovers_without_owner_replay(
 def test_write_is_fenced_across_concurrency_recovery_restart(http_wake, fault):
     http, relay, registry, service, desktop, send, _ = http_wake
     desktop.response = fault
+    owner_entered, owners = threading.Event(), []
+
+    def on_owner(_request):
+        owners.append(threading.current_thread())
+        owner_entered.set()
+
+    desktop.on_owner = on_owner
     errors = []
     def run():
         try:
@@ -1390,11 +1397,21 @@ def test_write_is_fenced_across_concurrency_recovery_restart(http_wake, fault):
         except Exception as error:
             errors.append(error)
     threads = [threading.Thread(target=run) for _ in range(3)]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join(3)
-        assert not thread.is_alive()
+    try:
+        for thread in threads:
+            thread.start()
+        assert owner_entered.wait(5), "native owner did not enter"
+        owned, = owners
+        owned.join(5)
+        assert not owned.is_alive(), "owned native worker did not settle"
+        for thread in threads:
+            thread.join(3)
+            assert not thread.is_alive()
+    finally:
+        for thread in threads:
+            if thread.ident is not None:
+                thread.join(5)
+        assert all(not thread.is_alive() for thread in threads), "sender did not drain"
     assert errors == []
     assert len(desktop.owners) == 1
     recover(http_wake)

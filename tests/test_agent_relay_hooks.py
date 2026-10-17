@@ -228,6 +228,9 @@ def _exercise_short_prompt(hook, monkeypatch, *, codex: bool):
     }
     if codex:
         expected_body["wake_delivery_id"] = embedded_delivery_id
+        expiry = turn_calls[0][2]["claim_expires_at_ms"]
+        assert type(expiry) is int and 0 < expiry <= (1 << 53) - 1
+        expected_body["claim_expires_at_ms"] = expiry
     else:
         expected_body["structural_work_refs"] = []
     assert turn_calls[0][2] == expected_body
