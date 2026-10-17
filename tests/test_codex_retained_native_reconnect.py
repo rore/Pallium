@@ -13,7 +13,7 @@ import time
 import pytest
 
 from app import codex_bridge_pipe as bridge
-from tests.test_codex_bridge_pipe import FakeDesktop
+from tests.test_codex_bridge_pipe import FakeDesktop, tmp_path as native_tmp_path
 
 pytestmark = pytest.mark.slow
 native = pytest.mark.skipif(sys.platform != "win32", reason="Windows kernel pipe contract")
@@ -405,6 +405,105 @@ def _service_status(process):
     process.stdin.write("status\n")
     process.stdin.flush()
     return _process_json_line(process, 2, "retained service status")
+
+
+@native
+def test_closed_before_accept_reuses_native_listener_for_fresh_registration(native_tmp_path, monkeypatch):
+    from tests.test_codex_bridge_pipe import wait_until
+
+    directory = bridge.prepare_inventory_service(native_tmp_path / "closed-accept-home")
+    notifications, native_results, resets = [], [], []
+    service = bridge.RetainedService(directory, on_terminal=lambda: notifications.append(True))
+    manifest_ready, closed = threading.Event(), threading.Event()
+    w = bridge._native()
+    original_publish = bridge._atomic_private
+    original_connect, original_disconnect = w.pipe.ConnectNamedPipe, w.pipe.DisconnectNamedPipe
+
+    def publish(*args, **kwargs):
+        result = original_publish(*args, **kwargs)
+        if args[1] == directory / "active.json":
+            manifest_ready.set()
+            assert closed.wait(2), "First real client must close before accept starts"
+        return result
+
+    def connect(*args):
+        try:
+            result = original_connect(*args)
+        except w.types.error as exc:
+            if threading.current_thread() is service.thread:
+                native_results.append(exc.winerror)
+            raise
+        if threading.current_thread() is service.thread:
+            native_results.append(result)
+        return result
+
+    def disconnect(*args):
+        result = original_disconnect(*args)
+        if threading.current_thread() is service.thread:
+            resets.append((service.retained_registration, service.custody))
+        return result
+
+    desktop = FakeDesktop(_response)
+    monkeypatch.setenv("CODEX_APP_TOOLS_PIPE_PATH", desktop.endpoint)
+    monkeypatch.setattr(bridge, "_atomic_private", publish)
+    monkeypatch.setattr(w.pipe, "ConnectNamedPipe", connect)
+    monkeypatch.setattr(w.pipe, "DisconnectNamedPipe", disconnect)
+    monkeypatch.setattr(bridge, "_process_image", lambda *_: (r"C:\TestHost\Codex.exe", "native-fixture-v1"))
+    first = source = None
+    try:
+        assert service.start() is service and manifest_ready.wait(2)
+        epoch = service.epoch
+        first = bridge.NativeInventoryClient(directory / "active.json", threading.Event(), retained=True)
+        first.dispose()
+        closed.set()
+        wait_until(lambda: bool(resets) or service.stop_event.is_set())
+        assert native_results[0] == 232 and resets[0] == (None, None)
+        assert service.source is None and not service._terminal_failure and service.thread.is_alive()
+        source = subprocess.Popen([sys.executable, "-B", "-c", _SOURCE],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, encoding="utf-8")
+        result = _source_call(source, {"bootstrap": str(directory / "active.json"), "continuity": None,
+            "metadata": {"thread_ref": "fresh-source", "turn_ref": "fresh-turn"}})
+        assert result["ready"]["status"] == "ready" and result["result"]["status"] == "registered"
+        assert len(result["continuity"]) == 64
+        assert service.retained_registration["caller"] == ("fresh-source", "fresh-turn")
+        assert service.source.pid == source.pid and service.epoch == epoch
+        assert service.thread.is_alive() and not service.stop_event.is_set()
+        assert not service._terminal_failure and not service.unresolved and notifications == []
+    finally:
+        closed.set()
+        try:
+            if first is not None:
+                first.dispose()
+        finally:
+            try:
+                if source is not None:
+                    try:
+                        if source.poll() is None:
+                            source.stdin.write(json.dumps({"stop": True}) + "\n")
+                            source.stdin.flush()
+                            source.wait(timeout=5)
+                        assert source.returncode == 0
+                    except BaseException as failure:
+                        if source.poll() is None:
+                            try:
+                                source.terminate()
+                                source.wait(timeout=5)
+                            except Exception:
+                                failure.add_note("Owned source did not settle during cleanup")
+                        raise
+                    finally:
+                        for stream in (source.stdin, source.stdout, source.stderr):
+                            stream.close()
+            finally:
+                try:
+                    service.stop()
+                    if service.thread is not None:
+                        service.thread.join()
+                finally:
+                    desktop.close()
+    assert not service.unresolved and not bridge._native_uncertain and notifications == []
+    assert service.source is None and service.custody is None and not service.thread.is_alive()
 
 
 @native

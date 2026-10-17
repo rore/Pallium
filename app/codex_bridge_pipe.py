@@ -41,7 +41,7 @@ _INVENTORY_FAILURE_CATEGORIES = frozenset({
     "invalid-policy", "invalid-policy-lock", "invalid-response", "message-limit", "native-failed",
     "path-unavailable", "peer-gone", "peer-mismatch", "peer-unavailable", "policy-busy",
     "policy-changed", "policy-inactive", "stopped", "transport-failed", "unsafe-acl", "unsafe-owner",
-    "unsafe-path", "unsupported-acl", "registration-missing",
+    "unsafe-path", "unsupported-acl", "registration-missing", "peer-closed",
 })
 
 
@@ -534,6 +534,9 @@ class _PipeIO:
             if connected_ok and code == 535:
                 completed = True
                 return 0, None
+            if connected_ok and type(code) is int and code == 232:  # ERROR_NO_DATA: the client already closed.
+                completed = True
+                raise ShadowUnavailable("peer-closed")
             if code not in (0, 997):  # ERROR_IO_PENDING.
                 completed = True
                 raise ShadowUnavailable("transport-failed")
@@ -570,6 +573,10 @@ class _PipeIO:
                              code if type(code) is int and 0 <= code <= 0xFFFFFFFF else "unknown")
             except Exception:
                 pass  # Diagnostics must not change failure handling or cleanup.
+            if (connected_ok and isinstance(exc, w.types.error) and type(code) is int
+                    and code == 232 and (not pending or completed)):
+                completed = True
+                raise ShadowUnavailable("peer-closed") from None
             raise ShadowUnavailable("transport-failed") from None
         finally:
             if pending and not completed:
@@ -1903,6 +1910,17 @@ class InventoryService:
                     io.accept(time.monotonic() + .1)
                 except ShadowUnavailable as exc:
                     if exc.category == "deadline" and not io.unresolved:
+                        continue
+                    if (self.retained and exc.category == "peer-closed" and not io.unresolved
+                            and not self.unresolved and not _native_uncertain and not self.stop_event.is_set()):
+                        self._drop()
+                        if self.unresolved or _native_uncertain or self.stop_event.is_set():
+                            raise
+                        self.w.pipe.DisconnectNamedPipe(handle)
+                        if self.source is not None:
+                            self.source.close()
+                            self.source = None
+                        self.ready_announced = False
                         continue
                     raise
                 peer = _Peer(self.w, self.w.pipe.GetNamedPipeClientProcessId(handle), self.sid)

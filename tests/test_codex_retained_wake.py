@@ -517,6 +517,82 @@ def test_conclusive_source_channel_eof_clears_registration_while_source_is_alive
                    for record in caplog.records)
 
 
+@pytest.mark.parametrize("fault", ["resolved", "fenced", "source-unresolved", "native-uncertain",
+                                 "drop-unresolved", "drop-stopped", "drop-uncertain",
+                                 "stopped", "reset-failed", "unknown"])
+def test_closed_accept_resets_only_resolved_retained_listener(retained, monkeypatch, fault):
+    service, request, natives = retained
+    service._process({**request, "continuity": None}, service.source, 0, float("inf"))
+    source = service.source
+    service.ready_deadline = float("inf")
+    service.fenced = fault == "fenced"
+    notifications, resets, accepts, peers = [], [], [], []
+    service._on_terminal = lambda: notifications.append(True)
+    original_drop = service._drop
+    def drop(*args, **kwargs):
+        original_drop(*args, **kwargs)
+        if fault == "drop-stopped":
+            service.stop_event.set()
+        if fault == "drop-uncertain":
+            bridge._native_uncertain = True
+    monkeypatch.setattr(service, "_drop", drop)
+    w = service.w
+    for name in ("PIPE_ACCESS_DUPLEX", "PIPE_TYPE_MESSAGE", "PIPE_READMODE_MESSAGE", "PIPE_WAIT",
+                 "PIPE_REJECT_REMOTE_CLIENTS"):
+        setattr(w.pipe, name, 1)
+    w.pipe.CreateNamedPipe = lambda *_: 91
+    w.pipe.GetNamedPipeClientProcessId = lambda *_: (peers.append(True), 42)[1]
+
+    def disconnect(_handle):
+        resets.append((service.retained_registration, service.custody))
+        if fault == "reset-failed":
+            raise OSError("controlled reset failure")
+
+    w.pipe.DisconnectNamedPipe = disconnect
+
+    class SourceIO:
+        unresolved = False
+        def __init__(self, *_):
+            pass
+        def accept(self, _deadline):
+            accepts.append(True)
+            if len(accepts) == 2:
+                assert source.closed and service.source is None and not service.ready_announced
+                assert service.retained_registration is None and service.custody is None
+                service.stop_event.set()
+                return
+            self.unresolved = fault == "source-unresolved"
+            if fault == "native-uncertain":
+                bridge._native_uncertain = True
+            if fault == "drop-unresolved":
+                service.custody.unresolved = True
+            if fault == "stopped":
+                service._explicit_stop.set()
+                service.stop_event.set()
+            raise bridge.ShadowUnavailable("transport-failed" if fault == "unknown" else "peer-closed")
+        def close(self):
+            pass
+
+    monkeypatch.setattr(bridge, "_native_uncertain", False)
+    monkeypatch.setattr(bridge, "_native", lambda: w)
+    monkeypatch.setattr(bridge, "_self_sid", lambda *_: service.sid)
+    monkeypatch.setattr(bridge, "_check_path", lambda *_: None)
+    monkeypatch.setattr(bridge, "_lock_file", lambda *_: 92)
+    monkeypatch.setattr(bridge, "_security_attributes", lambda *_: None)
+    monkeypatch.setattr(bridge, "_atomic_private", lambda *_: None)
+    monkeypatch.setattr(bridge, "_PipeIO", SourceIO)
+    service._run()
+    recovered = fault in {"resolved", "fenced"}
+    assert len(accepts) == (2 if recovered else 1)
+    assert len(peers) == (1 if recovered else 0)  # Never construct a peer for the failed accept.
+    assert notifications == ([] if recovered or fault == "stopped" else [True])
+    assert service._terminal_failure is (not recovered)
+    assert service.fenced is (fault == "fenced")
+    assert all(registration is None and custody is None for registration, custody in resets)
+    assert len(resets) == (2 if recovered else 1 if fault == "reset-failed" else 0)
+    assert service.retained_registration is None and not natives[0].owners
+
+
 @pytest.mark.parametrize("failure_at", ["accept", "read"])
 @pytest.mark.parametrize("broken_sink", [False, True])
 def test_inherited_source_io_unresolved_invalidates_enrollment_evidence(

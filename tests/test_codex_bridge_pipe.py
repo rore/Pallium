@@ -404,7 +404,7 @@ def test_competing_owner_does_not_replace_manifest_or_grant(tmp_path):
 
 @pytest.mark.parametrize("operation", ["accept", "read", "write"])
 @pytest.mark.parametrize("returned", [True, False], ids=["returned", "thrown"])
-@pytest.mark.parametrize("code", [535, 5])
+@pytest.mark.parametrize("code", [535, 232, 5])
 def test_pipe_connected_is_success_only_for_accept(monkeypatch, operation, returned, code):
     retained, closed, forbidden_calls = [], [], []
     monkeypatch.setattr(bridge, "_retained", retained)
@@ -441,13 +441,69 @@ def test_pipe_connected_is_success_only_for_accept(monkeypatch, operation, retur
         if operation == "accept" and code == 535:
             assert io.accept(*arguments) is None
         else:
-            with pytest.raises(bridge.ShadowUnavailable, match="transport-failed"):
+            expected = "peer-closed" if operation == "accept" and code == 232 else "transport-failed"
+            with pytest.raises(bridge.ShadowUnavailable, match=expected):
                 getattr(io, operation)(*arguments)
         assert closed == [event] and forbidden_calls == []
         assert not io.unresolved and not bridge._native_uncertain and retained == []
     finally:
         io.close()
     assert closed == [event, handle]
+
+
+@pytest.mark.parametrize("fault", ["completed", "wait-drained", "wait-unresolved", "cancel-failed", "non-native"])
+def test_accept_no_data_requires_conclusive_native_completion(monkeypatch, fault):
+    closed, cancelled, retained, waits = [], [], [], []
+    monkeypatch.setattr(bridge, "_retained", retained)
+    monkeypatch.setattr(bridge, "_native_uncertain", False)
+
+    class NativeError(Exception):
+        winerror = 232
+
+    class ForeignError(Exception):
+        winerror = 232
+
+    class Handle:
+        def Close(self):
+            closed.append(self)
+
+    event, handle = Handle(), Handle()
+
+    def wait(*_args):
+        waits.append(True)
+        if fault != "completed" and (len(waits) == 1 or fault == "wait-unresolved"):
+            raise NativeError()
+        return 0
+
+    def result(*_args):
+        raise NativeError()
+
+    def connect(*_args):
+        if fault == "non-native":
+            raise ForeignError()
+        return 997
+
+    def cancel(*_args):
+        cancelled.append(True)
+        if fault == "cancel-failed":
+            raise NativeError()
+
+    w = SimpleNamespace(types=SimpleNamespace(OVERLAPPED=SimpleNamespace, error=NativeError),
+        pipe=SimpleNamespace(ConnectNamedPipe=connect),
+        file=SimpleNamespace(GetOverlappedResult=result, CancelIo=cancel),
+        event=SimpleNamespace(CreateEvent=lambda *_: event, WaitForSingleObject=wait,
+            WAIT_OBJECT_0=0, WAIT_TIMEOUT=258))
+    io = bridge._PipeIO(w, handle, threading.Event())
+    expected = "peer-closed" if fault == "completed" else "transport-failed"
+    with pytest.raises(bridge.ShadowUnavailable, match=expected):
+        io.accept(time.monotonic() + 1)
+    assert cancelled == ([] if fault in {"completed", "non-native"} else [True])
+    assert io.unresolved is (fault in {"wait-unresolved", "cancel-failed"})
+    assert bridge._native_uncertain is io.unresolved
+    assert bool(retained) is io.unresolved
+    assert closed == ([] if io.unresolved else [event])
+    io.close()
+    assert closed == ([] if io.unresolved else [event, handle])
 
 
 @pytest.mark.parametrize("operation", ["accept", "read", "write"])
