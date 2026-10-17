@@ -31,6 +31,82 @@ commitment: committed
 
 ## Summary
 
+### October 17 practical check and adoption checklist
+
+The user supplied an October 17 alternatives-and-lessons report and requested a
+small check of the current product before further investment. This checklist is
+the owning task list for that follow-up; navigation remains in its existing
+[queued study](../features/investigate-history-navigation-and-on-demand-compression.md).
+The small diagnostic below precedes that study and does not require new navigation
+features. It does not replace the larger product gate or relax its Done When.
+
+- [x] Review the supplied report and identify the unresolved question: downstream
+  benefit over inexpensive native-transcript search, not simply recoverable history.
+- [x] Inspect current retained usage and selected native call traces. Recorded
+  delivered searches fell from 96 in the week of August 31 and 68 in the week of
+  September 7 to five during October 3-17, across three requesting chats. Research,
+  verification, missing attribution and retention limit interpretation; search and
+  expansion counts are not independent tasks or verified downstream use.
+- [ ] Classify 5-8 existing genuine context-recovery episodes, including searches
+  and non-searches. Record the actual need, whether earlier evidence was necessary,
+  what context/tool was used, observable outcome, repeated work and manual rescue.
+  Separate adequate alternatives, plausible missed opportunities, capture gaps,
+  retrieval misses, delivery failures, reasoning failures and unknowns. Do not infer
+  motivation or a retrieval failure from absence of a search. Preserve unknown
+  protected-case exclusions; use metadata-only review where content eligibility is
+  unresolved, and do not reuse retrospective cases as untouched confirmation.
+- [ ] Complete a brief agent-awareness survey and compare replies with observable
+  traces. Ask what agents already knew about when/how to search, a recent example,
+  alternatives used, and specific observed friction; accept unknown or defer.
+  Three requests were saved through Relay on October 17. Native activation did
+  not deliver them; ordinary app messages were used for two recipients with no
+  active turn, preserving their settings. Receipt and replies need separate checks.
+  Saved/queued is not receipt. Keep self-report separate from verified behavior;
+  record survey exposure because the survey itself may change later behavior.
+- [ ] Take the next eight genuine upcoming needs, accepting 5-10 over a bounded
+  two-week collection window without padding or outcome-based selection. Before
+  searching, freeze the request, shared caller/repository context, expected
+  evidence and qualifiers, success rubric, eligible sources and per-arm budget.
+  Keep the answer key outside answering contexts and log exclusions.
+- [ ] Compare current Pallium with one baseline: literal `rg` search and bounded
+  reading of explicitly eligible native transcripts. Include no history wherever
+  ordinary investigation or justified abstention is meaningful. Use independent
+  contexts, the same model/settings and task budget, randomized arm order, and a
+  pre-request evidence cutoff excluding pilot/other-arm material. Mark contaminated
+  comparisons invalid. Run no new paid batch without verified adapter/budget gates.
+- [ ] Separate normal capture coverage from retrieval quality on equivalent eligible
+  evidence. Diagnose source presence only after outcome scoring, using authorized
+  read paths; do not re-ingest missing evidence during the check. A deleted,
+  redacted or inaccessible source is a boundary exclusion, not a retrieval defect.
+- [ ] Record per-arm correctness, stale/harmful conclusions, specific repeated
+  investigation avoided, manual context and user time, total input/output tokens,
+  reported monetary cost, tool calls, latency and retries. Distinguish necessary
+  current-state verification from repeated work; unknown cost is not zero. Report
+  per-case outcomes, sample dependence, evaluation overhead and small-sample limits.
+- [ ] Reuse existing governed transcripts, linked lookup telemetry, usage reports
+  and compatible evaluation tools. The paired runner is a two-arm isolated-fixture
+  tool with substring scoring, not a turnkey live task evaluator; the exporter is
+  synthetic-only. No new collector, index, adapter, dashboard or navigation feature.
+  Before retaining private excerpts, establish the private unsynced destination,
+  deletion owner, retention date and handling of all copies; revalidate lifecycle
+  before reuse. Native search must not bypass forgetting or expose less-redacted
+  evidence. Skip a source if equivalent eligibility cannot be established.
+- [ ] Use CASS, Sessions, AI Session Search and Episodic Memory as reference
+  candidates from the supplied research, with bounded source verification only
+  when a concrete observed failure makes comparison useful. No installation or
+  expanded competitor benchmark is selected. Extractive packs/navigation stay
+  conditional; new embeddings, reranking, compression and derived mechanisms are
+  deferred until evidence justifies their cost.
+- [ ] Recommend only the smallest change supported by an observed failure, or
+  retain the current product if adequate alternatives explain non-use. Keep
+  candidate recovery, agent-visible precision and downstream task effect separate.
+
+Owner: this Session History investigation; next action is finish the retrospective
+classification and collect survey replies, then freeze upcoming cases before
+search. No product implementation, installed changes or paid evaluation is
+authorized by this checklist. Detailed private prompts, transcripts, session
+identities and survey replies stay out of this public roadmap file.
+
 ### October 6 readiness reconciliation
 
 The gate remains in-progress, not merely waiting for more lookup rows. The
