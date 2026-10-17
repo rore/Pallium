@@ -591,38 +591,40 @@ def test_claude_scheduler_coalesces_one_attempt_and_forwards_completion(relay, m
         token="local-token",
         idle=True,
     )
-    started = threading.Event()
     release = threading.Event()
     calls = []
 
     def transport(*_args):
         calls.append(True)
-        started.set()
-        assert release.wait(timeout=2)
+        release.wait()
         return "accepted"
 
     monkeypatch.setattr(claude_wake, "claude_wake_transport", transport)
     events = []
-    worker = claude_wake.schedule_claude_relay_wake(
-        first,
-        {"container_ref": "git:test"},
-        registry=registry,
-        relay_service=service,
-        trace_callback=events.append,
-    )
-    assert worker is not None and started.wait(timeout=2)
-    assert (
-        claude_wake.schedule_claude_relay_wake(
-            second,
+    worker = None
+    try:
+        worker = claude_wake.schedule_claude_relay_wake(
+            first,
             {"container_ref": "git:test"},
             registry=registry,
             relay_service=service,
             trace_callback=events.append,
         )
-        is None
-    )
-    release.set()
-    worker.join(timeout=2)
+        assert worker is not None
+        assert (
+            claude_wake.schedule_claude_relay_wake(
+                second,
+                {"container_ref": "git:test"},
+                registry=registry,
+                relay_service=service,
+                trace_callback=events.append,
+            )
+            is None
+        )
+    finally:
+        release.set()
+        claude_wake.stop_claude_relay_wake_admission(registry)
+        claude_wake.drain_claude_relay_wakes(registry)
     assert not worker.is_alive() and calls == [True]
     assert [event["stage"] for event in events] == [
         "prepared",
