@@ -871,6 +871,10 @@ class RelayTurnRequest(BaseModel):
     wake_delivery_id: str | None = Field(
         default=None, pattern=r"^relay-delivery-[0-9a-f]{32}$"
     )
+    claim_expires_at_ms: int | None = Field(
+        default=None, strict=True, ge=1, le=2**53 - 1,
+        description="Optional caller UTC Unix-ms expiry for claim admission, not the claim lease.",
+    )
     previous_container_ref: str | None = Field(default=None, min_length=1, max_length=512)
     previous_endpoint_id: str | None = Field(default=None, min_length=1, max_length=128)
     previous_scope_generation: int | None = Field(default=None, ge=0)

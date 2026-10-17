@@ -4297,6 +4297,10 @@ def test_late_exact_hook_claim_is_correlated_before_expired_wake_sweep(
             body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
             if self.path == "/relay/turn":
                 assert hook_done.wait(5)
+                # Legacy callers omit the new optional expiry; retain every late-claim recovery oracle.
+                legacy_body = json.loads(body)
+                assert type(legacy_body.pop("claim_expires_at_ms")) is int
+                body = json.dumps(legacy_body).encode("utf-8")
             response = route.request("POST", self.path, content=body, headers={
                 "content-type": self.headers.get("Content-Type", "application/json"),
             })

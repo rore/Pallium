@@ -774,6 +774,115 @@ def test_codex_exact_wake_real_http_response_delay_is_bounded_and_traceable(
         assert json.loads(captured.out)["decision"] == "block"
 
 
+def test_expired_exact_hook_request_does_not_claim_then_fresh_hook_emits_and_acks(
+    client, monkeypatch, tmp_path, capsys,
+):
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    import threading
+    import time
+
+    from app import codex_wake
+    from integrations.codex.hooks import user_prompt_submit as hook
+
+    scope = {"container_ref": "git:example/expiry"}
+    for runtime, session in (("claude-code", "expiry-sender"), ("codex", "expiry-target")):
+        response = client.post("/relay/turn", json={"runtime": runtime, "session_ref": session, **scope})
+        assert response.status_code == 200, response.text
+    sent = client.post("/relay/messages", json={
+        "sender_runtime": "claude-code", "sender_session_ref": "expiry-sender",
+        "recipient": "codex:expiry-target", "payload": "expiry payload — 東京", **scope,
+    })
+    assert sent.status_code == 200, sent.text
+    message_id = sent.json()["message_id"]
+    delivery_id = sent.json()["deliveries"][0]["delivery_id"]
+    hook_done, late_done = threading.Event(), threading.Event()
+    events, handlers, requests, times = [], [], [], {}
+
+    class Server(ThreadingHTTPServer):
+        daemon_threads = True
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            handlers.append(threading.current_thread())
+            body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+            first = self.path == "/relay/turn" and not requests
+            if self.path == "/relay/turn":
+                requests.append(json.loads(body))
+            try:
+                if first:
+                    assert hook_done.wait(5), "The real hook must stop waiting before admission"
+                response = client.request("POST", self.path, content=body,
+                    headers={"content-type": "application/json"})
+                if first:
+                    times.update(late=time.monotonic(), status=response.status_code)
+                try:
+                    self.send_response(response.status_code)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(response.content)))
+                    self.end_headers()
+                    self.wfile.write(response.content)
+                except (ConnectionAbortedError, BrokenPipeError, OSError):
+                    pass
+            finally:
+                if first:
+                    late_done.set()
+
+        def log_message(self, *_args):
+            return
+
+    server = Server(("127.0.0.1", 0), Handler)
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    monkeypatch.setattr(hook._common, "PALLIUM_BASE_URL", f"http://127.0.0.1:{server.server_port}")
+    monkeypatch.setattr(hook, "read_hook_input", lambda: {
+        "cwd": str(tmp_path), "session_id": "expiry-target", "prompt": codex_wake._wake_prompt(delivery_id),
+    })
+    monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: scope["container_ref"])
+    monkeypatch.setattr(hook, "derive_actor_ref", lambda *_: "actor")
+    monkeypatch.setattr(hook, "get_pending_relay_close_batch", lambda *_: ([], 0))
+    monkeypatch.setattr(hook, "pallium_request", lambda *_a, **_k: pytest.fail("Exact wake must not query memory"))
+
+    def record(**event):
+        events.append(event)
+        if event.get("stage") == "relay_request_completed" and not hook_done.is_set():
+            times["hook"] = time.monotonic()
+            hook_done.set()
+
+    monkeypatch.setattr(hook, "record_codex_wake_event", record)
+    try:
+        server_thread.start()
+        with pytest.raises(SystemExit) as exited:
+            hook.main()
+        assert exited.value.code == 0
+        assert late_done.wait(3) and times["late"] > times["hook"]
+        completed = next(event for event in events if event["stage"] == "relay_request_completed")
+        assert completed["outcome"] == "unavailable" and completed["elapsed_ms"] >= 1800
+        assert not any(event["stage"] in {"payload_emitted", "delivery_acked"} for event in events)
+        assert json.loads(capsys.readouterr().out)["decision"] == "block"
+        state = client.get(f"/relay/messages/{message_id}", params=scope).json()["deliveries"][0]
+        assert (state["state"], state["attempts"]) == ("pending", 0), "Expired hook request created an abandoned claim"
+        assert times["status"] == 409
+        assert type(requests[0]["claim_expires_at_ms"]) is int
+        events.clear()
+        with pytest.raises(SystemExit) as fresh:
+            hook.main()
+        assert fresh.value.code == 0
+        output = json.loads(capsys.readouterr().out)["hookSpecificOutput"]["additionalContext"]
+        assert output.count(delivery_id) == 1 and "expiry payload — 東京" in output
+        assert any(event["stage"] == "payload_emitted" for event in events)
+        assert any(event["stage"] == "delivery_acked" for event in events)
+        delivered = client.get(f"/relay/messages/{message_id}", params=scope).json()["deliveries"][0]
+        assert (delivered["state"], delivered["attempts"]) == ("delivered", 1)
+    finally:
+        hook_done.set()
+        server.shutdown()
+        server.server_close()
+        server_thread.join(timeout=3)
+        for handler in handlers:
+            handler.join(timeout=3)
+            assert not handler.is_alive()
+        assert not server_thread.is_alive()
+
+
 def test_codex_exact_wake_late_ack_response_keeps_durable_delivery_without_confirmation(
     client, monkeypatch, tmp_path, capsys,
 ):
