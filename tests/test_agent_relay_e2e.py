@@ -88,7 +88,7 @@ def relay_storage(client):
     return client.app.state.pallium_service._storage
 
 
-def test_alias_transfer_reply_and_lifecycle(client):
+def test_alias_transfer_reply_and_lifecycle(client, monkeypatch):
     _turn(client, "claude-code", "sender")
     _turn(client, "codex", "review-old", title="review")
     _turn(client, "codex", "review-new", title="review")
@@ -118,10 +118,23 @@ def test_alias_transfer_reply_and_lifecycle(client):
         client, "codex", "review-old", "claude-code:sender", "reply one",
         in_reply_to=old["message_id"],
     ).json()
-    reply2 = _send(
-        client, "claude-code", "sender", "codex:review-old", "reply two",
-        in_reply_to=reply1["message_id"],
-    ).json()
+    from itertools import count
+    from types import SimpleNamespace
+    from storage import sqlite_queue
+
+    # This send exercises reply-chain behavior; native admission deadlines are separate.
+    native_queue_time = sqlite_queue.time
+    with monkeypatch.context() as reply_patch:
+        reply_time = SimpleNamespace(**vars(native_queue_time))
+        reply_time.monotonic = count(step=0.001).__next__
+        reply_patch.setattr(sqlite_queue, "time", reply_time)
+        response = _send(
+            client, "claude-code", "sender", "codex:review-old", "reply two",
+            in_reply_to=reply1["message_id"],
+        )
+    assert sqlite_queue.time is native_queue_time
+    assert response.status_code == 200, response.text
+    reply2 = response.json()
     reply3 = _send(
         client, "codex", "review-old", "claude-code:sender", "reply three",
         in_reply_to=reply2["message_id"],
@@ -171,9 +184,23 @@ def test_names_are_service_global_and_takeover_replaces_holder(client):
         ("unsafe\u2028value", 422),
     ],
 )
-def test_payload_boundaries_unicode_and_controls(client, payload, expected):
-    _turn(client, "claude-code", "sender")
-    _turn(client, "codex", "target")
+def test_payload_boundaries_unicode_and_controls(client, payload, expected, monkeypatch):
+    import time
+    from itertools import count
+    from types import SimpleNamespace
+    from storage import sqlite_queue
+
+    native_queue_time, native_monotonic = sqlite_queue.time, time.monotonic
+    # Registration prepares payload validation; native admission has separate coverage.
+    with monkeypatch.context() as registration:
+        registration_time = SimpleNamespace(**vars(native_queue_time))
+        registration_time.monotonic = count(step=.001).__next__
+        registration.setattr(sqlite_queue, "time", registration_time)
+        _turn(client, "claude-code", "sender")
+        _turn(client, "codex", "target")
+    assert sqlite_queue.time is native_queue_time
+    assert sqlite_queue.time.monotonic is native_monotonic
+    assert time.monotonic is native_monotonic
     response = _send(client, "claude-code", "sender", "codex:target", payload)
     assert response.status_code == expected, response.text
 
@@ -662,7 +689,14 @@ def test_http_omitted_expiry_defaults_new_send_and_reply_to_one_day(client):
 
 
 @pytest.mark.parametrize("original_expiry", [None, 600])
-def test_http_omitted_existing_send_and_reply_preserve_original_ttl(client, original_expiry):
+def test_http_omitted_existing_send_and_reply_preserve_original_ttl(client, original_expiry, request):
+    service = client.app.state.pallium_service
+    app = FastAPI()
+    # TTL/idempotence semantics do not require asynchronous wake/trace callbacks.
+    app.include_router(create_router(service, relay_service=RelayService(service._storage)))
+    client = TestClient(app)
+    request.addfinalizer(client.close)
+
     def expiry_instant(value):
         if value is None:
             return None
@@ -1688,3 +1722,121 @@ def test_unreachable_and_closed_destinations_reject_without_new_state(client, re
         "state"
     ] == "claimed"
     assert row_counts() == reply_before
+
+
+@pytest.mark.parametrize("phase", ("entry", "acquire", "candidate", "flush", "scope", "new-session", "missing", "closed"))
+def test_claim_expiry_rolls_back_waits_mutation_and_early_returns(client, monkeypatch, phase):
+    from types import SimpleNamespace
+    import storage.sqlite_relay as module
+    from storage.sqlite_schema import RelayEndpointGenerationRecord
+
+    _turn(client, "claude-code", "expiry-sender")
+    target = _turn(client, "codex", "expiry-target")["session"]
+    sent = _send(client, "claude-code", "expiry-sender", "codex:expiry-target", "expiry 東京")
+    assert sent.status_code == 200, sent.text
+    if phase == "closed":
+        closed = client.post("/relay/sessions/close", json={"runtime": "codex", "session_ref": "expiry-target", **SCOPE})
+        assert closed.status_code == 200, closed.text
+    storage = client.app.state.pallium_service._storage
+    records = (RelaySessionRecord, RelayEndpointGenerationRecord, RelayMessageRecord, RelayDeliveryRecord)
+
+    def snapshot():
+        with storage._relay_session_factory() as db:
+            return [db.execute(select(record.__table__).order_by(*record.__table__.primary_key.columns)).all()
+                    for record in records]
+
+    before = snapshot()
+    clock, observed = [0.0], []
+    native_time = module.time
+    monkeypatch.setattr(module, "time", SimpleNamespace(**{
+        **vars(native_time), "time": lambda: 1000.0, "monotonic": lambda: clock[0],
+    }))
+    original_transaction = storage._begin_relay_immediate
+
+    @contextmanager
+    def transaction():
+        with original_transaction() as db:
+            original_flush, original_execute = db.flush, db.execute
+
+            def flush(*args, **kwargs):
+                result = original_flush(*args, **kwargs)
+                rows = list(db.identity_map.values())
+                reached = (phase == "flush" and any(isinstance(row, RelayDeliveryRecord) and row.attempts == 1 for row in rows)
+                    or phase == "scope" and any(isinstance(row, RelaySessionRecord) and row.container_ref == "git:example.test/moved" for row in rows)
+                    or phase == "new-session" and any(isinstance(row, RelaySessionRecord) and row.session_ref == "expiry-new" for row in rows))
+                if reached:
+                    observed.append(phase)
+                    clock[0] = 2.0
+                return result
+
+            def execute(statement, *args, **kwargs):
+                result = original_execute(statement, *args, **kwargs)
+                if phase == "missing" and "relay_endpoint_generations" in str(statement):
+                    observed.append(phase)
+                    clock[0] = 2.0
+                return result
+
+            db.flush, db.execute = flush, execute
+            if phase == "acquire":
+                observed.append(phase)
+                clock[0] = 2.0
+            yield db
+
+    monkeypatch.setattr(storage, "_begin_relay_immediate", transaction)
+    original_view, original_session_view = module._delivery_view, storage._relay_session_view
+
+    def view(*args, **kwargs):
+        result = original_view(*args, **kwargs)
+        if phase == "candidate":
+            observed.append(phase)
+            clock[0] = 2.0
+        return result
+
+    def session_view(*args, **kwargs):
+        result = original_session_view(*args, **kwargs)
+        if phase == "closed":
+            observed.append(phase)
+            clock[0] = 2.0
+        return result
+
+    monkeypatch.setattr(module, "_delivery_view", view)
+    monkeypatch.setattr(storage, "_relay_session_view", session_view)
+    body = {"runtime": "codex", "session_ref": "expiry-target", **SCOPE,
+            "claim_expires_at_ms": 999000 if phase == "entry" else 1001000}
+    if phase == "scope":
+        body.update(container_ref="git:example.test/moved", previous_container_ref=SCOPE["container_ref"],
+                    previous_endpoint_id=target["endpoint_id"], previous_scope_generation=target["scope_generation"])
+    if phase in {"new-session", "missing"}:
+        body["session_ref"] = "expiry-new"
+    if phase in {"missing", "closed"}:
+        body["register_session"] = False
+    response = client.post("/relay/turn", json=body)
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"] == "Relay claim request expired"
+    assert phase == "entry" or observed
+    assert snapshot() == before  # Session/scope/generation/message expiry/token/lease/attempt all roll back.
+
+
+@pytest.mark.parametrize("expiry", (True, False, 0, -1, 1.5, "1000", 2**53))
+def test_claim_expiry_rejects_invalid_wire_and_direct_values(client, expiry):
+    response = client.post("/relay/turn", json={
+        "runtime": "codex", "session_ref": "invalid-expiry", **SCOPE, "claim_expires_at_ms": expiry,
+    })
+    assert response.status_code == 422
+    storage = client.app.state.pallium_service._storage
+    with pytest.raises(ValueError, match="invalid Relay claim expiry"):
+        RelayService(storage).turn(runtime="codex", session_ref="invalid-expiry", **SCOPE, claim_expires_at_ms=expiry)
+    with pytest.raises(ValueError, match="invalid Relay claim expiry"):
+        storage.relay_turn(runtime="codex", session_ref="invalid-expiry", **SCOPE, title=None,
+            max_chars=0, max_messages=1, lease_seconds=60, claim_expires_at_ms=expiry)
+
+
+@pytest.mark.parametrize(("expiry", "status"), ((None, 200), (1, 409), (2**53 - 1, 200)))
+def test_claim_expiry_optional_and_integer_boundaries(client, expiry, status):
+    response = client.post("/relay/turn", json={
+        "runtime": "codex", "session_ref": "expiry-boundary", **SCOPE, "claim_expires_at_ms": expiry,
+    })
+    assert response.status_code == status, response.text
+    if status == 200:
+        assert response.json()["session"]["session_ref"] == "expiry-boundary"
+        assert response.json()["deliveries"] == []

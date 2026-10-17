@@ -455,12 +455,19 @@ def test_inherited_stop_timeout_invalidates_enrollment_evidence(client, retained
     assert not worker.is_alive()
 
 
+@pytest.mark.parametrize("diagnostic", ["alive", "exited", "wait-failed", "wait-error", "missing-handle",
+                                      "pid-bool", "pid-large", "creation-invalid", "hostile-pid",
+                                      "hostile-creation", "getter-error", "logger-error"])
 def test_conclusive_source_channel_eof_clears_registration_while_source_is_alive(
-    retained, monkeypatch,
+    retained, monkeypatch, caplog, capsys, diagnostic,
 ):
+    monkeypatch.setattr(bridge._log, "handlers", [*bridge._log.handlers, caplog.handler])
     service, request, natives = retained
     source = service.source
+    service.ready_deadline = time.monotonic() + bridge.GRANT_SECONDS
     observations = []
+    terminal_notifications = []
+    service._on_terminal = lambda: terminal_notifications.append(True)
     w = service.w
     w.con.FILE_FLAG_OVERLAPPED = 4
     for name, value in dict(PIPE_ACCESS_DUPLEX=1, PIPE_TYPE_MESSAGE=2,
@@ -469,6 +476,29 @@ def test_conclusive_source_channel_eof_clears_registration_while_source_is_alive
         setattr(w.pipe, name, value)
     w.pipe.CreateNamedPipe = lambda *args: 91
     w.pipe.GetNamedPipeClientProcessId = lambda handle: source.pid
+    original_pid = source.pid
+    creation = "2026-01-02T03:04:05.123456+00:00"
+    waits = []
+
+    def observe(handle, timeout):
+        waits.append((handle, timeout))
+        assert (handle, timeout) == (original_pid, 0)
+        if diagnostic == "wait-error":
+            raise RuntimeError("private-native-error-sentinel")
+        return {"exited": 0, "wait-failed": 0xffffffff}.get(diagnostic, 258)
+
+    class Hostile:
+        def __str__(self):
+            raise AssertionError("diagnostic stringified private value")
+        __repr__ = __str__
+
+    class GetterError(Peer):
+        @property
+        def creation(self):
+            raise RuntimeError("private-getter-sentinel")
+
+    def logger_error(*args):
+        raise RuntimeError("private-logger-sentinel")
 
     def disconnected(handle):
         observations.append((service.retained_registration, service.custody,
@@ -489,6 +519,25 @@ def test_conclusive_source_channel_eof_clears_registration_while_source_is_alive
                 return {**request, "continuity": None}
             assert service.retained_registration is not None
             assert not source.gone and service.source is source
+            assert not source.closed
+            monkeypatch.setattr(w.event, "WaitForSingleObject", observe)
+            source.creation = creation
+            if diagnostic == "missing-handle":
+                source.handle = None
+            if diagnostic == "pid-bool":
+                source.pid = True
+            if diagnostic == "pid-large":
+                source.pid = 1 << 32
+            if diagnostic == "creation-invalid":
+                source.creation = "private-path-sentinel\nprivate-token-sentinel"
+            if diagnostic == "hostile-pid":
+                source.pid = Hostile()
+            if diagnostic == "hostile-creation":
+                source.creation = Hostile()
+            if diagnostic == "getter-error":
+                source.__class__ = GetterError
+            if diagnostic == "logger-error":
+                monkeypatch.setattr(bridge._log, "warning", logger_error)
             raise bridge.ShadowUnavailable("transport-failed")
         def write(self, response, deadline):
             assert response["status"] == "registered"
@@ -505,16 +554,148 @@ def test_conclusive_source_channel_eof_clears_registration_while_source_is_alive
     monkeypatch.setattr(bridge, "_PipeIO", SourceIO)
     service._run()
     assert observations == [(None, None, False, False)]
+    assert terminal_notifications == []
     assert len(natives) == 1 and natives[0].closed and not natives[0].owners
     assert not service.unresolved and not source.gone
+    assert not any(record.msg.startswith("codex_retained_terminal_failure ")
+                   for record in caplog.records)
+    records = [record for record in caplog.records
+               if record.msg.startswith("codex_retained_source_channel_closed ")]
+    if diagnostic == "logger-error":
+        assert records == []
+    else:
+        assert len(records) == 1
+        line = records[0].getMessage()
+        expected_pid = "unknown" if diagnostic in {"pid-bool", "pid-large", "hostile-pid", "getter-error"} else str(original_pid)
+        expected_creation = "unknown" if diagnostic in {"creation-invalid", "hostile-creation", "getter-error"} else creation
+        expected_state = {"exited": "exited", "wait-failed": "unknown", "wait-error": "unknown",
+                          "missing-handle": "unknown", "getter-error": "unknown"}.get(diagnostic, "alive")
+        assert f"source_pid={expected_pid} source_creation={expected_creation} source_state={expected_state} close_cause=unknown" in line
+        assert line in capsys.readouterr().err
+        assert "private-" not in line and "thread_ref" not in line and "turn_ref" not in line
+    assert waits == ([] if diagnostic in {"missing-handle", "getter-error"} else [(original_pid, 0)])
+
+
+@pytest.mark.parametrize("fault", ["resolved", "fenced", "source-unresolved", "native-uncertain",
+                                 "drop-unresolved", "drop-stopped", "drop-uncertain",
+                                 "stopped", "reset-failed", "unknown"])
+def test_closed_accept_resets_only_resolved_retained_listener(retained, monkeypatch, fault):
+    service, request, natives = retained
+    service._process({**request, "continuity": None}, service.source, 0, float("inf"))
+    source = service.source
+    service.ready_deadline = float("inf")
+    service.fenced = fault == "fenced"
+    notifications, resets, accepts, peers = [], [], [], []
+    service._on_terminal = lambda: notifications.append(True)
+    original_drop = service._drop
+    def drop(*args, **kwargs):
+        original_drop(*args, **kwargs)
+        if fault == "drop-stopped":
+            service.stop_event.set()
+        if fault == "drop-uncertain":
+            bridge._native_uncertain = True
+    monkeypatch.setattr(service, "_drop", drop)
+    w = service.w
+    for name in ("PIPE_ACCESS_DUPLEX", "PIPE_TYPE_MESSAGE", "PIPE_READMODE_MESSAGE", "PIPE_WAIT",
+                 "PIPE_REJECT_REMOTE_CLIENTS"):
+        setattr(w.pipe, name, 1)
+    w.pipe.CreateNamedPipe = lambda *_: 91
+    w.pipe.GetNamedPipeClientProcessId = lambda *_: (peers.append(True), 42)[1]
+
+    def disconnect(_handle):
+        resets.append((service.retained_registration, service.custody))
+        if fault == "reset-failed":
+            raise OSError("controlled reset failure")
+
+    w.pipe.DisconnectNamedPipe = disconnect
+
+    class SourceIO:
+        unresolved = False
+        def __init__(self, *_):
+            pass
+        def accept(self, _deadline):
+            accepts.append(True)
+            if len(accepts) == 2:
+                assert source.closed and service.source is None and not service.ready_announced
+                assert service.retained_registration is None and service.custody is None
+                service.stop_event.set()
+                return
+            self.unresolved = fault == "source-unresolved"
+            if fault == "native-uncertain":
+                bridge._native_uncertain = True
+            if fault == "drop-unresolved":
+                service.custody.unresolved = True
+            if fault == "stopped":
+                service._explicit_stop.set()
+                service.stop_event.set()
+            raise bridge.ShadowUnavailable("transport-failed" if fault == "unknown" else "peer-closed")
+        def close(self):
+            pass
+
+    monkeypatch.setattr(bridge, "_native_uncertain", False)
+    monkeypatch.setattr(bridge, "_native", lambda: w)
+    monkeypatch.setattr(bridge, "_self_sid", lambda *_: service.sid)
+    monkeypatch.setattr(bridge, "_check_path", lambda *_: None)
+    monkeypatch.setattr(bridge, "_lock_file", lambda *_: 92)
+    monkeypatch.setattr(bridge, "_security_attributes", lambda *_: None)
+    monkeypatch.setattr(bridge, "_atomic_private", lambda *_: None)
+    monkeypatch.setattr(bridge, "_PipeIO", SourceIO)
+    service._run()
+    recovered = fault in {"resolved", "fenced"}
+    assert len(accepts) == (2 if recovered else 1)
+    assert len(peers) == (1 if recovered else 0)  # Never construct a peer for the failed accept.
+    assert notifications == ([] if recovered or fault == "stopped" else [True])
+    assert service._terminal_failure is (not recovered)
+    assert service.fenced is (fault == "fenced")
+    assert all(registration is None and custody is None for registration, custody in resets)
+    assert len(resets) == (2 if recovered else 1 if fault == "reset-failed" else 0)
+    assert service.retained_registration is None and not natives[0].owners
 
 
 @pytest.mark.parametrize("failure_at", ["accept", "read"])
+@pytest.mark.parametrize("broken_sink", [False, True])
 def test_inherited_source_io_unresolved_invalidates_enrollment_evidence(
-    client, retained, monkeypatch, caplog, failure_at,
+    client, retained, monkeypatch, caplog, failure_at, broken_sink,
 ):
     monkeypatch.setattr(bridge._log, "handlers", [*bridge._log.handlers, caplog.handler])
     service, request, _ = retained
+    events = []
+    original_warning = bridge._log.warning
+    original_stop = service.stop_event.set
+    original_drop = service._drop
+    original_record = service._record_failure
+    failures = []
+    primary_error = bridge.ShadowUnavailable("transport-failed")
+    primary_error.args = ("private-error-sentinel",)
+    def no_unresolved_wait(*args):
+        pytest.fail("unresolved diagnostic waited on peer")
+    def record(error):
+        failures.append(error)
+        return original_record(error)
+    monkeypatch.setattr(service, "_record_failure", record)
+    notifications = []
+    def terminal_callback():
+        notifications.append((events[-1], service.stop_event.is_set(), service.unresolved))
+    service._on_terminal = terminal_callback
+
+    def warning(message, *args, **kwargs):
+        if message.startswith("codex_retained_terminal_failure "):
+            events.append("terminal")
+            if broken_sink:
+                raise OSError("private-sink-sentinel")
+        return original_warning(message, *args, **kwargs)
+
+    def stop():
+        events.append("stop")
+        return original_stop()
+
+    def drop(*args, **kwargs):
+        events.append("drop")
+        return original_drop(*args, **kwargs)
+
+    monkeypatch.setattr(bridge._log, "warning", warning)
+    monkeypatch.setattr(service.stop_event, "set", stop)
+    monkeypatch.setattr(service, "_drop", drop)
     assert service._process(request, service.source, 0, float("inf"))["status"] == "registered"
     client.app.state.codex_wake_registry.retained_service = service
     monkeypatch.setattr(bridge, "_retained", [])
@@ -539,16 +720,16 @@ def test_inherited_source_io_unresolved_invalidates_enrollment_evidence(
             if failure_at == "read":
                 return
             self.unresolved = True
-            raise bridge.ShadowUnavailable("transport-failed")
+            monkeypatch.setattr(w.event, "WaitForSingleObject", no_unresolved_wait)
+            raise primary_error
         def read(self, _deadline):
             self.reads += 1
             if self.reads == 1:
                 assert not any("codex_retained_source_channel_closed" in record.message for record in caplog.records)
                 raise bridge.ShadowUnavailable("deadline")
             self.unresolved = True
-            error = bridge.ShadowUnavailable("transport-failed")
-            error.args = ("private-error-sentinel",)
-            raise error
+            monkeypatch.setattr(w.event, "WaitForSingleObject", no_unresolved_wait)
+            raise primary_error
         def close(self):
             pass
     monkeypatch.setattr(bridge, "_native", lambda: w)
@@ -559,19 +740,176 @@ def test_inherited_source_io_unresolved_invalidates_enrollment_evidence(
     monkeypatch.setattr(bridge, "_atomic_private", lambda *_args: None)
     monkeypatch.setattr(bridge, "_PipeIO", BrokenIO)
     service._run()
+    assert failures == [primary_error] and failures[0] is primary_error
     records = [record for record in caplog.records if "codex_retained_source_channel_closed" in record.message]
     assert len(records) == (1 if failure_at == "read" else 0)
     if records:
         message, observed_at = records[0].message.split(" observed_at=")
         assert message == "codex_retained_source_channel_closed category=transport-failed unresolved=True stopping=False"
+        observed_at, identity = observed_at.split(" source_pid=")
+        assert identity == "42 source_creation=unknown source_state=unknown close_cause=unknown"
         assert bridge.datetime.fromisoformat(observed_at).utcoffset().total_seconds() == 0
         assert records[0].exc_info is None
         assert records[0].created > 0
     assert "private-error-sentinel" not in caplog.text
+    terminal = [record for record in caplog.records
+                if record.msg.startswith("codex_retained_terminal_failure ")]
+    assert len(terminal) == (0 if broken_sink else 1)
+    if terminal:
+        timestamp, category, origin_line = terminal[0].args
+        assert bridge.datetime.fromisoformat(timestamp).utcoffset().total_seconds() == 0
+        assert category == "transport-failed" and terminal[0].exc_info is None
+        assert type(origin_line) is int and 0 < origin_line <= 100000
+    terminal_index = events.index("terminal")
+    assert events[terminal_index:terminal_index + 2] == ["terminal", "stop"]
+    assert events[-1] == "drop"
+    assert notifications == [("drop", True, True)]
     assert service.unresolved and service.enrollment_diagnostics() is None
     for path in ("/status", "/dashboard/api/relay/summary"):
         enrollment = client.get(path).json()["relay_wake"]["native_enrollment"]
         assert enrollment["state"] == "unavailable"
+
+
+@pytest.mark.parametrize("case,expected", [
+    ("safe", "deadline"), ("unknown", "unexpected"), ("missing", "unexpected"),
+    ("nonstring", "unexpected"), ("hostile", "unexpected"),
+])
+def test_retained_terminal_failure_category_is_bounded(tmp_path, monkeypatch, caplog, case, expected):
+    monkeypatch.setattr(bridge._log, "handlers", [caplog.handler])
+    service = bridge.RetainedService(tmp_path)
+
+    class HostileCategory(Exception):
+        @property
+        def category(self):
+            raise OSError("private-category-sentinel")
+
+    error = {
+        "safe": bridge.ShadowUnavailable("deadline"),
+        "unknown": bridge.ShadowUnavailable("private-category-sentinel"),
+        "missing": RuntimeError("private-message-sentinel"),
+        "nonstring": SimpleNamespace(category=[]),
+        "hostile": HostileCategory("private-message-sentinel"),
+    }[case]
+    before = service.enrollment_diagnostics()
+    service._record_failure(error)
+    records = [record for record in caplog.records
+               if record.msg.startswith("codex_retained_terminal_failure ")]
+    assert len(records) == 1
+    timestamp, category, origin_line = records[0].args
+    assert category == expected and records[0].exc_info is None
+    assert origin_line == 0
+    assert bridge.datetime.fromisoformat(timestamp).utcoffset().total_seconds() == 0
+    assert "private" not in caplog.text
+    assert not service.stop_event.is_set()
+    assert service.enrollment_diagnostics() == before
+
+
+def test_retained_terminal_generic_failure_records_only_module_line(tmp_path, monkeypatch, caplog):
+    import inspect
+
+    monkeypatch.setattr(bridge._log, "handlers", [caplog.handler])
+    service = bridge.RetainedService(tmp_path)
+    source, first_line = inspect.getsourcelines(bridge.InventoryService._run)
+    expected_line = next(first_line + index for index, line in enumerate(source)
+                         if line.strip() == "self.w = _native()")
+
+    def native_failure():
+        raise RuntimeError("private-native-sentinel")
+
+    monkeypatch.setattr(bridge, "_native", native_failure)
+    service._run()
+    records = [record for record in caplog.records
+               if record.msg.startswith("codex_retained_terminal_failure ")]
+    assert len(records) == 1 and records[0].args[1:] == ("unexpected", expected_line)
+    assert records[0].exc_info is None
+    assert "private" not in caplog.text and bridge.__file__ not in caplog.text
+    assert service.stop_event.is_set() and service.custody is None
+
+
+@pytest.mark.parametrize("case", ["absent", "foreign", "hostile", "invalid", "truncated"])
+def test_retained_terminal_unknown_origin_is_zero(tmp_path, monkeypatch, caplog, case):
+    import inspect
+    from types import TracebackType
+
+    monkeypatch.setattr(bridge._log, "handlers", [caplog.handler])
+    service = bridge.RetainedService(tmp_path)
+
+    class UnsafeTrace(Exception):
+        def __getattribute__(self, name):
+            if name == "__traceback__":
+                if case == "invalid":
+                    return SimpleNamespace(tb_lineno=123, tb_next=None)
+                raise OSError("private-trace-sentinel")
+            return super().__getattribute__(name)
+
+    error = RuntimeError("private-message-sentinel")
+    if case in {"hostile", "invalid"}:
+        error = UnsafeTrace("private-message-sentinel")
+    elif case == "foreign":
+        try:
+            raise error
+        except RuntimeError as caught:
+            error = caught
+    elif case == "truncated":
+        namespace = {}
+        exec(compile("def fail():\n    raise RuntimeError('private-message-sentinel')\n", bridge.__file__, "exec"), namespace)
+        try:
+            namespace["fail"]()
+        except RuntimeError as caught:
+            error = caught
+            local = caught.__traceback__.tb_next
+        frame = inspect.currentframe()
+        tail = None
+        for _ in range(33):
+            tail = TracebackType(tail, frame, frame.f_lasti, frame.f_lineno)
+        error.__traceback__ = TracebackType(tail, local.tb_frame, local.tb_lasti, local.tb_lineno)
+    before = service.enrollment_diagnostics()
+    service._record_failure(error)
+    records = [record for record in caplog.records
+               if record.msg.startswith("codex_retained_terminal_failure ")]
+    assert len(records) == 1 and records[0].args[1:] == ("unexpected", 0)
+    assert records[0].exc_info is None
+    assert "private" not in caplog.text and bridge.__file__ not in caplog.text
+    assert not service.stop_event.is_set() and service.enrollment_diagnostics() == before
+
+
+@pytest.mark.parametrize("lines,expected", [
+    ([1], 1), ([100000], 100000), ([0], 0), ([100001], 0),
+    ([7] * 32, 7), ([7] * 33, 0), ([3, 5, 9], 9),
+])
+def test_retained_terminal_origin_bounds(tmp_path, monkeypatch, caplog, lines, expected):
+    from types import TracebackType
+
+    monkeypatch.setattr(bridge._log, "handlers", [caplog.handler])
+    service = bridge.RetainedService(tmp_path)
+    namespace = {}
+    exec(compile("def anchor():\n    import sys\n    return sys._getframe()\n", bridge.__file__, "exec"), namespace)
+    frame = namespace["anchor"]()
+    trace = None
+    for line in reversed(lines):
+        trace = TracebackType(trace, frame, frame.f_lasti, line)
+    error = RuntimeError("private-message-sentinel")
+    error.__traceback__ = trace
+    service._record_failure(error)
+    records = [record for record in caplog.records
+               if record.msg.startswith("codex_retained_terminal_failure ")]
+    assert len(records) == 1 and records[0].args[1:] == ("unexpected", expected)
+    assert records[0].exc_info is None
+    assert "private" not in caplog.text and bridge.__file__ not in caplog.text
+    assert not service.stop_event.is_set()
+
+
+def test_retained_terminal_diagnostic_clock_failure_does_not_change_state(tmp_path, monkeypatch):
+    service = bridge.RetainedService(tmp_path)
+    before = service.enrollment_diagnostics()
+
+    def unavailable(*_args):
+        raise OSError("private-clock-sentinel")
+
+    monkeypatch.setattr(bridge, "datetime", SimpleNamespace(now=unavailable))
+    service._record_failure(RuntimeError("private-message-sentinel"))
+    assert not service.stop_event.is_set()
+    assert service.enrollment_diagnostics() == before
 
 
 @pytest.mark.parametrize("category,expected", [("peer-gone", "peer-gone"), ("private-category-sentinel", "unavailable")])
@@ -662,12 +1000,12 @@ def http_wake(client, retained, monkeypatch, tmp_path):
         if dispatch_completed is not None:
             assert dispatch_completed.wait(5), "native setup dispatch did not complete"
         for worker in workers:
-            worker.join(2)
+            worker.join(5)
             assert not worker.is_alive(), "native wake blocked hook/registry"
         return response.json()["deliveries"][0]
     yield http, relay, registry, service, desktop, send, workers
     for worker in workers:
-        worker.join(2)
+        worker.join(5)
         assert not worker.is_alive()
     http.close()
 
@@ -677,7 +1015,7 @@ def recover(journey, *, hook_completed=None):
     if hook_completed is not None:
         assert hook_completed.wait(5), "recovery hook did not complete"
     for worker in workers:
-        worker.join(2)
+        worker.join(5)
         assert not worker.is_alive()
 
 
@@ -778,7 +1116,101 @@ def test_pending_busy_or_unknown_releases_and_recovers(
         assert service._process(request, service.source, 1, float("inf"))["status"] == "registered"
         desktop = service.custody
     desktop.state = "notLoaded"
-    recover(http_wake)
+    from sqlalchemy import select
+    from storage.sqlite_schema import (
+        RelayAliasRecord, RelayCodexWakeReservationRecord, RelayCodexWakeStateRecord,
+        RelayDeliveryRecord, RelayMessageRecord, RelaySessionRecord, RelaySessionWorkRefRecord,
+    )
+
+    storage = relay._store
+    workers = http_wake[6]
+    attempts, acquisitions = [], []
+    local = threading.local()
+    begin = storage._begin_relay_immediate
+
+    def authority():
+        with storage._relay_engine.connect() as db:
+            return tuple(db.execute(select(*[
+                column for column in model.__table__.columns
+                if column.name not in {"trace_version", "trace_truncated", "trace_pruned"}
+            ]).order_by(*model.__table__.primary_key.columns)).all() for model in (
+                RelayMessageRecord, RelayDeliveryRecord, RelaySessionRecord, RelayAliasRecord,
+                RelaySessionWorkRefRecord, RelayCodexWakeStateRecord, RelayCodexWakeReservationRecord,
+            ))
+
+    def native_state():
+        return (service.epoch, service.source, service.desktop, service.custody,
+                service.retained_registration, desktop.closed, desktop.unresolved,
+                tuple(desktop.writes), tuple(desktop.owners), tuple(workers))
+
+    def observe_reserve(operation, **kwargs):
+        if operation != "reserve":
+            return transition(operation, **kwargs)
+        attempt = {"values": dict(kwargs["values"])}
+        attempts.append(attempt)
+        local.reserve = True
+        try:
+            attempt["result"] = transition(operation, **kwargs)
+            return attempt["result"]
+        except BaseException as error:
+            attempt["error"] = error
+            raise
+        finally:
+            local.reserve = False
+
+    @contextmanager
+    def observe_begin():
+        if not getattr(local, "reserve", False):
+            with begin() as db:
+                yield db
+            return
+        acquired = {"acquired": False}
+        acquisitions.append(acquired)
+        try:
+            with begin() as db:
+                acquired["acquired"] = True
+                yield db
+        except BaseException as error:
+            acquired["error"] = error
+            raise
+
+    # A refused reservation can defer this functional recovery without spending a native attempt.
+    before, native_before = authority(), native_state()
+    assert relay.codex_wake_snapshot() == (True, ())
+    with monkeypatch.context() as admission:
+        admission.setattr(relay, "codex_wake_transition", observe_reserve)
+        admission.setattr(storage, "_begin_relay_immediate", observe_begin)
+        recover(http_wake)
+        if not desktop.owners:
+            assert len(attempts) == len(acquisitions) == 1
+            assert "result" not in attempts[0] and acquisitions[0]["acquired"] is False
+            assert type(attempts[0].get("error")) is ImmediateTransactionBusyError
+            assert acquisitions[0].get("error") is attempts[0]["error"]
+            assert attempts[0]["values"] == {
+                "recipient_endpoint_id": delivery["recipient_endpoint_id"],
+                "delivery_id": delivery["delivery_id"], "session_ref": TARGET, **SCOPE,
+            }
+            assert authority() == before and native_state() == native_before
+            assert relay.codex_wake_snapshot() == (True, ())
+            pending, = http.get("/relay/messages/retained-journey", params=SCOPE).json()["deliveries"]
+            assert pending["delivery_id"] == delivery["delivery_id"]
+            assert pending["state"] == "pending" and pending["attempts"] == 0
+            with storage._relay_engine.connect() as db:
+                row = db.execute(select(RelayDeliveryRecord.__table__).where(
+                    RelayDeliveryRecord.id == delivery["delivery_id"],
+                )).one()
+            assert row.claim_token is row.claimed_at is row.lease_expires_at is None
+            assert authority() == before and native_state() == native_before
+            recover(http_wake)
+            assert len(attempts) == len(acquisitions) == 2
+        assert acquisitions[-1]["acquired"] is True and "error" not in acquisitions[-1]
+        reserved = attempts[-1].get("result")
+        assert reserved is not None and reserved.outcome == "prepared"
+        assert attempts[-1]["values"] == {
+            "recipient_endpoint_id": delivery["recipient_endpoint_id"],
+            "delivery_id": delivery["delivery_id"], "session_ref": TARGET, **SCOPE,
+        }
+        assert reserved.generation == before[5][0].generation + 1
     assert len(desktop.owners) == 1
     assert registry.snapshot(delivery["recipient_endpoint_id"]).outcome == "uncertain"
     recover(http_wake)
@@ -786,9 +1218,37 @@ def test_pending_busy_or_unknown_releases_and_recovers(
 
 
 def test_pending_invalid_state_release_busy_recovers_without_owner_replay(http_wake, monkeypatch):
+    from itertools import count
+    import time
+    from storage import sqlite_queue
+
+    relay = http_wake[1]
+    original_transition = relay.codex_wake_transition
+    native_queue_time, native_monotonic = sqlite_queue.time, time.monotonic
+    qualified = []
+
+    def transition(operation, **kwargs):
+        if operation != "release" or qualified:
+            return original_transition(operation, **kwargs)
+        qualified.append(True)
+        owner = threading.get_ident()
+        ticks = count(step=.001).__next__
+        release_time = SimpleNamespace(**vars(native_queue_time))
+        release_time.monotonic = lambda: ticks() if threading.get_ident() == owner else native_monotonic()
+        try:
+            with monkeypatch.context() as admission:
+                admission.setattr(sqlite_queue, "time", release_time)
+                return original_transition(operation, **kwargs)
+        finally:
+            assert sqlite_queue.time is native_queue_time
+            assert time.monotonic is native_monotonic
+
+    # The helper injects its first refusal before delegation; qualify only real recovery.
+    monkeypatch.setattr(relay, "codex_wake_transition", transition)
     test_pending_busy_or_unknown_releases_and_recovers(
         http_wake, [], monkeypatch, force_release_refusal=True,
     )
+    assert qualified == [True] and sqlite_queue.time is native_queue_time
 
 @pytest.mark.parametrize("body", ["{}", "bad-json", "[]", '{"schemaVersion":1,"schemaVersion":1}',
     json.dumps({"schemaVersion": True, "thread": {"id": TARGET, "kind": "codex", "hostId": "local", "status": {"type": "notLoaded"}}}),
@@ -923,6 +1383,13 @@ def test_malformed_descriptor_release_busy_recovers_without_owner_replay(
 def test_write_is_fenced_across_concurrency_recovery_restart(http_wake, fault):
     http, relay, registry, service, desktop, send, _ = http_wake
     desktop.response = fault
+    owner_entered, owners = threading.Event(), []
+
+    def on_owner(_request):
+        owners.append(threading.current_thread())
+        owner_entered.set()
+
+    desktop.on_owner = on_owner
     errors = []
     def run():
         try:
@@ -930,11 +1397,21 @@ def test_write_is_fenced_across_concurrency_recovery_restart(http_wake, fault):
         except Exception as error:
             errors.append(error)
     threads = [threading.Thread(target=run) for _ in range(3)]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join(3)
-        assert not thread.is_alive()
+    try:
+        for thread in threads:
+            thread.start()
+        assert owner_entered.wait(5), "native owner did not enter"
+        owned, = owners
+        owned.join(5)
+        assert not owned.is_alive(), "owned native worker did not settle"
+        for thread in threads:
+            thread.join(3)
+            assert not thread.is_alive()
+    finally:
+        for thread in threads:
+            if thread.ident is not None:
+                thread.join(5)
+        assert all(not thread.is_alive() for thread in threads), "sender did not drain"
     assert errors == []
     assert len(desktop.owners) == 1
     recover(http_wake)
@@ -971,6 +1448,7 @@ def test_http_retryable_busy_once_keeps_one_delivery_and_owner(http_wake, monkey
 
     monkeypatch.setattr(storage, "_begin_relay_immediate", busy_once)
     delivery = send()
+    recover(http_wake)  # The bare router omits production's periodic recovery sweep.
 
     status = http.get("/relay/messages/retained-journey", params=SCOPE)
     assert status.status_code == 200
@@ -1251,6 +1729,8 @@ def test_selected_transport_actual_hook_emits_then_acks(http_wake, monkeypatch, 
     else:
         desktop.on_owner = lambda request: hook(request["params"]["arguments"]["prompt"])
     send()
+    # The bare router fixture omits the production periodic recovery sweep.
+    recover(http_wake)
     assert [e[0] for e in events] == ["emit", "ack"]
     output = json.loads(capsys.readouterr().out)
     assert output["hookSpecificOutput"]["hookEventName"] == event
@@ -1335,13 +1815,18 @@ def test_spent_wake_retries_after_cooldown_and_real_hook_acks_backlog(
 
     recover_expired_relay_wakes(relay, ClaudeWakeRegistry(), codex_registry=restarted)
     for worker in workers:
-        worker.join(2)
+        worker.join(5)
         assert not worker.is_alive()
     assert len(prompts) == 1
     now[0] += timedelta(seconds=2)
     recover_expired_relay_wakes(relay, ClaudeWakeRegistry(), codex_registry=restarted)
     for worker in workers:
-        worker.join(2)
+        worker.join(5)
+        assert not worker.is_alive()
+    # The bare router has no periodic recovery loop to revisit a refused admission.
+    recover_expired_relay_wakes(relay, ClaudeWakeRegistry(), codex_registry=restarted)
+    for worker in workers:
+        worker.join(5)
         assert not worker.is_alive()
 
     assert len(prompts) == 3  # Initial wake, recovered wake, then the next hook batch.
@@ -1416,10 +1901,12 @@ def test_busy_target_does_not_slide_due_retry_deadline(http_wake, monkeypatch):
 @pytest.mark.parametrize("claim_mode", ["active", "acked"])
 def test_retry_cas_loses_to_hook_claim_after_fresh_native_read(http_wake, client, monkeypatch, claim_mode):
     from datetime import datetime, timedelta, timezone
+    from itertools import count
 
     import storage.sqlite_relay as sqlite_relay
+    from storage import sqlite_queue
 
-    http, _, registry, _, desktop, send, workers = http_wake
+    http, relay, registry, _, desktop, send, workers = http_wake
     now = [datetime(2030, 9, 5, tzinfo=timezone.utc)]
 
     def controlled_now(value=None):
@@ -1451,8 +1938,32 @@ def test_retry_cas_loses_to_hook_claim_after_fresh_native_read(http_wake, client
     spent = registry.snapshot(delivery["recipient_endpoint_id"])
     assert spent is not None and spent.outcome == "accepted"
     now[0] += timedelta(seconds=61)
+    native_queue_time, native_monotonic = sqlite_queue.time, time.monotonic
+    original_transition = relay.codex_wake_transition
+    qualified, callback = [], []
+
+    def transition(operation, **kwargs):
+        if operation != "retry_target" or qualified:
+            return original_transition(operation, **kwargs)
+        qualified.append(True)
+        owner = threading.get_ident()
+        ticks = count(step=.001).__next__
+        retry_time = SimpleNamespace(**vars(native_queue_time))
+        retry_time.monotonic = lambda: ticks() if threading.get_ident() == owner else native_monotonic()
+        try:
+            with monkeypatch.context() as admission:
+                admission.setattr(sqlite_queue, "time", retry_time)
+                return original_transition(operation, **kwargs)
+        finally:
+            assert sqlite_queue.time is native_queue_time
+            assert time.monotonic is native_monotonic
+
+    monkeypatch.setattr(relay, "codex_wake_transition", transition)
 
     def claim_before_rearm():
+        assert sqlite_queue.time is native_queue_time
+        assert time.monotonic is native_monotonic
+        callback.append("entered")
         desktop.on_state = None
         response = http.post("/relay/turn", json={
             "runtime": "codex", "session_ref": TARGET, **SCOPE,
@@ -1466,9 +1977,12 @@ def test_retry_cas_loses_to_hook_claim_after_fresh_native_read(http_wake, client
                 "claim_token": claimed["claim_token"], **SCOPE,
             })
             assert ack.status_code == 200, ack.text
+        callback.append("completed")
 
     desktop.on_state = claim_before_rearm
     recover(http_wake)
+    assert qualified == [True] and callback == ["entered", "completed"]
+    assert sqlite_queue.time is native_queue_time
     assert len(launches) == 1
     if claim_mode == "active":
         current = registry.snapshot(delivery["recipient_endpoint_id"])
@@ -1674,18 +2188,31 @@ def test_relay_lock_and_scope_recovery_share_one_deadline(
 
 
 def test_natural_hook_overtakes_state_check_without_owner_attempt(http_wake, monkeypatch, capsys, tmp_path):
-    http, _, registry, _, desktop, send, _ = http_wake
+    http, _, registry, _, desktop, send, workers = http_wake
     events = []
-    desktop.on_state = _hook_runner(http, monkeypatch, "notLoaded", events, tmp_path)
-    send()
-    assert [e[0] for e in events] == ["emit", "ack"]
-    assert desktop.owners == [] and registry.reservations() == ()
-    assert http.get("/relay/messages/retained-journey", params=SCOPE).json()["deliveries"][0]["state"] == "delivered"
-    capsys.readouterr()
+    hook = _hook_runner(http, monkeypatch, "notLoaded", events, tmp_path)
+    completed = threading.Event()
+    def natural_hook():
+        try:
+            hook()
+        finally:
+            completed.set()
+    desktop.on_state = natural_hook
+    try:
+        send(dispatch_completed=completed)
+        assert [e[0] for e in events] == ["emit", "ack"]
+        assert desktop.owners == [] and registry.reservations() == ()
+        assert http.get("/relay/messages/retained-journey", params=SCOPE).json()["deliveries"][0]["state"] == "delivered"
+        capsys.readouterr()
+    finally:
+        for worker in workers:
+            worker.join()
 
 
 def test_queue_wait_allows_fresh_registration_and_disconnect(http_wake, retained, monkeypatch):
-    _, _, registry, service, desktop, send, _ = http_wake
+    from dataclasses import replace
+
+    http, relay, registry, service, desktop, send, workers = http_wake
     desktop.state = "idle"
     queues, checks, callback_errors = [], [], []
     class Process:
@@ -1711,10 +2238,43 @@ def test_queue_wait_allows_fresh_registration_and_disconnect(http_wake, retained
         return Process(), None
     monkeypatch.setattr(codex_wake, "_start_launch", launch)
     try:
-        send()
+        # Admission can refuse before queue-wait coverage; recovery requires proven no-attempt state.
+        with monkeypatch.context() as admission:
+            attempts = _observe_transition_attempts(http_wake, admission, "begin_native_attempt")
+            releases = _observe_transition_attempts(http_wake, admission, "release")
+            first = send()
+            if _single_typed_transition_refusal(attempts):
+                prepared = attempts[0]["reservation"]
+                assert prepared.outcome == "prepared"
+                assert len(releases) == 1 and releases[0]["reservations"] == (prepared,)
+                assert "error_type" not in releases[0] and releases[0].get("result") == (prepared,)
+                assert relay.codex_wake_snapshot() == (True, ())
+                assert prepared.delivery_id == first["delivery_id"]
+                assert queues == checks == desktop.owners == []
+                assert all(not worker.is_alive() for worker in workers)
+                pending, = http.get("/relay/messages/retained-journey", params=SCOPE).json()["deliveries"]
+                assert pending["delivery_id"] == prepared.delivery_id
+                assert pending["state"] == "pending" and pending["attempts"] == 0
+                recover(http_wake)
+                assert len(attempts) == 2 and attempts[1]["reservation"] == replace(
+                    prepared, generation=prepared.generation + 1,
+                )
+            else:
+                assert len(attempts) == 1 and "error_type" not in attempts[0]
+                assert releases == []
+            assert "error_type" not in attempts[-1]
+            spent = attempts[-1].get("result")
+            assert spent is not None and spent == replace(
+                attempts[-1]["reservation"], outcome="uncertain",
+                retry_not_before=spent.retry_not_before,
+            )
+            assert type(spent.retry_not_before) is float
     finally:
+        for worker in workers:
+            worker.join()
         for check in checks:
             check.join(3)
+            check.join()
     assert not callback_errors, callback_errors
     assert len(checks) == 1 and not checks[0].is_alive()
     assert len(queues) == 1 and desktop.owners == []
@@ -2093,8 +2653,9 @@ async def test_fresh_mcp_request_enrolls_replacement_service_without_background_
         replacement._drop()
 
     assert len(clients) == 1 and clients[0].service is replacement
-    assert exchanges == [("ready", None), ("register", {
+    assert exchanges[:2] == [("ready", None), ("register", {
         "thread_ref": TARGET, "turn_ref": "fresh-request"})]
+    assert all(exchange == ("ready", None) for exchange in exchanges[2:])
     assert len(actual_calls) == 1
 @pytest.mark.parametrize("fault", ["start", "stop", None])
 def test_retained_service_failure_keeps_existing_http_lifecycle_live(monkeypatch, request, caplog, fault):
@@ -2117,6 +2678,73 @@ def test_retained_service_failure_keeps_existing_http_lifecycle_live(monkeypatch
     assert registry.retained_service is None
     assert calls == (["start"] if fault == "start" else ["start", "stop"])
     assert "private-" not in caplog.text
+
+
+@pytest.mark.parametrize("explicit_stop", [False, True])
+@pytest.mark.parametrize("escape_cleanup", [False, True])
+@pytest.mark.parametrize("broken_callback", [False, True])
+def test_terminal_listener_notifies_only_after_unwind(
+    tmp_path, monkeypatch, explicit_stop, escape_cleanup, broken_callback,
+):
+    events = []
+    fault = RuntimeError("private-source-loop-fault")
+    close_fault = RuntimeError("private-cleanup-fault")
+    service = bridge.RetainedService(tmp_path)
+    retained_resources = []
+    notification_states = []
+    monkeypatch.setattr(bridge, "_retained", retained_resources)
+
+    def native():
+        events.append("native")
+        raise fault
+
+    def drop():
+        events.append("drop")
+        if escape_cleanup:
+            raise close_fault
+
+    def notify():
+        notification_states.append((events[-1], service._terminal_failure))
+        events.append("notify")
+        if broken_callback:
+            raise RuntimeError("private-callback-fault")
+
+    monkeypatch.setattr(bridge, "_native", native)
+    monkeypatch.setattr(service, "_drop", drop)
+    service._on_terminal = notify
+    if explicit_stop:
+        service.stop()
+        assert service._explicit_stop.is_set() and service.stop_event.is_set()
+        events.clear()
+    for _ in range(2):
+        if escape_cleanup:
+            with pytest.raises(RuntimeError) as caught:
+                service._run()
+            assert caught.value is close_fault
+        else:
+            service._run()
+    assert events.count("notify") == (0 if explicit_stop else 1)
+    assert notification_states == ([] if explicit_stop else [("drop", True)])
+    assert service._terminal_failure
+    if escape_cleanup:
+        assert service.unresolved
+        assert retained_resources == [(service, close_fault), (service, close_fault)]
+        assert close_fault.__traceback__ is not None
+
+
+def test_terminal_notification_survives_diagnostic_invalidation_failure(tmp_path, monkeypatch):
+    service = bridge.RetainedService(tmp_path)
+    fault = RuntimeError("private-cleanup-fault")
+    notifications = []
+    monkeypatch.setattr(bridge, "_retained", [])
+    monkeypatch.setattr(bridge, "_native", lambda: (_ for _ in ()).throw(fault))
+    monkeypatch.setattr(service, "_drop", lambda: (_ for _ in ()).throw(fault))
+    monkeypatch.setattr(service, "_invalidate_enrollment_diagnostics",
+                        lambda: (_ for _ in ()).throw(ValueError("private-diagnostic-fault")))
+    service._on_terminal = lambda: notifications.append(True)
+    with pytest.raises(RuntimeError) as caught:
+        service._run()
+    assert caught.value is fault and service.unresolved and notifications == [True]
 
 
 

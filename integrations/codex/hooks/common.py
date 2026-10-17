@@ -2730,9 +2730,13 @@ def relay_turn(
                     previous_endpoint_id=endpoint,
                     previous_scope_generation=generation,
                 )
+            # Read UTC before the existing remaining-budget check; never extend the caller deadline.
+            claim_now_ms = int(time.time() * 1000) if "wake_delivery_id" in payload else None
             remaining = deadline.remaining()
             if remaining <= 0:
                 return None
+            if claim_now_ms is not None:
+                payload["claim_expires_at_ms"] = claim_now_ms + int(remaining * 1000)
             request_options = {"timeout": remaining}
             if pass_deadline:
                 request_options["deadline"] = deadline

@@ -260,6 +260,7 @@ def test_nullable_legacy_retry_deadline_recovers_and_hook_acks(http_wake, monkey
 @pytest.mark.parametrize("restart", [False, True])
 def test_unloaded_hook_claim_failure_recovers_original_and_backlog(
     client, http_wake, monkeypatch, tmp_path, capsys, fault, moved, restart, request,
+    *, force_backlog_refusal=False,
 ):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
@@ -315,20 +316,121 @@ def test_unloaded_hook_claim_failure_recovers_original_and_backlog(
 
     desktop.on_owner = on_owner
 
-    def send(message_id, payload):
-        response = http.post("/relay/messages", json={
+    def send(message_id, payload, *, retry_busy=False):
+        from contextlib import contextmanager
+        import json
+        import time
+        from sqlalchemy import select
+        from core.errors import ImmediateTransactionBusyError
+        from storage.sqlite_schema import (
+            RelayMessageRecord, RelayDeliveryRecord, RelaySessionRecord,
+            RelaySessionWorkRefRecord, RelayEndpointGenerationRecord,
+            RelayCodexWakeStateRecord, RelayCodexWakeReservationRecord,
+        )
+
+        body = {
             "sender_runtime": "claude-code", "sender_session_ref": "sender",
             "recipient": target["endpoint_id"], "message_id": message_id,
             "payload": payload, **sender_scope,
-        })
-        assert response.status_code == 200, response.text
-        if message_id == "claim-failure-original":
-            # Synchronize real hook work before checking worker settlement below.
-            assert owner_finished.wait(5), "first owner hook did not finish"
-        for worker in workers:
-            worker.join(2)
-            assert not worker.is_alive()
-        return response.json()["deliveries"][0]
+        }
+        try:
+            if not retry_busy:
+                response = http.post("/relay/messages", json=body)
+            else:
+                storage = relay._store
+                begin, original_send = storage._begin_relay_immediate, storage.relay_send
+                local, attempts = threading.local(), []
+
+                def authority():
+                    values = []
+                    with storage._relay_engine.connect() as db:
+                        assert db.execute(select(RelayMessageRecord.id).where(RelayMessageRecord.id == message_id)).first() is None
+                        assert db.execute(select(RelayDeliveryRecord.id).where(RelayDeliveryRecord.message_id == message_id)).first() is None
+                        original = db.execute(select(
+                            RelayDeliveryRecord.state, RelayDeliveryRecord.attempts,
+                            RelayDeliveryRecord.lease_expires_at,
+                        ).where(RelayDeliveryRecord.id == first["delivery_id"])).one()
+                        assert original.state == ("delivered" if fault == "ack-response" else "claimed")
+                        assert original.attempts == 1
+                        if fault != "ack-response":
+                            lease = original.lease_expires_at
+                            lease = lease if lease.tzinfo else lease.replace(tzinfo=timezone.utc)
+                            assert lease > now[0]
+                        for model in (RelayMessageRecord, RelayDeliveryRecord, RelaySessionRecord,
+                                      RelaySessionWorkRefRecord, RelayEndpointGenerationRecord,
+                                      RelayCodexWakeStateRecord, RelayCodexWakeReservationRecord):
+                            columns = [column for column in model.__table__.columns
+                                       if column.name not in {"trace_version", "trace_truncated", "trace_pruned"}]
+                            values.append(tuple(db.execute(select(*columns).order_by(*model.__table__.primary_key.columns)).all()))
+                    return (tuple(values), registry.reservations(), now[0],
+                            json.dumps(desktop.owners, sort_keys=True), tuple(id(worker) for worker in workers),
+                            json.dumps(events, sort_keys=True))
+
+                def observe_send(*args, **kwargs):
+                    previous = getattr(local, "active", False)
+                    local.active = kwargs.get("message_id") == message_id
+                    try:
+                        return original_send(*args, **kwargs)
+                    finally:
+                        local.active = previous
+
+                @contextmanager
+                def observe_begin():
+                    if not getattr(local, "active", False):
+                        with begin() as db:
+                            yield db
+                        return
+                    attempt = {"acquired": False}
+                    attempts.append(attempt)
+                    try:
+                        if force_backlog_refusal and len(attempts) == 1:
+                            attempt["forced"] = True
+                            raise ImmediateTransactionBusyError("controlled backlog refusal", acquisition_stage="late_begin")
+                        with begin() as db:
+                            attempt["acquired"] = True
+                            yield db
+                    except BaseException as error:
+                        attempt["error"] = error
+                        raise
+
+                before = authority()
+                with monkeypatch.context() as admission:
+                    admission.setattr(storage, "relay_send", observe_send)
+                    admission.setattr(storage, "_begin_relay_immediate", observe_begin)
+                    deadline = time.monotonic() + 5
+                    response = http.post("/relay/messages", json=body)
+                    expected_attempts = 1
+                    if response.status_code == 503:
+                        assert len(attempts) == 1 and attempts[0]["acquired"] is False
+                        assert type(attempts[0].get("error")) is ImmediateTransactionBusyError
+                        assert response.json() == {"detail": {"code": "relay_busy", "retryable": True}}
+                        assert authority() == before
+                        delay = response.headers.get("Retry-After", "")
+                        assert delay.isascii() and delay.isdecimal()
+                        assert 0 < int(delay) < deadline - time.monotonic()
+                        time.sleep(int(delay))
+                        assert time.monotonic() < deadline
+                        assert authority() == before
+                        response = http.post("/relay/messages", json=body)
+                        expected_attempts = 2
+                    assert len(attempts) == expected_attempts
+                    assert attempts[-1]["acquired"] is True and "error" not in attempts[-1]
+                    assert not force_backlog_refusal or attempts[0].get("forced") is True
+            assert response.status_code == 200, response.text
+            if message_id == "claim-failure-original":
+                for worker in workers:
+                    worker.join(5)
+                    assert not worker.is_alive()
+                recover(http_wake)  # Model the omitted production sweep after initial settlement.
+                # Synchronize real hook work before checking worker settlement below.
+                assert owner_finished.wait(5), "first owner hook did not finish"
+            for worker in workers:
+                worker.join(2)
+                assert not worker.is_alive()
+            return response.json()["deliveries"][0]
+        finally:
+            for worker in workers:
+                worker.join()
 
     first = send("claim-failure-original", "original-marker-東京")
     observed = http.get("/relay/messages/claim-failure-original", params=sender_scope).json()["deliveries"][0]
@@ -359,28 +461,41 @@ def test_unloaded_hook_claim_failure_recovers_original_and_backlog(
         if moved and fault == "ack-response":
             assert relay._store is client.app.state.pallium_service._storage
             _observe_relay_busy_acquisition(relay._store, monkeypatch, test_request, tmp_path)
-    send("claim-failure-backlog", "backlog-marker-東京")
-    journey = (http, relay, registry, service, desktop, None, workers)
-    if fault != "ack-response":
-        assert len(desktop.owners) == 1
-        now[0] += timedelta(seconds=RELAY_CLAIM_LEASE_SECONDS - 0.001)
-        recover(journey)
-        assert len(desktop.owners) == 1  # Active claim is excluded, even after restart.
-        now[0] += timedelta(seconds=0.001)
-        recover(journey)  # Exactly at lease expiry, not only after it.
-    else:
-        recover(journey)
-    for message_id in ("claim-failure-original", "claim-failure-backlog"):
-        result = http.get(f"/relay/messages/{message_id}", params=sender_scope)
-        assert result.status_code == 200, result.text
-        delivery = result.json()["deliveries"][0]
-        assert delivery["state"] == "delivered"
-        assert delivery["attempts"] == (2 if message_id.endswith("original") and fault != "ack-response" else 1)
-    assert registry.reservations() == ()
-    output = capsys.readouterr().out
-    assert "original-marker-東京" in output and "backlog-marker-東京" in output
-    if restart:
-        http.close()
+    try:
+        send("claim-failure-backlog", "backlog-marker-東京", retry_busy=True)
+        journey = (http, relay, registry, service, desktop, None, workers)
+        if fault != "ack-response":
+            assert len(desktop.owners) == 1
+            now[0] += timedelta(seconds=RELAY_CLAIM_LEASE_SECONDS - 0.001)
+            recover(journey)
+            assert len(desktop.owners) == 1  # Active claim is excluded, even after restart.
+            now[0] += timedelta(seconds=0.001)
+            recover(journey)  # Exactly at lease expiry, not only after it.
+        else:
+            recover(journey)
+        for message_id in ("claim-failure-original", "claim-failure-backlog"):
+            result = http.get(f"/relay/messages/{message_id}", params=sender_scope)
+            assert result.status_code == 200, result.text
+            delivery = result.json()["deliveries"][0]
+            assert delivery["state"] == "delivered"
+            assert delivery["attempts"] == (2 if message_id.endswith("original") and fault != "ack-response" else 1)
+        assert registry.reservations() == ()
+        output = capsys.readouterr().out
+        assert "original-marker-東京" in output and "backlog-marker-東京" in output
+    finally:
+        for worker in workers:
+            worker.join()
+        if restart:
+            http.close()
+
+
+def test_unloaded_backlog_precommit_refusal_preserves_claim_and_recovery(
+    client, http_wake, monkeypatch, tmp_path, capsys, request,
+):
+    test_unloaded_hook_claim_failure_recovers_original_and_backlog(
+        client, http_wake, monkeypatch, tmp_path, capsys,
+        "ack-before-commit", True, True, request, force_backlog_refusal=True,
+    )
 
 
 @pytest.mark.parametrize("moved", [False, True])
@@ -572,17 +687,32 @@ def test_expired_claim_guards_recover_initial_native_refusal(http_wake, monkeypa
 
 def test_concurrent_expired_claim_recovery_spends_one_new_generation(http_wake, monkeypatch):
     import traceback
+    from itertools import count
+    from types import SimpleNamespace
+    from storage import sqlite_queue
     from tests import test_codex_retained_wake as wake_fixture
 
     http, _, registry, _, desktop, send, workers = http_wake
     now = [datetime(2030, 9, 5, tzinfo=timezone.utc)]
     _freeze_clock(monkeypatch, now)
     first = send()
-    response = http.post("/relay/turn", json={
-        "runtime": "codex", "session_ref": TARGET, **SCOPE,
-    })
-    assert response.status_code == 200, response.text
+    assert len(desktop.owners) == 1
     initial = registry.snapshot(first["recipient_endpoint_id"])
+    assert initial is not None and initial.delivery_id == first["delivery_id"]
+    assert initial.outcome == "uncertain"
+    # This claim prepares the concurrency journey; native deadline coverage is separate.
+    native_queue_time = sqlite_queue.time
+    with monkeypatch.context() as claim_patch:
+        claim_time = SimpleNamespace(**vars(native_queue_time))
+        claim_time.monotonic = count(step=0.001).__next__
+        claim_patch.setattr(sqlite_queue, "time", claim_time)
+        response = http.post("/relay/turn", json={
+            "runtime": "codex", "session_ref": TARGET, **SCOPE,
+        })
+    assert sqlite_queue.time is native_queue_time
+    assert response.status_code == 200, response.text
+    assert response.json()["deliveries"][0]["delivery_id"] == first["delivery_id"]
+    assert registry.snapshot(first["recipient_endpoint_id"]) == initial
     now[0] += timedelta(seconds=60)
     barrier, errors = threading.Barrier(3), []
     phases = {}
@@ -620,12 +750,19 @@ def test_concurrent_expired_claim_recovery_spends_one_new_generation(http_wake, 
         finally:
             phases[threading.get_ident()] = "finished"
     threads = [threading.Thread(target=sweep) for _ in range(2)]
-    for thread in threads:
-        thread.start()
-    barrier.wait(timeout=2)
-    for thread in threads:
-        thread.join(3)
-        assert not thread.is_alive(), timeout_diagnostics()
-    assert errors == []
-    assert len(desktop.owners) == 2
-    assert registry.snapshot(first["recipient_endpoint_id"]).generation > initial.generation
+    try:
+        for thread in threads:
+            thread.start()
+        barrier.wait(timeout=2)
+        for thread in threads:
+            thread.join(3)
+            assert not thread.is_alive(), timeout_diagnostics()
+        assert errors == []
+        assert len(desktop.owners) == 2
+        assert registry.snapshot(first["recipient_endpoint_id"]).generation > initial.generation
+    finally:
+        for thread in threads:
+            if thread.ident is not None:
+                thread.join()
+        for worker in workers:
+            worker.join()

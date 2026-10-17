@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+from logging.handlers import RotatingFileHandler
 import os
 import queue
 import re
@@ -11,6 +13,53 @@ import threading
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
+
+
+_close_log_lock = threading.Lock()
+_CLOSE_REASONS = frozenset({
+    "idle-ready-deadline", "idle-ready-transport", "unused-ready-retired",
+    "caller-thread-changed", "first-admission-cancelled", "first-registered-result-cancelled",
+    "initial-ready-unavailable",
+    "replacement-ready-unavailable", "initial-register-unavailable", "reregister-unavailable",
+    "idle-ready-unavailable", "capability-changed", "continuity-changed",
+    "worker-error", "worker-finished", "lifespan-stop", "cleanup",
+})
+
+
+class _QuietCloseHandler(RotatingFileHandler):
+    def handleError(self, record):
+        pass
+
+
+def _client_close_diagnostic(reason, identity, unresolved):
+    try:
+        from app.runtime_logging import RuntimeLogFormatter
+
+        own_pid = os.getpid()
+        if type(reason) is not str or reason not in _CLOSE_REASONS:
+            reason = "cleanup"
+        creation = "unknown"
+        pid, value = identity
+        if (type(pid) is int and pid == own_pid and type(value) is str and len(value) <= 40
+                and re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?(?:[+-][0-9]{2}:[0-9]{2})?", value)):
+            creation = value
+        unresolved = unresolved if type(unresolved) is bool else "unknown"
+        record = logging.LogRecord("pallium.codex.close", logging.WARNING, "", 0,
+            "reason=%s own_pid=%s native_creation=%s unresolved=%s",
+            (reason, own_pid, creation, unresolved), None)
+        with _close_log_lock:
+            home = os.environ.get("PALLIUM_HOME")
+            directory = (Path(home).expanduser().resolve() if home else Path.home() / ".pallium") / "logs"
+            directory.mkdir(parents=True, exist_ok=True)
+            handler = _QuietCloseHandler(directory / f"codex-retained-client-{own_pid}.log",
+                maxBytes=4096, backupCount=1, encoding="utf-8", delay=True)
+            try:
+                handler.setFormatter(RuntimeLogFormatter("codex-retained-client"))
+                handler.handle(record)
+            finally:
+                handler.close()
+    except Exception:
+        pass  # A diagnostic sink must never interfere with native ownership cleanup.
 
 
 def _diagnostic(category: str) -> None:
@@ -203,7 +252,7 @@ RECONNECT_MAX_BACKOFF_SECONDS = 30.0
 
 
 class InventoryWorker:
-    """One finite child channel; EOF never revokes separate service custody."""
+    """One finite child channel; retained registration requires a live source channel."""
 
     def __init__(self, bootstrap_path: Path, *, retained=False):
         self.stop_event = threading.Event()
@@ -255,16 +304,24 @@ class InventoryWorker:
     def _valid_continuity(value):
         return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None
 
-    def _finish(self, client):
+    def _finish(self, client, *, retire=False, reason="cleanup"):
+        identity = (None, None)
+        try:
+            identity = (client.source.pid, client.source.creation)
+        except Exception:
+            pass
         restart_allowed = self._restart_allowed
         unresolved = bool(client is not None and getattr(client, "unresolved", False))
         if client is not None:
             try:
-                client.dispose()
+                close = getattr(client, "retire", None) if retire else None
+                (close if callable(close) else client.dispose)()
             except Exception:
                 unresolved = True
             unresolved = unresolved or bool(getattr(client, "unresolved", False))
         self._restart_allowed = restart_allowed and not unresolved
+        if self._retained and client is not None:
+            _client_close_diagnostic(reason, identity, unresolved)
 
     def _recover_if_gone(self, client, native_type, original_pipe, metadata, continuity,
                          *, allow_ready_retirement=False):
@@ -294,13 +351,16 @@ class InventoryWorker:
                             or client.bootstrap_unchanged() is not True):
                         raise
                     previous_manifest = dict(manifest)
-                    self._finish(client)
+                    self._finish(client, retire=True, reason=(
+                        "idle-ready-deadline" if exc.category == "deadline" else "idle-ready-transport"))
+                    exit_witness = getattr(client, "retired_service_exited", None)
+                    owner_exited = callable(exit_witness) and exit_witness() is True
                     if (not self._restart_allowed or self.stop_event.is_set()
                             or getattr(client, "unresolved", False)
                             or getattr(source_io, "unresolved", False)
                             or os.environ.get("CODEX_APP_TOOLS_PIPE_PATH") != original_pipe
                             or getattr(client, "continuity", None) != continuity
-                            or client.bootstrap_unchanged() is not True
+                            or (not owner_exited and client.bootstrap_unchanged() is not True)
                             or client.manifest != previous_manifest):
                         raise
                     # Resolved observation failure permits only a new real caller.
@@ -399,6 +459,7 @@ class InventoryWorker:
 
     def _run(self):
         client = None
+        close_reason = "worker-finished"
         first_request = None
         admitted_metadata = continuity = original_pipe = None
         registered = False
@@ -437,6 +498,7 @@ class InventoryWorker:
                     except queue.Empty:
                         if registered and self._retained:
                             if os.environ.get("CODEX_APP_TOOLS_PIPE_PATH") != original_pipe:
+                                close_reason = "capability-changed"
                                 self.stop_event.set()
                                 break
                             replacement, disposed = self._recover_if_gone(
@@ -451,6 +513,7 @@ class InventoryWorker:
                                 registered = False
                                 continue
                             if replacement is None:
+                                close_reason = "idle-ready-unavailable"
                                 self.stop_event.set()
                                 break
                             client = replacement
@@ -469,7 +532,7 @@ class InventoryWorker:
                                 retired_manifest = dict(client.manifest)
                                 retired_pipe = channel_pipe
                                 retired_client = client
-                                self._finish(retired_client)
+                                self._finish(retired_client, retire=True, reason="unused-ready-retired")
                                 client = None
                                 if not self._restart_allowed:
                                     self.stop_event.set()
@@ -479,6 +542,7 @@ class InventoryWorker:
                     continue
                 if (self._retained and admitted_metadata is not None
                         and metadata.get("thread_ref") != admitted_metadata.get("thread_ref")):
+                    close_reason = "caller-thread-changed"
                     self._restart_allowed = False
                     self.stop_event.set()
                     loop.call_soon_threadsafe(ShadowWorker._complete, future,
@@ -492,6 +556,7 @@ class InventoryWorker:
                         client = NativeInventoryClient(self._path, self.stop_event, retained=True)
                         ready = inventory_status(client.ready())
                         if ready["status"] != "ready":
+                            close_reason = "initial-ready-unavailable"
                             return
                     else:
                         acquire_deadline = time.monotonic() + 1.0
@@ -503,7 +568,9 @@ class InventoryWorker:
                                 self.stop_event.set()
                                 break
                             try:
-                                bootstrap_unchanged = retired_client.bootstrap_unchanged()
+                                exit_witness = getattr(retired_client, "retired_service_exited", None)
+                                owner_exited = callable(exit_witness) and exit_witness() is True
+                                bootstrap_unchanged = owner_exited or retired_client.bootstrap_unchanged()
                             except Exception:
                                 self._restart_allowed = False
                                 raise
@@ -515,7 +582,11 @@ class InventoryWorker:
                             if remaining <= 0:
                                 break
                             try:
-                                client = NativeInventoryClient(self._path, self.stop_event, retained=True)
+                                if owner_exited:
+                                    client = NativeInventoryClient(self._path, self.stop_event, retained=True,
+                                        previous_manifest=retired_manifest)
+                                else:
+                                    client = NativeInventoryClient(self._path, self.stop_event, retained=True)
                             except ShadowUnavailable as exc:
                                 if exc.category != "startup-unavailable":
                                     self._restart_allowed = False
@@ -530,7 +601,8 @@ class InventoryWorker:
                             try:
                                 replacement_manifest = client.manifest
                                 replacement_unchanged = client.bootstrap_unchanged()
-                                retired_unchanged = retired_client.bootstrap_unchanged()
+                                retired_unchanged = (exit_witness() is True if owner_exited
+                                                     else retired_client.bootstrap_unchanged())
                             except Exception:
                                 self._restart_allowed = False
                                 raise
@@ -538,7 +610,8 @@ class InventoryWorker:
                                 break
                             if (os.environ.get("CODEX_APP_TOOLS_PIPE_PATH") != retired_pipe
                                     or type(replacement_manifest) is not dict
-                                    or replacement_manifest != retired_manifest
+                                    or (replacement_manifest == retired_manifest if owner_exited
+                                        else replacement_manifest != retired_manifest)
                                     or replacement_unchanged is not True
                                     or retired_unchanged is not True):
                                 self._restart_allowed = False
@@ -562,6 +635,7 @@ class InventoryWorker:
                                 raise
                             ready = inventory_status(ready_result)
                             if ready["status"] != "ready":
+                                close_reason = "replacement-ready-unavailable"
                                 if ready.get("reason") == "peer-mismatch":
                                     self._restart_allowed = False
                                 return
@@ -571,7 +645,12 @@ class InventoryWorker:
                                 self._restart_allowed = False
                                 self.stop_event.set()
                                 break
+                            if callable(getattr(retired_client, "retire", None)):
+                                self._finish(retired_client)
                             retired_client = retired_manifest = None
+                            if not self._restart_allowed:
+                                self.stop_event.set()
+                                break
                             registration_attempted = False
                     if client is None:
                         if future.cancelled():
@@ -587,6 +666,7 @@ class InventoryWorker:
                     continue
                 if (registered and self._retained
                         and metadata.get("thread_ref") != admitted_metadata.get("thread_ref")):
+                    close_reason = "caller-thread-changed"
                     self.stop_event.set()
                     loop.call_soon_threadsafe(ShadowWorker._complete, future,
                         inventory_status({"reason": "peer-mismatch"}))
@@ -618,6 +698,8 @@ class InventoryWorker:
                     result = inventory_status({"reason": "native-failed"})
                 if future.cancelled():
                     if self._retained and not was_registered:
+                        close_reason = ("first-registered-result-cancelled" if result["status"] == "registered"
+                                        else "first-admission-cancelled")
                         self.stop_event.set()
                         break
                     continue
@@ -634,6 +716,7 @@ class InventoryWorker:
                         proof = getattr(client, "continuity", None)
                         if (not self._valid_continuity(proof)
                                 or (was_registered and proof != continuity)):
+                            close_reason = "continuity-changed"
                             result = inventory_status({"reason": "peer-mismatch"})
                             self.stop_event.set()
                             self._restart_allowed = False
@@ -658,11 +741,15 @@ class InventoryWorker:
                             and getattr(client, "continuity", None) == continuity):
                         continue
                     self.stop_event.set()
+                    if close_reason == "worker-finished":
+                        close_reason = "reregister-unavailable"
                     break
                 if result["status"] == "unavailable" and not was_registered:
+                    close_reason = "initial-register-unavailable"
                     self.stop_event.set()
                     break
         except Exception:
+            close_reason = "worker-error"
             self.stop_event.set()
             if "future" in locals():
                 try:
@@ -685,7 +772,16 @@ class InventoryWorker:
             except (queue.Empty, RuntimeError):
                 pass
             if client is not None:
-                self._finish(client)
+                self._finish(client, reason=("lifespan-stop" if self._closed
+                    and close_reason == "worker-finished" else close_reason))
+            if retired_client is not None and retired_client is not client and callable(getattr(retired_client, "retire", None)):
+                self._finish(retired_client)
+            pending_retirement = self._fresh_request_retirement
+            self._fresh_request_retirement = None
+            if (pending_retirement is not None and pending_retirement[0] is not client
+                    and pending_retirement[0] is not retired_client
+                    and callable(getattr(pending_retirement[0], "retire", None))):
+                self._finish(pending_retirement[0])
 
     async def stop(self):
         self._closed = True

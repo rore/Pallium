@@ -8,16 +8,63 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 
 import pytest
 
 from app import codex_bridge_pipe as bridge
-from tests.test_codex_bridge_pipe import FakeDesktop
+from tests.test_codex_bridge_pipe import FakeDesktop, tmp_path as native_tmp_path
 
 pytestmark = pytest.mark.slow
 native = pytest.mark.skipif(sys.platform != "win32", reason="Windows kernel pipe contract")
 
-_SERVICE = r"""
+
+@native
+def test_retired_native_client_keeps_exact_service_process_exit_witness(monkeypatch):
+    child = subprocess.Popen([sys.executable, "-B", "-c",
+        'import sys;print("ready",flush=True);sys.stdin.readline()'],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    client = owner = source = None
+    closed_io = []
+    try:
+        assert child.stdout.readline().strip() == "ready"
+        w = bridge._native()
+        sid = bridge._self_sid(w)
+        owner = bridge._Peer(w, child.pid, sid)
+        source = bridge._Peer(w, os.getpid(), sid)
+        original_handle = owner.handle
+        client = bridge.NativeInventoryClient.__new__(bridge.NativeInventoryClient)
+        client.w, client.peer, client.source, client.unresolved = w, owner, source, False
+        client.io = type("ResolvedIO", (), {"unresolved": False,
+            "close": lambda self: closed_io.append(True)})()
+        client.retire()
+        assert client.io is None and client.source is None and closed_io == [True]
+        assert source.handle is None and client.peer.handle is original_handle
+
+        def forbidden(*_args, **_kwargs):
+            pytest.fail("Retired exit proof must use its held handle, never reopen a numeric PID")
+
+        monkeypatch.setattr(w.api, "OpenProcess", forbidden)
+        assert client.retired_service_exited() is False
+        child.stdin.close()
+        assert child.wait(timeout=3) == 0
+        assert client.retired_service_exited() is True
+    finally:
+        if child.stdin is not None and not child.stdin.closed:
+            child.stdin.close()
+        child.wait()
+        try:
+            if client is not None:
+                client.dispose()
+        finally:
+            for peer in (owner, source):
+                if peer is not None:
+                    peer.close()
+            child.stdout.close()
+            child.stderr.close()
+    assert owner is not None and owner.handle is None
+
+_SERVICE_SETUP = r"""
 import json, os, sys, time
 from pathlib import Path
 import app.codex_bridge_pipe as bridge
@@ -42,6 +89,9 @@ def fake_app_descriptor(w, source, desktop_pid, sid):
     raise bridge.ShadowUnavailable("peer-mismatch")
 
 bridge._source_desktop = fake_app_descriptor
+"""
+
+_SERVICE = _SERVICE_SETUP + r"""
 service = bridge.RetainedService(Path(sys.argv[1]))
 service.start()
 try:
@@ -76,6 +126,58 @@ finally:
         service.stop()
 """
 
+_OWNED_API = _SERVICE_SETUP + r"""
+import threading
+from app import main, run, dependencies
+from app.config import AppConfig
+from tests.test_health import _no_vector_config
+
+directory, database, relay_database, fault_file = map(Path, sys.argv[1:5])
+host, port = sys.argv[5], int(sys.argv[6])
+config = _no_vector_config('sqlite:///' + database.as_posix())
+from dataclasses import replace
+config = replace(config, relay_sqlite_url='sqlite:///' + relay_database.as_posix())
+AppConfig.from_env = staticmethod(lambda: config)
+dependencies.schedule_codex_relay_wake = lambda *args, **kwargs: None
+services, exit_requests = [], []
+original_accept = bridge._PipeIO.accept
+def accept(self, deadline):
+    if fault_file.exists():
+        raise RuntimeError('controlled terminal listener failure')
+    return original_accept(self, deadline)
+bridge._PipeIO.accept = accept
+def start(*, on_terminal):
+    def notify():
+        exit_requests.append(True)
+        on_terminal()
+    service = bridge.RetainedService(directory, on_terminal=notify).start()
+    services.append(service)
+    return service
+bridge.start_retained_service = start
+factory, callbacks = main.app, []
+def owned_factory(*, on_retained_terminal):
+    callbacks.append(on_retained_terminal)
+    return factory(on_retained_terminal=on_retained_terminal)
+main.app = owned_factory
+def commands():
+    for command in sys.stdin:
+        if command.strip() == 'stop':
+            callbacks[0]()
+            return
+threading.Thread(target=commands, daemon=True).start()
+try:
+    code = run.run(['serve', '--host', host, '--port', str(port)])
+finally:
+    token = Path(os.environ['PALLIUM_HOME']) / 'run' / 'api_token'
+    receipt = {'pid': os.getpid(), 'nonce': os.environ['PALLIUM_API_LAUNCH_TOKEN'],
+        'epoch': services[0].epoch if services else None,
+        'listeners_settled': bool(services) and all(not item.thread.is_alive() for item in services),
+        'unresolved': any(item.unresolved for item in services),
+        'terminal_notifications': len(exit_requests), 'token_removed': not token.exists()}
+    (directory / ('exit-' + str(os.getpid()) + '.json')).write_text(json.dumps(receipt))
+raise SystemExit(code)
+"""
+
 _SOURCE = r"""
 import json, os, sys, threading
 from pathlib import Path
@@ -89,6 +191,12 @@ for line in sys.stdin:
             client.dispose()
         print("stopped", flush=True)
         break
+    if request.get("disconnect"):
+        previous = client.manifest
+        client.dispose()
+        client = None
+        print(json.dumps({"disconnected": True}), flush=True)
+        continue
     if client is not None and not client.service_current():
         previous = client.manifest
         client.dispose()
@@ -300,6 +408,211 @@ def _service_status(process):
 
 
 @native
+def test_closed_before_accept_reuses_native_listener_for_fresh_registration(native_tmp_path, monkeypatch):
+    from tests.test_codex_bridge_pipe import wait_until
+
+    directory = bridge.prepare_inventory_service(native_tmp_path / "closed-accept-home")
+    notifications, native_results, resets = [], [], []
+    service = bridge.RetainedService(directory, on_terminal=lambda: notifications.append(True))
+    manifest_ready, closed = threading.Event(), threading.Event()
+    w = bridge._native()
+    original_publish = bridge._atomic_private
+    original_connect, original_disconnect = w.pipe.ConnectNamedPipe, w.pipe.DisconnectNamedPipe
+
+    def publish(*args, **kwargs):
+        result = original_publish(*args, **kwargs)
+        if args[1] == directory / "active.json":
+            manifest_ready.set()
+            assert closed.wait(2), "First real client must close before accept starts"
+        return result
+
+    def connect(*args):
+        try:
+            result = original_connect(*args)
+        except w.types.error as exc:
+            if threading.current_thread() is service.thread:
+                native_results.append(exc.winerror)
+            raise
+        if threading.current_thread() is service.thread:
+            native_results.append(result)
+        return result
+
+    def disconnect(*args):
+        result = original_disconnect(*args)
+        if threading.current_thread() is service.thread:
+            resets.append((service.retained_registration, service.custody))
+        return result
+
+    desktop = FakeDesktop(_response)
+    monkeypatch.setenv("CODEX_APP_TOOLS_PIPE_PATH", desktop.endpoint)
+    monkeypatch.setattr(bridge, "_atomic_private", publish)
+    monkeypatch.setattr(w.pipe, "ConnectNamedPipe", connect)
+    monkeypatch.setattr(w.pipe, "DisconnectNamedPipe", disconnect)
+    monkeypatch.setattr(bridge, "_process_image", lambda *_: (r"C:\TestHost\Codex.exe", "native-fixture-v1"))
+    first = source = None
+    try:
+        assert service.start() is service and manifest_ready.wait(2)
+        epoch = service.epoch
+        first = bridge.NativeInventoryClient(directory / "active.json", threading.Event(), retained=True)
+        first.dispose()
+        closed.set()
+        wait_until(lambda: bool(resets) or service.stop_event.is_set())
+        assert native_results[0] == 232 and resets[0] == (None, None)
+        assert service.source is None and not service._terminal_failure and service.thread.is_alive()
+        source = subprocess.Popen([sys.executable, "-B", "-c", _SOURCE],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, encoding="utf-8")
+        result = _source_call(source, {"bootstrap": str(directory / "active.json"), "continuity": None,
+            "metadata": {"thread_ref": "fresh-source", "turn_ref": "fresh-turn"}})
+        assert result["ready"]["status"] == "ready" and result["result"]["status"] == "registered"
+        assert len(result["continuity"]) == 64
+        assert service.retained_registration["caller"] == ("fresh-source", "fresh-turn")
+        assert service.source.pid == source.pid and service.epoch == epoch
+        assert service.thread.is_alive() and not service.stop_event.is_set()
+        assert not service._terminal_failure and not service.unresolved and notifications == []
+    finally:
+        closed.set()
+        try:
+            if first is not None:
+                first.dispose()
+        finally:
+            try:
+                if source is not None:
+                    try:
+                        if source.poll() is None:
+                            source.stdin.write(json.dumps({"stop": True}) + "\n")
+                            source.stdin.flush()
+                            source.wait(timeout=5)
+                        assert source.returncode == 0
+                    except BaseException as failure:
+                        if source.poll() is None:
+                            try:
+                                source.terminate()
+                                source.wait(timeout=5)
+                            except Exception:
+                                failure.add_note("Owned source did not settle during cleanup")
+                        raise
+                    finally:
+                        for stream in (source.stdin, source.stdout, source.stderr):
+                            stream.close()
+            finally:
+                try:
+                    service.stop()
+                    if service.thread is not None:
+                        service.thread.join()
+                finally:
+                    desktop.close()
+    assert not service.unresolved and not bridge._native_uncertain and notifications == []
+    assert service.source is None and service.custody is None and not service.thread.is_alive()
+
+
+@native
+def test_completed_ready_during_native_cancel_preserves_registered_source(native_tmp_path, monkeypatch):
+    directory = bridge.prepare_inventory_service(native_tmp_path / "completed-read-home")
+    notifications, processed, drained = [], [], []
+    service = bridge.RetainedService(directory, on_terminal=lambda: notifications.append(True))
+    desktop = FakeDesktop(_response)
+    monkeypatch.setenv("CODEX_APP_TOOLS_PIPE_PATH", desktop.endpoint)
+    monkeypatch.setattr(bridge, "_process_image", lambda *_: (r"C:\TestHost\Codex.exe", "native-fixture-v1"))
+    w = bridge._native()
+    original_read, original_cancel = w.file.ReadFile, w.file.CancelIo
+    original_result, original_process = w.file.GetOverlappedResult, service._process
+    enabled, at_cancel, release_cancel = threading.Event(), threading.Event(), threading.Event()
+    pending = {}
+
+    def read(handle, size, ov):
+        code, buffer = original_read(handle, size, ov)
+        if threading.current_thread() is service.thread and enabled.is_set() and not pending:
+            assert code == 997 and size == bridge.MAX_MESSAGE + 1
+            pending.update(handle=handle, ov=ov, buffer=buffer)
+        return code, buffer
+
+    def cancel(handle):
+        if threading.current_thread() is service.thread and pending.get("handle") == handle and not at_cancel.is_set():
+            at_cancel.set()
+            assert release_cancel.wait(2), "Owned caller must release the cancellation gate"
+        return original_cancel(handle)
+
+    def result(handle, ov, wait):
+        count = original_result(handle, ov, wait)
+        if threading.current_thread() is service.thread and ov is pending.get("ov"):
+            value = bridge._json(bytes(pending["buffer"][:count]))
+            drained.append((count, value["verb"], value["sequence"]))
+        return count
+
+    def process(request, *args):
+        processed.append((request["verb"], request["sequence"]))
+        return original_process(request, *args)
+
+    monkeypatch.setattr(w.file, "ReadFile", read)
+    monkeypatch.setattr(w.file, "CancelIo", cancel)
+    monkeypatch.setattr(w.file, "GetOverlappedResult", result)
+    monkeypatch.setattr(service, "_process", process)
+    source = None
+    try:
+        assert service.start() is service
+        deadline = time.monotonic() + 2
+        while not (directory / "active.json").exists():
+            assert time.monotonic() < deadline and not service.stop_event.is_set()
+            time.sleep(.01)
+        source = subprocess.Popen([sys.executable, "-B", "-c", _SOURCE],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, encoding="utf-8")
+        first = _source_call(source, {"bootstrap": str(directory / "active.json"), "continuity": None,
+            "metadata": {"thread_ref": "race-source", "turn_ref": "before-race"}})
+        assert first["result"]["status"] == "registered" and len(first["continuity"]) == 64
+        assert service.source.pid == source.pid
+        epoch = service.epoch
+        enabled.set()
+        assert at_cancel.wait(2)
+        source.stdin.write(json.dumps({"bootstrap": str(directory / "active.json"),
+            "metadata": {"thread_ref": "race-source", "turn_ref": "after-race"}}) + "\n")
+        source.stdin.flush()
+        # Actual pending ReadFile has completed with ready bytes before actual CancelIo.
+        assert w.event.WaitForSingleObject(pending["ov"].hEvent, 1000) == w.event.WAIT_OBJECT_0
+        release_cancel.set()
+        second = json.loads(source.stdout.readline())
+        assert second["ready"]["status"] == "ready" and second["result"]["status"] == "registered"
+        assert second["continuity"] == first["continuity"]
+        assert len(drained) == 1 and drained[0][0] > 0 and drained[0][1:] == ("ready", 3)
+        assert processed == [("ready", 1), ("register", 2), ("ready", 3), ("register", 4)]
+        assert service.source.pid == source.pid and service.epoch == epoch
+        assert service.retained_registration["caller"] == ("race-source", "after-race")
+        assert service.custody is not None and service.thread.is_alive()
+        assert not service.unresolved and not service._terminal_failure and notifications == []
+    finally:
+        release_cancel.set()
+        try:
+            if source is not None:
+                try:
+                    if source.poll() is None:
+                        source.stdin.write(json.dumps({"stop": True}) + "\n")
+                        source.stdin.flush()
+                        source.wait(timeout=5)
+                    assert source.returncode == 0
+                except BaseException as failure:
+                    if source.poll() is None:
+                        try:
+                            source.terminate()
+                            source.wait(timeout=5)
+                        except Exception:
+                            failure.add_note("Owned source did not settle during cleanup")
+                    raise
+                finally:
+                    for stream in (source.stdin, source.stdout, source.stderr):
+                        stream.close()
+        finally:
+            try:
+                service.stop()
+                if service.thread is not None:
+                    service.thread.join()
+            finally:
+                desktop.close()
+    assert not service.unresolved and not bridge._native_uncertain and notifications == []
+    assert service.source is None and service.custody is None and not service.thread.is_alive()
+
+
+@native
 def test_retained_registration_continues_across_real_service_epoch(monkeypatch):
     repo = Path(__file__).resolve().parents[1]
     temp_parent = repo / "tmp"
@@ -398,6 +711,241 @@ def test_retained_registration_continues_across_real_service_epoch(monkeypatch):
         assert test_root.name.startswith("native-retained-reconnect-")
         if test_root.exists():
             shutil.rmtree(test_root)
+
+
+@native
+def test_terminal_owned_api_is_replaced_and_same_native_source_reenrolls(monkeypatch):
+    import httpx
+    import socket
+    from app import supervisor
+    from app.config import AppConfig
+    from core.codex_wake import CodexWakeRegistry
+    from core.relay import RelayService
+    from storage.sqlite import SQLiteStorageProvider
+    from tests.test_health import _no_vector_config
+
+    repo = Path(__file__).resolve().parents[1]
+    temp_parent = repo / "tmp"
+    temp_parent.mkdir(exist_ok=True)
+    test_root = temp_parent / f"native-owned-api-{secrets.token_hex(16)}"
+    assert not test_root.exists()
+    w = bridge._native()
+    bridge._secure_directory(w, test_root, bridge._self_sid(w))
+    home = test_root / "home"
+    database, relay_database = test_root / "main.db", test_root / "relay.db"
+    trigger = test_root / "terminal-fault"
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        port = listener.getsockname()[1]
+    directory = bridge.retained_directory(home, port=port)
+    bridge._secure_directory(w, directory, bridge._self_sid(w))
+    monkeypatch.setenv("PALLIUM_HOME", str(home))
+    monkeypatch.setenv("PALLIUM_BASE_URL", f"http://127.0.0.1:{port}")
+    monkeypatch.setenv("WEB_CONCURRENCY", "1")
+    monkeypatch.setattr(AppConfig, "from_env", staticmethod(lambda: _no_vector_config()))
+    processes, nonces, epochs, desktops, receipts = [], [], [], [], []
+    cleanup_errors = []
+    source = storage = None
+    proof = None
+    saved_fences = None
+    stage = 0
+    endpoint = rf"\\.\pipe\inventory-test-{secrets.token_hex(16)}"
+    monkeypatch.setenv("CODEX_APP_TOOLS_PIPE_PATH", endpoint)
+    desktop_module = sys.modules[FakeDesktop.__module__]
+
+    def start_desktop():
+        with monkeypatch.context() as patch:
+            patch.setattr(desktop_module.secrets, "token_hex", lambda *_: endpoint.rsplit("-", 1)[-1])
+            desktop = FakeDesktop(_response)
+        assert desktop.endpoint == endpoint
+        desktops.append(desktop)
+        return desktop
+
+    def spawn(command, **kwargs):
+        assert command == supervisor.build_server_command("127.0.0.1", port)
+        assert len(processes) < 2, "unexpected additional API incarnation"
+        if processes:
+            assert processes[0].poll() == 0, "replacement preceded old process exit"
+            assert stage == 1 and trigger.is_file(), "API restarted before the intended terminal fault"
+            trigger.unlink()
+        log = (test_root / f"api-{len(processes)}.log").open("w", encoding="utf-8")
+        try:
+            child = subprocess.Popen(
+                [sys.executable, "-c", _OWNED_API, str(directory), str(database),
+                 str(relay_database), str(trigger), "127.0.0.1", str(port)],
+                **{**kwargs, "stdin": subprocess.PIPE, "stdout": log, "stderr": log,
+                   "text": True, "encoding": "utf-8"},
+            )
+        finally:
+            log.close()
+        processes.append(child)
+        nonces.append(kwargs["env"]["PALLIUM_API_LAUNCH_TOKEN"])
+        return child
+
+    def stop_child(child, command="stop\n", timeout=8, **_kwargs):
+        try:
+            if child.poll() is not None:
+                return
+            child.stdin.write(command)
+            child.stdin.flush()
+            child.wait(timeout=timeout)
+        except Exception as exc:
+            cleanup_errors.append(exc)
+            try:
+                child.terminate()
+                child.wait(timeout=5)
+            except Exception as terminate_error:
+                cleanup_errors.append(terminate_error)
+                raise
+
+    def qualified(*args, **kwargs):
+        result = supervisor._wait_for_api(*args, **kwargs)
+        if result:
+            child = kwargs["process"]
+            token = json.loads((home / "run" / "api_token").read_text())
+            assert token == {"nonce": kwargs["expected_nonce"], "pid": child.pid}
+            deadline = time.monotonic() + 5
+            while True:
+                try:
+                    manifest = bridge._json(bridge._read_private(w, directory / "active.json", bridge._self_sid(w)))
+                    if manifest["pid"] == child.pid:
+                        break
+                except bridge.ShadowUnavailable:
+                    pass
+                assert child.poll() is None and time.monotonic() < deadline, "owned listener did not publish its exact PID"
+                time.sleep(.01)
+            assert manifest["pid"] == child.pid
+            epochs.append(manifest["epoch"])
+        return result
+
+    def completed():
+        nonlocal source, proof, storage, saved_fences, stage
+        if stage == 0:
+            start_desktop()
+            source = subprocess.Popen([sys.executable, "-c", _SOURCE], cwd=repo, env=os.environ.copy(),
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True, encoding="utf-8")
+            first = _source_call(source, {"bootstrap": str(directory / "active.json"), "continuity": None})
+            assert first["result"]["status"] == "registered"
+            proof = first["continuity"]
+            assert isinstance(proof, str) and len(proof) == 64
+            scope = {"container_ref": "git:example.test/process-incarnation"}
+            with httpx.Client(base_url=f"http://127.0.0.1:{port}") as http:
+                for runtime, session in (("opencode", "sender"), ("codex", "target")):
+                    response = http.post("/relay/turn", json={"runtime": runtime, "session_ref": session, **scope})
+                    assert response.status_code == 200
+                response = http.post("/relay/messages", json={"sender_runtime": "opencode",
+                    "sender_session_ref": "sender", "recipient": "codex:target", "payload": "preserved", **scope})
+                assert response.status_code == 200
+            delivery = response.json()["deliveries"][0]
+            storage = SQLiteStorageProvider("sqlite:///" + database.as_posix(),
+                                            relay_database_url="sqlite:///" + relay_database.as_posix())
+            registry = CodexWakeRegistry(relay_service=RelayService(storage))
+            reservation = registry.reserve(recipient_endpoint_id=delivery["recipient_endpoint_id"],
+                delivery_id=delivery["delivery_id"], session_ref="target", container_ref=scope["container_ref"])
+            assert reservation is not None
+            assert registry.begin_native_attempt(reservation) is not None
+            saved_fences = registry.reservations()
+            assert len(saved_fences) == 1 and saved_fences[0].outcome == "uncertain"
+            trigger.write_text("terminal")
+            assert _source_call(source, {"disconnect": True}) == {"disconnected": True}
+            stage = 1
+        elif len(processes) == 2:
+            assert processes[0].poll() == 0 and processes[1].poll() is None
+            assert processes[0].pid != processes[1].pid and nonces[0] != nonces[1]
+            assert len(epochs) == 2 and epochs[0] != epochs[1]
+            desktops[0].close()
+            assert not desktops[0].thread.is_alive()
+            start_desktop()
+            resumed = _source_call(source, {"bootstrap": str(directory / "active.json"), "continuity": proof})
+            assert resumed["result"]["status"] == "registered" and resumed["continuity"] == proof
+            registry = CodexWakeRegistry(relay_service=RelayService(storage))
+            assert registry.reservations() == saved_fences
+            assert all(not any(request.get("params", {}).get("tool") == "send_message_to_thread"
+                               for request in desktop.requests) for desktop in desktops)
+            source.stdin.write(json.dumps({"stop": True}) + "\n")
+            source.stdin.flush()
+            source.wait(timeout=5)
+            assert source.returncode == 0
+            stage = 2
+            return True
+        return False
+
+    try:
+        assert supervisor.run_supervisor(["--host", "127.0.0.1", "--port", str(port),
+            "--processors", "0", "--cleaners", "0"], popen_factory=spawn,
+            wait_for_api_fn=qualified, should_stop=completed, kill_fn=stop_child) == 0
+        assert stage == 2 and len(processes) == 2
+        for child in processes:
+            assert child.poll() == 0
+            receipt = json.loads((directory / f"exit-{child.pid}.json").read_text())
+            assert receipt["listeners_settled"] and receipt["token_removed"] and not receipt["unresolved"]
+            receipts.append(receipt)
+        assert [receipt["terminal_notifications"] for receipt in receipts] == [1, 0]
+        evidence = os.environ.get("PALLIUM_CONTROL_DIR")
+        if evidence:
+            Path(evidence, "native-supervisor-transition.json").write_text(json.dumps(receipts))
+    finally:
+        test_error = sys.exception()
+        if source is not None:
+            try:
+                stop_child(source, json.dumps({"stop": True}) + "\n", timeout=5)
+            except Exception:
+                pass
+        for child in processes:
+            try:
+                stop_child(child)
+            except Exception:
+                pass
+            if child.stdin:
+                try:
+                    child.stdin.close()
+                except Exception as exc:
+                    cleanup_errors.append(exc)
+        if source is not None:
+            for stream in (source.stdin, source.stdout, source.stderr):
+                if stream:
+                    try:
+                        stream.close()
+                    except Exception as exc:
+                        cleanup_errors.append(exc)
+        for desktop in desktops:
+            try:
+                desktop.close()
+            except Exception as exc:
+                cleanup_errors.append(exc)
+        children_exited = all(child.poll() is not None for child in processes) and (
+            source is None or source.poll() is not None)
+        if storage is not None and children_exited:
+            try:
+                storage.close()
+            except Exception as exc:
+                cleanup_errors.append(exc)
+        evidence = os.environ.get("PALLIUM_CONTROL_DIR")
+        if evidence:
+            try:
+                artifact_dir = Path(evidence) / "native-supervisor-existing-artifacts"
+                artifact_dir.mkdir(exist_ok=True)
+                for index, child in enumerate(processes):
+                    for artifact in (test_root / f"api-{index}.log", directory / f"exit-{child.pid}.json"):
+                        if artifact.exists():
+                            shutil.copyfile(artifact, artifact_dir / artifact.name)
+            except Exception as exc:
+                cleanup_errors.append(exc)
+        try:
+            assert test_root.resolve().parent == temp_parent.resolve()
+            assert test_root.resolve().is_relative_to(repo.resolve())
+            assert test_root.name.startswith("native-owned-api-")
+            if test_root.exists() and children_exited and not cleanup_errors:
+                shutil.rmtree(test_root)
+        except Exception as exc:
+            cleanup_errors.append(exc)
+        if cleanup_errors:
+            note = "bounded test cleanup errors: " + "; ".join(map(str, cleanup_errors))
+            if test_error is not None:
+                test_error.add_note(note)
+            else:
+                raise AssertionError(note) from cleanup_errors[0]
 
 
 @native

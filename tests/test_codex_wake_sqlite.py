@@ -202,11 +202,14 @@ def test_endpoint_view_preserves_current_session_fields_and_generation(
     from sqlalchemy import event
 
     relay, storage, database = relay_store
-    endpoint = _send(relay)["recipient_endpoint_id"]
+    endpoint = "relay-session-" + "a" * 32
     now = datetime.now(timezone.utc)
     container = "git:example.test/moved-東京" if state == "moved" else SCOPE["container_ref"]
     seen = now - timedelta(days=2) if state == "dormant" else now
     with sqlite3.connect(database) as db:
+        db.execute("INSERT INTO relay_sessions(id,runtime,session_ref,container_ref,first_seen_at,last_seen_at,state,trial_enrolled) VALUES (?,?,?,?,?,?,?,?)",
+            (endpoint, "codex", "target", SCOPE["container_ref"], now.strftime("%Y-%m-%d %H:%M:%S.%f"),
+             now.strftime("%Y-%m-%d %H:%M:%S.%f"), "active", 0))
         db.execute("UPDATE relay_sessions SET container_ref=?,title=?,alias=?,state=?,last_seen_at=?,closed_at=? WHERE id=?",
             (container, "Fresh title 東京", "current", "closed" if state == "closed" else "busy" if state == "busy" else "idle",
              seen.strftime("%Y-%m-%d %H:%M:%S.%f"), now.strftime("%Y-%m-%d %H:%M:%S.%f") if state == "closed" else None, endpoint))
@@ -864,10 +867,13 @@ def test_persistent_observation_preserves_endpoint_canonicalization_and_full_val
     (1, "high_water"), (0, "extra_marker"), (0, "absent_marker"),
 ])
 def test_authority_reads_preserve_all_fields_without_global_orm_hydration(
-    relay_store, tmp_path, count, damage,
+    relay_store, tmp_path, count, damage, monkeypatch,
 ):
+    from itertools import count as clock_ticks
+    import time
     from sqlalchemy import event
     from sqlalchemy.orm import Session
+    from storage import sqlite_queue
     from storage.sqlite_schema import RelayCodexWakeReservationRecord, RelayCodexWakeStateRecord
 
     relay, storage, database = relay_store
@@ -935,12 +941,21 @@ def test_authority_reads_preserve_all_fields_without_global_orm_hydration(
         # All unrelated rows remain validated during a write transition too.
         statements.clear()
         hydrated.clear()
-        if invalid:
-            with pytest.raises(ValueError, match="invalid persisted Codex wake authority"):
-                storage.relay_codex_wake_transition(operation="release", reservations=())
-        else:
-            released = storage.relay_codex_wake_transition(operation="release", reservations=())
-            assert released == (None if damage == "absent_marker" else ())
+        native_queue_time, native_monotonic = sqlite_queue.time, time.monotonic
+        # This tests substantive write validation/SQL shape, not acquisition latency.
+        with monkeypatch.context() as write_validation:
+            validation_time = SimpleNamespace(**vars(native_queue_time))
+            validation_time.monotonic = clock_ticks(step=.001).__next__
+            write_validation.setattr(sqlite_queue, "time", validation_time)
+            if invalid:
+                with pytest.raises(ValueError, match="invalid persisted Codex wake authority"):
+                    storage.relay_codex_wake_transition(operation="release", reservations=())
+            else:
+                released = storage.relay_codex_wake_transition(operation="release", reservations=())
+                assert released == (None if damage == "absent_marker" else ())
+        assert sqlite_queue.time is native_queue_time
+        assert sqlite_queue.time.monotonic is native_monotonic
+        assert time.monotonic is native_monotonic
         assert [statement.split()[0] for statement in statements] == [
             "PRAGMA", "BEGIN", "SELECT", "SELECT", "SELECT",
             "ROLLBACK" if invalid else "COMMIT", "PRAGMA",
@@ -1334,12 +1349,24 @@ def test_http_activation_reads_authority_once_and_fails_closed(relay_store, tmp_
     assert len(reads) == (1 if runtime == "codex" else 0)
 
 
-def test_existing_relay_database_adds_trial_endpoint_marker_without_enrolling(tmp_path):
+def test_existing_relay_database_adds_trial_endpoint_marker_without_enrolling(tmp_path, monkeypatch):
     relay_db = tmp_path / "relay.db"
     main_db = tmp_path / "main.db"
     storage = SQLiteStorageProvider(f"sqlite:///{main_db}", f"sqlite:///{relay_db}")
-    endpoint = RelayService(storage).turn(runtime="codex", session_ref="target", **SCOPE)["session"]["endpoint_id"]
-    storage.close()
+    from itertools import count
+    from storage import sqlite_queue
+
+    native_time = sqlite_queue.time
+    try:
+        # Endpoint creation prepares the old schema; acquisition deadlines have separate coverage.
+        with monkeypatch.context() as seed:
+            seed_time = SimpleNamespace(**vars(native_time))
+            seed_time.monotonic = count(step=0.001).__next__
+            seed.setattr(sqlite_queue, "time", seed_time)
+            endpoint = RelayService(storage).turn(runtime="codex", session_ref="target", **SCOPE)["session"]["endpoint_id"]
+    finally:
+        storage.close()
+    assert sqlite_queue.time is native_time
     with sqlite3.connect(relay_db) as db:
         db.execute("ALTER TABLE relay_sessions DROP COLUMN trial_enrolled")
         db.execute("DROP TABLE relay_codex_trial")
@@ -1714,8 +1741,16 @@ def test_http_pre_cas_worker_exception_clears_marker_for_same_process_resume(cli
     app.include_router(build_router(client.app.state.pallium_service, relay_storage=storage,
                                    codex_wake_registry=registry))
     http = TestClient(app)
-    for session in ("sender", "target"):
-        assert http.post("/relay/turn", json={"runtime": "codex", "session_ref": session, **SCOPE}).status_code == 200
+    from storage import sqlite_queue
+    native_storage_time = sqlite_queue.time
+    with monkeypatch.context() as registration:
+        registration_time = SimpleNamespace(**vars(native_storage_time))
+        from itertools import count
+        registration_time.monotonic = count(step=0.001).__next__
+        registration.setattr(sqlite_queue, "time", registration_time)
+        for session in ("sender", "target"):
+            assert http.post("/relay/turn", json={"runtime": "codex", "session_ref": session, **SCOPE}).status_code == 200
+    assert sqlite_queue.time is native_storage_time
 
     original_begin = registry.begin_native_attempt
     fail_once = [True]

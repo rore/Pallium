@@ -14,7 +14,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from types import SimpleNamespace
+from types import SimpleNamespace, TracebackType
 
 MAX_MESSAGE = 32 * 1024
 EXCHANGE_SECONDS = 3.0
@@ -41,7 +41,7 @@ _INVENTORY_FAILURE_CATEGORIES = frozenset({
     "invalid-policy", "invalid-policy-lock", "invalid-response", "message-limit", "native-failed",
     "path-unavailable", "peer-gone", "peer-mismatch", "peer-unavailable", "policy-busy",
     "policy-changed", "policy-inactive", "stopped", "transport-failed", "unsafe-acl", "unsafe-owner",
-    "unsafe-path", "unsupported-acl", "registration-missing",
+    "unsafe-path", "unsupported-acl", "registration-missing", "peer-closed",
 })
 
 
@@ -512,24 +512,42 @@ class _PipeIO:
     def __init__(self, w, handle, stop: threading.Event):
         self.w, self.handle, self.stop = w, handle, stop
         self.unresolved = False
+        self._completed_read = None
 
-    def _operation(self, operation, deadline: float, keepalive=None):
+    def _operation(self, operation, deadline: float, keepalive=None, *, connected_ok=False, retain_read=False):
+        global _native_uncertain
         w = self.w
         ov = w.types.OVERLAPPED()
         ov.hEvent = w.event.CreateEvent(None, True, False, None)
         buffer = None
         pending = False
         completed = False
+        read_deadline = False
         try:
             if self.stop.is_set() or time.monotonic() >= deadline:
                 raise ShadowUnavailable("stopped" if self.stop.is_set() else "deadline")
+            if retain_read and self._completed_read is not None:
+                if self.unresolved or _native_uncertain:
+                    _close(ov.hEvent)  # This fresh event has never been submitted to the kernel.
+                    ov.hEvent = None
+                    raise ShadowUnavailable("stopped")
+                result, self._completed_read = self._completed_read, None
+                completed = True
+                return result
             try:
+                self._operation_started = True
                 code, buffer = operation(ov)
             except w.types.error as exc:
-                if getattr(exc, "winerror", None) == 535:  # ERROR_PIPE_CONNECTED.
+                if connected_ok and getattr(exc, "winerror", None) == 535:  # ERROR_PIPE_CONNECTED.
                     completed = True
                     return 0, None
                 raise
+            if connected_ok and code == 535:
+                completed = True
+                return 0, None
+            if connected_ok and type(code) is int and code == 232:  # ERROR_NO_DATA: the client already closed.
+                completed = True
+                raise ShadowUnavailable("peer-closed")
             if code not in (0, 997):  # ERROR_IO_PENDING.
                 completed = True
                 raise ShadowUnavailable("transport-failed")
@@ -551,10 +569,26 @@ class _PipeIO:
                 raise
             completed = True
             return count, buffer
-        except ShadowUnavailable:
+        except ShadowUnavailable as exc:
+            read_deadline = retain_read and exc.category == "deadline"
             raise
-        except Exception:
+        except Exception as exc:
             # Native errors are bounded categories, never model-visible stderr.
+            code = None
+            try:
+                code = getattr(exc, "winerror", None)
+            except Exception:
+                pass
+            try:
+                _log.warning("codex_native_operation_failed operation=%s winerror=%s",
+                             "accept" if connected_ok else "io",
+                             code if type(code) is int and 0 <= code <= 0xFFFFFFFF else "unknown")
+            except Exception:
+                pass  # Diagnostics must not change failure handling or cleanup.
+            if (connected_ok and isinstance(exc, w.types.error) and type(code) is int
+                    and code == 232 and (not pending or completed)):
+                completed = True
+                raise ShadowUnavailable("peer-closed") from None
             raise ShadowUnavailable("transport-failed") from None
         finally:
             if pending and not completed:
@@ -562,14 +596,17 @@ class _PipeIO:
                     w.file.CancelIo(self.handle)
                     if w.event.WaitForSingleObject(ov.hEvent, 100) == w.event.WAIT_OBJECT_0:
                         try:
-                            w.file.GetOverlappedResult(self.handle, ov, False)
+                            count = w.file.GetOverlappedResult(self.handle, ov, False)
                             completed = True
+                            # A cancelled poll may have already consumed its message.
+                            if (read_deadline and not self.stop.is_set() and not self.unresolved
+                                    and not _native_uncertain and self._completed_read is None):
+                                self._completed_read = (count, buffer)
                         except w.types.error as exc:
                             completed = getattr(exc, "winerror", None) in {38, 109, 232, 233, 234, 995}
                 except Exception:
                     pass
                 if not completed:
-                    global _native_uncertain
                     _native_uncertain = True
                     self.unresolved = True
                     _retained.append((self, ov, buffer, keepalive))
@@ -577,14 +614,16 @@ class _PipeIO:
                 _close(ov.hEvent)
 
     def accept(self, deadline: float) -> None:
+        self._completed_read = None  # A reused server handle must not carry bytes across peers.
         def connect(ov):
             code = self.w.pipe.ConnectNamedPipe(self.handle, ov)
             return code or 0, None
-        self._operation(connect, deadline)
+        self._operation(connect, deadline, connected_ok=True)
 
     def read(self, deadline: float) -> dict:
         count, buffer = self._operation(
             lambda ov: self.w.file.ReadFile(self.handle, MAX_MESSAGE + 1, ov), deadline,
+            retain_read=True,
         )
         if count > MAX_MESSAGE:
             raise ShadowUnavailable("message-limit")
@@ -602,6 +641,7 @@ class _PipeIO:
         if self.unresolved:
             _retained.append(self)
             return
+        self._completed_read = None
         _close(self.handle)
         self.handle = None
 
@@ -1150,12 +1190,16 @@ class _DesktopIO(_PipeIO):
         return bytes(chunks)
 
     def read(self, deadline: float) -> dict:
+        self._frame_stage = "read-header"
         size = int.from_bytes(self._read_exact(4, deadline), "little")
         if not 0 < size <= MAX_DESKTOP_FRAME:
             raise ShadowUnavailable("message-limit")
+        self._frame_stage = "read-body"
         return _json(self._read_exact(size, deadline), limit=MAX_DESKTOP_FRAME)
 
     def write(self, value: dict, deadline: float) -> None:
+        self._frame_stage = "write"
+        self._operation_started = False
         payload = json.dumps(value, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8")
         if not 0 < len(payload) <= MAX_DESKTOP_FRAME:
             raise ShadowUnavailable("message-limit")
@@ -1885,6 +1929,17 @@ class InventoryService:
                 except ShadowUnavailable as exc:
                     if exc.category == "deadline" and not io.unresolved:
                         continue
+                    if (self.retained and exc.category == "peer-closed" and not io.unresolved
+                            and not self.unresolved and not _native_uncertain and not self.stop_event.is_set()):
+                        self._drop()
+                        if self.unresolved or _native_uncertain or self.stop_event.is_set():
+                            raise
+                        self.w.pipe.DisconnectNamedPipe(handle)
+                        if self.source is not None:
+                            self.source.close()
+                            self.source = None
+                        self.ready_announced = False
+                        continue
                     raise
                 peer = _Peer(self.w, self.w.pipe.GetNamedPipeClientProcessId(handle), self.sid)
                 sequence = 0
@@ -1928,9 +1983,29 @@ class InventoryService:
                 except ShadowUnavailable as exc:
                     if self.retained:
                         category = exc.category if exc.category in _INVENTORY_FAILURE_CATEGORIES else "unavailable"
-                        _log.warning("codex_retained_source_channel_closed category=%s unresolved=%s stopping=%s observed_at=%s",
-                                     category, io.unresolved, self.stop_event.is_set(),
-                                     datetime.now(timezone.utc).isoformat())
+                        source_pid = source_creation = source_state = "unknown"
+                        try:
+                            pid, creation = peer.pid, peer.creation
+                            if type(pid) is int and 0 < pid <= 0xffffffff:
+                                source_pid = pid
+                            if (type(creation) is str and len(creation) <= 40
+                                    and re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?(?:[+-][0-9]{2}:[0-9]{2})?", creation)):
+                                source_creation = creation
+                            if not io.unresolved and peer.handle is not None:
+                                state = self.w.event.WaitForSingleObject(peer.handle, 0)
+                                if type(state) is int:
+                                    if state == self.w.event.WAIT_OBJECT_0:
+                                        source_state = "exited"
+                                    elif state == self.w.event.WAIT_TIMEOUT:
+                                        source_state = "alive"
+                        except Exception:
+                            pass
+                        try:
+                            _log.warning("codex_retained_source_channel_closed category=%s unresolved=%s stopping=%s observed_at=%s source_pid=%s source_creation=%s source_state=%s close_cause=unknown",
+                                         category, io.unresolved, self.stop_event.is_set(),
+                                         datetime.now(timezone.utc).isoformat(), source_pid, source_creation, source_state)
+                        except Exception:
+                            pass  # Diagnostics cannot change source ownership or cleanup.
                     if io.unresolved or self.stop_event.is_set():
                         raise
                 finally:
@@ -1949,6 +2024,8 @@ class InventoryService:
                                 peer.close()
                         peer = None
         except Exception as exc:
+            if self.retained:
+                self._terminal_failure = True
             self._record_failure(exc)
             self.stop_event.set()
             try:
@@ -2154,8 +2231,39 @@ class NativeInventoryClient:
         """Compare the trusted private bootstrap even after this channel is disposed."""
         return _json(_read_private(self.w, self.bootstrap_path, self.sid)) == self.manifest
 
+    def retire(self) -> None:
+        """Close resolved source I/O but retain the authenticated service exit witness."""
+        if self.unresolved or (self.io is not None and self.io.unresolved):
+            self.dispose()
+            return
+        peer = self.peer
+        self.peer = None
+        try:
+            self.dispose()
+        except Exception:
+            if peer is not None:
+                peer.close()
+            raise
+        if self.unresolved or self.io is not None or self.source is not None:
+            if peer is not None:
+                peer.close()
+            self.unresolved = True
+            _retained.append(self)
+            raise ShadowUnavailable("stopped")
+        self.peer = peer
+
+    def retired_service_exited(self) -> bool:
+        if self.io is not None or self.unresolved or self.peer is None or self.peer.handle is None:
+            raise ShadowUnavailable("stopped")
+        state = self.w.event.WaitForSingleObject(self.peer.handle, 0)
+        if state == self.w.event.WAIT_OBJECT_0:
+            return True
+        if state == self.w.event.WAIT_TIMEOUT:
+            return False
+        raise ShadowUnavailable("peer-unavailable")
+
     def dispose(self) -> None:
-        """EOF closes the private source channel; service custody remains authorized."""
+        """Close resolved source I/O and its owned process handles."""
         self.unresolved = self.io is not None and self.io.unresolved
         if self.unresolved:
             _retained.append(self)
@@ -2266,9 +2374,48 @@ def _read_tool_schema_valid(tools: object) -> bool:
 class RetainedService(InventoryService):
     """Normal source-channel custody. Trial authority and files are never consulted."""
 
-    def __init__(self, directory: Path):
+    def _record_failure(self, exc: Exception) -> None:
+        # Retained source loops have no trial failure context; keep terminal
+        # attribution without exposing exception text or changing teardown.
+        try:
+            category = getattr(exc, "category", None)
+        except Exception:
+            category = None
+        category = category if type(category) is str and category in _INVENTORY_FAILURE_CATEGORIES else "unexpected"
+        origin_line = 0
+        try:
+            trace = exc.__traceback__
+            for _ in range(32):
+                if trace is None:
+                    break
+                if type(trace) is not TracebackType:
+                    origin_line = 0
+                    break
+                if trace.tb_frame.f_code.co_filename == __file__:
+                    line = trace.tb_lineno
+                    if type(line) is not int or not 0 < line <= 100000:
+                        origin_line = 0
+                        break
+                    origin_line = line
+                trace = trace.tb_next
+            else:
+                if trace is not None:
+                    origin_line = 0
+        except Exception:
+            origin_line = 0
+        try:
+            _log.warning("codex_retained_terminal_failure timestamp=%s stage=source-loop category=%s origin_line=%d",
+                         datetime.now(timezone.utc).isoformat(), category, origin_line)
+        except Exception:
+            pass  # Diagnostics must not replace the source-loop failure.
+
+    def __init__(self, directory: Path, *, on_terminal=None):
         super().__init__(directory)
         self.retained = True
+        self._on_terminal = on_terminal
+        self._explicit_stop = threading.Event()
+        self._terminal_failure = False
+        self._terminal_notified = False
         self._custody_lock = threading.RLock()
         self.ancestors = []
         self.read_tool = False
@@ -2374,6 +2521,7 @@ class RetainedService(InventoryService):
             )
 
     def stop(self) -> None:
+        self._explicit_stop.set()
         self.stop_event.set()
         self._clear_registration()
         super().stop()
@@ -2383,9 +2531,30 @@ class RetainedService(InventoryService):
     def _run(self) -> None:
         try:
             super()._run()
+        except Exception as exc:
+            self.unresolved = True
+            self._terminal_failure = True
+            # Preserve native locals in an escaping teardown's traceback.
+            _retained.append((self, exc))
+            try:
+                self._record_failure(exc)
+            except Exception:
+                pass
+            raise
         finally:
-            if self.unresolved:
-                self._invalidate_enrollment_diagnostics()
+            try:
+                if self.unresolved:
+                    self._invalidate_enrollment_diagnostics()
+            except Exception:
+                pass
+            finally:
+                if (self._terminal_failure and not self._explicit_stop.is_set()
+                        and not self._terminal_notified and self._on_terminal is not None):
+                    self._terminal_notified = True
+                    try:
+                        self._on_terminal()
+                    except Exception:
+                        pass  # A closed server loop must not replace the native failure.
 
     def _registration_identity(self, desktop, ancestors):
         policy = desktop.policy
@@ -2451,8 +2620,29 @@ class RetainedService(InventoryService):
         self._check_custody()
         self.native_sequence += 1
         request_id = self.native_sequence
-        self.custody.write({"jsonrpc": "2.0", "id": request_id, "method": "tools/list"}, deadline)
-        value = self.custody.read(deadline)
+        try:
+            self.custody.write({"jsonrpc": "2.0", "id": request_id, "method": "tools/list"}, deadline)
+            value = self.custody.read(deadline)
+        except Exception as exc:
+            if expected_identity is None:
+                stage = "unknown"
+                try:
+                    frame = getattr(self.custody, "_frame_stage", None)
+                    started = getattr(self.custody, "_operation_started", None)
+                    category = getattr(exc, "category", None)
+                    if type(frame) is str:
+                        if frame == "write":
+                            stage = ("before-catalog-write" if type(category) is str and category == "deadline"
+                                     and started is False else "catalog-write")
+                        elif frame in {"read-header", "read-body"}:
+                            stage = "catalog-" + frame
+                except Exception:
+                    pass
+                try:
+                    _log.warning("codex_retained_catalog_failed stage=%s", stage)
+                except Exception:
+                    pass  # Diagnostics cannot change failure identity or cleanup.
+            raise
         if (set(value) != {"jsonrpc", "id", "result"} or value["jsonrpc"] != "2.0"
                 or type(value["id"]) is not int or value["id"] != request_id
                 or not isinstance(value["result"], dict)):
@@ -2777,7 +2967,7 @@ class RetainedService(InventoryService):
             ), reservation
 
 
-def start_retained_service() -> RetainedService | None:
+def start_retained_service(*, on_terminal=None) -> RetainedService | None:
     if not retained_wake_enabled() or not native_available():
         return None
     try:
@@ -2786,6 +2976,6 @@ def start_retained_service() -> RetainedService | None:
             return None
         directory = retained_directory(port=int(port))
         _secure_directory(_native(), directory, _self_sid(_native()))
-        return RetainedService(directory).start()
+        return RetainedService(directory, on_terminal=on_terminal).start()
     except Exception:
         return None

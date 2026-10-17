@@ -7,7 +7,7 @@ import logging
 import os
 import threading
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -340,6 +340,7 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
             cleaned = True
             app_instance.state._lifespan_complete = False
             stop_claude_relay_wake_admission(claude_wake_registry)
+            codex_wake.stop_codex_relay_wake_admission(codex_wake_registry)
             if stop is not None:
                 stop.set()
             for worker in (retained_service, inventory_service, shadow_service,
@@ -381,6 +382,7 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
                     thread.join()
             wait_for_operations()
             drain_claude_relay_wakes(claude_wake_registry)
+            codex_wake.drain_codex_relay_wakes(codex_wake_registry)
             close_resources()
 
         def initialize_runtime() -> None:
@@ -476,7 +478,9 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
             try:
                 from app.codex_bridge_pipe import start_retained_service
 
-                retained_service = start_retained_service()
+                on_terminal = getattr(app_instance.state, "_on_retained_terminal", None)
+                retained_service = (start_retained_service(on_terminal=on_terminal)
+                                    if on_terminal is not None else start_retained_service())
             except Exception:
                 logger.warning("Codex retained worker unavailable")
             codex_wake_registry.retained_service = retained_service
@@ -833,7 +837,7 @@ class _StartupGate:
         await self.app(scope, receive, send)
 
 
-def app() -> FastAPI:
+def app(*, on_retained_terminal: Callable[[], None] | None = None) -> FastAPI:
     """Production ASGI factory: bind before non-abandoning initialization."""
     @contextlib.asynccontextmanager
     async def lifespan(startup: FastAPI):
@@ -846,6 +850,7 @@ def app() -> FastAPI:
             try:
                 built = await anyio.to_thread.run_sync(create_app, abandon_on_cancel=False)
                 built.state._production_bootstrap = True
+                built.state._on_retained_terminal = on_retained_terminal
                 if startup.state._closing:
                     await anyio.to_thread.run_sync(built.state._close_constructed, abandon_on_cancel=False)
                     return

@@ -184,7 +184,7 @@ def test_tcp_ack_receipt_precedes_owned_callback_and_shutdown_drains(
         server.__enter__()
         with httpx.Client(base_url=server.base_url, timeout=2) as client:
             for session in ("sender", "target"):
-                registered = client.post("/relay/turn", json={"runtime": "codex", "session_ref": session, **scope})
+                registered = client.post("/relay/turn", json={"runtime": "codex", "session_ref": session, **scope}, timeout=5)
                 assert registered.status_code == 200, registered.text
             sent = []
             for payload in ("first café 東京", "next café 東京"):

@@ -811,6 +811,8 @@ def create_router(
         service_ms: int | None = None
         outcome = "error"
         request_data = request.model_dump()
+        if request.claim_expires_at_ms is None:
+            request_data.pop("claim_expires_at_ms")
         relay_request = dict(request_data)
         relay_request["exact_delivery_id"] = relay_request.pop("wake_delivery_id", None)
         reservation = None
