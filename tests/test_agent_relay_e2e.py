@@ -689,7 +689,14 @@ def test_http_omitted_expiry_defaults_new_send_and_reply_to_one_day(client):
 
 
 @pytest.mark.parametrize("original_expiry", [None, 600])
-def test_http_omitted_existing_send_and_reply_preserve_original_ttl(client, original_expiry):
+def test_http_omitted_existing_send_and_reply_preserve_original_ttl(client, original_expiry, request):
+    service = client.app.state.pallium_service
+    app = FastAPI()
+    # TTL/idempotence semantics do not require asynchronous wake/trace callbacks.
+    app.include_router(create_router(service, relay_service=RelayService(service._storage)))
+    client = TestClient(app)
+    request.addfinalizer(client.close)
+
     def expiry_instant(value):
         if value is None:
             return None
