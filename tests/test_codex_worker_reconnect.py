@@ -5,6 +5,7 @@ import os
 import threading
 import time
 from types import SimpleNamespace
+from pathlib import Path
 
 import pytest
 
@@ -12,6 +13,240 @@ from app import codex_bridge_pipe as bridge
 from app.mcp import codex_desktop_bridge as lifecycle
 from app.mcp import server as mcp_server
 from tests.test_codex_mcp_desktop_bridge import _serve_protocol
+
+
+@pytest.mark.parametrize("fault", ["valid", "foreign-pid", "hostile-creation", "invalid-creation",
+                                  "hostile-reason", "hostile-unresolved"])
+def test_client_close_file_is_bounded_private_and_quiet(monkeypatch, tmp_path, capsys, fault):
+    import logging
+
+    class Hostile:
+        def __str__(self):
+            raise AssertionError("private-value-stringified")
+        __repr__ = __str__
+
+    monkeypatch.setenv("PALLIUM_HOME", str(tmp_path))
+    handlers = list(logging.getLogger().handlers)
+    creation = "2026-01-02T03:04:05.123000+00:00"
+    identity = (os.getpid() + (fault == "foreign-pid"), creation)
+    if fault == "hostile-creation":
+        identity = (os.getpid(), Hostile())
+    if fault == "invalid-creation":
+        identity = (os.getpid(), "private-path-sentinel\nprivate-token-sentinel")
+    lifecycle._client_close_diagnostic(Hostile() if fault == "hostile-reason" else "cleanup",
+        identity, Hostile() if fault == "hostile-unresolved" else False)
+    path = tmp_path / "logs" / f"codex-retained-client-{os.getpid()}.log"
+    text = path.read_text(encoding="utf-8")
+    expected = "unknown" if fault in {"foreign-pid", "hostile-creation", "invalid-creation"} else creation
+    assert f"reason=cleanup own_pid={os.getpid()} native_creation={expected}" in text
+    assert f"unresolved={'unknown' if fault == 'hostile-unresolved' else 'False'}" in text
+    assert "private-" not in text and "thread" not in text and "endpoint" not in text
+    assert not (tmp_path / "logs" / "pallium.log").exists()
+    assert logging.getLogger().handlers == handlers
+    assert capsys.readouterr() == ("", "")
+
+
+@pytest.mark.parametrize("fault", ["mkdir", "handler", "format", "close"])
+def test_client_close_sink_failure_does_not_escape_or_use_stderr(monkeypatch, tmp_path, capsys, fault):
+    monkeypatch.setenv("PALLIUM_HOME", str(tmp_path))
+    closed = []
+    original_close = lifecycle._QuietCloseHandler.close
+
+    def fail(*args, **kwargs):
+        raise OSError("private-sink-error-sentinel")
+
+    def close(handler):
+        original_close(handler)
+        closed.append(True)
+        if fault == "close":
+            fail()
+
+    with monkeypatch.context() as patch:
+        patch.setattr(lifecycle._QuietCloseHandler, "close", close)
+        if fault == "mkdir":
+            patch.setattr(Path, "mkdir", fail)
+        elif fault == "handler":
+            patch.setattr(lifecycle, "_QuietCloseHandler", fail)
+        elif fault == "format":
+            patch.setattr(lifecycle._QuietCloseHandler, "format", fail)
+        lifecycle._client_close_diagnostic("cleanup", (os.getpid(), "unknown"), False)
+    assert bool(closed) == (fault in {"format", "close"})
+    assert capsys.readouterr() == ("", "")
+
+
+def test_client_close_rotation_serializes_workers_and_closes_handlers(monkeypatch, tmp_path):
+    monkeypatch.setenv("PALLIUM_HOME", str(tmp_path))
+    closed = []
+    original_close = lifecycle._QuietCloseHandler.close
+    def close(handler):
+        original_close(handler)
+        closed.append(True)
+    monkeypatch.setattr(lifecycle._QuietCloseHandler, "close", close)
+    identity = (os.getpid(), "2026-01-02T03:04:05+00:00")
+    for _ in range(100):
+        lifecycle._client_close_diagnostic("cleanup", identity, False)
+    gate = threading.Barrier(16)
+    def write():
+        gate.wait()
+        lifecycle._client_close_diagnostic("cleanup", identity, False)
+    workers = [threading.Thread(target=write) for _ in range(16)]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join()
+    paths = sorted((tmp_path / "logs").glob("*"))
+    assert len(paths) == 2 and all(0 < path.stat().st_size <= 4096 for path in paths)
+    assert len(closed) == 116
+    for path in paths:
+        lines = path.read_text(encoding="utf-8").splitlines()
+        assert lines and all("reason=cleanup own_pid=" in line and line.endswith("unresolved=False") for line in lines)
+
+
+@pytest.mark.parametrize("failure", ["clean", "getter", "dispose"])
+def test_client_close_identity_is_captured_before_cleanup(monkeypatch, tmp_path, failure):
+    monkeypatch.setenv("PALLIUM_HOME", str(tmp_path))
+    worker = lifecycle.InventoryWorker.__new__(lifecycle.InventoryWorker)
+    worker._restart_allowed, worker._retained = True, True
+    creation = "2026-01-02T03:04:05+00:00"
+    class Native:
+        unresolved = False
+        source = SimpleNamespace(pid=os.getpid(), creation=creation)
+        def dispose(self):
+            self.source = None
+            self.closed = True
+            if failure == "dispose":
+                raise OSError("private-disposal-sentinel")
+    client = Native()
+    if failure == "getter":
+        class BadSource:
+            @property
+            def pid(self):
+                raise OSError("private-getter-sentinel")
+        client.source = BadSource()
+    worker._finish(client, reason="cleanup")
+    assert client.closed and client.source is None
+    assert worker._restart_allowed == (failure != "dispose")
+    text = (tmp_path / "logs" / f"codex-retained-client-{os.getpid()}.log").read_text(encoding="utf-8")
+    assert f"native_creation={'unknown' if failure == 'getter' else creation}" in text
+    assert f"unresolved={failure == 'dispose'}" in text and "private-" not in text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("journey", ["idle-transport", "unused-ready", "caller-thread", "lifespan-stop"])
+async def test_actual_mcp_close_branch_has_durable_marker(monkeypatch, tmp_path, journey):
+    monkeypatch.setenv("PALLIUM_HOME", str(tmp_path))
+    if journey == "idle-transport":
+        await test_fresh_caller_after_retirement_requires_trusted_old_owner_exit(monkeypatch, "exit-later")
+        expected = "idle-ready-transport"
+    elif journey == "unused-ready":
+        await test_mcp_cancellation_releases_unused_channel_for_fresh_request(monkeypatch, "terminal-bootstrap")
+        expected = "unused-ready-retired"
+    elif journey == "caller-thread":
+        await test_busy_response_does_not_preserve_changed_or_unresolved_admission(monkeypatch, "thread")
+        expected = "caller-thread-changed"
+    else:
+        await test_concurrent_actual_requests_do_not_create_a_second_worker(monkeypatch)
+        expected = "lifespan-stop"
+    text = (tmp_path / "logs" / f"codex-retained-client-{os.getpid()}.log").read_text(encoding="utf-8")
+    assert f"reason={expected} " in text
+    assert "actual-runtime" not in text and "original-capability" not in text
+
+
+@pytest.mark.parametrize("category", ["deadline", "transport-failed"])
+def test_registered_idle_retirement_records_exact_ready_failure(monkeypatch, tmp_path, category):
+    monkeypatch.setenv("PALLIUM_HOME", str(tmp_path))
+    monkeypatch.setenv("CODEX_APP_TOOLS_PIPE_PATH", "original-capability")
+    worker = lifecycle.InventoryWorker.__new__(lifecycle.InventoryWorker)
+    worker._restart_allowed, worker._retained = True, True
+    worker.stop_event = threading.Event()
+    worker._fresh_request_retirement = None
+    proof = "a" * 64
+    class Native:
+        continuity, unresolved, manifest = proof, False, {"epoch": "same"}
+        source = SimpleNamespace(pid=os.getpid(), creation="2026-01-02T03:04:05+00:00")
+        io = SimpleNamespace(unresolved=False)
+        def ready(self):
+            raise bridge.ShadowUnavailable(category)
+        def service_current(self):
+            return True
+        def bootstrap_unchanged(self):
+            return True
+        def retired_service_exited(self):
+            return False
+        def retire(self):
+            self.source = None
+            self.closed = True
+    client = Native()
+    assert worker._recover_if_gone(client, Native, "original-capability",
+        {"thread_ref": "actual-runtime", "turn_ref": "admitted"}, proof,
+        allow_ready_retirement=True) == (None, True)
+    assert client.closed and worker._restart_allowed and not worker.stop_event.is_set()
+    assert worker._fresh_request_retirement == (client, {"epoch": "same"})
+    text = (tmp_path / "logs" / f"codex-retained-client-{os.getpid()}.log").read_text(encoding="utf-8")
+    expected = "idle-ready-deadline" if category == "deadline" else "idle-ready-transport"
+    assert f"reason={expected} " in text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reply", ["registered", "unavailable"])
+async def test_first_cancelled_mcp_admission_records_validated_reply(monkeypatch, tmp_path, reply):
+    from mcp.shared.exceptions import McpError
+    from mcp.types import CancelledNotification, CancelledNotificationParams, ClientNotification
+
+    monkeypatch.setenv("PALLIUM_HOME", str(tmp_path))
+    entered, release = threading.Event(), threading.Event()
+    workers, clients, operations = [], [], []
+    original_worker = lifecycle.InventoryWorker
+    class Worker(original_worker):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            workers.append(self)
+    class Native:
+        def __init__(self, *args, **kwargs):
+            self.source = SimpleNamespace(pid=os.getpid(), creation="2026-01-02T03:04:05+00:00")
+            self.continuity, self.unresolved, self.closed = None, False, False
+            clients.append(self)
+        def ready(self):
+            return {"status": "ready"}
+        def register(self, metadata):
+            entered.set()
+            assert release.wait(5)
+            self.continuity = "a" * 64
+            return {"status": reply, "reason": "ok" if reply == "registered" else "native-failed"}
+        def dispose(self):
+            self.source = None
+            self.closed = True
+    monkeypatch.setattr(lifecycle, "InventoryWorker", Worker)
+    server = _protocol_server(monkeypatch, Native, operations)
+    async def exercise(session):
+        request_ids = []
+        original_send = session.send_request
+        async def observe(*args, **kwargs):
+            request_ids.append(session._request_id)
+            return await original_send(*args, **kwargs)
+        session.send_request = observe
+        task = asyncio.create_task(_actual_status(session, "cancelled-first"))
+        try:
+            assert await asyncio.to_thread(entered.wait, 1)
+            await session.send_notification(ClientNotification(CancelledNotification(
+                params=CancelledNotificationParams(requestId=request_ids[-1], reason="test cancellation"))))
+            with pytest.raises(McpError):
+                await asyncio.wait_for(task, 1)
+        finally:
+            release.set()
+            await asyncio.gather(task, return_exceptions=True)
+    try:
+        await _serve_protocol(server, exercise)
+    finally:
+        release.set()
+        for worker in workers:
+            await worker.stop()
+            worker._thread.join()
+    assert len(clients) == 1 and clients[0].closed and operations == []
+    text = (tmp_path / "logs" / f"codex-retained-client-{os.getpid()}.log").read_text(encoding="utf-8")
+    expected = "first-registered-result-cancelled" if reply == "registered" else "first-admission-cancelled"
+    assert f"reason={expected} " in text
+    assert "native_creation=2026-01-02T03:04:05+00:00" in text
 
 
 def _protocol_server(monkeypatch, native, operations=None):

@@ -2245,7 +2245,7 @@ class NativeInventoryClient:
         raise ShadowUnavailable("peer-unavailable")
 
     def dispose(self) -> None:
-        """EOF closes the private source channel; service custody remains authorized."""
+        """Close resolved source I/O and its owned process handles."""
         self.unresolved = self.io is not None and self.io.unresolved
         if self.unresolved:
             _retained.append(self)
