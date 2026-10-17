@@ -263,6 +263,7 @@ def test_exact_codex_turn_uses_one_admission_and_preserves_phase_failures(
     tmp_path, monkeypatch, caplog, failure,
 ) -> None:
     from contextlib import ExitStack
+    from storage import sqlite_queue
     from app import dependencies, main as app_main
     from core.errors import ImmediateTransactionBusyError
     from core.relay import (
@@ -294,6 +295,18 @@ def test_exact_codex_turn_uses_one_admission_and_preserves_phase_failures(
             if failure in durable_errors:
                 error, _, _ = durable_errors[failure]
                 raise error(f"controlled {failure}")
+            # Qualify the claim prerequisite before exercising callback/caller failures.
+            provider_thread = threading.get_ident()
+            native_time = sqlite_queue.time
+            qualified_time = SimpleNamespace(**vars(native_time))
+            logical_monotonic = itertools.count(step=.001).__next__
+            qualified_time.monotonic = lambda: (logical_monotonic()
+                if threading.get_ident() == provider_thread else native_time.monotonic())
+            with monkeypatch.context() as claim_setup:
+                claim_setup.setattr(sqlite_queue, "time", qualified_time)
+                result = original_turn(self, **kwargs)
+            assert sqlite_queue.time is native_time
+            return result
         return original_turn(self, **kwargs)
 
     def observe_router(service, **kwargs):

@@ -2299,6 +2299,15 @@ async def test_fresh_runtime_request_reenrolls_after_service_epoch_change(monkey
     from app.mcp import codex_desktop_bridge as lifecycle
     epoch = [1]
     calls, disposed = [], threading.Event()
+    workers = []
+    original_worker = lifecycle.InventoryWorker
+
+    class CapturingWorker(original_worker):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            workers.append(self)
+
+    monkeypatch.setattr(lifecycle, "InventoryWorker", CapturingWorker)
     class Native:
         def __init__(self, path, stop, *, retained):
             assert retained
@@ -2339,6 +2348,10 @@ async def test_fresh_runtime_request_reenrolls_after_service_epoch_change(monkey
             if disposed.is_set(): break
             await asyncio.sleep(.01)
         assert disposed.is_set()
+        worker, = workers
+        await asyncio.to_thread(worker._thread.join, 3)
+        assert not worker._thread.is_alive()
+        assert worker._restart_allowed and not worker._closed
         await call("fresh")
     await _serve_protocol(server, exercise)
     assert calls == [("connect", 1), ("register", {"thread_ref": "actual-runtime", "turn_ref": "first"}),

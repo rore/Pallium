@@ -1094,6 +1094,7 @@ def _automatic_recovery_worker(monkeypatch):
     worker = lifecycle.InventoryWorker.__new__(lifecycle.InventoryWorker)
     worker._path = "unused-bootstrap"
     worker.stop_event = threading.Event()
+    worker._retained = True
     worker._restart_allowed = True
     monkeypatch.setenv("CODEX_APP_TOOLS_PIPE_PATH", "original-capability")
     monkeypatch.setattr(lifecycle, "RECONNECT_INITIAL_BACKOFF_SECONDS", .001)
