@@ -157,17 +157,23 @@ No ranking, navigation, capture or guidance change is selected by this review.
 
 ### October 17-31 prospective intake during normal work
 
-The user selected two existing work chats and the coordinating chat. This is a
-task-level collection instruction, not a global agent/configuration change,
-background monitor or automated evaluation. The window ends October 31, 2026 at
-23:59 Asia/Jerusalem. Each work chat starts only after accepting the instruction;
+The user selected two existing work chats and the coordinating chat, then requested
+more participants on October 17. Collection is a task-level instruction, not a
+global agent/configuration change or automated evaluation. The window ends
+October 31, 2026 at 23:59 Asia/Jerusalem. Each work chat starts only after accepting the instruction;
 the coordinator starts with this setup. No previous episode is backdated into it.
 Both invited work chats accepted on October 17. One has a frozen assignment and
 may contribute no cases; intake never overrides that boundary or creates work.
 
-Take each chat's first three eligible triggers, in order, for at most nine
-registrations. The coordinator deduplicates underlying needs and selects the
-earliest eight within that explicitly capped participant sample, logging exclusions
+Take each original chat's first three eligible triggers, in order. Four additional
+existing Pallium work chats received bounded offers for their first two triggers
+each, only after acceptance. One subsequently accepted, one deferred because its
+work was complete, and two offers remain unconfirmed while their chats are busy.
+Receipt and acceptance evidence stays in the original private chats. Completed/frozen work
+is never restarted to produce cases. This replaces the original nine-registration
+pool with at most seventeen registrations if all four accept. The coordinator
+deduplicates underlying needs and selects the earliest eight within that capped
+participant sample, logging exclusions
 without inspecting outcomes. Five to ten genuine needs remains the small-check
 range; fewer than five at the deadline is an inconclusive shortfall. Do not extend
 the window, invent needs or substitute retrospective successes to fill it.
@@ -177,8 +183,9 @@ missing earlier decision, constraint or investigation fact encountered while doi
 already-authorized work. A natural prior-context question that existing sources
 already answer is a valid control. Exclude setup/survey administration, invented
 questions, synthetic evaluation, verification-marker readback and repeated searches
-for the same need. Within the three-trigger cap, record missed registrations and
-their reasons too; voluntary omission must not silently select only good cases.
+for the same need. Within each participant's trigger cap, record missed
+registrations and their reasons too; voluntary omission must not silently select
+only good cases.
 
 Before any Pallium/native/direct-chat historical lookup or request for pasted
 historical context, put a short neutral BEFORE card in the working chat:
@@ -222,6 +229,12 @@ tools only; if those conditions cannot be met, retain an observational case and
 report the limitation. No new adapter, raw private export or paid comparison is
 authorized by intake. Candidate recovery, observational use and controlled
 downstream benefit remain separate results.
+
+An existing app thread follow-up checks daily for new registrations without
+interrupting work or notifying on unchanged collection. Review once eight distinct
+completed cases are available; at the deadline review five to seven with the sample
+limit, or report fewer than five as inconclusive. Pause the follow-up after that
+review or shortfall report. No custom scheduler or paid evaluation is added.
 
 Initial registration count is zero; experiment-administration messages do not
 count as upcoming needs. The pending prospective checklist stays open until real
