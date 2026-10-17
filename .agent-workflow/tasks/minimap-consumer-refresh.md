@@ -80,7 +80,7 @@ Agent technical review: `/root/consumer_plan_review` (native agent result delive
 
 
 
-**State:** Ready to implement
+**State:** Ready for review
 
 <!-- agent-workflow:end -->
 
@@ -158,9 +158,9 @@ Agent technical review: `/root/consumer_plan_review` (native agent result delive
 
 
 
-- The fresh whole-change selector against origin/main exited 0 and selected the full lane: python -m pytest tests/ -x -q (86 changed paths). Selector stdout/stderr/exit are under uild/minimap-consumer-refresh-20261017/candidate/.
+- The fresh whole-change selector against origin/main exited 0 and selected the full lane: python -m pytest tests/ -x -q (86 changed paths). Selector stdout/stderr/exit are under build/minimap-consumer-refresh-20261017/candidate/.
 
-- Fresh import-linter boundary check exited 0 and produced uild/import-linter-report.json. Fresh Redline used the selector's changed-path manifest and matching numstat evidence, exited 1 with verdict RED (Red-zone files changed) because scripts/agent-workflow-check.py is red-zone. Its JSON and logs are retained under the same candidate evidence folder.
+- Fresh import-linter boundary check exited 0 and produced build/import-linter-report.json. Fresh Redline used the selector's changed-path manifest and matching numstat evidence, exited 1 with verdict RED (Red-zone files changed) because scripts/agent-workflow-check.py is red-zone. Its JSON and logs are retained under the same candidate evidence folder.
 
 - The local Agent Workflow checker, run with the private interpreter selected process-locally, exited 1 advisory with no blocking predicates. The shadow architecture-review checkpoint remains unsatisfied for the red-zone checker; a second nonblocking advisory notes Work Record and code are in the same local commit. The first wrapper attempt exited 2 because Python was not selected; its preserved output is not represented as a successful check.
 
@@ -168,6 +168,13 @@ Agent technical review: `/root/consumer_plan_review` (native agent result delive
 
 
 
+
+## Result review
+
+Agent technical review: /root/encoded_setup_review (independent final candidate review; result delivered to root).
+Reviewed revision: c48318945efcb47ab552baa96919735ed22f927e.
+Verification adequacy: Adequate for the consumer-sync and custody-fix scope. The reviewer checked the full-suite stdout and exit, process-drain receipt, matching before/after hashes for all 86 selector paths, and the custody correction with its unchanged assertions and cleanup. Source parity remained 77/77 per Agent Workflow mirror and 52/52 for Minimap.
+Limits: The review did not resolve the shadow architecture-review advisory or substitute for hosted checks. Later hosted results are recorded on PR #320.
 
 ## Full qualification result
 
