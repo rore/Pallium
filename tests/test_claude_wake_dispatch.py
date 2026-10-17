@@ -1404,12 +1404,26 @@ def test_restart_and_claim_recovery_deliver_once_on_user_prompt(
 
     original_registry = ClaudeWakeRegistry()
     before_restart = router(original_registry)
-    assert before_restart.post("/internal/claude-wake/register", json={
-        **PAYLOAD, "session_ref": "target", "idle": True,
-    }).status_code == 204
-    assert before_restart.post("/relay/turn", json={
-        "runtime": "claude-code", "session_ref": "target", **scope,
-    }).status_code == 200
+    from itertools import count
+    import time as native_time
+    from storage import sqlite_queue
+
+    native_storage_time = sqlite_queue.time
+    native_monotonic = native_time.monotonic
+    # These establish the restart fixture; native admission deadlines have separate coverage.
+    with monkeypatch.context() as registration:
+        registration_time = SimpleNamespace(**vars(native_storage_time))
+        registration_time.monotonic = count(step=0.001).__next__
+        registration.setattr(sqlite_queue, "time", registration_time)
+        assert before_restart.post("/internal/claude-wake/register", json={
+            **PAYLOAD, "session_ref": "target", "idle": True,
+        }).status_code == 204
+        assert before_restart.post("/relay/turn", json={
+            "runtime": "claude-code", "session_ref": "target", **scope,
+        }).status_code == 200
+    assert sqlite_queue.time is native_storage_time
+    assert sqlite_queue.time.monotonic is native_monotonic
+    assert native_time.monotonic is native_monotonic
 
     restarted_registry = ClaudeWakeRegistry()
     http = router(restarted_registry)
