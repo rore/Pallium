@@ -1,5 +1,5 @@
 import path from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import * as pallium from "./pallium-common.mjs";
 
 const WAKE_TEXT = "[Pallium Relay wake: check the lower-authority Relay context before acting.]";
@@ -31,7 +31,7 @@ export default {
     const state = (id) => {
       if (disposed) return null;
       let item = sessions.get(id);
-      if (!item) { item = { busy: false, wakeBusy: false, seen: new Set(), lastAssistant: null, abort: new AbortController() }; sessions.set(id, item); }
+      if (!item) { item = { busy: false, wakeBusy: false, seen: new Set(), captures: new Set(), lastAssistant: null, abort: new AbortController() }; sessions.set(id, item); }
       return item;
     };
     const live = (id, item, signal = item?.abort.signal) => !disposed && item &&
@@ -54,6 +54,8 @@ export default {
       if (item.endpointId && (item.endpointId !== session.endpoint_id || item.scopeGeneration !== session.scope_generation)) {
         item.abort.abort();
         item.abort = new AbortController();
+        item.captures = new Set();
+        item.lastAssistant = null;
         item.busy = false;
         item.wakeBusy = false;
         item.naturalClaim = null;
@@ -146,24 +148,38 @@ export default {
     const ingestAssistant = async (id) => {
       const item = state(id);
       const signal = item?.abort.signal;
+      const captures = item?.captures;
+      let sourceId;
+      let reserved = false;
       try {
         if (!live(id, item, signal)) return;
         const messages = rows(await ctx.session.context({ sessionID: id }));
-        if (!live(id, item, signal)) return;
-        const assistant = [...messages].reverse().find((m) => m?.type === "assistant" && validInput(m.id));
-        if (!assistant || assistant.id === item.lastAssistant) return;
+        if (!await owned(id, item, signal)) return;
+        const lastUser = messages.findLastIndex((message) => message?.type === "user");
+        const assistants = messages.slice(lastUser + 1).filter((message) => message?.type === "assistant");
+        if (!assistants.length || assistants.some((message) => !validInput(message.id) || !Number.isFinite(message.time?.completed))) return;
         const turn = pallium.extractV2AssistantTurn(messages);
-        if (!turn || (!turn.assistant_text && !turn.tool_calls?.length) || turn.assistant_text.length > MAX_HISTORY) return;
+        if (!turn?.assistant_text || turn.assistant_text.length > MAX_HISTORY) return;
+        const actor = pallium.resolveActorRef(cwd, id);
+        const container = scope(id);
+        sourceId = "oc-assistant-" + createHash("sha256").update(JSON.stringify([
+          "opencode-assistant/v1", pallium.AGENT_REF, actor, container, id, assistants.at(-1).id,
+        ])).digest("hex");
+        if (sourceId === item.lastAssistant || captures.has(sourceId)) return;
         const workTrace = pallium.buildWorkTraceMetadata(turn);
         const metadata = { ...pallium.buildWorkRefsMetadata(cwd), ...(workTrace ? { agent_work_trace_turn: workTrace, cwd } : {}) };
+        captures.add(sourceId);
+        reserved = true;
         const response = await pallium.palliumRequest("POST", "/items", [{
-          source_type: pallium.SOURCE_TYPE, source_id: pallium.ocSourceId(), content_type: "text/plain",
+          source_type: pallium.SOURCE_TYPE, source_id: sourceId, content_type: "text/plain",
           content: turn.assistant_text, role: "assistant", agent_ref: pallium.AGENT_REF,
-          container_ref: scope(id), thread_ref: id, actor_ref: pallium.resolveActorRef(cwd, id),
+          container_ref: container, thread_ref: id, actor_ref: actor,
           visibility: "private", artifact_kind: "message", ...(Object.keys(metadata).length ? { metadata } : {}),
         }], signal);
-        if (live(id, item, signal) && response) item.lastAssistant = assistant.id;
+        if (Array.isArray(response) && response.length === 1 && typeof response[0]?.source_item_id === "string" &&
+            response[0].source_item_id.trim() && await owned(id, item, signal)) item.lastAssistant = sourceId;
       } catch (error) { log(`V2 assistant ingest failed: ${String(error)}`); }
+      finally { if (reserved) captures.delete(sourceId); }
     };
 
     registrations.push(await ctx.session.hook("prompt", async (event) => {

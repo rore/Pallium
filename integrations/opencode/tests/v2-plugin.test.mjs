@@ -3,13 +3,14 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { createHash } from "node:crypto";
 const profile = mkdtempSync(path.join(tmpdir(), "pallium-caller-"));
 const previousEnv = Object.fromEntries(["HOME", "USERPROFILE", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "PALLIUM_HOOK_ACTOR_REF"].map((key) => [key, process.env[key]]));
 for (const key of Object.keys(previousEnv)) process.env[key] = key === "PALLIUM_HOOK_ACTOR_REF" ? "fixture-actor" : profile;
 after(() => { for (const [key, value] of Object.entries(previousEnv)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; } rmSync(profile, { recursive: true, force: true }); });
 const { default: v1 } = await import("../.opencode/plugins/pallium.mjs");
 const { default: v2 } = await import("../server.js");
-const { deriveContainerRef, getPinnedContainer, removeSessionPin } = await import("../.opencode/plugins/pallium-common.mjs");
+const { deriveContainerRef, getPinnedContainer, pinContainer, removeSessionPin } = await import("../.opencode/plugins/pallium-common.mjs");
 
 const sessionID = "ses_abc123";
 const deliveryID = "relay-delivery-" + "a".repeat(32);
@@ -351,6 +352,291 @@ const barrier = () => {
 };
 const natural = (id = "msg_ordinary") => ({ id, role: "user", content: [{ type: "text", text: "ordinary work" }] });
 const jsonResponse = (value) => ({ ok: true, text: async () => JSON.stringify(value) });
+const completedAssistant = (id = "msg_answer", text = "שלום answer 😀") => ({
+  type: "assistant", id, time: { completed: 1 }, content: [{ type: "text", text }],
+});
+const captureCalls = (f) => f.calls.filter((call) => call.path === "/items");
+const captureReceipt = [{ source_item_id: "source-capture" }];
+
+test("assistant capture reserves one identity across completion, failure and compaction callbacks", async () => {
+  const gate = barrier();
+  const f = await callerFixture({ history: [completedAssistant()], fetch: async (route) => {
+    if (route === "/items") { await gate.wait(); return jsonResponse(captureReceipt); }
+  } });
+  const running = f.hooks.compaction({ sessionID });
+  try {
+    await gate.entered;
+    for (const type of ["session.execution.succeeded", "session.execution.failed"])
+      await f.emit({ type, location: { directory: location }, data: { sessionID } });
+    const overlap = f.hooks.compaction({ sessionID });
+    await new Promise(setImmediate);
+    assert.equal(captureCalls(f).length, 1);
+    gate.release();
+    await Promise.all([running, overlap]);
+    await f.hooks.compaction({ sessionID });
+    assert.equal(captureCalls(f).length, 1, "valid receipt suppresses a repeated callback");
+    assert.equal(captureCalls(f)[0].body[0].content, "שלום answer 😀");
+  } finally { gate.release(); await running; await f.close(); }
+});
+
+for (const fault of ["precommit", "committed response lost", "malformed", "empty", "multiple", "blank id", "nonstring id"]) {
+  test(`assistant capture retries the same source identity after ${fault}`, async () => {
+    const stored = new Map();
+    let attempts = 0;
+    const f = await callerFixture({ history: [completedAssistant()], fetch: async (route, body) => {
+      if (route !== "/items") return;
+      attempts++;
+      if (attempts === 1 && fault === "precommit") return { ok: false };
+      if (!stored.has(body[0].source_id)) stored.set(body[0].source_id, structuredClone(body[0]));
+      if (attempts === 1) {
+        if (fault === "committed response lost") throw new Error("committed response lost");
+        const invalid = { malformed: {}, empty: [], multiple: [...captureReceipt, ...captureReceipt],
+          "blank id": [{ source_item_id: "  " }], "nonstring id": [{ source_item_id: 1 }] };
+        return jsonResponse(invalid[fault]);
+      }
+      return jsonResponse(captureReceipt);
+    } });
+    try {
+      await f.hooks.compaction({ sessionID });
+      await f.hooks.compaction({ sessionID });
+      await f.hooks.compaction({ sessionID });
+      assert.equal(attempts, 2);
+      assert.equal(stored.size, 1);
+      assert.equal(captureCalls(f)[0].body[0].source_id, captureCalls(f)[1].body[0].source_id);
+      assert.equal([...stored.values()][0].content, "שלום answer 😀");
+    } finally { await f.close(); }
+  });
+}
+
+test("assistant capture identity survives reload and separates actor, container, session and native IDs", async () => {
+  const sources = [];
+  const capture = async (id = sessionID, native = "msg_answer") => {
+    const f = await callerFixture({ history: [completedAssistant(native)], fetch: async (route) => {
+      if (route === "/items") return jsonResponse(captureReceipt);
+    } });
+    try {
+      await f.hooks.compaction({ sessionID: id });
+      const payload = captureCalls(f)[0].body[0];
+      sources.push(payload.source_id);
+      assert.equal(payload.source_id, "oc-assistant-" + createHash("sha256").update(JSON.stringify([
+        "opencode-assistant/v1", payload.agent_ref, payload.actor_ref, payload.container_ref, id, native,
+      ])).digest("hex"));
+      assert.equal(payload.content, "שלום answer 😀");
+    } finally { await f.close(); }
+  };
+  removeSessionPin(sessionID);
+  try {
+    await capture();
+    await capture();
+    await capture(sessionID, "msg_other_answer");
+    await capture("ses_other_capture");
+    process.env.PALLIUM_HOOK_ACTOR_REF = "other-actor";
+    await capture();
+    process.env.PALLIUM_HOOK_ACTOR_REF = "fixture-actor";
+    pinContainer(sessionID, "path:other:123", undefined, "fixture-actor");
+    await capture();
+    assert.equal(sources[0], sources[1]);
+    assert.equal(new Set(sources).size, 5);
+  } finally { process.env.PALLIUM_HOOK_ACTOR_REF = "fixture-actor"; removeSessionPin(sessionID); removeSessionPin("ses_other_capture"); }
+});
+
+test("different assistant identities can capture while another identity is in flight", async () => {
+  const gate = barrier();
+  const history = [completedAssistant()];
+  const f = await callerFixture({ history, fetch: async (route, body) => {
+    if (route !== "/items") return;
+    if (body[0].content === "שלום answer 😀") await gate.wait();
+    return jsonResponse(captureReceipt);
+  } });
+  const first = f.hooks.compaction({ sessionID });
+  try {
+    await gate.entered;
+    history.splice(0, history.length, completedAssistant("msg_next", "next"));
+    await f.hooks.compaction({ sessionID });
+    assert.equal(captureCalls(f).length, 2);
+    assert.notEqual(captureCalls(f)[0].body[0].source_id, captureCalls(f)[1].body[0].source_id);
+  } finally { gate.release(); await first; await f.close(); }
+});
+
+for (const invalid of [undefined, "", "not-native", "msg_", 1]) {
+  test(`assistant capture does not fall back from invalid latest ID ${String(invalid)}`, async () => {
+    const history = [completedAssistant("msg_old"), { ...completedAssistant(), id: invalid }];
+    const f = await callerFixture({ history });
+    try { await f.hooks.compaction({ sessionID }); assert.equal(captureCalls(f).length, 0); }
+    finally { await f.close(); }
+  });
+}
+
+for (const completed of [undefined, null, "1", NaN, Infinity]) {
+  test(`assistant capture requires finite completion on every selected assistant: ${String(completed)}`, async () => {
+    const history = [completedAssistant("msg_step"), completedAssistant()];
+    history[0].time.completed = completed;
+    const f = await callerFixture({ history, fetch: async (route) => {
+      if (route === "/items") return jsonResponse(captureReceipt);
+    } });
+    try {
+      await f.hooks.compaction({ sessionID });
+      assert.equal(captureCalls(f).length, 0);
+      history[0].time.completed = 0;
+      await f.hooks.compaction({ sessionID });
+      assert.equal(captureCalls(f).length, 1, "eligibility failure does not reserve the identity");
+    } finally { await f.close(); }
+  });
+}
+
+for (const text of ["", "   ", "😀".repeat(10000), "😀".repeat(10000) + "x"]) {
+  test(`assistant capture preserves the nonempty and UTF-16 boundary: ${text.length} units`, async () => {
+    const f = await callerFixture({ history: [completedAssistant("msg_boundary", text)], fetch: async (route) => {
+      if (route === "/items") return jsonResponse(captureReceipt);
+    } });
+    try {
+      await f.hooks.compaction({ sessionID });
+      const eligible = text.trim().length > 0 && text.length <= 20000;
+      assert.equal(captureCalls(f).length, eligible ? 1 : 0);
+      if (eligible) assert.equal(captureCalls(f)[0].body[0].content, text);
+    } finally { await f.close(); }
+  });
+}
+
+test("assistant capture keeps latest-user multi-step text and work trace while skipping tool-only", async () => {
+  const tool = { type: "tool", name: "read", state: { status: "completed", input: { filePath: "/tmp/fixture.txt" }, content: [{ type: "text", text: "read result" }] } };
+  const history = [{ ...completedAssistant("invalid", "previous turn"), time: {} }, { type: "user", id: "msg_question", text: "question" },
+    { ...completedAssistant("msg_tool", ""), content: [tool] }];
+  const f = await callerFixture({ history, fetch: async (route) => {
+    if (route === "/items") return jsonResponse(captureReceipt);
+  } });
+  try {
+    await f.hooks.compaction({ sessionID });
+    assert.equal(captureCalls(f).length, 0);
+    history.push(completedAssistant("msg_middle", "first"), completedAssistant("msg_final", "last 😀"));
+    await f.hooks.compaction({ sessionID });
+    const item = captureCalls(f)[0].body[0];
+    assert.equal(item.content, "first\nlast 😀");
+    assert.deepEqual(item.metadata.agent_work_trace_turn.files_read, ["/tmp/fixture.txt"]);
+    await f.hooks.compaction({ sessionID });
+    assert.equal(captureCalls(f).length, 1);
+  } finally { await f.close(); }
+});
+
+test("assistant capture ignores no assistant and unfinished latest without older fallback", async () => {
+  const history = [];
+  const f = await callerFixture({ history, fetch: async (route) => {
+    if (route === "/items") return jsonResponse(captureReceipt);
+  } });
+  try {
+    await f.hooks.compaction({ sessionID });
+    history.push(completedAssistant("msg_old"), { ...completedAssistant(), time: {} });
+    await f.hooks.compaction({ sessionID });
+    assert.equal(captureCalls(f).length, 0);
+    history.at(-1).time.completed = 2;
+    await f.hooks.compaction({ sessionID });
+    assert.equal(captureCalls(f).length, 1);
+  } finally { await f.close(); }
+});
+
+test("assistant history move is revalidated before writing", async () => {
+  const gate = barrier();
+  let directory = location;
+  const f = await callerFixture({ get: async () => ({ location: { directory } }), context: async () => {
+    await gate.wait(); return { data: [completedAssistant()] };
+  } });
+  const running = f.hooks.compaction({ sessionID });
+  try {
+    await gate.entered;
+    directory = "/tmp/other-owner";
+    gate.release();
+    await running;
+    assert.equal(captureCalls(f).length, 0);
+  } finally { gate.release(); await running; await f.close(); }
+});
+
+test("assistant capture requires valid IDs on earlier selected steps too", async () => {
+  const history = [completedAssistant("invalid"), completedAssistant()];
+  const f = await callerFixture({ history, fetch: async (route) => {
+    if (route === "/items") return jsonResponse(captureReceipt);
+  } });
+  try {
+    await f.hooks.compaction({ sessionID });
+    assert.equal(captureCalls(f).length, 0);
+    history[0].id = "msg_step";
+    await f.hooks.compaction({ sessionID });
+    assert.equal(captureCalls(f).length, 1);
+  } finally { await f.close(); }
+});
+
+test("assistant receipt with lost native ownership remains retryable", async () => {
+  let directory = location;
+  let attempts = 0;
+  const f = await callerFixture({ history: [completedAssistant()], get: async () => ({ location: { directory } }),
+    fetch: async (route) => {
+      if (route !== "/items") return;
+      if (++attempts === 1) directory = "/tmp/new-owner";
+      return jsonResponse(captureReceipt);
+    } });
+  try {
+    await f.hooks.compaction({ sessionID });
+    directory = location;
+    await f.hooks.compaction({ sessionID });
+    await f.hooks.compaction({ sessionID });
+    assert.equal(captureCalls(f).length, 2);
+    assert.equal(captureCalls(f)[0].body[0].source_id, captureCalls(f)[1].body[0].source_id);
+  } finally { await f.close(); }
+});
+
+test("disposed assistant HTTP continuation cannot capture again", async () => {
+  const gate = barrier();
+  const f = await callerFixture({ history: [completedAssistant()], fetch: async (route) => {
+    if (route !== "/items") return;
+    return { ok: true, text: async () => { await gate.wait(); return JSON.stringify(captureReceipt); } };
+  } });
+  const running = f.hooks.compaction({ sessionID });
+  try {
+    await gate.entered;
+    await f.dispose();
+    gate.release();
+    await running;
+    await f.hooks.compaction({ sessionID });
+    await f.emit({ type: "session.execution.succeeded", data: { sessionID } });
+    assert.equal(captureCalls(f).length, 1);
+    assert.equal(captureCalls(f)[0].signal.aborted, true);
+  } finally { gate.release(); await running; await f.close(); }
+});
+
+for (const retire of ["delete", "rebind"]) {
+  test(`assistant ${retire} releases the captured reservation without clearing a successor`, async () => {
+    const firstGate = barrier(), successorGate = barrier();
+    let generation = 0, attempts = 0;
+    const f = await callerFixture({ history: [completedAssistant()], fetch: async (route) => {
+      if (route !== "/items") return;
+      const gate = ++attempts === 1 ? firstGate : successorGate;
+      // The transport resolves on abort, but its underlying body may finish late.
+      return { ok: true, text: async () => { await gate.wait(); return JSON.stringify(captureReceipt); } };
+    }, response: async (route) => {
+      if (route === "/relay/turn") return { session: { ...relaySession, scope_generation: generation }, deliveries: [] };
+      if (route === "/relay/opencode/wake") return { session: { ...relaySession, scope_generation: generation }, wake: null, deliveries: [] };
+    } });
+    const first = f.hooks.compaction({ sessionID });
+    let successor;
+    try {
+      await firstGate.entered;
+      if (retire === "delete") await f.emit({ type: "session.deleted", data: { sessionID } });
+      else {
+        generation = 1;
+        await f.hooks.context({ sessionID, messages: [natural("msg_rebind")] });
+      }
+      successor = f.hooks.compaction({ sessionID });
+      await successorGate.entered;
+      firstGate.release();
+      await first;
+      await f.hooks.compaction({ sessionID });
+      assert.equal(captureCalls(f).length, 2, "old finally cannot release successor reservation or mark its success");
+      successorGate.release();
+      await successor;
+      await f.hooks.compaction({ sessionID });
+      assert.equal(captureCalls(f).length, 2);
+    } finally { firstGate.release(); successorGate.release(); await first; await successor; await f.close(); }
+  });
+}
 
 for (const bodyStall of [false, true]) {
   test(`retired natural context cannot attach or ACK after stalled Relay ${bodyStall ? "body" : "turn"}`, async () => {
@@ -417,7 +703,7 @@ test("retired prompt ownership continuation cannot capture or pin", async () => 
 
 test("retired assistant history continuation cannot capture", async () => {
   const gate = barrier();
-  const f = await callerFixture({ context: async () => { await gate.wait(); return { data: [{ type: "assistant", id: "msg_answer", content: [{ type: "text", text: "an answer" }] }] }; } });
+  const f = await callerFixture({ context: async () => { await gate.wait(); return { data: [completedAssistant()] }; } });
   const running = f.hooks.compaction({ sessionID });
   try {
     await gate.entered;
