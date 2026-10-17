@@ -1600,8 +1600,33 @@ def test_claude_session_start_invalid_scope_never_claims(monkeypatch):
 
 
 def test_claude_short_prompt_delivers_relay_before_memory_gate(monkeypatch):
+    import threading
+    import time
+    from itertools import count
+    from types import SimpleNamespace
+
     hook = _load("claude_prompt", "integrations/claude-code/hooks/user_prompt_submit.py")
+    original_turn = hook.relay_turn
+    common = original_turn.__globals__
+    native_time, native_monotonic = common["time"], time.monotonic
+
+    def relay_turn(*args, **kwargs):
+        owner = threading.get_ident()
+        ticks = count(step=.001).__next__
+        turn_time = SimpleNamespace(**vars(native_time))
+        turn_time.monotonic = lambda: ticks() if threading.get_ident() == owner else native_monotonic()
+        try:
+            with monkeypatch.context() as admission:
+                admission.setitem(common, "time", turn_time)
+                return original_turn(*args, **kwargs)
+        finally:
+            assert common["time"] is native_time
+            assert time.monotonic is native_monotonic
+
+    # This mocked protocol journey tests Relay-before-memory ordering, not lock latency.
+    monkeypatch.setattr(hook, "relay_turn", relay_turn)
     _exercise_short_prompt(hook, monkeypatch, codex=False)
+    assert common["time"] is native_time and time.monotonic is native_monotonic
 
 
 def test_codex_short_prompt_delivers_relay_before_memory_gate(monkeypatch):
