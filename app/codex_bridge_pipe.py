@@ -556,8 +556,19 @@ class _PipeIO:
             return count, buffer
         except ShadowUnavailable:
             raise
-        except Exception:
+        except Exception as exc:
             # Native errors are bounded categories, never model-visible stderr.
+            code = None
+            try:
+                code = getattr(exc, "winerror", None)
+            except Exception:
+                pass
+            try:
+                _log.warning("codex_native_operation_failed operation=%s winerror=%s",
+                             "accept" if connected_ok else "io",
+                             code if type(code) is int and 0 <= code <= 0xFFFFFFFF else "unknown")
+            except Exception:
+                pass  # Diagnostics must not change failure handling or cleanup.
             raise ShadowUnavailable("transport-failed") from None
         finally:
             if pending and not completed:

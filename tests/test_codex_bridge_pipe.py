@@ -450,6 +450,120 @@ def test_pipe_connected_is_success_only_for_accept(monkeypatch, operation, retur
     assert closed == [event, handle]
 
 
+@pytest.mark.parametrize("operation", ["accept", "read", "write"])
+@pytest.mark.parametrize("fault", ["zero", "native", "maximum", "boolean", "negative", "over-max",
+                                 "string", "object", "missing", "getter", "logger"])
+def test_native_operation_failure_diagnostic_is_bounded_and_fail_safe(
+    monkeypatch, inventory_caplog, capsys, operation, fault,
+):
+    secret = "private-native-message-東京"
+    closed, retained = [], []
+    monkeypatch.setattr(bridge, "_retained", retained)
+    monkeypatch.setattr(bridge, "_native_uncertain", False)
+
+    class HostileValue:
+        def __str__(self):
+            raise AssertionError(secret)
+        __repr__ = __str__
+
+    value = {"zero": 0, "native": 109, "maximum": 0xFFFFFFFF, "boolean": True,
+             "negative": -1, "over-max": 0x100000000, "string": secret,
+             "object": HostileValue(), "logger": 109}.get(fault)
+
+    class NativeError(Exception):
+        @property
+        def winerror(self):
+            if fault in {"missing", "getter"}:
+                raise AttributeError(secret) if fault == "missing" else RuntimeError(secret)
+            return value
+        def __str__(self):
+            raise AssertionError(secret)
+
+    class Handle:
+        def Close(self):
+            closed.append(self)
+
+    def fail(*_args):
+        raise NativeError(secret)
+
+    if fault == "logger":
+        monkeypatch.setattr(bridge._log, "warning", fail)
+    event, handle = Handle(), Handle()
+    w = SimpleNamespace(
+        types=SimpleNamespace(OVERLAPPED=SimpleNamespace, error=NativeError),
+        event=SimpleNamespace(CreateEvent=lambda *_: event),
+        pipe=SimpleNamespace(ConnectNamedPipe=fail),
+        file=SimpleNamespace(ReadFile=fail, WriteFile=fail),
+    )
+    io = bridge._PipeIO(w, handle, threading.Event())
+    deadline = time.monotonic() + 1
+    arguments = ({"data": secret}, deadline) if operation == "write" else (deadline,)
+    try:
+        with pytest.raises(bridge.ShadowUnavailable, match="^transport-failed$"):
+            getattr(io, operation)(*arguments)
+        assert closed == [event] and not io.unresolved and not bridge._native_uncertain and retained == []
+    finally:
+        io.close()
+    assert closed == [event, handle]
+    records = [record for record in inventory_caplog.records
+               if record.msg == "codex_native_operation_failed operation=%s winerror=%s"]
+    if fault == "logger":
+        assert records == []
+    else:
+        record, = records
+        expected = value if type(value) is int and 0 <= value <= 0xFFFFFFFF else "unknown"
+        assert record.args == ("accept" if operation == "accept" else "io", expected)
+        assert record.exc_info is None and record.stack_info is None and record.exc_text is None
+        assert secret not in record.getMessage() and secret not in repr(record)
+    assert secret not in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("case", ["zero", "pending", "connected-return", "connected-throw",
+                                "stopped", "deadline", "returned-error"])
+def test_native_operation_diagnostic_is_quiet_outside_generic_failure(monkeypatch, inventory_caplog, case):
+    closed = []
+
+    class NativeError(Exception):
+        winerror = 535
+
+    class Handle:
+        def Close(self):
+            closed.append(self)
+
+    def connect(*_args):
+        if case == "connected-throw":
+            raise NativeError()
+        return 535
+
+    event, handle = Handle(), Handle()
+    w = SimpleNamespace(
+        types=SimpleNamespace(OVERLAPPED=SimpleNamespace, error=NativeError),
+        event=SimpleNamespace(CreateEvent=lambda *_: event, WAIT_OBJECT_0=0, WAIT_TIMEOUT=258,
+                              WaitForSingleObject=lambda *_: 0),
+        pipe=SimpleNamespace(ConnectNamedPipe=connect),
+        file=SimpleNamespace(GetOverlappedResult=lambda *_: 1),
+    )
+    stop = threading.Event()
+    if case == "stopped":
+        stop.set()
+    io = bridge._PipeIO(w, handle, stop)
+    deadline = 0 if case == "deadline" else time.monotonic() + 1
+    try:
+        if case.startswith("connected-"):
+            assert io.accept(deadline) is None
+        elif case in {"stopped", "deadline", "returned-error"}:
+            with pytest.raises(bridge.ShadowUnavailable):
+                io._operation(lambda _: (5, None), deadline)
+        else:
+            assert io._operation(lambda _: (997 if case == "pending" else 0, b"x"), deadline) == (1, b"x")
+        assert closed == [event] and not io.unresolved
+    finally:
+        io.close()
+    assert closed == [event, handle]
+    assert not [record for record in inventory_caplog.records
+                if record.msg == "codex_native_operation_failed operation=%s winerror=%s"]
+
+
 @native
 def test_retained_source_preconnected_accept_survives_real_native_round_trip(tmp_path, monkeypatch):
     directory = bridge.prepare_inventory_service(tmp_path / "preconnected-home")
