@@ -958,7 +958,8 @@ function buildWorkspaceSetupDetails(repoRoot, workspace, extra = {}) {
   };
 }
 
-async function readRoadmapConfig(repoRoot) {
+async function readRoadmapConfig(repoRoot, signal) {
+  if (signal?.aborted) throw signal.reason;
   const resolvedRepoRoot = path.resolve(repoRoot);
   const configPath = path.join(resolvedRepoRoot, "roadmap.config.json");
   let configuredPath = "roadmap";
@@ -970,9 +971,10 @@ async function readRoadmapConfig(repoRoot) {
     let rawConfig;
 
     try {
-      rawConfig = await fs.readFile(configPath, "utf8");
+      rawConfig = await fs.readFile(configPath, { encoding: "utf8", signal });
       configText = rawConfig;
-    } catch {
+    } catch (error) {
+      if (signal?.aborted) throw signal.reason || error;
       throw new AppError("Could not read roadmap.config.json.", 500, "config_error", buildConfigErrorDetails(resolvedRepoRoot, configPath));
     }
 
@@ -1085,8 +1087,8 @@ async function ensureStarterFile(templateName, targetPath) {
   await fs.writeFile(targetPath, templateText, "utf8");
 }
 
-export async function resolveRoadmapRoot(repoRoot) {
-  return readRoadmapConfig(repoRoot);
+export async function resolveRoadmapRoot(repoRoot, { signal } = {}) {
+  return readRoadmapConfig(repoRoot, signal);
 }
 
 export function parseBoardText(text, sourcePath = "board.md") {
@@ -1123,9 +1125,9 @@ export function parseBoardText(text, sourcePath = "board.md") {
   return groups;
 }
 
-async function readUtf8(filePath, notFoundMessage) {
+async function readUtf8(filePath, notFoundMessage, signal) {
   try {
-    return await fs.readFile(filePath, "utf8");
+    return await fs.readFile(filePath, { encoding: "utf8", signal });
   } catch (error) {
     if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
       throw new AppError(notFoundMessage, 404, "setup_error");
@@ -1135,14 +1137,16 @@ async function readUtf8(filePath, notFoundMessage) {
   }
 }
 
-async function listMarkdownFiles(directoryPath) {
+async function listMarkdownFiles(directoryPath, signal) {
+  if (signal?.aborted) throw signal.reason;
   const entries = await fs.readdir(directoryPath, { withFileTypes: true });
+  if (signal?.aborted) throw signal.reason;
   return entries
     .filter((entry) => entry.isFile() && entry.name.endsWith(".md"))
     .map((entry) => path.join(directoryPath, entry.name));
 }
 
-async function loadItemIndex(roadmapRoot) {
+async function loadItemIndex(roadmapRoot, signal) {
   const featuresDir = path.join(roadmapRoot, "features");
   const ideasDir = path.join(roadmapRoot, "ideas");
 
@@ -1151,14 +1155,15 @@ async function loadItemIndex(roadmapRoot) {
   }
 
   const files = [
-    ...(await listMarkdownFiles(featuresDir)).map((filePath) => ({ filePath, kind: "feature" })),
-    ...(await listMarkdownFiles(ideasDir)).map((filePath) => ({ filePath, kind: "idea" })),
+    ...(await listMarkdownFiles(featuresDir, signal)).map((filePath) => ({ filePath, kind: "feature" })),
+    ...(await listMarkdownFiles(ideasDir, signal)).map((filePath) => ({ filePath, kind: "idea" })),
   ];
   const index = new Map();
 
   const texts = [];
   for (let start = 0; start < files.length; start += 32) {
-    texts.push(...await Promise.all(files.slice(start, start + 32).map((entry) => fs.readFile(entry.filePath, "utf8"))));
+    if (signal?.aborted) throw signal.reason;
+    texts.push(...await Promise.all(files.slice(start, start + 32).map((entry) => fs.readFile(entry.filePath, { encoding: "utf8", signal }))));
   }
   for (const [fileIndex, entry] of files.entries()) {
     const parsed = parseItemText(texts[fileIndex], entry.filePath);
@@ -1179,15 +1184,17 @@ async function loadItemIndex(roadmapRoot) {
   return index;
 }
 
-export async function loadWorkspace(repoRoot) {
-  const workspace = await resolveRoadmapRoot(repoRoot);
+export async function loadWorkspace(repoRoot, { signal } = {}) {
+  if (signal?.aborted) throw signal.reason;
+  const workspace = await resolveRoadmapRoot(repoRoot, { signal });
+  if (signal?.aborted) throw signal.reason;
   await validateWorkspaceShape(repoRoot, workspace);
   const boardPath = path.join(workspace.resolvedPath, "board.md");
   const scopePath = path.join(workspace.resolvedPath, "scope.md");
-  const boardText = await readUtf8(boardPath, "Missing roadmap board.md file.");
-  const scopeText = await readUtf8(scopePath, "Missing roadmap scope.md file.");
+  const boardText = await readUtf8(boardPath, "Missing roadmap board.md file.", signal);
+  const scopeText = await readUtf8(scopePath, "Missing roadmap scope.md file.", signal);
   const groups = parseBoardText(boardText, boardPath);
-  const itemIndex = await loadItemIndex(workspace.resolvedPath);
+  const itemIndex = await loadItemIndex(workspace.resolvedPath, signal);
   const itemSummaries = {};
   const orphanIds = [];
   const boardGroups = groups.map((group) => ({

@@ -222,26 +222,24 @@ jobs:
         run: |
           set +e
           mkdir -p build
-          git diff --name-only \
-            ${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }} \
-            > build/changed-files.txt
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          MERGE_BASE=$(git merge-base "$BASE_SHA" "$HEAD_SHA") || exit 1
+          git diff --name-only -z --no-renames "$MERGE_BASE" "$HEAD_SHA" > build/changed-files.z
           # `--numstat` so the reporter can apply policy.excludes to the
           # size budget. Without this, excludes affect zone classification
           # but NOT prSize, which silently double-counts generated /
           # vendored / excluded files in the line budget.
-          git diff --numstat \
-            ${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }} \
-            > build/lines-per-file.txt
+          git diff --numstat -z --no-renames "$MERGE_BASE" "$HEAD_SHA" > build/lines-per-file.z
           # `--unified=0`: scan only added lines for suppression markers.
-          git diff --unified=0 \
-            ${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }} \
-            > build/diff-unified.patch
+          git diff --no-ext-diff --no-textconv --unified=0 --no-renames "$MERGE_BASE" "$HEAD_SHA" > build/diff-unified.patch
           LABELS="$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | paste -sd,)"
           python scripts/agent-redline-report.py \
             --policy agent-redline-policy.yaml \
-            --changed-files build/changed-files.txt \
-            --lines-per-file build/lines-per-file.txt \
+            --changed-files-z build/changed-files.z \
+            --lines-per-file-z build/lines-per-file.z \
             --diff-unified build/diff-unified.patch \
+            --head-ref "$HEAD_SHA" \
             --pr-labels "$LABELS" \
             --json-out build/verdict.json \
             --comment-out build/comment.md
@@ -325,18 +323,20 @@ jobs:
              ! git rev-parse --verify "$BEFORE^{commit}" >/dev/null 2>&1; then
             BEFORE="$(git merge-base origin/main "$AFTER" 2>/dev/null || echo "$AFTER^")"
           fi
-          git diff --name-only "$BEFORE"..."$AFTER" > build/changed-files.txt
+          MERGE_BASE=$(git merge-base "$BEFORE" "$AFTER") || exit 1
+          git diff --name-only -z --no-renames "$MERGE_BASE" "$AFTER" > build/changed-files.z
           # `--numstat` so the reporter can apply policy.excludes to
           # the size budget (excludes-aware prSize).
-          git diff --numstat "$BEFORE"..."$AFTER" > build/lines-per-file.txt
+          git diff --numstat -z --no-renames "$MERGE_BASE" "$AFTER" > build/lines-per-file.z
           # `--unified=0`: added-line scan for suppression markers.
-          git diff --unified=0 "$BEFORE"..."$AFTER" > build/diff-unified.patch
+          git diff --no-ext-diff --no-textconv --unified=0 --no-renames "$MERGE_BASE" "$AFTER" > build/diff-unified.patch
           python scripts/agent-redline-report.py \
             --policy agent-redline-policy.yaml \
             --flow-mode push \
-            --changed-files build/changed-files.txt \
-            --lines-per-file build/lines-per-file.txt \
+            --changed-files-z build/changed-files.z \
+            --lines-per-file-z build/lines-per-file.z \
             --diff-unified build/diff-unified.patch \
+            --head-ref "$AFTER" \
             --json-out build/verdict.json \
             --comment-out build/comment.md
           EXIT=$?

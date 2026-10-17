@@ -6,11 +6,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import subprocess
 import sys
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field, asdict
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Iterable
 
 try:
@@ -541,6 +543,43 @@ def _summarize_violation(text: str, max_len: int = 400) -> str:
 # Unified-diff parsing (suppression-detection input)
 # --------------------------------------------------------------------------
 
+def _decode_git_path_header(header: str) -> str:
+    """Decode one Git diff path, including Git's C-quoted byte escapes."""
+    if not header.startswith('"'):
+        # Git terminates an unquoted ---/+++ path with a TAB. Filenames that
+        # contain tabs are C-quoted, so removing this format delimiter keeps
+        # valid spaces (including trailing spaces) lossless.
+        return header.split("\t", 1)[0]
+    decoded = bytearray()
+    i = 1
+    while i < len(header):
+        char = header[i]
+        i += 1
+        if char == '"':
+            if i != len(header):
+                raise ValueError("unexpected data after quoted diff path")
+            return decoded.decode("utf-8")
+        if char != "\\":
+            decoded.extend(char.encode("utf-8"))
+            continue
+        if i >= len(header):
+            raise ValueError("incomplete escape in quoted diff path")
+        escaped = header[i]
+        i += 1
+        simple = {"a": 7, "b": 8, "t": 9, "n": 10, "v": 11, "f": 12, "r": 13, '"': 34, "\\": 92}
+        if escaped in simple:
+            decoded.append(simple[escaped])
+        elif escaped in "01234567":
+            digits = escaped
+            while i < len(header) and len(digits) < 3 and header[i] in "01234567":
+                digits += header[i]
+                i += 1
+            decoded.append(int(digits, 8))
+        else:
+            raise ValueError("invalid escape in quoted diff path")
+    raise ValueError("unterminated quoted diff path")
+
+
 def parse_unified_diff(patch: str) -> dict[str, list[tuple[int, str]]]:
     """
     Parse a unified diff (produced by `git diff --unified=0`).
@@ -556,12 +595,14 @@ def parse_unified_diff(patch: str) -> dict[str, list[tuple[int, str]]]:
     out: dict[str, list[tuple[int, str]]] = {}
     current_path: str | None = None
     new_lineno = 0
-    for raw in patch.splitlines():
+    in_hunk = False
+    for raw in patch.split("\n"):
         if raw.startswith("diff --git "):
             current_path = None  # reset; +++ line below sets it
+            in_hunk = False
             continue
-        if raw.startswith("+++ "):
-            target = raw[4:].strip()
+        if not in_hunk and raw.startswith("+++ "):
+            target = _decode_git_path_header(raw[4:])
             if target == "/dev/null":
                 current_path = None
             else:
@@ -574,13 +615,14 @@ def parse_unified_diff(patch: str) -> dict[str, list[tuple[int, str]]]:
             m = re.match(r"@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@", raw)
             if m and current_path is not None:
                 new_lineno = int(m.group(1))
+                in_hunk = True
             continue
         if current_path is None:
             continue
-        if raw.startswith("+") and not raw.startswith("+++"):
+        if raw.startswith("+"):
             out.setdefault(current_path, []).append((new_lineno, raw[1:]))
             new_lineno += 1
-        elif raw.startswith("-") or raw.startswith("---"):
+        elif raw.startswith("-"):
             # deletion — does not advance new-file lineno
             pass
         else:
@@ -758,10 +800,186 @@ def _is_config_key_assignment(line: str, key: str) -> bool:
     return bool(pattern.search(line))
 
 
+def _marker_occurrences(line: str, marker: str) -> Iterable[tuple[int, int]]:
+    start = 0
+    while marker and (index := line.find(marker, start)) >= 0:
+        yield index, index + len(marker)
+        start = index + 1
+
+
+def _suppression_occurrence_masked(
+    definition_ranges: dict[tuple[str, int, str], list[tuple[int, int]]] | None,
+    path: str,
+    line: int,
+    marker: str,
+    start: int,
+    end: int,
+) -> bool:
+    return any(
+        span_start <= start and end <= span_end
+        for span_start, span_end in (definition_ranges or {}).get(
+            (path, line, marker), []
+        )
+    )
+
+
+def suppression_catalog_ranges(
+    source: str,
+    config: SuppressionsConfig,
+) -> dict[tuple[int, str], list[tuple[int, int]]] | None:
+    """Return exact scalar spans for a complete, schema-shaped catalog."""
+    try:
+        if any(
+            isinstance(token, (yaml.tokens.AliasToken, yaml.tokens.AnchorToken, yaml.tokens.TagToken))
+            for token in yaml.scan(source, Loader=yaml.SafeLoader)
+        ):
+            return None
+        documents = list(yaml.compose_all(source, Loader=yaml.SafeLoader))
+    except yaml.YAMLError:
+        return None
+    if len(documents) != 1:
+        return None
+    root = documents[0]
+    if not isinstance(root, yaml.nodes.MappingNode) or root.tag != "tag:yaml.org,2002:map" or len(root.value) != 1:
+        return None
+
+    def mapping(node: Any, allowed: set[str]) -> dict[str, Any] | None:
+        if not isinstance(node, yaml.nodes.MappingNode) or node.tag != "tag:yaml.org,2002:map":
+            return None
+        values: dict[str, Any] = {}
+        for key_node, value_node in node.value:
+            if not isinstance(key_node, yaml.nodes.ScalarNode) or key_node.tag != "tag:yaml.org,2002:str":
+                return None
+            key = key_node.value
+            if key not in allowed or key in values:
+                return None
+            values[key] = value_node
+        return values
+
+    root_key, suppression_node = root.value[0]
+    if not isinstance(root_key, yaml.nodes.ScalarNode) or root_key.tag != "tag:yaml.org,2002:str" or root_key.value != "suppressions":
+        return None
+    categories = mapping(suppression_node, {"inlineComments", "annotations", "configEdits"})
+    if categories is None or not categories:
+        return None
+
+    masks: dict[tuple[int, str], list[tuple[int, int]]] = {}
+    line_offsets = [0]
+    for index, char in enumerate(source):
+        if char == "\n":
+            line_offsets.append(index + 1)
+
+    def marker_sequence(node: Any, markers: list[str]) -> bool:
+        if not isinstance(node, yaml.nodes.SequenceNode) or node.tag != "tag:yaml.org,2002:seq" or not node.value:
+            return False
+        for item in node.value:
+            if not isinstance(item, yaml.nodes.ScalarNode) or item.tag != "tag:yaml.org,2002:str" or not item.value:
+                return False
+            if item.value not in markers:
+                continue
+            # Mask only occurrences inside this exact YAML scalar. Block
+            # scalars can span lines, so map source offsets back to line spans.
+            search_from = item.start_mark.index
+            while True:
+                occurrence = source.find(item.value, search_from, item.end_mark.index)
+                if occurrence < 0:
+                    break
+                line_index = source.count("\n", 0, occurrence)
+                line_start = line_offsets[line_index]
+                masks.setdefault((line_index + 1, item.value), []).append(
+                    (occurrence - line_start, occurrence - line_start + len(item.value))
+                )
+                search_from = occurrence + 1
+        return True
+
+    for category, markers in (("inlineComments", config.inline_comments), ("annotations", config.annotations)):
+        if category in categories and not marker_sequence(categories[category], markers):
+            return None
+
+    if "configEdits" in categories:
+        edits = mapping(categories["configEdits"], {"files", "keys"})
+        if edits is None or set(edits) != {"files", "keys"}:
+            return None
+        for field, markers in (("files", []), ("keys", config.config_keys)):
+            if field in edits and not marker_sequence(edits[field], markers):
+                return None
+    return masks
+
+
+def _git_output(args: list[str], cwd: Path) -> bytes:
+    kwargs: dict[str, Any] = {"cwd": cwd, "stdout": subprocess.PIPE, "stderr": subprocess.PIPE}
+    if os.name == "nt":
+        kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+    try:
+        result = subprocess.run(["git", *args], **kwargs)
+    except OSError as e:
+        raise ValueError("could not verify suppression catalog against the supplied Git head") from e
+    if result.returncode:
+        raise ValueError("could not verify suppression catalog against the supplied Git head")
+    return result.stdout
+
+
+def _git_head_commit(head_ref: str, repo_root: Path) -> str:
+    if not re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", head_ref):
+        raise ValueError("--head-ref must be a full Git commit ID")
+    return _git_output(["rev-parse", "--verify", f"{head_ref}^{{commit}}"], repo_root).decode("ascii").strip()
+
+
+def suppression_definition_ranges_for_head(
+    changed_files: list[str],
+    added_by_file: dict[str, list[tuple[int, str]]] | None,
+    config: SuppressionsConfig,
+    head_ref: str | None,
+    repo_root: Path,
+) -> dict[tuple[str, int, str], list[tuple[int, int]]]:
+    """Mask catalog scalar text only when added lines match the exact Git head."""
+    if not head_ref:
+        return {}
+    head = _git_head_commit(head_ref, repo_root)
+    if not added_by_file:
+        return {}
+    changed = set(changed_files)
+    masks: dict[tuple[str, int, str], list[tuple[int, int]]] = {}
+    for path, added in added_by_file.items():
+        if path not in changed or PurePosixPath(path).is_absolute() or ".." in PurePosixPath(path).parts or "\\" in path:
+            continue
+        if PurePosixPath(path).suffix.lower() not in {".yaml", ".yml"}:
+            continue
+        path_bytes = path.encode("utf-8")
+        try:
+            tree = _git_output(["ls-tree", "-z", "--full-tree", head, "--", f":(literal){path}"], repo_root)
+        except ValueError:
+            continue
+        entries = [entry for entry in tree.split(b"\0") if entry]
+        if len(entries) != 1 or b"\t" not in entries[0]:
+            continue
+        metadata, entry_path = entries[0].split(b"\t", 1)
+        mode, object_type, object_id = metadata.split(b" ", 2)
+        if entry_path != path_bytes or object_type != b"blob" or mode not in {b"100644", b"100755"}:
+            continue
+        try:
+            source = _git_output(["cat-file", "blob", object_id.decode("ascii")], repo_root).decode("utf-8")
+        except (UnicodeDecodeError, ValueError):
+            continue
+        local_masks = suppression_catalog_ranges(source, config)
+        if local_masks is None:
+            continue
+        source_lines = source.split("\n")
+        if any(
+            line_no < 1 or line_no > len(source_lines) or source_lines[line_no - 1] != content
+            for line_no, content in added
+        ):
+            continue
+        for (line_no, marker), spans in local_masks.items():
+            masks[(path, line_no, marker)] = spans
+    return masks
+
+
 def scan_suppressions(
     added_by_file: dict[str, list[tuple[int, str]]] | None,
     config: SuppressionsConfig | None,
     classification: dict[str, list[str]],
+    definition_ranges: dict[tuple[str, int, str], list[tuple[int, int]]] | None = None,
 ) -> list[SuppressionMatch]:
     """
     Naive added-line scanner. Spec §2.2 — deliberately no hunk parsing,
@@ -781,8 +999,6 @@ def scan_suppressions(
 
     matches: list[SuppressionMatch] = []
     for path, lines in added_by_file.items():
-        if path == VENDORED_SUPPRESSIONS_PATH:
-            continue
         if config.exempt_paths and matches_any(path, config.exempt_paths):
             continue
         zone = file_zone.get(path, "gray")
@@ -794,14 +1010,24 @@ def scan_suppressions(
         for line_no, content in lines:
             stripped = content.lstrip()
             for marker in config.inline_comments:
-                if marker in content:
+                if any(
+                    not _suppression_occurrence_masked(
+                        definition_ranges, path, line_no, marker, start, end,
+                    )
+                    for start, end in _marker_occurrences(content, marker)
+                ):
                     matches.append(SuppressionMatch(
                         file=path, line=line_no, marker=marker,
                         category="inlineComment", zone=zone,
                         context=content[:200],
                     ))
             for marker in config.annotations:
-                if _annotation_marker_in_code(content, marker):
+                if _annotation_marker_in_code(content, marker) and any(
+                    not _suppression_occurrence_masked(
+                        definition_ranges, path, line_no, marker, start, end,
+                    )
+                    for start, end in _marker_occurrences(content, marker)
+                ):
                     matches.append(SuppressionMatch(
                         file=path, line=line_no, marker=marker,
                         category="annotation", zone=zone,
@@ -809,7 +1035,12 @@ def scan_suppressions(
                     ))
             if is_config_file:
                 for key in config.config_keys:
-                    if _is_config_key_assignment(content, key):
+                    if _is_config_key_assignment(content, key) and any(
+                        not _suppression_occurrence_masked(
+                            definition_ranges, path, line_no, key, start, end,
+                        )
+                        for start, end in _marker_occurrences(content, key)
+                    ):
                         matches.append(SuppressionMatch(
                             file=path, line=line_no, marker=key,
                             category="configEdit", zone=zone,
@@ -1285,6 +1516,7 @@ def classify(
     codeowner_approvals: Iterable[str] = (),
     codeowners_rules: list[_CodeOwnersRule] | None = None,
     suppressions_config: SuppressionsConfig | None = None,
+    suppression_definition_ranges: dict[tuple[str, int, str], list[tuple[int, int]]] | None = None,
 ) -> Verdict:
     """The single entry point. Pure function.
 
@@ -1308,6 +1540,7 @@ def classify(
 
     suppression_matches = scan_suppressions(
         diff.added_by_file, suppressions_config, classification,
+        suppression_definition_ranges,
     )
 
     arch_test_modified = any(_is_architecture_test_file(f) for f in files)
@@ -1850,28 +2083,71 @@ def load_policy(path: Path) -> dict[str, Any]:
 
 
 
+def _validate_git_paths(paths: list[str]) -> None:
+    if any(not path or PurePosixPath(path).is_absolute() or ".." in PurePosixPath(path).parts for path in paths):
+        raise ValueError("diff evidence contains an invalid repository path")
+    if len(paths) != len(set(paths)):
+        raise ValueError("diff evidence contains duplicate paths")
+
+
+def _parse_numstat_z(raw: bytes, changed_files: list[str]) -> dict[str, int]:
+    if raw and not raw.endswith(b"\0"):
+        raise ValueError("NUL-delimited numstat input is incomplete")
+    rows = raw.split(b"\0")[:-1] if raw else []
+    lines_by_file: dict[str, int] = {}
+    for row in rows:
+        fields = row.split(b"\t", 2)
+        if len(fields) != 3 or not fields[2]:
+            raise ValueError("NUL-delimited numstat input contains a malformed row")
+        counts: list[int] = []
+        for value in fields[:2]:
+            if value == b"-":
+                counts.append(0)
+            elif value.isdigit():
+                counts.append(int(value))
+            else:
+                raise ValueError("NUL-delimited numstat input contains a malformed line count")
+        try:
+            path = fields[2].decode("utf-8")
+        except UnicodeDecodeError as e:
+            raise ValueError("NUL-delimited numstat path is not valid UTF-8") from e
+        if path in lines_by_file:
+            raise ValueError("NUL-delimited numstat input contains duplicate paths")
+        lines_by_file[path] = sum(counts)
+    _validate_git_paths(list(lines_by_file))
+    if set(lines_by_file) != set(changed_files):
+        raise ValueError("NUL-delimited numstat paths do not match changed-files paths")
+    return lines_by_file
+
+
 def load_diff_from_files(
     changed_files_path: Path,
     lines_changed: int = 0,
     lines_per_file_path: Path | None = None,
+    lines_per_file_z_path: Path | None = None,
     diff_unified_path: Path | None = None,
     nul_delimited: bool = False,
 ) -> Diff:
     if nul_delimited:
         raw = changed_files_path.read_bytes()
-        if not raw:
-            return Diff([], 0, lines_changed)
-        if not raw.endswith(b"\0"):
+        if raw and not raw.endswith(b"\0"):
             raise ValueError("NUL-delimited changed-files input is incomplete")
-        raw_paths = raw.split(b"\0")
-        if raw_paths[-1] != b"" or any(path == b"" for path in raw_paths[:-1]):
+        raw_paths = raw.split(b"\0")[:-1] if raw else []
+        if any(path == b"" for path in raw_paths):
             raise ValueError("NUL-delimited changed-files input contains an empty path")
-        files = [path.decode("utf-8") for path in raw_paths[:-1]]
+        try:
+            files = [path.decode("utf-8") for path in raw_paths]
+        except UnicodeDecodeError as e:
+            raise ValueError("NUL-delimited changed-files path is not valid UTF-8") from e
+        _validate_git_paths(files)
     else:
         files = [line.strip() for line in changed_files_path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
     lines_by_file: dict[str, int] | None = None
-    if lines_per_file_path is not None and lines_per_file_path.exists():
+    if lines_per_file_z_path is not None:
+        lines_by_file = _parse_numstat_z(lines_per_file_z_path.read_bytes(), files)
+        lines_changed = sum(lines_by_file.values())
+    elif lines_per_file_path is not None and lines_per_file_path.exists():
         # `git diff --numstat` rows: <added>\t<deleted>\t<path>. Either
         # numeric column may be "-" for binary files; treat those as 0.
         lines_by_file = {}
@@ -1894,10 +2170,12 @@ def load_diff_from_files(
             lines_changed = sum(lines_by_file.values())
 
     added_by_file: dict[str, list[tuple[int, str]]] | None = None
-    if diff_unified_path is not None and diff_unified_path.exists():
+    if diff_unified_path is not None:
         added_by_file = parse_unified_diff(
-            diff_unified_path.read_text(encoding="utf-8")
+            diff_unified_path.read_bytes().decode("utf-8", errors="surrogateescape")
         )
+        if set(added_by_file) - set(files):
+            raise ValueError("unified diff paths do not match changed-files paths")
 
     return Diff(
         changed_files=files,
@@ -2022,6 +2300,9 @@ def main(argv: list[str] | None = None) -> int:
                         "check: files matching any excludes glob are subtracted "
                         "from both file and line counts. Without this flag, "
                         "excludes affects only zone classification, not size.")
+    p.add_argument("--lines-per-file-z", type=Path,
+                   help="NUL-delimited `git diff --numstat -z --no-renames` evidence. "
+                        "Requires `--changed-files-z` and must list exactly the same paths.")
     p.add_argument("--diff-unified", type=Path,
                    help="Path to a unified diff with -U0 (produced by "
                         "`git diff --unified=0 <base> <head>`). Used by "
@@ -2029,6 +2310,7 @@ def main(argv: list[str] | None = None) -> int:
                         "content. Optional; absent -> suppression detection "
                         "falls back to no-op (compatible with policies that "
                         "lack a suppressions block).")
+    p.add_argument("--head-ref", help="Full commit ID for the head side of the supplied diff")
     p.add_argument("--archunit-xml", type=Path,
                    help="(Deprecated) Path to an ArchUnit JUnit XML report. Use "
                         "--boundary-report with --boundary-format=junit-xml instead.")
@@ -2079,13 +2361,32 @@ def main(argv: list[str] | None = None) -> int:
         sys.stderr.write("error: --changed-files or --changed-files-z is required\n")
         return 1
 
-    diff = load_diff_from_files(
-        changed_files_path,
-        args.lines_changed,
-        lines_per_file_path=args.lines_per_file,
-        diff_unified_path=args.diff_unified,
-        nul_delimited=args.changed_files_z is not None,
-    )
+    try:
+        if args.lines_per_file_z is not None and args.changed_files_z is None:
+            raise ValueError("--lines-per-file-z requires --changed-files-z")
+        if args.lines_per_file_z is not None and args.lines_per_file is not None:
+            raise ValueError("choose either --lines-per-file or --lines-per-file-z")
+        diff = load_diff_from_files(
+            changed_files_path,
+            args.lines_changed,
+            lines_per_file_path=args.lines_per_file,
+            lines_per_file_z_path=args.lines_per_file_z,
+            diff_unified_path=args.diff_unified,
+            nul_delimited=args.changed_files_z is not None,
+        )
+        if args.head_ref is not None:
+            _git_head_commit(args.head_ref, Path("."))
+    except (OSError, UnicodeDecodeError, ValueError) as e:
+        message = f"invalid diff evidence: {e}"
+        sys.stderr.write(f"error: {message}\n")
+        payload = {"error": {"code": "invalid_diff_evidence", "message": message}, "exitCode": 2}
+        if args.json_out is not None:
+            args.json_out.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        else:
+            print(json.dumps(payload, indent=2))
+        if args.comment_out is not None:
+            args.comment_out.write_text(f"# agent-redline\n\nReporter could not verify diff evidence: {message}\n", encoding="utf-8")
+        return 2
 
     if args.archunit_xml is not None:
         sys.stderr.write(
@@ -2113,11 +2414,28 @@ def main(argv: list[str] | None = None) -> int:
     # consuming repo. Returns None when the policy has no `suppressions:`
     # block — detection stays OFF and end-to-end behavior is unchanged for
     # policies that haven't opted in (spec §1.4).
+    suppression_definition_ranges: dict[tuple[str, int, str], list[tuple[int, int]]] = {}
     try:
         suppressions_cfg = resolve_suppressions_config(policy, repo_root=Path("."))
+        if suppressions_cfg is not None:
+            suppression_definition_ranges = suppression_definition_ranges_for_head(
+                diff.changed_files, diff.added_by_file, suppressions_cfg,
+                args.head_ref, Path("."),
+            )
     except FileNotFoundError as e:
         sys.stderr.write(f"error: {e}\n")
         return 1
+    except ValueError as e:
+        message = f"invalid diff evidence: {e}"
+        sys.stderr.write(f"error: {message}\n")
+        payload = {"error": {"code": "invalid_diff_evidence", "message": message}, "exitCode": 2}
+        if args.json_out is not None:
+            args.json_out.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        else:
+            print(json.dumps(payload, indent=2))
+        if args.comment_out is not None:
+            args.comment_out.write_text(f"# agent-redline\n\nReporter could not verify diff evidence: {message}\n", encoding="utf-8")
+        return 2
 
     pr_labels = [s.strip() for s in args.pr_labels.split(",") if s.strip()]
     codeowner_approvals = [s.strip() for s in args.codeowner_approvals.split(",") if s.strip()]
@@ -2139,6 +2457,7 @@ def main(argv: list[str] | None = None) -> int:
         codeowner_approvals=codeowner_approvals,
         codeowners_rules=codeowners_rules,
         suppressions_config=suppressions_cfg,
+        suppression_definition_ranges=suppression_definition_ranges,
     )
 
     if args.json_out:

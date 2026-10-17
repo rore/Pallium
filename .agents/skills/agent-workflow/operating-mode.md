@@ -6,7 +6,7 @@ For an in-scope change task when `agent-workflow.yaml` exists.
 
 | Term | Meaning |
 |---|---|
-| **Work Record** | One file per task, marker-bounded, holding structured state. Location configured by `agent-workflow.yaml`'s `workRecord.local.taskPath` (e.g. `.agent-workflow/tasks/{slug}.md`). |
+| **Work Record** | Marker-bounded task record. |
 | **Slug** | Persisted task identifier, or the branch-derived fallback. |
 | **Compact shape** | Fast-path Work Record for `(Routine, Simple)` tasks. SPEC §7. |
 | **Expanded shape** | Full §9.4 Work Record. Required for any classification other than `(Routine, Simple)`. |
@@ -28,6 +28,18 @@ For an in-scope change task when `agent-workflow.yaml` exists.
 ```
 
 At pickup, pause, resume, handoff, and completion, if an applicable canonical roadmap item exists, carry its exact reference and reconcile or report task progress under that roadmap's rules; respect its designated owner/checkout and preserve broader unfinished scope.
+
+## Source-item lifecycle
+
+Keep exact source IDs/links in prose; maintain Relationships per [capture rules](templates/checkpoints/establish-context.md#relationships).
+
+|When|Action|
+|---|---|
+|Pickup/resume/leaving|Optional Pallium association: follow installed `pallium-memory` attach/detach guidance; never duplicate/remove hook-owned branch/Work Record refs.|
+|PR creation|Link PR from source item under tracker rules.|
+|Verified merge|Record delivered contribution/remaining scope; don't infer whole-feature completion from one PR.|
+|Owner-managed tracker/checkout|Hand owner item/PR/contribution/remaining scope; keep update pending in Work Record until confirmed.|
+|Missing tracker/Pallium/tools/identity|Don't block work or invent refs.|
 
 ## Step 1 — Read the config
 
@@ -85,8 +97,6 @@ Update as soon as the transition happens; don't batch at the end. A killed sessi
 
 ## Step 6 — Update Implementation prose at every checkpoint transition
 
-The next agent reads **Implementation prose** to recover what happened between Plan and Verify.
-
 Update at every phase boundary:
 
 - After Discover: name what you found that Outcome / Scope didn't anticipate.
@@ -95,19 +105,19 @@ Update at every phase boundary:
 - During Implement: one-line entry per phase boundary in roughly chronological order. **Don't wait until the task is done.**
 - At Verify: list actual checks and their results. Not a recap of the plan.
 
-The `workrecord.commit_order` advisory predicate fires when the Work Record's first commit on a branch lands *after* the first code commit on the same branch — i.e., retroactive. Non-blocking; treat it as a signal to check whether recovery state was sacrificed.
+`workrecord.commit_order` advises when the first Work Record commit follows the first code commit; check recovery state.
 
 ## Delegating to subagents
 
-Outcome-affecting subagents inherit this Work Record. Prompt them with:
+Outcome-affecting subagents inherit this Work Record. Supply:
 
 1. Path to the Work Record (don't paraphrase; point at the file).
-2. What the subagent should update on completion (Implementation prose, Evidence, State).
-3. The scope boundary (parts of Scope it may touch; parts it may not).
-4. Read-only vs material (read-only subagents report and don't update the record; material subagents update it).
+2. Required updates (Implementation prose, Evidence, State).
+3. Allowed and excluded scope.
+4. Read-only (report, no edits) or material (update the record).
 5. Exact target checkout; use explicit shell workdir or absolute write targets. Relative `apply_patch` targets the session cwd, not a prose-assigned checkout.
 
-When the subagent finishes, sanity-check the Work Record. If the subagent updated it, the record reflects the work done; if not, you update before declaring the step done.
+Check the finished subagent's record; repair missing updates before declaring the step done.
 
 ### Clean-context delegation
 
@@ -115,7 +125,9 @@ Elevated/High plan and result reviews require a clean-context non-implementer ag
 
 With a Task/Agent primitive, spawn a read-only agent with the Work Record path, SPEC reference, and relevant source paths; do not paraphrase the record. Otherwise use a fresh session with the same references. Put plan-review prose under a Plan review heading and reference it in the marker field; record result evidence under ## Result review.
 
-Choose the least costly capable reviewer for the consequence; preserve independent/human/specialist requirements and user-selected settings. Reuse valid review unless scope, assumptions, approach, or risk materially change.
+Choose the least costly capable reviewer; preserve independent/human/specialist requirements and user-selected settings.
+
+Reuse completed technical plan/result reviews for unchanged application, including local installation: verify reviewed change identity/revision and destination compatibility with its assumptions/risk. Cite source review and revision, not a new review. Review only materially uncovered behavior, scope, assumptions, approach, or risk; don't restart a broad cycle for covered material. Reuse waives neither applicability/Work Records, destination verification, human review/approval, nor runtime trust.
 ## Step 7 — Resolve review threads before merge
 
 CI green is not "ready to merge." Before invoking the merge:
@@ -141,5 +153,3 @@ Before ending a session, even if the task is not done:
 ## CI predicates surfaced at PR time
 
 `workrecord.exists`, `workrecord.markers_present`, `risk.declared`, `complexity.declared`, `workrecord.shape_matches_classification`, `workrecord.routine_fields_present` (compact) / `workrecord.expanded_fields_present` (expanded), `workrecord.state_valid`.
-
-A failing predicate names the cause in its detail. Fix the marker block, push again — the sticky verdict comment refreshes on the next CI run. The harness does not judge whether the prose is right, only whether the structure is well-formed.

@@ -47,13 +47,14 @@ export function projectWorktreeGroups(aggregate, {
   else aggregate.groups.forEach((group, index) => addGroup(`${group.kind}:${group.name}`, group.name, group.kind, index));
 
   const idCounts = new Map();
+  const featuresByKey = new Map(aggregate.features.map((feature) => [feature.key, feature]));
   for (const feature of aggregate.features) {
     const id = canonicalId(feature.id);
     idCounts.set(id, (idCounts.get(id) || 0) + 1);
   }
   for (const group of aggregate.groups || []) {
     for (const item of group.items || []) {
-      const feature = aggregate.features.find((entry) => entry.key === item.key);
+      const feature = featuresByKey.get(item.key);
       if (!feature && item.missing) {
         if (!filtersActive && !derived) addGroup(`${group.kind}:${group.name}`, group.name, group.kind, 0).items.push({ ...item, title: item.id, sourceVersion: item.versions?.[0] });
         continue;
@@ -109,4 +110,18 @@ export function projectWorktreeGroups(aggregate, {
 
 export function countDistinctWorktreeFeatures(groups) {
   return new Set(groups.flatMap((group) => group.items.filter((item) => !item.missing).map((item) => item.featureKey || item.id))).size;
+}
+
+/** Retain only the current view. Consumers must treat its groups/items as read-only. */
+export function createWorktreeProjector() {
+  let previous;
+  return (aggregate, options = {}) => {
+    const signature = JSON.stringify([options.lens, options.searchQuery, options.activeFilters, options.inPlay, options.showEmptyGroups]);
+    if (previous?.aggregate === aggregate && previous.signature === signature && previous.counts === options.participantCounts) return previous.result;
+    const groups = projectWorktreeGroups(aggregate, options);
+    const items = new Map(groups.flatMap((group) => group.items.filter((item) => !item.missing).map((item) => [item.id, item])));
+    const result = { groups, items };
+    previous = { aggregate, signature, counts: options.participantCounts, result };
+    return result;
+  };
 }

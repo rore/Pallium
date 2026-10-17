@@ -49,6 +49,7 @@ Read what's in the repo:
 Propose a language extension:
 - JVM (Java, Kotlin) — Gradle or Maven → `jvm-archunit` — see "JVM shape selection" below
 - Python (web service, library, or pipeline) → `python` — see "Python shape selection" below
+- Node / JavaScript / TypeScript → `node` when a tracked `package.json` exists; see "Node shape selection" below
 - Other stacks → see the upstream agent-redline EXTENSIONS docs (`docs/EXTENSIONS.md`; not vendored in our copy — upstream reference only); ask developer to pick a third-party one or proceed without one
 - No extension available → offer zone-only governance (no boundary backend)
 
@@ -85,6 +86,10 @@ Confirm before loading `profile.md` details. If two shapes could fire, present b
 | None match | zone-only fallback |
 
 Confirm before loading `profile.md` details. If two shapes could fire (e.g., a Spring Boot library), present both. Layout (single-module / multi-module / mixed Java+Kotlin) is bootstrap-derived, not a separate shape.
+
+### Node shape selection
+
+Use the Node extension when a tracked root, nested package, or workspace `package.json` is an owned project manifest; package scripts referenced by CI also show ownership. Ignore vendored, generated, and test-fixture copies for selection. If Node and another build ecosystem both have positive signals, show both and ask which profile to use. Without an owned manifest, keep the existing extension fallback. Tracked copies still retain normal risk classification. The profile supplies zones only; `boundaryAdapter.outputFormat` is `none`.
 
 ### Flow mode (CI shape)
 
@@ -208,7 +213,7 @@ Once signed off, write the committed artifacts.
 
 **Boundary adapter** — merge extension `adapter.yaml` into policy, or set `boundaryAdapter: { outputFormat: none }`. Never declare `boundaries:` without one.
 
-**Suppression markers** — copy extension `suppressions.yaml` (or `assets/templates/suppressions.yaml`) to `.agent-redline/suppressions.yaml`. Add `suppressions: { useExtensionDefaults: true, exemptPaths: ["**/tests/**"] }`. Classify it red/watch, never gray. Re-bootstrap: ask; decline leaves it off.
+**Suppression markers** — copy extension `suppressions.yaml` (or `assets/templates/suppressions.yaml`) to `.agent-redline/suppressions.yaml`. Add `suppressions: { useExtensionDefaults: true, exemptPaths: ["**/tests/**"] }`, except Node uses `exemptPaths: []` so protected contract tests stay guarded. Classify it red/watch, never gray. Re-bootstrap: ask; decline leaves it off.
 
 **Vendor the reporter** — copy `scripts/agent-redline-report.py` to the consuming repo at `scripts/agent-redline-report.py`, mark executable. The pre-push script and CI workflow both invoke it.
 

@@ -598,9 +598,9 @@ function makeSessionPaths(minimapHome, sessionId) {
   };
 }
 
-async function readJson(filePath, fallback) {
+async function readJson(filePath, fallback, signal) {
   try {
-    return JSON.parse(await fs.readFile(filePath, "utf8"));
+    return JSON.parse(await fs.readFile(filePath, { encoding: "utf8", signal }));
   } catch (error) {
     if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
       return fallback;
@@ -637,8 +637,8 @@ async function writeJson(filePath, value) {
   await writeFileAtomic(filePath, `${JSON.stringify(value, null, 2)}\n`);
 }
 
-async function readJsonLines(filePath) {
-  const content = await fs.readFile(filePath, "utf8").catch((error) => {
+async function readJsonLines(filePath, signal) {
+  const content = await fs.readFile(filePath, { encoding: "utf8", signal }).catch((error) => {
     if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
       return "";
     }
@@ -699,12 +699,13 @@ async function staleSessionLock(lockPath) {
   catch (error) { return error?.code === "ESRCH"; }
 }
 
-async function withSessionMutationLock(paths, work) {
+async function withSessionMutationLock(paths, work, signal) {
   const lockPath = path.join(paths.sessionDir, SESSION_LOCK);
   const reclaimPath = lockPath + ".reclaim";
   const token = crypto.randomUUID();
   const deadline = Date.now() + 10_000;
   while (true) {
+    if (signal?.aborted) throw signal.reason;
     try {
       await fs.writeFile(lockPath, JSON.stringify({ pid: process.pid, token }), { flag: "wx" });
       if (!(await pathExists(reclaimPath))) break;
@@ -729,7 +730,13 @@ async function withSessionMutationLock(paths, work) {
       }
     }
     if (Date.now() >= deadline) throw new AppError("Another session edit is still running.", 409, "session_busy");
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(done, 50);
+      function done() { signal?.removeEventListener("abort", abort); resolve(); }
+      function abort() { clearTimeout(timer); signal.removeEventListener("abort", abort); reject(signal.reason); }
+      signal?.addEventListener("abort", abort, { once: true });
+      if (signal?.aborted) abort();
+    });
   }
   try {
     await assertSourceWriteGuard();
@@ -745,7 +752,7 @@ async function withSessionMutationLock(paths, work) {
 
 async function recoverSuggestionTransactionUnlocked(paths) {
   const journalPath = path.join(paths.sessionDir, SUGGESTION_JOURNAL);
-  if (!(await pathExists(journalPath))) return;
+  if (!(await pathExists(journalPath))) return false;
 
   let journal;
   try { journal = JSON.parse(await fs.readFile(journalPath, "utf8")); } catch {
@@ -784,11 +791,15 @@ async function recoverSuggestionTransactionUnlocked(paths) {
   }
   if (targetHash === journal.afterHash) await writeAllOrNothing(journal.writes);
   await fs.unlink(journalPath);
+  return true;
 }
 
-async function recoverSuggestionTransaction(paths) {
-  if (!(await pathExists(path.join(paths.sessionDir, SUGGESTION_JOURNAL)))) return;
-  return withSessionMutationLock(paths, () => recoverSuggestionTransactionUnlocked(paths));
+async function recoverSuggestionTransaction(paths, { signal, onMutation } = {}) {
+  if (signal?.aborted) throw signal.reason;
+  if (!(await pathExists(path.join(paths.sessionDir, SUGGESTION_JOURNAL)))) return false;
+  const recovered = await withSessionMutationLock(paths, () => recoverSuggestionTransactionUnlocked(paths), signal);
+  if (recovered) await onMutation?.();
+  return recovered;
 }
 
 async function withSessionMutation(filePath, options, work) {
@@ -796,7 +807,8 @@ async function withSessionMutation(filePath, options, work) {
   const home = options.minimapHome || resolveMinimapHome(options.env || process.env, options.platform || process.platform);
   const paths = makeSessionPaths(home, session.id);
   return withSessionMutationLock(paths, async () => {
-    await recoverSuggestionTransactionUnlocked(paths);
+    const recovered = await recoverSuggestionTransactionUnlocked(paths);
+    if (recovered) await options.onMutation?.();
     return work();
   });
 }
@@ -1049,9 +1061,9 @@ export function resolveMinimapHome(env = process.env, platform = process.platfor
   return path.join(os.homedir(), ".minimap");
 }
 
-export async function loadSessionIndex(minimapHome = resolveMinimapHome()) {
+export async function loadSessionIndex(minimapHome = resolveMinimapHome(), { signal } = {}) {
   const indexPath = path.join(minimapHome, SESSION_INDEX_FILE);
-  const index = await readJson(indexPath, { version: SESSION_INDEX_VERSION, files: {} });
+  const index = await readJson(indexPath, { version: SESSION_INDEX_VERSION, files: {} }, signal);
   return {
     version: SESSION_INDEX_VERSION,
     files: index?.files && typeof index.files === "object" && !Array.isArray(index.files) ? index.files : {},
@@ -1120,7 +1132,8 @@ async function withSessionLifecycle(filePath, options, create, work) {
   const paths = makeSessionPaths(home, sessionId);
   if (create) { await assertSourceWriteGuard(); await fs.mkdir(paths.sessionDir, { recursive: true }); }
   return withSessionMutationLock(paths, async () => {
-    await recoverSuggestionTransactionUnlocked(paths);
+    const recovered = await recoverSuggestionTransactionUnlocked(paths);
+    if (recovered) await options.onMutation?.();
     return work();
   });
 }
@@ -1210,7 +1223,7 @@ export async function getFileSession(filePath, options = {}) {
   const minimapHome = options.minimapHome || resolveMinimapHome(options.env || process.env, options.platform || process.platform);
   const targetPath = path.resolve(cwd, filePath);
   const fileKey = normalizeFileKey(targetPath, options.platform || process.platform);
-  const index = await loadSessionIndex(minimapHome);
+  const index = await loadSessionIndex(minimapHome, { signal: options.signal });
   const sessionId = index.files[fileKey];
 
   if (!sessionId) {
@@ -1218,8 +1231,8 @@ export async function getFileSession(filePath, options = {}) {
   }
 
   const paths = makeSessionPaths(minimapHome, sessionId);
-  await recoverSuggestionTransaction(paths);
-  const session = await readJson(paths.sessionJson, null);
+  await recoverSuggestionTransaction(paths, { signal: options.signal, onMutation: options.onMutation });
+  const session = await readJson(paths.sessionJson, null, options.signal);
   if (!session) {
     throw new AppError(`Session metadata is missing for ${filePath}.`, 404, "not_found");
   }
@@ -1956,24 +1969,29 @@ export async function getFileSessionFileContent(filePath, options = {}) {
 
 export async function listFileSessions(options = {}) {
   const minimapHome = options.minimapHome || resolveMinimapHome(options.env || process.env, options.platform || process.platform);
-  const index = await loadSessionIndex(minimapHome);
+  const index = await loadSessionIndex(minimapHome, { signal: options.signal });
   const sessions = [];
+  const targets = options.targetFiles === undefined ? null
+    : new Set(options.targetFiles.map((file) => normalizeFileKey(file, options.platform || process.platform)));
 
   for (const [fileKey, sessionId] of Object.entries(index.files)) {
+    if (options.signal?.aborted) throw options.signal.reason;
+    if (targets && !targets.has(fileKey)) continue;
     const paths = makeSessionPaths(minimapHome, sessionId);
     let session;
     try {
-      await recoverSuggestionTransaction(paths);
-      session = await readJson(paths.sessionJson, null);
+      await recoverSuggestionTransaction(paths, { signal: options.signal, onMutation: options.onMutation });
+      session = await readJson(paths.sessionJson, null, options.signal);
       if (!session) continue;
       // Keep counts out of the full context; one bad session must not hide others.
-      const comments = await readJsonLines(paths.commentsJsonl);
-      const suggestions = await readJsonLines(paths.suggestionsJsonl);
+      const comments = await readJsonLines(paths.commentsJsonl, options.signal);
+      const suggestions = await readJsonLines(paths.suggestionsJsonl, options.signal);
       session.counts = {
         openComments: comments.filter((c) => c.status !== "resolved").length,
         pendingSuggestions: suggestions.filter((s) => s.status === "pending" || s.status === "accepted").length,
       };
     } catch (error) {
+      if (options.signal?.aborted) throw options.signal.reason || error;
       session = session || await readJson(paths.sessionJson, null).catch(() => null)
         || { id: sessionId, targetFile: normalizeDisplayPath(fileKey), title: path.basename(fileKey) };
       delete session.counts;
