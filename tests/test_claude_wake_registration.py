@@ -1045,6 +1045,8 @@ def test_restricted_claude_prompt_still_delivers_and_acks_pending_relay(
 
 def test_hook_enforces_encoded_body_limit_before_open(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from contextlib import closing
+    from itertools import count
+    import core.claude_wake as wake
 
     common = _load_claude_hook("common", monkeypatch)
     wake_dir = tmp_path / "wake"
@@ -1057,8 +1059,14 @@ def test_hook_enforces_encoded_body_limit_before_open(tmp_path: Path, monkeypatc
     intent.parent.mkdir(parents=True)
     intent.write_text(json.dumps(opened), encoding="utf-8")
     registry = ClaudeWakeRegistry(state_dir=wake_dir)
-    with closing(_client(registry)) as admitted:
-        assert admitted.post("/internal/claude-wake/register", json=opened).status_code == 204
+    native_time = wake.time
+    with monkeypatch.context() as setup:
+        setup_time = SimpleNamespace(**vars(native_time))
+        setup_time.monotonic = count(step=.001).__next__
+        setup.setattr(wake, "time", setup_time)
+        with closing(_client(registry)) as admitted:
+            assert admitted.post("/internal/claude-wake/register", json=opened).status_code == 204
+    assert wake.time is native_time
     requested_paths: list[str] = []
 
     def unavailable_open(request, **_kwargs):
