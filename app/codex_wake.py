@@ -886,6 +886,12 @@ def _stderr_category(stderr: str | bytes | None) -> str:
         stderr[:2048].decode("utf-8", errors="replace").lower()
         if isinstance(stderr, bytes) else stderr[:2048].lower()
     )
+    text = sample.removeprefix("error: ")
+    for server in ("local app-server daemon", "remote app server"):
+        prefix = f"the {server} does not support thread/queue/add; update or restart the {server}: "
+        if text.startswith(prefix):
+            sample = text[len(prefix):]
+            break
     queue = re.match(
         r"(?:error: )?failed to queue session message(?:: |\s+caused by:\s*)"
         r"thread/queue/add (transport error: |response decode error: |failed: )", sample,
@@ -909,6 +915,37 @@ def _stderr_category(stderr: str | bytes | None) -> str:
     if any(term in sample for term in ("connection refused", "transport error", "timed out")):
         return "transport"
     return "other"
+
+
+def _stderr_structure(stderr: str | bytes | None) -> str:
+    """Report fixed observations, never arbitrary error content or a trusted cause."""
+    try:
+        if not stderr:
+            return "empty"
+        sample = (stderr[:2048].decode("utf-8", errors="replace")
+                  if isinstance(stderr, bytes) else stderr[:2048]).lower()
+        outer = "unknown"
+        text = sample.removeprefix("error: ")
+        for marker, name in (
+            ("the local app-server daemon does not support thread/queue/add; update or restart the local app-server daemon: ", "unsupported_local"),
+            ("the remote app server does not support thread/queue/add; update or restart the remote app server: ", "unsupported_remote"),
+            ("cannot queue through an embedded app server while a local app-server daemon is running; remove configuration overrides or use --remote", "embedded_conflict"),
+            ("failed to find codex home:", "home"),
+            ("failed to load config.toml:", "config"),
+        ):
+            if text.startswith(marker):
+                outer = name
+                break
+        return " ".join((
+            f"outer={outer}",
+            "wrapper=" + ("present" if "failed to queue session message" in sample else "absent"),
+            "method=" + ("present" if "thread/queue/add" in sample else "absent"),
+            "sample=" + ("truncated" if len(stderr) > 2048 else "complete"),
+            "lines=" + ("multiple" if any(c in sample.rstrip("\r\n") for c in "\r\n") else "single"),
+            "prefix=" + ("ansi" if sample.startswith("\x1b[") else "plain"),
+        ))
+    except Exception:
+        return "unknown"
 
 
 def _finish_launch(
@@ -954,10 +991,11 @@ def _finish_launch(
                     else _log_fingerprint(delivery_id)
                 )
                 logger.info(
-                    "codex_relay_wake_stderr delivery_ref=%s reason=timeout exit_code=%s category=%s",
+                    "codex_relay_wake_stderr delivery_ref=%s reason=timeout exit_code=%s category=%s structure=%s",
                     delivery_ref,
                     exit_code,
                     category,
+                    _stderr_structure(exc.stderr),
                 )
             except Exception:
                 pass
@@ -973,8 +1011,8 @@ def _finish_launch(
             else _log_fingerprint(delivery_id)
         )
         logger.info(
-            "codex_relay_wake_stderr delivery_ref=%s exit_code=%s category=%s",
-            delivery_ref, process.returncode, _stderr_category(stderr),
+            "codex_relay_wake_stderr delivery_ref=%s exit_code=%s category=%s structure=%s",
+            delivery_ref, process.returncode, _stderr_category(stderr), _stderr_structure(stderr),
         )
     return "failed", "nonzero_exit", process.returncode
 

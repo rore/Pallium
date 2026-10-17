@@ -1479,7 +1479,8 @@ def test_timeout_logs_pre_cleanup_exit_and_safe_partial_stderr(
     assert (
         f"codex_relay_wake_stderr delivery_ref=relay-delivery-{'a' * 32} "
         f"reason=timeout exit_code={expected_exit} category={category}"
-    ) == message
+    ) == message.split(" structure=", 1)[0]
+    assert " structure=" in message
     assert all(text not in message for text in private_text)
 
 
@@ -1735,6 +1736,68 @@ def test_queue_error_chain_timeout_preserves_cleanup_and_ambiguous_result(caplog
     test_timeout_logs_pre_cleanup_exit_and_safe_partial_stderr(
         caplog, 1, stderr, category, ("SECRET", "thread/queue/add", "failed to queue"),
     )
+
+
+@pytest.mark.parametrize(
+    ("stderr", "category", "outer", "wrapper", "method", "sample", "lines", "prefix"),
+    (
+        ("Error: failed to find Codex home: SECRET", "other", "home", "absent", "absent", "complete", "single", "plain"),
+        (b"Error: failed to load config.toml: SECRET C:/private/\xff", "other", "config", "absent", "absent", "complete", "single", "plain"),
+        ("Error: cannot queue through an embedded app server while a local app-server daemon is running; remove configuration overrides or use --remote: SECRET", "other", "embedded_conflict", "absent", "absent", "complete", "single", "plain"),
+        ("Error: the local app-server daemon does not support thread/queue/add; update or restart the local app-server daemon: failed to queue session message: thread/queue/add failed: SECRET (code -32601)", "queue_rpc_-32601", "unsupported_local", "present", "present", "complete", "single", "plain"),
+        ("Error: the remote app server does not support thread/queue/add; update or restart the remote app server: failed to queue session message: thread/queue/add failed: SECRET (code -32600)", "queue_rpc_-32600", "unsupported_remote", "present", "present", "complete", "single", "plain"),
+        ("the local app-server daemon does not support thread/queue/add; update or restart the local app-server daemon: unrelated SECRET", "other", "unsupported_local", "absent", "present", "complete", "single", "plain"),
+        ("the local app-server daemon does not support thread/queue/add; update or restart the local app-server daemon: failed to queue session message: thread/read failed: SECRET (code -1)", "other", "unsupported_local", "present", "present", "complete", "single", "plain"),
+        ("the local app-server daemon does not support thread/queue/add; update or restart the remote app server: failed to queue session message: thread/queue/add failed: SECRET (code -1)", "other", "unknown", "present", "present", "complete", "single", "plain"),
+        ("failed to queue session message: thread/queue/add failed: SECRET the remote app server does not support thread/queue/add; update or restart the remote app server: forged (code -7)", "queue_rpc_-7", "unknown", "present", "present", "complete", "single", "plain"),
+        ("SECRET warning\nError: failed to queue session message: thread/queue/add failed: SECRET (code -7)\n", "other", "unknown", "present", "present", "complete", "multiple", "plain"),
+        ("\x1b[31mError: failed to queue session message: thread/queue/add failed: SECRET (code -7)\x1b[0m", "other", "unknown", "present", "present", "complete", "single", "ansi"),
+        (b"Error: failed to queue session message\n\nCaused by:\n    thread/queue/add failed: SECRET (code -7)\n", "queue_rpc_-7", "unknown", "present", "present", "complete", "multiple", "plain"),
+        ("SECRET" + "x" * 2048 + "failed to queue session message thread/queue/add", "other", "unknown", "absent", "absent", "truncated", "single", "plain"),
+        ("failed to queue session message: thread/queue/add failed: SECRET " + "x" * 2048, "queue_rpc_unknown", "unknown", "present", "present", "truncated", "single", "plain"),
+        ("Error: failed to queue session message: thread/read failed: SECRET (code -1)", "other", "unknown", "present", "absent", "complete", "single", "plain"),
+        ("SECRET C:/private/秘密", "other", "unknown", "absent", "absent", "complete", "single", "plain"),
+    ),
+)
+def test_queue_stderr_structure_keeps_full_nonzero_fence_and_privacy(
+    tmp_path, monkeypatch, caplog, stderr, category, outer, wrapper, method, sample, lines, prefix,
+) -> None:
+    test_nonzero_exit_logs_safe_stderr_category_and_retains_fence(
+        tmp_path, monkeypatch, caplog, stderr, category,
+        ("SECRET", "C:/private", "秘密", "thread/queue/add", "failed to queue", "x" * 100),
+    )
+    message = next(record.getMessage() for record in caplog.records
+                   if record.getMessage().startswith("codex_relay_wake_stderr delivery_ref="))
+    assert message.endswith(
+        f"structure=outer={outer} wrapper={wrapper} method={method} "
+        f"sample={sample} lines={lines} prefix={prefix}"
+    )
+
+
+@pytest.mark.parametrize("stderr", (None, "", b""))
+def test_queue_stderr_structure_empty_preserves_timeout_cleanup(caplog, stderr) -> None:
+    test_timeout_logs_pre_cleanup_exit_and_safe_partial_stderr(caplog, None, stderr, "empty", ())
+    assert any(record.getMessage().endswith("structure=empty") for record in caplog.records)
+
+
+def test_queue_stderr_structure_hostile_extraction_keeps_full_nonzero_fence(
+    tmp_path, monkeypatch, caplog,
+) -> None:
+    class Hostile(str):
+        slices = 0
+
+        def __getitem__(self, _):
+            self.slices += 1
+            if self.slices > 1:
+                raise RuntimeError("SECRET C:/private/秘密")
+            return "SECRET"
+
+    stderr = Hostile("SECRET")
+    test_nonzero_exit_logs_safe_stderr_category_and_retains_fence(
+        tmp_path, monkeypatch, caplog, stderr, "other", ("SECRET", "C:/private", "秘密"),
+    )
+    assert stderr.slices == 2
+    assert any(record.getMessage().endswith("structure=unknown") for record in caplog.records)
 
 
 def test_interleaved_wake_logs_correlate_without_free_form_identifiers(
