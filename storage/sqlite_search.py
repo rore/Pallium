@@ -60,11 +60,11 @@ class SQLiteSearchMixin:
         page_size = max(limit, 1)
         fts_order = (
             "ORDER BY score, index_entry_id"
-            if exact_source_work_query
+            if exact_source_work_query or target_kind == "source_item"
             else "ORDER BY score"
         )
         exact_rows = None
-        if exact_source_work_query:
+        if exact_source_work_query or target_kind == "source_item":
             def exact_pages():
                 with self._session_factory() as session:
                     if structural_work_ref_query:
@@ -96,8 +96,8 @@ class SQLiteSearchMixin:
             exact_rows = exact_pages()
         seen: set[tuple[str, str]] = set()
 
-        # Work-ref candidates are refilled after lifecycle/visibility gates.
-        # The exact JSON membership predicate remains inside SQL before LIMIT.
+        # Source-only candidates refill after lifecycle/filter/visibility gates;
+        # exact work-ref membership stays in SQL before candidates are fetched.
         while len(hits) < limit:
             if exact_rows is not None:
                 rows = next(exact_rows, None)
@@ -125,10 +125,8 @@ class SQLiteSearchMixin:
 
             for row in rows:
                 key = (row.target_kind, row.target_id)
-                if exact_source_work_query and key in seen:
+                if target_kind == "source_item" and key in seen:
                     continue
-                if exact_source_work_query:
-                    seen.add(key)
                 score = -row.score
                 if not structural_work_ref_query and score < LEXICAL_BM25_FLOOR:
                     continue
@@ -169,6 +167,8 @@ class SQLiteSearchMixin:
                         exclusion_counts[reason] = exclusion_counts.get(reason, 0) + 1
                     continue
                 total_hits_after_visibility += 1
+                if target_kind == "source_item":
+                    seen.add(key)
                 hits.append(
                     IndexSearchHit(
                         target_kind=row.target_kind,
@@ -183,7 +183,7 @@ class SQLiteSearchMixin:
                 if len(hits) >= limit:
                     break
 
-            if not exact_source_work_query or len(rows) < page_size:
+            if exact_rows is None or len(rows) < page_size:
                 break
 
         hits.sort(
