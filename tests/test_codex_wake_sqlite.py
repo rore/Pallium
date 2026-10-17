@@ -1332,8 +1332,12 @@ def test_http_claim_correlation_uses_fresh_identity_and_preserves_authority(
 @pytest.mark.parametrize("authority", ["reserved", "absent", "uninitialized", "malformed", "failed"])
 @pytest.mark.parametrize("runtime", ["codex", "claude-code"])
 def test_http_activation_reads_authority_once_and_fails_closed(relay_store, tmp_path, monkeypatch, authority, runtime):
-    relay, storage, _ = relay_store
-    endpoint = relay.turn(runtime=runtime, session_ref="target", **SCOPE)["session"]["endpoint_id"]
+    relay, storage, database = relay_store
+    endpoint = "relay-session-" + "a" * 32
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")
+    with sqlite3.connect(database) as db:
+        db.execute("INSERT INTO relay_sessions(id,runtime,session_ref,container_ref,first_seen_at,last_seen_at,state,trial_enrolled) VALUES (?,?,?,?,?,?,?,?)",
+            (endpoint, runtime, "target", SCOPE["container_ref"], now, now, "active", 0))
     registry = _registry(relay, tmp_path / "legacy")
     reservation = CodexWakeReservation(endpoint, "delivery", "target", SCOPE["container_ref"], 1)
     reads = []

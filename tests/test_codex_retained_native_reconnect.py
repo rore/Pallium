@@ -13,10 +13,32 @@ import time
 import pytest
 
 from app import codex_bridge_pipe as bridge
-from tests.test_codex_bridge_pipe import FakeDesktop, tmp_path as native_tmp_path
+from tests.test_codex_bridge_pipe import FakeDesktop
 
 pytestmark = pytest.mark.slow
 native = pytest.mark.skipif(sys.platform != "win32", reason="Windows kernel pipe contract")
+
+
+@pytest.fixture
+def native_tmp_path():
+    w = bridge._native()
+    import win32profile
+    token = w.security.OpenProcessToken(w.api.GetCurrentProcess(), w.con.TOKEN_QUERY)
+    try:
+        profile = Path(win32profile.GetUserProfileDirectory(token))
+    finally:
+        token.Close()
+    # Neither checkout provisioning nor ordinary TEMP ancestry owns this policy.
+    directory = profile / ("pallium-native-test-" + secrets.token_hex(16))
+    bridge._secure_directory(w, directory, bridge._self_sid(w))
+    try:
+        yield directory
+    finally:
+        assert directory.resolve().parent == profile.resolve()
+        assert directory.name.startswith("pallium-native-test-")
+        # Never override a journey's failing/live/unresolved no-delete guard.
+        if directory.exists() and not any(directory.iterdir()):
+            directory.rmdir()
 
 
 @native
@@ -411,7 +433,8 @@ def _service_status(process):
 def test_closed_before_accept_reuses_native_listener_for_fresh_registration(native_tmp_path, monkeypatch):
     from tests.test_codex_bridge_pipe import wait_until
 
-    directory = bridge.prepare_inventory_service(native_tmp_path / "closed-accept-home")
+    home = native_tmp_path / "closed-accept-home"
+    directory = bridge.prepare_inventory_service(home)
     notifications, native_results, resets = [], [], []
     service = bridge.RetainedService(directory, on_terminal=lambda: notifications.append(True))
     manifest_ready, closed = threading.Event(), threading.Event()
@@ -504,11 +527,14 @@ def test_closed_before_accept_reuses_native_listener_for_fresh_registration(nati
                     desktop.close()
     assert not service.unresolved and not bridge._native_uncertain and notifications == []
     assert service.source is None and service.custody is None and not service.thread.is_alive()
+    assert home.resolve().parent == native_tmp_path.resolve()
+    shutil.rmtree(home)
 
 
 @native
 def test_completed_ready_during_native_cancel_preserves_registered_source(native_tmp_path, monkeypatch):
-    directory = bridge.prepare_inventory_service(native_tmp_path / "completed-read-home")
+    home = native_tmp_path / "completed-read-home"
+    directory = bridge.prepare_inventory_service(home)
     notifications, processed, drained = [], [], []
     service = bridge.RetainedService(directory, on_terminal=lambda: notifications.append(True))
     desktop = FakeDesktop(_response)
@@ -610,13 +636,14 @@ def test_completed_ready_during_native_cancel_preserves_registered_source(native
                 desktop.close()
     assert not service.unresolved and not bridge._native_uncertain and notifications == []
     assert service.source is None and service.custody is None and not service.thread.is_alive()
+    assert home.resolve().parent == native_tmp_path.resolve()
+    shutil.rmtree(home)
 
 
 @native
-def test_retained_registration_continues_across_real_service_epoch(monkeypatch):
+def test_retained_registration_continues_across_real_service_epoch(native_tmp_path, monkeypatch):
     repo = Path(__file__).resolve().parents[1]
-    temp_parent = repo / "tmp"
-    temp_parent.mkdir(exist_ok=True)
+    temp_parent = native_tmp_path
     test_root = temp_parent / f"native-retained-reconnect-{secrets.token_hex(16)}"
     assert not test_root.exists()
     service_processes, desktops = [], []
@@ -707,14 +734,14 @@ def test_retained_registration_continues_across_real_service_epoch(monkeypatch):
         for desktop in desktops:
             desktop.close()
         assert test_root.resolve().parent == temp_parent.resolve()
-        assert test_root.resolve().is_relative_to(repo.resolve())
+        assert test_root.resolve().is_relative_to(native_tmp_path.resolve())
         assert test_root.name.startswith("native-retained-reconnect-")
         if test_root.exists():
             shutil.rmtree(test_root)
 
 
 @native
-def test_terminal_owned_api_is_replaced_and_same_native_source_reenrolls(monkeypatch):
+def test_terminal_owned_api_is_replaced_and_same_native_source_reenrolls(native_tmp_path, monkeypatch):
     import httpx
     import socket
     from app import supervisor
@@ -725,8 +752,7 @@ def test_terminal_owned_api_is_replaced_and_same_native_source_reenrolls(monkeyp
     from tests.test_health import _no_vector_config
 
     repo = Path(__file__).resolve().parents[1]
-    temp_parent = repo / "tmp"
-    temp_parent.mkdir(exist_ok=True)
+    temp_parent = native_tmp_path
     test_root = temp_parent / f"native-owned-api-{secrets.token_hex(16)}"
     assert not test_root.exists()
     w = bridge._native()
@@ -934,7 +960,7 @@ def test_terminal_owned_api_is_replaced_and_same_native_source_reenrolls(monkeyp
                 cleanup_errors.append(exc)
         try:
             assert test_root.resolve().parent == temp_parent.resolve()
-            assert test_root.resolve().is_relative_to(repo.resolve())
+            assert test_root.resolve().is_relative_to(native_tmp_path.resolve())
             assert test_root.name.startswith("native-owned-api-")
             if test_root.exists() and children_exited and not cleanup_errors:
                 shutil.rmtree(test_root)
@@ -949,10 +975,9 @@ def test_terminal_owned_api_is_replaced_and_same_native_source_reenrolls(monkeyp
 
 
 @native
-def test_cancelled_initial_ready_releases_unused_source_channel(monkeypatch):
+def test_cancelled_initial_ready_releases_unused_source_channel(native_tmp_path, monkeypatch):
     repo = Path(__file__).resolve().parents[1]
-    temp_parent = repo / "tmp"
-    temp_parent.mkdir(exist_ok=True)
+    temp_parent = native_tmp_path
     test_root = temp_parent / f"native-ready-cancel-{secrets.token_hex(16)}"
     assert not test_root.exists()
     service = source = None
@@ -1038,7 +1063,7 @@ def test_cancelled_initial_ready_releases_unused_source_channel(monkeypatch):
                 except Exception as terminate_error:
                     cleanup_errors.append(terminate_error)
         assert test_root.resolve().parent == temp_parent.resolve()
-        assert test_root.resolve().is_relative_to(repo.resolve())
+        assert test_root.resolve().is_relative_to(native_tmp_path.resolve())
         assert test_root.name.startswith("native-ready-cancel-")
         if test_root.exists():
             try:
