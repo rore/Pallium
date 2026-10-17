@@ -1032,8 +1032,10 @@ def test_activation_projection_uses_tracked_relay_runner_after_admission(
 def test_relay_callbacks_use_tracked_runner_without_blocking_health(
     tmp_path, monkeypatch, phase, outcome,
 ) -> None:
+    import time
     from app import dependencies
     from core.claude_wake import ClaudeWakeRegistry
+    from storage import sqlite_queue
 
     entered, release = threading.Event(), threading.Event()
     events, callback_threads, gate_errors = [], [], []
@@ -1108,12 +1110,31 @@ def test_relay_callbacks_use_tracked_runner_without_blocking_health(
         nonlocal armed
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            with _observe_setup_writer(app.state.pallium_service._storage, monkeypatch):
-                for role in ("sender", "target"):
-                    response = await client.post("/relay/turn", json={
-                        "runtime": runtime, "session_ref": role, **scope,
-                    })
-                    assert response.status_code == 200, response.text
+            storage = app.state.pallium_service._storage
+            native_turn, native_time = storage.relay_turn, sqlite_queue.time
+            native_monotonic = native_time.monotonic
+
+            def setup_turn(**kwargs):
+                provider_thread = threading.get_ident()
+                qualified_time = SimpleNamespace(**vars(native_time))
+                logical_monotonic = itertools.count(step=.001).__next__
+                qualified_time.monotonic = lambda: (logical_monotonic()
+                    if threading.get_ident() == provider_thread else native_monotonic())
+                with monkeypatch.context() as setup_clock:
+                    setup_clock.setattr(sqlite_queue, "time", qualified_time)
+                    return native_turn(**kwargs)
+
+            with monkeypatch.context() as setup:
+                setup.setattr(storage, "relay_turn", setup_turn)
+                with _observe_setup_writer(storage, monkeypatch):
+                    for role in ("sender", "target"):
+                        response = await client.post("/relay/turn", json={
+                            "runtime": runtime, "session_ref": role, **scope,
+                        })
+                        assert response.status_code == 200, response.text
+            assert storage.relay_turn == native_turn
+            assert sqlite_queue.time is native_time
+            assert time.monotonic is native_monotonic
             message = await client.post("/relay/messages", json={
                 "sender_runtime": runtime, "sender_session_ref": "sender",
                 "recipient": f"{runtime}:target",
