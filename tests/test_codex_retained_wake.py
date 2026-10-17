@@ -1070,9 +1070,37 @@ def test_pending_busy_or_unknown_releases_and_recovers(
 
 
 def test_pending_invalid_state_release_busy_recovers_without_owner_replay(http_wake, monkeypatch):
+    from itertools import count
+    import time
+    from storage import sqlite_queue
+
+    relay = http_wake[1]
+    original_transition = relay.codex_wake_transition
+    native_queue_time, native_monotonic = sqlite_queue.time, time.monotonic
+    qualified = []
+
+    def transition(operation, **kwargs):
+        if operation != "release" or qualified:
+            return original_transition(operation, **kwargs)
+        qualified.append(True)
+        owner = threading.get_ident()
+        ticks = count(step=.001).__next__
+        release_time = SimpleNamespace(**vars(native_queue_time))
+        release_time.monotonic = lambda: ticks() if threading.get_ident() == owner else native_monotonic()
+        try:
+            with monkeypatch.context() as admission:
+                admission.setattr(sqlite_queue, "time", release_time)
+                return original_transition(operation, **kwargs)
+        finally:
+            assert sqlite_queue.time is native_queue_time
+            assert time.monotonic is native_monotonic
+
+    # The helper injects its first refusal before delegation; qualify only real recovery.
+    monkeypatch.setattr(relay, "codex_wake_transition", transition)
     test_pending_busy_or_unknown_releases_and_recovers(
         http_wake, [], monkeypatch, force_release_refusal=True,
     )
+    assert qualified == [True] and sqlite_queue.time is native_queue_time
 
 @pytest.mark.parametrize("body", ["{}", "bad-json", "[]", '{"schemaVersion":1,"schemaVersion":1}',
     json.dumps({"schemaVersion": True, "thread": {"id": TARGET, "kind": "codex", "hostId": "local", "status": {"type": "notLoaded"}}}),
@@ -1708,10 +1736,12 @@ def test_busy_target_does_not_slide_due_retry_deadline(http_wake, monkeypatch):
 @pytest.mark.parametrize("claim_mode", ["active", "acked"])
 def test_retry_cas_loses_to_hook_claim_after_fresh_native_read(http_wake, client, monkeypatch, claim_mode):
     from datetime import datetime, timedelta, timezone
+    from itertools import count
 
     import storage.sqlite_relay as sqlite_relay
+    from storage import sqlite_queue
 
-    http, _, registry, _, desktop, send, workers = http_wake
+    http, relay, registry, _, desktop, send, workers = http_wake
     now = [datetime(2030, 9, 5, tzinfo=timezone.utc)]
 
     def controlled_now(value=None):
@@ -1743,8 +1773,32 @@ def test_retry_cas_loses_to_hook_claim_after_fresh_native_read(http_wake, client
     spent = registry.snapshot(delivery["recipient_endpoint_id"])
     assert spent is not None and spent.outcome == "accepted"
     now[0] += timedelta(seconds=61)
+    native_queue_time, native_monotonic = sqlite_queue.time, time.monotonic
+    original_transition = relay.codex_wake_transition
+    qualified, callback = [], []
+
+    def transition(operation, **kwargs):
+        if operation != "retry_target" or qualified:
+            return original_transition(operation, **kwargs)
+        qualified.append(True)
+        owner = threading.get_ident()
+        ticks = count(step=.001).__next__
+        retry_time = SimpleNamespace(**vars(native_queue_time))
+        retry_time.monotonic = lambda: ticks() if threading.get_ident() == owner else native_monotonic()
+        try:
+            with monkeypatch.context() as admission:
+                admission.setattr(sqlite_queue, "time", retry_time)
+                return original_transition(operation, **kwargs)
+        finally:
+            assert sqlite_queue.time is native_queue_time
+            assert time.monotonic is native_monotonic
+
+    monkeypatch.setattr(relay, "codex_wake_transition", transition)
 
     def claim_before_rearm():
+        assert sqlite_queue.time is native_queue_time
+        assert time.monotonic is native_monotonic
+        callback.append("entered")
         desktop.on_state = None
         response = http.post("/relay/turn", json={
             "runtime": "codex", "session_ref": TARGET, **SCOPE,
@@ -1758,9 +1812,12 @@ def test_retry_cas_loses_to_hook_claim_after_fresh_native_read(http_wake, client
                 "claim_token": claimed["claim_token"], **SCOPE,
             })
             assert ack.status_code == 200, ack.text
+        callback.append("completed")
 
     desktop.on_state = claim_before_rearm
     recover(http_wake)
+    assert qualified == [True] and callback == ["entered", "completed"]
+    assert sqlite_queue.time is native_queue_time
     assert len(launches) == 1
     if claim_mode == "active":
         current = registry.snapshot(delivery["recipient_endpoint_id"])
