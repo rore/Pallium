@@ -42,6 +42,213 @@ async def _actual_status(session, turn):
         meta={"threadId": "actual-runtime", "turnId": turn})
 
 
+@pytest.mark.parametrize("fault", ["clean", "wait-failed", "unresolved", "raises", "returns-unresolved", "incomplete"])
+def test_retired_native_owner_proof_has_one_owner_and_fails_closed(monkeypatch, fault):
+    retained, closed = [], []
+    monkeypatch.setattr(bridge, "_retained", retained)
+
+    class Handle:
+        def __init__(self, name):
+            self.name, self.handle = name, object()
+        def close(self):
+            if self.handle is not None:
+                closed.append(self.name)
+                self.handle = None
+
+    state = [258]
+    owner, source = Handle("owner"), Handle("source")
+    original_handle = owner.handle
+
+    def wait(handle, timeout):
+        assert handle is original_handle and timeout == 0
+        return state[0]
+
+    client = bridge.NativeInventoryClient.__new__(bridge.NativeInventoryClient)
+    client.w = SimpleNamespace(event=SimpleNamespace(WaitForSingleObject=wait, WAIT_OBJECT_0=0, WAIT_TIMEOUT=258))
+    client.peer, client.source, client.unresolved = owner, source, False
+    client.io = SimpleNamespace(unresolved=fault == "unresolved", close=lambda: closed.append("io"))
+    dispose = lambda: bridge.NativeInventoryClient.dispose(client)
+    if fault == "raises":
+        def dispose():
+            raise OSError("controlled disposal failure")
+    elif fault == "returns-unresolved":
+        def dispose():
+            bridge.NativeInventoryClient.dispose(client)
+            client.unresolved = True
+    elif fault == "incomplete":
+        dispose = lambda: None
+    client.dispose = dispose
+    try:
+        if fault in {"raises", "returns-unresolved", "incomplete"}:
+            with pytest.raises((OSError, bridge.ShadowUnavailable)):
+                client.retire()
+            assert owner.handle is None
+            with pytest.raises(bridge.ShadowUnavailable):
+                client.retired_service_exited()
+        elif fault == "unresolved":
+            client.retire()
+            assert retained == [client] and closed == []
+            with pytest.raises(bridge.ShadowUnavailable):
+                client.retired_service_exited()
+        else:
+            client.retire()
+            assert closed == ["io", "source"] and owner.handle is original_handle
+            assert client.retired_service_exited() is False
+            state[0] = 0xFFFFFFFF if fault == "wait-failed" else 0
+            if fault == "wait-failed":
+                with pytest.raises(bridge.ShadowUnavailable, match="peer-unavailable"):
+                    client.retired_service_exited()
+            else:
+                assert client.retired_service_exited() is True
+    finally:
+        if client.io is not None:
+            client.io.unresolved = False  # Only fake handles are settled for test cleanup.
+        bridge.NativeInventoryClient.dispose(client)
+    assert closed.count("owner") == closed.count("source") == closed.count("io") == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case", ["exit-later", "exit-during-retire", "live-bootstrap", "pid-reuse-live",
+                                "wait-failed", "dispose-unresolved", "other-caller", "capability",
+                                "constructor-failure", "ready-failure", "cancel", "shutdown"])
+async def test_fresh_caller_after_retirement_requires_trusted_old_owner_exit(monkeypatch, case):
+    from mcp.shared.exceptions import McpError
+    from mcp.types import CancelledNotification, CancelledNotificationParams, ClientNotification
+
+    clients, workers, registrations, operations = [], [], [], []
+    retired, candidate_ready, release_ready = threading.Event(), threading.Event(), threading.Event()
+    manifest = [{"pid": 1, "creation": "old", "epoch": "old"}]
+    retained = []
+    monkeypatch.setattr(bridge, "_retained", retained)
+    proof = "a" * 64
+    native_client = bridge.NativeInventoryClient
+
+    class Peer:
+        def __init__(self):
+            self.handle, self.closed, self.exited, self.failed = self, 0, False, False
+        def close(self):
+            if self.handle is not None:
+                self.closed += 1
+                self.handle = None
+
+    def wait(handle, timeout):
+        assert timeout == 0
+        return 0xFFFFFFFF if handle.failed else 0 if handle.exited else 258
+
+    class Native:
+        retire = native_client.retire
+        retired_service_exited = native_client.retired_service_exited
+        def __init__(self, *args, retained, previous_manifest=None):
+            self.index = len(clients)
+            if self.index and case == "constructor-failure":
+                raise OSError("controlled candidate constructor failure")
+            self.manifest = dict(manifest[0])
+            if previous_manifest is not None:
+                assert previous_manifest == clients[0].manifest and self.manifest != previous_manifest
+            self.w = SimpleNamespace(event=SimpleNamespace(WaitForSingleObject=wait, WAIT_OBJECT_0=0, WAIT_TIMEOUT=258))
+            self.peer, self.source = Peer(), Peer()
+            self.owner = self.peer
+            self.io = SimpleNamespace(unresolved=False, close=lambda: None)
+            self.unresolved, self.continuity = False, None
+            clients.append(self)
+        def bootstrap_unchanged(self):
+            return self.manifest == manifest[0]
+        def service_current(self):
+            if self.owner.exited:
+                return False
+            if not self.bootstrap_unchanged():
+                raise bridge.ShadowUnavailable("peer-mismatch")
+            return True
+        def ready(self):
+            if self.index == 0 and self.continuity:
+                raise bridge.ShadowUnavailable("transport-failed")
+            if self.index and case == "ready-failure":
+                raise bridge.ShadowUnavailable("deadline")
+            if self.index and case == "cancel":
+                candidate_ready.set()
+                assert release_ready.wait(2)
+            return {"status": "ready", "connected": self.continuity is not None, "source_exited": False}
+        def register(self, metadata):
+            registrations.append((self.index, dict(metadata), self.continuity))
+            self.continuity = proof
+            return {"status": "registered", "reason": "ok"}
+        def dispose(self):
+            native_client.dispose(self)
+            if self.index == 0 and self.continuity and self.peer is None:
+                if case == "exit-during-retire":
+                    self.owner.exited = True
+                    manifest[0] = {"pid": 2, "creation": "new", "epoch": "new"}
+                if case == "dispose-unresolved":
+                    self.unresolved = True
+
+    class Worker(lifecycle.InventoryWorker):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            workers.append(self)
+        def _recover_if_gone(self, *args, **kwargs):
+            result = super()._recover_if_gone(*args, **kwargs)
+            retired.set()
+            return result
+
+    monkeypatch.setattr(lifecycle, "InventoryWorker", Worker)
+    monkeypatch.setattr(bridge, "native_available", lambda: True)
+    server = _protocol_server(monkeypatch, Native, operations)
+
+    async def exercise(session):
+        assert not (await _actual_status(session, "admitted")).isError
+        assert await asyncio.to_thread(retired.wait, 1)
+        old = clients[0]
+        if case == "shutdown":
+            await workers[0].stop()
+            return
+        if case != "exit-during-retire":
+            old.owner.exited = case not in {"live-bootstrap", "pid-reuse-live"}
+            manifest[0] = {"pid": 1 if case == "pid-reuse-live" else 2, "creation": "new", "epoch": "new"}
+        if case == "wait-failed":
+            old.owner.failed = True
+        if case == "capability":
+            monkeypatch.setenv("CODEX_APP_TOOLS_PIPE_PATH", "changed-capability")
+        if case == "other-caller":
+            result = await session.call_tool("pallium_relay_status", {"message_id": "message"},
+                meta={"threadId": "other-runtime", "turnId": "fresh"})
+        elif case == "cancel":
+            request_id = session._request_id
+            request = asyncio.create_task(_actual_status(session, "fresh"))
+            try:
+                assert await asyncio.to_thread(candidate_ready.wait, 1)
+                await session.send_notification(ClientNotification(CancelledNotification(
+                    params=CancelledNotificationParams(requestId=request_id, reason="controlled cancellation"))))
+                with pytest.raises(McpError):
+                    await asyncio.wait_for(request, 1)
+            finally:
+                release_ready.set()
+                if not request.done():
+                    request.cancel()
+                await asyncio.gather(request, return_exceptions=True)
+            return
+        else:
+            result = await _actual_status(session, "fresh")
+        assert not result.isError
+        if case in {"exit-later", "exit-during-retire"}:
+            assert registrations == [(0, {"thread_ref": "actual-runtime", "turn_ref": "admitted"}, None),
+                                     (1, {"thread_ref": "actual-runtime", "turn_ref": "fresh"}, proof)]
+            assert workers[0]._restart_allowed and workers[0]._thread.is_alive()
+        else:
+            assert len(registrations) == 1
+
+    try:
+        await _serve_protocol(server, exercise)
+    finally:
+        release_ready.set()
+        for worker in workers:
+            await worker.stop()
+            await asyncio.to_thread(worker._thread.join)
+    assert registrations[0][1]["turn_ref"] == "admitted"
+    assert all(client.owner.closed == 1 for client in clients)
+    assert all(client.io is None and client.source is None for client in clients)
+    assert len(operations) == (1 if case in {"cancel", "shutdown"} else 2)
+
+
 @pytest.mark.parametrize("case", ["healthy", "ready-busy", "register-busy", "unresolved",
     "invalid-continuity", "pipe-changed", "source-exited", "ready-malformed",
     "ready-refused", "register-refused", "register-uncertain", "continuity-changed",

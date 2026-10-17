@@ -18,6 +18,52 @@ from tests.test_codex_bridge_pipe import FakeDesktop
 pytestmark = pytest.mark.slow
 native = pytest.mark.skipif(sys.platform != "win32", reason="Windows kernel pipe contract")
 
+
+@native
+def test_retired_native_client_keeps_exact_service_process_exit_witness(monkeypatch):
+    child = subprocess.Popen([sys.executable, "-B", "-c",
+        'import sys;print("ready",flush=True);sys.stdin.readline()'],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    client = owner = source = None
+    closed_io = []
+    try:
+        assert child.stdout.readline().strip() == "ready"
+        w = bridge._native()
+        sid = bridge._self_sid(w)
+        owner = bridge._Peer(w, child.pid, sid)
+        source = bridge._Peer(w, os.getpid(), sid)
+        original_handle = owner.handle
+        client = bridge.NativeInventoryClient.__new__(bridge.NativeInventoryClient)
+        client.w, client.peer, client.source, client.unresolved = w, owner, source, False
+        client.io = type("ResolvedIO", (), {"unresolved": False,
+            "close": lambda self: closed_io.append(True)})()
+        client.retire()
+        assert client.io is None and client.source is None and closed_io == [True]
+        assert source.handle is None and client.peer.handle is original_handle
+
+        def forbidden(*_args, **_kwargs):
+            pytest.fail("Retired exit proof must use its held handle, never reopen a numeric PID")
+
+        monkeypatch.setattr(w.api, "OpenProcess", forbidden)
+        assert client.retired_service_exited() is False
+        child.stdin.close()
+        assert child.wait(timeout=3) == 0
+        assert client.retired_service_exited() is True
+    finally:
+        if child.stdin is not None and not child.stdin.closed:
+            child.stdin.close()
+        child.wait()
+        try:
+            if client is not None:
+                client.dispose()
+        finally:
+            for peer in (owner, source):
+                if peer is not None:
+                    peer.close()
+            child.stdout.close()
+            child.stderr.close()
+    assert owner is not None and owner.handle is None
+
 _SERVICE_SETUP = r"""
 import json, os, sys, time
 from pathlib import Path

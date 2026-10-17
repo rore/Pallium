@@ -2170,6 +2170,37 @@ class NativeInventoryClient:
         """Compare the trusted private bootstrap even after this channel is disposed."""
         return _json(_read_private(self.w, self.bootstrap_path, self.sid)) == self.manifest
 
+    def retire(self) -> None:
+        """Close resolved source I/O but retain the authenticated service exit witness."""
+        if self.unresolved or (self.io is not None and self.io.unresolved):
+            self.dispose()
+            return
+        peer = self.peer
+        self.peer = None
+        try:
+            self.dispose()
+        except Exception:
+            if peer is not None:
+                peer.close()
+            raise
+        if self.unresolved or self.io is not None or self.source is not None:
+            if peer is not None:
+                peer.close()
+            self.unresolved = True
+            _retained.append(self)
+            raise ShadowUnavailable("stopped")
+        self.peer = peer
+
+    def retired_service_exited(self) -> bool:
+        if self.io is not None or self.unresolved or self.peer is None or self.peer.handle is None:
+            raise ShadowUnavailable("stopped")
+        state = self.w.event.WaitForSingleObject(self.peer.handle, 0)
+        if state == self.w.event.WAIT_OBJECT_0:
+            return True
+        if state == self.w.event.WAIT_TIMEOUT:
+            return False
+        raise ShadowUnavailable("peer-unavailable")
+
     def dispose(self) -> None:
         """EOF closes the private source channel; service custody remains authorized."""
         self.unresolved = self.io is not None and self.io.unresolved

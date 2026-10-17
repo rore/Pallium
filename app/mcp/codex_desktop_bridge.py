@@ -255,12 +255,13 @@ class InventoryWorker:
     def _valid_continuity(value):
         return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None
 
-    def _finish(self, client):
+    def _finish(self, client, *, retire=False):
         restart_allowed = self._restart_allowed
         unresolved = bool(client is not None and getattr(client, "unresolved", False))
         if client is not None:
             try:
-                client.dispose()
+                close = getattr(client, "retire", None) if retire else None
+                (close if callable(close) else client.dispose)()
             except Exception:
                 unresolved = True
             unresolved = unresolved or bool(getattr(client, "unresolved", False))
@@ -294,13 +295,15 @@ class InventoryWorker:
                             or client.bootstrap_unchanged() is not True):
                         raise
                     previous_manifest = dict(manifest)
-                    self._finish(client)
+                    self._finish(client, retire=True)
+                    exit_witness = getattr(client, "retired_service_exited", None)
+                    owner_exited = callable(exit_witness) and exit_witness() is True
                     if (not self._restart_allowed or self.stop_event.is_set()
                             or getattr(client, "unresolved", False)
                             or getattr(source_io, "unresolved", False)
                             or os.environ.get("CODEX_APP_TOOLS_PIPE_PATH") != original_pipe
                             or getattr(client, "continuity", None) != continuity
-                            or client.bootstrap_unchanged() is not True
+                            or (not owner_exited and client.bootstrap_unchanged() is not True)
                             or client.manifest != previous_manifest):
                         raise
                     # Resolved observation failure permits only a new real caller.
@@ -469,7 +472,7 @@ class InventoryWorker:
                                 retired_manifest = dict(client.manifest)
                                 retired_pipe = channel_pipe
                                 retired_client = client
-                                self._finish(retired_client)
+                                self._finish(retired_client, retire=True)
                                 client = None
                                 if not self._restart_allowed:
                                     self.stop_event.set()
@@ -503,7 +506,9 @@ class InventoryWorker:
                                 self.stop_event.set()
                                 break
                             try:
-                                bootstrap_unchanged = retired_client.bootstrap_unchanged()
+                                exit_witness = getattr(retired_client, "retired_service_exited", None)
+                                owner_exited = callable(exit_witness) and exit_witness() is True
+                                bootstrap_unchanged = owner_exited or retired_client.bootstrap_unchanged()
                             except Exception:
                                 self._restart_allowed = False
                                 raise
@@ -515,7 +520,11 @@ class InventoryWorker:
                             if remaining <= 0:
                                 break
                             try:
-                                client = NativeInventoryClient(self._path, self.stop_event, retained=True)
+                                if owner_exited:
+                                    client = NativeInventoryClient(self._path, self.stop_event, retained=True,
+                                        previous_manifest=retired_manifest)
+                                else:
+                                    client = NativeInventoryClient(self._path, self.stop_event, retained=True)
                             except ShadowUnavailable as exc:
                                 if exc.category != "startup-unavailable":
                                     self._restart_allowed = False
@@ -530,7 +539,8 @@ class InventoryWorker:
                             try:
                                 replacement_manifest = client.manifest
                                 replacement_unchanged = client.bootstrap_unchanged()
-                                retired_unchanged = retired_client.bootstrap_unchanged()
+                                retired_unchanged = (exit_witness() is True if owner_exited
+                                                     else retired_client.bootstrap_unchanged())
                             except Exception:
                                 self._restart_allowed = False
                                 raise
@@ -538,7 +548,8 @@ class InventoryWorker:
                                 break
                             if (os.environ.get("CODEX_APP_TOOLS_PIPE_PATH") != retired_pipe
                                     or type(replacement_manifest) is not dict
-                                    or replacement_manifest != retired_manifest
+                                    or (replacement_manifest == retired_manifest if owner_exited
+                                        else replacement_manifest != retired_manifest)
                                     or replacement_unchanged is not True
                                     or retired_unchanged is not True):
                                 self._restart_allowed = False
@@ -571,7 +582,12 @@ class InventoryWorker:
                                 self._restart_allowed = False
                                 self.stop_event.set()
                                 break
+                            if callable(getattr(retired_client, "retire", None)):
+                                self._finish(retired_client)
                             retired_client = retired_manifest = None
+                            if not self._restart_allowed:
+                                self.stop_event.set()
+                                break
                             registration_attempted = False
                     if client is None:
                         if future.cancelled():
@@ -686,6 +702,14 @@ class InventoryWorker:
                 pass
             if client is not None:
                 self._finish(client)
+            if retired_client is not None and retired_client is not client and callable(getattr(retired_client, "retire", None)):
+                self._finish(retired_client)
+            pending_retirement = self._fresh_request_retirement
+            self._fresh_request_retirement = None
+            if (pending_retirement is not None and pending_retirement[0] is not client
+                    and pending_retirement[0] is not retired_client
+                    and callable(getattr(pending_retirement[0], "retire", None))):
+                self._finish(pending_retirement[0])
 
     async def stop(self):
         self._closed = True
