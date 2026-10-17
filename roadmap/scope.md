@@ -213,8 +213,14 @@ qualified behavior, current availability, fallback, and native-attempt evidence
 explicit across HTTP, MCP, and dashboard without turning acceptance into delivery.
 `add-relay-delivery-trace` shipped bounded diagnostic evidence through message
 detail, HTTP, and MCP.
-Copilot is later runtime expansion, still blocked on delivery tracing and OpenCode
-wake qualification. Existing lifecycle hardening retains ownership of
+Hermes is the next runtime feature after the current reliability issues and their
+release/rollout/real-delivery acceptance gates are resolved. The queued
+`add-hermes-agent-integration` captures the initial v0.22.2 source validation,
+proposed native plugin path, admission/identity gaps, and isolated qualification
+criteria. It does not claim shipped Hermes support or advance the reliability gate.
+
+Copilot remains later runtime expansion behind its primary-runtime wake
+qualification prerequisite; delivery tracing is already shipped. Existing lifecycle hardening retains ownership of
 delivery/session state and retention; trace recording never becomes delivery
 authority. The paused Relay workflow-example catalog is reserved for future public
 positioning and usage guidance; it is not a product gate. Add only further extensions repeatedly
