@@ -155,6 +155,78 @@ The next step remains prospective frozen needs, including evidence absent from
 the repository/current conversation, alongside adequate-alternative controls.
 No ranking, navigation, capture or guidance change is selected by this review.
 
+### October 17-31 prospective intake during normal work
+
+The user selected two existing work chats and the coordinating chat. This is a
+task-level collection instruction, not a global agent/configuration change,
+background monitor or automated evaluation. The window ends October 31, 2026 at
+23:59 Asia/Jerusalem. Each work chat starts only after accepting the instruction;
+the coordinator starts with this setup. No previous episode is backdated into it.
+Both invited work chats accepted on October 17. One has a frozen assignment and
+may contribute no cases; intake never overrides that boundary or creates work.
+
+Take each chat's first three eligible triggers, in order, for at most nine
+registrations. The coordinator deduplicates underlying needs and selects the
+earliest eight within that explicitly capped participant sample, logging exclusions
+without inspecting outcomes. Five to ten genuine needs remains the small-check
+range; fewer than five at the deadline is an inconclusive shortfall. Do not extend
+the window, invent needs or substitute retrospective successes to fill it.
+
+An eligible trigger is a real request to recover/resume earlier work, or an actual
+missing earlier decision, constraint or investigation fact encountered while doing
+already-authorized work. A natural prior-context question that existing sources
+already answer is a valid control. Exclude setup/survey administration, invented
+questions, synthetic evaluation, verification-marker readback and repeated searches
+for the same need. Within the three-trigger cap, record missed registrations and
+their reasons too; voluntary omission must not silently select only good cases.
+
+Before any Pallium/native/direct-chat historical lookup or request for pasted
+historical context, put a short neutral BEFORE card in the working chat:
+
+```text
+Timestamp and exact original request/turn reference, when supplied:
+Question; expected evidence type and essential qualifiers (not the answer):
+Context already available; answerable without History? yes/no/uncertain:
+Normal intended route; existing budget; revision/model/settings if known:
+```
+
+Use minimal paraphrases and source handles; omit unknown identity rather than
+guessing. Do not look up the answer to manufacture expectations. Actual answer
+keys and private historical text stay out of indexed case cards and Relay. A
+missed BEFORE card is observational only and cannot be repaired by backfilling.
+
+Continue the ordinary task without waiting for a coordinator response, forcing a
+History call, changing model/settings, or running extra comparison arms. Append
+an AFTER card with actual evidence route, search/expansion/tool counts where known,
+outcome and uncertainty, observable repeated investigation, manual context needed,
+and already-reported time/token/monetary cost; otherwise record unknown. A case is
+not a claim of benefit merely because a search happened or the agent says it helped.
+
+Send the coordinator card/request references and registration time only. Keep the
+cards in their original governed chats; do not create transcript archives or a
+parallel case database. Respect source visibility/redaction/forgetting, withdraw
+revoked evidence and never recover deleted text from native copies. If transport
+fails, retain the card for the next ordinary interaction rather than repeatedly
+resending or blocking work. Relay dispatch requires receipt/acceptance evidence;
+the initial native wake attempts were unavailable, so idle participants received
+ordinary app-message fallbacks with their settings preserved.
+
+Registration starts prospective observation, not an automatic A/B run. Current
+History search exposes no as-of cutoff: newly captured cards, clarifications and
+other-arm answers can affect later retrieval. Before promoting a case to a matched
+Pallium/native-search/no-history comparison, establish the pre-search rubric and
+expected evidence, independently supported grading, original common caller context,
+equal budgets and actually enforceable eligible evidence/contamination controls.
+Keep answer keys out of answering contexts. Use compatible existing evaluation
+tools only; if those conditions cannot be met, retain an observational case and
+report the limitation. No new adapter, raw private export or paid comparison is
+authorized by intake. Candidate recovery, observational use and controlled
+downstream benefit remain separate results.
+
+Initial registration count is zero; experiment-administration messages do not
+count as upcoming needs. The pending prospective checklist stays open until real
+cases and the comparison requirements above are satisfied.
+
 ### October 6 readiness reconciliation
 
 The gate remains in-progress, not merely waiting for more lookup rows. The
