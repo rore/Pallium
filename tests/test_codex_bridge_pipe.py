@@ -2145,6 +2145,179 @@ def test_inventory_runtime_authority_loss_closes_without_replacement(tmp_path, m
         assert desktop.connections <= 1 and len(desktop.requests) == 1
 
 
+def _catalog_stage_service(monkeypatch, w):
+    service = bridge.RetainedService.__new__(bridge.RetainedService)
+    service.w, service.sid, service.source = w, "fixture-sid", object()
+    service.stop_event, service.native_sequence = threading.Event(), 0
+    service._registration_identity = lambda *_: (1,)
+    service._check_custody = lambda: None
+    monkeypatch.setattr(bridge, "_source_desktop", lambda *_: (object(), []))
+    return service
+
+
+@pytest.mark.parametrize("case,stage,clock_reads", [
+    ("before-write", "before-catalog-write", 1), ("write", "catalog-write", 4),
+    ("partial-write", "catalog-write", 2), ("header", "catalog-read-header", 5),
+    ("partial-header", "catalog-read-header", 6), ("body", "catalog-read-body", 6),
+    ("partial-body", "catalog-read-body", 7), ("success", None, 3),
+    ("reopen", None, 5),
+])
+def test_initial_catalog_failure_stage_tracks_actual_native_frame_boundaries(
+    monkeypatch, inventory_caplog, case, stage, clock_reads,
+):
+    now, clock_calls, writes, errors, closed, deadlines = [0.0], [], [], [], [], []
+    retained = []
+    monkeypatch.setattr(bridge, "_retained", retained)
+    monkeypatch.setattr(bridge, "_native_uncertain", False)
+    monkeypatch.setattr(bridge, "time", SimpleNamespace(**{**vars(time),
+        "monotonic": lambda: (clock_calls.append(True), now[0])[1]}))
+
+    class Handle:
+        def Close(self):
+            closed.append(self)
+
+    class NativeError(Exception):
+        pass
+
+    class ObservedIO(bridge._DesktopIO):
+        def _operation(self, operation, deadline, keepalive=None, **kwargs):
+            deadlines.append(deadline)
+            try:
+                return super()._operation(operation, deadline, keepalive, **kwargs)
+            except Exception as exc:
+                errors.append(exc)
+                raise
+
+    tools = [{"namespace": "codex_app", "name": name, "inputSchema": {
+        "type": "object", "properties": properties, "required": required}}
+        for name, properties, required in [
+            ("send_message_to_thread", {"threadId": {"type": "string"}, "prompt": {"type": "string"}}, ["threadId", "prompt"]),
+            ("read_thread", {"threadId": {"type": "string"}, "turnLimit": {"type": "integer"},
+                "includeOutputs": {"type": "boolean"}, "maxOutputCharsPerItem": {"type": "integer"}}, ["threadId"]),
+        ]]
+    payload = encode({"jsonrpc": "2.0", "id": 1, "result": {"tools": tools}})
+    incoming = bytearray(len(payload).to_bytes(4, "little") + payload)
+    count, partial, waiting = [0], [False], [False]
+
+    def write(_handle, raw, _ov):
+        count[0] = 3 if case == "partial-write" else len(raw)
+        writes.append(bytes(raw[:count[0]]))
+        if case == "write":
+            return 997, None
+        return 0, None
+
+    def read(_handle, size, _ov):
+        phase = service.custody._frame_stage
+        target = phase == ("read-body" if case in {"body", "partial-body"} else "read-header")
+        if case != "success" and target and (not case.startswith("partial-") or partial[0]):
+            return 997, b""
+        count[0] = min(size, 2) if case.startswith("partial-") and target else size
+        value = bytes(incoming[:count[0]])
+        del incoming[:count[0]]
+        partial[0] = partial[0] or target
+        return 0, value
+
+    def result(*_args):
+        if case == "partial-write":
+            now[0] = 1.0
+        return count[0]
+
+    def wait(*_args):
+        if waiting[0]:
+            return 0  # Cancellation conclusively drained the pending operation.
+        waiting[0], now[0] = True, 1.0
+        return 258
+
+    handle = Handle()
+    w = SimpleNamespace(con=SimpleNamespace(GENERIC_READ=1, GENERIC_WRITE=2, OPEN_EXISTING=3,
+            FILE_FLAG_OVERLAPPED=4, SECURITY_SQOS_PRESENT=8),
+        types=SimpleNamespace(OVERLAPPED=SimpleNamespace, error=NativeError),
+        file=SimpleNamespace(SECURITY_IDENTIFICATION=16, CreateFile=lambda *_: handle,
+            ReadFile=read, WriteFile=write, GetOverlappedResult=result, CancelIo=lambda *_: None),
+        pipe=SimpleNamespace(GetNamedPipeServerProcessId=lambda *_: 1),
+        event=SimpleNamespace(CreateEvent=lambda *_: Handle(), WaitForSingleObject=wait,
+            WAIT_OBJECT_0=0, WAIT_TIMEOUT=258))
+    service = _catalog_stage_service(monkeypatch, w)
+    monkeypatch.setattr(bridge, "_DesktopIO", ObservedIO)
+    if case == "before-write":
+        service._check_custody = lambda: now.__setitem__(0, 1.0)
+    try:
+        if case == "success":
+            assert service._open_custody("private-pipe-sentinel", 1.0) == (1,)
+            assert errors == []
+        else:
+            with pytest.raises(bridge.ShadowUnavailable, match="deadline") as caught:
+                service._open_custody("private-pipe-sentinel", 1.0,
+                    (1,) if case == "reopen" else None)
+            assert len(errors) == 1 and caught.value is errors[0]
+        records = [r for r in inventory_caplog.records if r.msg == "codex_retained_catalog_failed stage=%s"]
+        assert [r.args for r in records] == ([] if stage is None else [(stage,)])
+        assert all(r.exc_info is None and r.stack_info is None for r in records)
+        assert len(clock_calls) == clock_reads and all(d == 1.0 for d in deadlines)
+        assert bool(writes) is (case != "before-write")
+        assert not service.custody.unresolved and not bridge._native_uncertain and retained == []
+    finally:
+        service.custody.close()
+    assert len(closed) == len(deadlines) + 1 and closed[-1] is handle
+
+
+@pytest.mark.parametrize("fault", ["object", "string", "subclass", "getter", "started-getter", "category-getter", "logger"])
+def test_initial_catalog_failure_stage_is_private_and_keeps_exception_identity(
+    monkeypatch, inventory_caplog, fault,
+):
+    class Hostile(str):
+        def __str__(self):
+            pytest.fail("Private metadata must never be stringified")
+        __repr__ = __str__
+        def __eq__(self, _other):
+            pytest.fail("Private metadata must never be compared")
+
+    class Failure(Exception):
+        def __str__(self):
+            pytest.fail("Exception text must never enter diagnostics")
+        __repr__ = __str__
+        @property
+        def category(self):
+            if fault == "category-getter":
+                raise RuntimeError("private-category-sentinel")
+            return Hostile("private-category-sentinel")
+
+    failure = Failure()
+
+    class BrokenIO:
+        def __init__(self, *_):
+            self.handle = object()
+        @property
+        def _operation_started(self):
+            if fault == "started-getter":
+                raise RuntimeError("private-started-sentinel")
+            return False
+        @property
+        def _frame_stage(self):
+            if fault == "getter":
+                raise RuntimeError("private-stage-sentinel")
+            if fault == "string":
+                return "private-stage-sentinel"
+            return Hostile("write") if fault == "subclass" else object()
+        def write(self, *_):
+            raise failure
+
+    w = SimpleNamespace(con=SimpleNamespace(GENERIC_READ=1, GENERIC_WRITE=2, OPEN_EXISTING=3,
+            FILE_FLAG_OVERLAPPED=4, SECURITY_SQOS_PRESENT=8),
+        file=SimpleNamespace(SECURITY_IDENTIFICATION=16, CreateFile=lambda *_: object()),
+        pipe=SimpleNamespace(GetNamedPipeServerProcessId=lambda *_: 1))
+    service = _catalog_stage_service(monkeypatch, w)
+    monkeypatch.setattr(bridge, "_DesktopIO", BrokenIO)
+    if fault == "logger":
+        monkeypatch.setattr(bridge._log, "warning", lambda *_: (_ for _ in ()).throw(RuntimeError("private-logger")))
+    with pytest.raises(Failure) as caught:
+        service._open_custody("private-pipe-sentinel", 1.0)
+    assert caught.value is failure
+    records = [r for r in inventory_caplog.records if r.msg == "codex_retained_catalog_failed stage=%s"]
+    assert [r.args for r in records] == ([] if fault == "logger" else [("unknown",)])
+    assert all(r.exc_info is None and r.stack_info is None for r in records)
+
+
 def test_inventory_frame_partial_read_write_and_limits(monkeypatch):
     incoming = bytearray()
     written = bytearray()

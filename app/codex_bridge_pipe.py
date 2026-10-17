@@ -524,6 +524,7 @@ class _PipeIO:
             if self.stop.is_set() or time.monotonic() >= deadline:
                 raise ShadowUnavailable("stopped" if self.stop.is_set() else "deadline")
             try:
+                self._operation_started = True
                 code, buffer = operation(ov)
             except w.types.error as exc:
                 if connected_ok and getattr(exc, "winerror", None) == 535:  # ERROR_PIPE_CONNECTED.
@@ -1164,12 +1165,16 @@ class _DesktopIO(_PipeIO):
         return bytes(chunks)
 
     def read(self, deadline: float) -> dict:
+        self._frame_stage = "read-header"
         size = int.from_bytes(self._read_exact(4, deadline), "little")
         if not 0 < size <= MAX_DESKTOP_FRAME:
             raise ShadowUnavailable("message-limit")
+        self._frame_stage = "read-body"
         return _json(self._read_exact(size, deadline), limit=MAX_DESKTOP_FRAME)
 
     def write(self, value: dict, deadline: float) -> None:
+        self._frame_stage = "write"
+        self._operation_started = False
         payload = json.dumps(value, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8")
         if not 0 < len(payload) <= MAX_DESKTOP_FRAME:
             raise ShadowUnavailable("message-limit")
@@ -2559,8 +2564,29 @@ class RetainedService(InventoryService):
         self._check_custody()
         self.native_sequence += 1
         request_id = self.native_sequence
-        self.custody.write({"jsonrpc": "2.0", "id": request_id, "method": "tools/list"}, deadline)
-        value = self.custody.read(deadline)
+        try:
+            self.custody.write({"jsonrpc": "2.0", "id": request_id, "method": "tools/list"}, deadline)
+            value = self.custody.read(deadline)
+        except Exception as exc:
+            if expected_identity is None:
+                stage = "unknown"
+                try:
+                    frame = getattr(self.custody, "_frame_stage", None)
+                    started = getattr(self.custody, "_operation_started", None)
+                    category = getattr(exc, "category", None)
+                    if type(frame) is str:
+                        if frame == "write":
+                            stage = ("before-catalog-write" if type(category) is str and category == "deadline"
+                                     and started is False else "catalog-write")
+                        elif frame in {"read-header", "read-body"}:
+                            stage = "catalog-" + frame
+                except Exception:
+                    pass
+                try:
+                    _log.warning("codex_retained_catalog_failed stage=%s", stage)
+                except Exception:
+                    pass  # Diagnostics cannot change failure identity or cleanup.
+            raise
         if (set(value) != {"jsonrpc", "id", "result"} or value["jsonrpc"] != "2.0"
                 or type(value["id"]) is not int or value["id"] != request_id
                 or not isinstance(value["result"], dict)):
