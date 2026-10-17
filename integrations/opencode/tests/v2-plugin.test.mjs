@@ -176,8 +176,9 @@ test("assistant completion and compaction ingest only sessions owned by this dir
       }
     } },
   };
+  let dispose;
   try {
-    const dispose = await v2.setup(ctx);
+    dispose = await v2.setup(ctx);
     const emit = async (id) => {
       eventQueue.push({ type: "session.execution.succeeded", data: { sessionID: id } });
       wakeEvent();
@@ -198,8 +199,9 @@ test("assistant completion and compaction ingest only sessions owned by this dir
     assert.equal(ingested.length, ownedWrites);
     await hooks.compaction({ sessionID: "ses_owned" });
     assert.equal(ingested.length, ownedWrites);
-    await dispose();
-  } finally { globalThis.fetch = oldFetch; }
+  } finally {
+    try { await dispose?.(); } finally { globalThis.fetch = oldFetch; }
+  }
 });
 
 const pause = () => new Promise((resolve) => setTimeout(resolve, 20));
@@ -491,8 +493,64 @@ for (const deleted of [false, true]) {
   });
 }
 
-test("assistant completion cannot create state when deletion runs after ownership succeeds", async () => {
+for (const existing of [false, true]) {
+  test(`unrelated session retirement preserves ${existing ? "existing" : "fresh"} assistant capture`, async () => {
+    const id = `ses_assistant_${existing ? "existing" : "fresh"}`;
+    const gate = barrier();
+    const history = [{ type: "assistant", id: "msg_unrelated_retirement", content: [{ type: "text", text: "captured answer" }] }];
+    let block = false, reads = 0;
+    const f = await callerFixture({ history, get: async ({ sessionID: requested }) => {
+      if (block && requested === id) await gate.wait();
+      return { location: { directory: location } };
+    }, context: async () => { reads++; return { data: history }; } });
+    try {
+      if (existing) await f.hooks.context({ sessionID: id, messages: [natural("msg_seed_existing")] });
+      const initialReads = reads;
+      block = true;
+      const running = f.hooks.compaction({ sessionID: id });
+      await gate.entered;
+      await f.emit({ type: "session.deleted", data: { sessionID: "ses_unrelated_retirement" } });
+      gate.release();
+      await running;
+      assert.equal(reads, initialReads + 1);
+      assert.equal(f.calls.filter((call) => call.path === "/items").length, 1);
+    } finally { gate.release(); await f.close(); }
+  });
+}
+
+test("concurrent assistant probes keep successor retirement tokens through stale cleanup", async () => {
+  const id = "ses_concurrent_assistant";
+  const oldGate = barrier(), successorGate = barrier();
+  let gets = 0, reads = 0;
+  const history = [{ type: "assistant", id: "msg_concurrent_assistant", content: [{ type: "text", text: "answer" }] }];
+  const f = await callerFixture({ history, get: async ({ sessionID: requested }) => {
+    if (requested !== id) return { location: { directory: location } };
+    const call = ++gets;
+    if (call <= 2) await oldGate.wait();
+    else await successorGate.wait();
+    return { location: { directory: location } };
+  }, context: async () => { reads++; return { data: history }; } });
+  const old = [f.hooks.compaction({ sessionID: id }), f.hooks.compaction({ sessionID: id })];
+  let successor;
+  try {
+    await oldGate.entered;
+    assert.equal(gets, 2, "both same-ID probes registered before retirement");
+    await f.emit({ type: "session.deleted", data: { sessionID: id } });
+    successor = f.hooks.compaction({ sessionID: id });
+    await successorGate.entered;
+    oldGate.release();
+    await Promise.all(old);
+    await f.emit({ type: "session.deleted", data: { sessionID: id } });
+    successorGate.release();
+    await successor;
+    assert.equal(reads, 0, "the second deletion must still find and invalidate the successor probe");
+    assert.equal(f.calls.filter((call) => call.path === "/items").length, 0);
+  } finally { oldGate.release(); successorGate.release(); await Promise.all([...old, successor]); await f.close(); }
+});
+
+for (const sameSession of [true, false]) test(`${sameSession ? "same-session" : "unrelated"} deletion after ownership ${sameSession ? "fences" : "preserves"} assistant completion`, async () => {
   const id = "ses_helper_success_retired";
+  const retiredId = sameSession ? id : "ses_helper_unrelated";
   const deletion = barrier();
   const previousFetch = globalThis.fetch;
   const previousInterval = globalThis.setInterval;
@@ -522,7 +580,7 @@ test("assistant completion cannot create state when deletion runs after ownershi
         // Resolve the supported event iterator after owned's final current check.
         // Its consumer retires the absent entry in the next microtask, before
         // ingestAssistant resumes from the successfully resolved owned promise.
-        nextEvent({ value: { type: "session.deleted", data: { sessionID: id } }, done: false });
+        nextEvent({ value: { type: "session.deleted", data: { sessionID: retiredId } }, done: false });
         return location;
       } } };
       },
@@ -546,12 +604,12 @@ test("assistant completion cannot create state when deletion runs after ownershi
     removeSessionPin(id);
     dispose = await v2.setup(ctx);
     await hooks.compaction({ sessionID: id });
-    assert.equal(reads, 0);
-    assert.equal(calls.filter((call) => call.path === "/items").length, 0);
+    assert.equal(reads, sameSession ? 0 : 1);
+    assert.equal(calls.filter((call) => call.path === "/items").length, sameSession ? 0 : 1);
     await deletion.entered;
     deletion.release();
     assert.equal(ownedLocationReads, 1, "the supported location read succeeds before deletion");
-    assert.equal(calls.filter((call) => call.path === "/relay/sessions/close" && call.body.session_ref === id).length, 1,
+    assert.equal(calls.filter((call) => call.path === "/relay/sessions/close" && call.body.session_ref === retiredId).length, 1,
       "the public deletion callback retired the absent entry and issued its close");
     assert.equal(getPinnedContainer(id), null);
     await dispose();

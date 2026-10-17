@@ -25,6 +25,158 @@ from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
 pytestmark = pytest.mark.slow
 
 
+@pytest.mark.parametrize("existing,phase,retired", [
+    (False, "lookup", "other"), (True, "lookup", "other"),
+    (False, "caller", "other"), (True, "caller", "other"),
+    (False, "lookup", "same"), (False, "lookup", "recreated"),
+    (False, "lookup", "dispose"), (False, "lookup", "created"),
+])
+def test_assistant_ownership_retirement_through_http_and_history(client, tmp_path, existing, phase, retired):
+    """Public plugin callbacks use a controlled native client and real Pallium HTTP."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    subprocess.run(["git", "init", "-q", str(workspace)], check=True)
+    subprocess.run(["git", "-C", str(workspace), "remote", "add", "origin",
+                    "https://example.test/team/ownership.git"], check=True)
+    attempted, stored, closed = [], [], []
+
+    class OwnershipHTTP(BaseHTTPRequestHandler):
+        def log_message(self, *_):
+            pass
+
+        def forward(self):
+            raw = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            body = json.loads(raw) if raw else None
+            if self.path == "/items":
+                attempted.extend(body)
+            if self.path == "/relay/sessions/close":
+                closed.append(body["session_ref"])
+            response = client.request(self.command, self.path, content=raw or None,
+                                      headers={"Content-Type": "application/json"})
+            if self.path == "/items" and response.is_success:
+                stored.extend(zip(body, response.json()))
+            payload = response.content
+            try:
+                self.send_response(response.status_code)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                pass
+
+        do_GET = do_POST = forward
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), OwnershipHTTP)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    program = tmp_path / "ownership-caller.mjs"
+    program.write_text(r"""import assert from 'node:assert/strict';
+import {writeFileSync} from 'node:fs';
+const {default:production}=await import(process.env.OWNERSHIP_PLUGIN);
+const config=JSON.parse(process.env.OWNERSHIP_CASE),cwd=process.env.OWNERSHIP_DIRECTORY;
+const sessionID='ses_ownership_a',other='ses_ownership_b',hooks={},disposed=[];
+const defer=()=>{let resolve;const promise=new Promise(done=>resolve=done);return{promise,resolve}};
+const entered=defer(),release=defer();
+let waiting,acknowledge,lookup=false,gap=false,eventDone,contextReads=0,locationReads=0;
+let text='OWNERSHIP_שלום',cleanup;
+const deliver=(id,type='session.deleted')=>{
+ assert.equal(typeof waiting,'function','subscriber must await the public event');
+ const done=defer();acknowledge=done.resolve;
+ const resolve=waiting;waiting=null;resolve({value:{type,data:{sessionID:id}},done:false});
+ return done.promise;
+};
+const ctx={location:{directory:cwd},app:{log(){}},session:{
+ hook:async(name,callback)=>{hooks[name]=callback;return{dispose:()=>disposed.push(name)}},
+ get:async({sessionID:id})=>{
+  if(id===sessionID&&lookup){lookup=false;entered.resolve();await release.promise}
+  return{location:{get directory(){
+   if(id===sessionID&&gap){gap=false;locationReads++;eventDone=deliver(other)}
+   return cwd;
+  }}};
+ },
+ context:async()=>{contextReads++;return{data:[
+  {type:'assistant',id:'msg_ownership_'+(text.startsWith('SUCCESSOR')?'new':'old'),
+   time:{created:0,completed:1},content:[{type:'text',text}]},
+ ]}},
+},event:{subscribe:({signal})=>({
+ [Symbol.asyncIterator](){return this},
+ next(){
+  acknowledge?.();acknowledge=null;
+  if(signal.aborted)return Promise.resolve({done:true});
+  return new Promise(resolve=>{waiting=resolve;
+   signal.addEventListener('abort',()=>resolve({done:true}),{once:true});
+  });
+ },
+})}};
+try{
+ cleanup=await production.setup(ctx);
+ if(config.existing)await hooks.prompt({sessionID,messageID:'msg_ownership_seed',prompt:{text:'generic seed'}});
+ lookup=config.phase==='lookup';gap=config.phase==='caller';
+ const capture=hooks.compaction({sessionID});
+ if(config.phase==='lookup'){
+  await entered.promise;
+  if(config.retired==='dispose')await cleanup();
+  else if(config.retired==='created')await deliver(sessionID,'session.created');
+  else{
+   await deliver(config.retired==='other'?other:sessionID);
+   if(config.retired==='recreated')await deliver(sessionID,'session.created');
+  }
+  release.resolve();
+ }
+ await capture;
+ if(eventDone)await eventDone;
+ const initialReads=contextReads;
+ if(['same','recreated'].includes(config.retired)){
+  text='SUCCESSOR_שלום';await hooks.compaction({sessionID});
+ }
+ writeFileSync(process.env.OWNERSHIP_REPORT,JSON.stringify({initialReads,contextReads,locationReads}));
+}finally{
+ release.resolve();await cleanup?.();
+ assert.deepEqual([...disposed].sort(),['compaction','context','prompt']);
+}
+""", encoding="utf-8")
+    root = Path(__file__).resolve().parents[1]
+    env = {key: value for key, value in os.environ.items()
+           if not key.startswith(("PALLIUM_", "OPENCODE_", "OPENAI_", "ANTHROPIC_"))
+           and not key.endswith("API_KEY")}
+    private = tmp_path / "profile"
+    private.mkdir()
+    for key in ("HOME", "USERPROFILE", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME"):
+        env[key] = str(private)
+    env.update(PALLIUM_PORT=str(server.server_port), PALLIUM_HOOK_ACTOR_REF="ownership-actor",
+               OWNERSHIP_PLUGIN=(root / "integrations/opencode/.opencode/plugins/pallium-v2.mjs").as_uri(),
+               OWNERSHIP_DIRECTORY=str(workspace), OWNERSHIP_REPORT=str(tmp_path / "ownership-report.json"),
+               OWNERSHIP_CASE=json.dumps({"existing": existing, "phase": phase, "retired": retired}))
+    try:
+        result = subprocess.run([shutil.which("node") or "node", str(program)], env=env, cwd=workspace,
+                                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
+        (tmp_path / "ownership-caller.log").write_text(result.stdout + result.stderr, encoding="utf-8")
+        assert result.returncode == 0, result.stdout + result.stderr
+        report = json.loads((tmp_path / "ownership-report.json").read_text(encoding="utf-8"))
+        expected = ["SUCCESSOR_שלום"] if retired in ("same", "recreated") else [] if retired == "dispose" else ["OWNERSHIP_שלום"]
+        assert [body["content"] for body in attempted] == expected
+        assert len(stored) == len(expected)
+        assert report["initialReads"] == (0 if retired in ("same", "recreated", "dispose") else 1)
+        assert report["locationReads"] == (1 if phase == "caller" else 0)
+        if retired not in ("dispose", "created"):
+            assert ("ses_ownership_b" if retired == "other" else "ses_ownership_a") in closed
+        client.app.state.pallium_service.drain_processing_queue(worker_id="ownership-history")
+        for body, receipt in stored:
+            assert body["thread_ref"] == "ses_ownership_a" and body["actor_ref"] == "ownership-actor"
+            assert body["container_ref"] == "git:example.test/team/ownership"
+            history = client.post("/query", json={"text": body["content"], "container_ref": body["container_ref"],
+                "active_session_ref": body["thread_ref"], "thread_ref": body["thread_ref"],
+                "actor_ref": body["actor_ref"], "visibility": "private", "trigger_origin": "agent_pull",
+                "limit": 50, "source_only": True})
+            assert history.status_code == 200 and receipt["source_item_id"] in history.text
+            expanded = client.get("/source/" + receipt["source_item_id"] + "/context", params={
+                "container_ref": body["container_ref"], "query_actor_ref": body["actor_ref"], "before": 0, "after": 0})
+            assert expanded.status_code == 200 and body["content"] in expanded.text
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 def test_released_native_idle_busy_and_reload(client, tmp_path, test_db_url, monkeypatch):
     binary = os.environ.get("PALLIUM_OPENCODE_V2_BINARY")
     if not binary or not Path(binary).is_file():

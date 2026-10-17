@@ -21,6 +21,7 @@ export default {
     const cwd = ctx.location.directory;
     const ownerId = "opencode-owner-" + randomUUID().replaceAll("-", "");
     const sessions = new Map();
+    const assistantChecks = new Map();
     const registrations = [];
     const abort = new AbortController();
     let disposed = false;
@@ -38,7 +39,12 @@ export default {
       sessions.get(id) === item && item.abort.signal === signal && !signal.aborted;
     const retire = (id, item) => {
       item?.abort.abort();
-      if (sessions.get(id) === item) { sessions.delete(id); retirement++; }
+      if (sessions.get(id) === item) {
+        sessions.delete(id);
+        retirement++;
+        const pending = assistantChecks.get(id);
+        if (pending) { for (const token of pending) token.valid = false; assistantChecks.delete(id); }
+      }
     };
     const scope = (id) => pallium.resolveContainerRef(cwd, id);
     const base = (id, item) => ({
@@ -64,10 +70,10 @@ export default {
       item.scopeGeneration = session.scope_generation;
       return true;
     };
-    const owned = async (id, item = sessions.get(id), signal = item?.abort.signal) => {
+    const owned = async (id, item = sessions.get(id), signal = item?.abort.signal, token) => {
       const started = retirement;
-      const current = () => item ? live(id, item, signal) : !disposed && retirement === started &&
-        (!sessions.has(id) || live(id, sessions.get(id)));
+      const current = () => (!token || token.valid) && (item ? live(id, item, signal) : !disposed && (token != null || retirement === started) &&
+        (!sessions.has(id) || live(id, sessions.get(id))));
       try {
         if (!current()) return false;
         const session = await ctx.session.get({ sessionID: id });
@@ -147,10 +153,19 @@ export default {
       } finally { if (live(id, item, signal)) item.busy = false; }
     };
     const ingestAssistant = async (id) => {
-      // ponytail: global retirement can defer unrelated captures; use per-session epochs if observed.
-      const started = retirement;
-      if (!await owned(id) || disposed || started !== retirement) return;
-      const item = state(id);
+      const token = { valid: true };
+      let pending = assistantChecks.get(id);
+      if (!pending) assistantChecks.set(id, pending = new Set());
+      pending.add(token);
+      let item;
+      try {
+        if (!await owned(id, sessions.get(id), undefined, token) || disposed || !token.valid) return;
+        item = state(id);
+      } finally {
+        token.valid = false;
+        pending.delete(token);
+        if (!pending.size && assistantChecks.get(id) === pending) assistantChecks.delete(id);
+      }
       const signal = item?.abort.signal;
       try {
         if (!live(id, item, signal)) return;
