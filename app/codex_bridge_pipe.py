@@ -137,7 +137,7 @@ def _self_sid(w) -> str:
 def _security_attributes(w, sid: str, *, directory: bool = False):
     flags = "OICI" if directory else ""
     descriptor = w.security.ConvertStringSecurityDescriptorToSecurityDescriptor(
-        f"D:P(A;{flags};FA;;;{sid})(A;{flags};FA;;;SY)", 1,
+        f"O:{sid}D:P(A;{flags};FA;;;{sid})(A;{flags};FA;;;SY)", 1,
     )
     attrs = w.types.SECURITY_ATTRIBUTES()
     attrs.SECURITY_DESCRIPTOR = descriptor

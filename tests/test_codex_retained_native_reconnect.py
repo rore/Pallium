@@ -42,6 +42,75 @@ def native_tmp_path():
 
 
 @native
+@pytest.mark.parametrize("directory", [False, True])
+def test_native_creation_descriptor_explicitly_binds_authenticated_owner(directory):
+    w = bridge._native()
+    sid = bridge._self_sid(w)
+    attrs = bridge._security_attributes(w, sid, directory=directory)
+    descriptor = attrs.SECURITY_DESCRIPTOR
+    assert not attrs.bInheritHandle
+    assert descriptor.GetSecurityDescriptorControl()[0] & 0x1000
+    dacl = descriptor.GetSecurityDescriptorDacl()
+    aces = [dacl.GetAce(index) for index in range(dacl.GetAceCount())]
+    assert [(kind, flags, mask, w.security.ConvertSidToStringSid(principal))
+            for (kind, flags), mask, principal in aces] == [
+        (0, 3 if directory else 0, 0x1F01FF, sid),  # SDDL FA.
+        (0, 3 if directory else 0, 0x1F01FF, "S-1-5-18"),
+    ]
+    owner = descriptor.GetSecurityDescriptorOwner()
+    assert owner is not None and w.security.ConvertSidToStringSid(owner) == sid, (
+        "Creation descriptor must explicitly bind the authenticated owner")
+
+
+@native
+def test_created_private_directory_file_and_pipe_keep_authenticated_owner(native_tmp_path):
+    w = bridge._native()
+    sid = bridge._self_sid(w)
+    directory = native_tmp_path / "objects"
+    path = directory / "state.json"
+    handle = None
+    try:
+        bridge._secure_directory(w, directory, sid)
+        bridge._check_path(w, directory, sid)
+        bridge._atomic_private(w, path, sid, b'{"value":"private"}')
+        assert bridge._read_private(w, path, sid) == b'{"value":"private"}'
+        pipe_name = rf"\\.\pipe\pallium-owner-test-{secrets.token_hex(16)}"
+        handle = w.pipe.CreateNamedPipe(
+            pipe_name, w.pipe.PIPE_ACCESS_DUPLEX | w.con.FILE_FLAG_OVERLAPPED
+            | bridge.FIRST_PIPE_INSTANCE,
+            w.pipe.PIPE_TYPE_MESSAGE | w.pipe.PIPE_READMODE_MESSAGE
+            | w.pipe.PIPE_WAIT | w.pipe.PIPE_REJECT_REMOTE_CLIENTS,
+            1, bridge.MAX_MESSAGE + 1, bridge.MAX_MESSAGE + 1, 2000,
+            bridge._security_attributes(w, sid),
+        )
+        descriptors = [w.security.GetNamedSecurityInfo(
+            str(item), w.security.SE_FILE_OBJECT,
+            w.security.OWNER_SECURITY_INFORMATION | w.security.DACL_SECURITY_INFORMATION,
+        ) for item in (directory, path)]
+        descriptors.append(w.security.GetSecurityInfo(
+            handle, w.security.SE_FILE_OBJECT,
+            w.security.OWNER_SECURITY_INFORMATION | w.security.DACL_SECURITY_INFORMATION,
+        ))
+        for descriptor in descriptors:
+            bridge._validate_descriptor(w, descriptor, sid, private=True)
+            assert w.security.ConvertSidToStringSid(descriptor.GetSecurityDescriptorOwner()) == sid
+            assert descriptor.GetSecurityDescriptorControl()[0] & 0x1000
+            dacl = descriptor.GetSecurityDescriptorDacl()
+            assert [(kind, mask, w.security.ConvertSidToStringSid(principal))
+                    for (kind, _flags), mask, principal in
+                    (dacl.GetAce(index) for index in range(dacl.GetAceCount()))] == [
+                (0, 0x1F01FF, sid), (0, 0x1F01FF, "S-1-5-18"),
+            ]
+    finally:
+        bridge._close(handle)
+        assert directory.resolve().parent == native_tmp_path.resolve()
+        if path.exists():
+            path.unlink()
+        if directory.exists():
+            directory.rmdir()
+
+
+@native
 def test_retired_native_client_keeps_exact_service_process_exit_witness(monkeypatch):
     child = subprocess.Popen([sys.executable, "-B", "-c",
         'import sys;print("ready",flush=True);sys.stdin.readline()'],
