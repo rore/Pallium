@@ -184,9 +184,23 @@ def test_names_are_service_global_and_takeover_replaces_holder(client):
         ("unsafe\u2028value", 422),
     ],
 )
-def test_payload_boundaries_unicode_and_controls(client, payload, expected):
-    _turn(client, "claude-code", "sender")
-    _turn(client, "codex", "target")
+def test_payload_boundaries_unicode_and_controls(client, payload, expected, monkeypatch):
+    import time
+    from itertools import count
+    from types import SimpleNamespace
+    from storage import sqlite_queue
+
+    native_queue_time, native_monotonic = sqlite_queue.time, time.monotonic
+    # Registration prepares payload validation; native admission has separate coverage.
+    with monkeypatch.context() as registration:
+        registration_time = SimpleNamespace(**vars(native_queue_time))
+        registration_time.monotonic = count(step=.001).__next__
+        registration.setattr(sqlite_queue, "time", registration_time)
+        _turn(client, "claude-code", "sender")
+        _turn(client, "codex", "target")
+    assert sqlite_queue.time is native_queue_time
+    assert sqlite_queue.time.monotonic is native_monotonic
+    assert time.monotonic is native_monotonic
     response = _send(client, "claude-code", "sender", "codex:target", payload)
     assert response.status_code == expected, response.text
 
