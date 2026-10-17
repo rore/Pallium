@@ -495,20 +495,43 @@ def test_scoped_codepoint_pages_reconstruct_redacted_message_body(client):
 
 
 def test_identity_selector_scope_and_state_errors_are_visible(client, monkeypatch, tmp_path, request):
+    from itertools import count
     import threading
     import time
+    from types import SimpleNamespace
+    from storage import sqlite_queue
 
     from tests.test_codex_wake_retry_edges import _observe_relay_busy_acquisition
 
+    storage = client.app.state.pallium_service._storage
+    native_turn, native_time = storage.relay_turn, sqlite_queue.time
+    native_monotonic = time.monotonic
+
+    def prepare_session(runtime, session):
+        def initial_session(**kwargs):
+            provider_thread = threading.get_ident()
+            setup_time = SimpleNamespace(**vars(native_time))
+            logical_monotonic = count(step=.001).__next__
+            setup_time.monotonic = lambda: (logical_monotonic()
+                if threading.get_ident() == provider_thread else native_monotonic())
+            with monkeypatch.context() as admission:
+                admission.setattr(sqlite_queue, "time", setup_time)
+                return native_turn(**kwargs)
+
+        with monkeypatch.context() as setup:
+            setup.setattr(storage, "relay_turn", initial_session)
+            _turn(client, runtime, session)
+        assert storage.relay_turn == native_turn and sqlite_queue.time is native_time
+        assert time.monotonic is native_monotonic
+
     _observe_relay_busy_acquisition(client.app.state.pallium_service._storage, monkeypatch, request, tmp_path)
-    _turn(client, "claude-code", "sender")
+    prepare_session("claude-code", "sender")
     assert client.post("/relay/turn", json={"runtime": "other", "session_ref": "x", **SCOPE}).status_code == 422
     assert client.post("/relay/turn", json={"runtime": "codex", "session_ref": "bad\x00", **SCOPE}).status_code == 422
     assert _send(client, "claude-code", "sender", "codex:missing").status_code in (404, 409)
     assert _send(client, "claude-code", "sender", "codex:@missing").status_code in (404, 409)
     assert _send(client, "claude-code", "sender", "codex").status_code == 422
     assert _send(client, "claude-code", "sender", "bad").status_code == 422
-    storage = client.app.state.pallium_service._storage
     begin = storage._begin_relay_immediate
     name = storage.relay_name_session
     local = threading.local()
@@ -557,7 +580,7 @@ def test_identity_selector_scope_and_state_errors_are_visible(client, monkeypatc
         assert type(attempts[-1].get("error")) is RelayNotFoundError
     assert _status(client, "missing").status_code == 404
 
-    _turn(client, "codex", "target")
+    prepare_session("codex", "target")
     message = _send(client, "claude-code", "sender", "codex:target").json()
     assert _status(client, message["message_id"]).status_code == 200
     assert client.get(

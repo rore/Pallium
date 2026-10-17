@@ -2809,9 +2809,11 @@ def test_busy_queue_claims_at_hook_execution_without_stale_receipt_or_duplicate_
 def test_busy_queue_recovery_stays_single_flight_and_competing_hook_blocks_overtaken_wake(
     client, monkeypatch, tmp_path, capsys,
 ) -> None:
+    from itertools import count
     from app.dependencies import recover_expired_relay_wakes
     from core.claude_wake import ClaudeWakeRegistry
     from integrations.codex.hooks import user_prompt_submit as hook
+    from storage import sqlite_queue
 
     scope = {
         "container_ref": "git:example.test/overtaken-wake",
@@ -2832,10 +2834,28 @@ def test_busy_queue_recovery_stays_single_flight_and_competing_hook_blocks_overt
         codex_wake_registry=registry,
     ))
     route = TestClient(app)
-    for runtime, session in (("claude-code", "sender"), ("codex", "target")):
-        assert route.post("/relay/turn", json={
-            "runtime": runtime, "session_ref": session, **scope,
-        }).status_code == 200
+    storage = client.app.state.pallium_service._storage
+    native_turn, native_time = storage.relay_turn, sqlite_queue.time
+    native_monotonic = native_time.monotonic
+
+    def initial_session(**kwargs):
+        provider_thread = threading.get_ident()
+        setup_time = SimpleNamespace(**vars(native_time))
+        logical_monotonic = count(step=.001).__next__
+        setup_time.monotonic = lambda: (logical_monotonic()
+            if threading.get_ident() == provider_thread else native_monotonic())
+        with monkeypatch.context() as admission:
+            admission.setattr(sqlite_queue, "time", setup_time)
+            return native_turn(**kwargs)
+
+    with monkeypatch.context() as setup:
+        setup.setattr(storage, "relay_turn", initial_session)
+        for runtime, session in (("claude-code", "sender"), ("codex", "target")):
+            assert route.post("/relay/turn", json={
+                "runtime": runtime, "session_ref": session, **scope,
+            }).status_code == 200
+    assert storage.relay_turn == native_turn and sqlite_queue.time is native_time
+    assert native_time.monotonic is native_monotonic
 
     workers = []
     clock = [10.0]
