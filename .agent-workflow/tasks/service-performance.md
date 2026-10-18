@@ -1,5 +1,42 @@
 # Service-wide performance investigation and correction
 
+## Startup admission — required full independently accepted 2026-10-18
+
+ONE required isolated full at clean dd60a407defc28d05eb55285325b053f857ba87f
+passed7399/45skipped/2xfailed453.57s; JUnit7446/0errors/0failures/47skips453.524s.
+Evidence startup-admission-full-51f6c4df28df4779bad073a77c8933a7:
+stdout0C681514711D0CBDA829C7EC6D2188D7D454DF4F9748CB0AA5112C8A60C14CAD;
+JUnitD25493AF9EFD6951681BF8ABE239C9C93A49369F517BB2D549036557EF451FBF;
+result94D594390E6B047506095271C09037EF213C1836B2A1A5BFEF5EAE73638DC557;
+runtime5E5E869B578EA3AEA525BAF85593BEF8022F97CEAEFEFD35C8DA26D6A85F37A1;
+sourceafterEA15204E5700C8AAF33EC786B38A2278E9464D72F168020213EE5E80E2A6B95E.
+Exit0/no timeout/root76240+directchildren0, stderr0/network logs absent. Exact
+clean dd60/source23drift[]; existing isolated Python3.13.14/SQLite3.53.1 full65
+observed/reference/lock inventory mismatch{}. This is local non-slow qualification,
+not hosted-version parity or a complete descendant-history ledger.
+
+Independent actual-result review confirms all14 mandatory nodes PASS/not skipped:
+original two-instance outage/restart, parked-background immediate readiness,
+other startup2, activation restart4, periodic recovery2, native held-writer2, and
+both UNCHANGED ownership cases accepted0.542s/uncertain0.508s completing all
+original downstream assertions. The focused12 and unaffected older evidence are
+reused; no focused repetition. Shared helper restores synchronous admission only;
+activation deferral/404/exact consume remain identical and native wake scheduling
+stays asynchronous. New holder uses the existing450ms policy, without retry.
+
+Published9f9 automaticLinux313 remains FAILED at source readiness regression and
+introduced rawtimeout0 holder setup. Its manualLinux313 also FAILED; actual raw
+awaits the existing sole59612 collector/whole workflow terminal, so do not assume
+it has the same failures. Old Windows full lanes remain pending at this record;
+all actual failure receipts stay visible. Unknown13be Windows312 registration
+refusal is not explained or modified by this correction.
+
+Root permits ONLY final record/body/publication-manifest PREPARATION after this
+accepted full. Source/tests remain byte-identical beyond this record-only commit.
+No new hosted dispatch/publication or live change until old-matrix terminal
+classification and ROOT decision. Required exact-head platform checks, independent
+actual combined-result review and fresh resolved reviews remain merge gates.
+
 ## Startup admission readiness — adopted continuation 2026-10-18
 
 Fresh nonapplication checks at nonapp-startup-admission select full45 paths;
