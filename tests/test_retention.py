@@ -629,3 +629,350 @@ def test_purge_suppressed_lexical_search_intact_for_active(test_db_url: str) -> 
     fts_target_ids_after = {row[0] for row in fts_rows_after}
     assert active.id in fts_target_ids_after
     assert suppressed.id not in fts_target_ids_after
+
+
+def test_source_retention_prepares_protected_suffix_without_holding_writer(test_db_url, monkeypatch):
+    import sqlite3
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+    from pathlib import Path
+
+    storage = SQLiteStorageProvider(test_db_url)
+    now = datetime(2026, 10, 12, tzinfo=UTC)
+    entered, release = threading.Event(), threading.Event()
+    original = storage._source_item_is_protected
+    future = None
+    try:
+        first = _make_source(storage, source_id="expired-first", occurred_at=now - timedelta(days=90))
+        protected = _make_source(storage, source_id="protected-later", occurred_at=now - timedelta(days=89))
+        memory = _make_memory(storage, memory_type="decision", created_at=protected.created_at, source_items=[protected])
+        # Keep the existing marker case distinct from the zero-row writer proof.
+        assert storage.claim_retention_lease(worker_id="private-proof", lease_seconds=60, now=now)
+
+        def held_check(session, source_id, **kwargs):
+            result = original(session, source_id, **kwargs)
+            if source_id == protected.id and not release.is_set():
+                entered.set()
+                assert release.wait(5), "test did not release protected preparation"
+            return result
+
+        monkeypatch.setattr(storage, "_source_item_is_protected", held_check)
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(storage.run_retention_pass, now=now, batch_size=2,
+                                 retention_policy=_TEST_RETENTION_POLICY)
+            try:
+                assert entered.wait(5)
+                uri = Path(storage._engine.url.database).resolve().as_uri() + "?mode=rw"
+                with sqlite3.connect(uri, uri=True, timeout=0) as competitor:
+                    competitor.execute("BEGIN IMMEDIATE")
+                    competitor.execute("UPDATE source_items SET processing_status=processing_status WHERE id=?", (protected.id,))
+                    competitor.commit()
+            finally:
+                release.set()
+                stats = future.result(timeout=5)
+        assert stats.deleted_source_items == 1
+        assert stats.skipped_protected_source_items == 1
+        with pytest.raises(KeyError):
+            storage.get_source_item(first.id)
+        assert storage.get_source_item(protected.id).content == protected.content
+        assert storage.get_memory_object(memory.id).lifecycle == "active"
+    finally:
+        release.set()
+        storage.close()
+
+
+@pytest.mark.parametrize("marker_exists", [False, True])
+def test_source_retention_owns_writer_before_fresh_checks(test_db_url, monkeypatch, marker_exists):
+    import sqlite3
+    from pathlib import Path
+
+    storage = SQLiteStorageProvider(test_db_url)
+    now = datetime(2026, 10, 12, tzinfo=UTC)
+    try:
+        source = _make_source(storage, source_id="expired", occurred_at=now - timedelta(days=90))
+        if marker_exists:
+            storage.claim_retention_lease(worker_id="marker", lease_seconds=60, now=now)
+        original = storage._source_item_raw_ttl_expired
+        observations = []
+
+        def observe(record, **kwargs):
+            uri = Path(storage._engine.url.database).resolve().as_uri() + "?mode=rw"
+            with sqlite3.connect(uri, uri=True, timeout=0) as competitor:
+                try:
+                    competitor.execute("BEGIN IMMEDIATE")
+                except sqlite3.OperationalError as exc:
+                    assert exc.sqlite_errorcode & 255 == sqlite3.SQLITE_BUSY
+                    observations.append("busy")
+                else:
+                    observations.append("free")
+                    competitor.rollback()
+            return original(record, **kwargs)
+
+        monkeypatch.setattr(storage, "_source_item_raw_ttl_expired", observe)
+        stats = storage.run_retention_pass(now=now, batch_size=1, retention_policy=_TEST_RETENTION_POLICY)
+        assert observations == ["free", "busy"]
+        assert stats.deleted_source_items == 1
+        with pytest.raises(KeyError):
+            storage.get_source_item(source.id)
+    finally:
+        storage.close()
+
+
+@pytest.mark.parametrize("change", ["durable", "working", "processing-lease", "ttl", "status", "deleted", "created-at"])
+def test_source_retention_rechecks_changes_after_preparation(test_db_url, monkeypatch, change):
+    from sqlalchemy import update
+    from storage.sqlite_schema import SourceItemRecord
+    from core.retention import RETENTION_MAINTENANCE_KEY
+
+    storage = SQLiteStorageProvider(test_db_url)
+    now = datetime(2026, 10, 12, tzinfo=UTC)
+    try:
+        source = _make_source(storage, source_id="changing", occurred_at=now - timedelta(days=90))
+        later = _make_source(storage, source_id="later", occurred_at=now - timedelta(days=89)) if change == "created-at" else None
+        original_retry = storage._with_retry
+        original_candidates = storage._next_source_retention_candidates_in_session
+        prepared = changed = False
+
+        def candidates(*args, **kwargs):
+            nonlocal prepared
+            result = original_candidates(*args, **kwargs)
+            prepared = True
+            return result
+
+        def write(fn):
+            nonlocal changed
+            if prepared and not changed:
+                changed = True
+                if change in {"durable", "working"}:
+                    _make_memory(storage, memory_type="decision" if change == "durable" else "thread_summary",
+                                 created_at=now, source_items=[source])
+                elif change == "deleted":
+                    original_retry(lambda session: storage._delete_source_item_cascade_in_session(session, source.id,
+                        durable_types=_TEST_RETENTION_POLICY.durable_types, working_types=_TEST_RETENTION_POLICY.working_types,
+                        orphan_delete_types=_TEST_RETENTION_POLICY.orphan_delete_types))
+                else:
+                    values = {
+                        "processing-lease": {"processing_claimed_by": "active-worker", "processing_lease_expires_at": now + timedelta(minutes=1)},
+                        "ttl": {"occurred_at": now},
+                        "status": {"processing_status": "processing"},
+                        "created-at": {"created_at": now + timedelta(days=1)},
+                    }[change]
+                    original_retry(lambda session: session.execute(update(SourceItemRecord).where(
+                        SourceItemRecord.id == source.id).values(**values)))
+            return original_retry(fn)
+
+        monkeypatch.setattr(storage, "_next_source_retention_candidates_in_session", candidates)
+        monkeypatch.setattr(storage, "_with_retry", write)
+        stats = storage.run_retention_pass(now=now, batch_size=1, retention_policy=_TEST_RETENTION_POLICY)
+        assert changed
+        if change in {"deleted", "created-at"}:
+            with pytest.raises(KeyError):
+                storage.get_source_item(source.id)
+            assert stats.deleted_source_items == (1 if change == "created-at" else 0)
+        else:
+            assert storage.get_source_item(source.id).content == source.content
+            assert stats.deleted_source_items == 0
+        if change in {"durable", "working"}:
+            assert stats.skipped_protected_source_items == 1
+        if later is not None:
+            with storage._session_factory() as session:
+                marker = session.get(MaintenanceStateRecord, RETENTION_MAINTENANCE_KEY)
+                assert marker.source_scan_cursor_id == source.id
+                assert storage._normalize_datetime(marker.source_scan_cursor_created_at) == source.created_at
+            second = storage.run_retention_pass(now=now, batch_size=1, retention_policy=_TEST_RETENTION_POLICY)
+            assert second.deleted_source_items == 1
+            with pytest.raises(KeyError):
+                storage.get_source_item(later.id)
+    finally:
+        storage.close()
+
+
+@pytest.mark.parametrize("change", ["replaced", "expired"])
+def test_source_retention_validates_expected_lease_after_preparation(test_db_url, monkeypatch, change):
+    from core.retention import RETENTION_MAINTENANCE_KEY
+
+    storage = SQLiteStorageProvider(test_db_url)
+    now = datetime(2026, 10, 12, tzinfo=UTC)
+    try:
+        source = _make_source(storage, source_id="leased", occurred_at=now - timedelta(days=90))
+        lease = storage.claim_retention_lease(worker_id="expected", lease_seconds=60, now=now)
+        assert lease is not None
+        original_retry, original_candidates = storage._with_retry, storage._next_source_retention_candidates_in_session
+        prepared = changed = False
+
+        def candidates(*args, **kwargs):
+            nonlocal prepared
+            result = original_candidates(*args, **kwargs)
+            prepared = True
+            return result
+
+        def write(fn):
+            nonlocal changed
+            if prepared and not changed:
+                changed = True
+                def replace(session):
+                    marker = session.get(MaintenanceStateRecord, RETENTION_MAINTENANCE_KEY)
+                    if change == "replaced":
+                        marker.claimed_by, marker.claimed_at = "replacement", now + timedelta(seconds=1)
+                    else:
+                        marker.lease_expires_at = now - timedelta(seconds=1)
+                original_retry(replace)
+            return original_retry(fn)
+
+        monkeypatch.setattr(storage, "_next_source_retention_candidates_in_session", candidates)
+        monkeypatch.setattr(storage, "_with_retry", write)
+        with pytest.raises(RetentionLeaseLostError):
+            storage.run_retention_pass(now=now, batch_size=1, lease=lease, lease_seconds=60,
+                lease_now=now, retention_policy=_TEST_RETENTION_POLICY)
+        assert changed and storage.get_source_item(source.id).content == source.content
+        with storage._session_factory() as session:
+            marker = session.get(MaintenanceStateRecord, RETENTION_MAINTENANCE_KEY)
+            assert marker.source_scan_cursor_id is None and marker.source_scan_cursor_created_at is None
+    finally:
+        storage.close()
+
+
+@pytest.mark.parametrize("change", ["advance", "create", "wrap", "exhaustion"])
+def test_source_retention_reprepares_on_cursor_or_marker_conflict(test_db_url, monkeypatch, change):
+    from core.retention import RETENTION_MAINTENANCE_KEY
+
+    storage = SQLiteStorageProvider(test_db_url)
+    now = datetime(2026, 10, 12, tzinfo=UTC)
+    try:
+        first = _make_source(storage, source_id="first", occurred_at=now - timedelta(days=90))
+        second = _make_source(storage, source_id="second", occurred_at=now - timedelta(days=89))
+        if change != "create":
+            storage.claim_retention_lease(worker_id="marker", lease_seconds=60, now=now)
+        original_retry, original_candidates = storage._with_retry, storage._next_source_retention_candidates_in_session
+        if change == "wrap":
+            def seed(session):
+                marker = session.get(MaintenanceStateRecord, RETENTION_MAINTENANCE_KEY)
+                marker.source_scan_cursor_created_at, marker.source_scan_cursor_id = second.created_at, second.id
+            original_retry(seed)
+        generations = mutations = 0
+
+        def candidates(*args, **kwargs):
+            nonlocal generations
+            result = original_candidates(*args, **kwargs)
+            generations += 1
+            return result
+
+        def write(fn):
+            nonlocal mutations
+            if generations > mutations and (mutations == 0 or change == "exhaustion"):
+                mutations += 1
+                def advance(session):
+                    marker = storage._ensure_maintenance_state_record_in_session(session, RETENTION_MAINTENANCE_KEY, now)
+                    if change == "exhaustion" and marker.source_scan_cursor_id == first.id:
+                        storage._clear_source_scan_cursor_in_session(marker)
+                    else:
+                        marker.source_scan_cursor_created_at, marker.source_scan_cursor_id = first.created_at, first.id
+                original_retry(advance)
+            return original_retry(fn)
+
+        monkeypatch.setattr(storage, "_next_source_retention_candidates_in_session", candidates)
+        monkeypatch.setattr(storage, "_with_retry", write)
+        if change == "exhaustion":
+            with pytest.raises(RuntimeError, match="cursor changed repeatedly"):
+                storage.run_retention_pass(now=now, batch_size=1, retention_policy=_TEST_RETENTION_POLICY)
+            assert generations == mutations == storage._LOCKED_MAX_RETRIES
+            assert storage.get_source_item(second.id).content == second.content
+        else:
+            stats = storage.run_retention_pass(now=now, batch_size=1, retention_policy=_TEST_RETENTION_POLICY)
+            assert generations == 2 and mutations == 1
+            assert stats.deleted_source_items == 1
+            with pytest.raises(KeyError):
+                storage.get_source_item(second.id)
+        assert storage.get_source_item(first.id).content == first.content
+    finally:
+        storage.close()
+
+
+def test_source_retention_rollback_restores_cursor_source_and_fts(test_db_url):
+    from sqlalchemy import event
+    from core.retention import RETENTION_MAINTENANCE_KEY
+
+    storage = SQLiteStorageProvider(test_db_url)
+    now = datetime(2026, 10, 12, tzinfo=UTC)
+    flushed = []
+    listener = None
+    try:
+        source = _make_source(storage, source_id="rollback", occurred_at=now - timedelta(days=90))
+        storage.claim_retention_lease(worker_id="marker", lease_seconds=60, now=now)
+
+        def before_commit(session):
+            if session.bind is not storage._engine:
+                return
+            if any(isinstance(record, MaintenanceStateRecord)
+                   and record.source_scan_cursor_id == source.id for record in session.identity_map.values()):
+                session.flush()
+                flushed.append(True)
+                raise RuntimeError("controlled failure after cursor and deletion flush")
+
+        listener = before_commit
+        event.listen(storage._session_factory.class_, "before_commit", listener)
+        with pytest.raises(RuntimeError, match="controlled failure"):
+            storage.run_retention_pass(now=now, batch_size=1, retention_policy=_TEST_RETENTION_POLICY)
+        assert flushed == [True]
+        assert storage.get_source_item(source.id).content == source.content
+        assert storage.find_index_entry(target_kind="source_item", target_id=source.id,
+            index_type="lexical", text_view_name="source_item.content") is not None
+        assert source.id in {hit.target_id for hit in storage.search_index_entries(["rollback"], limit=10).hits}
+        with storage._session_factory() as session:
+            marker = session.get(MaintenanceStateRecord, RETENTION_MAINTENANCE_KEY)
+            assert marker.source_scan_cursor_id is None and marker.source_scan_cursor_created_at is None
+    finally:
+        if listener is not None:
+            event.remove(storage._session_factory.class_, "before_commit", listener)
+        storage.close()
+
+
+@pytest.mark.parametrize("exhausted", [False, True])
+def test_source_retention_retries_transient_preparation_without_writes(test_db_url, monkeypatch, exhausted):
+    import sqlite3
+    from sqlalchemy import event
+    from core.retention import RETENTION_MAINTENANCE_KEY
+
+    storage = SQLiteStorageProvider(test_db_url)
+    now = datetime(2026, 10, 12, tzinfo=UTC)
+    statements, failures = [], []
+    listener = None
+    try:
+        source = _make_source(storage, source_id="retry", occurred_at=now - timedelta(days=90))
+        original = storage._source_item_is_protected
+        original_candidates = storage._next_source_retention_candidates_in_session
+
+        def preparation(*args, **kwargs):
+            statements.clear()
+            return original_candidates(*args, **kwargs)
+
+        def fail_once(session, source_id, **kwargs):
+            if exhausted or not failures:
+                assert not any(sql.lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE")) for sql in statements)
+                failures.append(True)
+                raise sqlite3.OperationalError("database is locked")
+            return original(session, source_id, **kwargs)
+
+        def observe(conn, cursor, statement, parameters, context, executemany):
+            statements.append(statement)
+
+        listener = observe
+        event.listen(storage._engine, "before_cursor_execute", listener)
+        monkeypatch.setattr(storage, "_next_source_retention_candidates_in_session", preparation)
+        monkeypatch.setattr(storage, "_source_item_is_protected", fail_once)
+        if exhausted:
+            with pytest.raises(sqlite3.OperationalError, match="locked"):
+                storage.run_retention_pass(now=now, batch_size=1, retention_policy=_TEST_RETENTION_POLICY)
+            assert len(failures) == storage._LOCKED_MAX_RETRIES
+            assert storage.get_source_item(source.id).content == source.content
+            with storage._session_factory() as session:
+                assert session.get(MaintenanceStateRecord, RETENTION_MAINTENANCE_KEY) is None
+        else:
+            stats = storage.run_retention_pass(now=now, batch_size=1, retention_policy=_TEST_RETENTION_POLICY)
+            assert failures == [True] and stats.deleted_source_items == 1
+            with pytest.raises(KeyError):
+                storage.get_source_item(source.id)
+    finally:
+        if listener is not None:
+            event.remove(storage._engine, "before_cursor_execute", listener)
+        storage.close()

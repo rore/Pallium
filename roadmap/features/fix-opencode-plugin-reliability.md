@@ -28,8 +28,8 @@ existing tests but has lifecycle and failure-path gaps. Two independent reviewer
 reproduced defects in isolated mocks or an in-memory backend. These are separate
 from the developer-created pinned OpenCode launcher that caused an update loop.
 
-That deployment mistake was repaired: the normal desktop and ordinary
-unmodified standalone CLI now run official 2.0.24 with default configuration/data
+At the 2026-10-07 review, that deployment mistake had been repaired: the normal
+desktop and ordinary unmodified standalone CLI ran official 2.0.24 with default configuration/data
 locations, direct native shortcuts, retained settings and 87 user sessions.
 The desktop updater reported current/latest 2.0.24. This item must preserve the
 native installation and update paths. It does not authorize another installation,
@@ -38,6 +38,31 @@ upgrade, database migration, live fault injection or application restart.
 Related umbrella: [Add wake-first Relay delivery](add-wake-first-relay-delivery.md).
 Its unfinished Codex recovery and shared native-wake incident remain separately
 owned; do not absorb, reopen or claim them fixed here.
+
+## Current disposition (2026-10-18)
+
+The findings below preserve the reviewed 2026-10-07 baseline and its reproduction
+contracts. Their original line references and behavior descriptions are historical;
+re-resolve them before implementing remaining work.
+
+| Finding | Current disposition |
+|---|---|
+| OC-1 wake-anchor liveness | Open; no verified closure recorded. Preserve the activation/completion distinction and native qualification gates. |
+| OC-2 retired callbacks | Implemented, independently reviewed and merged in [PR302](https://github.com/rore/Pallium/pull/302), merge `e9eb3956ce4990f9dc15d0a24520f40d67246883`. Installed deployment is not established by that merge. |
+| OC-3 capture idempotence | Reviewed implementation remains open in [PR306](https://github.com/rore/Pallium/pull/306), head `05a11db0f566c93138e1d129e109db85e08fb340`; publication-head qualification and merge remain separate gates. |
+| OC-4 aggregate optional latency | Open; preserve the caller-visible budget and fail-open requirements below. |
+| OC-5 bounded disposal | Implemented, independently reviewed and merged with OC-2 in PR302. Its isolated native 2.0.22/2.0.24 evidence does not establish installed deployment or arbitrary-version support. |
+| OC-6 synchronous discovery | Open; synchronous Git discovery remains in the shared helper. |
+| OC-7 directory ownership | Separate open [PR297](https://github.com/rore/Pallium/pull/297), head `45c30cd800e60b03fdcd3c0aab0fc1e66860a459`; qualification and merge remain outstanding. |
+| OC-8 deletion authority | Native reachability/qualification question remains open; do not promote the mock concern to a confirmed native defect. |
+
+PR302's accepted result and evidence are recorded in
+[OpenCode disposal reliability](../../.agent-workflow/tasks/opencode-disposal-reliability.md).
+Its package, full Python and isolated native results supersede the pending
+first-slice verification notes below. They do not close the remaining findings.
+The V2 activation foundation is already merged in
+[PR292](https://github.com/rore/Pallium/pull/292); its happy-path and isolated
+version-specific witnesses are distinct from this feature's reliability closure.
 
 ## In Scope
 
@@ -302,13 +327,13 @@ bug or discard it without evidence.
 - The Pallium manager accepted management and owns canonical queue/order,
   cross-task assignments, independent acceptance review and completion.
   @pal-dev1 accepted implementation ownership; no overlapping developers are
-  assigned. The human-approved OC-2/OC-5 disposal slice is implemented at
-  `af2591e2bb763c9c34904007f78716c9024a5511` and independent technical source
-  review approved it. Package checks passed 93 tests with seven Windows skips;
-  isolated native before/after checks passed on 2.0.24 and 2.0.22. Full Python
-  validation and separate verification-adequacy review remain pending. This is
-  not human result approval, merge or deployment. OC-1/3/4/6/8 remain unresolved;
-  OC-7 remains the separate PR297 dependency.
+  assigned. The human-approved OC-2/OC-5 disposal slice completed independent
+  technical and verification-adequacy review and merged in PR302. Final evidence
+  records 96 package passes with seven Windows skips, 6,332 Python passes with
+  45 skips and two expected failures, and isolated native 2.0.24/2.0.22 checks.
+  These results supersede the earlier 93-test/source-only checkpoint; installed
+  deployment is not established here. OC-1/4/6/8 remain open; OC-3 and OC-7 retain
+  their separate PR306 and PR297 qualification/merge dependencies.
 - Authorize repository fixes and isolated tests under the user's request; use
   Agent Workflow before any implementation edits. Classify the actual combined
   change and trigger architecture/API/persistence review for any wake-authority
@@ -330,12 +355,12 @@ bug or discard it without evidence.
 - Canonical feature identity: `roadmap/features/fix-opencode-plugin-reliability.md`.
   The manager reviews the combined documentation before publication; temporary
   checkout and branch coordination stays in the private handoff.
-- First bounded implementation slice: OC-2 plus OC-5, which share disposal/lifecycle
-  callers. OC-1 safe anchor retirement gets a separate contract review, concurrently
-  at planning only; no guessed completion or ACK-only retirement. OC-3 capture
-  idempotence follows; then OC-4 and OC-6 optional I/O and event-loop latency.
-  Reconcile OC-7 with PR297 and qualify OC-8 natively in an isolated fixture.
-  Slice boundaries are proposed sequencing, not a fixed architecture decision.
+- The first bounded slice, OC-2 plus OC-5, is merged; do not reimplement it.
+  Reconcile the reviewed OC-3/OC-7 follow-ups in PR306/PR297 without duplicating
+  their work. OC-1 safe anchor retirement needs its separate contract review;
+  no guessed completion or ACK-only retirement. OC-4/OC-6 optional I/O and
+  event-loop latency remain open, and OC-8 needs isolated native qualification.
+  Remaining slice boundaries are proposed sequencing, not a fixed architecture.
 
 ## Notes and Evidence Baseline
 

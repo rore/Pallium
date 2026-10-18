@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import os
 import secrets
 import signal
+import socket
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -187,19 +190,95 @@ def build_snapshot_command(interval_seconds: int) -> list[str]:
     return [sys.executable, "-m", "app.snapshot", "--interval-seconds", str(interval_seconds)]
 
 
+_API_START_TIMEOUT_SECONDS = 120.0
+_API_HEALTH_BODY_MAX_BYTES = 64 * 1024
+
+
+def _probe_initialized_health(
+    host: str, port: int, timeout: float, *, fail_fast: bool = False,
+) -> bool | None:
+    """Accept initialized health; optionally distinguish terminal startup failure."""
+    if timeout <= 0:
+        return False
+    deadline = time.monotonic() + timeout
+    connection = http.client.HTTPConnection(host, port, timeout=timeout)
+    watchdog: threading.Timer | None = None
+    try:
+        connection.request("GET", "/health")
+        remaining = deadline - time.monotonic()
+        probe_socket = connection.sock
+        if remaining <= 0 or probe_socket is None:
+            return False
+        probe_socket.settimeout(remaining)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+
+        def abort_at_deadline() -> None:
+            # Per-read socket timeouts reset; close trickled responses at the absolute deadline.
+            try:
+                probe_socket.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            probe_socket.close()
+
+        timer = threading.Timer(remaining, abort_at_deadline)
+        timer.daemon = True
+        timer.start()
+        watchdog = timer
+        response = connection.getresponse()
+        body = response.read(_API_HEALTH_BODY_MAX_BYTES + 1)
+        if len(body) > _API_HEALTH_BODY_MAX_BYTES:
+            return False
+        health = json.loads(body.decode("utf-8"))
+        if not isinstance(health, dict):
+            return False
+        status = health.get("status")
+        initialized = health.get("initialized")
+        if not isinstance(status, str):
+            return False
+        if (
+            fail_fast and response.status == 503 and status == "failed"
+            and initialized is False and health.get("ready") is False
+            and health.get("initialization_error") == "service_initialization_failed"
+            and time.monotonic() < deadline
+        ):
+            return None
+        if initialized is True:
+            valid = (response.status == 503 and status == "initializing") or (
+                response.status == 200 and status in {"ok", "degraded"}
+            )
+        else:
+            # Older servers have no initialized field; accept only explicit healthy HTTP 200.
+            valid = (
+                "initialized" not in health
+                and response.status == 200
+                and status in {"ok", "degraded"}
+            )
+        return valid and time.monotonic() < deadline
+    except (http.client.HTTPException, OSError, RuntimeError, UnicodeDecodeError, ValueError):
+        return False
+    finally:
+        if watchdog is not None:
+            watchdog.cancel()
+            watchdog.join()
+        connection.close()
+
+
 def _wait_for_api(
     host: str,
     port: int,
     *,
-    timeout: float = 30.0,
+    timeout: float = _API_START_TIMEOUT_SECONDS,
     sleep_fn: Callable[[float], None] = time.sleep,
     process: subprocess.Popen | None = None,
     expected_nonce: str | None = None,
     run_dir: Path | None = None,
+    stop: object | None = None,
     grace_period: float = 3.0,
     clock: Callable[[], float] = time.monotonic,
 ) -> bool:
-    """Block until the API server accepts connections, or timeout/crash.
+    """Block until the owned API reports initialized health, or timeout/crash.
 
     Returns True if the API became ready, False if it exited or timed out.
 
@@ -223,6 +302,8 @@ def _wait_for_api(
     tcp_first_seen: float | None = None
     foreign_bind_seen = False
     while clock() < deadline:
+        if stop is not None and getattr(stop, "requested", False):
+            return False
         if process is not None and process.poll() is not None:
             return False
         try:
@@ -233,29 +314,47 @@ def _wait_for_api(
             sleep_fn(0.5)
             continue
 
-        # TCP succeeded.
+        # TCP succeeded; preserve the token/legacy/grace ownership gate first.
+        verified_owned = False
         if expected_nonce is None or run_dir is None:
-            return True  # legacy / no self-id requested
-
-        token_path = run_dir / "api_token"
-        token_match = _check_token(token_path, expected_nonce)
-        if token_match is True:
-            return True
-        if token_match is False:
-            # Mismatched nonce — definitive proof of a foreign bind. Never
-            # trust the missing-token grace path after seeing this; if the
-            # orphan deletes the file mid-probe, we must not silently accept.
-            foreign_bind_seen = True
+            candidate = True  # legacy / no self-id requested
         else:
-            # token_match is None: file absent or unreadable. Apply the grace
-            # period only if we have NOT seen a foreign-bind marker.
-            if not foreign_bind_seen:
+            token_match = _check_token(run_dir / "api_token", expected_nonce)
+            candidate = token_match is True
+            verified_owned = candidate and process is not None and process.poll() is None
+            if token_match is False:
+                # Never let a later missing token launder a foreign bind through grace.
+                foreign_bind_seen = True
+            elif not candidate and not foreign_bind_seen:
                 now = clock()
                 if tcp_first_seen is None:
                     tcp_first_seen = now
-                elif now - tcp_first_seen >= grace_period:
-                    return True
-        sleep_fn(0.5)
+                else:
+                    candidate = now - tcp_first_seen >= grace_period
+
+        if candidate:
+            remaining = deadline - clock()
+            health = (
+                _probe_initialized_health(host, port, min(1.0, remaining), fail_fast=verified_owned)
+                if remaining > 0 else False
+            )
+            if health is None and verified_owned:
+                if (
+                    clock() < deadline
+                    and not (stop is not None and getattr(stop, "requested", False))
+                    and process.poll() is None
+                    and _check_token(run_dir / "api_token", expected_nonce) is True
+                ):
+                    return False
+            if health:
+                # HTTP can block; recheck every startup fence before accepting.
+                if clock() < deadline and not (stop is not None and getattr(stop, "requested", False)):
+                    if process is None or process.poll() is None:
+                        return True
+        remaining = deadline - clock()
+        if remaining <= 0:
+            return False
+        sleep_fn(min(0.5, remaining))
     return False
 
 
@@ -336,19 +435,21 @@ def _start_api_with_retry(
             return None
         nonce = token_fn()
         env = {**os.environ, "PALLIUM_API_LAUNCH_TOKEN": nonce}
+        started = time.monotonic()
         proc = popen_factory(cmd, cwd=os.getcwd(), env=env)
-        emit_runtime_log("supervisor", f"started api pid={proc.pid} host={host} port={port} attempt={attempt}")
+        emit_runtime_log("supervisor", f"started api pid={proc.pid} host={host} port={port} attempt={attempt} budget_seconds={_API_START_TIMEOUT_SECONDS:.0f}")
         if wait_for_api_fn(
-            host, port, timeout=30.0, process=proc,
-            expected_nonce=nonce, run_dir=run_dir,
+            host, port, timeout=_API_START_TIMEOUT_SECONDS, process=proc,
+            expected_nonce=nonce, run_dir=run_dir, stop=stop,
         ):
+            emit_runtime_log("supervisor", f"api startup outcome=ready pid={proc.pid} attempt={attempt} elapsed_seconds={time.monotonic() - started:.3f}")
             return proc
+        emit_runtime_log("supervisor", f"api startup outcome=unverified pid={proc.pid} attempt={attempt} elapsed_seconds={time.monotonic() - started:.3f}", stderr=True)
         # wait_for_api returned False. Two sub-cases:
         #   (a) process is alive but probe failed (timeout, foreign bind,
-        #       missing token past grace). Under self-id mode this is NOT
-        #       a "slow startup, give it a chance" scenario — it likely
-        #       means a previous-generation orphan is holding the port and
-        #       our child can never bind. Kill the proc and retry rather
+        #       missing token past grace). This may be slow startup or a
+        #       foreign bind; neither is verified readiness. Kill and retry
+        #       only after the bounded startup allowance rather
         #       than handing the supervisor a child that will never serve.
         #   (b) process exited on its own — fall through to retry log.
         if proc.poll() is None:
@@ -367,6 +468,8 @@ def _start_api_with_retry(
                 f"api startup failed attempt={attempt}/{_API_START_MAX_ATTEMPTS} code={proc.returncode}",
                 stderr=True,
             )
+        if stop is not None and getattr(stop, "requested", False):
+            return None
         if attempt < _API_START_MAX_ATTEMPTS:
             sleep_fn(_API_START_BACKOFF_SECONDS * attempt)
     return None
@@ -458,6 +561,8 @@ def run_supervisor(
                 stop=stop,
             )
             if server is None:
+                if stop.requested:
+                    return 0
                 emit_runtime_log("supervisor", "api failed to start after retries, giving up", stderr=True)
                 return 1
             slots.append(_ManagedSlot(
@@ -470,6 +575,8 @@ def run_supervisor(
             ))
 
             for index in range(1, parsed.processors + 1):
+                if stop.requested:
+                    break
                 cmd = build_processor_command(index)
                 proc = _popen_with_log(cmd, cwd=os.getcwd())
                 slots.append(_ManagedSlot(
@@ -481,6 +588,8 @@ def run_supervisor(
                 ))
                 emit_runtime_log("supervisor", f"started processor pid={proc.pid} processor_id=supervisor-processor-{index}")
             for index in range(1, parsed.cleaners + 1):
+                if stop.requested:
+                    break
                 cmd = build_cleaner_command(index)
                 proc = _popen_with_log(cmd, cwd=os.getcwd())
                 slots.append(_ManagedSlot(
@@ -492,7 +601,7 @@ def run_supervisor(
                 ))
                 emit_runtime_log("supervisor", f"started cleaner pid={proc.pid} cleaner_id=supervisor-cleaner-{index}")
 
-            if snapshot_config.enabled and snapshot_config.snapshot_path:
+            if not stop.requested and snapshot_config.enabled and snapshot_config.snapshot_path:
                 cmd = build_snapshot_command(snapshot_config.interval_seconds)
                 proc = _popen_with_log(cmd, cwd=os.getcwd())
                 slots.append(_ManagedSlot(
@@ -510,8 +619,12 @@ def run_supervisor(
             while True:
                 if should_stop is not None and should_stop():
                     stop.requested = True
+                if stop.requested:
+                    break
                 for slot in slots:
                     return_code = slot.process.poll()
+                    if stop.requested:
+                        break
                     if return_code is None:
                         continue
                     emit_runtime_log(
@@ -521,7 +634,7 @@ def run_supervisor(
                     )
                     if not slot.restartable:
                         # non-restartable slot exit is always fatal
-                        exit_code = return_code
+                        exit_code = return_code or 1
                         stop.requested = True
                         break
                     # Check restart budget
@@ -537,7 +650,7 @@ def run_supervisor(
                             f"within {_RAPID_RESTART_WINDOW_SECONDS}s, shutting down",
                             stderr=True,
                         )
-                        exit_code = return_code
+                        exit_code = return_code or 1
                         stop.requested = True
                         break
                     # Restart the child
@@ -551,7 +664,9 @@ def run_supervisor(
                             stop=stop,
                         )
                         if new_proc is None:
-                            stop.requested = True
+                            if not stop.requested:
+                                exit_code = 1
+                                stop.requested = True
                             break
                     else:
                         new_proc = _popen_with_log(slot.command, cwd=os.getcwd())
@@ -563,6 +678,8 @@ def run_supervisor(
                     if slot.use_retry_start:
                         _probe_failures = 0
                         _last_probe = clock()  # give new API a full probe interval before first check
+                    if stop.requested:
+                        break
                 if stop.requested:
                     break
                 # Periodic TCP health probe — detects the WinError 64 stuck-socket case

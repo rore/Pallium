@@ -150,6 +150,61 @@ def test_validate_snapshot_empty_file(tmp_path: Path) -> None:
     assert _validate_snapshot(empty_path) is False
 
 
+@pytest.mark.parametrize("failed_role", ["main", "relay"])
+@pytest.mark.parametrize("failure", ["destination_open", "destination_close"])
+def test_paired_snapshot_closes_owned_connections_on_destination_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failed_role: str, failure: str,
+) -> None:
+    from types import SimpleNamespace
+
+    import app.snapshot as snapshot_module
+
+    main = tmp_path / "main.db"
+    relay = tmp_path / "relay.db"
+    snapshot_dir = tmp_path / "snapshots"
+    snapshot_dir.mkdir()
+    _make_test_db(main)
+    _make_test_db(relay)
+
+    original_connect = stdlib_sqlite3.connect
+    sentinel = RuntimeError(f"{failure} failed")
+    handles: list[stdlib_sqlite3.Connection] = []
+    failed_once = False
+
+    class DestinationCloseFailure(stdlib_sqlite3.Connection):
+        def close(self) -> None:
+            super().close()
+            raise sentinel
+
+    def connect(database, *args, **kwargs):
+        nonlocal failed_once
+        is_destination = str(database).endswith(f"-{failed_role}.tmp")
+        if is_destination and failure == "destination_open" and not failed_once:
+            failed_once = True
+            raise sentinel
+        if is_destination and failure == "destination_close" and not failed_once:
+            failed_once = True
+            kwargs["factory"] = DestinationCloseFailure
+        connection = original_connect(database, *args, **kwargs)
+        handles.append(connection)
+        return connection
+
+    monkeypatch.setattr(snapshot_module, "sqlite3", SimpleNamespace(connect=connect))
+    try:
+        with pytest.raises(RuntimeError) as raised:
+            create_snapshot({"main": str(main), "relay": str(relay)}, snapshot_dir)
+        assert raised.value is sentinel
+        assert failed_once
+        assert not list(snapshot_dir.iterdir())
+        assert len(handles) >= 1
+        for handle in handles:
+            with pytest.raises(stdlib_sqlite3.ProgrammingError, match="closed database"):
+                handle.execute("SELECT 1")
+    finally:
+        for handle in handles:
+            stdlib_sqlite3.Connection.close(handle)
+
+
 def test_snapshot_create_produces_valid_db(tmp_path: Path) -> None:
     db_path = tmp_path / "live.db"
     snapshot_dir = tmp_path / "snapshots"

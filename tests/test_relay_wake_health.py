@@ -5,13 +5,17 @@ from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 import subprocess
+import sys
 import threading
+import time
+import traceback
 
 import pytest
 from fastapi.testclient import TestClient
 
 from app.main import create_app
 from app.claude_wake import ClaudeWakeReconciler
+from app import codex_bridge_pipe as bridge
 from storage.sqlite_schema import RelayCodexWakeReservationRecord, RelayCodexWakeStateRecord, RelayDeliveryRecord, RelayMessageRecord, RelaySessionRecord
 from tests.test_dashboard import _test_config
 
@@ -37,6 +41,38 @@ def _assert_snapshot_shape(snapshot: dict) -> None:
     assert snapshot["last_recovery_progress_at"] is None
     assert snapshot["trace_loss_evidence"] == "not_recorded"
     assert snapshot["trace_loss_count"] is None
+    enrollment = snapshot["native_enrollment"]
+    assert enrollment["state"] in {
+        "unavailable", "never_registered", "registered", "retained_disconnected",
+        "authority_cleared", "unresolved_handles", "released",
+    }
+    assert enrollment["evidence"] in {"unavailable", "cached_lifecycle_observation"}
+    assert enrollment["accepted"] in {True, False, None}
+    assert enrollment["registration_remembered"] in {True, False, None}
+    assert enrollment["custody_present"] in {True, False, None}
+    assert enrollment["unresolved_handles"] in {True, False, None}
+    assert enrollment["continuity_opted_in"] in {True, False, None}
+    assert enrollment["last_failure_stage"] in {None, "register", "maintenance", "reopen", "state-read", "owner-result"}
+    assert enrollment["last_failure_reason"] in {
+        None, "busy", "deadline", "file-unavailable", "file-write-failed", "invalid-message",
+        "invalid-path", "invalid-policy", "invalid-policy-lock", "invalid-response",
+        "message-limit", "native-failed", "native-tool-failed", "path-unavailable",
+        "peer-gone", "peer-mismatch", "peer-unavailable", "policy-busy", "policy-changed",
+        "policy-inactive", "stopped", "timeout", "transport-failed", "unsafe-acl",
+        "unsafe-owner", "unsafe-path", "unsupported-acl", "registration-missing",
+    } or enrollment["state"] == "unavailable"
+    fields = {
+        "state", "evidence", "observed_at", "accepted", "registration_remembered",
+        "custody_present", "unresolved_handles", "continuity_opted_in",
+        "last_failure_stage", "last_failure_reason",
+    }
+    if enrollment["state"] == "unavailable":
+        assert set(enrollment) == fields | {"reason"}
+        assert enrollment["reason"] in {"service_missing", "snapshot_unavailable"}
+    else:
+        assert set(enrollment) == fields
+        assert enrollment["evidence"] == "cached_lifecycle_observation"
+        datetime.fromisoformat(enrollment["observed_at"])
 
     expected = {
         (None, None): ("unknown", "authority_unavailable"),
@@ -119,16 +155,23 @@ def world(tmp_path, monkeypatch):
     config = replace(_test_config(tmp_path), relay_sqlite_url=f"sqlite:///{tmp_path / 'relay.db'}")
     app = create_app(config)
     storage = app.state.pallium_service._storage
-    http = TestClient(app)  # No live reconciliation lifecycle; native boundary is fake.
-    registry = app.state.codex_wake_registry
-    assert registry.initialize(old_owner_drained=True)
-    for session in ("sender", "target"):
-        assert http.post("/relay/turn", json={"runtime": "codex", "session_ref": session, **SCOPE}).status_code == 200
+    http = None
     try:
+        http = TestClient(app)  # No live reconciliation lifecycle; native boundary is fake.
+        registry = app.state.codex_wake_registry
+        assert registry.initialize(old_owner_drained=True)
+        for session in ("sender", "target"):
+            assert http.post("/relay/turn", json={"runtime": "codex", "session_ref": session, **SCOPE}).status_code == 200
         yield http, storage, registry, native
     finally:
-        http.close()
-        storage.close()
+        try:
+            if http is not None:
+                http.close()
+        finally:
+            try:
+                app.state.pallium_service.close()
+            finally:
+                storage.close()
 
 
 def _send(world, outcome=None):
@@ -152,6 +195,84 @@ def _view(world, path):
     snapshot = response.json()["relay_wake"]
     _assert_snapshot_shape(snapshot)
     return snapshot
+
+
+@pytest.mark.parametrize("path", VIEWS)
+@pytest.mark.parametrize("case,state", [
+    ("missing", "unavailable"), ("malformed", "unavailable"),
+    ("never", "never_registered"), ("registered", "registered"),
+    ("disconnected", "retained_disconnected"), ("cleared", "authority_cleared"),
+    ("unresolved", "unresolved_handles"), ("released", "released"),
+])
+def test_native_enrollment_is_cached_lifecycle_evidence(world, tmp_path, path, case, state):
+    _, _, registry, _ = world
+    if case != "missing":
+        data = {
+            "observed_at": datetime.now(timezone.utc).isoformat(),
+            "accepted": case not in {"never", "malformed"},
+            "registration_remembered": case in {"registered", "disconnected"},
+            "custody_present": case in {"registered", "cleared", "unresolved"},
+            "unresolved_handles": case == "unresolved",
+            "continuity_opted_in": case in {"registered", "disconnected", "released"},
+            "last_failure_stage": "register" if case in {"disconnected", "released"} else None,
+            "last_failure_reason": "peer-mismatch" if case in {"disconnected", "released"} else None,
+        }
+        if case == "malformed":
+            data["private-path-sentinel"] = "must not be returned"
+        service = bridge.RetainedService(tmp_path)
+        service._enrollment_diagnostics = data
+        registry.retained_service = service
+    enrollment = _view(world, path)["native_enrollment"]
+    assert enrollment["state"] == state
+    assert "private-path-sentinel" not in json.dumps(enrollment)
+    if case == "missing":
+        assert enrollment["reason"] == "service_missing"
+    elif case == "malformed":
+        assert enrollment["reason"] == "snapshot_unavailable"
+    else:
+        assert enrollment["evidence"] == "cached_lifecycle_observation"
+
+
+@pytest.mark.parametrize("path", VIEWS)
+@pytest.mark.parametrize("unknown_reason", [False, True])
+def test_native_enrollment_preserves_missing_registration_evidence(world, tmp_path, path, unknown_reason):
+    service = bridge.RetainedService(tmp_path)
+    service._publish_enrollment_diagnostics(
+        accepted=True, registration_remembered=False, custody_present=False,
+        unresolved_handles=False, continuity_opted_in=True,
+    )
+    service._record_enrollment_failure("reopen", "registration-missing")
+    if unknown_reason:
+        service._enrollment_diagnostics["last_failure_reason"] = "unknown-reason-sentinel"
+    world[2].retained_service = service
+    enrollment = _view(world, path)["native_enrollment"]
+    if unknown_reason:
+        assert enrollment["state"] == "unavailable"
+        assert enrollment["reason"] == "snapshot_unavailable"
+        assert enrollment["last_failure_reason"] is None
+        assert "unknown-reason-sentinel" not in json.dumps(enrollment)
+    else:
+        assert enrollment["state"] == "released"
+        assert enrollment["evidence"] == "cached_lifecycle_observation"
+        assert enrollment["accepted"] is True
+        assert enrollment["registration_remembered"] is False
+        assert enrollment["custody_present"] is False
+        assert enrollment["unresolved_handles"] is False
+        assert enrollment["continuity_opted_in"] is True
+        assert enrollment["last_failure_stage"] == "reopen"
+        assert enrollment["last_failure_reason"] == "registration-missing"
+
+
+@pytest.mark.parametrize("path", VIEWS)
+def test_native_enrollment_never_invokes_foreign_getter(world, path):
+    class ForeignService:
+        def enrollment_diagnostics(self):
+            pytest.fail("health invoked an unknown service getter")
+
+    world[2].retained_service = ForeignService()
+    enrollment = _view(world, path)["native_enrollment"]
+    assert enrollment["state"] == "unavailable"
+    assert enrollment["reason"] == "snapshot_unavailable"
 
 
 @pytest.mark.parametrize("path", VIEWS)
@@ -359,35 +480,88 @@ def test_failed_snapshot_read_is_unknown_and_bounded(world, path, monkeypatch):
 
 
 @pytest.mark.parametrize("path", VIEWS)
-def test_status_does_not_take_native_guard_or_mutate_delivery(world, path):
+def test_status_does_not_take_native_guard_or_mutate_delivery(world, path, monkeypatch):
     _, delivery = _send(world, "uncertain")
     http, _, registry, native = world
     before = registry.reservations()
     baseline_native = len(native)
     release, held = threading.Event(), threading.Event()
+    real_guard, forbidden_acquisitions = registry._lock, []
+
+    class ObserveNativeGuard:
+        def acquire(self, *args, **kwargs):
+            if threading.current_thread() is not owner:
+                forbidden_acquisitions.append(threading.get_ident())
+                raise AssertionError("status attempted native initiation ownership")
+            return real_guard.acquire(*args, **kwargs)
+
+        def release(self):
+            return real_guard.release()
+
+        def __enter__(self):
+            self.acquire()
+            return self
+
+        def __exit__(self, *_args):
+            self.release()
+
     def own_native():
         with registry._lock:
             held.set()
             release.wait()
     owner = threading.Thread(target=own_native, daemon=True)
-    owner.start()
-    assert held.wait(1)
     # Separate caller avoids a hanging test if health accidentally takes the guard.
-    result, done = [], threading.Event()
+    result, errors, phases, done = [], [], [], threading.Event()
     def observe():
         try:
-            result.append(_view(world, path))
+            phases.append(("request_started", time.monotonic()))
+            response = http.get(path)
+            phases.append(("http_returned", time.monotonic()))
+            assert response.status_code == 200, response.text
+            snapshot = response.json()["relay_wake"]
+            _assert_snapshot_shape(snapshot)
+            result.append(snapshot)
+            phases.append(("view_validated", time.monotonic()))
+        except BaseException:
+            errors.append(traceback.format_exc(limit=12))
         finally:
             done.set()
     reader = threading.Thread(target=observe, daemon=True)
-    reader.start()
-    try:
-        assert done.wait(2), "status waited for native initiation ownership"
-        assert result[0]["unresolved_uncertain_count"] == 1
-    finally:
-        release.set()
-        owner.join(2)
-        reader.join(2)
+    reader_started = False
+    with monkeypatch.context() as guard_patch:
+        guard_patch.setattr(registry, "_lock", ObserveNativeGuard())
+        owner.start()
+        try:
+            assert held.wait(1)
+            phases.append(("reader_start", time.monotonic()))
+            reader.start()
+            reader_started = True
+            # Completion is orchestration; the proxy directly detects forbidden guard use.
+            completed = done.wait(5)
+            diagnostics = None
+            if not completed:
+                frames = sys._current_frames()
+                threads = sorted(threading.enumerate(), key=lambda thread: (
+                    thread not in (reader, owner),
+                    not any(name in thread.name.lower() for name in ("anyio", "portal")),
+                ))[:12]
+                diagnostics = {
+                    "phases": list(phases), "errors": list(errors),
+                    "stacks": {
+                        f"{thread.name}:{thread.ident}": "".join(traceback.format_stack(frames[thread.ident], limit=12))[-4096:]
+                        for thread in threads if thread.ident in frames
+                    },
+                }
+            assert not forbidden_acquisitions, forbidden_acquisitions
+            assert completed, f"status observation did not complete: {diagnostics}"
+            assert not errors, errors
+            assert result[0]["unresolved_uncertain_count"] == 1
+        finally:
+            release.set()
+            owner.join()
+            if reader_started:
+                reader.join()
+    assert registry._lock is real_guard
     assert not owner.is_alive() and not reader.is_alive()
     assert registry.reservations() == before and len(native) == baseline_native
     status = http.get(f"/relay/messages/{delivery['message_id']}", params=SCOPE).json()["deliveries"][0]

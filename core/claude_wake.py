@@ -5,6 +5,8 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field, replace
 import json
+import hashlib
+import logging
 import math
 import os
 import re
@@ -26,6 +28,97 @@ MAX_CONTAINER_CHARS = 512
 MAX_SOCKET_CHARS = 4096
 MAX_TOKEN_CHARS = 8192
 _ENDPOINT_RE = re.compile(r"^relay-session-[0-9a-f]{32}$")
+logger = logging.getLogger(__name__)
+
+
+@contextmanager
+def _open_atomic_state_file(path: Path):
+    """Let atomic replacement proceed while an existing read snapshot is open."""
+    name = os.fspath(path)
+    if "\x00" in name:
+        raise ValueError("embedded null character")
+    if os.name != "nt":
+        with path.open("r", encoding="utf-8") as source:
+            yield source
+        return
+    import ctypes
+    from ctypes import wintypes
+    import msvcrt
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    create_file = kernel32.CreateFileW
+    create_file.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                           wintypes.LPVOID, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+    create_file.restype = wintypes.HANDLE
+    close_handle = kernel32.CloseHandle
+    close_handle.argtypes = [wintypes.HANDLE]
+    close_handle.restype = wintypes.BOOL
+    # GENERIC_READ, FILE_SHARE_READ|WRITE|DELETE, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL.
+    handle = create_file(name, 0x80000000, 7, None, 3, 0x80, None)
+    if handle == ctypes.c_void_p(-1).value:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        fd = msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY)
+    except BaseException:
+        close_handle(handle)
+        raise
+    try:
+        with os.fdopen(fd, "r", encoding="utf-8", closefd=False) as source:
+            yield source
+    finally:
+        os.close(fd)
+
+
+def _replace_atomic_state_file(source: Path, destination: Path) -> None:
+    source_name, destination_name = os.fspath(source), os.fspath(destination)
+    if "\x00" in source_name or "\x00" in destination_name:
+        raise ValueError("embedded null character")
+    if os.name != "nt":
+        os.replace(source_name, destination_name)
+        return
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    create_file = kernel32.CreateFileW
+    create_file.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                           wintypes.LPVOID, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+    create_file.restype = wintypes.HANDLE
+    close_handle = kernel32.CloseHandle
+    close_handle.argtypes = [wintypes.HANDLE]
+    close_handle.restype = wintypes.BOOL
+    rename = kernel32.SetFileInformationByHandle
+    rename.argtypes = [wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD]
+    rename.restype = wintypes.BOOL
+
+    class RenameInfo(ctypes.Structure):
+        _fields_ = [("Flags", wintypes.DWORD), ("RootDirectory", wintypes.HANDLE),
+                    ("FileNameLength", wintypes.DWORD), ("FileName", wintypes.WCHAR * 1)]
+
+    filename = os.path.abspath(destination_name).encode("utf-16-le", "surrogatepass")
+    buffer = ctypes.create_string_buffer(ctypes.sizeof(RenameInfo) + len(filename) + 2)
+    info = ctypes.cast(buffer, ctypes.POINTER(RenameInfo)).contents
+    info.Flags = 3  # REPLACE_IF_EXISTS | POSIX_SEMANTICS.
+    info.RootDirectory = None
+    info.FileNameLength = len(filename)
+    ctypes.memmove(ctypes.addressof(buffer) + RenameInfo.FileName.offset, filename, len(filename))
+    # DELETE, shared read/write/delete, OPEN_EXISTING, OPEN_REPARSE_POINT.
+    handle = create_file(source_name, 0x10000, 7, None, 3, 0x200080, None)
+    if handle == ctypes.c_void_p(-1).value:
+        raise ctypes.WinError(ctypes.get_last_error())
+    fallback = False
+    try:
+        if not rename(handle, 22, buffer, len(buffer)):
+            error = ctypes.get_last_error()
+            if error in {1, 50, 87}:
+                fallback = True
+            else:
+                raise ctypes.WinError(error)
+    finally:
+        if not close_handle(handle):
+            raise ctypes.WinError(ctypes.get_last_error())
+    if fallback:
+        os.replace(source_name, destination_name)
 
 
 @dataclass(frozen=True)
@@ -42,9 +135,15 @@ class _Registration:
     delivery_id: str | None = None
     attempted_at: float | None = None
     recipient_endpoint_id: str | None = None
+    admission_id: str | None = None
 
 
 Transport = Callable[[str, str], object]
+
+
+def _revocation_file(runtime: str, session_ref: str, container_ref: str, admission_id: str) -> str:
+    identity = json.dumps([runtime, session_ref, container_ref, admission_id], ensure_ascii=False, separators=(",", ":"))
+    return "revoke-" + hashlib.sha256(identity.encode("utf-8")).hexdigest() + ".json"
 
 
 def _valid(value: object, maximum: int) -> bool:
@@ -182,16 +281,19 @@ class ClaudeWakeRegistry:
                 raise ValueError("registration capacity reached")
             self._generation += 1
             existing = self._registrations.get(key)
+            # Reader-first stage: new admissions remain legacy; native transitions
+            # preserve any modern ID already loaded from current durable state.
             registration = (
                 replace(
                     existing, socket_path=socket_path, token=token,
-                    generation=self._generation,
+                    generation=self._generation, admission_id=None,
                     expires_at=(float("inf") if self._state_dir else self._clock() + TTL_SECONDS),
                 )
                 if existing is not None and existing.state == "wake_inflight"
                 else _Registration(
                     runtime=runtime, session_ref=session_ref, container_ref=container_ref,
                     socket_path=socket_path, token=token, generation=self._generation,
+                    admission_id=None,
                     expires_at=(float("inf") if self._state_dir else self._clock() + TTL_SECONDS),
                     idle=idle, state="idle" if idle else "busy",
                 )
@@ -429,6 +531,9 @@ class ClaudeWakeRegistry:
                 intent = self._read_json(path)
                 if not isinstance(intent, dict) or "actor_ref" in intent:
                     continue
+                if path.name.startswith("revoke-"):
+                    self._recover_revocation_locked(path, intent)
+                    continue
                 scope = tuple(
                     intent.get(key)
                     for key in ("runtime", "session_ref", "container_ref")
@@ -475,6 +580,44 @@ class ClaudeWakeRegistry:
                     except OSError:
                         pass
 
+    def _recover_revocation_locked(self, path: Path, notice: dict) -> None:
+        keys = {"runtime", "session_ref", "container_ref", "admission_id", "closed"}
+        if (
+            set(notice) != keys or notice.get("closed") is not True
+            or notice.get("runtime") != RUNTIME
+            or not _valid(notice.get("session_ref"), MAX_SESSION_CHARS)
+            or not _valid(notice.get("container_ref"), MAX_CONTAINER_CHARS)
+            or not _valid(notice.get("admission_id"), 128)
+            or path.name != _revocation_file(*(notice[key] for key in ("runtime", "session_ref", "container_ref", "admission_id")))
+        ):
+            return
+        runtime, session_ref, container_ref = (notice[key] for key in ("runtime", "session_ref", "container_ref"))
+        with self._scoped_intent_lock(runtime, session_ref, container_ref) as acquired:
+            if not acquired:
+                return
+            current = self._registrations.get((runtime, session_ref, container_ref))
+            if current is not None and current.admission_id == notice["admission_id"]:
+                pending = self._read_intent_locked(runtime, session_ref, container_ref)
+                if (
+                    isinstance(pending, dict) and pending.get("closed") is not True
+                    and type(pending.get("idle")) is bool and _valid(pending.get("intent_id"), 128)
+                    and self._valid_registration(*(pending.get(key) for key in ("runtime", "session_ref", "container_ref", "socket_path", "token")))
+                    and all(pending.get(key) == notice[key] for key in ("runtime", "session_ref", "container_ref"))
+                ):
+                    return
+                if current.state != "wake_inflight":
+                    updated = dict(self._registrations)
+                    updated.pop((runtime, session_ref, container_ref))
+                    if not self._write_canonical_locked(updated):
+                        return
+                    self._registrations = updated
+            # Never remove the scoped intent: it may represent a competing admission.
+            if self._read_json(path) == notice:
+                try:
+                    path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+
     def rearm_inflight(self, **_kwargs: object) -> bool:
         """Compatibility no-op: elapsed time never releases a reservation."""
         return False
@@ -498,6 +641,10 @@ class ClaudeWakeRegistry:
                 }.items()):
                     return False
             registration = self._registrations.get((runtime, session_ref, container_ref))
+            if self._state_dir is not None and "expected_admission_id" in intent:
+                if registration is None or registration.admission_id != intent["expected_admission_id"]:
+                    self._delete_intent_locked(runtime, session_ref, container_ref, expected_intent_id=intent_id)
+                    return False
             if registration is not None and (registration.container_ref != container_ref):
                 return False
             if registration is not None and registration.state == "wake_inflight":
@@ -628,7 +775,9 @@ class ClaudeWakeRegistry:
             "generation", "expires_at", "idle", "state", "delivery_id",
             "attempted_at",
         }
-        if set(item) not in (required, required | {"recipient_endpoint_id"}):
+        if (not required <= set(item)
+            or set(item) - required - {"recipient_endpoint_id", "admission_id"}
+            or ("admission_id" in item and not _valid(item["admission_id"], 128))):
             return False
         if (
             type(item["generation"]) is not int
@@ -737,7 +886,11 @@ class ClaudeWakeRegistry:
     def _write_canonical_locked(self, registrations: dict[tuple[str, str, str], _Registration]) -> bool:
         if self._canonical is None:
             return True
-        payload = {"version": 1, "registrations": [asdict(item) for item in registrations.values()]}
+        rows = [asdict(item) for item in registrations.values()]
+        for row in rows:
+            if row["admission_id"] is None:
+                row.pop("admission_id")
+        payload = {"version": 1, "registrations": rows}
         return self._atomic_write(self._canonical, payload)
 
     def _quarantine_or_mark_unusable_locked(self) -> bool:
@@ -763,6 +916,7 @@ class ClaudeWakeRegistry:
         return True
 
     def _atomic_write(self, path: Path, payload: dict) -> bool:
+        phase = "mkdir"
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             if os.name != "nt":
@@ -770,6 +924,7 @@ class ClaudeWakeRegistry:
                     os.chmod(path.parent, 0o700)
                 except OSError:
                     pass
+            phase = "temporary_write"
             temp = path.with_name(path.name + ".tmp")
             temp.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
             if os.name != "nt":
@@ -777,9 +932,21 @@ class ClaudeWakeRegistry:
                     os.chmod(temp, 0o600)
                 except OSError:
                     pass
-            os.replace(temp, path)
+            phase = "atomic_replace"
+            _replace_atomic_state_file(temp, path)
             return True
-        except (OSError, TypeError, ValueError):
+        except (OSError, TypeError, ValueError) as error:
+            try:
+                errno = getattr(error, "errno", None)
+                winerror = getattr(error, "winerror", None)
+                logger.warning(
+                    "claude_wake_atomic_write_failed phase=%s error_type=%s errno=%s winerror=%s",
+                    phase, type(error).__name__,
+                    errno if type(errno) is int else None,
+                    winerror if type(winerror) is int else None,
+                )
+            except Exception:
+                pass
             return False
 
     @staticmethod
@@ -787,6 +954,8 @@ class ClaudeWakeRegistry:
         if path is None:
             return None
         try:
-            return json.loads(path.read_text(encoding="utf-8"))
+            with _open_atomic_state_file(path) as source:
+                contents = source.read()
+            return json.loads(contents)
         except (OSError, ValueError, json.JSONDecodeError):
             return None

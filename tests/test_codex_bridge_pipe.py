@@ -1964,6 +1964,39 @@ def test_inventory_stale_manifest_denies_before_native_access(tmp_path, monkeypa
 
 
 @native
+def test_inventory_bootstrap_unchanged_after_resolved_dispose(tmp_path, monkeypatch):
+    with inventory_running(tmp_path, monkeypatch, arm=False) as (service, client, directory, _):
+        wait_until(lambda: service.source is not None)
+        client.dispose()
+        wait_until(lambda: service.source is None)
+        assert client.bootstrap_unchanged()
+
+        service.stop()
+        path = directory / "active.json"
+        bridge._atomic_private(client.w, path, client.sid, encode(client.manifest))
+        assert client.bootstrap_unchanged()
+        changed = {**client.manifest, "epoch": "replacement"}
+        bridge._atomic_private(client.w, path, client.sid, encode(changed))
+        assert not client.bootstrap_unchanged()
+        path.unlink()
+        with pytest.raises(bridge.ShadowUnavailable):
+            client.bootstrap_unchanged()
+
+        with monkeypatch.context() as patch:
+            patch.setattr(bridge, "_read_private", lambda *_args: b"not-json")
+            with pytest.raises(bridge.ShadowUnavailable) as exc:
+                client.bootstrap_unchanged()
+            assert exc.value.category == "invalid-message"
+        with monkeypatch.context() as patch:
+            def inaccessible(*_args):
+                raise OSError("read denied")
+
+            patch.setattr(bridge, "_read_private", inaccessible)
+            with pytest.raises(OSError, match="read denied"):
+                client.bootstrap_unchanged()
+
+
+@native
 @pytest.mark.parametrize("ready_first", [False, True])
 def test_inventory_unarmed_eof_releases_source_slot(tmp_path, monkeypatch, ready_first):
     directory = bridge.prepare_inventory_service(tmp_path / "unarmed-home")

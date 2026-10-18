@@ -307,6 +307,55 @@ def test_service_reconcile_vector_index_delegates(test_db_url: str, tmp_path: Pa
     assert result == 0
 
 
+@requires_usearch
+def test_service_reconcile_vector_index_limits_strict_bootstrap_batch(test_db_url: str, tmp_path: Path) -> None:
+    """Strict startup reconciliation processes one bounded batch, not the backlog."""
+    from core.indexing import build_index_entry
+    from core.service import PalliumService
+
+    storage = SQLiteStorageProvider(test_db_url)
+    try:
+        for i in range(55):
+            storage.create_index_entry(build_index_entry(
+                target_kind="memory_object",
+                target_id=f"batch-{i}",
+                index_type="vector",
+                text_view=f"Text for batch entry {i}",
+                text_view_name="default.embedding",
+            ))
+        vector_index = VectorIndex.create_empty(
+            tmp_path / "svc-batch.index", dimensions=4, model_name="test-model",
+        )
+        service = PalliumService.__new__(PalliumService)
+        service._vector_embedder = VectorEmbedder(
+            storage, StubEmbeddingProvider(), index_holder=VectorIndexHolder(vector_index),
+        )
+
+        assert service.reconcile_vector_index(raise_errors=True) == 50
+        assert vector_index.entry_count() == 50
+        assert storage.count_index_entries_by_type("vector") == 55
+    finally:
+        storage.close()
+
+
+@requires_usearch
+def test_reconcile_raise_errors_is_opt_in(test_db_url: str, tmp_path: Path, monkeypatch) -> None:
+    storage = SQLiteStorageProvider(test_db_url)
+    try:
+        vector_index = VectorIndex.create_empty(tmp_path / "strict.index", dimensions=4, model_name="test-model")
+        embedder = VectorEmbedder(storage, StubEmbeddingProvider(), index_holder=VectorIndexHolder(vector_index))
+
+        def fail_count(_index_type):
+            raise RuntimeError("reconcile failure detail")
+
+        monkeypatch.setattr(storage, "count_index_entries_by_type", fail_count)
+        assert embedder.reconcile() == 0
+        with pytest.raises(RuntimeError, match="reconcile failure detail"):
+            embedder.reconcile(raise_errors=True)
+    finally:
+        storage.close()
+
+
 def test_worker_loop_does_not_call_reconciliation(test_db_url: str, monkeypatch) -> None:
     """Worker no longer reconciles — the server daemon thread handles it."""
     from app.worker import run_worker

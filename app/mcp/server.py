@@ -867,10 +867,16 @@ def _bounded_expansion(
 
     content_total_chars = len(anchor_content)
     effective_offset = min(content_offset, content_total_chars)
+    following_ids = [
+        item["source_item_id"] for item in projected[projected.index(anchor) + 1:]
+    ]
+    next_source_item_id = result.get("next_source_item_id")
     omitted = 0
     if content_offset:
         omitted = len(projected) - 1
         projected[:] = [anchor]
+        if following_ids:
+            next_source_item_id = following_ids[0]
 
     for item in projected:
         item["content"] = ""
@@ -890,6 +896,8 @@ def _bounded_expansion(
     }
     if omitted:
         out["items_omitted"] = omitted
+    if next_source_item_id is not None:
+        out["next_source_item_id"] = next_source_item_id
 
     anchor_base = anchor
     remaining = anchor_content[effective_offset:]
@@ -933,16 +941,35 @@ def _bounded_expansion(
             )
             if farthest is None:
                 break
+            source_id = farthest["source_item_id"]
+            if source_id in following_ids:
+                current = out.get("next_source_item_id")
+                if (
+                    current not in following_ids
+                    or following_ids.index(source_id) < following_ids.index(current)
+                ):
+                    out["next_source_item_id"] = source_id
             projected.remove(farthest)
             omitted += 1
             out["items_omitted"] = omitted
         set_anchor_page(len(remaining))
 
+    if (
+        "next_source_item_id" in out
+        and out.get("supported_memories") is None
+        and len(_json_text(out)) > max_chars
+    ):
+        out.pop("supported_memories", None)
+
     if len(_json_text(out)) > max_chars:
         set_anchor_page(0)
         if len(_json_text(out)) > max_chars:
             return {
-                "error": "max_chars is too small for the expansion anchor",
+                "error": (
+                    "expansion exceeds the response budget"
+                    if "next_source_item_id" in out
+                    else "max_chars is too small for the expansion anchor"
+                ),
                 "min_max_chars": _MCP_EXPANSION_MIN_CHARS,
             }
         low, high = 0, len(remaining) - 1
@@ -1665,7 +1692,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None,
         visibility: str | None = None,
         thread_ref: str | None = None,
     ) -> str:
-        """Expand a raw hit around its anchor. Follow `next_offset` with the returned `content_revision` to continue oversized anchor content. Omitted `actor_ref` spans eligible actors; supplied is an exact metadata filter. Treat outdated `historical_updates` as historical; pass `parent_lookup_id` from search."""
+        """Expand a hit. Continue with `next_offset` + `content_revision`. Open `next_source_item_id` at offset 0 without that revision; it is not content. Keep scope and search `parent_lookup_id`. Omit `actor_ref` for eligible actors; supplied filters exactly. Treat outdated `historical_updates` as historical."""
         ctx = resolve_context(
             container_ref=container_ref,
             actor_ref=actor_ref,

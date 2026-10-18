@@ -568,6 +568,103 @@ class TestLoadOrCreateVectorIndex:
 # CLI commands
 # ---------------------------------------------------------------------------
 
+@requires_usearch
+@pytest.mark.parametrize("vector_exists", [False, True])
+@pytest.mark.parametrize("content", [
+    "é" * 40, "é" * 19 + "\x00" + "é" * 20,
+    "\x00" + "😀" * 39, "e\u0301\x00" * 13 + "\n",
+], ids=["unicode", "nul40", "leading-nul", "multiple-nul-newline"])
+def test_raw_source_backfill_http_startup_and_reopen(tmp_path, monkeypatch, vector_exists, content):
+    from fastapi.testclient import TestClient
+
+    from app.config import EmbeddingProviderConfig
+    from app.main import create_app
+    from core.indexing import SOURCE_ITEM_VECTOR_TEXT_VIEW, build_index_entry
+    from core.rebuild_coordinator import RebuildCoordinator
+    from storage.sqlite import SQLiteStorageProvider
+
+    sqlite_url = f"sqlite:///{tmp_path / 'startup.db'}"
+    with TestClient(create_app(_minimal_config(
+        sqlite_url=sqlite_url, vector_index=VectorIndexConfig(enabled=False),
+    ))) as client:
+        response = client.post("/items", json=[{
+            "source_type": "chat_message", "source_id": "startup-source",
+            "content_type": "text/plain", "content": content,
+            "artifact_kind": "message", "container_ref": "test-container",
+        }])
+        assert response.status_code == 200
+        source_id = response.json()[0]["source_item_id"]
+        assert len(response.json()[0]["index_entry_ids"]) == 1
+        response = client.post("/items", json=[{
+            "source_type": "chat_message", "source_id": "indexed-peer",
+            "content_type": "text/plain", "content": content,
+            "artifact_kind": "message", "container_ref": "test-container",
+        }])
+        assert response.status_code == 200
+        indexed_id = response.json()[0]["source_item_id"]
+
+    storage = SQLiteStorageProvider(sqlite_url)
+    try:
+        for target_id in ([source_id, indexed_id] if vector_exists else [indexed_id]):
+            storage.create_index_entry(build_index_entry(
+                target_kind="source_item", target_id=target_id, index_type="vector",
+                text_view=content, text_view_name=SOURCE_ITEM_VECTOR_TEXT_VIEW,
+            ))
+    finally:
+        storage.close()
+
+    monkeypatch.setattr(
+        "app.dependencies.build_embedding_provider",
+        lambda config, *, provider_name: StubEmbeddingProvider(),
+    )
+    monkeypatch.setattr(RebuildCoordinator, "start", RebuildCoordinator.run_sync)
+    original_inventory = RebuildCoordinator._inventory_raw_source_vectors
+    inventories = []
+    def observed_inventory(coordinator):
+        hydrated = []
+        original_get = coordinator._storage.get_source_item
+        def get_source(source_id):
+            hydrated.append(source_id)
+            return original_get(source_id)
+        with monkeypatch.context() as patch:
+            patch.setattr(coordinator._storage, "get_source_item", get_source)
+            result = original_inventory(coordinator)
+        inventories.append(hydrated)
+        return result
+    monkeypatch.setattr(RebuildCoordinator, "_inventory_raw_source_vectors", observed_inventory)
+    config = _minimal_config(
+        sqlite_url=sqlite_url,
+        vector_index=VectorIndexConfig(
+            enabled=True, index_path=str(tmp_path / "startup.index"),
+            embedding_provider="local",
+        ),
+        embedding_providers={"local": EmbeddingProviderConfig(
+            name="local", kind="fastembed", model="test-model",
+        )},
+    )
+    for reopening in (False, True):
+        with TestClient(create_app(config)) as client:
+            response = client.get("/status")
+            assert response.status_code == 200
+            rebuild = response.json()["vector_rebuild"]
+            if vector_exists or reopening:
+                assert rebuild is None
+            else:
+                assert rebuild["status"] == "completed"
+                assert rebuild["reason"] == "eligible raw sources missing vector entries"
+            response = client.get(
+                f"/source/{source_id}/context", params={"container_ref": "test-container"},
+            )
+            assert response.status_code == 200
+            assert response.json()["items"][0]["content"] == content
+            response = client.get(
+                f"/source/{indexed_id}/context", params={"container_ref": "test-container"},
+            )
+            assert response.status_code == 200
+            assert response.json()["items"][0]["content"] == content
+    assert inventories == ([] if vector_exists else [[source_id]])
+
+
 class TestCLICommands:
 
     def test_rebuild_vector_index_mode_accepted_by_parser(self) -> None:
@@ -704,6 +801,7 @@ class TestCLICommands:
             return []
 
         mock_storage.list_index_entries_by_type_page.side_effect = page
+        mock_storage.list_raw_source_vector_backfill_page.return_value = []
         mock_storage.get_memory_object.return_value = memory_obj
         mock_storage.get_source_item.return_value = source_item
         mock_storage.update_index_entry_text_view = MagicMock()
@@ -729,6 +827,8 @@ class TestCLICommands:
         from storage.vector_index import VectorIndex
         loaded = VectorIndex.load(index_path)
         assert loaded.entry_count() == 2
+        assert loaded.known_entry_ids() == frozenset({"e1", "e2"})
+        mock_storage.list_raw_source_vector_backfill_page.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

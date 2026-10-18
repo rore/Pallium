@@ -849,10 +849,46 @@ def test_bounded_expansion_counts_dropped_neighbors_inside_budget() -> None:
         ],
         "supported_memories": None,
         "parent_lookup_id": "parent",
+        "next_source_item_id": "later",
     }, 400)
     assert result["items"][0]["source_item_id"] == "anchor"
     assert result["items"][0]["is_anchor"] is True
     assert result["items_omitted"] == 2
+    assert result["next_source_item_id"] == "n2"
+    assert len(_json_text(result)) <= 400
+
+
+@pytest.mark.parametrize("budget", [256, 4000, 50000])
+def test_bounded_expansion_cannot_silently_drop_unfittable_handle(budget: int) -> None:
+    result = _bounded_expansion({
+        "items": [{"source_item_id": "anchor", "is_anchor": True, "content": "a"}],
+        "next_source_item_id": "n" * 5000,
+    }, budget)
+    assert result["error"] == "expansion exceeds the response budget"
+    assert "items" not in result
+    assert len(_json_text(result)) <= min(budget, 4000)
+
+
+def test_anchor_continuation_keeps_earliest_omitted_following_handle() -> None:
+    raw = {
+        "items": [
+            {"source_item_id": "anchor", "is_anchor": True, "content": "anchor text"},
+            {"source_item_id": "first", "content": "first following"},
+            {"source_item_id": "second", "content": "second following"},
+        ],
+        "next_source_item_id": "later",
+        "parent_lookup_id": "lookup",
+    }
+    first = _bounded_expansion(raw)
+    result = _bounded_expansion(
+        raw, content_offset=1, content_revision=first["content_revision"],
+    )
+    assert result["next_source_item_id"] == "first"
+    assert [item["source_item_id"] for item in result["items"]] == ["anchor"]
+    assert result["items"][0]["content"] == "nchor text"
+    assert result["parent_lookup_id"] == "lookup"
+    assert result["items_omitted"] == 2
+    assert len(_json_text(result)) <= 4000
 
 def test_compact_history_preserves_unicode_casefold_match_offset() -> None:
     result = _compact_history({

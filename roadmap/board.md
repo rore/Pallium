@@ -9,6 +9,7 @@
 - validate-relay-dependency-workflows
 
 # Later · Runtime Expansion
+- add-hermes-agent-integration
 - add-copilot-relay-integration
 
 # P1 · Reuse Measurement

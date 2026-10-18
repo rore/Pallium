@@ -10,6 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from tests.transport_isolation_helpers import isolated_hook_transport
 
 SECRET = "ghp_abcdefghijklmnopqrstuvwxyz1234567890"
 STRUCTURAL = ["git-branch:fix/alpha", "agent-workflow:alpha"]
@@ -39,7 +40,7 @@ def _load(name: str, path: Path, monkeypatch: pytest.MonkeyPatch):
     spec = importlib.util.spec_from_file_location(name, path)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
+    monkeypatch.setitem(sys.modules, name, module)
     spec.loader.exec_module(module)
     return module
 
@@ -68,6 +69,11 @@ def _quiet_common_side_effects(module, monkeypatch: pytest.MonkeyPatch) -> None:
     ):
         if hasattr(module, name):
             monkeypatch.setattr(module, name, replacement)
+    fetch_confirmed = getattr(module, "fetch_confirmed_work_refs", None)
+    if fetch_confirmed is not None:
+        monkeypatch.setitem(
+            fetch_confirmed.__globals__, "relay_request", lambda *_a, **_k: None
+        )
 
 
 def _python_payloads(
@@ -261,6 +267,7 @@ def test_all_real_callers_capture_and_ingest_exact_refs(
     explicit: list[str],
     expected: list[str],
     explicit_only: list[str],
+    isolated_hook_transport: list[str],
 ) -> None:
     repo = _repo_metadata(tmp_path / "repo")
     captured = _python_payloads(repo, explicit, monkeypatch)
@@ -301,6 +308,7 @@ def test_python_user_and_assistant_resolver_failure_ingest_explicit_only(
     monkeypatch: pytest.MonkeyPatch,
     host: str,
     relative: str,
+    isolated_hook_transport: list[str],
 ) -> None:
     captured = _python_payloads(tmp_path / "missing", CASES[-1][0], monkeypatch)
     selected = [
@@ -345,7 +353,8 @@ def test_opencode_user_and_assistant_resolver_failure_still_ingest(
     (("codex", "codex"), ("claude", "claude-code")),
 )
 def test_python_stop_hook_actual_http_items_round_trips_into_exact_history(
-    client, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, host: str, source_type: str
+    client, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, host: str, source_type: str,
+    isolated_hook_transport: list[str],
 ) -> None:
     payload = next(item for item in _python_payloads(_repo_metadata(tmp_path / host), [], monkeypatch) if item["source_type"] == source_type and item["role"] == "assistant")
     response = client.post("/items", json=[payload])
@@ -590,10 +599,14 @@ def test_python_relay_early_return_includes_structural_work_ref(
     assert '"work_ref":"git-branch:fix/alpha"' in capsys.readouterr().out
 
 
+@pytest.mark.parametrize("refusal", [None, "relay_only", "publication_and_relay", "preexisting_poison"])
 def test_codex_prompt_identity_cache_keeps_work_refs_live(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
+    refusal: str | None,
 ) -> None:
+    http = request.getfixturevalue("client") if refusal is not None else None
     monkeypatch.delenv("PALLIUM_HOOK_ACTOR_REF", raising=False)
     repo = _repo_metadata(tmp_path / "repo")
     git_dir = repo / ".git"
@@ -629,11 +642,117 @@ def test_codex_prompt_identity_cache_keeps_work_refs_live(
     state_dir = tmp_path / "state"
     monkeypatch.setattr(prompt._common, "STATE_DIR", state_dir)
     monkeypatch.setattr(prompt._common, "SESSIONS_DIR", state_dir / "sessions")
-    prompt._common.pin_container(
+    stages = []
+    hook_turn = [0]
+    request.addfinalizer(lambda: (tmp_path / "identity-pin-stages.json").write_text(
+        json.dumps(stages, indent=2), encoding="utf-8",
+    ))
+    if refusal in (None, "preexisting_poison"):
+        original_replace = prompt._common.os.replace
+        original_dumps = prompt._common.json.dumps
+
+        def replace(*args, **kwargs):
+            try:
+                return original_replace(*args, **kwargs)
+            except (OSError, TypeError, ValueError) as exc:
+                stages.append({"stage": "replace_error", "turn": hook_turn[0],
+                               "type": type(exc).__name__, "errno": getattr(exc, "errno", None),
+                               "winerror": getattr(exc, "winerror", None),
+                               "source_length": len(str(args[0])), "target_length": len(str(args[1]))})
+                raise
+
+        def dumps(*args, **kwargs):
+            try:
+                return original_dumps(*args, **kwargs)
+            except (TypeError, ValueError) as exc:
+                stages.append({"stage": "serialize_error", "turn": hook_turn[0],
+                               "type": type(exc).__name__})
+                raise
+
+        class ObservedSessionPath(type(state_dir)):
+            def write_text(self, *args, **kwargs):
+                try:
+                    return super().write_text(*args, **kwargs)
+                except (OSError, TypeError, ValueError) as exc:
+                    stages.append({"stage": "write_error", "turn": hook_turn[0],
+                                   "type": type(exc).__name__, "errno": getattr(exc, "errno", None),
+                                   "winerror": getattr(exc, "winerror", None), "path_length": len(str(self))})
+                    raise
+
+        monkeypatch.setattr(prompt._common, "os", SimpleNamespace(
+            **{**vars(prompt._common.os), "replace": replace},
+        ))
+        monkeypatch.setattr(prompt._common, "json", SimpleNamespace(
+            **{**vars(prompt._common.json), "dumps": dumps},
+        ))
+        monkeypatch.setattr(prompt._common, "SESSIONS_DIR", ObservedSessionPath(state_dir / "sessions"))
+    original_lock = prompt._common._acquire_session_lock
+    original_write = prompt._common._write_session_state_locked
+    original_turn = prompt.relay_turn
+    original_provisional = prompt._common._cache_provisional_identity_context
+    refusals = {}
+
+    def provisional(*args, **kwargs):
+        if refusal != "publication_and_relay" or hook_turn[0] != 3:
+            return original_provisional(*args, **kwargs)
+        lock = original_lock("cache-session")
+        refusals["publication_lock_acquired"] = lock is not None
+        try:
+            result = original_provisional(*args, **kwargs)
+            refusals["publication_refused"] = result is False
+            return result
+        finally:
+            if lock is not None:
+                prompt._common._release_session_lock(lock)
+
+    def acquire_lock(*args, **kwargs):
+        remaining = prompt._common.remaining_safe_time(kwargs.get("deadline"))
+        result = original_lock(*args, **kwargs)
+        stages.append({"stage": "lock", "turn": hook_turn[0], "acquired": result is not None,
+                       "remaining_seconds": remaining if remaining != float("inf") else None})
+        return result
+
+    def write_state(session_id, state):
+        result = original_write(session_id, state)
+        remaining = prompt._common.remaining_safe_time()
+        stages.append({"stage": "write", "turn": hook_turn[0], "written": result,
+                       "container_ref": state.get("container_ref"),
+                       "scope_generation": state.get("last_confirmed_scope_generation"),
+                       "has_turn_intent": "relay_turn_intent" in state,
+                       "remaining_seconds": remaining if remaining != float("inf") else None})
+        return result
+
+    def turn(*args, **kwargs):
+        result = None
+        lock = None
+        try:
+            if refusal in ("relay_only", "publication_and_relay") and hook_turn[0] == 3:
+                lock = original_lock("cache-session")
+                refusals["relay_lock_acquired"] = lock is not None
+            result = original_turn(*args, **kwargs)
+            if refusal in ("relay_only", "publication_and_relay") and hook_turn[0] == 3:
+                refusals["relay_refused"] = result is None
+            return result
+        finally:
+            if lock is not None:
+                prompt._common._release_session_lock(lock)
+            session = result.get("session", {}) if isinstance(result, dict) else {}
+            remaining = prompt._common.remaining_safe_time()
+            stages.append({"stage": "turn", "turn": hook_turn[0],
+                           "returned_dict": isinstance(result, dict),
+                           "container_ref": session.get("container_ref"),
+                           "remaining_seconds": remaining if remaining != float("inf") else None})
+
+    monkeypatch.setattr(prompt._common, "_acquire_session_lock", acquire_lock)
+    monkeypatch.setattr(prompt._common, "_write_session_state_locked", write_state)
+    monkeypatch.setattr(prompt._common, "_cache_provisional_identity_context", provisional)
+    monkeypatch.setattr(prompt, "relay_turn", turn)
+    assert prompt._common.pin_container(
         "cache-session",
         "git:example.test/repo",
         source="startup",
-    )
+    ), stages
+    assert prompt._common.get_pinned_container("cache-session") == "git:example.test/repo", stages
 
     git_calls = []
 
@@ -652,6 +771,18 @@ def test_codex_prompt_identity_cache_keeps_work_refs_live(
         return subprocess.CompletedProcess(command, 0, output, "")
 
     monkeypatch.setattr(prompt._common.subprocess, "run", run)
+    original_resolve = prompt.resolve_container_ref
+    resolution_remote_counts = []
+
+    def resolve(*args):
+        before = git_calls.count(("git", "remote", "get-url", "origin"))
+        result = original_resolve(*args)
+        resolution_remote_counts.append(
+            git_calls.count(("git", "remote", "get-url", "origin")) - before,
+        )
+        return result
+
+    monkeypatch.setattr(prompt, "resolve_container_ref", resolve)
     current = {
         "cwd": str(repo),
         "prompt": "First prompt with enough text to ingest.",
@@ -667,9 +798,16 @@ def test_codex_prompt_identity_cache_keeps_work_refs_live(
     )
     monkeypatch.setattr(prompt, "check_dedup", lambda *_args: False)
     relay_calls = []
+    relay_responses = []
+    http_statuses = []
 
     def relay_request(_method, path, body=None, **_kwargs):
         relay_calls.append((path, body))
+        if http is not None:
+            response = http.post(path, json=body)
+            http_statuses.append(response.status_code)
+            relay_responses.append(response.json())
+            return response.json()
         moved = body["container_ref"] == "git:example.test/other"
         return {
             "session": {
@@ -688,13 +826,18 @@ def test_codex_prompt_identity_cache_keeps_work_refs_live(
     monkeypatch.setattr(prompt, "emit_context", lambda *_args: None)
     requests = []
 
-    def request(_method, path, body=None, **_kwargs):
+    def history_request(_method, path, body=None, **_kwargs):
         if path == "/item-and-query":
             requests.append(body)
+            if http is not None:
+                response = http.post(path, json={**body, "use_case": "demo_agent_memory"})
+                http_statuses.append(response.status_code)
+                return response.json()
             return {"source_item_id": f"source-{len(requests)}", "injectable_blocks": []}
         return None
 
-    monkeypatch.setattr(prompt, "pallium_request", request)
+    monkeypatch.setattr(prompt, "pallium_request", history_request)
+    hook_turn[0] = 1
     with pytest.raises(SystemExit):
         prompt.main()
 
@@ -703,16 +846,79 @@ def test_codex_prompt_identity_cache_keeps_work_refs_live(
         encoding="utf-8",
     )
     current["prompt"] = "Second prompt after the active work changed."
+    hook_turn[0] = 2
     with pytest.raises(SystemExit):
         prompt.main()
+
+    if refusal == "preexisting_poison":
+        context = prompt._common._identity_context(str(other_repo))
+        assert context is not None
+
+        def seed_legacy_poison(state):
+            state.update(context)
+            state["actor_ref"] = "Other Actor"
+            state.pop("identity_container_ref", None)
+            return state
+
+        assert prompt._common._update_session_state("cache-session", seed_legacy_poison)
+        assert prompt._common.get_pinned_container("cache-session") == "git:example.test/repo"
 
     current["cwd"] = str(other_repo)
     current["prompt"] = "Third prompt after switching repository and active work."
+    hook_turn[0] = 3
     with pytest.raises(SystemExit):
         prompt.main()
 
-    assert git_calls.count(("git", "remote", "get-url", "origin")) == 5
-    assert git_calls.count(("git", "config", "user.name")) == 2
+    if refusal in ("relay_only", "publication_and_relay"):
+        assert refusals["relay_lock_acquired"] and refusals["relay_refused"], (refusals, stages)
+        assert len(relay_calls) == 2, (relay_calls, stages)
+        assert prompt._common.get_pinned_container("cache-session") == "git:example.test/repo"
+        state = prompt._common._read_session_state("cache-session")
+        if refusal == "publication_and_relay":
+            assert refusals["publication_lock_acquired"] and refusals["publication_refused"], (refusals, stages)
+            assert "provisional_identity_context" not in state
+            assert prompt._common._identity_context_matches(state, prompt._common._identity_context(str(repo)))
+            assert not prompt._common._identity_context_matches(state, prompt._common._identity_context(str(other_repo)))
+        else:
+            assert state["provisional_identity_context"] == prompt._common._identity_context(str(other_repo))
+        stages.append({"stage": "refusal", "turn": 3, **refusals,
+                       "pinned_container": state["container_ref"],
+                       "has_provisional_context": "provisional_identity_context" in state})
+    if refusal is not None:
+        if refusal == "preexisting_poison":
+            assert requests[2]["container_ref"] == "git:example.test/other", (requests[2], stages)
+            assert prompt._common.get_pinned_container("cache-session") == "git:example.test/other", stages
+        history = http.post("/query", json={
+            "text": " ", "limit": 5, "source_only": True,
+            "trigger_origin": "agent_pull_work", "work_refs": ["git-branch:fix/gamma"],
+            "container_ref": "git:example.test/other", "thread_ref": "cache-session",
+            "visibility": "private",
+        })
+        assert history.status_code == 200, history.text
+        assert len(history.json()["results"]) == 1, history.text
+        current["prompt"] = "Fourth prompt after releasing the actual session locks."
+        hook_turn[0] = 4
+        with pytest.raises(SystemExit):
+            prompt.main()
+        assert all(status == 200 for status in http_statuses), http_statuses
+        if refusal == "preexisting_poison":
+            state = prompt._common._read_session_state("cache-session")
+            assert state["identity_container_ref"] == {
+                "container_ref": "git:example.test/other",
+                **prompt._common._identity_context(str(other_repo)),
+            }
+            remote_count_before_warm = git_calls.count(("git", "remote", "get-url", "origin"))
+            current["prompt"] = "Fifth prompt reusing the confirmed warm cache."
+            hook_turn[0] = 5
+            with pytest.raises(SystemExit):
+                prompt.main()
+            assert requests[4]["container_ref"] == "git:example.test/other", stages
+            assert resolution_remote_counts[-1] == 0
+            # Structural work-ref discovery still performs its existing lookup.
+            assert git_calls.count(("git", "remote", "get-url", "origin")) == remote_count_before_warm + 1
+    else:
+        assert git_calls.count(("git", "remote", "get-url", "origin")) == 5
+        assert git_calls.count(("git", "config", "user.name")) == 2
     assert all(call in {
         ("git", "remote", "get-url", "origin"),
         ("git", "config", "user.name"),
@@ -730,15 +936,114 @@ def test_codex_prompt_identity_cache_keeps_work_refs_live(
         "git-branch:fix/gamma",
         "agent-workflow:gamma",
     ]
-    assert [request["actor_ref"] for request in requests] == [
+    expected_actors = [
         "Actor", "Actor", "Other Actor",
     ]
+    if refusal is not None:
+        expected_actors.append("Other Actor")
+        if refusal == "preexisting_poison":
+            expected_actors.append("Other Actor")
+        assert requests[3]["container_ref"] == "git:example.test/other", (requests[3]["container_ref"], stages)
+        assert requests[3]["metadata"]["pallium_work_refs"] == [
+            "git-branch:fix/gamma", "agent-workflow:gamma",
+        ]
+    assert [request["actor_ref"] for request in requests] == expected_actors
     assert all(path == "/relay/turn" for path, _body in relay_calls)
-    assert relay_calls[-1][1]["previous_container_ref"] == "git:example.test/repo"
-    assert relay_calls[-1][1]["previous_endpoint_id"] == "relay-session-00000000000000000000000000000001"
-    assert relay_calls[-1][1]["previous_scope_generation"] == 0
-    assert prompt._common.get_pinned_container("cache-session") == "git:example.test/other"
+    assert len(relay_calls) == (5 if refusal == "preexisting_poison" else 3), stages
+    switch_call = relay_calls[2] if refusal == "preexisting_poison" else relay_calls[-1]
+    assert switch_call[1]["container_ref"] == "git:example.test/other", stages
+    assert switch_call[1]["previous_container_ref"] == "git:example.test/repo"
+    expected_endpoint = (
+        relay_responses[0]["session"]["endpoint_id"] if refusal is not None
+        else "relay-session-00000000000000000000000000000001"
+    )
+    assert switch_call[1]["previous_endpoint_id"] == expected_endpoint
+    assert switch_call[1]["previous_scope_generation"] == 0
+    assert prompt._common.get_pinned_container("cache-session") == "git:example.test/other", stages
     assert prompt._common.get_pending_relay_closes("cache-session") == []
+
+
+@pytest.mark.parametrize("relative", [
+    "codex/hooks/user_prompt_submit.py", "claude-code/hooks/user_prompt_submit.py",
+    "claude-code/hooks/stop.py", "codex/hooks/stop.py",
+])
+def test_unconfirmed_scope_actor_cache_is_fenced_through_actual_hook(
+    client, tmp_path, monkeypatch, relative,
+):
+    monkeypatch.delenv("PALLIUM_HOOK_ACTOR_REF", raising=False)
+    repo = _repo_metadata(tmp_path / "repo")
+    (repo / ".git" / "config").write_text(
+        '[remote "origin"]\nurl = https://example.test/other.git\n', encoding="utf-8",
+    )
+    hook = _load("unconfirmed_actor_hook", Path("integrations") / relative, monkeypatch)
+    _quiet_common_side_effects(hook, monkeypatch)
+    common = sys.modules[hook.derive_actor_ref.__module__]
+    monkeypatch.setattr(common, "STATE_DIR", tmp_path / "state")
+    monkeypatch.setattr(common, "SESSIONS_DIR", tmp_path / "state" / "sessions")
+    session = "guard-session"
+    scope = "git:example.test/other"
+    unqualified = relative == "codex/hooks/stop.py"
+    assert common.pin_container(session, "git:example.test/repo")
+    assert common._cache_identity_context(session, {
+        "identity_cwd": "previous", "repo_config_fingerprint": "previous",
+    }, actor_ref="Old Actor")
+    before = common._read_session_state(session)
+    monkeypatch.setattr(common.subprocess, "run", lambda command, **kwargs:
+        subprocess.CompletedProcess(command, 0,
+            "https://example.test/other.git\n" if command[1] == "remote" else "New Actor\n", ""))
+    # Model a recognized switch whose provisional marker could not be published.
+    if not unqualified:
+        monkeypatch.setattr(hook, "resolve_container_ref", lambda *_args: scope)
+    monkeypatch.setattr(hook, "read_hook_input", lambda: {
+        "cwd": str(repo), "session_id": session, "prompt": "Continue this substantial task.",
+        "transcript_path": "synthetic.jsonl", "stop_hook_active": True,
+    })
+    monkeypatch.setattr(hook, "check_dedup", lambda *_args: False, raising=False)
+    for name in ("register_claude_wake", "emit_context", "build_work_trace_metadata"):
+        monkeypatch.setattr(hook, name, lambda *_args, **_kwargs: None, raising=False)
+    monkeypatch.setattr(hook, "relay_turn", lambda *_args, **_kwargs: None, raising=False)
+    monkeypatch.setattr(hook, "relay_request", lambda *_args, **_kwargs: None, raising=False)
+    monkeypatch.setattr(hook, "read_turn", lambda *_args: SimpleNamespace(
+        assistant_text="Completed this substantial task.", tool_calls=[],
+        has_productive_action=False, files_modified=[],
+    ), raising=False)
+    supplied_scopes = []
+    original_actor = hook.derive_actor_ref
+
+    def actor(*args):
+        supplied_scopes.append(args[2] if len(args) > 2 else None)
+        return original_actor(*args)
+
+    monkeypatch.setattr(hook, "derive_actor_ref", actor)
+    bodies, statuses = [], []
+
+    def history(method, path, body, **kwargs):
+        items = body if isinstance(body, list) else [body]
+        bodies.extend(items)
+        data = [{**item, "use_case": "demo_agent_memory"} for item in items]
+        response = client.request(method, path, json=data if isinstance(body, list) else data[0])
+        statuses.append(response.status_code)
+        return response.json()
+
+    monkeypatch.setattr(hook, "pallium_request", history)
+    try:
+        hook.main()
+    except SystemExit as exc:
+        assert exc.code in (None, 0)
+    assert supplied_scopes == [None if unqualified else scope]
+    assert statuses == [200] and len(bodies) == 1, (statuses, bodies)
+    assert bodies[0]["container_ref"] == (before["container_ref"] if unqualified else scope)
+    assert bodies[0]["actor_ref"] == "New Actor"
+    if unqualified:
+        state = common._read_session_state(session)
+        assert state["container_ref"] == before["container_ref"]
+        assert common._identity_context_matches(state, common._identity_context(str(repo)))
+        assert "identity_container_ref" not in state
+        assert common.resolve_container_ref(str(repo), session, True, False) == scope
+    else:
+        assert common._read_session_state(session) == before
+
+
 @pytest.mark.parametrize(
     "host,relative",
     (("codex", "codex/hooks"), ("claude", "claude-code/hooks")),

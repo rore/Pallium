@@ -24,6 +24,7 @@ from app.codex_wake import (
 from app.claude_wake import schedule_claude_relay_wake
 from app.claude_wake_binding import binding_for_relay_database, claim_wake_directory
 from app.config import AppConfig, EmbeddingProviderConfig, SemanticPackageConfig
+from app.runtime_logging import startup_stage
 from core.contracts import MemoryRetentionPolicy
 from core.observability import IntegrationDebugLogger, QueryStats
 from core.relay import RelayNotFoundError, RelayService, RelayUnavailableError
@@ -360,10 +361,36 @@ def build_service(
     enable_vector: bool = True,
     query_stats: QueryStats | None = None,
     metrics_store=None,
+    storage: StorageProvider | None = None,
 ) -> BuildResult:
+    """Build with caller-owned storage, or create and own storage on failure."""
     resolved_config = config or AppConfig.from_env()
-    storage = build_storage_provider(resolved_config)
-    plugins = build_semantic_plugins(resolved_config, routing_overrides=routing_overrides)
+    owns_storage = storage is None
+    if owns_storage:
+        with startup_stage("service_storage"):
+            storage = build_storage_provider(resolved_config)
+    try:
+        return _build_service_from_storage(
+            resolved_config, storage, routing_overrides,
+            enable_vector=enable_vector, query_stats=query_stats, metrics_store=metrics_store,
+        )
+    except BaseException:
+        if owns_storage:
+            storage.close()
+        raise
+
+
+def _build_service_from_storage(
+    resolved_config: AppConfig,
+    storage,
+    routing_overrides: RoutingOverrides | None,
+    *,
+    enable_vector: bool,
+    query_stats: QueryStats | None,
+    metrics_store,
+) -> BuildResult:
+    with startup_stage("semantic_plugins"):
+        plugins = build_semantic_plugins(resolved_config, routing_overrides=routing_overrides)
 
     active_names = list(plugins.keys())
     logger.info("Active semantic packages: %s", ", ".join(active_names) if active_names else "(none)")
@@ -385,17 +412,19 @@ def build_service(
             logger.error("Vector index enabled but no embedding_provider configured. Vector disabled.")
         else:
             try:
-                embedding_provider = build_embedding_provider(
-                    resolved_config,
-                    provider_name=vector_config.embedding_provider,
-                )
+                with startup_stage("embedding_provider"):
+                    embedding_provider = build_embedding_provider(
+                        resolved_config,
+                        provider_name=vector_config.embedding_provider,
+                    )
             except Exception as exc:
                 logger.error("Vector embedding provider failed to initialize: %s. Vector disabled.", exc)
                 embedding_provider = None
 
         # 2. Load or create vector index
         if embedding_provider is not None:
-            vector_index = _load_or_create_vector_index(vector_config, embedding_provider)
+            with startup_stage("vector_index_load"):
+                vector_index = _load_or_create_vector_index(vector_config, embedding_provider)
 
         # Create holder early — rebuild coordinator will swap into it
         if vector_index is not None:
@@ -419,7 +448,9 @@ def build_service(
             and embedding_provider is not None
         ):
             from core.rebuild_coordinator import raw_source_vector_backfill_needed
-            if raw_source_vector_backfill_needed(storage):
+            with startup_stage("raw_source_backfill_check"):
+                backfill_needed = raw_source_vector_backfill_needed(storage)
+            if backfill_needed:
                 rebuild_needed = True
                 rebuild_reason = "eligible raw sources missing vector entries"
 
@@ -433,8 +464,9 @@ def build_service(
 
         # 4. Count reconciliation check — warn but continue; runtime reconciliation fills gaps
         if vector_index is not None and embedding_provider is not None:
-            sqlite_count = storage.count_index_entries_by_type("vector")
-            index_count = vector_index.entry_count()
+            with startup_stage("vector_counts"):
+                sqlite_count = storage.count_index_entries_by_type("vector")
+                index_count = vector_index.entry_count()
             if sqlite_count != index_count:
                 logger.warning(
                     "Vector index count mismatch: SQLite=%d, index=%d. "
@@ -649,8 +681,11 @@ def recover_expired_relay_wakes(
 ) -> None:
     """Recheck and dispatch persisted pending work without changing Relay state."""
     codex_registry = codex_registry or get_codex_wake_registry()
+    reservations = codex_registry.reservations()
+    reserved_delivery_ids = {reservation.delivery_id for reservation in reservations}
     reconcile_codex_relay_wake_reservations(
-        relay_service, registry=codex_registry, trace_callback=trace_callback
+        relay_service, registry=codex_registry, reservations=reservations,
+        trace_callback=trace_callback,
     )
     for candidate in relay_service.wake_candidates(include_coalesced=True):
         try:
@@ -660,6 +695,8 @@ def recover_expired_relay_wakes(
             if current != [candidate]:
                 continue
             runtime = candidate["recipient_runtime"]
+            if runtime == "codex" and candidate["delivery_id"] in reserved_delivery_ids:
+                continue
             session_ref = candidate["recipient_session_ref"]
             if runtime == "codex":
                 delivery_ref, session_fp, container_fp = relay_wake_log_refs(
@@ -708,6 +745,7 @@ def build_router(
     claude_wake_registry: ClaudeWakeRegistry | None = None,
     codex_wake_registry: CodexWakeRegistry | None = None,
     relay_runner: Callable[[Callable[[], Any]], Awaitable[Any]] | None = None,
+    relay_codex_runner: Callable[[Callable[[], Any]], Awaitable[Any]] | None = None,
     diagnostic_runner: Callable[[Callable[[], Any]], Awaitable[Any]] | None = None,
 ):
     relay_service = None
@@ -738,17 +776,21 @@ def build_router(
         if not isinstance(delivery_id, str):
             return
 
-        registry.release_delivery(delivery_id)
-        release_codex_relay_wake(delivery_id, registry=codex_registry)
-
         endpoint_id = result.get("recipient_endpoint_id")
-        if not isinstance(endpoint_id, str):
+        live_scope = None
+        if isinstance(endpoint_id, str):
+            try:
+                live_scope = relay_service.session_scope_by_endpoint(endpoint_id)
+            except (RelayNotFoundError, RelayUnavailableError, ValueError):
+                pass
+        # Both sources are runtime-owned: the live endpoint or durable ACK row.
+        runtime = live_scope.get("runtime") if live_scope is not None else result.get("recipient_runtime")
+        if runtime == "claude-code" or runtime not in {"claude-code", "codex", "opencode"}:
+            registry.release_delivery(delivery_id)
+        if runtime == "codex" or runtime not in {"claude-code", "codex", "opencode"}:
+            release_codex_relay_wake(delivery_id, registry=codex_registry)
+        if live_scope is None:
             return
-        try:
-            live_scope = relay_service.session_scope_by_endpoint(endpoint_id)
-        except (RelayNotFoundError, RelayUnavailableError, ValueError):
-            return
-        runtime = live_scope.get("runtime")
         session_ref = live_scope.get("session_ref")
         container_ref = live_scope.get("container_ref")
         if not all(isinstance(value, str) and value for value in (
@@ -775,40 +817,46 @@ def build_router(
                 },
                 {"container_ref": live_scope["container_ref"]},
             )
-    def _relay_activation(row: dict[str, Any]) -> dict[str, object]:
+    def _relay_activation(
+        row: dict[str, Any], *, reserved_endpoints: frozenset[str] | None = None,
+    ) -> dict[str, object]:
         endpoint_id = row.get("endpoint_id") or row.get("recipient_endpoint_id") or row.get("id")
         projection = row
         if relay_service is not None and "recipient_endpoint_id" in row and "endpoint_id" not in row:
             projection = {}
             if isinstance(endpoint_id, str):
                 try:
-                    scope = relay_service.session_scope_by_endpoint(endpoint_id)
-                    sessions = relay_service.list_sessions(**scope, include_inactive=True)
+                    projection = relay_service.session_view_by_endpoint(endpoint_id)
                 except (RelayNotFoundError, RelayUnavailableError, ValueError):
-                    sessions = []
-                current = [
-                    session for session in sessions
-                    if session.get("endpoint_id") == endpoint_id
-                ]
-                if len(current) == 1:
-                    projection = dict(current[0])
+                    projection = {}
         session_ref = projection.get("session_ref", projection.get("recipient_session_ref"))
         container_ref = projection.get("container_ref", projection.get("recipient_container_ref"))
         runtime = projection.get("runtime", projection.get("recipient_runtime"))
         claude_state = registry.state_for(recipient_endpoint_id=endpoint_id, session_ref=session_ref, container_ref=container_ref) if runtime == "claude-code" and all(isinstance(value, str) for value in (endpoint_id, session_ref, container_ref)) else None
-        codex_reserved = codex_registry.usable and isinstance(endpoint_id, str) and codex_registry.snapshot(endpoint_id) is not None
+        codex_reserved = runtime == "codex" and isinstance(endpoint_id, str) and (
+            endpoint_id in reserved_endpoints if reserved_endpoints is not None
+            else codex_registry.snapshot_if_usable(endpoint_id) is not None
+        )
         opencode_registered = runtime == "opencode" and isinstance(endpoint_id, str) and relay_service is not None and relay_service.opencode_wake_active(endpoint_id)
         return retained_activation_snapshot(relay_activation_snapshot(projection, platform=current_platform(), claude_state=claude_state, codex_reserved=codex_reserved, opencode_registered=opencode_registered))
 
+    def _relay_activation_factory(actual_callback):
+        if actual_callback is not _relay_activation:
+            return actual_callback
+        reserved_endpoints = frozenset(
+            item.recipient_endpoint_id for item in codex_registry.reservations_if_usable()
+        )
+        return partial(_relay_activation, reserved_endpoints=reserved_endpoints)
+
     def _relay_turn_snapshot(request: dict[str, Any]) -> CodexWakeReservation | None:
-        if request.get("runtime") != "codex" or not codex_registry.usable:
+        if request.get("runtime") != "codex":
             return None
         delivery_id = request.get("wake_delivery_id")
         session_ref = request.get("session_ref")
         container_ref = request.get("container_ref")
         return next(
             (
-                reservation for reservation in codex_registry.reservations()
+                reservation for reservation in codex_registry.reservations_if_usable()
                 if reservation.delivery_id == delivery_id
                 and reservation.session_ref == session_ref
                 and reservation.container_ref == container_ref
@@ -826,7 +874,8 @@ def build_router(
             return
         if request.get("runtime") == "codex":
             wake_delivery_id = request.get("wake_delivery_id")
-            if isinstance(wake_delivery_id, str) and reservation is not None:
+            # Persistent exact claims already commit their generation with the delivery.
+            if isinstance(wake_delivery_id, str) and reservation is not None and not codex_registry.persistent:
                 correlate_codex_relay_wake_claim(
                     wake_delivery_id,
                     session_ref,
@@ -856,6 +905,8 @@ def build_router(
         relay_turn_snapshot_callback=_relay_turn_snapshot,
         relay_ack_callback=(_relay_ack_release if relay_service is not None else None),
         relay_activation_callback=(_relay_activation if relay_service is not None else None),
+        relay_activation_callback_factory=(_relay_activation_factory if relay_service is not None else None),
         relay_runner=relay_runner,
+        relay_codex_runner=relay_codex_runner,
         diagnostic_runner=diagnostic_runner,
     )
