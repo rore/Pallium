@@ -1,5 +1,46 @@
 # Service-wide performance investigation and correction
 
+## Dashboard read-only fixture continuation — 2026-10-18
+
+Published fb3b9b70 ordinary CI39109486474 failed Linux3.13 at the first setup
+POST in `test_dashboard_relay_exact_session_lookup_is_validated_and_read_only`,
+before any dashboard GET or read-only assertion. Raw job117622350908 SHA256
+`29185C954CF304D5131B806972DC6A6A9B57B57352BD815541E88FB6490F6AD5`
+records503/late_begin1706ms; it does not establish the physical delay's cause.
+Manual39109493488 remains under the sole existing collector; its Linux3.12 lane
+has failed with raw evidence not yet available, so combined disposition is pending.
+
+Root and independent source review adopt only replacing this selected test's four
+setup POSTs with four canonical RelaySessionRecord rows in real SQLite, using the
+same-file existing ORM seed pattern, valid distinct IDs, native UTC timestamps,
+runtime/session/scope/state and unchanged defaults. Preserve all subsequent
+dormant/closed/alias mutations, every GET/validation/pagination assertion and the
+before/after read-only check. This is BLUE test-only normal workflow under the
+existing High/Large record, not a new requirement, production/timing/retry change.
+Actual diff/runner review precedes exactly one selected-node run in root's released
+slot. No new publication/full run precedes the current matrix's combined actual
+failure disposition; earlier failures and local7357 pass remain preserved.
+
+Independent actual source/runner review accepted only that seed correction.
+The selected original node passed1/JUnit1.876 seconds/zero errors, failures or
+skips at `build/claim-acquisition/dashboard-seed-832fbb2831044f939fd1cd2f6a259be0`.
+Log SHA256 `DCE850F1ABC406BCC50920CA9E9853701308B736CE2511326D401CC282A0D216`,
+JUnit `F1D182DCC7FCB67D11C77EF37C2F83317CB4DAB5F3D1B194C340B244A4D9A877`,
+result `3A5F0244D7F196BD7CBAF71917E9FE66BD62DAAD5D6F05CE9199B88BB56A10B0`.
+Source848A61A2 and runnerD9F5E486 stayed frozen. Exit0/no timeout/owned pytest26424
+and direct children remaining0/stderr empty/no network logs; this is not a complete
+descendant ledger or hosted parity. Every original downstream assertion passed.
+No repeat application run is made for this isolated correction. Fresh nonapplication
+checks/local commit may proceed, with replacement full/publication held pending the
+current manual matrix's actual combined failure disposition.
+
+Fresh `build/claim-acquisition/nonapp-dashboard-seed` selects full39 paths;
+imports8 kept/0 broken/1 ignored, boundary passed/API0. Parsed workflow/native
+reports each retain advisory1 and zero failed blocking predicates. Existing
+architecture/API/persistence shadow checkpoints and size38 files/5484 lines fail
+remain disclosed. Independent actual node review accepts the local result only;
+the published head and active hosted qualification remain fb3b9b70.
+
 ## Published claim split — hosted terminal 2026-10-18
 
 Exact published `ccc7c9b37b9cff1879604ecf6e248f85de522c28` is NOT qualified:
