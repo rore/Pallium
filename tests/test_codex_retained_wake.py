@@ -2365,18 +2365,21 @@ def test_relay_lock_and_scope_recovery_share_one_deadline(
     calls = []
 
     def request(method, path, body, *, timeout, **kwargs):
-        calls.append((body, timeout))
+        calls.append((body, timeout, method, path))
         now[0] += 1 if exhausted_at == "bootstrap" else 0.25
-        return {"session": {"endpoint_id": "relay-session-budget",
+        session = {"endpoint_id": "relay-session-budget", "runtime": "codex", "session_ref": TARGET,
             "container_ref": body["container_ref"],
-            "scope_generation": 0 if len(calls) == 1 else 1}, "deliveries": []}
+            "scope_generation": 0 if len(calls) == 1 else 1}
+        return [session] if method == "GET" else {"session": session, "deliveries": []}
 
     result = common.relay_turn("codex", TARGET, SCOPE["container_ref"],
         timeout=1 if limit == "timeout" else 5, deadline=deadline, request=request)
     assert len(calls) == (0 if exhausted_at == "lock" else 1 if exhausted_at == "bootstrap" else 2)
     if calls:
         assert calls[0][1] == pytest.approx(0.75)
-        assert calls[0][0]["register_session"] is False
+        assert calls[0][2:] == ("GET", "/relay/sessions")
+        assert calls[0][0] == {"runtime": "codex", "session_ref": TARGET,
+                               "container_ref": "git:example.test/old"}
     if exhausted_at is None:
         assert calls[1][1] == pytest.approx(0.5)
         assert result["session"]["container_ref"] == SCOPE["container_ref"]

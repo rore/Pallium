@@ -1991,7 +1991,7 @@ def test_confirmed_switch_does_not_attach_old_identity_to_new_pin(
 
 @pytest.mark.parametrize("runtime", ["claude-code", "codex"])
 def test_legacy_pin_bootstraps_endpoint_alias_and_queued_delivery(
-    client, monkeypatch, tmp_path: Path, runtime: str,
+    client, monkeypatch, tmp_path: Path, runtime: str, *, held_writer: bool = False,
 ):
     relative = "integrations/claude-code/hooks/common.py" if runtime == "claude-code" else "integrations/codex/hooks/common.py"
     common = _load(f"legacy_{runtime}", relative)
@@ -2022,17 +2022,153 @@ def test_legacy_pin_bootstraps_endpoint_alias_and_queued_delivery(
         "container_ref": old,
     }), encoding="utf-8")
 
+    writer = None
+    calls = []
+    if held_writer:
+        import sqlite3
+
+        engine = client.app.state.pallium_service._storage._relay_engine
+        writer = sqlite3.connect(str(engine.url.database), timeout=0, isolation_level=None)
+        try:
+            writer.execute("BEGIN IMMEDIATE")
+            assert writer.in_transaction
+        except BaseException:
+            writer.close()
+            raise
+
     def request(method, path, body, *, timeout):
-        response = client.request(method, path, json=body)
+        calls.append((method, path))
+        if method == "GET":
+            assert path == "/relay/sessions"
+            assert body == {"runtime": runtime, "session_ref": "legacy-target", "container_ref": old}
+            if writer is not None:
+                assert writer.in_transaction
+            response = client.get(path, params=body)
+            assert response.status_code == 200, response.text
+            assert response.json()[0]["endpoint_id"] == endpoint
+            if writer is not None:
+                assert writer.in_transaction
+                writer.rollback()
+                assert not writer.in_transaction
+        else:
+            assert (method, path) == ("POST", "/relay/turn")
+            assert calls == [("GET", "/relay/sessions"), ("POST", "/relay/turn")]
+            if writer is not None:
+                assert not writer.in_transaction
+            response = client.post(path, json=body)
         assert response.status_code == 200, response.text
         return response.json()
 
-    result = common.relay_turn(runtime, "legacy-target", new, max_chars=1000, request=request)
+    try:
+        result = common.relay_turn(runtime, "legacy-target", new, max_chars=1000, request=request)
+    finally:
+        if writer is not None:
+            writer.rollback()
+            writer.close()
 
-
+    assert calls == [("GET", "/relay/sessions"), ("POST", "/relay/turn")]
     assert result["session"]["endpoint_id"] == endpoint
     assert result["session"]["alias"] == "legacy-alias"
     assert [item["payload"] for item in result["deliveries"]] == ["queued legacy delivery"]
+    delivery, = result["deliveries"]
+    assert delivery["attempts"] == 1
+    assert client.post("/relay/deliveries/ack", json={
+        "delivery_id": delivery["delivery_id"], "claim_token": delivery["claim_token"],
+        "container_ref": new,
+    }).status_code == 200
+    status = client.get(f"/relay/messages/{sent.json()['message_id']}", params={"container_ref": new})
+    assert status.status_code == 200, status.text
+    assert status.json()["deliveries"][0]["state"] == "delivered"
+
+
+@pytest.mark.parametrize("runtime", ["claude-code", "codex"])
+def test_legacy_pin_identity_read_does_not_acquire_held_writer(client, monkeypatch, tmp_path, runtime):
+    test_legacy_pin_bootstraps_endpoint_alias_and_queued_delivery(
+        client, monkeypatch, tmp_path, runtime, held_writer=True,
+    )
+
+
+@pytest.mark.parametrize("runtime", ["claude-code", "codex"])
+@pytest.mark.parametrize("state", ["closed", "unreachable"])
+def test_legacy_pin_read_preserves_final_inactive_move_refusal(client, monkeypatch, tmp_path, runtime, state):
+    from storage.sqlite_schema import RelaySessionRecord
+
+    relative = "integrations/claude-code/hooks/common.py" if runtime == "claude-code" else "integrations/codex/hooks/common.py"
+    common = _load(f"inactive_legacy_{runtime}", relative)
+    monkeypatch.setattr(common, "SESSIONS_DIR", tmp_path / "inactive-sessions")
+    old, new = "git:legacy/old", "git:legacy/new"
+    identity = {"runtime": runtime, "session_ref": "legacy-target", "container_ref": old}
+    response = client.post("/relay/turn", json=identity)
+    assert response.status_code == 200, response.text
+    endpoint = response.json()["session"]["endpoint_id"]
+    store = client.app.state.pallium_service._storage
+    with store._relay_session_factory.begin() as db:
+        db.get(RelaySessionRecord, endpoint).state = state
+    common.SESSIONS_DIR.mkdir(parents=True)
+    state_path = common.SESSIONS_DIR / "legacy-target.json"
+    state_path.write_text(json.dumps({"container_ref": old}), encoding="utf-8")
+    calls = []
+
+    def request(method, path, body, *, timeout):
+        response = client.request(method, path, **({"params": body} if method == "GET" else {"json": body}))
+        calls.append((method, path, response.status_code))
+        if method == "GET":
+            assert response.status_code == 200
+            row, = response.json()
+            assert row["endpoint_id"] == endpoint
+            if state == "closed":
+                assert row["state"] == "closed"
+            else:
+                assert row["destination_health"] == "unreachable"
+            return response.json()
+        assert response.status_code == 409, response.text
+        assert response.json() == {"detail": "Relay transition source is not active"}
+        return None  # Existing transport's HTTP-error result; the native CAS refused.
+
+    assert common.relay_turn(runtime, "legacy-target", new, request=request) is None
+    assert calls == [("GET", "/relay/sessions", 200), ("POST", "/relay/turn", 409)]
+    local = json.loads(state_path.read_text(encoding="utf-8"))
+    assert local["container_ref"] == old
+    assert local["last_confirmed_endpoint_id"] == endpoint
+    current = client.get("/relay/sessions", params=identity)
+    assert current.status_code == 200
+    assert current.json()[0]["endpoint_id"] == endpoint
+    assert current.json()[0]["scope_generation"] == 0
+    destination = client.get("/relay/sessions", params={**identity, "container_ref": new})
+    assert destination.status_code == 200 and destination.json() == []
+
+
+@pytest.mark.parametrize("runtime", ["claude-code", "codex"])
+@pytest.mark.parametrize("invalid", [
+    "none", "not_list", "empty", "multiple", "not_object", "runtime", "session",
+    "container", "endpoint", "bool_generation", "negative_generation", "fraction_generation",
+])
+def test_legacy_pin_identity_read_rejects_ambiguous_or_mismatched_response(monkeypatch, tmp_path, runtime, invalid):
+    relative = "integrations/claude-code/hooks/common.py" if runtime == "claude-code" else "integrations/codex/hooks/common.py"
+    common = _load(f"malformed_legacy_{runtime}", relative)
+    monkeypatch.setattr(common, "SESSIONS_DIR", tmp_path / "malformed-sessions")
+    common.SESSIONS_DIR.mkdir(parents=True)
+    state_path = common.SESSIONS_DIR / "legacy-target.json"
+    original = json.dumps({"container_ref": "git:legacy/old"}).encode()
+    state_path.write_bytes(original)
+    row = {"runtime": runtime, "session_ref": "legacy-target", "container_ref": "git:legacy/old",
+           "endpoint_id": "relay-session-" + "1" * 32, "scope_generation": 0}
+    if invalid in {"runtime", "session", "container", "endpoint"}:
+        field = {"runtime": "runtime", "session": "session_ref", "container": "container_ref", "endpoint": "endpoint_id"}[invalid]
+        row[field] = "" if invalid == "endpoint" else "other"
+    if invalid.endswith("generation"):
+        row["scope_generation"] = {"bool_generation": True, "negative_generation": -1, "fraction_generation": 1.5}[invalid]
+    response = {"none": None, "not_list": row, "empty": [], "multiple": [row, row], "not_object": [None]}.get(invalid, [row])
+    calls = []
+
+    def request(method, path, body, *, timeout):
+        calls.append((method, path, body))
+        return response
+
+    assert common.relay_turn(runtime, "legacy-target", "git:legacy/new", request=request) is None
+    assert calls == [("GET", "/relay/sessions", {"runtime": runtime, "session_ref": "legacy-target", "container_ref": "git:legacy/old"})]
+    assert state_path.read_bytes() == original
+
 
 @pytest.mark.parametrize(
     ("relative", "runtime", "imported"),

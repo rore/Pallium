@@ -1550,7 +1550,7 @@ def pallium_request(
 
 def relay_request(
     method: str, path: str, payload: Any, *, timeout: float, deadline: HookDeadline | None = None
-) -> dict | None:
+) -> dict | list | None:
     """Short-deadline Relay request; failures never block a host turn."""
     url = f"{PALLIUM_BASE_URL}{path}"
     body = None
@@ -2554,7 +2554,7 @@ def relay_turn(
     wake_delivery_id: str | None = None,
     register_session: bool = True,
     deadline: HookDeadline | None = None,
-    request: Callable[..., dict[str, Any] | None] | None = None,
+    request: Callable[..., dict[str, Any] | list[Any] | None] | None = None,
 ) -> dict[str, Any] | None:
     """Serialize a turn, recover durable intent, and confirm its exact scope."""
     sid = _safe_session_id(session_ref if isinstance(session_ref, str) else None)
@@ -2639,9 +2639,6 @@ def relay_turn(
                 "runtime": runtime,
                 "session_ref": sid,
                 "container_ref": source_candidate,
-                "max_chars": 1,
-                "max_messages": 1,
-                "register_session": False,
             }
             remaining = deadline.remaining()
             if remaining <= 0:
@@ -2650,11 +2647,11 @@ def relay_turn(
             if pass_deadline:
                 request_options["deadline"] = deadline
             bootstrap = (request or relay_request)(
-                "POST", "/relay/turn", bootstrap_payload, **request_options
+                "GET", "/relay/sessions", bootstrap_payload, **request_options
             )
-            if not isinstance(bootstrap, dict):
+            if not isinstance(bootstrap, list) or len(bootstrap) != 1:
                 return None
-            bootstrap_session = bootstrap.get("session")
+            bootstrap_session = bootstrap[0]
             if not isinstance(bootstrap_session, dict):
                 return None
             bootstrap_endpoint = bootstrap_session.get("endpoint_id")
@@ -2663,6 +2660,8 @@ def relay_turn(
             if not (
                 isinstance(bootstrap_endpoint, str)
                 and bootstrap_endpoint
+                and bootstrap_session.get("runtime") == runtime
+                and bootstrap_session.get("session_ref") == sid
                 and bootstrap_container == source_candidate
                 and type(bootstrap_generation) is int
                 and bootstrap_generation >= 0
