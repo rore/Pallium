@@ -117,14 +117,22 @@ jobs:
         run: python scripts/relay_claim_acquisition_diagnostic.py build/claim-acquisition/runtime.json
 
       - name: Run tests
+        if: ${{ !inputs.claim_acquisition_diagnostic }}
         env:
           PYTEST_PLUGINS: ${{ inputs.claim_acquisition_diagnostic && 'scripts.relay_claim_acquisition_diagnostic' || '' }}
           PALLIUM_CLAIM_DIAGNOSTIC_DIR: ${{ inputs.claim_acquisition_diagnostic && 'build/claim-acquisition' || '' }}
         run: python -m pytest tests/ ${{ github.event_name != 'workflow_dispatch' && '-x' || '' }} -q --durations=20
 
+      - name: Run four focused Linux claim experiments
+        if: inputs.claim_acquisition_diagnostic
+        env:
+          PYTEST_PLUGINS: ''
+          PALLIUM_CLAIM_DIAGNOSTIC_DIR: ''
+        run: timeout --signal=TERM --kill-after=5s 120s python scripts/relay_claim_focused_repro.py --run build/claim-acquisition
+
       - name: Mark absent or incomplete diagnostic capture
         if: always() && inputs.claim_acquisition_diagnostic
-        run: python scripts/relay_claim_acquisition_diagnostic.py --status build/claim-acquisition
+        run: python scripts/relay_claim_focused_repro.py --status build/claim-acquisition
 
       - name: Preserve diagnostic evidence even after failure
         if: always() && inputs.claim_acquisition_diagnostic

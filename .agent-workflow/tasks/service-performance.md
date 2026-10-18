@@ -1,5 +1,226 @@
 # Service-wide performance investigation and correction
 
+## Focused Linux committed-candidate preparation — nonapplication checks
+
+Fresh whole-change selector selects full/41paths (inherited originalfb3 release
+scope plus diagnostic files). This is disclosed, not a fullsuite qualification:
+root explicitly requires FOURfocused Linux diagnostic cases only. No application
+full/localLinux/pressure/hosted run occurred. Imports8kept/0broken/1ignored;
+boundary0/APIunchanged. Parsed workflow+nativeadapter exit1 ADVISORY with ZERO
+failedblocking predicates; unsatisfied shadow architecture/persistence/API
+checkpoints remain visible. Redline size40files/6539lines fails advisory, with
+oneWorkRecord/1403lines excluded. No policy/checkpoint/size weakening.
+
+Evidence: build/observer-controls/checks-focused-linux. Initial nativeadapter
+failed beforecheck because Python3.11+ was not located in this checkout. Only
+that failedadapter was rerun with documented process-local PYTHON set to the
+existing C:/Dev/rore/Pallium/.venv/Scripts/python.exe; it returned advisory1/
+0blocking. No installation or persistent environment mutation, no repeated
+imports/selector/redline/workflow/application checks. Native guard/tool mutation
+prevention is not asserted. Both initial+corrected receipts retained.
+
+Independent PURE2 accepted; final runmanifest is updated to ACTUAL model evidence,
+not stale 'notexecuted'. Prepare exactlyWR/ci/focusedharness/CPUhelper commit,
+then independent committed/sourceparity/runmanifest review and ROOT final
+singlehostedfocuseddecision. Originalfb3 product/tests/config/lock and DE45
+recorder remain unchanged. All Windows experiments and failure histories stay
+recoverable. This is artifact readiness only, not causal/release closure.
+
+## Focused Linux artifact verification — pure gate evidence
+
+Independent actual source/runner GO authorized only2new modeled status rows.
+They passed2/2, stdout1.86s/JUnit1.788s, noerrors/failures/skips. Evidence:
+build/observer-controls/focused-linux-status-1d5d03c32c8849e5abc972edcbc67171.
+Log86E8353C354F0BCE3339907B2CD825B80952F5FF3EA0B12CAF5B3AB5979899D6;
+XMLF61E226F949A821B31205AEE7975D1408A74E99871CA107BB91B6E27541A0AAE;
+resultD2C4B22B283589A8338E764339E59F7BCB4DD77D90DB47FA8306D66F2D07D5C8.
+Exit0/no timeout/root74996/direct0; both rows await5ownedCLIstatuschildren,
+not an exhaustive descendant history. Stderr/network empty. Independent result
+review accepted modeled gate behavior only: no app/Linux/pressure qualification.
+Reuse prior16 controls; no repeats. CLI--status executes before app/Linux code.
+
+Finalprepared harness4C3F8B2C/helper287B2D13/ci6F7E4D5A/observerDE45 unchanged.
+Matched4case gate verifies exactthird/provider affinity+nice ALLcases, records
+original_all_pass separately, disabledresources explicit resource_completeFalse
+andstatus1. Actual Linux workload is still NOTexecuted. Bootstrap affinity/nice
+changes own calling thread before pytest/app creation; provider/helper receipts
+verify inheritance. Temp is unique RUNNER_TEMP outsidecheckout and retained
+until disposable runnercleanup. Existing dependency install/policy unchanged.
+Freshnonapp governance and exactcommittedmanifest review remain; ROOT final
+hosted decision is required before any push/dispatch. No fullsuite/test/source
+accommodation, guessedSQL/pool/deadlinefix or installed change is included.
+
+## Focused Linux3.12 comparison — preparation 2026-10-18
+
+Root adopts four FOCUSED originalfb3 HTTP journeys, not a fullsuite: two baseline
+and two sameCPU third-entry pressure trials. Reuse accepted reproducer/recorder;
+minimal Linux-only copies of harness/helper plus existing diagnostic workflow.
+Preserve Windows receipts/frozen scripts. Bootstrap restricts only its own
+thread before pytest/app imports; new threads/helpers inherit one allowed CPU
+and nice=max(10,inherited). Verify actual third-provider/helper affinity/nice.
+Same8children/shared3sdeadline/nonblocking one-write signals/triggeroverhead/
+aggregatecleanup/120sowned timeout. No sysctl, persistentsettings, pin/install
+policy, product/tests/deadline/retry/SQL changes. Existing pipinstall only.
+Four-case evidence gate replaces oldtwo-row status; disable old automatic
+plugin for focusedrun. Unsupported counters remain unknown/incomplete, never0.
+All original assertion outcomes remain explicit, separate from harnesssuccess.
+Prepare exact scripts/workflow/runmanifest and independent actual review;
+ROOT hosted decision still required. No local/hosted experiments authorized
+by this preparation; no rerun of accepted controls or any applicationfullsuite.
+
+## Third-entry focused experiment — repeated induced provider slowdown
+
+Reviewed changed EXACT4 ran once, managed45923 exit0/notimeout, harness4PASS
+23.31s; every original2.2 journey/assertion alsoPASS/all12HTTP200. Evidence:
+build/observer-controls/focused-claim-entry-f275fc52b6484704901518e7092ff937.
+LogC19CBEFB/XMLF8C62CD9/resultFC723957 fullSHA retained. Frozen testEC2DE6E7 /
+helperBE7D3C16 / runner85AF299D / plan21F4B632 unchanged. All17 exact owned
+root/helper PIDs absent, all16helpers exit0/no kill, rootdirectsnapshot0,
+stderr/networkempty; not exhaustive descendant-history proof.
+
+Matched native claim baselines6.4552/8.558ms become740.7524/784.9707ms under
+CPU pressure. All8same-mask1 BelowNormal helpers fully overlap EACH native
+claim; actualaggregateCPU2906.25/2875ms, separate from shared3s deadline.
+This is a repeatable locally induced mechanism, not originalLinux312 attribution.
+Trigger wall499.5765/722.4406ms is separately excluded from native provider;
+originalCore1240.4005/1507.4728ms includes it. It must not be called native
+product work. Original AnyIOentrywait.3095/.3491ms stays short.
+
+Native gate~.006ms/connection~.113ms/BEGIN~.028ms/close~.10ms remain fast,
+with no busy errors. Dominance differs: pressure1body706.3607ms inclusive /
+608.4487exclusive residual plus firstSELECT96.6569ms; COMMIT33.5544ms.
+Pressure2body37.3143ms, COMMIT746.806ms. Thus CPUconcurrency can elongate
+postacquisition provider wall even without a long acquisition/nativebusy
+outcome. Available counters cannot partition each SQL/residual gap into
+nativeI/O versus descheduling. Windows threadCPU is visibly quantized15.625ms;
+recorded rootCPU15.625/0ms is not precise CPU-use proof. Schedstat/rusage are
+unsupported, Capture is resource-incomplete, no invented zero runnablewait.
+
+No caller-visible contract failed and no product patch is justified by this
+experiment alone. Historical2.733s provider still lacks phase evidence and
+Linux parity. No budgets/retries/testassertions/SQL/deps/persistentsettings or
+installed changes. Independent actual evidence review accepted repeated INDUCED POST-ACQUISITION
+STALL, verified every direct-child/exclusive sum, actualhelperoverlap, source
+acquisition-only bound and preserved expiry guards. Analysis SHA
+AF5F419F570E6B71350B15A01BD376E678795743AA439F1CC44A4B15D4869C6C.
+No single SQL bottleneck or publiccontractfailure; no acquisition/pool/deadline/
+SQL productfix is supported. Stop finite trial sequence; no repeat/full/hosted/fix follows without next adopted scope.
+
+## Changed focused claim-entry trigger — preparation 2026-10-18
+
+Root explicitly adopts exactly2matchedbaseline+2CPU trials with same bounds,
+but releases already-ready helpers only at the exact THIRD native provider
+relay_turn entry, immediately delegating with original args/results/exceptions.
+No sleep/acknowledgement wait is added inside measured path. Signalling wall/CPU
+is recorded separately, since it is experiment overhead inside Core but outside
+recorded native storage. Keep shared3s deadline/oneCPU/BelowNormal/eightchildren/
+cleanup/120s watchdog; require measured claim-provider overlap for adequacy.
+Preserve original stageJSON for worker/Core/storage phase comparison. First
+frozen scripts/plan are copied into their existing result directory, not lost.
+No dependencies/product/test/observer/timeout changes or performance fix. This
+is changed bounded experimental scope, not automatic repetition of old trial.
+Independent actual edit review releases exact4 once, no root/human handoff.
+
+## Focused local experiment — actual four trials 2026-10-18
+
+Reviewed EXACT4 ran once, managed98124 exit0/no timeout, harness4PASS30.86s;
+all4 ORIGINAL2.2 journeys/assertions also PASS/all12HTTP200. Evidence:
+build/observer-controls/focused-repro-323abb64562b472fbea937e7b6b1f45c.
+Log11204E84/JUnitA30749F3/result1D19E665/analysis114918D9 fullSHA in files.
+Two baselines: exactclaim5.597/10.595ms. Two pressure trials: claim5.414/4.718ms,
+BUT helpers had ZERO overlap with both claims: pressure ended during setup.
+This does not test/falsify claim scheduling or reproduce historicalCore2.733s.
+
+Pressure is real on SETUP:8same-mask1 BelowNormal helpers overlap both setup
+provider calls. Actual aggregateCPU2796.875/2843.75ms, distinct from common3s
+wall window. FirstHTTP beforeprovider27.765/35.565ms baseline becomes
+2033.682/414.101ms; provider10.072/9.412 becomes34.712/72.701ms. This repeats an
+induced PREPROVIDER admission slowdown only. All original assertions remain.
+Windows threadCPU visibly quantized15.625ms, sometimes above short wall;
+all records resource_unsupported, runnablewait unknown. Windows3.13.14 /
+SQLite3.53.1 / SA2.1.4 is not hosted Linux312 parity. Frozen scripts/hashes and
+original product/tests/observer/workflow unchanged. All17 known root/helper
+PIDs absent after explicit owned waits, root/directsnapshot0, no forcekill;
+not exhaustive historical descendants. Stderr/network empty. Independent actual-result review accepted this finite
+INADEQUATE CLAIM PRESSURE experiment, recomputing all12 phase sums/overlaps.
+The setup interval is before provider/storage, not proven AnyIO queue: original
+stage instrumentation starts only after setup. No historicalcause/fix/rerun GO. A first evidence-note write failed UTF8 decoding before
+mutation; corrected explicitUTF8 read preserves all previous history.
+
+STOP this finite experiment; no automatic repeat/full/hosted/release action.
+Possible changed plan: gate already-ready helpers near third forwardedHTTP
+and REQUIRE actual claim overlap; after-send alone may waste3s on preparation.
+Reuse original claim stageJSON to separate worker entry/Core/provider. Root disposition
+and independent actual changed-plan review precede any new bounded execution.
+No historicalcause or fix claim. Preserve original sources and first results.
+
+## Focused reproduction — preparation 2026-10-18
+
+User now requires a reliable focused reproduction and concrete cause/fix, not
+another full pass. Agent Workflow is required; this existing High/Large record
+owns ignored experiment files only. Preserve dirty terminal receipts, original
+fb3, 31e/8bd baselines, stopped accommodations, PR and installed state.
+Existing held-writer HTTP evidence is reused: induced bounded acquisition
+refusal is already proved and is not historical attribution. Prepare only two
+baseline plus two process-scoped CPU-pressure original real-HTTP journeys.
+Actual script/runner review precedes execution. All processes and files are
+private; no persistent settings/dependencies/product/tests/observer changes.
+Windows Python3.13.14/SQLite3.53.1/SQLAlchemy2.1.4 is a local mechanism check,
+not original Linux3.12 hosted parity. Exact caps, adequacy and stop criteria are
+in build/observer-controls/focused-repro-plan.json. Root owns roadmap and any
+hosted decision. No release/full action follows. The first apply_patch call
+hung without modifying the file and was terminated; this named-file-only
+Python replacement is the deterministic fallback, not a repository change.
+
+## Two-row hosted result — incomplete, causal objective still open
+
+Root's final explicit single-run GO published exact
+`8bd3cf5a4059f645309791f93c8f966de2d13247` by normal fast-forward from31e,
+then dispatched only39119478451. Sole collector9866 completed exit0 and retained
+all raw logs plus both row reports once. Actual Linux3.12 pytest passed7311/
+91 skipped/2 xfailed465.78s; the job/run FAILED at the diagnostic completeness
+gate, not a pytest assertion. Evidence is
+`build/observer-controls/hosted-two-row`; raw job117651987695 SHA256
+`E045F361AA364CA84E56DB2C803B452A1A069837231A20AE336700D5511BEE49`,
+artifact `DA3635964C3D817ED928D4DF07B32900CF24F2E1D7BD1BE5BF5AF0F92B6CC5AC`,
+row1 `A702190CA3FD48EBA7ED2A1CD7736F0803B21FC049462B5331560C34BE008609`,
+row2 `0769A0263C2DA32D294D77D2C86966203F1F779B86A8C9A325CFDC657E4D63BF`,
+runtime `301EB4FD6E0344BFE213CC6E3CC5F62CAB6F761D5651F6FBF5195B6EE656FC40`.
+
+Both original rows captured all three native turns, zero dropped/errors/slow
+turns at100ms, and all six actual HTTP responses200. Each record's sole issue is
+resource_unsupported: native rusage is available, but schedstat enabled/support
+are0. Runnable wait is UNKNOWN, never zero. Mount-root quota is unsupported and
+unknown; the attaching pytest thread's affinity count is4. No kernel settings,
+affinity or quotas were changed. Actual Python3.12.15/SQLite3.45.1/SQLAlchemy2.1.5/
+FastAPI0.143.5 and all six runtime source hashes match exact8bd Git blobs.
+
+Provider wall/thread CPU milliseconds, in setup1/setup2/claim order, are
+row1:29.991666/19.774474,6.317820/5.511914,8.619732/7.712930;
+row2:16.020427/15.609392,8.305404/7.593383,8.998049/8.194126.
+Connection spans are0.157194–0.470440ms, gate0.020849–0.044483ms, with warm
+pool reuse and no creator spans. The largest body is row1 setup1:20.519790ms
+inclusive/15.116754ms exclusive residual; its COMMIT is6.618629ms. Its HTTP
+93.987288ms includes61.578792ms before provider entry. Row2's first HTTP
+83.073380ms includes62.228229ms before provider entry. Those residuals are not
+attributed to a specific caller/thread/scheduler mechanism. Rusage records real
+switch/fault/block counts, but they do not replace the unavailable runnable-wait
+duration or identify native blocking. Body residual includes fetch/materialization/
+ORM/Python/waits. The original artificial response holds remain outside provider.
+
+Independent actual artifact review verified every nested parent/exclusive wall/
+CPU equality, each turn's exclusive totals, consecutive available native counters,
+both original journeys and all six source hashes. It accepts this as collected
+INCOMPLETE/NONREPRODUCTION evidence, not diagnostic success, performance-fix proof,
+historical2.733s cause closure or release qualification. The original slow episode
+was not captured even though this full suite was slower than the31e330.98s run.
+The ignored detailed phase receipt is
+`build/observer-controls/hosted-two-row/phase-analysis.json`, SHA256
+`F4E28C17964D60AAC52872712E5402E1FF1C9E02D63440AEDB0725B6F041642A`.
+This once-only collection is stopped; no automatic repeat, setting enable, source
+accommodation, release action or installed change follows. The causal objective
+remains unfinished and returns to planning for root's next evidence decision.
+
 ## Two-row native-resource causal diagnostic — preparation 2026-10-18
 
 Root adopts a changed bounded diagnostic after read-only comparison of the saved
