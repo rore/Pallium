@@ -1146,13 +1146,18 @@ def test_http_response_projection_uses_fresh_authority_and_distinct_health(
 
 @pytest.mark.parametrize("callback_mode", ["custom", "delegate", "factory_raises", "factory_invalid"])
 def test_http_projection_factory_preserves_overrides_and_error_fallback(
-    relay_store, tmp_path, monkeypatch, caplog, callback_mode,
+    relay_store, tmp_path, monkeypatch, caplog, callback_mode, *, force_setup_refusal=False,
 ):
     from app import dependencies
+    from tests.codex_wake_setup import initialize_empty_wake_registry
 
-    relay, storage, _ = relay_store
-    registry = _registry(relay, tmp_path / "legacy")
-    assert registry.initialize(old_owner_drained=True)
+    relay, storage, database = relay_store
+    legacy = tmp_path / "legacy"
+    registry = _registry(relay, legacy)
+    initialize_empty_wake_registry(
+        registry, relay, storage, expected_database=database, legacy=legacy,
+        monkeypatch=monkeypatch, force_refusal=force_setup_refusal,
+    )
     reservation = _reserve(registry, _send(relay))
     spent = registry.begin_native_attempt(reservation)
     assert spent is not None and registry.record_outcome(spent, "accepted")

@@ -1,5 +1,69 @@
 # Service-wide performance investigation and correction
 
+## Published claim split — hosted terminal 2026-10-18
+
+Exact published `ccc7c9b37b9cff1879604ecf6e248f85de522c28` is NOT qualified:
+manual39104960663 FAILED; ordinary39104962346 and governance39104962339 passed.
+Actual raw Windows3.13 passes79 serial/2 skipped plus7298 remaining/32 skipped/
+2 xfailed; Windows3.12 passes79 serial/2 skipped but remaining has1 failure/
+7297 passed/32 skipped/2 xfailed. All four Linux selections pass7311/91/2.
+Both Windows smoke selections pass9 plus624/7. The collector completed once with
+all19 raw job logs saved under `build/claim-acquisition/hosted-ccc7c9b3`; state
+SHA256 `070AA51F5B6821C9DBC81A09536AA08A4053CAB284C021FA0EF11638CDA155E0`.
+
+The sole new failure is initial offline `registry.initialize` in
+`test_http_projection_factory_preserves_overrides_and_error_fallback[delegate]`
+at1155, before reservation/native attempt/router/projector/HTTP. It records only
+ImmediateTransactionBusyError type; no stage or physical cause is established.
+Win3.12 raw SHA256 `A28BD046FBC5ACD2D9ABD58C186F0EF7A0678D822E7DF2D168E26039DFD70D82`;
+Win3.13 `7AE54992560512EFD27DCE8847BE928F056FCF8351B6C5377F450477946BC73E`.
+The two native HTTP boundaries and ten postcommit rows passed both Windows lanes.
+The local installer refusal did not recur as a hosted failure; its cause remains
+unknown, and its failed local-full receipt is not relabeled green. No rerun or
+merge. Independent review proposes the existing opt-in empty offline initializer
+only for this four-mode projection prerequisite, with its existing forced-refusal
+full-journey control; exact adoption/diff review precede any change or execution.
+
+Root explicitly adopts that exact narrow helper reuse. The selected four-mode
+projection test may use the existing empty-offline initializer, unchanged, before
+reservation/native attempt/router/HTTP. Its native450ms policy remains; the helper
+permits one exact ImmediateBusy only after proving absent legacy, uninitialized
+empty authority and zero canonical sessions/deliveries, and rejects unexpected,
+partial or repeated refusals. Add one private full-delegate force-refusal control
+using the existing flag and verify restoration before all body operations. No
+new helper, clock replacement, actual HTTP claim retry or production change.
+The local slot is released for exactly four originals plus that control after
+actual diff/runner review. Preserve the failedccc matrix and unknown cause; no
+earlier accepted21 repetition. Required full qualification follows coherent
+source/check/review evidence; no installer or live-environment change is included.
+
+Independent actual source/control review accepted the bounded helper reuse.
+The exact four original modes plus forced-refusal full-delegate control passed5,
+JUnit1.686 seconds/zero errors, failures or skips, at
+`build/claim-acquisition/projection-init-b30af7b51287445a98c8bacf17d5ad4a`.
+Log SHA256 `83163F84F5F62469E1B1E8354188F1AA85A8BBA2EA70329CD19C6B8A528FFCCC`;
+JUnit `B060D3214639B66001CD683BBF0443BB8215A0B9D4D36A8FAC7F2E7E64C1B513`;
+result `038106CAE95ED604958A5E1F9A3B53F4BB059B91530DD7CEFDD1E5D4EA7499E0`.
+The receipt proves initialization False then True exactly once, helper restoration
+before all seven actual storage-body calls, native clocks and the complete original
+delegate oracles. Exit0/no timeout/owned pytest34216 and direct children remaining0;
+stderr and network guard logs are empty. This is not an exhaustive descendant ledger
+or hosted-runtime parity. Frozen source5E0E001C/control8CBB585F/runner8B5CE265
+remain unchanged. Independent result review accepts this offline-fixture correction
+only; the historical physical cause remains unknown. Reuse prior21, without repeats.
+Fresh whole-change governance and a coherent commit precede the required isolated
+full run; no local-full waiver, publication, merge or installed action is claimed.
+
+Fresh `build/claim-acquisition/nonapp-projection-init` checks select full38 paths.
+No-cache import contracts are8 kept/0 broken/1 ignored, boundary/API0. Workflow
+and native adapter return advisory1 with zero failed blocking predicates; existing
+architecture/API/persistence shadow checkpoints remain unsatisfied. Redline size
+is37 files/5466 lines fail (record excluded), not a clean whole-PR result. The full
+runner will reuse the existing locked private runtime read-only, verify its complete
+inventory against the lock/reference, require the exact clean committed candidate,
+and preserve before/after source hashes and the owned-tree watchdog. This required
+new-source full run is not a retry of the prior failed installer operation.
+
 ## Real claim acquisition refusal — resumed 2026-10-18
 
 Root conveyed the user's priority to correct the failures blocking PR314/PR297
@@ -1294,7 +1358,7 @@ Agent technical review: /root/architecture_check, clean nonimplementer source/pl
 
 **Exceptions:** None
 
-**State:** Blocked or returned to planning
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ### Final adbc Windows preparation boundaries — pre-edit checkpoint 2026-10-16
