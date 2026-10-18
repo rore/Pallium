@@ -1025,15 +1025,20 @@ def _acquire_session_lock(
         if lock_file.tell() == 0:
             lock_file.write(b"0")
             lock_file.flush()
-        wait_budget = min(timeout, remaining_safe_time(), remaining_safe_time(deadline))
+        clock = deadline.clock if deadline is not None else time.monotonic
+        # Keep the timeout endpoint; caller/global budgets stay in their own clocks.
+        lock_deadline = clock() + max(0.0, timeout)
+        wait_budget = min(
+            lock_deadline - clock(), remaining_safe_time(), remaining_safe_time(deadline),
+        )
         if wait_budget <= 0:
             _report_session_state_failure("lock_budget_exhausted")
             phase = "lock_close"
             lock_file.close()
             return None
-        clock = deadline.clock if deadline is not None else time.monotonic
-        lock_deadline = clock() + wait_budget
-        while clock() < lock_deadline:
+        while min(
+            lock_deadline - clock(), remaining_safe_time(), remaining_safe_time(deadline),
+        ) > 0:
             try:
                 phase = "native_prepare"
                 lock_file.seek(0)
@@ -1056,7 +1061,10 @@ def _acquire_session_lock(
                     last_native_error = error
                 else:
                     last_prepare_error = error
-                time.sleep(min(0.01, max(0.0, lock_deadline - clock())))
+                time.sleep(min(
+                    0.01, max(0.0, lock_deadline - clock()),
+                    remaining_safe_time(), remaining_safe_time(deadline),
+                ))
         _report_session_state_failure(
             "native_wait_exhausted" if native_attempted else (
                 "native_prepare" if last_prepare_error is not None else "pre_attempt_deadline"

@@ -2290,6 +2290,57 @@ def test_session_start_lock_budget_claims_emits_and_acks_once(
         assert delivery["state"] == "pending" and delivery["attempts"] == 0
 
 
+@pytest.mark.parametrize("limit", ["global", "provided"])
+def test_session_lock_does_not_rebase_sampled_deadline(monkeypatch, tmp_path, limit):
+    common = _load("absolute_lock_budget_common", "integrations/codex/hooks/common.py")
+    monkeypatch.setattr(common, "SESSIONS_DIR", tmp_path)
+    native_monotonic, native_sleep = time.monotonic, time.sleep
+    now = [10.0]
+    global_clock = lambda: now[0] + 1000.0
+    caller_clock = lambda: now[0] - 1000.0
+    monkeypatch.setattr(common, "_HOOK_DEADLINE", common.HookDeadline(
+        1011.0 if limit == "global" else 1100.0, reserve=0.25, clock=global_clock,
+    ))
+    deadline = common.HookDeadline(
+        -989.0 if limit == "provided" else -900.0, reserve=0.25, clock=caller_clock,
+    )
+    remaining = common.remaining_safe_time
+    samples, attempts, opened = [], [], []
+
+    def sample_then_deschedule(selected=None):
+        value = remaining(selected)
+        samples.append(value)
+        if len(samples) == 2:
+            now[0] += 2.0  # After sampling, before the old rebased endpoint.
+        return value
+
+    def tracked_open(*args, **kwargs):
+        handle = open(*args, **kwargs)
+        opened.append(handle)
+        return handle
+
+    def native_attempt(*args):
+        attempts.append(now[0])
+
+    monkeypatch.setattr(common, "remaining_safe_time", sample_then_deschedule)
+    monkeypatch.setattr(common, "open", tracked_open, raising=False)
+    if os.name == "nt":
+        import msvcrt
+        monkeypatch.setattr(msvcrt, "locking", native_attempt)
+    else:
+        import fcntl
+        monkeypatch.setattr(fcntl, "flock", native_attempt)
+    lock = common._acquire_session_lock(TARGET, timeout=5, deadline=deadline)
+    try:
+        assert lock is None
+        assert attempts == []  # Never enter the native lock after either expiry.
+        assert len(opened) == 1 and opened[0].closed
+        assert time.monotonic is native_monotonic and time.sleep is native_sleep
+    finally:
+        if lock is not None:
+            common._release_session_lock(lock)
+
+
 @pytest.mark.parametrize("limit", ["timeout", "global", "provided"])
 @pytest.mark.parametrize("exhausted_at", [None, "lock", "bootstrap"])
 def test_relay_lock_and_scope_recovery_share_one_deadline(

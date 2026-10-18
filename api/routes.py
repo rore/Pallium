@@ -1148,21 +1148,18 @@ def create_router(
             payload.setdefault("idle", False)
             if not isinstance(payload["idle"], bool):
                 raise ValueError
-            if not await _run_relay_operation(lambda: wake_registry.register(**payload)):
+            def complete_registration(**scope):
+                if relay_service is not None:
+                    try:
+                        _relay_sync_call("mark_active", lambda: relay_service.mark_active(**scope))
+                    except HTTPException as exc:
+                        if exc.status_code != 404:
+                            raise
+
+            if not await _run_relay_operation(lambda: wake_registry.register(
+                **payload, complete_registration=complete_registration,
+            )):
                 raise HTTPException(status_code=409, detail="registration rejected")
-            if relay_service is not None:
-                try:
-                    await _relay_call(
-                        "mark_active",
-                        lambda: relay_service.mark_active(
-                            runtime=payload["runtime"],
-                            session_ref=payload["session_ref"],
-                            container_ref=payload["container_ref"],
-                        ),
-                    )
-                except HTTPException as exc:
-                    if exc.status_code != 404:
-                        raise
         except (TypeError, UnicodeDecodeError, ValueError, json.JSONDecodeError):
             raise HTTPException(status_code=400, detail="invalid registration")
         return Response(status_code=204)

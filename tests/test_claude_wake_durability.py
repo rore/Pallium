@@ -2071,3 +2071,193 @@ def test_durable_attempt_fences_same_endpoint_after_scope_move(
         item["state"] != "wake_inflight"
         for item in restarted.recovery_candidates()
     )
+
+
+@pytest.mark.parametrize("health", ["closed", "unreachable"])
+@pytest.mark.parametrize("idle", [False, True], ids=["busy", "idle"])
+def test_registration_activation_refusal_recovers_before_new_http_delivery(
+    tmp_path, monkeypatch, health, idle,
+):
+    from datetime import datetime, timezone
+    from app import main, claude_wake
+    from app.config import AppConfig
+    from core.errors import ImmediateTransactionBusyError
+    from core.relay import RelayService
+    from storage.vector_index import VectorIndexConfig
+    from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
+
+    state_dir = tmp_path / "activation-wake"
+    monkeypatch.setenv("PALLIUM_CLAUDE_WAKE_DIR", str(state_dir))
+    config = AppConfig(
+        storage_backend="sqlite", sqlite_url=f"sqlite:///{tmp_path / 'activation.db'}",
+        default_use_case="demo_agent_memory", semantic_packages=DEMO_SEMANTIC_PACKAGES,
+        vector_index=VectorIndexConfig(enabled=False),
+    )
+    scope = {"container_ref": PAYLOAD["container_ref"]}
+    identity = {key: PAYLOAD[key] for key in ("runtime", "session_ref", "container_ref")}
+    registration = {**PAYLOAD, "idle": idle, "intent_id": "activation-pending"}
+    path = _intent_path(state_dir, PAYLOAD["session_ref"])
+    original_start = main.start_claude_wake_reconciler
+    monkeypatch.setattr(main, "start_claude_wake_reconciler", lambda *a, **k: None)
+
+    def destination(http):
+        response = http.get("/relay/sessions", params={**identity, "include_inactive": True})
+        assert response.status_code == 200, response.text
+        row, = response.json()
+        return row
+
+    with TestClient(main.create_app(config), client=("127.0.0.1", 50000)) as first:
+        for runtime, session in (("codex", "activation-sender"), ("claude-code", PAYLOAD["session_ref"])):
+            response = first.post("/relay/turn", json={"runtime": runtime, "session_ref": session, **scope})
+            assert response.status_code == 200, response.text
+        storage = first.app.state.pallium_service._storage
+        relay = RelayService(storage)
+        if health == "closed":
+            assert first.post("/relay/sessions/close", json=identity).status_code == 200
+        else:
+            assert relay.mark_unreachable(**identity, attempt_started_at=datetime.now(timezone.utc))
+        row = destination(first)
+        assert (row["state"] if health == "closed" else row["destination_health"]) == health
+        _write_intent(state_dir, registration, registration["intent_id"])
+
+        def refused_activation(**actual):
+            assert actual == {**identity, "now": None}
+            raise ImmediateTransactionBusyError("controlled activation refusal", acquisition_stage="local_gate")
+
+        with monkeypatch.context() as fault:
+            fault.setattr(storage, "relay_mark_active", refused_activation)
+            response = first.post("/internal/claude-wake/register", json=registration)
+        assert response.status_code == 503
+        assert response.json() == {"detail": {"code": "relay_busy", "retryable": True}}
+        assert response.headers["Retry-After"] == "1"
+        assert json.loads(path.read_text(encoding="utf-8")) == registration
+        registry = first.app.state.claude_wake_registry
+        assert registry.state_for(recipient_endpoint_id=row["endpoint_id"],
+            session_ref=identity["session_ref"], container_ref=identity["container_ref"]) == ("idle" if idle else "busy")
+        row = destination(first)
+        assert (row["state"] if health == "closed" else row["destination_health"]) == health
+    assert path.exists()  # Actual service/engine shutdown did not consume pending activation.
+
+    recovered, notified = threading.Event(), threading.Event()
+    native_calls = []
+
+    def start_observed(*args, claim_recovery, **kwargs):
+        def initial_recovery():
+            try:
+                return claim_recovery()
+            finally:
+                recovered.set()
+        return original_start(*args, claim_recovery=initial_recovery, **kwargs)
+
+    def transport(socket_path, token):
+        native_calls.append((socket_path, token))
+        notified.set()
+        return "accepted"
+
+    monkeypatch.setattr(main, "start_claude_wake_reconciler", start_observed)
+    monkeypatch.setattr(claude_wake, "claude_wake_transport", transport)
+    app = main.create_app(config)
+    with TestClient(app, client=("127.0.0.1", 50000)) as restarted:
+        assert recovered.wait(5), "initial native recovery did not settle"
+        assert not path.exists()
+        assert destination(restarted)["destination_health"] == "active"
+        assert native_calls == []
+        if not idle:
+            ready = {**registration, "idle": True, "intent_id": "fresh-idle"}
+            _write_intent(state_dir, ready, ready["intent_id"])
+            assert restarted.post("/internal/claude-wake/register", json=ready).status_code == 204
+        sent = restarted.post("/relay/messages", json={
+            "sender_runtime": "codex", "sender_session_ref": "activation-sender",
+            "recipient": "claude-code:" + PAYLOAD["session_ref"],
+            "payload": "fresh delivery after activation recovery 東京", **scope,
+        })
+        assert sent.status_code == 200, sent.text
+        assert notified.wait(5)
+        assert native_calls == [(PAYLOAD["socket_path"], PAYLOAD["token"])]
+        claimed = restarted.post("/relay/turn", json={**identity, "max_chars": 2400})
+        assert claimed.status_code == 200, claimed.text
+        item, = claimed.json()["deliveries"]
+        assert item["payload"] == "fresh delivery after activation recovery 東京"
+        assert restarted.post("/relay/deliveries/ack", json={
+            "delivery_id": item["delivery_id"], "claim_token": item["claim_token"], **scope,
+        }).status_code == 200
+        response = restarted.get("/relay/messages/" + sent.json()["message_id"], params=scope)
+        assert response.status_code == 200
+        delivery, = response.json()["deliveries"]
+        assert delivery["state"] == "delivered" and delivery["attempts"] == 1
+        assert native_calls == [(PAYLOAD["socket_path"], PAYLOAD["token"])]
+        reconciler = app.state._claude_wake_reconciler
+    assert reconciler is not None and not reconciler._thread.is_alive()
+    assert all(not worker.is_alive() for owner, worker in claude_wake._workers if owner == id(app.state.claude_wake_registry))
+
+
+@pytest.mark.parametrize("replacement", ["idle", "closed"])
+@pytest.mark.parametrize("inflight", [False, True])
+def test_activation_completion_preserves_newer_intent_and_inflight(
+    tmp_path, monkeypatch, replacement, inflight,
+):
+    registry = ClaudeWakeRegistry(state_dir=tmp_path)
+    assert _register(registry, tmp_path, PAYLOAD, "initial")
+    native_calls = []
+    identity = {key: PAYLOAD[key] for key in ("runtime", "session_ref", "container_ref")}
+    if inflight:
+        assert registry.probe(**identity, delivery_id="held-delivery", recipient_endpoint_id=ENDPOINT_ID,
+            transport=lambda *a: native_calls.append(a) or "accepted")
+    pending = {**PAYLOAD, "idle": False}
+    _write_intent(tmp_path, pending, "pending-activation")
+    scope_calls = []
+
+    def defer(**scope):
+        scope_calls.append(scope)
+        return False
+
+    assert not registry.register(**pending, intent_id="pending-activation", complete_registration=defer)
+    assert scope_calls == [identity]
+    assert registry.state_for(recipient_endpoint_id=ENDPOINT_ID,
+        session_ref=identity["session_ref"], container_ref=identity["container_ref"]) == ("wake_inflight" if inflight else "busy")
+    assert json.loads(_intent_path(tmp_path, PAYLOAD["session_ref"]).read_text(encoding="utf-8"))["intent_id"] == "pending-activation"
+    newer = ({**identity, "intent_id": "newer", "closed": True} if replacement == "closed"
+             else {**PAYLOAD, "token": "new-token", "intent_id": "newer"})
+    _write_intent(tmp_path, newer, "newer")
+    assert not registry.register(**pending, intent_id="pending-activation", complete_registration=lambda **k: pytest.fail("stale activation"))
+    restarted = ClaudeWakeRegistry(state_dir=tmp_path)
+    completed = []
+    restarted.recover_intents(complete_registration=lambda **scope: completed.append(scope))
+    assert not _intent_path(tmp_path, PAYLOAD["session_ref"]).exists()
+    assert completed == ([] if replacement == "closed" else [identity])
+    expected = "wake_inflight" if inflight else None if replacement == "closed" else "idle"
+    assert restarted.state_for(recipient_endpoint_id=ENDPOINT_ID,
+        session_ref=identity["session_ref"], container_ref=identity["container_ref"]) == expected
+    if inflight:
+        result = restarted.attempt(**identity, delivery_id="new-delivery", recipient_endpoint_id=ENDPOINT_ID,
+            transport=lambda *a: native_calls.append(a) or "accepted")
+        assert result.outcome == "deferred" and len(native_calls) == 1
+
+
+def test_recovery_defers_only_failed_registration_activation(client, tmp_path, monkeypatch):
+    from app.claude_wake import recover_claude_relay_wakes
+    from core.errors import ImmediateTransactionBusyError
+    from core.relay import RelayService
+
+    registry = ClaudeWakeRegistry(state_dir=tmp_path / "recovery-activation")
+    relay = RelayService(client.app.state.pallium_service._storage)
+    payloads = [PAYLOAD, {**PAYLOAD, "session_ref": "other-session"}]
+    for index, payload in enumerate(payloads):
+        relay.turn(runtime=payload["runtime"], session_ref=payload["session_ref"], container_ref=payload["container_ref"])
+        _write_intent(registry._state_dir, payload, "pending-" + str(index))
+    native_activation = relay.mark_active
+    calls = []
+    def one_failed_activation(**scope):
+        calls.append(scope["session_ref"])
+        if scope["session_ref"] == PAYLOAD["session_ref"]:
+            raise ImmediateTransactionBusyError("controlled recovery refusal", acquisition_stage="local_gate")
+        return native_activation(**scope)
+    with monkeypatch.context() as fault:
+        fault.setattr(relay, "mark_active", one_failed_activation)
+        recover_claude_relay_wakes(registry, relay)
+    assert sorted(calls) == sorted(payload["session_ref"] for payload in payloads)
+    failed = _intent_path(registry._state_dir, PAYLOAD["session_ref"])
+    assert failed.exists()
+    assert not _intent_path(registry._state_dir, "other-session").exists()
+    recover_claude_relay_wakes(registry, relay)
+    assert not failed.exists()
