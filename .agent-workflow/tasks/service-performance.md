@@ -90,6 +90,46 @@ non-slow run using the existing read-only private locked runtime and inventory
 comparison, with fresh isolated state and source-before/after hashes. No runtime
 installation, dependency/pool policy change or installed action is authorized.
 
+Required full qualification of clean `344e281f68f80b73cec47f1c0324ff5aa5571d33`
+FAILED and is incomplete: pytest1 failed/2687 passed/1 xfailed in236.73 seconds,
+JUnit2689 cases/1 failure/0 errors/1 skipped (the xfail), exit2 from xdist's
+stop-after-first-failure, no timeout. Artifacts are
+`build/claim-acquisition/full-a967c94be4a145eeb0d52fd53699e555`: log
+`026AF0D530A15A543FAFBB6D00AB7F63A3ACF957863705F8A6004CD45F1E8801`, XML
+`476F37E77CCDFAF3497A7AAAD608E4B2F83417B7AE4A31B532A421E0C6321178`, result
+`5E601A4C28F6762D19A5425969D730BDBE1CAF142F97E832F0314740948915C0`.
+The existing read-only private runtime reported Python3.13.14/SQLite3.53.1 and65
+distributions matching the reference and lock without mismatch. All nine source
+hashes and exact clean HEAD were unchanged before/after; owned launcher66472 and
+direct children remaining0, stderr/network evidence empty. Descendant coverage
+is root/direct-only, not exhaustive. The local application slot was released.
+
+The sole failure is unchanged
+`test_claude_setup_deploys_and_removes_skill`, test187:
+`app/cli/setup_claude_code.py:83` failed `dest_dir.rename(previous)` with Windows
+AccessDenied5 on its private gw1 test path. Initial installation, missing-source
+preservation and forced-activation rollback had succeeded. This final replacement
+fails before moving the current destination or activating staged files. Source
+inspection and independent review find no evident test-owned open handle or
+proven ACL/sharing-owner cause; no installer retry, permission change or fixture
+correction is justified by this record. Preserve the failure without rerunning,
+publication or qualification claims. Focused21 remains accepted; its test-contract
+split does not touch this installer or explain historical claim latency.
+
+Root's release disposition authorizes normal publication of the reviewed
+test-only change plus this failed-full ledger and exactly one hosted full matrix
+on the new source. It does not waive the local failure, authorize merge, establish
+a historical cause or permit a local rerun/installer retry/ACL/dependency/live
+change. The unchanged installer test remains mandatory. Independent review
+accepted the exact failed-run ledger as factual evidence only; required exact-head
+checks, combined failure disposition and review resolution still precede merge.
+
+Fresh publication checks at `build/claim-acquisition/nonapp-publication` again
+select full38, imports8 kept/0 broken/1 ignored and boundary/API0 against fetched
+main701608. Workflow/native reports contain zero failed blocking predicates;
+advisory1 and existing shadow checkpoints/size findings remain disclosed. Only
+this truthful evidence/disposition ledger changes after the tested source commit.
+
 ## Foreground retained-channel recovery — isolated plan checkpoint 2026-10-18
 
 Agent technical result review: `/root/simplicity_reviewer` independently accepted the actual RED1 and affected-file144 GREEN artifacts, matching source hashes, unavailable-before-fresh-registration oracle, native trust/cleanup assertions and runtime limits. Fresh non-application checks at `build/qualification-boundaries/final-foreground-retirement-checks` fetched and reverified `origin/main=f602753edf46d0b7a5d88bcd79725a143e311dba`; selector requires full38 paths, no-cache imports8 kept/0 broken/1 existing ignored import, boundary0/API0. Redline/workflow/native adapter each return advisory1 with zero failed blocking predicates. Existing whole-change architecture/API/persistence checkpoints remain unsatisfied shadow advisories and size37 files/5303 lines is fail; these are not clean governance passes. The initial reused adapter invocation failed2 solely because it omitted the explicit fresh Redline verdict argument in this new worktree; its output remains `native-adapter-initial-missing-verdict.log`. Only that adapter was rerun with the exact fresh verdict/changed-files/base/head arguments and passed all blocking predicates. No application case was repeated. Local review readiness covers this bounded implementation and144-case evidence; root still owns integration, exact-head full qualification, publication and any separately approved live activation. No service or Desktop restart, installed file/configuration/dependency/data change, push or new CI dispatch occurred.
@@ -1254,7 +1294,7 @@ Agent technical review: /root/architecture_check, clean nonimplementer source/pl
 
 **Exceptions:** None
 
-**State:** Ready to implement
+**State:** Blocked or returned to planning
 <!-- agent-workflow:end -->
 
 ### Final adbc Windows preparation boundaries — pre-edit checkpoint 2026-10-16
