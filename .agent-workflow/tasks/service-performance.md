@@ -64,6 +64,24 @@ inventory against the lock/reference, require the exact clean committed candidat
 and preserve before/after source hashes and the owned-tree watchdog. This required
 new-source full run is not a retry of the prior failed installer operation.
 
+The required one new-source full run on exact clean `bcb0e3a508c2b3bffeddc7ddc683ba4f3f24f988`
+passed7357/45 skipped/2 xfailed428.02 seconds. JUnit7404 has0 errors/failures,
+47 skipped including the two expected failures,427.987 seconds. Evidence is
+`build/claim-acquisition/projection-full-926420e9d006410dade34a4da893fbcb`;
+log SHA256 `FB951311F00E4462282C2C33D425A2201384C23F87858A49C26A136401A69594`,
+JUnit `859C961280D86C81D2E8717233F5225FE371BA3C8A1F8791CD10A554E4A97A03`,
+result `ED61A30C1240C8128C697DD0C81362B8E5E6F2F3E73BE5851B6CD2CDB6F6C36F`.
+Exit0/no20-minute timeout/owned launcher23072 and direct children remaining0;
+stderr/network logs empty. All nine before/after hashes are unchanged and tracked
+state stays clean. The read-only existing private runtime is Python3.13.14/
+SQLite3.53.1,65 distributions with zero lock/reference mismatches; its receipt
+SHA256 is `5E5E869B578EA3AEA525BAF85593BEF8022F97CEAEFEFD35C8DA26D6A85F37A1`.
+This is local locked-runtime qualification, not hosted parity, exhaustive descendant
+custody, or historical installer/setup latency cause closure. The earlier failed
+local full and ccc hosted matrix remain recorded. Independent actual result and
+record-only committed/body review precede normal fast-forward publication and one
+new exact-head hosted qualification; required checks/reviews still precede merge.
+
 ## Real claim acquisition refusal — resumed 2026-10-18
 
 Root conveyed the user's priority to correct the failures blocking PR314/PR297
