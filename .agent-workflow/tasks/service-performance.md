@@ -1,5 +1,50 @@
 # Service-wide performance investigation and correction
 
+## Invalid OpenCode wake schema validation — approved continuation
+
+Root accepts focused result and authorizes this exact two-path LOCAL commit only
+while Windows continue. Fresh nonapp-invalid-wake-schema selects full40paths;
+workflow/native advisory1, no failed blocking predicates; RED shadow
+architecture/API/persistence and size advisories remain. Accepted import report
+is explicitly reused because imports/product/policy are unchanged. No local full
+repeat is authorized, and current hosted failure is not waived; whole-change
+qualification/publication disposition remains root-owned after all Windows raw
+results. State Ready for review applies to this bounded local correction.
+
+
+Independent actual-result review accepts the ONE exact-eight HTTP cohort:
+invalid-wake-schema-c717ea92e6734061b23a3bf7a4ae6eef,8passed4.08s;
+JUnit8/0errors/0failures/0skips4.084s; exit0/no timeout/PID51372+direct0,
+stderr empty/network logs absent. LogB4D3D51446C8F1710F5D770BD0C2CFA2B1AFB27CA9FC851DE5D458CB4CE997DA;
+XMLFB156478DEBF6C4E19A321B52F16C7C96A1D96143FE5FC0D1EB4176D332E44D2;
+result6455CC2FE6B3FABBCF878F3A4965195D18182912E9498536EE99BE09572CA36A.
+Frozen test8D706F19/runner6DAC66DB unchanged. This proves schema422 behavior
+without irrelevant enrollment, NOT a runtime2490ms fix/cause/native-wake proof.
+The original hostedfailure is retained. No additional accommodation, full,
+publication or application repeat is released; combined Windows/root disposition
+is pending. Owned root/direct ledger is not exhaustive descendant history.
+
+
+Root adopts a selected-function-only fixture correction after automatic CI
+39132388177 failed at initial enrollment in body6, before the invalid POST.
+Raw job117690061826 SHA925F16CD017F1D7A2EC6392F5E8D32617EED62EB203897CB5CF624B762CB4757
+records typed503 relay_busy,2490ms/pre_attempt_deadline; attempt and physical
+holder/delay are not recorded. Other current Windows full lanes remain running.
+
+Agent Workflow resumes the same High/Large/non-exempt record before editing.
+api/schemas.py898–924 rejects all eight rows before routes.py916 dispatch;
+therefore this schema-validation function needs no enrolled endpoint. Replace
+only its _setup call with otherwise valid literal scope/session/native-location,
+canonical-shaped endpoint/owner and scope_generation1. Preserve all eight real
+HTTP invalid POSTs and strengthen status to exact422. Shared setup/helpers,
+valid enrollment/claim journeys, product clocks/budgets and protected contracts
+stay unchanged. Reviewer checks actual diff/isolated exact-eight runner before
+ONE focused cohort in root-released slot. No new full/publication until combined
+current-matrix disposition. This removes an irrelevant prerequisite; it does
+not solve or attribute the physical2490ms delay. Preserve existing local full
+PASS and new automatic failure; no green lane repetition or live change.
+
+
 
 ## Delivery full qualification — independently accepted result
 
