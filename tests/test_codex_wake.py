@@ -607,6 +607,8 @@ def test_expired_wake_reconciliation_serializes_an_ordinary_reclaim(
     client, monkeypatch: pytest.MonkeyPatch, tmp_path,
 ) -> None:
     import storage.sqlite_relay as sqlite_relay
+    from core.errors import ImmediateTransactionBusyError
+    import time as native_time
 
     clock = [datetime(2030, 9, 5, tzinfo=timezone.utc)]
 
@@ -656,6 +658,14 @@ def test_expired_wake_reconciliation_serializes_an_ordinary_reclaim(
     assert reservation is not None
     clock[0] += timedelta(seconds=61)
 
+    # Separate read-only WAL snapshots observe only committed authority.
+    before_status = relay.message_status(message_id=sent["message_id"], **SCOPE)
+    before_reservations = registry.reservations_if_usable()
+    assert before_status["deliveries"][0]["state"] == "claimed"
+    assert before_status["deliveries"][0]["attempts"] == 1
+    assert before_status["deliveries"][0]["claim_token"] == claimed["claim_token"]
+    assert before_reservations == (reservation,)
+
     replacement_written = threading.Event()
     allow_reconcile = threading.Event()
     native_gate = threading.Event()
@@ -686,56 +696,96 @@ def test_expired_wake_reconciliation_serializes_an_ordinary_reclaim(
 
     monkeypatch.setattr(storage, "_begin_relay_immediate", hold_reconciliation_commit)
     monkeypatch.setattr(registry, "begin_native_attempt", begin_native_attempt)
-    monkeypatch.setattr(
-        codex_wake.time, "sleep", lambda _seconds: native_gate.wait(2)
-    )
+    native_sleep, native_monotonic = native_time.sleep, native_time.monotonic
+    monkeypatch.setattr(codex_wake, "time", SimpleNamespace(
+        **{**vars(native_time), "sleep": lambda _seconds: native_gate.wait()},
+    ))
+    assert native_time.sleep is native_sleep
+    assert native_time.monotonic is codex_wake.time.monotonic is native_monotonic
     monkeypatch.setattr(
         codex_wake, "_start_launch",
         lambda *_args: (launches.append(_args), (None, ("queued", None, 0)))[1],
     )
 
     reconciled = []
+    reconcile_errors = []
     reclaim = []
+    claim_errors = []
     claim_finished = threading.Event()
-    reconcile_thread = threading.Thread(
-        target=lambda: reconciled.append(
-            codex_wake.reconcile_codex_relay_wake_reservations(
-                relay, registry=registry
-            )
-        )
-    )
-    reconcile_thread.start()
-    assert replacement_written.wait(2)
+
+    def reconcile():
+        try:
+            reconciled.append(codex_wake.reconcile_codex_relay_wake_reservations(
+                relay, registry=registry,
+            ))
+        except BaseException as error:
+            reconcile_errors.append(error)
 
     def ordinary_reclaim():
-        reclaim.append(relay.turn(
-            runtime="codex", session_ref="target", **SCOPE
-        ))
-        claim_finished.set()
+        try:
+            reclaim.append(relay.turn(
+                runtime="codex", session_ref="target", **SCOPE,
+            ))
+        except BaseException as error:
+            claim_errors.append(error)
+        finally:
+            claim_finished.set()
 
+    reconcile_thread = threading.Thread(target=reconcile)
     claim_thread = threading.Thread(target=ordinary_reclaim)
-    claim_thread.start()
-    assert not claim_finished.wait(0.05)
-    allow_reconcile.set()
-    reconcile_thread.join(timeout=2)
-    claim_thread.join(timeout=2)
-    assert not reconcile_thread.is_alive()
-    assert not claim_thread.is_alive()
-    assert reconciled == [1]
-    assert reclaim[0]["deliveries"][0]["attempts"] == 2
-    current = registry.snapshot(endpoint_id)
-    assert current is not None
-    assert current.generation > reservation.generation
-    assert current.correlated_claim_attempts is None
+    try:
+        reconcile_thread.start()
+        assert replacement_written.wait(2)
+        claim_thread.start()
+        # The real writer remains held until this bounded caller has refused.
+        assert claim_finished.wait(2)
+        claim_thread.join(timeout=2)
+        assert not claim_thread.is_alive()
+        assert reclaim == []
+        assert len(claim_errors) == 1
+        assert type(claim_errors[0]) is ImmediateTransactionBusyError
+        assert claim_errors[0].acquisition_stage == "local_gate"
+        assert not allow_reconcile.is_set()
+        assert relay.message_status(message_id=sent["message_id"], **SCOPE) == before_status
+        assert registry.reservations_if_usable() == before_reservations
 
-    native_gate.set()
-    assert begin_checked.wait(2)
-    assert begin_results == [None]
-    assert launches == []
-    current = registry.snapshot(endpoint_id)
-    assert current is not None
-    assert current.outcome == "prepared"
-    assert current.correlated_claim_attempts is None
+        allow_reconcile.set()
+        reconcile_thread.join(timeout=2)
+        assert not reconcile_thread.is_alive()
+        assert reconcile_errors == []
+        assert reconciled == [1]
+        assert begin_results == []
+        assert launches == []
+
+        # A distinct caller after commit can now reclaim; no retry loop.
+        fresh = relay.turn(runtime="codex", session_ref="target", **SCOPE)
+        assert fresh["deliveries"][0]["delivery_id"] == delivery_id
+        assert fresh["deliveries"][0]["attempts"] == 2
+        current = registry.snapshot(endpoint_id)
+        assert current is not None
+        assert current.generation > reservation.generation
+        assert current.correlated_claim_attempts is None
+
+        native_gate.set()
+        assert begin_checked.wait(2)
+        assert begin_results == [None]
+        assert launches == []
+        current = registry.snapshot(endpoint_id)
+        assert current is not None
+        assert current.outcome == "prepared"
+        assert current.correlated_claim_attempts is None
+    finally:
+        allow_reconcile.set()
+        native_gate.set()
+        for thread in (reconcile_thread, claim_thread):
+            if thread.ident is not None:
+                thread.join(timeout=2)
+        codex_wake.stop_codex_relay_wake_admission(registry)
+        codex_wake.drain_codex_relay_wakes(registry)
+        assert not reconcile_thread.is_alive()
+        assert not claim_thread.is_alive()
+        assert native_time.sleep is native_sleep
+        assert native_time.monotonic is native_monotonic
 
 @pytest.mark.parametrize("lifecycle", ("closed", "unreachable", "moved"))
 def test_expired_wake_reconciliation_requires_current_active_recipient(

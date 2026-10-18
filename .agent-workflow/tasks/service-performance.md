@@ -1,5 +1,87 @@
 # Service-wide performance investigation and correction
 
+## Contested reconciliation — explicit bounded-refusal contract adopted
+
+Fresh nonapp-contested-reclaim selects full40; workflow/native advisory1
+with zero failed blocking predicates. Unchanged import report is reused with
+explicit scope; RED shadow architecture/API/persistence and size advisories
+remain, not a clean-governance claim. No localfull repeat/publication follows
+without root combined evidence disposition. Prepare exact local commit review.
+
+Independent actual-result review accepts ONE selected real-transaction journey:
+contested-reclaim-5f37aa2427df4627b91d2b7d9f9887cb,1passed1.99s (call0.51s),
+JUnit1/0errors/0failures/0skips1.992s. Exit0/no timeout/PID38172+direct0,
+stderr empty/network logs absent; child source74060FA8/runner4BE33F00 unchanged.
+Log2A1D289AA4F0000AC1E245EE7A037EB68239F25E0AE3CA344A786D7AD8C9CF6A;
+XML9E4B9BC62F3AF3AEBDC7F82E991C808EA7565EE9CE64E0760955100A5C3854D9;
+result20DCA0CE4C683FD82525C96555E96B6424F77B243E9EB8EAF31348CE177DDC24.
+Actual heldgate/local_gate refusal, unchanged committed delivery/token/attempt/
+reservation, distinct fresh attempt2/highergeneration/prepared/uncorrelated,
+nativeattemptNone/zero launches and finally drain all passed. Native450ms and
+stdlib clock identities remain. This validates the accepted caller contract,
+NOT historical delay cause, native-wake recoverability or a reliability fix.
+Reused schema8/nativebusy evidence is unchanged. No more tests/full/publication
+are released; exact combined source/governance review and root disposition
+remain. The sampled owned-root/direct ledger is not exhaustive descendants.
+
+
+Actual review scopes the owned worker park to a codex_wake.time module-local
+SimpleNamespace clone; stdlib sleep/monotonic identities remain native and are
+asserted before/after. No process-global sleep mutation parks unrelated work.
+
+Root adopts a selected test-only correction after actual contract review:
+real reconciliation retains the uncommitted writer gate until one ordinary
+claim ends with exact ImmediateTransactionBusyError/local_gate. Compare existing
+message_status independent WAL reads and persistent reservation observation
+before/after that refusal; message remains unexpired, no borrowed writer Session
+or uncommitted replacement. Then release/join reconciliation and make ONE distinct
+fresh native claim; retain attempt2/higher-generation/uncorrelated prepared and
+begin_native_attemptNone/zero-launch assertions. Capture thread errors, set
+finished in finally, and release all gates/join owned work before fixture close.
+Native450ms/clocks/product unchanged; no retry loop/optional busy/empty acceptance.
+Existing worker test gate must stay parked until explicit release, with mandatory
+finally/drain owning cleanup. This tests the accepted caller contract, NOT a
+reliability or historical delay fix. Preserve b092/schema8 and all8fbd failures.
+
+Same High/Large/non-exempt Work Record resumed before test edit. Prepare exact
+function diff and smallest isolated cohort; actual reviewer GO permits one
+necessary focused run in root-released slot. Reuse accepted schema8/nativebusy/
+localfull evidence; no broad full/publication until exact result and combined
+source disposition. No new diagnostics or installed/environment changes.
+
+
+## Exact8fbd hosted qualification — terminal failure retained
+
+Sole collector67504 exited0/allterminaltrue, saved19 raw job logs at
+build/claim-acquisition/hosted-8fbd68b0/ with terminal-summary.json. Automatic
+CI39132388177 FAILED: Linux313 initial invalid-schema test setup returned typed
+relay_busy503 before its target POST (2490ms/pre_attempt_deadline; physicalcause
+unknown); Linux3127311passed91skipped2xfailed453.01s and Windows smoke passed.
+Governance39132388195 succeeded with disclosed advisory checker1.
+
+Manualfull39132398029 FAILED. Linux312/313 both7311passed91skipped2xfailed
+425.44/439.43s; both smoke selections9+624passed/7skipped. Windows313 actual
+serial79passed2skipped84.65s and remaining7298passed32skipped2xfailed2167.60s.
+Windows312 actualserial79passed2skipped82.56s; remaining7292passed/1failed/
+37skipped2xfailed2050.95s. Raw35F50D21B3CD94D2ECB2F79B0990E5E61CC1FA82EFF2637B645E56A1C5C58136.
+
+New failure test_expired_wake_reconciliation_serializes_an_ordinary_reclaim
+is NOT initial setup: test_codex_wake.py725 IndexError is the empty-result
+symptom of ordinary_reclaim711 raising ImmediateTransactionBusyError(local_gate)
+in storage/sqlite_queue.py110 while competing with held reconciliation. Both
+threads joined and reconciled==[1] passed. No timing record locates lock-release
+scheduling or establishes a product serialization defect; no physical cause is
+inferred. This new failure cancels the conditional both-Windows-green reuse/
+publication path. Root/reviewer combined contract disposition is pending.
+
+Clean localb092 schema-only correction remains separately reviewed with exact8
+HTTP422 passes; it is not published or represented as a2490ms/runtimefix. No
+new accommodation, rerun, localfull, manualdispatch, live change or merge is
+released by this receipt. Existing local7357 fullPASS remains evidence atf8e7,
+not qualification of current unmerged heads. Goal reliablelocal+314/297 merged
+remains UNFINISHED. Preserve every failure and stop dependent publication.
+
+
 ## Invalid OpenCode wake schema validation — approved continuation
 
 Root accepts focused result and authorizes this exact two-path LOCAL commit only
