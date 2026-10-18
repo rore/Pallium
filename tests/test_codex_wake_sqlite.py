@@ -1241,8 +1241,24 @@ def test_http_claim_correlation_uses_fresh_identity_and_preserves_authority(
     original_router = dependencies.create_router
     original_correlate = registry.correlate_claim
     original_begin = storage._begin_relay_immediate
+    native_turn = storage.relay_turn
     results = []
     expected = [current]
+
+    def qualified_claim(*args, **kwargs):
+        # Correlation faults start after acquisition; native expiry is covered below.
+        assert kwargs["exact_delivery_id"] == current.delivery_id
+        claim_thread = threading.get_ident()
+        claim_time = SimpleNamespace(**vars(native_time))
+        claim_clock = count(step=.001).__next__
+        claim_time.monotonic = lambda: (claim_clock()
+            if threading.get_ident() == claim_thread else native_monotonic())
+        try:
+            with monkeypatch.context() as acquisition:
+                acquisition.setattr(sqlite_queue, "time", claim_time)
+                return native_turn(*args, **kwargs)
+        finally:
+            monkeypatch.setattr(storage, "relay_turn", native_turn)
 
     def correlate(**kwargs):
         mismatches = {
@@ -1267,6 +1283,8 @@ def test_http_claim_correlation_uses_fresh_identity_and_preserves_authority(
             )
 
         def change_before_correlation(request, result, captured):
+            assert sqlite_queue.time is native_time and native_time.monotonic is native_monotonic
+            assert storage.relay_turn == native_turn
             assert captured == current
             assert result["deliveries"][0]["attempts"] == 1
             if change == "outcome":
@@ -1309,10 +1327,13 @@ def test_http_claim_correlation_uses_fresh_identity_and_preserves_authority(
     app = FastAPI()
     app.include_router(build_router(SimpleNamespace(), relay_storage=storage, codex_wake_registry=registry))
     with TestClient(app) as http:
+        monkeypatch.setattr(storage, "relay_turn", qualified_claim)
         response = http.post("/relay/turn", json={
             "runtime": "codex", "session_ref": "target",
             "wake_delivery_id": current.delivery_id, **SCOPE,
         })
+        assert sqlite_queue.time is native_time and native_time.monotonic is native_monotonic
+        assert storage.relay_turn == native_turn
         assert response.status_code == 200, response.text
         claimed, = response.json()["deliveries"]
         assert claimed["delivery_id"] == current.delivery_id and claimed["attempts"] == 1
@@ -1327,6 +1348,135 @@ def test_http_claim_correlation_uses_fresh_identity_and_preserves_authority(
         retained, = readback.json()["deliveries"]
         assert retained["delivery_id"] == current.delivery_id
         assert retained["state"] == "claimed" and retained["attempts"] == 1
+
+
+@pytest.mark.parametrize("boundary", ["setup_expired", "late_begin"])
+def test_http_claim_native_acquisition_expiry_preserves_pending_delivery(
+    relay_store, tmp_path, monkeypatch, boundary,
+):
+    import time
+    from app import dependencies
+    from storage import sqlite_queue
+
+    relay, storage, database = relay_store
+    registry = _registry(relay, tmp_path / "legacy")
+    assert registry.initialize(old_owner_drained=True)
+    sent = _send(relay)
+    current = registry.begin_native_attempt(_reserve(registry, sent))
+    assert current is not None
+    authority = _stored_items(database)
+    native_time = sqlite_queue.time
+    native_monotonic = time.monotonic
+    native_turn = storage.relay_turn
+    native_factory = storage._relay_session_factory
+    original_router = dependencies.create_router
+    callbacks, sessions, statements, holds = [], [], [], []
+    claim_thread = [None]
+
+    def observe_router(service, **kwargs):
+        kwargs["relay_turn_admission_callback"] = lambda *args: callbacks.append(args)
+        return original_router(service, **kwargs)
+
+    def hold():
+        started = time.monotonic()
+        time.sleep(.5)
+        holds.append(time.monotonic() - started)
+
+    def factory(*args, **kwargs):
+        session = native_factory(*args, **kwargs)
+        if threading.get_ident() != claim_thread[0]:
+            return session
+        native_connection, native_close = session.connection, session.close
+        observed = {"session": session, "closed": 0}
+        sessions.append(observed)
+
+        def connection(*args, **kwargs):
+            conn = native_connection(*args, **kwargs)
+            observed["connection"] = conn
+            execute = conn.execute
+
+            def execute_observed(statement, *args, **kwargs):
+                result = execute(statement, *args, **kwargs)
+                sql = str(statement).strip().upper()
+                statements.append(sql)
+                if sql == "BEGIN IMMEDIATE" and boundary == "late_begin":
+                    assert conn.connection.driver_connection.in_transaction
+                    hold()
+                return result
+
+            attempt.setattr(conn, "execute", execute_observed)
+            if boundary == "setup_expired":
+                assert not conn.connection.driver_connection.in_transaction
+                hold()
+            return conn
+
+        def close():
+            try:
+                conn = observed["connection"]
+                observed["busy_timeout"] = conn.exec_driver_sql("PRAGMA busy_timeout").scalar()
+                observed["in_transaction"] = conn.connection.driver_connection.in_transaction
+            finally:
+                native_close()
+                observed["closed"] += 1
+
+        attempt.setattr(session, "connection", connection)
+        attempt.setattr(session, "close", close)
+        return session
+
+    def turn(*args, **kwargs):
+        claim_thread[0] = threading.get_ident()
+        try:
+            return native_turn(*args, **kwargs)
+        finally:
+            claim_thread[0] = None
+
+    monkeypatch.setattr(dependencies, "create_router", observe_router)
+    app = FastAPI()
+    app.include_router(build_router(SimpleNamespace(), relay_storage=storage, codex_wake_registry=registry))
+    body = {"runtime": "codex", "session_ref": "target",
+            "wake_delivery_id": current.delivery_id, **SCOPE}
+    with TestClient(app) as http:
+        before = http.get(f"/relay/messages/{sent['message_id']}", params=SCOPE)
+        with monkeypatch.context() as attempt:
+            attempt.setattr(storage, "relay_turn", turn)
+            attempt.setattr(storage, "_relay_session_factory", factory)
+            response = http.post("/relay/turn", json=body)
+        assert sqlite_queue.time is native_time and time.monotonic is native_monotonic
+        assert storage.relay_turn == native_turn and storage._relay_session_factory == native_factory
+        assert response.status_code == 503, response.text
+        assert response.json() == {"detail": {"code": "relay_busy", "retryable": True}}
+        assert response.headers["Retry-After"] == "1"
+        assert len(holds) == len(sessions) == 1 and holds[0] >= .5
+        assert statements.count("BEGIN IMMEDIATE") == (boundary == "late_begin")
+        assert statements.count("ROLLBACK") == (boundary == "late_begin")
+        assert statements.count("PRAGMA BUSY_TIMEOUT=15000") == 1
+        assert "COMMIT" not in statements and callbacks == []
+        assert sessions[0]["closed"] == 1 and sessions[0]["connection"].closed
+        assert not sessions[0]["session"].in_transaction()
+        assert not storage._relay_writer_lock.locked()
+        assert sessions[0]["busy_timeout"] == 15000
+        assert sessions[0]["in_transaction"] is False
+        assert _stored_items(database) == authority
+        # Readback and the fresh caller run with every acquisition seam removed.
+        assert before.status_code == 200, before.text
+        message_id = before.json()["message_id"]
+        pending = http.get(f"/relay/messages/{message_id}", params=SCOPE)
+        assert pending.status_code == 200, pending.text
+        assert pending.json()["deliveries"] == before.json()["deliveries"]
+        delivery, = pending.json()["deliveries"]
+        assert delivery["state"] == "pending" and delivery["attempts"] == 0
+        fresh = http.post("/relay/turn", json=body)
+        assert fresh.status_code == 200, fresh.text
+        claimed, = fresh.json()["deliveries"]
+        assert claimed["delivery_id"] == current.delivery_id and claimed["attempts"] == 1
+        assert len(callbacks) == 1
+        ack = http.post("/relay/deliveries/ack", json={
+            "delivery_id": claimed["delivery_id"], "claim_token": claimed["claim_token"], **SCOPE})
+        assert ack.status_code == 200, ack.text
+        delivered = http.get(f"/relay/messages/{message_id}", params=SCOPE)
+        assert delivered.status_code == 200, delivered.text
+        retained, = delivered.json()["deliveries"]
+        assert retained["state"] == "delivered" and retained["attempts"] == 1
 
 
 @pytest.mark.parametrize("authority", ["reserved", "absent", "uninitialized", "malformed", "failed"])

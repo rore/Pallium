@@ -1,5 +1,95 @@
 # Service-wide performance investigation and correction
 
+## Real claim acquisition refusal — resumed 2026-10-18
+
+Root conveyed the user's priority to correct the failures blocking PR314/PR297
+and complete qualification. This continuation uses the existing record on isolated
+branch `fix/relay-claim-acquisition`, starting at published `65a4e5ad`; installed
+code, the publication checkout and PRIMARY's dirty roadmap remain untouched.
+This is normal Agent Workflow scope, not a documentation exemption. The existing
+High/Large whole-change classification and immutable baseline remain; the bounded
+investigation is Elevated/Moderate while a production change is possible.
+
+The retained hosted RED is the real HTTP claim in
+`test_http_claim_correlation_uses_fresh_identity_and_preserves_authority[outcome]`:
+503/setup_deadline after initialization and reservations, before the postcommit
+correlation callback and readback. Its raw SHA256 is
+`4B1C0220A891B9D71A323BCD4CC3679D18CFE8486D59EA48788FAB734AFAC387`.
+The one changed-host diagnostic passed without failure spans; it is closed and
+will not be repeated unchanged. Neither record establishes the physical delay.
+
+Discovery confirms that the 450 ms acquisition bound includes Session/connection
+setup: existing `setup_expired` tests require refusal before BEGIN/body/flush.
+Moving the deadline start or extending budgets would change that accepted contract
+and is not selected. Removing an unnecessary cleanup PRAGMA alone cannot explain
+or correct the observed refusal. All Relay correctness callers share this bound.
+
+The initial selected-request retry proposal was withdrawn after independent
+review: the public 503 does not provide the private pre-yield/no-mutation proof
+that proposal would require. The original single-claim assertion stays intact.
+No product/test edit or test run occurred. The idle local slot was released to
+PR297 rather than reserved during source inspection.
+
+A separate source candidate is the file-database QueuePool capacity wait: its
+default 30-second checkout timeout can exceed Relay's 450 ms acquisition bound.
+The provider aliases the main and Relay pool for the default/same-file layout;
+even a separate Relay pool serves its read paths. A public engine-wide timeout
+would therefore change other callers, while a dedicated write pool adds resource
+ownership. The normal Relay HTTP limiter is four, below default pool capacity
+fifteen; no evidence links saturation to the retained hosted refusal. This is
+under assessment, not an adopted configuration fix or historical-cause claim.
+Actual plan/diff review and a released shared test slot precede execution.
+
+Independent review rejects a second pool for this closure. The remaining bounded
+test-contract option requires a companion before changing the functional matrix:
+drive the real HTTP claim through an actual Session.connection whose return is
+held past the unchanged native acquisition deadline; require typed 503 and
+Retry-After, no BEGIN/claim/postcommit callback, closed resources and publicly
+pending attempt zero with unchanged authority. Remove only the injected hold and
+prove a fresh genuine claim and ACK. Existing real held-writer HTTP and explicit
+acquisition-boundary tests remain mandatory. Only after this composition is
+reviewed may the ten postcommit-correlation rows qualify their successful claim
+acquisition, restoring native policy before callbacks/correlation/readback. This
+separates functional authority coverage from scheduling-sensitive deadline
+qualification; it does not fix or explain the historical latency.
+Root explicitly adopted this split after technical review. Implement exactly two
+native HTTP companions (setup expiry and late-BEGIN rollback) and the narrow
+ten-row acquisition seam, with no production change. The focused cohort is 21:
+these twelve rows, eight existing acquisition-deadline boundaries and the existing
+real held-writer HTTP lifecycle. Actual diff/runner review precedes execution;
+PR297 owns the application-test slot until explicit release. Historical failure
+and diagnostic nonreproduction remain preserved. No further diagnostic is planned.
+
+Actual diff/runner review accepted the selected-handle timeout proof: read its
+PRAGMA inside delegated Session.close before closing in finally, and assert the
+recorded policy after the request. The exact 21 cases passed/JUnit8.132 seconds,
+zero errors/failures/skips, exit0/no timeout, owned pytest4132 and direct children
+remaining0, stderr/network evidence empty. Artifacts are under
+`build/claim-acquisition/focused-679f58f414ca41cca826a9b259bb5970`: log
+`DAEB4E1BD43F313E31A10AF82CB71ABEAC33195C73A89723CF418E444BCFBF6E`, XML
+`02412029EBA41FA198CE4710876AFE8CD6AE6C9016DC43BD79D562E6AACACD9F`, result
+`2276285C97B924903736C077D167ADAE714D9536C0BE172B9DA089A2397DC7E9`.
+Actual imported queue/storage/test matched the candidate; test
+`C5C359F75DB058894B92C90787AFC68035CBA7FF771720CA2C367785ACE2C0EE`
+and runner `23A6089A405145FD2292C39EC437823ABC03BAB56896B79D1A81D49E91487B2F`
+were unchanged. Independent actual-result GO is received. The isolated focused
+runtime uses existing base Python/private dependencies and is not hosted parity;
+the drain ledger covers the root/direct children, not exhaustive descendants.
+Do not repeat the focused cohort. Fresh whole-change checks and a required full
+run with the existing locked private runtime follow actual runner review. This
+qualifies the coverage split, not historical latency or live reliability.
+
+Fresh nonapplication checks at `build/claim-acquisition/nonapp` use fetched
+`origin/main=701608cd0f666fe5106bf7c91e2e98bf0fe21d0c`: selector full/38 paths,
+no-cache imports8 kept/0 broken/1 ignored, boundary0/API0. Redline/workflow/native
+adapter return advisory1; recursively parsed workflow/native reports have zero
+failed blocking predicates. Architecture/API/persistence checkpoints remain
+unsatisfied shadow advisories; whole-change size37 files/5453 lines fails and is
+disclosed. These are not a clean whole-PR qualification. Prepare the required full
+non-slow run using the existing read-only private locked runtime and inventory
+comparison, with fresh isolated state and source-before/after hashes. No runtime
+installation, dependency/pool policy change or installed action is authorized.
+
 ## Foreground retained-channel recovery — isolated plan checkpoint 2026-10-18
 
 Agent technical result review: `/root/simplicity_reviewer` independently accepted the actual RED1 and affected-file144 GREEN artifacts, matching source hashes, unavailable-before-fresh-registration oracle, native trust/cleanup assertions and runtime limits. Fresh non-application checks at `build/qualification-boundaries/final-foreground-retirement-checks` fetched and reverified `origin/main=f602753edf46d0b7a5d88bcd79725a143e311dba`; selector requires full38 paths, no-cache imports8 kept/0 broken/1 existing ignored import, boundary0/API0. Redline/workflow/native adapter each return advisory1 with zero failed blocking predicates. Existing whole-change architecture/API/persistence checkpoints remain unsatisfied shadow advisories and size37 files/5303 lines is fail; these are not clean governance passes. The initial reused adapter invocation failed2 solely because it omitted the explicit fresh Redline verdict argument in this new worktree; its output remains `native-adapter-initial-missing-verdict.log`. Only that adapter was rerun with the exact fresh verdict/changed-files/base/head arguments and passed all blocking predicates. No application case was repeated. Local review readiness covers this bounded implementation and144-case evidence; root still owns integration, exact-head full qualification, publication and any separately approved live activation. No service or Desktop restart, installed file/configuration/dependency/data change, push or new CI dispatch occurred.
@@ -1164,7 +1254,7 @@ Agent technical review: /root/architecture_check, clean nonimplementer source/pl
 
 **Exceptions:** None
 
-**State:** Ready for review
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ### Final adbc Windows preparation boundaries — pre-edit checkpoint 2026-10-16
