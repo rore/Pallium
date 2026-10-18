@@ -150,6 +150,9 @@ VIEWS = ("/status", "/dashboard/api/relay/summary")
 
 @pytest.fixture
 def world(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    import storage.sqlite_queue as sqlite_queue
+
     native = []
     monkeypatch.setattr("app.dependencies.schedule_codex_relay_wake", lambda *a, **kw: native.append(1))
     config = replace(_test_config(tmp_path), relay_sqlite_url=f"sqlite:///{tmp_path / 'relay.db'}")
@@ -160,8 +163,18 @@ def world(tmp_path, monkeypatch):
         http = TestClient(app)  # No live reconciliation lifecycle; native boundary is fake.
         registry = app.state.codex_wake_registry
         assert registry.initialize(old_owner_drained=True)
-        for session in ("sender", "target"):
-            assert http.post("/relay/turn", json={"runtime": "codex", "session_ref": session, **SCOPE}).status_code == 200
+        native_time = sqlite_queue.time
+        native_monotonic = native_time.monotonic
+        logical_time = SimpleNamespace(**vars(native_time))
+        # Qualify the health read after real enrollment setup; native acquisition budgets have separate coverage.
+        from itertools import count
+        logical_time.monotonic = count(step=.001).__next__
+        with monkeypatch.context() as setup_clock:
+            setup_clock.setattr(sqlite_queue, "time", logical_time)
+            for session in ("sender", "target"):
+                assert http.post("/relay/turn", json={"runtime": "codex", "session_ref": session, **SCOPE}).status_code == 200
+        assert sqlite_queue.time is native_time
+        assert sqlite_queue.time.monotonic is native_monotonic
         yield http, storage, registry, native
     finally:
         try:

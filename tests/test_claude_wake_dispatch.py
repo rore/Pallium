@@ -1625,6 +1625,7 @@ def test_empty_stop_rearms_claude_wake_after_turn_admission(client, monkeypatch,
     from fastapi.testclient import TestClient
 
     from app.dependencies import build_router
+    import app.claude_wake as wake
     from tests.test_claude_code_integration import _load_claude_hook
 
     registry = ClaudeWakeRegistry()
@@ -1637,17 +1638,63 @@ def test_empty_stop_rearms_claude_wake_after_turn_admission(client, monkeypatch,
     http = TestClient(app, client=("127.0.0.1", 50000))
     scope = {"container_ref": PAYLOAD["container_ref"]}
     stop = _load_claude_hook("stop", monkeypatch)
+    common = sys.modules["common"]
+    assert stop.relay_turn.__globals__ is common.__dict__
+    native_time = common.time
+    native_monotonic = native_time.monotonic
+    native_acquire = common._acquire_session_lock
+    native_release = common._release_session_lock
+    lock_events = []
+    acquired_handles = []
+    from itertools import count
+
+    def scoped_acquire(session_id):
+        if session_id != "empty-stop":
+            return native_acquire(session_id)
+        logical_time = SimpleNamespace(**vars(native_time))
+        # Qualify functional rearm after real lock setup; native elapsed-budget behavior has separate coverage.
+        logical_time.monotonic = count(step=.001).__next__
+        common.time = logical_time
+        try:
+            handle = native_acquire(session_id)
+            lock_events.append(("acquire", handle is not None))
+            if handle is not None:
+                acquired_handles.append(handle)
+            return handle
+        finally:
+            common.time = native_time
+
+    def observe_release(handle):
+        result = native_release(handle)
+        if acquired_handles and handle is acquired_handles[0]:
+            lock_events.append(("release", True))
+        return result
+
+    monkeypatch.setattr(common, "_acquire_session_lock", scoped_acquire)
+    monkeypatch.setattr(common, "_release_session_lock", observe_release)
     monkeypatch.setitem(stop.relay_turn.__globals__, "SESSIONS_DIR", tmp_path / "hook-sessions")
     monkeypatch.setattr(stop, "resolve_container_ref", lambda *_: scope["container_ref"])
     monkeypatch.setattr(stop, "derive_actor_ref", lambda *_: "local")
+    registration_events = []
+    turn_events = []
+
     def register(session, container, **kwargs):
         response = http.post("/internal/claude-wake/register", json={
             **PAYLOAD, "session_ref": session, "container_ref": container, "idle": kwargs.get("idle", False),
         })
+        registration_events.append({"session": session, "idle": kwargs.get("idle", False), "status": response.status_code})
+        turn_events.append("register")
         return response.status_code == 204
 
     def relay(method, path, body, *, timeout):
         response = http.request(method, path, json=body)
+        if method == "POST" and path == "/relay/turn" and body.get("session_ref") == "empty-stop":
+            payload = response.json() if response.content else {}
+            session_payload = payload.get("session", {}) if isinstance(payload, dict) else {}
+            turn_events.append("target_turn")
+            turn_events.append({"status": response.status_code, "runtime": session_payload.get("runtime"),
+                                "session_ref": session_payload.get("session_ref"), "container_ref": session_payload.get("container_ref"),
+                                "endpoint_id": session_payload.get("endpoint_id"), "scope_generation": session_payload.get("scope_generation")})
         return response.json() if response.content else None
 
     monkeypatch.setattr(stop, "register_claude_wake", register)
@@ -1655,19 +1702,52 @@ def test_empty_stop_rearms_claude_wake_after_turn_admission(client, monkeypatch,
     monkeypatch.setattr(stop, "read_hook_input", lambda: {
         "session_id": "empty-stop", "cwd": str(tmp_path), "transcript_path": "",
     })
-    stop.main()
+    try:
+        try:
+            stop.main()
+        finally:
+            common.time = native_time
+            monkeypatch.setattr(common, "_acquire_session_lock", native_acquire)
+            monkeypatch.setattr(common, "_release_session_lock", native_release)
 
-    assert http.post("/relay/turn", json={
-        "runtime": "codex", "session_ref": "sender", **scope,
-    }).status_code == 200
-    triggered = threading.Event()
-    monkeypatch.setattr("app.claude_wake.claude_wake_transport", lambda *_: triggered.set() or True)
-    sent = http.post("/relay/messages", json={
-        "sender_runtime": "codex", "sender_session_ref": "sender",
-        "recipient": "claude-code:empty-stop", "payload": "wake after empty stop", **scope,
-    })
-    assert sent.status_code == 200
-    assert triggered.wait(timeout=1)
+        assert common.time is native_time
+        assert common.time.monotonic is native_monotonic
+        assert common._acquire_session_lock is native_acquire
+        assert common._release_session_lock is native_release
+        assert lock_events == [("acquire", True), ("release", True)], "empty-stop native lock acquisition must succeed"
+        assert any(isinstance(event, dict) for event in turn_events), "target canonical turn admission witness must exist"
+        assert [event for event in turn_events if isinstance(event, str)] == ["register", "target_turn", "register"]
+        target_turn = next(event for event in turn_events if isinstance(event, dict))
+        assert target_turn["status"] == 200 and target_turn["runtime"] == "claude-code"
+        assert target_turn["session_ref"] == "empty-stop" and target_turn["container_ref"] == scope["container_ref"]
+        assert isinstance(target_turn["endpoint_id"], str) and target_turn["endpoint_id"].startswith("relay-session-")
+        assert type(target_turn["scope_generation"]) is int and target_turn["scope_generation"] >= 0
+        assert len(registration_events) == 2
+        assert registration_events[0]["session"] == registration_events[1]["session"] == "empty-stop"
+        assert registration_events[0]["idle"] is True and registration_events[1]["idle"] is True
+        assert registration_events[1]["status"] == 204, "post-turn idle rearm registration must be accepted"
+        assert registration_events[0]["status"] == 204
+        assert registry.state_for(recipient_endpoint_id=target_turn["endpoint_id"], session_ref="empty-stop",
+                                  container_ref=scope["container_ref"]) == "idle"
+        assert http.post("/relay/turn", json={
+            "runtime": "codex", "session_ref": "sender", **scope,
+        }).status_code == 200
+        triggered = threading.Event()
+        monkeypatch.setattr("app.claude_wake.claude_wake_transport", lambda *_: triggered.set() or True)
+        sent = http.post("/relay/messages", json={
+            "sender_runtime": "codex", "sender_session_ref": "sender",
+            "recipient": "claude-code:empty-stop", "payload": "wake after empty stop", **scope,
+        })
+        assert sent.status_code == 200
+        assert triggered.wait(timeout=1)
+    finally:
+        try:
+            wake.stop_claude_relay_wake_admission(registry)
+        finally:
+            try:
+                wake.drain_claude_relay_wakes(registry)
+            finally:
+                http.close()
 
 
 def test_post_start_lost_http_intent_reconciles_without_claiming_relay(
