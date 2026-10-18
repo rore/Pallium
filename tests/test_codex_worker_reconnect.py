@@ -560,6 +560,179 @@ def test_same_epoch_recovery_preserves_admission_and_identity_fences(monkeypatch
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("case", ["transport-failed", "deadline", "primary-peer-mismatch",
+    "primary-invalid-response", "primary-generic", "primary-refusal", "unresolved-io",
+    "retire-unresolved", "changed-bootstrap", "changed-continuity", "changed-capability",
+    "other-caller", "cancel-fresh", "shutdown"])
+async def test_fresh_caller_recovers_resolved_foreground_channel_failure(monkeypatch, tmp_path, case):
+    from mcp.shared.exceptions import McpError
+    from mcp.types import CancelledNotification, CancelledNotificationParams, ClientNotification
+
+    clients, workers, registrations, outcomes, operations = [], [], [], [], []
+    observed, candidate_ready, release_ready = threading.Event(), threading.Event(), threading.Event()
+    proof = "a" * 64
+    retained = []
+    monkeypatch.setattr(bridge, "_retained", retained)
+    monkeypatch.setenv("PALLIUM_HOME", str(tmp_path))
+    native_client = bridge.NativeInventoryClient
+
+    class Peer:
+        def __init__(self):
+            self.handle, self.closed = self, 0
+            self.pid, self.creation = os.getpid(), "2026-01-02T03:04:05+00:00"
+        def close(self):
+            if self.handle is not None:
+                self.closed += 1
+                self.handle = None
+
+    class IO:
+        unresolved, closed = False, 0
+        def close(self):
+            self.closed += 1
+
+    class Native:
+        retire = native_client.retire
+        retired_service_exited = native_client.retired_service_exited
+        def __init__(self, *args, retained, previous_manifest=None):
+            assert previous_manifest is None  # The authenticated service never exits.
+            self.index = len(clients)
+            self.manifest = {"epoch": "same", "pid": 1, "creation": "same"}
+            self.peer, self.source, self.io = Peer(), Peer(), IO()
+            self.owner, self.source_peer, self.source_io = self.peer, self.source, self.io
+            self.w = SimpleNamespace(event=SimpleNamespace(
+                WaitForSingleObject=lambda handle, timeout: 258, WAIT_OBJECT_0=0, WAIT_TIMEOUT=258))
+            self.unresolved, self.continuity, self.failed = False, None, False
+            clients.append(self)
+        def bootstrap_unchanged(self):
+            return not (self.failed and case == "changed-bootstrap")
+        def service_current(self):
+            if not self.bootstrap_unchanged():
+                raise bridge.ShadowUnavailable("peer-mismatch")
+            return True
+        def ready(self):
+            if self.index == 0 and self.failed:
+                if case == "changed-capability":
+                    monkeypatch.setenv("CODEX_APP_TOOLS_PIPE_PATH", "changed-capability")
+                raise bridge.ShadowUnavailable("deadline" if case == "deadline" else "transport-failed")
+            if self.index and case == "cancel-fresh":
+                candidate_ready.set()
+                assert release_ready.wait(5)
+            return {"status": "ready", "connected": self.continuity is not None, "source_exited": False}
+        def register(self, metadata):
+            registrations.append((self.index, dict(metadata), self.continuity))
+            if self.index == 0 and self.continuity:
+                self.failed = True
+                if case == "unresolved-io":
+                    self.io.unresolved = True
+                if case == "changed-continuity":
+                    self.continuity = "b" * 64
+                if case == "primary-refusal":
+                    return {"status": "unavailable", "reason": "peer-mismatch"}
+                if case == "primary-generic":
+                    raise RuntimeError("controlled foreground failure")
+                category = (case.removeprefix("primary-") if case.startswith("primary-")
+                            else "deadline" if case == "deadline" else "transport-failed")
+                raise bridge.ShadowUnavailable(category)
+            assert metadata["thread_ref"] == "actual-runtime"
+            assert self.continuity == (None if self.index == 0 else proof)
+            self.continuity = proof
+            return {"status": "registered", "reason": "ok"}
+        def dispose(self):
+            native_client.dispose(self)
+            if self.failed and case == "retire-unresolved":
+                self.unresolved = True
+
+    class Worker(lifecycle.InventoryWorker):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            workers.append(self)
+        async def register(self, metadata):
+            result = await super().register(metadata)
+            outcomes.append((dict(metadata), result))
+            return result
+        def _recover_if_gone(self, *args, **kwargs):
+            try:
+                return super()._recover_if_gone(*args, **kwargs)
+            finally:
+                observed.set()
+
+    monkeypatch.setattr(lifecycle, "InventoryWorker", Worker)
+    monkeypatch.setattr(bridge, "native_available", lambda: True)
+    server = _protocol_server(monkeypatch, Native, operations)
+    monkeypatch.setattr(lifecycle, "RECONNECT_IDLE_POLL_SECONDS", 5)
+    request = None
+
+    async def exercise(session):
+        nonlocal request
+        assert not (await _actual_status(session, "admitted")).isError
+        assert not (await _actual_status(session, "failed-foreground")).isError
+        assert await asyncio.to_thread(observed.wait, 2)
+        assert outcomes[1][1]["status"] == "unavailable"
+        assert outcomes[1][1]["reason"] == ("peer-mismatch" if case == "primary-refusal" else "native-failed")
+        assert len(clients) == 1 and len(registrations) == 2
+        assert len(operations) == 2  # Unavailable enrollment does not replay or suppress Relay.
+        if case == "shutdown":
+            await workers[0].stop()
+            return
+        if case == "cancel-fresh":
+            request_id = session._request_id
+            request = asyncio.create_task(_actual_status(session, "fresh"))
+            try:
+                assert await asyncio.to_thread(candidate_ready.wait, 2)
+                await session.send_notification(ClientNotification(CancelledNotification(
+                    params=CancelledNotificationParams(requestId=request_id, reason="controlled cancellation"))))
+                with pytest.raises(McpError):
+                    await asyncio.wait_for(request, 2)
+            finally:
+                release_ready.set()
+            return
+        if case == "other-caller":
+            result = await session.call_tool("pallium_relay_status", {"message_id": "message"},
+                meta={"threadId": "other-runtime", "turnId": "fresh"})
+        else:
+            result = await _actual_status(session, "fresh")
+        assert not result.isError
+        if case in {"transport-failed", "deadline"}:
+            assert registrations == [
+                (0, {"thread_ref": "actual-runtime", "turn_ref": "admitted"}, None),
+                (0, {"thread_ref": "actual-runtime", "turn_ref": "failed-foreground"}, proof),
+                (1, {"thread_ref": "actual-runtime", "turn_ref": "fresh"}, proof),
+            ], "Fresh same caller must register after resolved foreground channel failure"
+            assert outcomes[-1][1]["status"] == "registered"
+            assert workers[0]._restart_allowed and workers[0]._thread.is_alive()
+            text = (tmp_path / "logs" / f"codex-retained-client-{os.getpid()}.log").read_text(encoding="utf-8")
+            expected = "reregister-ready-deadline" if case == "deadline" else "reregister-ready-transport"
+            assert f"reason={expected} " in text
+        else:
+            assert len(clients) == 1 and len(registrations) == 2
+            assert not workers[0]._restart_allowed
+        assert len(operations) == 3
+
+    try:
+        await _serve_protocol(server, exercise)
+    finally:
+        release_ready.set()
+        if request is not None and not request.done():
+            request.cancel()
+            await asyncio.gather(request, return_exceptions=True)
+        try:
+            for worker in workers:
+                await worker.stop()
+            for worker in workers:
+                await asyncio.to_thread(worker._thread.join)
+        finally:
+            # Only fake I/O/handles are settled after checking refusal and worker cleanup.
+            for client in clients:
+                if client.io is not None:
+                    client.io.unresolved = False
+                native_client.dispose(client)
+    assert all(not worker._thread.is_alive() for worker in workers)
+    assert all(client.owner.closed == client.source_peer.closed == client.source_io.closed == 1
+               for client in clients)
+    assert all(client.peer is None and client.source is None and client.io is None for client in clients)
+
+
+@pytest.mark.asyncio
 async def test_actual_request_reconnects_after_old_service_epoch_is_gone(monkeypatch):
     epochs = [1]
     clients = []
