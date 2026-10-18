@@ -282,7 +282,16 @@ class TestImmediateTransactionRetry:
                 assert statements.count("ROLLBACK") == 1
 
     @pytest.mark.parametrize("failure", ["setup", "begin", "body", "flush", "commit", "rollback", "close"])
-    def test_relay_writer_releases_on_every_exception_before_fresh_acquisition(self, storage, failure):
+    def test_relay_writer_releases_on_every_exception_before_fresh_acquisition(self, storage, failure, monkeypatch):
+        from storage import sqlite_queue
+
+        # Exception cleanup is modeled here; native deadlines have separate coverage.
+        native_monotonic = time.monotonic
+        monkeypatch.setattr(sqlite_queue, "time", SimpleNamespace(
+            **{**vars(time), "monotonic": lambda: 0.0},
+        ))
+        assert time.monotonic is native_monotonic
+        assert sqlite_queue.time.sleep is time.sleep
         session, connection = MagicMock(), MagicMock()
         session.connection.return_value = connection
         storage._relay_session_factory = lambda: session
@@ -318,6 +327,8 @@ class TestImmediateTransactionRetry:
             assert active is fresh
         assert fresh.flush.call_count == fresh.close.call_count == 1
         assert not storage._relay_writer_lock.locked()
+        assert time.monotonic is native_monotonic
+        assert sqlite_queue.time.sleep is time.sleep
 
     def test_same_provider_writer_waits_locally_before_native_begin(self, storage):
         from sqlalchemy import event

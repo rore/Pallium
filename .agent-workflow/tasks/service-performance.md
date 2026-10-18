@@ -1,5 +1,61 @@
 # Service-wide performance investigation and correction
 
+## Exact68b hosted terminal and mocked-unit continuation
+
+Fresh nonapp-mocked-cleanup selects full41; workflow/native advisory1 with
+zero failed blocking predicates. Imports0violations are explicitly reused
+because product/import-policy paths are unchanged; RED shadow checkpoints and
+size advisories remain disclosed. Exact local commit/body/manifest review next.
+
+ONE reviewed focused cohort passed7 in1.03s (JUnit7/0errors/failures/skips,
+1.031s), mocked-cleanup-d97a72290c0c47ed81f25775dbebd0a1. Exit0/no timeout,
+PID19664+directchildren0, stderr empty/network logs absent. Frozen testE12C7451;
+executed runnerC84584EF changes only approved HTTP-to-storage ledger label from
+reviewed33AF. Log4B86880B485C5551F88BB6FF53666E4539D2021E193B02BC33AD248A7BF35E22;
+XML05C7F7877433D39AAF9A03D90E0651A70A2FDAFF2E3740F35F092FF48753272F;
+result9377C10117D7EF0F9FC35BCCA1B07A079290C55F0F7DAD106AE1FF3CD61E22DA.
+This establishes modeled exception/cleanup/fresh-success mechanics, not a native
+latency fix or hosted parity. Independent actual-result GO verifies all7 named rows and exact source/runner
+provenance; no additional local test is needed.
+
+Root conditionally authorizes exact committed source/record/body/manifest review,
+then normalFF publication plus EXACTLY ONE existing manualfull/no diagnostics
+and automatic required checks, without another localfull. Reuse accepted local
+full/native evidence only at original heads; retain failed68b without waiver.
+Actual new-head Windows312/313 and all required checks/reviews must pass before
+merge. No workflow/runtime/installed changes, no further local tests or capture.
+
+
+Sole collector88569 terminated normally/allterminaltrue/saved19 raw logs at
+hosted-68b5e388/terminal-summary.json. AutomaticCI39136924560 and governance
+39136924475 succeeded. Manualfull39136937124 FAILED only Windows312:
+79serialpassed2skipped66.50s; remaining7297passed/1failed/32skipped2xfailed
+2831.38s. Windows313 actual79serial2skipped80.15s plus7298remaining32skipped/
+2xfailed2316.39s passed. All4 Linux full lanes7311/91skipped/2xfailed and
+both Windows smokes9+624/7skipped passed. No merge or passingWin312 claim.
+
+RawEC537B9C73BD32C5630ADF7BC3F8C76D53B7790886CF1712667BA4DE86FF6D22
+fails test_relay_writer_releases_on_every_exception_before_fresh_acquisition
+[body] ONLY at line317 fresh MagicMock session acquisition. Intended original
+body KeyboardInterrupt, bodies[1], unlocked writer and oldSession.close1 had
+all passed. Fake connection return exceeded setup deadline; no realSQL or
+holder/I/O attribution follows. Initial preliminary before-body attribution
+was corrected after reading full traceback. Native guard correctly refused;
+no product cleanup/reliability defect or historical cause is established.
+
+Root adopts ONLY this fully mocked unit plus WR: existing module-local
+sqlite_queue.time SimpleNamespace pattern supplies deterministic monotonic,
+while native global time/lock timeout remain unchanged. Preserve all7 intended
+exceptions/body/close/unlocked and fresh flush/close/success assertions. No
+factory defaults/sharedhelpers/budget/retry/product edit. Adjacent deadline
+models and real heldwriter/HTTP native guards remain unchanged. Same existing
+High/Large/non-exempt record is resumed before code edit; actual diff/exact7
+runner review precedes ONE isolated focused cohort in root-released slot.
+Reuse accepted8+1/nativeguard/localfull evidence, no new localfull/publication
+or diagnostic. This is unit clock-model isolation, NOT a runtime reliability
+fix. Preserve every failed run and stop on any unexpected new failure.
+
+
 ## Contested reconciliation — explicit bounded-refusal contract adopted
 
 Fresh nonapp-contested-reclaim selects full40; workflow/native advisory1
