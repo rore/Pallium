@@ -2022,16 +2022,17 @@ def test_legacy_pin_bootstraps_endpoint_alias_and_queued_delivery(
         "container_ref": old,
     }), encoding="utf-8")
 
-    writer = None
+    from contextlib import ExitStack
+
+    writer = ExitStack()
+    store = client.app.state.pallium_service._storage
+    connection = None
     calls = []
     if held_writer:
-        import sqlite3
-
-        engine = client.app.state.pallium_service._storage._relay_engine
-        writer = sqlite3.connect(str(engine.url.database), timeout=0, isolation_level=None)
         try:
-            writer.execute("BEGIN IMMEDIATE")
-            assert writer.in_transaction
+            db = writer.enter_context(store._begin_relay_immediate())
+            connection = db.connection().connection.driver_connection
+            assert connection.in_transaction and store._relay_writer_lock.locked()
         except BaseException:
             writer.close()
             raise
@@ -2041,20 +2042,20 @@ def test_legacy_pin_bootstraps_endpoint_alias_and_queued_delivery(
         if method == "GET":
             assert path == "/relay/sessions"
             assert body == {"runtime": runtime, "session_ref": "legacy-target", "container_ref": old}
-            if writer is not None:
-                assert writer.in_transaction
+            if held_writer:
+                assert connection.in_transaction and store._relay_writer_lock.locked()
             response = client.get(path, params=body)
             assert response.status_code == 200, response.text
             assert response.json()[0]["endpoint_id"] == endpoint
-            if writer is not None:
-                assert writer.in_transaction
-                writer.rollback()
-                assert not writer.in_transaction
+            if held_writer:
+                assert connection.in_transaction and store._relay_writer_lock.locked()
+                writer.close()
+                assert not connection.in_transaction and not store._relay_writer_lock.locked()
         else:
             assert (method, path) == ("POST", "/relay/turn")
             assert calls == [("GET", "/relay/sessions"), ("POST", "/relay/turn")]
-            if writer is not None:
-                assert not writer.in_transaction
+            if held_writer:
+                assert not connection.in_transaction and not store._relay_writer_lock.locked()
             response = client.post(path, json=body)
         assert response.status_code == 200, response.text
         return response.json()
@@ -2062,9 +2063,7 @@ def test_legacy_pin_bootstraps_endpoint_alias_and_queued_delivery(
     try:
         result = common.relay_turn(runtime, "legacy-target", new, max_chars=1000, request=request)
     finally:
-        if writer is not None:
-            writer.rollback()
-            writer.close()
+        writer.close()
 
     assert calls == [("GET", "/relay/sessions"), ("POST", "/relay/turn")]
     assert result["session"]["endpoint_id"] == endpoint

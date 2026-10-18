@@ -24,6 +24,7 @@ from app import codex_wake
 from app.dashboard import mount_dashboard
 from app.claude_wake import (
     drain_claude_relay_wakes,
+    recover_claude_registration_intents,
     start_claude_wake_reconciler,
     stop_claude_relay_wake_admission,
 )
@@ -431,6 +432,7 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
                     port = int(service_port)
                     write_json_atomic(service_marker_path(port), {"port": port, **binding})
                 relay_service = RelayService(build_result.storage)
+                recover_claude_registration_intents(claude_wake_registry, relay_service)
 
                 def relay_trace(event: dict[str, object]) -> bool:
                     return service.enqueue_relay_trace_event(

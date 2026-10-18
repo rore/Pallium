@@ -241,13 +241,10 @@ def schedule_claude_relay_wake(
     assert worker is not None
     return worker
 
-def recover_claude_relay_wakes(
-    registry: ClaudeWakeRegistry,
-    relay_service: Any,
-    *,
-    trace_callback: Callable[[dict[str, object]], object] | None = None,
+def recover_claude_registration_intents(
+    registry: ClaudeWakeRegistry, relay_service: Any,
 ) -> None:
-    """Schedule only idle capabilities; unresolved reservations stay fenced."""
+    """Admit persisted registrations before readiness, completing only safe intents."""
     def complete_registration(**scope):
         try:
             relay_service.mark_active(**scope)
@@ -259,6 +256,16 @@ def recover_claude_relay_wakes(
         return True
 
     registry.recover_intents(complete_registration=complete_registration)
+
+
+def recover_claude_relay_wakes(
+    registry: ClaudeWakeRegistry,
+    relay_service: Any,
+    *,
+    trace_callback: Callable[[dict[str, object]], object] | None = None,
+) -> None:
+    """Schedule only idle capabilities; unresolved reservations stay fenced."""
+    recover_claude_registration_intents(registry, relay_service)
     for candidate in registry.recovery_candidates():
         if candidate["state"] == "wake_inflight":
             continue
