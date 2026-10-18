@@ -1,5 +1,93 @@
 # Service-wide performance investigation and correction
 
+## Original slow-service causal timing diagnostic — preparation 2026-10-18
+
+The user explicitly stops further test accommodations and asks where time is
+spent. Root authorizes diagnostic preparation only on isolated branch
+diagnostic/relay-service-timing from original published fb3b9b70, preserving the
+closed62e30 diagnostic branch and the separate stopped accommodation candidate.
+The original delayed2.2 HTTP row, caller deadlines, product source, four-worker
+workload and installed environment remain unchanged. This continues the existing
+non-exempt High/Large Work Record; it is not release qualification or a waiver.
+
+Reuse the existing bounded instance observer on the actual client storage for
+the original Linux3.12 failing full workload. Add public owned-engine cursor/error
+events with fixed operation classes/ordinal only, selected transaction-body and
+Session.flush spans, safe fixed HTTP status/expiry classification, and bounded
+event retention even on PASS. Preserve gate/factory/pool/creator/listener/connection/
+close spans, native wall/thread CPU, exact return/exception/resource ownership,
+version gates and explicit incomplete evidence. No SQL/parameters, new connections,
+waits, retries, clock/budget/pool changes, global profiling or production edits.
+
+Minimal pure controls must prove SQL/body/error/retention/delegation before any
+hosted execution. Actual diff/control review and a concrete one-run plan precede
+dispatch; no actual capture is authorized yet. The plan must distinguish acquisition,
+body/SQL/flush/commit/cleanup, preserve observer-inclusive/scheduler-vs-I/O limits,
+record actual runtime/distributions, and run only as a purposeful original-workload
+diagnostic. New release/full qualification and publication stay stopped.
+
+Independent actual source/control review accepted the bounded diagnostic and its
+twelve pure safety controls. The first attempt stopped during collection with
+ModuleNotFoundError for the private adjacent fixture module; zero controls ran.
+Its raw result is preserved at
+`build/observer-controls/service-timing-safety-53236d403bd34cda8fdacb6b486e6d22`:
+log `517D67B0CE185501E23D25A3972F587BDD07A42FB7541DFD9B56B31D3E59EF52`,
+JUnit `AEF52E2C3F756B9A6A38C1E4A9B714BEF8F23EA88449968C6701B02809B10161`,
+result `C2840190A971C91001D150843DD590F9E730E93321A716523D9956FBC9D1C615`.
+Only the private control's fixture import changed to an explicit adjacent-file
+import; no sys.path, application import mode, observer or workflow was changed.
+
+The corrected exact twelve pure controls then passed once: JUnit12 with zero
+errors/failures/skips in0.927 seconds, stdout12 passed0.93 seconds. Evidence is
+`build/observer-controls/service-timing-safety-import-a26a92f5f77d4e38846cb4e6fb5cfeb9`;
+log `C0F4A8D5CFA4ECD28F2B4C5637FA6DD9D5340A265D088C6EBF218F59EA2B2C0B`,
+JUnit `88A4F74CC786F139B99F04FD5B3E6C612D484E0A5983879EBFD1BCA99900DD83`,
+result `264409021D0CCDEEA3521192BD249DCFDCC3F7299406D9B9B8C924048B9CBB61`.
+The controls prove modeled native return/error identity, cleanup/restoration,
+fixed SQL/error/HTTP classifications, PASS retention, bounded incomplete paths
+and exact direct-child subtraction of nested wall/thread-CPU spans. Exact expiry
+before transaction entry is a valid paired-turn outcome, not a missing gate.
+The two workflow-gate subprocesses are synchronously owned; result exit0, no300s
+timeout, owned pytest68084 and direct children remaining0, stderr/network logs
+empty. This is not an exhaustive descendant history. Imported observer90F6B830
+and queueA372509D match the reviewed checkout; controlsD46B0E3A and runnerEF03A61B
+remain unchanged. Independent actual result review accepted model safety only,
+not real claim observation, hosted runtime parity, qualification or cause closure.
+
+No application node or hosted capture has run in this continuation. Original fb3
+product/tests/config/lock bytes remain unchanged. The intended one diagnostic uses
+the original Linux3.12 full four-worker workload without early exit, retains
+bounded PASS/FAIL timing and always uploads evidence. The existing floating
+dependency policy stays unchanged; actual runtime is inventoried and unsupported
+SQLAlchemy versions make evidence incomplete. Cursor spans exclude fetch and
+materialization; residual body time can include ORM/fetch/Python/waits. Low thread
+CPU cannot distinguish native I/O from scheduler delay. Unlocked pool occupancy
+is approximate, peer lock holders remain unmeasured, and all timings are
+observer-inclusive. Fresh non-application governance and exact committed manifest
+review precede root's separate one-run dispatch decision. No automatic repeat,
+release publication, installed change or historical-delay cause claim is implied.
+
+Root accepts the independent twelve-control result and the concrete run plan,
+and authorizes exactly one diagnostic dispatch after final committed-artifact
+review. This is the original fb3 Linux3.12/default-four-worker full workload,
+with no early exit or dependency pinning; the diagnostic branch is separate from
+the release branch and stopped accommodation candidate. No further human/root
+handoff is required after that exact review GO. Unsupported runtime or incomplete
+evidence is reported as such, without an automatic repeat or release-green claim.
+
+Fresh non-application governance selects full for39 whole-change paths. This
+describes the inherited release chain plus diagnostic; it does not authorize a
+local application run or claim this diagnostic qualifies that release. Imports
+are8 kept/0 broken/1 ignored, boundary/API violations0. Redline is RED/advisory1;
+architecture/persistence/API shadow checkpoints remain unsatisfied and size38/
+6081 fails the advisory threshold. Workflow and native adapter each return
+advisory1 with zero failed blocking predicates. The adapter initially could not
+find a Python in this isolated checkout; its log is retained, and selecting the
+existing PRIMARY Python for that child process only produced the reported native
+result. No installation or persistent environment setting changed. Evidence is
+`build/observer-controls/checks-service-timing`; none of these are clean-green
+claims or permission to bypass any binding gate.
+
 ## Published claim split — hosted terminal 2026-10-18
 
 Exact published `ccc7c9b37b9cff1879604ecf6e248f85de522c28` is NOT qualified:

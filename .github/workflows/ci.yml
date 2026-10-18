@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      claim_acquisition_diagnostic:
+        description: Temporary diagnostic branch only; not release qualification
+        type: boolean
+        default: false
   schedule:
     # Nightly full run (incl. the full Windows matrix). Off-peak, off :00.
     - cron: "17 6 * * *"
@@ -89,7 +94,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.12", "3.13"]
+        python-version: ${{ fromJSON(inputs.claim_acquisition_diagnostic && '["3.12"]' || '["3.12", "3.13"]') }}
     steps:
       - uses: actions/checkout@v4
 
@@ -106,8 +111,28 @@ jobs:
       - name: Verify MCP test dependency
         run: python -c "import mcp; import app.mcp.server"
 
+      - name: Record diagnostic runtime and distributions
+        if: inputs.claim_acquisition_diagnostic
+        continue-on-error: true
+        run: python scripts/relay_claim_acquisition_diagnostic.py build/claim-acquisition/runtime.json
+
       - name: Run tests
+        env:
+          PYTEST_PLUGINS: ${{ inputs.claim_acquisition_diagnostic && 'scripts.relay_claim_acquisition_diagnostic' || '' }}
+          PALLIUM_CLAIM_DIAGNOSTIC_DIR: ${{ inputs.claim_acquisition_diagnostic && 'build/claim-acquisition' || '' }}
         run: python -m pytest tests/ ${{ github.event_name != 'workflow_dispatch' && '-x' || '' }} -q --durations=20
+
+      - name: Mark absent or incomplete diagnostic capture
+        if: always() && inputs.claim_acquisition_diagnostic
+        run: python scripts/relay_claim_acquisition_diagnostic.py --status build/claim-acquisition
+
+      - name: Preserve diagnostic evidence even after failure
+        if: always() && inputs.claim_acquisition_diagnostic
+        uses: actions/upload-artifact@v4
+        with:
+          name: service-timing-${{ github.sha }}
+          path: build/claim-acquisition/
+          if-no-files-found: error
 
   # Fast Windows regression for full-lane PRs and pushes. Runs only the
   # Windows-sensitive hotspots (process mgmt, subprocess hooks, file I/O,
@@ -115,7 +140,7 @@ jobs:
   # The full Windows matrix runs in `windows-full` on push-to-main + nightly.
   windows-smoke:
     needs: select
-    if: needs.select.outputs.lane == 'full'
+    if: needs.select.outputs.lane == 'full' && !inputs.claim_acquisition_diagnostic
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -185,7 +210,7 @@ jobs:
   # Full Windows matrix for full-lane pushes, nightly and manual runs, never on PRs.
   windows-full:
     needs: select
-    if: needs.select.outputs.lane == 'full' && github.event_name != 'pull_request'
+    if: needs.select.outputs.lane == 'full' && github.event_name != 'pull_request' && !inputs.claim_acquisition_diagnostic
     runs-on: windows-latest
     strategy:
       fail-fast: false
@@ -275,6 +300,7 @@ jobs:
         env:
           RESULTS: ${{ toJSON(needs) }}
           EVENT: ${{ github.event_name }}
+          DIAGNOSTIC: ${{ inputs.claim_acquisition_diagnostic }}
         run: |
           python - <<'PY'
           import json, os
@@ -294,8 +320,13 @@ jobs:
               "windows-full": lane == "full" and event != "pull_request",
               "nightly-slow-smoke": event == "schedule",
           }
+          diagnostic = os.environ.get("DIAGNOSTIC") == "true"
+          if diagnostic:
+              assert event == "workflow_dispatch" and lane == "full"
+              expected.update(test=True, **{"windows-smoke": False, "windows-full": False})
           for job, required in expected.items():
               wanted = "success" if required else "skipped"
               assert jobs[job]["result"] == wanted, f"{job}: expected {wanted}, got {jobs[job]['result']}"
-          print(f"All required {lane} checks succeeded")
+          print("Diagnostic workload completed; NOT release qualification" if diagnostic
+                else f"All required {lane} checks succeeded")
           PY
