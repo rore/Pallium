@@ -1,5 +1,48 @@
 # Service-wide performance investigation and correction
 
+## Legacy read bootstrap — required full independently accepted 2026-10-18
+
+Root subsequently accepts the independent full result and conditionally permits
+normal FF publication to existingPR314 plus EXACTLY ONE existing nondiagnostic
+manualfull and automaticCI/governance after final record-only/body/manifest GO.
+No additional local tests or live changes. Source drift/newfailure cancels the
+path; exact new-head fullWindows312/313 and every required check plus independent
+actual combined-result review/fresh clear reviews remain mandatory before merge.
+
+ONE required isolated full at clean d65d95e7e7153b00e98ef1dfe4a6ee79850c1090
+passed7398/45skipped/2xfailed466.38s; JUnit7445/0errors/0failures/47skips466.348s.
+Evidence legacy-bootstrap-full-f05207d2db69401987b2bd3d0f6acdbf:
+stdout069AD23148BF185ECD0303A17AE96685EF9A76DEC9112C3FD7CB874A33B5FAC0;
+JUnit28C577B3578990AD74464CB81940B132015B14E457C37523B4717367CB53F8D3;
+result7D19DB9ED0BEA7D1F917E6AB96938591E95F1B30FDC56568A1B2EC71452B3065;
+runtime5E5E869B578EA3AEA525BAF85593BEF8022F97CEAEFEFD35C8DA26D6A85F37A1;
+sourceafter1830824DDA0EFEDD730012B275728CF56BC95A79921A5192C156F24583168FA7.
+Exit0/no timeout/root66768+directchildren0, stderr0/network logs absent; exact
+clean head/source22drift[]. Existing private Python3.13.14/SQLite3.53.1 inventory
+matches all65 observed/reference/lock distributions. This is local non-slow
+qualification, not hosted-version parity or exhaustive descendant-history proof.
+
+Independent actual-result review verifies every41 GET/deadline case PASS and
+BOTH UNCHANGED scope-move durability cases PASS/not skipped: accepted0.643s,
+uncertain0.448s. Their original downstream restart/no-second-native/public-state/
+release assertions completed. The original Windows312 refusal branch remains
+unknown; local PASS neither explains it nor attributes it to the GET correction.
+The prior13be manual matrix remains FAILED at its two actual Windows failures;
+all19raw/terminal receipts are retained. Prior02fc full and focused evidence
+remain at their actual heads, with no application test repetition beyond this
+new-product required full. The failed governance trace check and rejected
+hardcoded-results resume command also remain recorded; actual unchanged checker
+checks passed with disclosed advisories after the record trace repair.
+
+Root now permits concise record-only commit, truthful PR body and exact
+publication-manifest PREPARATION for final independent review/ROOT decision.
+Every tested non-record source must remain byte-identical. No publication,
+manual dispatch, merge or installed/service/host/environment change follows
+from this local result alone. Any later exact-head platform qualification must
+retain both meaningful Windows targets; all required green/review disposition
+is necessary before merge. Historical physical delays and native uncertain
+activation metadata remain explicit limitations, not universal reliability proof.
+
 ## Legacy identity bootstrap — adopted product correction 2026-10-18
 
 ### Independently accepted focused result and retained platform failures
