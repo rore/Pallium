@@ -1,5 +1,138 @@
 # Service-wide performance investigation and correction
 
+## Two-row native-resource causal diagnostic — preparation 2026-10-18
+
+Root adopts a changed bounded diagnostic after read-only comparison of the saved
+original slow Linux3.12 run and the completed31e baseline. This resumes the
+existing non-exempt High/Large record on the isolated diagnostic branch; clean
+31e and its once-only artifact remain recoverable. No release/test accommodation,
+application source, dependency policy or installed environment change is included.
+
+The original suite took500.95s versus330.98s; command-to-first-xdist-output was
+57.410975s versus33.697516s. The sixteen PowerShell subprocess checks took9.58s
+versus5.15s, and two Python repair-CLI rows9.33/8.35s versus4.06/4.35s. These are
+broader observed differences, not proof of scheduler pressure or a Relay cause.
+Of67 versions in both install summaries, only FastAPI differs0.143.3 to0.143.5;
+runner regions differ westus2 to centralus. Python/image/provisioner/cache and
+the other66 recorded installed versions match. Original resource allocation,
+per-thread runqueue/fault/I/O counters, peer-node timing and SQLite version are
+unrecorded. The original2.733s service delay remains unpartitioned.
+
+Prepare an extension of the existing recorder across the independently specified
+four affected functions and their existing parameter rows, observing only their
+owned providers' turn/mark-active/wake-initialize operations. Install native
+delegates once per provider, dispatch records through thread-local ownership and
+never patch/restore a shared engine or pool concurrently per call. Retain the
+first fast baseline per fixed operation kind plus failures/operations at least
+100ms: at most8 slow/error records per worker and256 events per record, with
+seen/slow/dropped/incomplete counters. No extra connections, waits, retries,
+SQL/parameters, policy clocks, budget changes or system settings.
+
+Add native RUSAGE_THREAD and Linux thread schedstat deltas to the existing
+wall/thread-CPU phase accounting, with explicit supported/disabled/missing states
+and one-time CPU affinity/quota metadata. Disabled/missing counters cannot mean
+zero wait. Keep data fixed-label/numeric and bounded; add no optional cgroup
+extras without a demonstrated need. Actual inventory records the version
+confounder rather than pinning it away. Acceptance requires an actual captured
+slow episode with CPU/runqueue/SQL/body/cleanup decomposition; another fast pass
+is not cause closure. Actual diff, simplicity, pure safety controls and a concrete
+one-run manifest require review before any new diagnostic execution. Only the
+reviewed pure controls may run once at this preparation stage. No hosted run is
+authorized yet, and no automatic repeat follows incomplete or fast evidence.
+
+Preparation review surfaced a scope objection before observer edits: the
+simplicity reviewer does not endorse a four-area/ten-node sampling extension
+before an actual slow phase has been captured. Its smaller alternative is the
+original2.2 response-delay journey plus the matched1.15 row on the same provider
+path, with fixed native phase/resource/error deltas and no cross-area retention
+harness. Technical review supplied the exact ten-node access seams for root's
+adopted scope. Root has both judgments for resolution. Only this Work Record's
+preparation text has changed; observer/workflow remain exact31e, with no tests,
+capture, dispatch, product or installed changes. Implementation returns to
+planning until the scope objection is resolved; this is not causal completion.
+
+Root resolves that objection by adopting only the original2.2 row and matched
+1.15 row, observing all native turns on each existing single provider. Source
+proves three calls on a successful journey: two initial registration turns and
+one hook claim. A fourth still delegates unchanged but marks overflow/incomplete;
+an early setup failure may legitimately stop before three. Keep existing reviewed
+SQL/body/flush/commit/cleanup spans, add native resource snapshots only at major
+boundaries, and use one stable delegate lifetime with a thread-local active
+recorder. No four-area sampling, provider deduplication, general recorder stack,
+worker slow-record retention harness or app-construction wrapper remains in scope.
+The original full four-worker workload is unchanged; these rows are not executed
+independently. Actual diff/control review precedes pure controls once; final
+reviewed manifest precedes a separate hosted execution decision.
+
+The preserved31e diagnostic run39115771405 is independently verified as a
+complete fast baseline only: original Linux3.12 full workload7311 passed/
+91 skipped/2 xfailed330.98s, Python3.12.15/SQLite3.45.1/SQLAlchemy2.1.5,
+all six source hashes equal committed31e blobs. Its one HTTP200 request has
+60 events/27 paired spans, dropped0/issues[],10.557165ms HTTP and6.794946ms
+provider wall/6.217842ms provider CPU. Exclusive sums equal those root totals;
+body4.983418ms includes2.881685ms residual, connection0.107229ms and
+COMMIT0.689604ms. The unchanged artificial2.2s response hold starts after that
+HTTP call. ArtifactF9BCB693/claim067B2DBB/runtimeAE7F5080 and the full raw log
+78C04A03 remain in `build/observer-controls/hosted-service-timing`. This has
+not reproduced or partitioned the historical2.733s delay, demonstrated a product
+optimization, or qualified release65/fb3. Its collector ended once; no repeat
+of that unchanged capture occurred.
+
+The reduced actual observer preserves all existing timing spans and installs
+shared provider/engine/pool delegates once, with a single thread-local selected
+recorder. Stable delegates restore only after ordinary test fixture teardown;
+engine listeners stay with the disposed owned engine. Each of the three turns
+has its own SQL ordinal/pending state and256-event bound. Unexpected fourth calls
+and nested selection still execute the exact native delegate and make evidence
+incomplete. Errors retain identity and prefix evidence; an early failed row does
+not invent missing later turns. Resource snapshots use native RUSAGE_THREAD and
+enabled/readable thread schedstat only at major boundaries, never per SQL event;
+missing/disabled is unsupported, and consecutive counter decreases/key changes
+are invalid rather than clamped. One-time affinity is the attaching pytest thread;
+mount-root cpu.max is not an effective current-process quota. Resource deltas are
+inclusive; existing wall/CPU exclusive accounting remains separate. Body residual
+includes fetch/materialization/ORM/Python/waits, never a pure CPU attribution.
+
+Technical review identified and verified correction of SQL state forwarding,
+constructor-clock fault handling, consecutive-counter validity and those metadata
+labels before execution. Simplicity review accepts the reduced actual scope.
+Exactly sixteen new pure modeled controls then passed once: JUnit16/0 errors,
+failures or skips0.742s, stdout16 passed0.74s. Evidence
+`build/observer-controls/two-row-safety-e13089dee4614b6ba1f763b6b93d1292`:
+log `4CC8BA0F9F033BDC52908A24A4DC45B26CE054345B25A37A31D6D8F755F26605`,
+JUnit `B56EC398F3B9A8858A3ABDAEB95F7F04378F0897282DA81382F4A10717680CBA`,
+result `8AE042AD2C48E156E76B11242A5B21C42DDEFEF45CFF17BD5C9BAB47AA4F3854`.
+Imported observerDE45D8B2/queueA372509D and controlsC2BF0FD9/runner319F2276
+match the frozen reviewed files. Actual Capture/listener paths cover three SQL
+ordinal resets, native return/error identity and cleanup, early409, fourth-call
+delegation, two-thread selection/drain, actual hook lifetime/partial installation/
+clock faults, resource-reader failure/reset, enabled/disabled/missing support and
+two required row reports. Exit0/no300s timeout/owned pytest21180 and direct
+children remaining0, stderr/network logs empty. The two modeled threads are
+joined; there are no helper subprocesses or exhaustive descendant history.
+Independent actual result GO accepts safety only, not real Linux accounting,
+application behavior, hosted parity or causal evidence. No application node ran.
+
+Fresh non-application governance and committed/manifest review follow. Original
+fb3 product/tests/config/lock and current workflow bytes remain unchanged. The
+intended changed diagnostic still runs the original full Linux3.12/n4 workload;
+the two rows are not independently rerun. A captured slow episode with native
+CPU/runqueue plus SQL/body/flush/commit/cleanup decomposition is the acceptance
+target; fast-only or unsupported evidence must be reported without cause closure.
+No hosted dispatch is authorized until root's final result/manifest decision.
+
+Fresh non-application checks at `build/observer-controls/checks-two-row` select
+full39 inherited whole-change paths; imports8 kept/0 broken/1 ignored, boundary/
+API violations0. Redline remains RED/advisory1, with unsatisfied architecture,
+persistence and API shadow checkpoints and advisory size38/6316 failure. Workflow
+and native adapter each return advisory1 with zero failed blocking predicates.
+These are disclosed advisory outcomes, not a clean-green release claim. Source/
+tests/dependency parity to fb3 and unchanged31e workflow are rechecked before the
+exact local commit; final review pins observer/control/runner/plan hashes and the
+two row-report filenames. No pure-control repeat or application/full run follows
+from this governance result. Preparation is ready for committed-artifact review;
+the causal objective and release remain unfinished.
+
 ## Original slow-service causal timing diagnostic — preparation 2026-10-18
 
 The user explicitly stops further test accommodations and asks where time is
@@ -1464,7 +1597,7 @@ Agent technical review: /root/architecture_check, clean nonimplementer source/pl
 
 **Exceptions:** None
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ### Final adbc Windows preparation boundaries — pre-edit checkpoint 2026-10-16
