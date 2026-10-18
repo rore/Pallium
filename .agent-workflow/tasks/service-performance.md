@@ -1,5 +1,113 @@
 # Service-wide performance investigation and correction
 
+## Request-window correction — nonapplication review readiness
+
+Fresh build/observer-controls/checks-lifecycle-gc-boundary selects full41
+whole-change paths; explicit root scope remains four focused subjects, NO full
+suite. Imports8kept/0broken/1ignored, boundary0/APIunchanged. Workflow/native
+adapter are advisory1 with recursively verified zero failed blocking predicates.
+RED shadow architecture/persistence/API checkpoints remain unsatisfied; size
+40files/6683lines fails advisory, not clean green. No policy or deadline change.
+Independent actual modeledONE result GO accepted; prior controls reused. Only
+WR and existing harness form the new commit; CI is unchanged from reviewedf513.
+Original fb3 product/tests/config/lock remain unchanged. Final exact committed
+manifest GO releases root's conditional ONE corrected focused hosted run; no
+further controls, fullsuite or live changes. Failure remains preserved as failure.
+
+
+
+## Request-window boundary — actual modeled verification
+
+The independently reviewed exact new boundary control passed once1/0.13s,
+exit0/no timeout/root50260/direct0, empty stderr, no subprocess. Evidence:
+build/observer-controls/lifecycle-gc-boundary-fdd6aef220e34c85858cb878d5f0825f.
+LogE522F4FA9E7E6C5D3349E96C1AB4C86B8C5B05C486CCFE3B1538B7CA109A2C0C;
+XMLBD310D8DE509C8410C12343C5B551F6B737244A318CFB2D4A523191E3BC77B1F;
+result3D11EC28E84215C141A482431399FF4FB1E8E26B8B778F736983D1ADD2DB3A73.
+Modeled construction300GCpairs consume zero interval capacity; request interval
+and exact provider overlap are retained. A collection spanning the entire arm
+window is incomplete with no invented interval. Arm/stop clock faults preserve
+native return/exception and remove the exact callback. Reuse earlier accepted
+controls, including original3passes+privatefailedONE correction. No application
+journey, real collection or hosted parity is established by this modeled node.
+
+Only the measurement boundary changes: constructor callback tracks one active
+thread/generation; separate before/afterconstruction and arming snapshots; arm
+immediately before unchanged journey, record through native teardown; callback
+removed before faultable stop clock. Frozen harness0DCC20C72D6073B7FCC067A02ACA4757F33A6071572526A72879A4E85A2946BC;
+workflow remains BD6BE68059741352BB0F6F2226AF763C4D25508A0225B1B5D8C9A9B1BA19A23E.
+No conditioning,256-event cap,120s/RSS256MiB/cleanup/530+15 bounds or product/
+test/dependency/GC-policy edits. Failed f513 run remains INCOMPLETE; its missing
+comparison and historical2.733s cause are not repaired by a safety-control pass.
+Root conditionally permits ONE corrected focused hosted run after final exact
+commit/manifest review; no more local controls/application runs or cap changes.
+
+
+
+## Request-window GC arming — adopted correction before edit
+
+Root adopts only the demonstrated instrument boundary repair: preserve real
+conditioning and target construction, native policies and the256-event cap.
+Keep a tiny callback's active collection identity across construction without
+retaining its events. Capture pre/post construction GC counters/RSS separately;
+arm bounded interval events AFTER actual target client construction and observer
+setup, immediately before the unchanged original HTTP journey. An ongoing
+collection at arming or unmatched boundary interval means incomplete; never
+invent a start. Retain recording through native journey/teardown and restore.
+
+Same four fresh subjects0/0/16/16,120s each, observedRSS256MiB and exact-owned-
+group cleanup/530+15 outer remain. No cap increase, forcedGC, product/test/deps
+change or cycle fix. Preserve f513 failed firstbaseline and every raw artifact.
+Add only one new modeled boundary node; reuse prior valid controls. Actual
+review GO permits that node once; root conditional one corrected hosted run
+requires accepted actual result plus exact committed manifest/parity review.
+No application experiment or dispatch has occurred for this correction.
+
+
+
+## Lifecycle/GC single-run terminal receipt — INCOMPLETE, stop
+
+The one authorized run39127114344 at f5131f23e08128f448b93c12ecfd2548f368b2e3
+is terminal FAILED; sole collector40580 completed0 and saved raw/artifact once.
+First fresh baseline completed the unchanged original journey and all three
+HTTP200 calls. Its diagnostic teardown failed gc_overflow (pytest1passed/
+1error4.82s, subjectexit1), so the supervisor correctly stopped. Second baseline
+and both16-lifecycle subjects NEVER RAN. There is no lifecycle comparison,
+qualification, historical cause closure or permission to repeat from this run.
+
+GC buffer retained256 events/128 paired intervals and dropped26. ALL retained
+events precede the first native provider turn: target app construction exhausted
+the cap before measured requests. Snapshot deltas show129 generation0,11 gen1
+and1 gen2 collections (141 total); RSS grew13,922,304 bytes. The longest retained
+collection was generation2,53.817698ms wall/53.819582ms threadCPU,185 collected,
+BEFORE the requests. It includes observer/app construction context, not proven
+product-only heap cost. Dropped GC events may overlap later requests; zero
+retained overlap therefore DOES NOT exclude request GC. Do not silently enlarge
+the cap, drop generation0 events or infer long-lived worker heap behavior.
+
+Native provider wall12.470631/4.498034/6.657128ms, threadCPU11.934037/
+4.280424/6.287044ms; no slow provider or caller failure reproduced. All nested
+inclusive/exclusive wall+CPU sums recompute exactly. Group PID2419 is absent,
+term_sent=false/kill_sent=false/no timeout; this case needed no watchdog kill.
+Only one subject ran. Owned-group existence receipt is not an exhaustive
+historical process inventory. Status correctly reports missing/malformed/failed
+four-case evidence. Stderr empty; installed/environment settings unchanged.
+
+Evidence build/observer-controls/hosted-lifecycle-gc: raw SHA256
+51BB9EDAC41806FD643F205770C0FBAB4AC1112EB204FB7332810724FD51F70A;
+artifactB28A4F61B2F3AA6AAB457E58C369B93C2D86E522D5BCB6593A43EAC5083304B2;
+analysisA19008799B568C18944ADE75D0ABE09C823EA8D107D39330B1ADDAFDEACD6C9A.
+All14 consumed source hashes match exact f513 GitLF. Runtime remains Linux
+Python3.12.15/SQLite3.45.1/SQLAlchemy2.1.5/FastAPI0.143.5. Original fb3
+product/tests/config/lock remain unchanged; no forcedGC/CPU pressure/policy edit.
+Independent actual-artifact review requested; root has concrete failure boundary.
+
+Recovery: preserve frozen f513 and every earlier result; no more execution or
+source correction authorized. Return to planning because event-window adequacy
+failed before the intended comparison. A different measurement scope requires
+root adoption and actual review; no automatic capture loop or product patch.
+
+
 
 ## Lifecycle/GC candidate — final nonapplication readiness
 

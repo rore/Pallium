@@ -24,17 +24,29 @@ class GCWindow:
         self.callback = self.observe
         self.installed = False
         self.started = False
+        self.armed = True
+        self.active_collection = None
     def fault(self, name):
         if name not in self.issues:
             self.issues.append(name)
     def observe(self, phase, info):
         try:
+            if phase not in ('start', 'stop'):
+                self.fault('gc_phase')
+                return
+            identity = (threading.get_ident(), int(info['generation']))
+            if phase == 'start':
+                if self.active_collection is not None: self.fault('gc_nested_or_duplicate')
+                self.active_collection = identity
+            else:
+                if self.active_collection not in (None, identity): self.fault('gc_identity_mismatch')
+                self.active_collection = None
+            # Construction only maintains one active identity, no event buffer use.
+            if not self.armed:
+                return
             if len(self.events) >= 256:
                 self.dropped += 1
                 self.fault('gc_overflow')
-                return
-            if phase not in ('start', 'stop'):
-                self.fault('gc_phase')
                 return
             self.events.append({'phase': 0 if phase == 'start' else 1,
                 'generation': int(info['generation']), 'thread': threading.get_ident(),
@@ -44,7 +56,8 @@ class GCWindow:
                 'uncollectable': int(info.get('uncollectable', 0))})
         except BaseException:
             self.fault('gc_observer_fault')
-    def start(self):
+    def start(self, armed=True):
+        self.armed = armed
         try:
             self.policy = (gc.isenabled(), gc.get_threshold())
             self.previous = tuple(gc.callbacks)
@@ -54,8 +67,21 @@ class GCWindow:
             self.started = True
         except BaseException:
             self.fault('gc_start_fault')
+    def construction_finished(self):
+        try: self.construction_after = heap_snapshot()
+        except BaseException: self.fault('gc_construction_snapshot_fault')
+    def arm(self):
+        try:
+            self.arm_snapshot = heap_snapshot()
+            if self.active_collection is not None: self.fault('gc_active_at_arm')
+            self.armed_at_ns = time.monotonic_ns()
+            self.armed = True
+        except BaseException:
+            self.fault('gc_arm_fault')
     def stop(self):
         try:
+            if not self.armed: self.fault('gc_not_armed')
+            if self.active_collection is not None: self.fault('gc_active_at_stop')
             if self.installed:
                 for index, callback in enumerate(gc.callbacks):
                     if callback is self.callback:
@@ -64,6 +90,7 @@ class GCWindow:
                         break
                 else:
                     self.fault('gc_callback_missing')
+            if hasattr(self, 'armed_at_ns'): self.stopped_at_ns = time.monotonic_ns()
             if not self.started:
                 self.fault('gc_not_started')
             if tuple(gc.callbacks) != getattr(self, 'previous', tuple(gc.callbacks)):
@@ -103,8 +130,10 @@ class GCWindow:
                     max(entered, i['entered_ns'])) for i in intervals]})
         return {'complete': not self.issues, 'issues': self.issues, 'dropped': self.dropped,
                 'events': self.events, 'intervals': intervals, 'turn_overlaps': overlaps,
-                'before': getattr(self, 'before', None), 'after': getattr(self, 'after', None),
-                'scope': 'all-thread cyclic GC intervals, observer-inclusive; not refcount-finalizer or runqueue/I-O duration'}
+                'before': getattr(self, 'before', None), 'construction_after': getattr(self, 'construction_after', None),
+                'arm_snapshot': getattr(self, 'arm_snapshot', None), 'armed_at_ns': getattr(self, 'armed_at_ns', None),
+                'stopped_at_ns': getattr(self, 'stopped_at_ns', None), 'after': getattr(self, 'after', None),
+                'scope': 'all-thread interval events armed immediately before original journey through ordinary teardown; construction counters separate, active boundary incomplete; observer-inclusive, not refcount-finalizer or runqueue/I-O duration'}
 
 def cleanup_subject(child):
     """Only this start_new_session child's exact owned group, including survivors."""
@@ -247,14 +276,15 @@ def observed_client(test_db_url, monkeypatch, request, tmp_path):
             if snapshot['rss_bytes'] - initial['rss_bytes'] > 256 * 1024 * 1024:
                 receipt['conditioning']['cap_exceeded'] = True
                 raise AssertionError('conditioning observed RSS growth cap exceeded')
-        window.start()
+        window.start(armed=False)
         try:
             with ExitStack() as observation:
                 with contextmanager(native_client.__wrapped__)(test_db_url, monkeypatch) as client:
+                    window.construction_finished()
                     observer.install(capture, observation, client.app.state.pallium_service._storage)
                     observer.install_http(capture, observation, client)
                     assert not capture.issues
-                    yield client, capture, observation
+                    yield client, capture, observation, window
         finally:
             window.stop()
             after = getattr(window, 'after', None)
@@ -282,7 +312,7 @@ def observed_client(test_db_url, monkeypatch, request, tmp_path):
 
 @pytest.mark.parametrize('mode,repeat', CASES)
 def test_focused_original_http(observed_client, monkeypatch, tmp_path, capsys, request, mode, repeat):
-    client, capture, observation = observed_client
+    client, capture, observation, window = observed_client
     receipt = request.node._focused_receipt
     storage = client.app.state.pallium_service._storage
     native_turn = storage.relay_turn
@@ -296,6 +326,7 @@ def test_focused_original_http(observed_client, monkeypatch, tmp_path, capsys, r
     capture.patch(observation, storage, 'relay_turn', observe_exact)
     receipt['journey_entered_ns'] = time.monotonic_ns()
     try:
+        window.arm()
         journey(client, monkeypatch, tmp_path, capsys, 2.2, False, 'claimed', False, False)
         receipt['original_assertions_passed'] = True
     except AssertionError as exc:
