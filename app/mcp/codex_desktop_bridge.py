@@ -18,6 +18,7 @@ from pathlib import Path
 _close_log_lock = threading.Lock()
 _CLOSE_REASONS = frozenset({
     "idle-ready-deadline", "idle-ready-transport", "unused-ready-retired",
+    "reregister-ready-deadline", "reregister-ready-transport",
     "caller-thread-changed", "first-admission-cancelled", "first-registered-result-cancelled",
     "initial-ready-unavailable",
     "replacement-ready-unavailable", "initial-register-unavailable", "reregister-unavailable",
@@ -324,7 +325,7 @@ class InventoryWorker:
             _client_close_diagnostic(reason, identity, unresolved)
 
     def _recover_if_gone(self, client, native_type, original_pipe, metadata, continuity,
-                         *, allow_ready_retirement=False):
+                         *, allow_ready_retirement=False, ready_retirement_context="idle"):
         if not hasattr(client, "service_current") or not self._restart_allowed:
             return None, False
         try:
@@ -352,7 +353,8 @@ class InventoryWorker:
                         raise
                     previous_manifest = dict(manifest)
                     self._finish(client, retire=True, reason=(
-                        "idle-ready-deadline" if exc.category == "deadline" else "idle-ready-transport"))
+                        f"{ready_retirement_context}-ready-deadline" if exc.category == "deadline"
+                        else f"{ready_retirement_context}-ready-transport"))
                     exit_witness = getattr(client, "retired_service_exited", None)
                     owner_exited = callable(exit_witness) and exit_witness() is True
                     if (not self._restart_allowed or self.stop_event.is_set()
@@ -692,9 +694,13 @@ class InventoryWorker:
                     client.continuity = continuity
                 if self._retained and not was_registered and retired_pipe is not None:
                     retired_pipe = None
+                foreground_transport_failure = False
                 try:
                     result = inventory_status(client.register(metadata))
-                except Exception:
+                except Exception as exc:
+                    from app.codex_bridge_pipe import ShadowUnavailable
+                    foreground_transport_failure = (isinstance(exc, ShadowUnavailable)
+                        and exc.category in {"transport-failed", "deadline"})
                     result = inventory_status({"reason": "native-failed"})
                 if future.cancelled():
                     if self._retained and not was_registered:
@@ -729,9 +735,16 @@ class InventoryWorker:
                 loop.call_soon_threadsafe(ShadowWorker._complete, future, result)
                 if was_registered and self._retained and result["status"] != "registered":
                     replacement, disposed = self._recover_if_gone(
-                        client, NativeInventoryClient, original_pipe, admitted_metadata, continuity)
+                        client, NativeInventoryClient, original_pipe, admitted_metadata, continuity,
+                        allow_ready_retirement=foreground_transport_failure, ready_retirement_context="reregister")
                     if disposed:
                         client = replacement
+                    if self._fresh_request_retirement is not None:
+                        retired_client, retired_manifest = self._fresh_request_retirement
+                        self._fresh_request_retirement = None
+                        retired_pipe = original_pipe
+                        registered = False
+                        continue
                     if disposed and replacement is not None:
                         continue
                     # Busy admits nothing: keep only the checked live channel and old caller.
