@@ -1,5 +1,45 @@
 # Service-wide performance investigation and correction
 
+## Corrected product full — independently accepted 2026-10-18
+
+ONE corrected required full at clean02fcaa3d96972d75fc7912bd51265f3111132d30
+passed7368/45skipped/2xfailed444.24s; JUnit7415/0errors/0failures/47skips444.201s.
+Evidence product-corrected-full-f66b8e76fa62498bafebcef3d93b9c39:
+log0BB9ABF8756D0BC45E2B6E2582C45EA2F0B161835600C4717FD5588A7295545F;
+XML9BFCCFDFB7A62830DEF637A65F729F21D972F34DBD9B9455CC6DA97B0F15AEE9;
+result9243178082161B9E84B7FF787C1DA06583C49F9C1C226FEDD0F9E72949C3F53C;
+runtime5E5E869B578EA3AEA525BAF85593BEF8022F97CEAEFEFD35C8DA26D6A85F37A1;
+sourceafterC8EDAAAE4965C501104E6F2499030CCE57D3DF2E0430B24A667CE6FF9DFACF24.
+Exit0/no timeout/root47856+directchildren0, stderr empty/network logs absent;
+exact clean02fc/source21drift[]. Existing private Python3.13.14/SQLite3.53.1
+complete65distribution inventory matches reference+uv.lock with0mismatches.
+This is isolated local non-slow qualification, not hosted parity or exhaustive
+descendant-history proof. Independent actual-result GO recomputes all counts,
+hashes and changed-target presence: four real activation-failure/restart/NEWsend
+HTTPclaimACK journeys, four newer-intent/inflight boundaries, recovery isolation,
+fixed deadline2 and unchanged diagnostic8 allPASS/not skipped. Earlier focused
+results reused; no additional application tests requested.
+
+The previous6196072e full remains FAILED/incomplete (diagnostic phase only),
+initial new-regression4 guard failures remain retained before corrected4pass,
+and all older hosted failures are preserved. Old053391 sole56819 is terminal/
+exit0/all19raw saved with0hash mismatches/errors. Manual Windows312/313 each
+passed79serial/2skip plus7298remaining/32skip/2xfail; manualLinux312/313 and
+autoLinux313 each7311/91skip/2xfail passed. Overall manual and automatic remain
+FAILED at exactly known held SessionStart empty output and old-registration
+activation503, respectively; no new failed node. Current product regressions
+repair demonstrated deadline rebasing and durable activation-completion gaps,
+not establish historical physical delay or old-output exception cause.
+
+Root conditionally authorizes final record-only commit/body/publication manifest
+review, then normal FF existingPR314 branch publication and EXACTLY ONE existing
+nondiagnostic manualfull plus automaticCI/governance, without another routine
+handoff. Tested product/tests/config/dependencies must remain unchanged beyond
+records. Sole actual raw collection, exact-head Windows312/313 and every required
+check green plus resolved reviews are mandatory before merge. No installed,
+service, host, configuration or data change is authorized here.
+
+
 ## Deadline diagnostic compatibility — adopted correction 2026-10-18
 
 Actual reviewed exact10 deadline-compat-3329ffde359140b881c31bbe2079a5f1
