@@ -1029,7 +1029,7 @@ def _acquire_session_lock(
         # Keep the timeout endpoint; caller/global budgets stay in their own clocks.
         lock_deadline = clock() + max(0.0, timeout)
         wait_budget = min(
-            lock_deadline - clock(), remaining_safe_time(), remaining_safe_time(deadline),
+            timeout, remaining_safe_time(), remaining_safe_time(deadline),
         )
         if wait_budget <= 0:
             _report_session_state_failure("lock_budget_exhausted")

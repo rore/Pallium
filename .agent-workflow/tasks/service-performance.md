@@ -1,5 +1,69 @@
 # Service-wide performance investigation and correction
 
+## Deadline diagnostic compatibility — adopted correction 2026-10-18
+
+Actual reviewed exact10 deadline-compat-3329ffde359140b881c31bbe2079a5f1
+passed10 in0.86s, exit0/no timeout/root35380+direct0/stderr0/network logs absent.
+Frozen common9501CB69/unchangedparityE27E7480/retained5264EC02/runner478706AE.
+LogCDA6BC8E005C78BAC370E7DF35E58D40676BE19FC94861E36B78E2AA8D58D983;
+XMLBE9547E56F549433595BE78C220171BEA3D5983C6AF995E2E164906D3EAEBF3A;
+result126EF436270619B1A1AA7D5E58DFEDBB0DE00D66E3AD9BF76955F864F24AF428.
+Independent actual-result GO verifies all exact10 hashes, JUnit10/zero errors,
+failures/skips0.861s and cleanup/provenance. Fresh nonapp-deadline-compat selects
+full43; workflow/native advisory1 with parsed0failed blocking predicates.
+Prior fresh product-recovery no-cache import8kept0broken1ignored is reused only
+after exact6196 diff fence proves all import-policy/runtime packages unchanged;
+only standalone Codex hook initial min expression and WR differ. Boundary/API0;
+RED shadow architecture/API/persistence and whole-PR size advisories remain.
+
+Existing8 phase/privacy/wait/close assertions pass unmodified, fixed2 own-domain
+rebasing guards pass. Prior originalRED2/real6/shared9 and activation27+corrected4
+are reused; failed full6196 remains FAILED/incomplete, never a passing full claim.
+Coherent corrected commit/required full manifest are preparation only pending
+independent actual-result/final committed runner review and root execution GO.
+
+Root and independent reviewer adopt one production expression only after the
+failed required full: initial wait_budget first term returns to timeout rather
+than lock_deadline-clock(). Timeout endpoint remains anchored BEFORE sampling;
+each native attempt/sleep independently checks that endpoint and caller/global
+remaining time in its own clock. No budget/reserve/output policy/test expectation
+change. This preserves original zero-initial-allowance versus expired-before-first
+native-attempt diagnostics and finite clock model compatibility while eliminating
+rebasing. Exact10 after actual source/runner review: unchanged8 hook parity rows
+plus fixed2 rebasing regressions; reuse accepted originalRED2, real6/shared9 and
+activation27+corrected4. No immediate broad full/publication/live action. Prepare
+coherent corrected commit and full manifest for root qualification decision.
+
+
+## Required product full — retained failure 2026-10-18
+
+ONE root-authorized full at clean6196072e stopped incomplete under -x:
+1failed/4401passed/13skipped/2xfailed304.11s (JUnit4417/1failure/0errors/
+15skips304.092s). Evidence product-recovery-full-53cfcc9aa9bb4cd9b537972bfb4b201c;
+log14E236F17698DA1483C848D1C68715535B5B0734A72467B0B095CD3EF98A86F4;
+XML8A64867356E42C4CE89ECFF0508271F57949F43B4EAEA3365CD6EB4D73DD060D;
+result7885FD935AFE750036747D99578DCED5FDA27A290E80ED92536A127451FE26B0.
+Exit2/no timeout/root42688+directchildren0/stderr0/network logs absent. Exact
+source-after6196072e tracked clean,21source drift[], complete65locked/reference
+inventory mismatches{}. Direct-only ledger is not exhaustive descendant history.
+
+Existing test_hook_common_parity.py::test_session_lock_failure_reports_actual_boundary_without_changing_wait
+[pre_attempt_deadline-codex_common_parity] failed only diagnostic phase427:
+expected pre_attempt_deadline, actual lock_budget_exhausted. Native attempts0,
+handle closure, consumed modeled clock and no sleeps passed. New initial
+lock_deadline-clock() read classified an already sampled positive allowance as
+initially exhausted; original contract distinguished initial zero allowance
+from expiry before first native attempt. No physical delay or runtime refusal
+failure is demonstrated by this deterministic modeled check. Product correction
+proposal: keep timeout endpoint anchored BEFORE allowance samples, restore
+original initial min(timeout,globalremaining,providedremaining), retain fresh
+per-loop own-clock-domain checks and bounded sleep. No test expectation,
+budget/reserve, native setup IO or output-after-expiry change proposed.
+Independent classification/root adoption required before edits or another run.
+Accepted focused19/27+4 and all original failures retained; no publication/live
+action. Return to planning for this precise compatibility correction.
+
+
 ## Coherent product verification preparation — 2026-10-18
 
 Fresh nonapp-product-recovery selects full43 whole-change paths; no-cache import
