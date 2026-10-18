@@ -1,5 +1,35 @@
 # Service-wide performance investigation and correction
 
+
+## Delivery full qualification — independently accepted result
+
+The ONE required local full at cleanf8e7bbb3544bd277d3c918f7ad9f7f8d8dab0a10
+passed7357/45skipped/2xfailed463.91s; JUnit7404/0errors/0failures/47skipped
+(including expected failures)463.870s. Evidence delivery-full-b5c1acdecd854b57b086a347545aaecb:
+logCA2D6AB5BF9B4934B8F9092C669A833A78CF59332AC10A668BBAF58EDD1A4A44;
+XML88FBE91BA3336DCAC655FEEED8B6192A3E975DCA6F3BD4D0F2C780E738D67891;
+resultBE428E81A62FB19111303E964AA98CAF8EA22BC28EB7A434479C0C378D811A99.
+Exit0/no timeout/pytest64232+directchildren0, stderr empty/networklogs absent.
+All14 before/after sources unchanged, exactHEAD and trackedclean. Runtime:
+Python3.13.14/SQLite3.53.1/all65 distributions match lock and saved reference,
+zero mismatches; this is local isolated qualification, not hosted parity.
+
+Independent actual-result GO verified changedcleanup8/restart1/capacitynegative1/
+delay4/dashboard1 plus realHTTPsetup-expired/late-BEGIN-rollback companions all
+present/PASS/not skipped. Prior accepted21 is reused, not repeated as a cohort.
+Protected behavior/native deadlines, strict fragmented200/claimed/noemit,
+committed-loss ownership, exact409expiry/pending0 and registration/delivery/ACK
+fences remain covered. Historical installer/refusal/slow-claim failures remain
+retained; no physical delay cause or universal prompt-wake reliability claim.
+
+Source/required full accepted. Only record/body publication checkpoint follows;
+root conditionally authorizes normalFF to existing PR314 and exactlyONE existing
+ci.yml manual FULL with no diagnostic input after final record/commit review.
+Exact-head hosted gates/reviews must pass before merge. No application repeats,
+new diagnostic, installed/service/configuration/data changes. Sole local app slot
+is released; owned launcher/direct ledger is not exhaustive descendant history.
+
+
 ## Delivery candidate — verification gate readiness
 
 Fresh nonapp-delivery-resume selects full/39paths; imports8kept/0broken/1ignored,
@@ -1544,7 +1574,7 @@ Each measured fix -> causal RED/GREEN plus baseline/candidate comparisons, focus
 Whole-change assurance -> fresh Redline/import-boundary and Agent Workflow checks, scripts/test-plan.py --base origin/main, required full/CI and independent plan/result review; root owns shared-main roadmap reconciliation and separate live rollout.
 Any retrieval/eval metric -> identify candidate-recovery, injection-precision or downstream-task-effect and preserve the invariant that retrieval alone does not update accessibility state.
 
-**Plan review:** Independent /root/architecture_check GO conveyed by root covers the exact/general claim selection plans, explicit pending7/leased5 projection, locked usable snapshot observational plan and current diagnostic/burst test stages; root conveyed final source-fix architecture GO before352affected validation. Detailed checkpoint history below preserves each pre-edit ordering. New synchronized50hook failure is not accepted as a behavior change; next production plan/result review and whole-change qualification remain pending.
+**Plan review:** Agent result review by /root/encoded_setup_review: independently verified exact f8e7 full7357 pass, source/runtime/drain and retained caller contracts on 2026-10-18; current delivery/source and runner GO. Historical reviews follow.  Independent /root/architecture_check GO conveyed by root covers the exact/general claim selection plans, explicit pending7/leased5 projection, locked usable snapshot observational plan and current diagnostic/burst test stages; root conveyed final source-fix architecture GO before352affected validation. Detailed checkpoint history below preserves each pre-edit ordering. New synchronized50hook failure is not accepted as a behavior change; next production plan/result review and whole-change qualification remain pending.
 Current reopened lifecycle checkpoint: /root/native_cause_capture_review and /root/team_wake_boundary_review independently accepted the exact four-file plan, including teardown-escape retention and Uvicorn0.34 main-loop exit ordering, before implementation; root concurred. Actual runtime diff GO covers bridge847F3358, runA194F7E8, mainA8CC5C2D and Codex wake72EFA914. Focused test/runner review and execution remain distinct required evidence.
 Agent technical review: /root/architecture_check, clean nonimplementer source/plan review in this delegated task; actual nativeBUSY policy and response-owned ACK final source/test GO on 2026-10-12, preserved focused proofs and incomplete50 disposition below.
 
