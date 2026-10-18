@@ -123,12 +123,12 @@ jobs:
           PALLIUM_CLAIM_DIAGNOSTIC_DIR: ${{ inputs.claim_acquisition_diagnostic && 'build/claim-acquisition' || '' }}
         run: python -m pytest tests/ ${{ github.event_name != 'workflow_dispatch' && '-x' || '' }} -q --durations=20
 
-      - name: Run four focused Linux claim experiments
+      - name: Run four focused Linux lifecycle experiments
         if: inputs.claim_acquisition_diagnostic
         env:
           PYTEST_PLUGINS: ''
           PALLIUM_CLAIM_DIAGNOSTIC_DIR: ''
-        run: timeout --signal=TERM --kill-after=5s 120s python scripts/relay_claim_focused_repro.py --run build/claim-acquisition
+        run: timeout --signal=TERM --kill-after=15s 530s python scripts/relay_claim_focused_repro.py --run build/claim-acquisition
 
       - name: Mark absent or incomplete diagnostic capture
         if: always() && inputs.claim_acquisition_diagnostic

@@ -1,5 +1,148 @@
 # Service-wide performance investigation and correction
 
+
+## Lifecycle/GC candidate — final nonapplication readiness
+
+Fresh checks in build/observer-controls/checks-lifecycle-gc select full41 whole-
+change paths; this inherited release classification is disclosed, not permission
+for a fullsuite. Root explicitly limits the new diagnostic to four focused
+fresh subjects. No application tests ran. Import contracts8kept/0broken/1ignored;
+boundary0/APIunchanged. Parsed workflow/nativeadapter are advisory1 with zero
+failed blocking predicates; existing shadow architecture/persistence/API
+checkpoints remain unsatisfied. Size40files/6652lines fails advisory, not clean green.
+Process-local PYTHON points at the existing repository interpreter only for
+these checks; no installation or persistent environment change. Exact reviewed
+harness28235595 and CI BD6BE680 remain frozen. Commit only this existing record,
+workflow and harness; product/tests/config/lock match originalfb3. Prepared
+manifest includes actual3reused+failedONEpass and retains first model failure.
+ROOT conditional one-hosted authority requires final committed/manifest GO;
+no dispatch or further controls before that. No live changes or qualification.
+
+
+
+## Lifecycle/GC modeled safety — actual verification 2026-10-18
+
+The first reviewed pure4 cohort at lifecycle-gc-safety-75df18ef96a64a6e962b05049b546aa6
+is retained FAILED:3 passed/1 failed1.88s, exit1/no timeout/root39408/direct0,
+empty stderr. The single private-model failure accessed Linux SIGKILL on the
+Windows safety runtime, after GC fault/exception identity/restoration passed.
+Log544D39DF5ECD04BC7C0AEF648D3BCFE45DA59DC6C69A01888F49D58600D326CB;
+XML6D145570B9DBA06F28A3D63CB532C859DC7CABE1A5979988EB50563383EBB26F;
+result052352C99322AE2B232CD9B168BD389005515878C310F89FEF74B64CA2A04ACE.
+
+Independent source review accepted only a private modeled signal namespace
+(SIGTERM15/SIGKILL9), with no harness change. The exact failed node alone passed
+once0.12s at lifecycle-gc-safety-followup-ee67114eb96747bc978d7d120944a14e.
+LogD0F559EA21DBCED41D9E9F27EC9E4F48B5466C77AB3C36EF84D74EEEE39266B3;
+XML45EEEFCCEB5D9CBF0D5BFB99801DC4116F9464154228516DE67733F840DA1FA7;
+result3319500D3B4BA2C9EB543BAF74C7ADDE33CEEF1C1DCA1C378771A11928854C6D.
+Exit0/no timeout/root44800/direct0/stderr empty. Combined modeled acceptance is
+three reused initial passes plus this followup, not a repeated four-case suite.
+Initial cohort awaited four CLI-status children; followup starts none. Root/
+direct ledger is not exhaustive descendant history. No application or GC/lifecycle
+experiment ran. Independent actual-result review accepted these exact receipts.
+
+Frozen harness28235595A72A1FEC7703A0248BB2E90B7EF60BEF9502EC647F59B032A6B3B353,
+CI BD6BE68059741352BB0F6F2226AF763C4D25508A0225B1B5D8C9A9B1BA19A23E,
+privatecontrol9E9FE6A903FD47FEF2CF4EA60AF25D33445860BD119525B4B69734D56C91A08E
+and failed-one runner904CD8C8AEE980325AD679E00F366D3FF75CD38942D7DEF57C5C32AE563D157E
+remain unchanged. Source review corrected exact-group cleanup: leader exit is
+not group drain; native group existence is checked after bounded TERM5/KILL5,
+supervisor SIGTERM/exception finally owns cleanup, unresolved group fails.
+term_sent/kill_sent stay explicit: forced group cleanup is watchdog recovery,
+not proof ordinary fixture teardown drained. Outer kill-after15 permits cleanup.
+This is modeled mechanics, not Linux/application parity or causal evidence.
+
+No more controls; finish fresh nonapplication checks and exact three-path commit
+(WR/workflow/existing harness), then final frozen manifest/root decision. Original
+fb3 product/tests/config/lock and the phase recorder remain unchanged. No hosted
+dispatch, source accommodation, GC policy change or live environment operation.
+
+
+
+## Lifecycle/GC discrimination — adopted preparation 2026-10-18
+
+Root adopts a single focused Linux3.12 comparison, not qualification or a cycle
+fix: two fresh baseline subjects versus two fresh subjects preceded by exactly
+16 genuine native-client fixture construction, real HTTP registration/read and
+ordinary service/storage close lifecycles. Reuse the existing original fb3
+2.2 journey and phase recorder; product/test/config/dependency bytes unchanged.
+No CPU helpers, affinity/nice changes, forced GC, GC threshold/policy change,
+synthetic garbage, inserted service sleeps or live environment changes.
+
+Concrete source hypothesis: service children retain bound owner callbacks and
+app closures retain app, while explicit cleanup closes resources without
+breaking Python object cycles. Later cyclic collection is reachable, not proven
+to explain the saved historical2.733-second interval. No product finalizer or
+GC trigger was established. Existing Windows/Linux pressure evidence stays.
+
+Implementation plan: adapt only the focused harness and existing workflow;
+fresh owned subprocess per trial,120s per-subject watchdog, finite4 trials.
+Conditioning uses unique private databases and native fixture teardown; stop on
+any error or observed RSS growth greater than256MiB, checking each lifecycle.
+Record GC counts/stats and RSS, then bounded all-thread GC start/stop callbacks
+around the original journey and normal teardown, native wall/thread/processCPU
+and exact provider interval overlap. Callback faults/overflow/unpaired intervals
+mean incomplete, never a changed request result. No forced collection to make
+an inadequate experiment useful. Retain original assertion failures separately.
+Actual source/manifest review precedes minimal modeled safety controls; ROOT
+final hosted decision remains required. No application execution authorized now.
+Recovery: continue existing service-performance identity, High/Large/non-exempt;
+independent reviewer owns actual-script review. Preserve last clean e144 source
+and terminal receipt, no competing Work Record or release-source accommodation.
+
+
+
+## Focused Linux terminal receipt — induced effect, causal objective unresolved
+
+The one authorized focused run39124505333 at exact e14453e15b0c918064aeed942c658ec59d61f185
+is terminal. Sole collector36475 ended0; no repeat was dispatched. Linux3.12
+job117666726242 ran only two baseline plus two pressure cases, not the full
+suite. All four original journeys and all12 HTTP200 responses passed (JUnit4,
+0 errors/failures/skips,13.539s). CLI0; the job correctly FAILED its diagnostic
+completeness gate because schedstat was disabled. timing_complete and
+pressure_adequate are true; resource_complete and complete are false. This is
+neither release qualification nor historical latency closure.
+
+Native claim wall milliseconds: baseline4.651682/3.921417, pressure36.194514/
+45.202757. Corresponding threadCPU4.301931/3.621136 and3.789926/3.918959ms.
+Trigger8.204248/5.439103ms is separately excluded from pressure provider roots.
+All eight helpers overlap each pressure claim (positive overlaps22.204–36.195
+and28.215–45.203ms); actual helperCPU2990.444842/2990.025574ms is distinct
+from the common three-second window. Subject/provider/helper CPU0 and nice10
+were verified. All16 helpers exited0 and were awaited, remaining0/no forced
+kill; CLI exited0. This is owned-wait evidence, not exhaustive descendant history.
+
+Pressure body24.068/24.140ms wall versus2.967/3.070ms CPU contains one
+involuntary context switch each, zero voluntary switches/block-I/O counts/major
+faults; baseline bodies have wall approximately CPU and no context switches.
+Thus controlled CPU pressure demonstrably preempted the body. COMMIT wall also
+rose11.395/20.317ms with about0.092/0.104ms CPU. Acquisition remained fast:
+connection0.0785/0.2048ms, local gate about0.013ms; no native busy, expiry,
+caller failure or provider span at least100ms occurred. Valid rusage counts do
+not measure wait duration. schedstat enabled0/supported0 means runnable wait
+UNKNOWN, not zero; mount-root quota unavailable is not proof of unlimited CPU.
+Cursor spans exclude fetch/materialization; exclusive body includes those and
+other waits. No exact SQL gap is attributed to runqueue or I/O duration.
+
+Evidence: build/observer-controls/hosted-focused-linux. Raw SHA256
+BE743A74DBA968371965A1318121090D3476C4AF09AD95D46A3E698403AA2639;
+artifact21F7BCDE2639246DBE9B4B018189525372B56EA7D51ED7F9290689EFB7655E81;
+analysisFA90415888F6DD5480E62DE2581AB5EB3A849E209BD1201FE10F4EA91DD71D84.
+Independent actual review verified all12 consumed and six runtime source hashes
+against exact e144 GitLF, all12 nested/exclusive wall and CPU sums (zero bad),
+helper overlap/cleanup and original assertions. Runtime is Python3.12.15,
+SQLite3.45.1, SQLAlchemy2.1.5/FastAPI0.143.5/AnyIO4.15.1/Starlette1.8.0.
+Original fb3 product/tests/config/lock remain unchanged; no settings enabled.
+
+Recovery: preserve source, Windows/Linux receipts and failed completeness status;
+return to planning for the unresolved causal objective. Linux intervention
+reproduced tens-of-milliseconds slowdown, not the historical2.733-second event
+or a demonstrated caller requirement defect. No guessed performance patch,
+pressure escalation, repeat capture, release action or installed change follows.
+Root explicitly stopped further experiments; any new causal scope needs adoption.
+
+
 ## Focused Linux committed-candidate preparation — nonapplication checks
 
 Fresh whole-change selector selects full/41paths (inherited originalfb3 release
