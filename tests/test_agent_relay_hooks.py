@@ -550,7 +550,7 @@ def test_codex_hook_records_unavailable_after_committed_http_claim(
 )
 def test_codex_exact_wake_real_http_response_delay_is_bounded_and_traceable(
     client, monkeypatch, tmp_path, capsys, response_delay, fragmented,
-    expected_state, should_emit, delay_refresh, ack_response_delay=0.0,
+    expected_state, should_emit, delay_refresh, ack_response_delay=0.0, forward_delay=0.0,
 ):
     """Exercise actual hook urllib and /relay/turn through delayed loopback HTTP."""
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -637,11 +637,16 @@ def test_codex_exact_wake_real_http_response_delay_is_bounded_and_traceable(
             body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
             span = {"stage": "forward", "path": self.path, "entered": time.monotonic()}
             stages.append(span)
+            if self.path == "/relay/turn" and forward_delay:
+                time.sleep(forward_delay)
             response = client.request(
                 "POST", self.path, content=body,
                 headers={"content-type": self.headers.get("Content-Type", "application/json")},
             )
             span["returned"] = time.monotonic()
+            span["status"] = response.status_code
+            if response.status_code != 200:
+                span["error"] = response.json()
             if self.path == "/relay/turn":
                 span["delay_entered"] = time.monotonic()
                 time.sleep(response_delay)
@@ -730,8 +735,16 @@ def test_codex_exact_wake_real_http_response_delay_is_bounded_and_traceable(
         row for row in trace_response.json()["delivery_snapshots"]
         if row["delivery_id"] == delivery_id
     )
-    assert snapshot["state"] == expected_state
-    assert snapshot["attempts"] == 1
+    turn_span, = [span for span in stages if span.get("path") == "/relay/turn"]
+    if response_delay == 2.2 and not fragmented and not delay_refresh and turn_span["status"] == 409:
+        assert turn_span["error"] == {"detail": "Relay claim request expired"}
+        assert expected_state == "claimed" and should_emit is False
+        assert snapshot["state"] == "pending" and snapshot["attempts"] == 0
+        assert ack_handlers == []
+    else:
+        assert turn_span["status"] == 200
+        assert snapshot["state"] == expected_state
+        assert snapshot["attempts"] == 1
     assert refresh_calls == []  # Exact delivery never enters optional post-claim work.
     if delay_refresh:
         refs = client.get("/relay/sessions/work-refs", params={

@@ -1617,9 +1617,37 @@ def test_closed_loop_cleanup_drains_before_storage_close_on_callback_entry_asser
     original_router = dependencies.create_router
 
     def hold_callback_until_drain(service, **kwargs):
+        from api.schemas import RelayTurnRequest
+
         callback = kwargs["relay_turn_callback"]
+        relay = kwargs["relay_service"]
+        native_turn = relay.turn
+        identity = {"runtime": "codex", "session_ref": "loop-close-target",
+                    "container_ref": "git:example.test/loop-close"}
+        request_data = RelayTurnRequest(**identity, actor_ref="capacity-user").model_dump()
+        # actor_ref is an ignored HTTP extra, not part of the existing turn schema.
+        assert "actor_ref" not in request_data
+        request_data.pop("claim_expires_at_ms")
+        request_data["exact_delivery_id"] = request_data.pop("wake_delivery_id")
+        prepared = native_turn(**request_data)
+        assert prepared["session"]["runtime"] == identity["runtime"]
+        assert prepared["session"]["session_ref"] == identity["session_ref"]
+        assert prepared["session"]["container_ref"] == identity["container_ref"]
+        assert prepared["session"]["endpoint_id"].startswith("relay-session-")
+        assert prepared["deliveries"] == []
+        app_ref.update(relay=relay, native_turn=native_turn, prepared_request=request_data, prepared_calls=[])
+
+        def prepared_once(**turn_kwargs):
+            # Only this negative control isolates callback-entry cleanup from SQL setup.
+            relay.turn = native_turn
+            assert turn_kwargs == request_data
+            app_ref["prepared_calls"].append(turn_kwargs)
+            return prepared
+
+        relay.turn = prepared_once
 
         def held_callback(*args, **callback_kwargs):
+            assert relay.turn == native_turn
             worker_entered.set()
             if not worker_gate.wait(5):
                 worker_gate_timed_out.set()
@@ -1703,8 +1731,12 @@ def test_closed_loop_cleanup_drains_before_storage_close_on_callback_entry_asser
         wait = app_ref.get("wait")
         if wait is not None:
             wait()
+        if "relay" in app_ref:
+            app_ref["relay"].turn = app_ref["native_turn"]
 
     assert failure.traceback[-1].name == "cancel_http_request"
+    assert app_ref["prepared_calls"] == [app_ref["prepared_request"]]
+    assert app_ref["relay"].turn == app_ref["native_turn"]
     assert worker_entered.is_set()
     assert not worker_gate_timed_out.is_set()
     assert worker_finished.is_set()

@@ -1667,7 +1667,7 @@ def test_post_start_lost_http_intent_reconciles_without_claiming_relay(
 @pytest.mark.parametrize("lost_http", [False, True], ids=["http", "recovery"])
 def test_create_app_preserves_new_intent_during_old_cleanup(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
-    old_state: str, new_state: str, lost_http: bool,
+    old_state: str, new_state: str, lost_http: bool, *, before_cleanup=None,
 ) -> None:
     from itertools import count
     from concurrent.futures import ThreadPoolExecutor
@@ -1805,6 +1805,8 @@ def test_create_app_preserves_new_intent_during_old_cleanup(
             return payload
 
         def apply(payload: dict[str, object]):
+            if payload.get("intent_id") == "old" and before_cleanup is not None:
+                before_cleanup()
             path = "/internal/claude-wake/register"
             if payload.get("closed"):
                 path = "/internal/claude-wake/close"
@@ -1884,7 +1886,8 @@ def test_create_app_preserves_new_intent_during_old_cleanup(
             with ThreadPoolExecutor(max_workers=2) as workers:
                 try:
                     cleanup = workers.submit(apply, old)
-                    assert cleanup_held.wait(timeout=1)
+                    # Arrival precedes the competing publisher; contention stays native.
+                    assert cleanup_held.wait(timeout=5)
                     publication = workers.submit(publish_new)
                     # Arrival is fixture orchestration; native lock budgets stay unchanged.
                     assert published.wait(timeout=5)
@@ -1994,6 +1997,7 @@ def test_create_app_preserves_new_intent_during_old_cleanup(
 
 def test_expired_claim_rewakes_once_after_real_app_restart(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    *, force_first_registration_refusal=False,
 ) -> None:
     from itertools import count
 
@@ -2100,6 +2104,8 @@ def test_expired_claim_rewakes_once_after_real_app_restart(
         registrations: list[dict[str, object]] = []
         publication_results: list[tuple[str, bool]] = []
         registration_responses: list[tuple[str, int]] = []
+        registration_failures: list[tuple[str, object, str | None]] = []
+        forced_refusals = []
         claimed_ids: list[list[str]] = []
         states_before_ack: list[str] = []
         acknowledged_ids: list[str] = []
@@ -2113,8 +2119,29 @@ def test_expired_claim_rewakes_once_after_real_app_restart(
             published = common._write_wake_intent(registration)
             publication_results.append((registration["intent_id"], published))
             assert published
-            response = http_b.post("/internal/claude-wake/register", json=registration)
+            storage = app_b.state.pallium_service._storage
+            native_mark_active = storage.relay_mark_active
+            with monkeypatch.context() as refusal:
+                if force_first_registration_refusal and registration["intent_id"] == "stop-0":
+                    from core.errors import ImmediateTransactionBusyError
+
+                    def refused_mark_active(**kwargs):
+                        assert kwargs["runtime"] == "claude-code"
+                        assert kwargs["session_ref"] == "restart-target"
+                        assert kwargs["container_ref"] == scope["container_ref"]
+                        forced_refusals.append(registration["intent_id"])
+                        raise ImmediateTransactionBusyError(
+                            "controlled mark-active acquisition refusal", acquisition_stage="setup_deadline",
+                        )
+
+                    refusal.setattr(storage, "relay_mark_active", refused_mark_active)
+                response = http_b.post("/internal/claude-wake/register", json=registration)
+            assert storage.relay_mark_active == native_mark_active
             registration_responses.append((registration["intent_id"], response.status_code))
+            if response.status_code != 204:
+                registration_failures.append((
+                    registration["intent_id"], response.json(), response.headers.get("Retry-After"),
+                ))
             return response.status_code == 204
 
         def relay(method: str, path: str, body: dict[str, object], *, timeout: float) -> object:
@@ -2157,11 +2184,21 @@ def test_expired_claim_rewakes_once_after_real_app_restart(
         diagnostics = {
             "publication_results": publication_results,
             "registration_responses": registration_responses,
+            "registration_failures": registration_failures,
         }
         assert publication_results == [(f"stop-{index}", True) for index in range(3)], diagnostics
-        assert registration_responses == [(f"stop-{index}", 204) for index in range(3)], diagnostics
+        assert registration_responses[1:] == [(f"stop-{index}", 204) for index in (1, 2)], diagnostics
+        if registration_responses[0] == ("stop-0", 503):
+            assert registration_failures == [(
+                "stop-0", {"detail": {"code": "relay_busy", "retryable": True}}, "1",
+            )], diagnostics
+        else:
+            assert registration_responses[0] == ("stop-0", 204), diagnostics
+            assert registration_failures == [], diagnostics
         assert [candidate["session_ref"] for candidate in candidates] == ["restart-target"], diagnostics
+        assert transport_calls == [(PAYLOAD["socket_path"], PAYLOAD["token"])], diagnostics
         assert all(registration["idle"] is True for registration in registrations)
+        assert forced_refusals == (["stop-0"] if force_first_registration_refusal else [])
         assert registry._clock is real_monotonic and reconciler._clock is real_monotonic
         assert real_time.monotonic is real_monotonic
     assert reconciler._thread is not None and not reconciler._thread.is_alive()
