@@ -223,6 +223,7 @@ jobs:
 
       - name: Record diagnostic runtime and distributions
         if: inputs.claim_acquisition_diagnostic
+        continue-on-error: true
         run: python scripts/relay_claim_acquisition_diagnostic.py build/claim-acquisition/runtime.json
 
       - name: Run process-sensitive tests serially

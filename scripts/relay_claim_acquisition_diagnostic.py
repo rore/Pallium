@@ -338,6 +338,20 @@ def evidence_status(directory):
                           issues=claim["issues"])
         except Exception:
             result["issues"] = ["unreadable_report"]
+    try:
+        runtime_path = directory / "runtime.json"
+        if runtime_path.stat().st_size > 1_000_000:
+            raise ValueError
+        runtime = json.loads(runtime_path.read_text(encoding="utf-8"))
+        if (not all(type(runtime.get(k)) is str and runtime[k]
+                    for k in ("python", "platform", "sqlite"))
+                or runtime.get("expected_sqlalchemy") != EXPECTED_SQLALCHEMY
+                or not isinstance(runtime.get("source"), dict) or not runtime["source"]
+                or not isinstance(runtime.get("distributions"), list) or not runtime["distributions"]):
+            raise ValueError
+    except Exception:
+        result["complete"] = False
+        result["issues"] = [*result["issues"], "missing_or_malformed_runtime"]
     directory.mkdir(parents=True, exist_ok=True)
     (directory / "evidence-status.json").write_text(json.dumps(result, sort_keys=True), encoding="utf-8")
     return result["complete"]
