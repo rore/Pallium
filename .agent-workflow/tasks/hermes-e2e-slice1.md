@@ -132,9 +132,25 @@ integration assumptions, not an Agent Workflow defect.
 
 ## Result review
 
-Pending clean-context final review of the successful working result. The earlier
-partial review at dc730848 was not a complete-result endorsement. Separate human
-result review and the required full-suite gate remain open before publication.
+Agent technical review: /root/hermes_e2e_review, 2026-10-19, accepted for the
+explicitly narrow isolated slice-1 experiment; no actionable code blocker.
+Reviewed revision: 8840efed.
+Verification adequacy: adequate for the frozen real-host/local-stub proof and
+focused trust-boundary behavior; insufficient for publication until the required
+full non-slow suite and separate human result review are complete.
+
+Reviewer inspected the whole shared/plugin/harness/docs delta and actual final
+artifacts: six provider requests contain no receipt/claim-token fields; exactly
+one ACK follows provider response, and one reply reaches the original sender.
+Normal host authorization, bound session/turn, private receipts, metadata fencing,
+negative controls and unchanged other-tool behavior were accepted. The earlier
+partial review at dc730848 was not a complete-result endorsement.
+
+Fresh whole-change checks at 8840efed: import-linter zero violations; Redline
+High/shadow API and architecture checkpoints remain unsatisfied, size verdict ok
+(11 non-record files, 1727 changed lines); Agent Workflow advisory only, no
+blocking predicate. Canonical feature remains in progress with slice-1 proof and
+remaining qualification recorded. No PR, main push, deployment or live setup.
 
 ## Recovery
 
@@ -154,4 +170,8 @@ The test-slot request is with the Pallium manager. Relay scope update
 and a completed recipient turn with a trace gap, so the authorized reviewer received
 an app-message fallback. Completion/validation coordination was sent separately as
 `relay-msg-bdea2fd912e44260b2b382095758f1fe`; wake evidence is not receipt or slot
-approval. No tests have been started on the reliability owner's behalf.
+approval. The completion message also remained pending/attempts 0 after its wake
+turn completed; trace reports native activation did not complete. App-message
+fallback reported that concrete failure and clarified that only the E2E branch
+needs a full-suite slot; the earlier source-only branch is superseded. No tests
+have been started on the reliability owner's behalf.
