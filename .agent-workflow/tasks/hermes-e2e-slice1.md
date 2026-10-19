@@ -52,7 +52,7 @@ Key conventions: standard-library plugin HTTP and filesystem fencing where suffi
 When an idle real host has a pending message, it starts a turn automatically and the original sender receives its reply -> real released-host/provider-stub E2E asserting provider payload, integration-origin ACK, reply and cleanup through HTTP reads. When the target/scope or effective payload is wrong, no incorrect claim/ACK/reply occurs -> negative caller-surface controls. When pending is queried, no delivery state or payload changes -> exact-scope HTTP tests. When injection is uncertain, no blind retry occurs -> plugin fence/reload/refusal tests. When publishing, existing runtimes remain compatible -> affected subsystem checks, complete-path test selector, full non-slow suite once when its local slot is granted, existing platform CI and clean-context review. Behavior contracts unchanged.
 
 **Plan review:**
-Pending clean-context technical review; no repository implementation authorized until it passes.
+Accepted by clean-context reviewer `/root/hermes_e2e_review` on 2026-10-19 at HEAD 79cae04af813d7736c2d0900fedb9fbced8f1eb0. Admission must compare the complete attributed payload and host session/turn in the effective llm_execution request, forward the same request to next_call, and ACK only after successful downstream execution; the real provider stub independently verifies that request. Qualify only the explicit single-plugin/provider topology; refuse competing execution middleware. Persist the exact scoped metadata fence before injection, retain uncertainty across reload, and test identity, stripping, downstream failure and marker refusal. Hermes activation remains passive with no inferred admission evidence/fallback. Exclude Hermes from legacy Codex ACK/reply executor selection while preserving existing runtime behavior. No scope expansion or renewed human approval required.
 
 **Approvals:**
 Approved by user 2026-10-19: "ok, let's start with slice 1. keep it isolated from the reliability work, use cheaper models where it makes sense, and focus on getting the real e2e round trip working."
@@ -61,7 +61,7 @@ This approves the immediately preceding proposed slice: minimal plugin/runtime p
 **Exceptions:**
 —
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -70,7 +70,7 @@ This approves the immediately preceding proposed slice: minimal plugin/runtime p
   The prior feasibility branch and its pending validation remain preserved.
 - Pre-edit whole-change applicability requires a Work Record. Fresh boundary
   report has no violations; Redline triggers architecture and API checkpoints.
-  State is Blocked pending independent plan review, not user reconfirmation.
+  Independent plan review passed with the conditions recorded above.
 
 ## Evidence
 
