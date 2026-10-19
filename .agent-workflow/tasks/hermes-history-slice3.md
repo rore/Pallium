@@ -63,7 +63,7 @@ This approves the previously discussed History slice and isolated qualification.
 **Exceptions:**
 —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -80,7 +80,10 @@ First native attempt failed in the extended stub: auxiliary title requests also 
 
 ## Result review
 
-Pending.
+Agent technical review: /root/history_plan_review, 2026-10-19, independent non-implementer. Accepted the full production/caller-surface/native/guidance diff at 269b32ff conditionally on final validation. The only finding was unqualified shared supported-memory expansion; reviewer accepted the five-file narrow correction committed as 016cce03, with no further finding. The guard hides the option and refuses true before HTTP without changing the shared handler.
+Reviewed revision: 016cce03 (269b32ff plus the explicitly inspected correction).
+Verification adequacy: caller-surface hook/HTTP and real stdio tests cover the significant provenance, private scope, redaction, forgetting/replay, work-ref, paging and identity risks; actual released-host later-session search/expand plus retained Relay/lifecycle journey proves the native boundary. Focused correction rerun passed 17 tests in 9.29s. Final package native rerun and required hosted full non-slow CI remain pending; technical acceptance is conditional until those recorded checks pass. Separate human result review remains open; no merge/live rollout is authorized by this record.
+
 
 
 Discovery workers: /root/hermes_native_harness inspected pinned public Hermes source and /root/validate_hermes inspected existing History MCP/API contracts, read-only. Exact feature relationship decoded as declared; existing explicit Relay work association is reused. Worktree remains isolated and pushed.
@@ -90,3 +93,11 @@ Pre-edit risk evidence: planned-path Redline GRAY, no checkpoints, zero import b
 Implementation may begin after independent plan acceptance. The initial user instruction approves the presented History slice; no new host commit guarantee, source-forget capability or live change is introduced.
 
 Implemented integration-specific capture and three-tool access; no core/API/storage/Relay reliability implementation changed. Optional manager roadmap handoff relay-msg-0d793cf88e6c486e8b3f9e8053f8357a remains pending with native_unavailable; no receipt/ownership acceptance is claimed. Feature reconciliation must retain exact source association and preserve the dirty primary checkout.
+
+Native qualification checkpoint 269b32ff: 1 passed in 75.06s against clean Hermes d923a5eb. Real later conversation called search and expansion using exact source/lookup lineage and received original Unicode user/assistant content. Two same-profile Relay conversations overlapped (peak 2, no barrier error); wake/ACK ordering/reply/sender receipt and status/removal preserved unrelated config. Parent independently verified retained JSON shows 9 captured rows, one actual query and one source-context expansion. All owned processes/servers stopped. Artifacts: %TEMP%/pallium-hermes-history-slice3-01a1489e/run-native-002/test_released_hermes_idle_rela0. This precedes the narrow supported-memory guard; final frozen-package run-native-003 is pending.
+
+Whole-change selector at 269b32ff selects full lane: python -m pytest tests/ -x -q. Hosted CI will provide the required compatible-environment full non-slow run; no duplicate local full suite. Fresh final-path Redline is GRAY with zero boundary violations. Local runtime workflow check is clean after fresh build/redline-verdict.json and correctly formatted independent plan-review evidence.
+
+The user-requested isolation is preserved: Hermes-only feature reconciliation is proposed in this branch/PR, including merged PR321 state and slice3 scope; dirty shared primary/reliability roadmap and installed checkout stay unchanged. Manager handoff remains queued; shared checkout synchronization is not claimed. Full feature remains in-progress for optional memory, normal use and recovery qualification.
+
+Skill feedback trigger 2 dropped: incorrect SDK runtime used by a worker test and early record-format mistakes were local implementation/test errors, not upstream Workflow defects. Corrected without changing shared policy, dependencies or installed tools.
