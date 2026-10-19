@@ -361,11 +361,21 @@ def test_reply_follows_sender_endpoint_after_sender_scope_transition(client: Tes
     assert [delivery["payload"] for delivery in received] == ["reply after sender moved"]
     assert received[0]["recipient_endpoint_id"] == sender["endpoint_id"]
 
-def test_receive_one_and_ack(client: TestClient):
+def test_receive_one_and_ack(client: TestClient, monkeypatch):
+    from itertools import count
+    from types import SimpleNamespace
+    from storage import sqlite_queue
+
     _register(client)
     _send(client, "payload-one")
 
-    turn = _turn(client)
+    # This journey asserts receive/receipt/ACK; separate tests cover acquisition deadlines.
+    ticks = count(step=0.001)
+    claim_clock = SimpleNamespace(**vars(sqlite_queue.time))
+    claim_clock.monotonic = lambda: next(ticks)
+    with monkeypatch.context() as claim:
+        claim.setattr(sqlite_queue, "time", claim_clock)
+        turn = _turn(client)
     assert len(turn["deliveries"]) == 1
     d = turn["deliveries"][0]
     assert d["payload"] == "payload-one"

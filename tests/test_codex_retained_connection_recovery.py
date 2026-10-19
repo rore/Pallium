@@ -400,6 +400,7 @@ def test_reconnect_catalog_timeout_preserves_authority_for_next_recovery(http_wa
     from app import codex_bridge_pipe as bridge
     _, service, _, natives = _defer_on_state_timeout(http_wake, retained, bridge)
     original_connect = bridge._DesktopIO
+    catalog_fault_entered = threading.Event()
 
     def timeout_catalog(*args):
         desktop = original_connect(*args)
@@ -407,6 +408,7 @@ def test_reconnect_catalog_timeout_preserves_authority_for_next_recovery(http_wa
 
         def read(deadline):
             if desktop.writes[-1].get("method") == "tools/list":
+                catalog_fault_entered.set()
                 raise bridge.ShadowUnavailable("deadline")
             return original_read(deadline)
 
@@ -415,6 +417,10 @@ def test_reconnect_catalog_timeout_preserves_authority_for_next_recovery(http_wa
 
     monkeypatch.setattr(bridge, "_DesktopIO", timeout_catalog)
     recover(http_wake)
+    if not catalog_fault_entered.is_set():
+        # The bare fixture has no periodic sweep after a pre-catalog admission refusal.
+        recover(http_wake)
+    assert catalog_fault_entered.is_set()
     assert len(natives) == 2 and service.retained_registration is not None
 
     monkeypatch.setattr(bridge, "_DesktopIO", original_connect)

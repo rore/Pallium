@@ -12,7 +12,7 @@ from core.work_ref import readable_work_ref, validate_work_ref_key
 from redaction import redact_sensitive
 
 
-RELAY_RUNTIMES = frozenset({"claude-code", "codex", "opencode"})
+RELAY_RUNTIMES = frozenset({"claude-code", "codex", "opencode", "hermes"})
 RELAY_MESSAGE_MAX_CHARS = 16000
 RELAY_MESSAGE_PAGE_DEFAULT_CHARS = 2000
 RELAY_TURN_MAX_CHARS = 2400
@@ -204,6 +204,7 @@ class RelayService:
         register_session: bool = True,
         structural_work_refs: Any = None,
         exact_delivery_id: str | None = None,
+        claim_expires_at_ms: int | None = None,
         codex_wake_endpoint_id: str | None = None,
         codex_wake_generation: int | None = None,
         previous_container_ref: str | None = None,
@@ -218,6 +219,10 @@ class RelayService:
             raise ValueError("max_response_chars must be >= 0 (0 = no limit)")
         if max_messages < 0:
             raise ValueError("max_messages must be >= 0 (0 = no limit)")
+        if claim_expires_at_ms is not None and (
+            type(claim_expires_at_ms) is not int or not 1 <= claim_expires_at_ms <= 2**53 - 1
+        ):
+            raise ValueError("invalid Relay claim expiry")
         runtime = validate_runtime(runtime)
         session_ref = _opaque(session_ref, "session_ref")
         if exact_delivery_id is not None:
@@ -263,6 +268,7 @@ class RelayService:
             max_messages=max_messages,
             lease_seconds=RELAY_CLAIM_LEASE_SECONDS,
             **({"exact_delivery_id": exact_delivery_id} if exact_delivery_id is not None else {}),
+            **({"claim_expires_at_ms": claim_expires_at_ms} if claim_expires_at_ms is not None else {}),
             **({
                 "codex_wake_endpoint_id": codex_wake_endpoint_id,
                 "codex_wake_generation": codex_wake_generation,
