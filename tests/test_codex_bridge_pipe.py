@@ -402,6 +402,447 @@ def test_competing_owner_does_not_replace_manifest_or_grant(tmp_path):
             competitor.stop()
 
 
+def test_deadline_completed_message_is_delivered_once_on_fresh_read(monkeypatch):
+    first = {"verb": "ready", "sequence": 7}
+    frames = [json.dumps(first).encode(), b'{"verb":"ready","sequence":8}']
+    calls, closed = [], []
+    monkeypatch.setattr(bridge, "_native_uncertain", False)
+    monkeypatch.setattr(bridge, "_retained", [])
+    ticks = iter([0., 0., 0., 1.])
+    monkeypatch.setattr(bridge, "time", SimpleNamespace(monotonic=lambda: next(ticks, 1.)))
+    class Handle:
+        def Close(self):
+            closed.append(self)
+    handle = Handle()
+    class NativeError(Exception):
+        pass
+    def read(_handle, size, ov):
+        assert _handle is handle and size == bridge.MAX_MESSAGE + 1
+        calls.append("read")
+        return (997 if calls.count("read") == 1 else 0), frames[min(calls.count("read") - 1, 1)]
+    def wait(event, milliseconds):
+        calls.append(("wait", milliseconds))
+        return 0 if milliseconds == 100 else 258
+    def result(*args):
+        calls.append("completed")
+        return len(frames[min(calls.count("read") - 1, 1)])
+    w = SimpleNamespace(types=SimpleNamespace(OVERLAPPED=SimpleNamespace, error=NativeError),
+        event=SimpleNamespace(CreateEvent=lambda *args: Handle(), WaitForSingleObject=wait,
+                              WAIT_OBJECT_0=0, WAIT_TIMEOUT=258),
+        file=SimpleNamespace(ReadFile=read, CancelIo=lambda _handle: calls.append("cancel"),
+                             GetOverlappedResult=result))
+    io = bridge._PipeIO(w, handle, threading.Event())
+    try:
+        with pytest.raises(bridge.ShadowUnavailable) as expired:
+            io.read(.5)
+        assert expired.value.category == "deadline"
+        assert calls == ["read", ("wait", 50), "cancel", ("wait", 100), "completed"]
+        assert not io.unresolved and not bridge._native_uncertain
+        received = io.read(2.)
+        assert calls.count("read") == 1, "successful drained message was discarded and native read reissued"
+        assert received == first
+        assert io.read(2.) == {"verb": "ready", "sequence": 8}
+        assert calls.count("read") == 2
+    finally:
+        io.close()
+    assert closed[-1] is handle and len(closed) == 4
+
+
+@pytest.mark.parametrize("fault", ["stop-during-drain", "uncertain-during-drain", "unresolved-during-drain", "nondeadline",
+    "aborted", "unknown-result", "cancel-failed", "expired-replay", "stopped-replay",
+    "uncertain-replay", "unresolved-replay", "closed", "new-accept", "maximum", "over-maximum",
+    "invalid-json", "write", "accept", "desktop"])
+def test_completed_message_carryover_preserves_failure_and_connection_boundaries(monkeypatch, fault):
+    raw = b'{"value":0}'
+    if fault in {"maximum", "over-maximum"}:
+        raw += b' ' * (bridge.MAX_MESSAGE + (fault == "over-maximum") - len(raw))
+    if fault == "invalid-json":
+        raw = b'{'
+    if fault == "desktop":
+        raw = (10).to_bytes(4, "little")
+    next_raw = b'{"next":true}'
+    calls, closed, retained = [], [], []
+    stop = threading.Event()
+    monkeypatch.setattr(bridge, "_native_uncertain", False)
+    monkeypatch.setattr(bridge, "_retained", retained)
+    ticks = iter([0., 0., 0., 1.])
+    monkeypatch.setattr(bridge, "time", SimpleNamespace(monotonic=lambda: next(ticks, 1.)))
+    class Handle:
+        def Close(self):
+            closed.append(self)
+    class NativeError(Exception):
+        def __init__(self, code):
+            self.winerror = code
+    handle = Handle()
+    def read(*args):
+        calls.append("read")
+        return (997, raw) if calls.count("read") == 1 else (0, next_raw)
+    def wait(event, milliseconds):
+        if milliseconds == 100:
+            return 0
+        return 0xffffffff if fault == "nondeadline" else 258
+    def cancel(*args):
+        calls.append("cancel")
+        if fault == "stop-during-drain":
+            stop.set()
+        if fault == "uncertain-during-drain":
+            bridge._native_uncertain = True
+        if fault == "unresolved-during-drain":
+            io.unresolved = True
+        if fault == "cancel-failed":
+            raise OSError("controlled native cancel failure")
+    def result(*args):
+        if calls.count("read") <= 1:
+            if fault in {"aborted", "unknown-result"}:
+                raise NativeError(995 if fault == "aborted" else 996)
+            return len(raw)
+        return len(next_raw)
+    w = SimpleNamespace(types=SimpleNamespace(OVERLAPPED=SimpleNamespace, error=NativeError),
+        event=SimpleNamespace(CreateEvent=lambda *args: Handle(), WaitForSingleObject=wait,
+                              WAIT_OBJECT_0=0, WAIT_TIMEOUT=258),
+        file=SimpleNamespace(ReadFile=read, WriteFile=lambda *args: (997, raw),
+            CancelIo=cancel, GetOverlappedResult=result),
+        pipe=SimpleNamespace(ConnectNamedPipe=lambda *args: 997))
+    io = (bridge._DesktopIO if fault == "desktop" else bridge._PipeIO)(w, handle, stop)
+    try:
+        operation = io.write if fault == "write" else io.accept if fault == "accept" else io.read
+        with pytest.raises(bridge.ShadowUnavailable) as original:
+            operation({}, .5) if fault == "write" else operation(.5)
+        assert original.value.category == ("transport-failed" if fault == "nondeadline" else "deadline")
+        assert calls.count("cancel") == 1
+        if fault == "unresolved-during-drain":
+            assert io.unresolved and io._completed_read is None
+            return
+        if fault in {"unknown-result", "cancel-failed"}:
+            assert io.unresolved and bridge._native_uncertain and retained
+            assert io._completed_read is None and closed == []
+            return
+        assert not io.unresolved
+        if fault in {"write", "accept", "desktop"}:
+            assert io._completed_read is None
+            return
+        if fault in {"stop-during-drain", "uncertain-during-drain", "nondeadline", "aborted"}:
+            stop.clear()  # Only fake native state is reset to test the next independent read.
+            bridge._native_uncertain = False
+            assert io.read(2.) == {"next": True} and calls.count("read") == 2
+            return
+        if fault in {"expired-replay", "stopped-replay", "uncertain-replay", "unresolved-replay"}:
+            stop.set() if fault == "stopped-replay" else None
+            bridge._native_uncertain = fault == "uncertain-replay"
+            io.unresolved = fault == "unresolved-replay"
+            with pytest.raises(bridge.ShadowUnavailable) as refused:
+                io.read(.5 if fault == "expired-replay" else 2.)
+            assert refused.value.category == ("deadline" if fault == "expired-replay" else "stopped")
+            assert calls.count("read") == 1
+            if fault == "expired-replay":
+                assert io.read(2.) == {"value": 0} and calls.count("read") == 1
+            return
+        if fault == "closed":
+            io.close()
+            assert io._completed_read is None
+            return
+        if fault == "new-accept":
+            w.pipe.ConnectNamedPipe = lambda *args: 0
+            io.accept(2.)
+            assert io.read(2.) == {"next": True} and calls.count("read") == 2
+            return
+        if fault in {"over-maximum", "invalid-json"}:
+            with pytest.raises(bridge.ShadowUnavailable) as invalid:
+                io.read(2.)
+            assert invalid.value.category == ("message-limit" if fault == "over-maximum" else "invalid-message")
+        else:
+            assert len(raw) == bridge.MAX_MESSAGE and io.read(2.) == {"value": 0}
+        assert calls.count("read") == 1
+        assert io.read(2.) == {"next": True} and calls.count("read") == 2
+    finally:
+        if io.unresolved:
+            io.close()
+            assert handle not in closed
+            io.unresolved = False  # Fake handles only; no native operation exists in this control.
+        io.close()
+    assert io._completed_read is None
+
+
+@pytest.mark.parametrize("operation", ["accept", "read", "write"])
+@pytest.mark.parametrize("returned", [True, False], ids=["returned", "thrown"])
+@pytest.mark.parametrize("code", [535, 232, 5])
+def test_pipe_connected_is_success_only_for_accept(monkeypatch, operation, returned, code):
+    retained, closed, forbidden_calls = [], [], []
+    monkeypatch.setattr(bridge, "_retained", retained)
+    monkeypatch.setattr(bridge, "_native_uncertain", False)
+
+    class NativeError(Exception):
+        winerror = code
+
+    class Handle:
+        def Close(self):
+            closed.append(self)
+
+    event, handle = Handle(), Handle()
+
+    def result(*_args):
+        if returned:
+            return code if operation == "accept" else (code, None)
+        raise NativeError()
+
+    def forbidden(*_args):
+        forbidden_calls.append(True)
+        pytest.fail("Completed pipe connection must not wait, query completion or cancel")
+
+    w = SimpleNamespace(
+        types=SimpleNamespace(OVERLAPPED=SimpleNamespace, error=NativeError),
+        event=SimpleNamespace(CreateEvent=lambda *_: event, WaitForSingleObject=forbidden),
+        pipe=SimpleNamespace(ConnectNamedPipe=result),
+        file=SimpleNamespace(ReadFile=result, WriteFile=result, GetOverlappedResult=forbidden, CancelIo=forbidden),
+    )
+    io = bridge._PipeIO(w, handle, threading.Event())
+    deadline = time.monotonic() + 1
+    arguments = ({"data": "β"}, deadline) if operation == "write" else (deadline,)
+    try:
+        if operation == "accept" and code == 535:
+            assert io.accept(*arguments) is None
+        else:
+            expected = "peer-closed" if operation == "accept" and code == 232 else "transport-failed"
+            with pytest.raises(bridge.ShadowUnavailable, match=expected):
+                getattr(io, operation)(*arguments)
+        assert closed == [event] and forbidden_calls == []
+        assert not io.unresolved and not bridge._native_uncertain and retained == []
+    finally:
+        io.close()
+    assert closed == [event, handle]
+
+
+@pytest.mark.parametrize("fault", ["completed", "wait-drained", "wait-unresolved", "cancel-failed", "non-native"])
+def test_accept_no_data_requires_conclusive_native_completion(monkeypatch, fault):
+    closed, cancelled, retained, waits = [], [], [], []
+    monkeypatch.setattr(bridge, "_retained", retained)
+    monkeypatch.setattr(bridge, "_native_uncertain", False)
+
+    class NativeError(Exception):
+        winerror = 232
+
+    class ForeignError(Exception):
+        winerror = 232
+
+    class Handle:
+        def Close(self):
+            closed.append(self)
+
+    event, handle = Handle(), Handle()
+
+    def wait(*_args):
+        waits.append(True)
+        if fault != "completed" and (len(waits) == 1 or fault == "wait-unresolved"):
+            raise NativeError()
+        return 0
+
+    def result(*_args):
+        raise NativeError()
+
+    def connect(*_args):
+        if fault == "non-native":
+            raise ForeignError()
+        return 997
+
+    def cancel(*_args):
+        cancelled.append(True)
+        if fault == "cancel-failed":
+            raise NativeError()
+
+    w = SimpleNamespace(types=SimpleNamespace(OVERLAPPED=SimpleNamespace, error=NativeError),
+        pipe=SimpleNamespace(ConnectNamedPipe=connect),
+        file=SimpleNamespace(GetOverlappedResult=result, CancelIo=cancel),
+        event=SimpleNamespace(CreateEvent=lambda *_: event, WaitForSingleObject=wait,
+            WAIT_OBJECT_0=0, WAIT_TIMEOUT=258))
+    io = bridge._PipeIO(w, handle, threading.Event())
+    expected = "peer-closed" if fault == "completed" else "transport-failed"
+    with pytest.raises(bridge.ShadowUnavailable, match=expected):
+        io.accept(time.monotonic() + 1)
+    assert cancelled == ([] if fault in {"completed", "non-native"} else [True])
+    assert io.unresolved is (fault in {"wait-unresolved", "cancel-failed"})
+    assert bridge._native_uncertain is io.unresolved
+    assert bool(retained) is io.unresolved
+    assert closed == ([] if io.unresolved else [event])
+    io.close()
+    assert closed == ([] if io.unresolved else [event, handle])
+
+
+@pytest.mark.parametrize("operation", ["accept", "read", "write"])
+@pytest.mark.parametrize("fault", ["zero", "native", "maximum", "boolean", "negative", "over-max",
+                                 "string", "object", "missing", "getter", "logger"])
+def test_native_operation_failure_diagnostic_is_bounded_and_fail_safe(
+    monkeypatch, inventory_caplog, capsys, operation, fault,
+):
+    secret = "private-native-message-東京"
+    closed, retained = [], []
+    monkeypatch.setattr(bridge, "_retained", retained)
+    monkeypatch.setattr(bridge, "_native_uncertain", False)
+
+    class HostileValue:
+        def __str__(self):
+            raise AssertionError(secret)
+        __repr__ = __str__
+
+    value = {"zero": 0, "native": 109, "maximum": 0xFFFFFFFF, "boolean": True,
+             "negative": -1, "over-max": 0x100000000, "string": secret,
+             "object": HostileValue(), "logger": 109}.get(fault)
+
+    class NativeError(Exception):
+        @property
+        def winerror(self):
+            if fault in {"missing", "getter"}:
+                raise AttributeError(secret) if fault == "missing" else RuntimeError(secret)
+            return value
+        def __str__(self):
+            raise AssertionError(secret)
+
+    class Handle:
+        def Close(self):
+            closed.append(self)
+
+    def fail(*_args):
+        raise NativeError(secret)
+
+    if fault == "logger":
+        monkeypatch.setattr(bridge._log, "warning", fail)
+    event, handle = Handle(), Handle()
+    w = SimpleNamespace(
+        types=SimpleNamespace(OVERLAPPED=SimpleNamespace, error=NativeError),
+        event=SimpleNamespace(CreateEvent=lambda *_: event),
+        pipe=SimpleNamespace(ConnectNamedPipe=fail),
+        file=SimpleNamespace(ReadFile=fail, WriteFile=fail),
+    )
+    io = bridge._PipeIO(w, handle, threading.Event())
+    deadline = time.monotonic() + 1
+    arguments = ({"data": secret}, deadline) if operation == "write" else (deadline,)
+    try:
+        with pytest.raises(bridge.ShadowUnavailable, match="^transport-failed$"):
+            getattr(io, operation)(*arguments)
+        assert closed == [event] and not io.unresolved and not bridge._native_uncertain and retained == []
+    finally:
+        io.close()
+    assert closed == [event, handle]
+    records = [record for record in inventory_caplog.records
+               if record.msg == "codex_native_operation_failed operation=%s winerror=%s"]
+    if fault == "logger":
+        assert records == []
+    else:
+        record, = records
+        expected = value if type(value) is int and 0 <= value <= 0xFFFFFFFF else "unknown"
+        assert record.args == ("accept" if operation == "accept" else "io", expected)
+        assert record.exc_info is None and record.stack_info is None and record.exc_text is None
+        assert secret not in record.getMessage() and secret not in repr(record)
+    assert secret not in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("case", ["zero", "pending", "connected-return", "connected-throw",
+                                "stopped", "deadline", "returned-error"])
+def test_native_operation_diagnostic_is_quiet_outside_generic_failure(monkeypatch, inventory_caplog, case):
+    closed = []
+
+    class NativeError(Exception):
+        winerror = 535
+
+    class Handle:
+        def Close(self):
+            closed.append(self)
+
+    def connect(*_args):
+        if case == "connected-throw":
+            raise NativeError()
+        return 535
+
+    event, handle = Handle(), Handle()
+    w = SimpleNamespace(
+        types=SimpleNamespace(OVERLAPPED=SimpleNamespace, error=NativeError),
+        event=SimpleNamespace(CreateEvent=lambda *_: event, WAIT_OBJECT_0=0, WAIT_TIMEOUT=258,
+                              WaitForSingleObject=lambda *_: 0),
+        pipe=SimpleNamespace(ConnectNamedPipe=connect),
+        file=SimpleNamespace(GetOverlappedResult=lambda *_: 1),
+    )
+    stop = threading.Event()
+    if case == "stopped":
+        stop.set()
+    io = bridge._PipeIO(w, handle, stop)
+    deadline = 0 if case == "deadline" else time.monotonic() + 1
+    try:
+        if case.startswith("connected-"):
+            assert io.accept(deadline) is None
+        elif case in {"stopped", "deadline", "returned-error"}:
+            with pytest.raises(bridge.ShadowUnavailable):
+                io._operation(lambda _: (5, None), deadline)
+        else:
+            assert io._operation(lambda _: (997 if case == "pending" else 0, b"x"), deadline) == (1, b"x")
+        assert closed == [event] and not io.unresolved
+    finally:
+        io.close()
+    assert closed == [event, handle]
+    assert not [record for record in inventory_caplog.records
+                if record.msg == "codex_native_operation_failed operation=%s winerror=%s"]
+
+
+@native
+def test_retained_source_preconnected_accept_survives_real_native_round_trip(tmp_path, monkeypatch):
+    directory = bridge.prepare_inventory_service(tmp_path / "preconnected-home")
+    service = bridge.RetainedService(directory)
+    manifest_ready, connected = threading.Event(), threading.Event()
+    native_results = []
+    w = bridge._native()
+    original_publish, original_connect = bridge._atomic_private, w.pipe.ConnectNamedPipe
+
+    def publish(*args, **kwargs):
+        result = original_publish(*args, **kwargs)
+        if args[1] == directory / "active.json":
+            manifest_ready.set()
+            assert connected.wait(2), "Client must preconnect before native accept"
+        return result
+
+    def connect(*args):
+        result = original_connect(*args)
+        native_results.append(result)
+        return result
+
+    monkeypatch.setattr(bridge, "_atomic_private", publish)
+    monkeypatch.setattr(w.pipe, "ConnectNamedPipe", connect)
+    first = second = None
+    try:
+        assert service.start() is service
+        assert manifest_ready.wait(2)
+        first = bridge.NativeInventoryClient(directory / "active.json", threading.Event(), retained=True)
+        connected.set()
+        assert first.ready()["status"] == "ready"
+        assert native_results[0] == 535
+        epoch = service.epoch
+        assert service.thread.is_alive() and not service.stop_event.is_set()
+        assert not service._terminal_failure and not service.unresolved and not bridge._native_uncertain
+        first.dispose()
+        wait_until(lambda: service.source is None)
+        second = bridge.NativeInventoryClient(directory / "active.json", threading.Event(), retained=True)
+        assert second.ready()["status"] == "ready"
+        assert service.epoch == epoch and service.thread.is_alive() and not service.stop_event.is_set()
+        assert not service._terminal_failure and not service.unresolved
+    finally:
+        connected.set()
+        try:
+            if first:
+                first.dispose()
+        finally:
+            try:
+                if second:
+                    second.dispose()
+            finally:
+                try:
+                    service.stop()
+                finally:
+                    if service.thread is not None:
+                        service.thread.join()
+        assert all(not client.unresolved for client in (first, second) if client)
+        assert service.thread is not None
+        assert not service.thread.is_alive()
+        assert not service.unresolved and service.custody is None and service.source is None
+        assert not bridge._native_uncertain
+
+
 @pytest.mark.parametrize("fault", ["wait-failed", "result-incomplete"])
 def test_uncertain_native_operation_retains_buffers_and_disables_future_native_work(monkeypatch, fault):
     retained = []
@@ -1919,6 +2360,179 @@ def test_inventory_runtime_authority_loss_closes_without_replacement(tmp_path, m
         except bridge.ShadowUnavailable:
             assert service.fenced and service.custody is None
         assert desktop.connections <= 1 and len(desktop.requests) == 1
+
+
+def _catalog_stage_service(monkeypatch, w):
+    service = bridge.RetainedService.__new__(bridge.RetainedService)
+    service.w, service.sid, service.source = w, "fixture-sid", object()
+    service.stop_event, service.native_sequence = threading.Event(), 0
+    service._registration_identity = lambda *_: (1,)
+    service._check_custody = lambda: None
+    monkeypatch.setattr(bridge, "_source_desktop", lambda *_: (object(), []))
+    return service
+
+
+@pytest.mark.parametrize("case,stage,clock_reads", [
+    ("before-write", "before-catalog-write", 1), ("write", "catalog-write", 4),
+    ("partial-write", "catalog-write", 2), ("header", "catalog-read-header", 5),
+    ("partial-header", "catalog-read-header", 6), ("body", "catalog-read-body", 6),
+    ("partial-body", "catalog-read-body", 7), ("success", None, 3),
+    ("reopen", None, 5),
+])
+def test_initial_catalog_failure_stage_tracks_actual_native_frame_boundaries(
+    monkeypatch, inventory_caplog, case, stage, clock_reads,
+):
+    now, clock_calls, writes, errors, closed, deadlines = [0.0], [], [], [], [], []
+    retained = []
+    monkeypatch.setattr(bridge, "_retained", retained)
+    monkeypatch.setattr(bridge, "_native_uncertain", False)
+    monkeypatch.setattr(bridge, "time", SimpleNamespace(**{**vars(time),
+        "monotonic": lambda: (clock_calls.append(True), now[0])[1]}))
+
+    class Handle:
+        def Close(self):
+            closed.append(self)
+
+    class NativeError(Exception):
+        pass
+
+    class ObservedIO(bridge._DesktopIO):
+        def _operation(self, operation, deadline, keepalive=None, **kwargs):
+            deadlines.append(deadline)
+            try:
+                return super()._operation(operation, deadline, keepalive, **kwargs)
+            except Exception as exc:
+                errors.append(exc)
+                raise
+
+    tools = [{"namespace": "codex_app", "name": name, "inputSchema": {
+        "type": "object", "properties": properties, "required": required}}
+        for name, properties, required in [
+            ("send_message_to_thread", {"threadId": {"type": "string"}, "prompt": {"type": "string"}}, ["threadId", "prompt"]),
+            ("read_thread", {"threadId": {"type": "string"}, "turnLimit": {"type": "integer"},
+                "includeOutputs": {"type": "boolean"}, "maxOutputCharsPerItem": {"type": "integer"}}, ["threadId"]),
+        ]]
+    payload = encode({"jsonrpc": "2.0", "id": 1, "result": {"tools": tools}})
+    incoming = bytearray(len(payload).to_bytes(4, "little") + payload)
+    count, partial, waiting = [0], [False], [False]
+
+    def write(_handle, raw, _ov):
+        count[0] = 3 if case == "partial-write" else len(raw)
+        writes.append(bytes(raw[:count[0]]))
+        if case == "write":
+            return 997, None
+        return 0, None
+
+    def read(_handle, size, _ov):
+        phase = service.custody._frame_stage
+        target = phase == ("read-body" if case in {"body", "partial-body"} else "read-header")
+        if case != "success" and target and (not case.startswith("partial-") or partial[0]):
+            return 997, b""
+        count[0] = min(size, 2) if case.startswith("partial-") and target else size
+        value = bytes(incoming[:count[0]])
+        del incoming[:count[0]]
+        partial[0] = partial[0] or target
+        return 0, value
+
+    def result(*_args):
+        if case == "partial-write":
+            now[0] = 1.0
+        return count[0]
+
+    def wait(*_args):
+        if waiting[0]:
+            return 0  # Cancellation conclusively drained the pending operation.
+        waiting[0], now[0] = True, 1.0
+        return 258
+
+    handle = Handle()
+    w = SimpleNamespace(con=SimpleNamespace(GENERIC_READ=1, GENERIC_WRITE=2, OPEN_EXISTING=3,
+            FILE_FLAG_OVERLAPPED=4, SECURITY_SQOS_PRESENT=8),
+        types=SimpleNamespace(OVERLAPPED=SimpleNamespace, error=NativeError),
+        file=SimpleNamespace(SECURITY_IDENTIFICATION=16, CreateFile=lambda *_: handle,
+            ReadFile=read, WriteFile=write, GetOverlappedResult=result, CancelIo=lambda *_: None),
+        pipe=SimpleNamespace(GetNamedPipeServerProcessId=lambda *_: 1),
+        event=SimpleNamespace(CreateEvent=lambda *_: Handle(), WaitForSingleObject=wait,
+            WAIT_OBJECT_0=0, WAIT_TIMEOUT=258))
+    service = _catalog_stage_service(monkeypatch, w)
+    monkeypatch.setattr(bridge, "_DesktopIO", ObservedIO)
+    if case == "before-write":
+        service._check_custody = lambda: now.__setitem__(0, 1.0)
+    try:
+        if case == "success":
+            assert service._open_custody("private-pipe-sentinel", 1.0) == (1,)
+            assert errors == []
+        else:
+            with pytest.raises(bridge.ShadowUnavailable, match="deadline") as caught:
+                service._open_custody("private-pipe-sentinel", 1.0,
+                    (1,) if case == "reopen" else None)
+            assert len(errors) == 1 and caught.value is errors[0]
+        records = [r for r in inventory_caplog.records if r.msg == "codex_retained_catalog_failed stage=%s"]
+        assert [r.args for r in records] == ([] if stage is None else [(stage,)])
+        assert all(r.exc_info is None and r.stack_info is None for r in records)
+        assert len(clock_calls) == clock_reads and all(d == 1.0 for d in deadlines)
+        assert bool(writes) is (case != "before-write")
+        assert not service.custody.unresolved and not bridge._native_uncertain and retained == []
+    finally:
+        service.custody.close()
+    assert len(closed) == len(deadlines) + 1 and closed[-1] is handle
+
+
+@pytest.mark.parametrize("fault", ["object", "string", "subclass", "getter", "started-getter", "category-getter", "logger"])
+def test_initial_catalog_failure_stage_is_private_and_keeps_exception_identity(
+    monkeypatch, inventory_caplog, fault,
+):
+    class Hostile(str):
+        def __str__(self):
+            pytest.fail("Private metadata must never be stringified")
+        __repr__ = __str__
+        def __eq__(self, _other):
+            pytest.fail("Private metadata must never be compared")
+
+    class Failure(Exception):
+        def __str__(self):
+            pytest.fail("Exception text must never enter diagnostics")
+        __repr__ = __str__
+        @property
+        def category(self):
+            if fault == "category-getter":
+                raise RuntimeError("private-category-sentinel")
+            return Hostile("private-category-sentinel")
+
+    failure = Failure()
+
+    class BrokenIO:
+        def __init__(self, *_):
+            self.handle = object()
+        @property
+        def _operation_started(self):
+            if fault == "started-getter":
+                raise RuntimeError("private-started-sentinel")
+            return False
+        @property
+        def _frame_stage(self):
+            if fault == "getter":
+                raise RuntimeError("private-stage-sentinel")
+            if fault == "string":
+                return "private-stage-sentinel"
+            return Hostile("write") if fault == "subclass" else object()
+        def write(self, *_):
+            raise failure
+
+    w = SimpleNamespace(con=SimpleNamespace(GENERIC_READ=1, GENERIC_WRITE=2, OPEN_EXISTING=3,
+            FILE_FLAG_OVERLAPPED=4, SECURITY_SQOS_PRESENT=8),
+        file=SimpleNamespace(SECURITY_IDENTIFICATION=16, CreateFile=lambda *_: object()),
+        pipe=SimpleNamespace(GetNamedPipeServerProcessId=lambda *_: 1))
+    service = _catalog_stage_service(monkeypatch, w)
+    monkeypatch.setattr(bridge, "_DesktopIO", BrokenIO)
+    if fault == "logger":
+        monkeypatch.setattr(bridge._log, "warning", lambda *_: (_ for _ in ()).throw(RuntimeError("private-logger")))
+    with pytest.raises(Failure) as caught:
+        service._open_custody("private-pipe-sentinel", 1.0)
+    assert caught.value is failure
+    records = [r for r in inventory_caplog.records if r.msg == "codex_retained_catalog_failed stage=%s"]
+    assert [r.args for r in records] == ([] if fault == "logger" else [("unknown",)])
+    assert all(r.exc_info is None and r.stack_info is None for r in records)
 
 
 def test_inventory_frame_partial_read_write_and_limits(monkeypatch):

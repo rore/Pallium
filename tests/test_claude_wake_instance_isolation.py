@@ -45,7 +45,9 @@ def _hook(monkeypatch: pytest.MonkeyPatch):
     return module
 
 
-def test_two_instances_real_hook_http_and_outage_recovery(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_two_instances_real_hook_http_and_outage_recovery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, park_first_pass: bool = False,
+) -> None:
     monkeypatch.delenv("PALLIUM_CLAUDE_WAKE_DIR", raising=False)
     monkeypatch.delenv("PALLIUM_PORT", raising=False)
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
@@ -91,10 +93,46 @@ def test_two_instances_real_hook_http_and_outage_recovery(tmp_path: Path, monkey
         assert {p.name: p.read_bytes() for p in b_dir.iterdir() if p.is_file()} == b_before
 
     restarted, _ = _app(tmp_path, "first.db")
-    with TestClient(restarted, client=("127.0.0.1", 50001)):
-        assert restarted.state.claude_wake_registry.recovery_candidates()[0]["session_ref"] == session
-        assert not intent.exists()
+    release = entered = None
+    if park_first_pass:
+        import threading
+        from app.claude_wake import ClaudeWakeReconciler
+
+        release, entered = threading.Event(), threading.Event()
+        registry = restarted.state.claude_wake_registry
+        native_run = ClaudeWakeReconciler._run
+
+        def park_owned_first_pass(self):
+            if self._registry is registry:
+                entered.set()
+                release.wait()
+            native_run(self)
+
+        monkeypatch.setattr(ClaudeWakeReconciler, "_run", park_owned_first_pass)
+    try:
+        with TestClient(restarted, client=("127.0.0.1", 50001)):
+            try:
+                # Readiness must not depend on the background loop's first pass.
+                assert restarted.state.claude_wake_registry.recovery_candidates()[0]["session_ref"] == session
+                assert not intent.exists()
+                assert {p.name: p.read_bytes() for p in b_dir.iterdir() if p.is_file()} == b_before
+                if park_first_pass:
+                    assert entered.wait(5)  # Prove the owned background pass is still parked.
+            finally:
+                if release is not None:
+                    release.set()  # Release before normal lifespan closes its storage.
+    finally:
+        if release is not None:
+            release.set()
+            reconciler = getattr(restarted.state, "_claude_wake_reconciler", None)
+            if reconciler is not None and reconciler._thread is not None:
+                reconciler._thread.join(5)
+                assert not reconciler._thread.is_alive()
     assert {p.name: p.read_bytes() for p in b_dir.iterdir() if p.is_file()} == b_before
+
+
+def test_restart_admits_durable_intent_before_parked_background_pass(tmp_path, monkeypatch):
+    test_two_instances_real_hook_http_and_outage_recovery(tmp_path, monkeypatch, park_first_pass=True)
 
 
 def test_changed_marker_and_unbound_hook_fail_before_intent_or_http(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

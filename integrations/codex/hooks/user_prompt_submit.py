@@ -112,8 +112,10 @@ def main() -> None:
         if not content:
             return
 
-        discovery = discover_work_refs(cwd)
-        current_work_ref = injected_work_ref(discovery)
+        # Exact wakes deliver existing authority; optional enrichment must not
+        # delay the claim response or clear existing structural associations.
+        discovery = None if wake_delivery_id else discover_work_refs(cwd)
+        current_work_ref = injected_work_ref(discovery) if discovery is not None else None
         deliveries = []
         rendered_deliveries = []
         relay_output = ""
@@ -163,8 +165,10 @@ def main() -> None:
                 relay_response = relay_turn(
                     "codex", session_id, container_ref,
                     max_chars=RELAY_TURN_BUDGET,
-                    structural_work_refs=structural_work_refs_payload(
-                        container_ref, discovery, cwd
+                    structural_work_refs=(
+                        None if wake_delivery_id else structural_work_refs_payload(
+                            container_ref, discovery, cwd
+                        )
                     ),
                     wake_delivery_id=(
                         wake_match.group("delivery_id")

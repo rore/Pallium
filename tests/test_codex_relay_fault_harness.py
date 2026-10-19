@@ -9,6 +9,7 @@ import subprocess
 import sys
 import threading
 import time
+from itertools import count
 
 import pytest
 
@@ -368,7 +369,10 @@ def _configure_observation_hook(module, tmp_path, *, rendered=True,
     """Drive the real hook main() with deterministic local dependencies."""
     operations = []
     emitted = []
-    module.start_hook_deadline = lambda *a, **k: None
+    original_start_deadline = module.start_hook_deadline
+    module.start_hook_deadline = lambda *a, **k: original_start_deadline(
+        *a, **k, clock=count(start=10, step=.001).__next__
+    )
     module.read_hook_input = lambda: {
         "source": "resume", "cwd": str(tmp_path), "session_id": SID,
         "prompt": "ordinary user prompt",
@@ -506,7 +510,7 @@ def test_observer_distinguishes_unavailable_from_malformed_target_response(
     module, tmp_path, response_case, observation_reader
 ):
     manifest, evidence, _ = setup_manifest(tmp_path, "observe")
-    _configure_observation_hook(
+    operations, _, _ = _configure_observation_hook(
         module, tmp_path, unavailable=response_case == "unavailable",
         malformed=response_case == "malformed",
     )
@@ -518,10 +522,11 @@ def test_observer_distinguishes_unavailable_from_malformed_target_response(
         undo()
     rows = [json.loads(line) for line in observation_reader["wait"](evidence).splitlines()]
     response_targets = [row["target_present"] for row in rows if row["stage"] == "relay_response"]
-    assert any(response_targets) is (response_case == "malformed")
+    diagnostic = (response_targets, rows, operations)
+    assert any(response_targets) is (response_case == "malformed"), diagnostic
     assert not any(row["target_present"] for row in rows if row["stage"] == "format_relay")
     assert not any(row["target_present"] for row in rows if row["stage"] == "acknowledge_relay")
-    assert any(row["delivery_id"] == DELIVERY for row in rows) is (response_case == "malformed")
+    assert any(row["delivery_id"] == DELIVERY for row in rows) is (response_case == "malformed"), diagnostic
 
 
 def test_observer_rejects_post_response_state_write_and_does_not_mark_rendered(module, tmp_path, observation_reader):
@@ -926,6 +931,9 @@ def test_observer_preserves_real_http_hook_emission_and_ack(http_wake, monkeypat
             "payload": "observer caller-surface payload", **WAKE_SCOPE,
         })
         assert response.status_code == 200, response.text
+        for worker in http_wake[6]:
+            worker.join(5)
+            assert not worker.is_alive(), "native wake blocked hook/registry"
         return response.json()["deliveries"][0]
 
     baseline = send("observer-baseline")

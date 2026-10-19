@@ -591,38 +591,40 @@ def test_claude_scheduler_coalesces_one_attempt_and_forwards_completion(relay, m
         token="local-token",
         idle=True,
     )
-    started = threading.Event()
     release = threading.Event()
     calls = []
 
     def transport(*_args):
         calls.append(True)
-        started.set()
-        assert release.wait(timeout=2)
+        release.wait()
         return "accepted"
 
     monkeypatch.setattr(claude_wake, "claude_wake_transport", transport)
     events = []
-    worker = claude_wake.schedule_claude_relay_wake(
-        first,
-        {"container_ref": "git:test"},
-        registry=registry,
-        relay_service=service,
-        trace_callback=events.append,
-    )
-    assert worker is not None and started.wait(timeout=2)
-    assert (
-        claude_wake.schedule_claude_relay_wake(
-            second,
+    worker = None
+    try:
+        worker = claude_wake.schedule_claude_relay_wake(
+            first,
             {"container_ref": "git:test"},
             registry=registry,
             relay_service=service,
             trace_callback=events.append,
         )
-        is None
-    )
-    release.set()
-    worker.join(timeout=2)
+        assert worker is not None
+        assert (
+            claude_wake.schedule_claude_relay_wake(
+                second,
+                {"container_ref": "git:test"},
+                registry=registry,
+                relay_service=service,
+                trace_callback=events.append,
+            )
+            is None
+        )
+    finally:
+        release.set()
+        claude_wake.stop_claude_relay_wake_admission(registry)
+        claude_wake.drain_claude_relay_wakes(registry)
     assert not worker.is_alive() and calls == [True]
     assert [event["stage"] for event in events] == [
         "prepared",
@@ -638,11 +640,15 @@ def test_claude_scheduler_coalesces_one_attempt_and_forwards_completion(relay, m
     assert endpoint
 
 
-def test_codex_scheduler_coalesces_without_starting_another_worker(relay, monkeypatch):
+def test_codex_scheduler_coalesces_without_starting_another_worker(relay, monkeypatch, request):
     _storage, service, _endpoint = relay
     first = _message(service)
     second = _message(service)
     registry = CodexWakeRegistry()
+    def drain_owned_registry():
+        codex_wake.stop_codex_relay_wake_admission(registry)
+        codex_wake.drain_codex_relay_wakes(registry)
+    request.addfinalizer(drain_owned_registry)
     events = []
 
     class ParkedThread:
@@ -650,6 +656,13 @@ def test_codex_scheduler_coalesces_without_starting_another_worker(relay, monkey
             self.kwargs = kwargs
 
         def start(self):
+            return None
+
+        # This fixture captures work without starting a native thread.
+        def is_alive(self):
+            return False
+
+        def join(self):
             return None
 
     monkeypatch.setattr(codex_wake.threading, "Thread", ParkedThread)

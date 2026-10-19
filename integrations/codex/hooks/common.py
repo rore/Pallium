@@ -1025,15 +1025,20 @@ def _acquire_session_lock(
         if lock_file.tell() == 0:
             lock_file.write(b"0")
             lock_file.flush()
-        wait_budget = min(timeout, remaining_safe_time(), remaining_safe_time(deadline))
+        clock = deadline.clock if deadline is not None else time.monotonic
+        # Keep the timeout endpoint; caller/global budgets stay in their own clocks.
+        lock_deadline = clock() + max(0.0, timeout)
+        wait_budget = min(
+            timeout, remaining_safe_time(), remaining_safe_time(deadline),
+        )
         if wait_budget <= 0:
             _report_session_state_failure("lock_budget_exhausted")
             phase = "lock_close"
             lock_file.close()
             return None
-        clock = deadline.clock if deadline is not None else time.monotonic
-        lock_deadline = clock() + wait_budget
-        while clock() < lock_deadline:
+        while min(
+            lock_deadline - clock(), remaining_safe_time(), remaining_safe_time(deadline),
+        ) > 0:
             try:
                 phase = "native_prepare"
                 lock_file.seek(0)
@@ -1056,7 +1061,10 @@ def _acquire_session_lock(
                     last_native_error = error
                 else:
                     last_prepare_error = error
-                time.sleep(min(0.01, max(0.0, lock_deadline - clock())))
+                time.sleep(min(
+                    0.01, max(0.0, lock_deadline - clock()),
+                    remaining_safe_time(), remaining_safe_time(deadline),
+                ))
         _report_session_state_failure(
             "native_wait_exhausted" if native_attempted else (
                 "native_prepare" if last_prepare_error is not None else "pre_attempt_deadline"
@@ -1542,7 +1550,7 @@ def pallium_request(
 
 def relay_request(
     method: str, path: str, payload: Any, *, timeout: float, deadline: HookDeadline | None = None
-) -> dict | None:
+) -> dict | list | None:
     """Short-deadline Relay request; failures never block a host turn."""
     url = f"{PALLIUM_BASE_URL}{path}"
     body = None
@@ -2546,7 +2554,7 @@ def relay_turn(
     wake_delivery_id: str | None = None,
     register_session: bool = True,
     deadline: HookDeadline | None = None,
-    request: Callable[..., dict[str, Any] | None] | None = None,
+    request: Callable[..., dict[str, Any] | list[Any] | None] | None = None,
 ) -> dict[str, Any] | None:
     """Serialize a turn, recover durable intent, and confirm its exact scope."""
     sid = _safe_session_id(session_ref if isinstance(session_ref, str) else None)
@@ -2631,9 +2639,6 @@ def relay_turn(
                 "runtime": runtime,
                 "session_ref": sid,
                 "container_ref": source_candidate,
-                "max_chars": 1,
-                "max_messages": 1,
-                "register_session": False,
             }
             remaining = deadline.remaining()
             if remaining <= 0:
@@ -2642,11 +2647,11 @@ def relay_turn(
             if pass_deadline:
                 request_options["deadline"] = deadline
             bootstrap = (request or relay_request)(
-                "POST", "/relay/turn", bootstrap_payload, **request_options
+                "GET", "/relay/sessions", bootstrap_payload, **request_options
             )
-            if not isinstance(bootstrap, dict):
+            if not isinstance(bootstrap, list) or len(bootstrap) != 1:
                 return None
-            bootstrap_session = bootstrap.get("session")
+            bootstrap_session = bootstrap[0]
             if not isinstance(bootstrap_session, dict):
                 return None
             bootstrap_endpoint = bootstrap_session.get("endpoint_id")
@@ -2655,6 +2660,8 @@ def relay_turn(
             if not (
                 isinstance(bootstrap_endpoint, str)
                 and bootstrap_endpoint
+                and bootstrap_session.get("runtime") == runtime
+                and bootstrap_session.get("session_ref") == sid
                 and bootstrap_container == source_candidate
                 and type(bootstrap_generation) is int
                 and bootstrap_generation >= 0
@@ -2730,9 +2737,13 @@ def relay_turn(
                     previous_endpoint_id=endpoint,
                     previous_scope_generation=generation,
                 )
+            # Read UTC before the existing remaining-budget check; never extend the caller deadline.
+            claim_now_ms = int(time.time() * 1000) if "wake_delivery_id" in payload else None
             remaining = deadline.remaining()
             if remaining <= 0:
                 return None
+            if claim_now_ms is not None:
+                payload["claim_expires_at_ms"] = claim_now_ms + int(remaining * 1000)
             request_options = {"timeout": remaining}
             if pass_deadline:
                 request_options["deadline"] = deadline
