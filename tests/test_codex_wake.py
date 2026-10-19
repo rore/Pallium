@@ -5589,6 +5589,7 @@ def test_http_ack_after_validation_serializes_with_native_start_and_releases_fen
     callback_entered = threading.Event()
     workers = []
     native_writes = []
+    ack_thread = None
     original_release = registry.release_delivery
 
     def release(delivery_id):
@@ -5625,6 +5626,12 @@ def test_http_ack_after_validation_serializes_with_native_start_and_releases_fen
             nonlocal first
             candidate = original_pending(relay, **kwargs)
             if first:
+                expected_delivery_id = kwargs.get("delivery_id")
+                assert isinstance(expected_delivery_id, str) and expected_delivery_id
+                assert isinstance(candidate, dict)
+                assert candidate.get("delivery_id") == expected_delivery_id
+                assert candidate.get("recipient_endpoint_id") == endpoint_id
+                assert candidate.get("state") == "pending"
                 first = False
                 validated.set()
                 assert continue_native.wait(2)
@@ -5635,38 +5642,48 @@ def test_http_ack_after_validation_serializes_with_native_start_and_releases_fen
 
     target = "app.dependencies.schedule_codex_relay_wake" if runtime == "codex" else "app.dependencies.schedule_claude_relay_wake"
     message_id = f"public-ack-native-{runtime}"
-    with patch(target, side_effect=capture_schedule):
-        sent = route.post("/relay/messages", json={
-            "sender_runtime": source_runtime, "sender_session_ref": "sender",
-            "recipient": endpoint_id, "message_id": message_id,
-            "payload": "ACK at native boundary", **scope,
-        })
-        assert sent.status_code == 200
-        assert len(workers) == 1 and workers[0] is not None
-        claim_response = claim_route.post("/relay/turn", json={
-            "runtime": runtime, "session_ref": "target", **scope,
-        })
-        assert claim_response.status_code == 200
-        claim = claim_response.json()["deliveries"][0]
+    ack_responses = []
+    try:
+        with patch(target, side_effect=capture_schedule):
+            sent = route.post("/relay/messages", json={
+                "sender_runtime": source_runtime, "sender_session_ref": "sender",
+                "recipient": endpoint_id, "message_id": message_id,
+                "payload": "ACK at native boundary", **scope,
+            })
+            assert sent.status_code == 200
+            assert len(workers) == 1 and workers[0] is not None
+            if runtime == "claude-code":
+                assert validated.wait(2)
+            claim_response = claim_route.post("/relay/turn", json={
+                "runtime": runtime, "session_ref": "target", **scope,
+            })
+            assert claim_response.status_code == 200
+            claim = claim_response.json()["deliveries"][0]
+            if runtime == "codex":
+                continue_worker.set()
+                assert validated.wait(2)
+
+            def acknowledge():
+                ack_responses.append(route.post("/relay/deliveries/ack", json={
+                    "delivery_id": claim["delivery_id"], "claim_token": claim["claim_token"], **scope,
+                }))
+
+            ack_thread = threading.Thread(target=acknowledge)
+            ack_thread.start()
+            assert callback_entered.wait(2)
+            assert ack_thread.is_alive()
+            continue_native.set()
+    finally:
+        continue_native.set()
         if runtime == "codex":
             continue_worker.set()
-        assert validated.wait(2)
-        ack_responses = []
+        if ack_thread is not None:
+            ack_thread.join(timeout=2)
+        for worker in workers:
+            if worker is not None:
+                worker.join(timeout=2)
 
-        def acknowledge():
-            ack_responses.append(route.post("/relay/deliveries/ack", json={
-                "delivery_id": claim["delivery_id"], "claim_token": claim["claim_token"], **scope,
-            }))
-
-        ack_thread = threading.Thread(target=acknowledge)
-        ack_thread.start()
-        assert callback_entered.wait(2)
-        assert ack_thread.is_alive()
-        continue_native.set()
-        ack_thread.join(timeout=2)
-        workers[0].join(timeout=2)
-
-    assert not ack_thread.is_alive() and not workers[0].is_alive()
+    assert ack_thread is not None and not ack_thread.is_alive() and not workers[0].is_alive()
     assert len(ack_responses) == 1 and ack_responses[0].status_code == 200
     assert len(native_writes) == 1
     if runtime == "codex":

@@ -53,6 +53,40 @@ Latest final-state governance refresh is build/claim-acquisition/phase-timing-no
 Selector whole-change breadth is the existing branch scope; these reports do not
 replace the required full validation.
 
+### Current hosted control follow-up — 2026-10-19
+
+The published-head automatic PR CI has one Linux Python3.12 failure in the
+unchanged `tests/test_codex_wake.py::test_http_ack_after_validation_serializes_with_native_start_and_releases_fence[claude-code]`:
+its expected native write list was empty. The raw run log shows the assertion at
+line 5671 after `pending_candidate` was queried; the worker had not observed an
+exact pending candidate before the public test claimed the delivery, so normal
+production suppression is consistent with the observed zero write. This is a
+test-control ordering race, not evidence against the new failure-only timing
+fields. Root adopts only a fixture correction in this test and this record:
+validate the exact scheduled delivery ID, endpoint ID and `pending` state before
+signaling validation, and for Claude await that event before issuing the public
+claim. Codex sequencing, production code, timeouts, ACK/status/readback oracles
+remain unchanged. Add bounded `finally` cleanup that unparks and joins only the
+owned ACK/native workers. One reviewed two-runtime focused run is required before
+any next commit or qualification; the already running manual full remains
+independent and is collected once. No hosted failure is waived or attributed to
+historical refusals.
+
+The exact test-control correction received independent source review and its one
+two-runtime focused run passed 2/2 in 1.96s at `cf347edea8d15e7c94a0873b3d240fef8597b7a8`.
+The private Python 3.13.14 / SQLite 3.53.1 runtime matched all 65 locked and reference
+distributions; pytest exited 0 without timeout or stderr, source-before/after had
+no drift, and the owned launcher PID 48096 / direct children remaining 0. Receipt:
+`build/claim-acquisition/ack-control-focused-8f9abd2d95ba42338081c0b474cc33bd`
+(JUnit SHA256 F2F66274320AD15ED3D4ADAE8E5218039191770EC43E19A94FBA35A2472FBEC;
+pytest log SHA256 40E68861BD12F21AA29204A7DB181363497F3E88008320A20A54DF94CC9724EA;
+runtime SHA256 720DEC5C3F921B25E14F3267C1107A55B7FD1569286E5FEC756711A681091ADE;
+source fence SHA256 22476D268C7C0DC846949307847272E739024E77036859199F49949F17E04026).
+Runner `build/claim-acquisition/run-ack-control-focused.ps1` SHA256
+0A65555489F785D869C181CD4F03ADE1B9F884A5DC6150D89685040B26774D9B. This is
+focused private-runtime evidence for the test-control ordering only; it neither
+reproduces hosted CI nor changes the historical failure diagnosis.
+
 
 ### Full qualification result and retained harness diagnosis — 2026-10-19
 
