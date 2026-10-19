@@ -135,3 +135,62 @@ released LLM wrapper and chain. Negative controls distinguish observed input fro
 terminal execution and preserve fixture module state. Findings were addressed;
 function-level evidence is adequate for this bounded primitive decision, but
 full-suite validation and actual-host qualification are explicitly not satisfied.
+
+## Proposed E2E-first continuation (planning only)
+
+User direction: reach a real Relay-and-wake vertical slice as soon as possible,
+then add supported features and wider reliability qualification. The preceding
+source probes are sufficient preparation; do not expand their coverage as a
+prerequisite to the first real-host experiment.
+
+First implementation step for the next slice: invoke Agent Workflow to create
+its Work Record, classify the exact minimal runtime/API/persistence changes, and
+review their overlap with the current reliability owner before any code edit.
+Those changes are outside this record's immutable qualification-only baseline;
+the proposal does not authorize modifying shared contracts or live installations.
+
+### Slice 1: experimental round trip through a real released host
+
+Use one loaded Hermes TUI/gateway-backed session, one explicit disposable profile
+and container, a pinned released host, an isolated Pallium instance/database/port,
+and a local provider stub. Through normal runtime/plugin and Relay surfaces, prove:
+existing sender persists an exactly addressed message -> idle Hermes starts a turn
+without human input -> full attributed payload reaches the provider request ->
+the integration ACKs from its qualified boundary -> Hermes calls its session-bound
+reply tool -> the original sender receives the correlated reply.
+
+Include only the plugin path and additive runtime plumbing needed for this
+journey. Exact identity/scope checks, honest admission evidence, bounded payloads,
+and no blind native retry remain mandatory from the first experiment. Add negative
+controls for wrong target and missing/stripped context; submission acceptance or a
+stub that ACKs on the plugin's behalf is not evidence. Basic refusal/failure paths
+for introduced code stay in this slice. Do not introduce a second Relay queue,
+generic adapter framework, broad tool parity, installer, or dashboard work.
+
+Success establishes this explicit experimental topology only. Use a model stub
+first to avoid paid inference; actual model understanding and broad host/runtime
+qualification remain separate. If a supported identity/admission seam is absent,
+stop on that precise blocker rather than moving into private host mutation.
+
+### Later vertical slices
+
+2. Normal live use in the same topology: busy queue without interruption, natural
+   turn fallback, next-message/backlog progression and close/dispose behavior.
+3. Failure/recovery expansion: lost submit/ACK response, claim expiry, host/service
+   restart, route reset, concurrent sessions and profiles. Each newly advertised
+   behavior earns caller-surface E2E evidence and preserves existing safety fences.
+4. Additional parity only after the core journey is proven: remaining Relay tools,
+   setup/removal and observability; propose Session History as separately scoped
+   work. Expand host/OS/version support only with matching qualification evidence.
+
+Keep the first experiment on a fixed isolated base while reliability proceeds.
+Serialize only overlapping shared-core edits/merges with the reliability owner;
+do not require every unrelated incident to close before running the isolated
+experiment. The existing full-suite gate still applies before PR/review; it need
+not prevent separately authorized focused E2E development in a safe resource
+window. No new test slot, installed-host change, or paid model call is assumed.
+
+Budget discipline: one cheaper-model bounded implementer, parent/independent review
+focused on identity/admission and shared changes, and a checkpoint after the first
+real host wake. Reuse probe results and test evidence; avoid parallel speculative
+implementations before the E2E path succeeds.
