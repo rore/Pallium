@@ -78,7 +78,10 @@ class RelayMcpBridge:
                     if "required" in schema:
                         schema["required"] = [key for key in schema["required"] if key not in hidden]
                     schema["additionalProperties"] = False
-                    catalog.append({"name": tool.name, "description": tool.description or "",
+                    description = (tool.description or "") + (
+                        " Hermes supplies self identity, scope and private receipts; only the listed arguments are accepted."
+                        " Incoming delivery is handled by hooks; receive/ACK tools are not exposed.")
+                    catalog.append({"name": tool.name, "description": description,
                                     "parameters": schema})
                 if {tool["name"] for tool in catalog} != TOOLS or result.next_cursor:
                     raise ValueError("Incomplete dedicated Hermes MCP catalog")

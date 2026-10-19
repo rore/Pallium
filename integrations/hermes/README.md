@@ -25,6 +25,13 @@ fallback_providers: []
 
 Use only a disposable `HERMES_HOME`, a loopback Pallium service, and a local provider stub. The installer calls the public Hermes config writer in the selected `--hermes-python` interpreter and refuses incompatible or unreadable profile config before touching package files.
 
+Run setup and removal only while the target Hermes host and other profile config
+writers are stopped. The digest check detects edits before writing; the native
+writer provides no atomic compare-and-swap against overlapping external writes.
+Concurrent config writers and production installation remain unqualified. On an
+uncertain write, current config bytes are retained for inspection rather than
+overwritten from an older snapshot.
+
 ## Install, inspect, and remove
 
 From the Pallium checkout, pass the exact profile and both Python environments:

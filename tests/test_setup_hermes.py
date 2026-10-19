@@ -318,3 +318,31 @@ def test_invalid_scope_and_visibility_refuse_before_writing(tmp_path, monkeypatc
         setup_hermes.install(home, Path(sys.executable), SETTINGS["service_url"],
                              SETTINGS["container_ref"], SETTINGS["actor_ref"], "global",
                              Path(sys.executable), repo)
+
+
+@pytest.mark.parametrize("option,value", [
+    ("--service-url", "http://127.0.0.1:29999/other"),
+    ("--container-ref", "C:\\data"),
+    ("--container-ref", "/var/data"),
+])
+def test_setup_rejects_adapter_incompatible_scope_before_mutation(tmp_path, monkeypatch, option, value):
+    home = tmp_path / "hermes-home"
+    _, config_path = _install_fake_hermes(monkeypatch, home)
+    _, repo = _source(tmp_path, monkeypatch)
+    original = config_path.read_bytes()
+    args = _install_args(home, repo)
+    args[args.index(option) + 1] = value
+    assert setup_hermes.main(args) == 2
+    assert config_path.read_bytes() == original
+    assert not setup_hermes._profile_paths(home)[0].exists()
+
+
+def test_setup_uses_common_canonical_container_scope(tmp_path, monkeypatch):
+    home = tmp_path / "hermes-home"
+    state, _ = _install_fake_hermes(monkeypatch, home)
+    _, repo = _source(tmp_path, monkeypatch)
+    args = _install_args(home, repo)
+    args[args.index("--container-ref") + 1] = "git:github.com/Team/Project.git"
+    assert setup_hermes.main(args) == 0
+    settings = state["config"]["plugins"]["entries"][PLUGIN]["settings"]
+    assert settings["container_ref"] == "git:github.com/team/project"

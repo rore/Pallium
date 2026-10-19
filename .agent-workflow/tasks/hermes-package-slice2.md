@@ -39,6 +39,7 @@ Slice 1 proves a native reply-only tool using public tool_execution middleware s
 
 **Material assumptions:**
 A public Hermes tool/MCP boundary can carry trusted actual session/turn scope into the existing Pallium tool surface without model identity or host patching. If unsupported, record the exact blocker and reassess before code rather than relabel a native-only wrapper as MCP. Supported config/skill/plugin paths permit a merge-safe disposable-profile installer; if not, report the missing extension point. Qualification remains the explicit pinned/local-stub topology until broader evidence exists.
+Setup/removal requires exclusive offline access to that profile; Hermes' public config writer cannot guarantee atomic conflict handling with overlapping external writers. Detected preflight conflicts and preexisting user edits are preserved; overlapping writes and production setup remain unqualified.
 
 **Plan:**
 1. Invoke Agent Workflow, evaluate whole-change applicability, create this record and classify risk before application edits.
@@ -88,9 +89,16 @@ This approves the immediately preceding installable-package slice and disposable
   plugin-owned MCP client/proxies, exact frozen profile binding and host-held reply
   receipts. Default registration remains on the same shared MCP tool functions.
 - Implemented explicit-profile setup/status/removal and bundled skill/references.
-  Parent review corrected installer CAS rollback to preserve concurrent config
+  Parent review corrected failed-preflight rollback to preserve detected config
   edits and whole-owned-entry checks to preserve user-added fields. Target filters
   remain legitimate tool arguments; self identity stays host-bound.
+- Independent review identified that Hermes' native writer has no atomic CAS or
+  interprocess lock. Setup/removal qualification therefore requires exclusive
+  offline access to the frozen disposable profile, as in the approved journey.
+  The digest detects preflight conflicts; overlapping external writes and live
+  production setup remain unqualified. Review accepted this explicit boundary;
+  no OS-lock machinery or host patch was added. Existing edited artifacts and
+  detected changes are preserved; uncertain writes never restore stale config.
 - The actual MCP 2.0 client to Pallium 1.29 stdio catalog probe passed with 12
   tools and hidden model identity/receipt fields; the owned connection closed.
   SDK 2 uses public snake-case result fields, which the client now follows.
@@ -109,13 +117,29 @@ the earlier shape-only HTTP stub was replaced with the actual service fixture.
 Slice-1 native/focused evidence remains in its own Work Record; no claim of
 slice-2 completion or broad support. Full validation and human result review remain
 open. No protected behavior contract, dependency or reliability code changed.
+After independent review corrections, setup lifecycle/refusal coverage is now
+**14 passed, 1 skipped in 1.28s**, including service-origin validation, filesystem
+scope refusal and common GitHub scope canonicalization before staging.
 Pinned optional MCP 2.0.0 and 11 supporting packages were installed only into the
 existing disposable Hermes qualification venv; actual call_tool(meta=...) and
 stdio signatures were inspected. Shared/global packages were unchanged.
 
 ## Result review
 
-Pending implementation and verification.
+Agent technical review: /root/hermes_e2e_review, 2026-10-19, accepted the code for
+the frozen offline disposable-profile experiment after the installer validation,
+writer-contract and skill corrections. No remaining actionable code blocker.
+Reviewed revision: e25f73df plus the inspected corrective diff in setup_hermes.py,
+README, mcp_bridge.py, skill/wait guidance and corresponding setup tests.
+Verification adequacy: focused code/stdio tests and actual MCP SDK interoperability
+support the narrow code verdict. Native package/concurrent-host E2E, the full
+non-slow suite and separate human result review still gate overall completion.
+
+Review verified per-call middleware identity in metadata, server-side fixed scope
+and self-identity checks, private admission receipts, host-session revalidation,
+context reset, exact tool catalog and unchanged default registration. Offline
+exclusive profile access is the accepted setup boundary; the writer's digest
+check is not atomic CAS. No production or overlapping-config-writer claim.
 
 ## Recovery
 

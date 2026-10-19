@@ -14,6 +14,8 @@ import tempfile
 from typing import Any
 from urllib.parse import urlsplit
 
+from core.container_ref import validate_explicit_container_ref
+
 PLUGIN_ID = "pallium-hermes-relay"
 MARKER = ".pallium-package.json"
 _CONFIG_HELPER = r'''
@@ -170,7 +172,7 @@ def _is_loopback_http(value: str) -> bool:
         parsed = urlsplit(value)
         return (parsed.scheme == "http" and parsed.hostname in {"127.0.0.1", "localhost", "::1"}
                 and parsed.port is not None and not parsed.username and not parsed.password
-                and not parsed.query and not parsed.fragment)
+                and not parsed.query and not parsed.fragment and parsed.path in {"", "/"})
     except ValueError:
         return False
 
@@ -281,6 +283,7 @@ def _settings(args: argparse.Namespace, mcp_python: Path, repo: Path) -> dict[st
             or args.container_ref != args.container_ref.strip() or len(args.container_ref) > 512
             or not args.container_ref.isprintable()):
         raise ValueError("--container-ref must be a non-empty exact scope")
+    container_ref = validate_explicit_container_ref(args.container_ref)
     if (not isinstance(args.actor_ref, str) or not args.actor_ref.strip()
             or args.actor_ref != args.actor_ref.strip() or len(args.actor_ref) > 255
             or not args.actor_ref.isprintable()):
@@ -290,7 +293,7 @@ def _settings(args: argparse.Namespace, mcp_python: Path, repo: Path) -> dict[st
     return {
         "experimental_frozen_local_stub": True,
         "service_url": args.service_url.rstrip("/"),
-        "container_ref": args.container_ref,
+        "container_ref": container_ref,
         "mcp_python": str(mcp_python),
         "mcp_repo": str(repo),
         "actor_ref": args.actor_ref,
@@ -408,13 +411,14 @@ def install(home: Path, hermes_python: Path, service_url: str, container_ref: st
             "old_settings": old_plugin.get("settings") if old_plugin else None,
             "settings": settings,
         })
-    except BaseException:
-        # The Hermes writer performs a digest CAS. If it refuses because another
-        # writer changed config, preserve those bytes; never restore a stale copy.
+    except BaseException as error:
+        # The digest detects preflight conflicts, not overlapping writes. Preserve
+        # current config on uncertainty; never restore a stale snapshot.
         for destination, stage, previous in reversed(stages):
             _restore_stage(destination, stage, previous)
+        detail = str(error)[:300] if isinstance(error, ValueError) else type(error).__name__
         raise RuntimeError(
-            "Hermes config write did not complete; current config bytes were preserved for review"
+            f"Hermes config write did not complete ({detail}); current config bytes were preserved for review"
         ) from None
     for _destination, stage, _previous in stages:
         shutil.rmtree(stage, ignore_errors=True)

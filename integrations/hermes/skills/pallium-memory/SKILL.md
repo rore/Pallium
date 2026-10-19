@@ -13,7 +13,7 @@ Use Pallium Relay only through the installed `pallium_relay_*` tools. This Herme
 - Tools apply the configured container scope automatically. Never guess a container or treat a display name, title, or endpoint as proof of identity.
 - Relay sends only to an exact canonical `relay-session-...` selector or a current `@name`. There is no broadcast or bare-runtime target. Ask before taking over another session.
 - A successful send means saved, not received. Do not resend after a saved or uncertain result; inspect status or trace when needed.
-- Hook deliveries already arrive in the current turn. The hook owns claim and ACK, so do not call receive or ACK for an injected delivery. Use `pallium_relay_reply` to reply; it acknowledges atomically.
+- Hook deliveries already arrive in the current turn. The hook owns claim and ACK, so do not call receive or ACK for an injected delivery. Use `pallium_relay_reply` to send the reply using the host-held admission receipt.
 
 ## Find a recipient and send
 
