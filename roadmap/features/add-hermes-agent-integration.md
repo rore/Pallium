@@ -1,7 +1,7 @@
 ---
 id: add-hermes-agent-integration
 title: Add Hermes Agent integration
-status: queued
+status: in-progress
 priority: high
 commitment: committed
 milestone: pallium-relay
@@ -10,15 +10,15 @@ lane: integration
 
 ## Summary
 
-Add Hermes Agent as the next runtime integration after the current reliability
-issues are resolved. The first deliverable is Relay: register an existing Hermes
+Add Hermes Agent as the next runtime integration, with isolated preparation in
+parallel with current reliability work. The first deliverable is Relay: register an existing Hermes
 conversation, send/reply through the common Relay contract, deliver pending
 messages on natural turns, and qualify active wake for loaded TUI/Desktop and
 authorized messaging sessions using the released native plugin API.
 
 Initial source validation on **2026-10-17** supports investigating **Hermes
-v0.22.2**, not waiting for unreleased gateway architecture. This is a queued
-feature and a proposed integration path, not a claim of working Pallium support.
+v0.22.2**, not waiting for unreleased gateway architecture. Slice 1 is in progress
+in an isolated checkout; this is not a claim of shipped Pallium support.
 Full Session History ingestion and optional derived-memory integration need their
 own discovery; the supplied research establishes neither.
 
@@ -32,10 +32,13 @@ drift after reset and duplicate actions or paid turns after ambiguous acceptance
 
 ## Sequencing
 
-- Keep this queued until the current correctness issues are resolved and the
-  release/rollout/real-delivery acceptance gates owned by
-  `add-wake-first-relay-delivery` are closed. This research does not satisfy those
-  gates. Hermes is the user's next feature; it precedes Copilot in runtime
+- On 2026-10-19 the user approved isolated slice 1 in parallel: first prove a
+  real released-host send → automatic idle wake → full payload → integration ACK
+  → reply round trip, using disposable data and a local provider stub. Branch
+  `feat/hermes-e2e-slice1` owns that experiment. No live setup is authorized.
+  Broader rollout remains behind the release/rollout/real-delivery gates owned by
+  `add-wake-first-relay-delivery`; this experiment does not satisfy those
+  gates. Hermes precedes Copilot in runtime
   expansion without changing Copilot's existing prerequisites.
 - Consume the shipped `add-relay-activation-capability-contract` and
   `add-relay-delivery-trace`. Reuse capability, fallback, fencing, and diagnostic
@@ -55,8 +58,10 @@ drift after reset and duplicate actions or paid turns after ambiguous acceptance
   from trusted host turn context; never let the model select its own identity or
   use a static profile MCP connection as proof of the current conversation.
 - Natural-turn delivery through `pre_llm_call`, with payload admission/ACK
-  verification using the corresponding `pre_api_request` observation, subject to
-  the qualification limits below. Preserve attribution, scope, claim leases,
+  verification at the effective `llm_execution` request and successful downstream
+  execution in the explicit single-plugin/provider topology. The real local
+  provider stub must independently observe the complete attributed content;
+  `pre_api_request` alone is insufficient. Preserve attribution, scope, claim leases,
   `claim_attempt`, and `possible_redelivery`.
 - A small outbound pending-work poller in the owning Hermes host, using
   `ctx.inject_message("Pallium Relay wake: <delivery-id>", role="user",

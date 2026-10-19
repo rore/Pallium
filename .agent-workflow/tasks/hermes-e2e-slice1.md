@@ -77,10 +77,26 @@ This approves the immediately preceding proposed slice: minimal plugin/runtime p
 ## Evidence
 
 Pre-edit path/risk evidence: `%TEMP%\pallium-hermes-e2e-slice1-01a1489e`.
-No real-host experiment or source implementation has run yet.
+Shared runtime/API implementation adds Hermes without changing existing runtime
+semantics. The new metadata-only HTTP route delegates to the existing exact-scope
+query. Activation remains passive/unqualified with no inferred admission evidence.
+Partial clean-context review `/root/hermes_e2e_review` found no shared-code blocker.
+
+Focused checks on the shared working diff, 2026-10-19:
+- `tests/test_hermes_relay_plugin.py`: 12 passed; a subsequently added closed/stale
+  wake node passed separately. Covers HTTP registration, scope, read-only pending,
+  validation, ACK/reply lifecycle and non-Codex callback routing.
+- `tests/test_agent_relay_e2e.py`: 64 passed.
+- `tests/test_relay_wake_contract.py`: 9 passed.
+- Implementation-readiness check: advisory only; required technical and human
+  plan approvals recognized. Redline PR checkpoints remain advisory/unsatisfied.
+
+The real-host bootstrap and plugin are still in progress. These HTTP checks do
+not establish native wake or payload admission. Full-suite resource coordination
+remains pending; no full-suite run, PR readiness, or completion is claimed.
 
 ## Recovery
 
-Owner: this chat. Next action: technical plan review and disposable released-host
-bootstrap. Keep this worktree for E2E implementation/qualification; never install
+Owner: this chat. Next action: disposable released-host/plugin round trip and
+independent result review. Keep this worktree for E2E qualification; never install
 it into the live service. The approved target is experimental slice 1 only.

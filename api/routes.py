@@ -17,6 +17,8 @@ from api.schemas import (
     RelayAckResponse,
     RelayMcpAckRequest,
     RelayMessageResponse,
+    RelayPendingCandidateResponse,
+    RelayRuntime,
     RelayDeliveryTraceResponse,
     RelayReplyRequest,
     RelaySendRequest,
@@ -906,6 +908,19 @@ def create_router(
                     outcome,
                 )
 
+    @router.get("/relay/pending-candidate", response_model=RelayPendingCandidateResponse | None)
+    async def relay_pending_candidate(
+        runtime: RelayRuntime,
+        session_ref: str = Query(min_length=1, max_length=255),
+        container_ref: str = Query(min_length=1, max_length=512),
+    ):
+        return await _relay_call(
+            "pending_candidate",
+            lambda: _relay().pending_candidate(
+                runtime=runtime, session_ref=session_ref, container_ref=container_ref,
+            ),
+        )
+
     @router.post("/relay/sessions/close", response_model=RelaySessionResponse)
     async def relay_close_session(request: RelaySessionMutationRequest):
         return await _with_relay_activation(await _relay_call("close_session", lambda: _relay().close_session(**request.model_dump())))
@@ -1043,7 +1058,7 @@ def create_router(
                         "recipient_runtime": result.get("sender_runtime"),
                     },
                     {"container_ref": request.container_ref},
-                ), codex=result.get("sender_runtime") not in {"claude-code", "opencode"})
+                ), codex=result.get("sender_runtime") not in {"claude-code", "opencode", "hermes"})
             except Exception:
                 logger.exception("Relay atomic reply ACK callback failed after persistence")
         if relay_send_callback is not None:
@@ -1092,7 +1107,7 @@ def create_router(
         try:
             await _run_relay_operation(
                 lambda: relay_ack_callback(result, scope),
-                codex=result.get("recipient_runtime") not in {"claude-code", "opencode"},
+                codex=result.get("recipient_runtime") not in {"claude-code", "opencode", "hermes"},
             )
         except Exception:
             logger.exception("%s failed after persistence", callback_name)

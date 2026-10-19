@@ -12,7 +12,7 @@ from core.work_ref import readable_work_ref, validate_work_ref_key
 from redaction import redact_sensitive
 
 
-RELAY_RUNTIMES = frozenset({"claude-code", "codex", "opencode"})
+RELAY_RUNTIMES = frozenset({"claude-code", "codex", "opencode", "hermes"})
 RELAY_MESSAGE_MAX_CHARS = 16000
 RELAY_MESSAGE_PAGE_DEFAULT_CHARS = 2000
 RELAY_TURN_MAX_CHARS = 2400

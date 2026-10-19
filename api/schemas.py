@@ -851,7 +851,13 @@ class RecordOutcomeResponse(BaseModel):
     recorded: bool
 
 
-RelayRuntime = Literal["claude-code", "codex", "opencode"]
+RelayRuntime = Literal["claude-code", "codex", "opencode", "hermes"]
+
+
+class RelayPendingCandidateResponse(BaseModel):
+    delivery_id: str
+    state: Literal["pending", "claimed"]
+    recipient_endpoint_id: str
 
 
 class RelayTurnRequest(BaseModel):
@@ -956,7 +962,7 @@ class RelayAckRequest(BaseModel):
 
 class RelayActivationResponse(BaseModel):
     contract: Literal["relay-activation/v1"]
-    runtime: Literal["codex", "claude-code", "opencode", "unknown"]
+    runtime: Literal["codex", "claude-code", "opencode", "hermes", "unknown"]
     platform: Literal["windows", "linux", "macos", "other", "unknown"]
     integration: Literal["codex_queue", "claude_peer", "opencode_queue", "hook_only", "unknown"]
     topology: Literal["existing_session", "none", "unknown"]
