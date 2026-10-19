@@ -217,6 +217,38 @@ this does not replace the full-suite or separate human review gates.
 
 ## Recovery
 
+### Delivery closure, 2026-10-19
+
+PR #321 is **merged** at `f0ba46470bbe3f6703ab69d9b66ca5ada962ccce`.
+Immediately before merge, main was still cf4e8ece, head was e5430e22, all hosted
+checks passed, and review threads were empty. Both Python 3.12/3.13 suites passed
+**7,438 passed, 92 skipped, 2 xfailed** (412.47s/431.92s), plus Windows smoke and
+workflow/Redline checks. Independent final technical review by
+/root/hermes_e2e_review accepted the exact head and evidence; CodeRabbit was
+rate-limited and is not counted as a review. After fetching merged main, its Git
+tree was verified identical to the tested head. No application/test edits followed.
+
+The user explicitly selected **"Leave the live environment unchanged"** after
+being offered the exact local rollout (source
+`6bd8232b-3889-493b-9f03-8e5db251e910`). This supersedes the local automatic
+post-merge sync/restart instruction for this task. No stash, cleanup, fast-forward,
+installed code/config/data update, service restart or everyday Hermes setup is
+authorized. Development remains at 701608cd with the same unrelated dirty files;
+installed remains clean at 65a4e5ad. The repository publication objective is done;
+there is no pending live rollout to perform or approval to seek again.
+
+Cleanup supersedes earlier retention notes: feasibility and slice-1 managed
+worktrees are archived with recoverable snapshots. Before slice-1 archive, the
+three ignored vector-index files were copied with verified hashes to task TEMP
+`preserved-slice1-ignored/` with a manifest. Installed config reference checks
+found no consumers of these checkouts. The slice-2 checkout has only disposable
+ignored caches and no concrete remaining use; archive it after pushing this
+handoff. This metadata-only closure is retained on the pushed feature branch;
+the merged application snapshot and canonical roadmap are on main. Future slice 3
+should use a fresh isolated checkout from origin/main, preserving the user's
+unchanged working environment. The full feature remains in progress for History,
+optional memory and broader qualification; do not restart slice-1/2 implementation.
+
 ### Publication integration, 2026-10-19
 
 Integrated merged main with a clean, history-preserving merge at
