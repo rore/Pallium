@@ -1,5 +1,6 @@
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+import json
 import sqlite3
 import sys
 import threading
@@ -538,28 +539,71 @@ def test_unloaded_hook_claim_failure_recovers_original_and_backlog(
             attempts = _observe_transition_attempts(
                 journey, monkeypatch, "retry", force_refusal=force_retry_refusal,
             )
-            recover(journey)  # Exactly at lease expiry, not only after it.
-            refused = (_single_typed_transition_refusal(attempts)
-                       and attempts[0].get("acquisition_stage") == "late_begin")
-            assert not force_retry_refusal or (refused and attempts[0].get("forced") is True)
-            if refused:
-                assert attempts[0]["reservation"] == fence
-                assert authority() == before and registry.snapshot(first["recipient_endpoint_id"]) == fence
-                assert deliveries() == before_deliveries
-                assert tuple(desktop.owners) == owners_before
-                assert tuple(events) == events_before
-                assert all(row["method"] == "tools/list" or (
-                    row["method"] == "tools/call" and row["params"]["tool"] == "read_thread"
-                ) for row in desktop.writes[native_before:])
-                recover(journey)  # Model one later production sweep after the proven refusal.
-            assert len(attempts) == (2 if refused else 1)
-            assert "error_type" not in attempts[-1]
+            from app import dependencies as wake_dependencies
+
+            reconcile = wake_dependencies.reconcile_codex_relay_wake_reservations
+            phase_refusals = []
+
+            def settled_original_reconcile(actual_relay, **kwargs):
+                if actual_relay is not relay or kwargs.get("registry") is not registry:
+                    return reconcile(actual_relay, **kwargs)
+                assert kwargs.get("reservations") == (fence,) and not phase_refusals
+                previous_workers = len(workers)
+                result = reconcile(actual_relay, **kwargs)
+                phase_workers = workers[previous_workers:]
+                assert len(phase_workers) == 1, attempts
+                for worker in phase_workers:
+                    worker.join(5)
+                    assert not worker.is_alive(), attempts
+                assert len(attempts) == 1 and attempts[0]["reservation"] == fence, attempts
+                refused = (_single_typed_transition_refusal(attempts)
+                           and attempts[0].get("acquisition_stage") == "late_begin")
+                assert not force_retry_refusal or (refused and attempts[0].get("forced") is True), attempts
+                if refused:
+                    assert authority() == before and registry.snapshot(first["recipient_endpoint_id"]) == fence, attempts
+                    assert deliveries() == before_deliveries, attempts
+                    assert tuple(desktop.owners) == owners_before and tuple(events) == events_before, attempts
+                    assert all(row["method"] == "tools/list" or (
+                        row["method"] == "tools/call" and row["params"]["tool"] == "read_thread"
+                    ) for row in desktop.writes[native_before:]), attempts
+                else:
+                    assert "error_type" not in attempts[0], attempts
+                phase_refusals.append(refused)
+                return result
+
+            # Observe settled refusal before a coalesced backlog can legitimately rearm.
+            with monkeypatch.context() as phase:
+                phase.setattr(wake_dependencies, "reconcile_codex_relay_wake_reservations", settled_original_reconcile)
+                recover(journey)  # Exactly at lease expiry; candidate enumeration stays real.
+            assert wake_dependencies.reconcile_codex_relay_wake_reservations is reconcile
+            assert len(phase_refusals) == 1, attempts
+            refused, = phase_refusals
+            later_sweep = refused and len(attempts) == 1
+            if later_sweep:
+                candidate = relay.pending_candidate(
+                    runtime="codex", session_ref=TARGET, container_ref=SCOPE["container_ref"],
+                    delivery_id=first["delivery_id"],
+                )
+                assert candidate == {
+                    "delivery_id": first["delivery_id"], "recipient_endpoint_id": first["recipient_endpoint_id"],
+                    "state": "pending",
+                }, attempts
+                recover(journey)
+            assert len(attempts) == (2 if refused else 1), attempts
+            assert all(attempt["reservation"] == fence for attempt in attempts), attempts
+            assert "error_type" not in attempts[-1], attempts
             replacement = attempts[-1].get("result")
-            assert isinstance(replacement, type(fence)) and replacement.generation > fence.generation
+            assert isinstance(replacement, type(fence)) and replacement.generation > fence.generation, attempts
             assert (replacement.delivery_id, replacement.recipient_endpoint_id,
                     replacement.session_ref, replacement.container_ref) == (
                 first["delivery_id"], first["recipient_endpoint_id"], TARGET, SCOPE["container_ref"],
-            )
+            ), attempts
+            added_owners = desktop.owners[len(owners_before):]
+            assert len(added_owners) == 1, attempts
+            assert added_owners[0]["params"]["arguments"]["threadId"] == TARGET, attempts
+            assert first["delivery_id"] in added_owners[0]["params"]["arguments"]["prompt"], attempts
+            assert tuple(events[:len(events_before)]) == events_before, attempts
+            assert [event[0] for event in events[len(events_before):]] == ["emit", "ack"], attempts
         else:
             recover(journey)
         for message_id in ("claim-failure-original", "claim-failure-backlog"):
@@ -571,6 +615,15 @@ def test_unloaded_hook_claim_failure_recovers_original_and_backlog(
         assert registry.reservations() == ()
         output = capsys.readouterr().out
         assert "original-marker-東京" in output and "backlog-marker-東京" in output
+        if fault != "ack-response":
+            (tmp_path / "retry-refusal-boundary.json").write_text(json.dumps({
+                "nodeid": test_request.node.nodeid, "fault": fault, "moved": moved, "restart": restart,
+                "forced_refusal_requested": force_retry_refusal,
+                "refusal_observed": refused, "later_sweep": later_sweep,
+                "attempts": [{key: repr(value) for key, value in attempt.items()} for attempt in attempts],
+                "boundary_safety_passed": True, "wrapper_restored": True,
+                "native_owners_added": len(added_owners), "final_delivery_ack_checks_passed": True,
+            }, indent=2), encoding="utf-8")
     finally:
         for worker in workers:
             worker.join()
