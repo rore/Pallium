@@ -53,6 +53,12 @@ Latest final-state governance refresh is build/claim-acquisition/phase-timing-no
 Selector whole-change breadth is the existing branch scope; these reports do not
 replace the required full validation.
 
+
+### Full qualification result and retained harness diagnosis — 2026-10-19
+
+The first frozen full attempt used a workspace temp root inside this Git checkout and failed2/1352 passed/2 skipped in167.63s (exit2, no timeout, source drift none). Its two failures were `tests/behavior_contracts/test_codex_busy_wake.py::test_busy_queue_recovery_stays_single_flight_and_competing_hook_blocks_overtaken_wake` and `tests/test_codex_wake.py::test_no_hook_completion_preserves_delivery_until_real_hook_recovery`. Preserve the attempt at `build/claim-acquisition/relay-phase-timing-full-0d1b66599e6f41b7b83e032eaa0bafaf`: pytest log SHA256 F7808F3AEFC2A99D6BF5D591A9A600DC65CD6C904CFB5DA3CDD7FBF5B4CDCEDA; JUnit 4C44CAFF40EEAF7D310948D42D5C6D8D158E36405629EEEA94BBB066091DD7E1; result 95627ABA50B6BC86944C854F5DBCB3572E446C2E3D32FEFB279157A3D2B93D7A. Read-only source tracing showed the test `tmp_path` was under the recognized checkout, allowing Codex hook identity resolution to derive the real repository scope instead of keeping the synthetic pinned scope. This was a runner isolation error; no product/test edit, failure waiver, or historical hosted-cause attribution followed. The protected behavior-contract failure remains unmodified and was rerun only as part of the corrected full suite.
+
+The one corrected, independently reviewed full run moved the unique basetemp to external LocalAppData Temp with a fail-closed Git-root preflight, preserving all profile/config/DB/network/runtime/source/process guards. At exact commit `7f508c08a9b7494735dbc53793fc6a44a26d9224`, the non-slow full suite passed7406, skipped45, xfailed2 in389.05s (exit0; no timeout). Both prior failed nodes passed in the JUnit report. Evidence: `build/claim-acquisition/relay-phase-timing-full-bd40f6830ae2490b8d0209e025c13acf`; pytest log SHA256 04C446A55CC8D8F2EC481BCB0CA922369D12A06BCF3811AAF463337DF55CB862; JUnit 4B8F63860C0CC67CAD578FBF9A2DDAD0BF243AC51312D93B36EC0D6E74B856C3; result 07A44B941F1DA4B5CD245EBCE383C107087CA07014EBBB79D34A08DD8A4A3AC9; source-after 815A3E56B95D4BDE1DDAB34FF6E7C9DE99649091818D740A21C94F23FBD946D2; runtime 5E5E869B578EA3AEA525BAF85593BEF8022F97CEAEFEFD35C8DA26D6A85F37A1; stderr was empty. The65 installed distributions matched uv.lock and the approved reference inventory. Source-after recorded the exact commit, tracked-clean and `changed=[]`. Pytest PID65416 and direct children remaining0. Network guard log files were absent. This is local locked-runtime evidence with no complete descendant ledger or hosted-runtime-parity claim; it does not attribute or close historical hosted acquisition refusals. Independent full-result review by /root/acquisition_source_review is GO on 2026-10-19. Reviewer verified the JUnit/log/runtime/source-after hashes above, exact clean HEAD and source no-drift, locked65/reference inventory, and both previously failing hook nodes pass in the corrected run. The result establishes this private full suite only; historical hosted acquisition refusals and cause remain unresolved. Hosted candidate qualification/review remains pending.
 ## Result review
 
 Agent technical review: /root/acquisition_source_review independently accepted
@@ -2265,6 +2271,7 @@ Root and architecture_check authorize reusing the previously semantically qualif
 
 Root and architecture_check authorize a named session_view_by_endpoint lookup in core/relay.py and storage/sqlite_relay.py, called by app/dependencies.py default delivery activation; tests/test_codex_wake_sqlite.py owns query-count and caller-contract regressions. Existing scope-only lookup stays unchanged. One fresh endpoint LEFT JOIN generation reuses the existing session renderer after admission. Missing endpoint, absent generation zero, current health/state/alias/last-seen, custom callbacks and conservative failures remain. Both full authority observations and all generation validation remain. Red-zone core/persistence risk remains High; no schema, capacity, deadline or installed changes. Desired HTTP query-count RED precedes source, then focused parity/freshness GREEN and unchanged real50 qualification. The latest thin capture failed34/50 with 2209.80ms composite occupancy, 631.73ms writer acquisition and383.59ms writer residence; outside-writer1194.48ms is not attributed wholly to duplicate reads. Removing100 repeated reads per50 projections is a bounded candidate, not a throughput guarantee.
 
+
 ## Result review
 
 Agent technical review: /root/architecture_check independently reviewed each candidate production change and the actual final process qualification cleanup on 2026-10-13.
@@ -2465,6 +2472,7 @@ Existing service-async-startup is a separate unfinished task. Do not overwrite i
 ## Evidence
 
 Initialization-only historical checkpoint: no application test, performance/load run, live inspection/change, restart or production/test edit had yet been performed when the WR-first record was created. Native Codex workflow seed succeeded; classification/config and request-scope applicability were read before the planning record. Measurements, numeric targets, candidate fixes and independent review are pending. Reuse prior reliable artifacts only with their revision, workload and simulation limits; do not describe prior Relay qualification as proof that all service bottlenecks are resolved.
+
 
 ## Result review and next action
 
