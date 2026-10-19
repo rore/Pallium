@@ -607,6 +607,8 @@ def test_released_hermes_idle_relay_roundtrip(client, tmp_path):
                     assert not hidden_identity.intersection(properties), (
                         f"trusted History identity leaked into {name} schema: {properties}"
                     )
+                    if name == "pallium_expand_source":
+                        assert "include_supported_memories" not in properties
         send_properties = next(definitions["pallium_relay_send"].get("parameters", {}).get("properties", {})
                                for definitions in provider_toolsets if "pallium_relay_send" in definitions)
         assert not {"sender_runtime", "sender_session_ref", "container_ref"} & set(send_properties)

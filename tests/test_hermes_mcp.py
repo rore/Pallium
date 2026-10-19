@@ -423,6 +423,14 @@ async def _exercise_history_stdio(base_url: str, *, expected_ids: dict[str, str]
                 missing, conflicting, wrong_thread, wrong_visibility, forged_request, conflicting_identity,
             ))
             assert sum(path == "/query" for path, _ in _RelayHandler.calls) == before_query
+            before_memory_opt_in = len(_RelayHandler.calls)
+            memory_opt_in = await session.call_tool(
+                "pallium_expand_source",
+                {"source_item_id": expected_ids["actor_a"], "include_supported_memories": True},
+                meta=_identity("later-session", "turn-memory-refusal"),
+            )
+            assert memory_opt_in.isError
+            assert len(_RelayHandler.calls) == before_memory_opt_in
 
             broad = await session.call_tool(
                 "pallium_search_history",

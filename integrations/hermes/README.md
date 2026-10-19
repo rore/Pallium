@@ -97,7 +97,8 @@ for subsequent pages. The bridge binds the current container, session and privat
 visibility; `actor_ref` and `source_thread_ref` remain optional historical filters.
 Completion-only capture supplies no current `request_source_item_id`; do not invent
 one. Source forgetting remains available through existing Pallium controls; this
-package does not expose a new forget or ingestion tool.
+package does not expose a new forget or ingestion tool. Source expansion excludes
+the shared opt-in supported-memory output; derived memory remains a later slice.
 
 ## Native qualification limits
 

@@ -25,6 +25,7 @@ HIDDEN = {
 }
 for _name in HISTORY_TOOLS:
     HIDDEN[_name] = {"container_ref", "thread_ref", "visibility", "agent_ref", "request_source_item_id"}
+HIDDEN["pallium_expand_source"].add("include_supported_memories")
 TIMEOUT_SECONDS = 15
 MAX_RESPONSE_CHARS = 24_000
 

@@ -115,6 +115,8 @@ def _validate_arguments(
 
     if tool_name in HERMES_HISTORY_TOOLS and arguments.get("request_source_item_id") is not None:
         raise ValueError("request_source_item_id is unavailable for Hermes History")
+    if tool_name == "pallium_expand_source" and arguments.get("include_supported_memories"):
+        raise ValueError("derived-memory expansion is not qualified for Hermes")
 
     identity_pairs = (
         ("sender_runtime", "sender_session_ref"),
@@ -180,7 +182,7 @@ def make_tool_adapter(context: PalliumContext) -> Callable[..., Any]:
 def create_hermes_server(
     *, base_url: str, container_ref: str, actor_ref: str, visibility: str = "private",
 ):
-    """Create a stdio server with only Relay tools and fixed profile scope."""
+    """Create a stdio server with Relay/History tools and fixed profile scope."""
     if not isinstance(base_url, str) or not base_url.strip() or base_url != base_url.strip():
         raise ValueError("--base-url is required")
     parsed = urlsplit(base_url)
