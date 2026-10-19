@@ -33,24 +33,25 @@ Real released-host E2E captures user and assistant turns, then searches and expa
 Persistent private conversation capture and trusted MCP identity cross privacy and provenance boundaries. Keep the common History contract unchanged and review the integration independently.
 
 **Discovery:**
-Pending bounded discovery of released public Hermes completion/message hooks and existing History ingestion/MCP contracts. This baseline precedes implementation.
+Pinned clean Hermes v0.22.2 d923a5eb exposes post_llm_call(session_id, turn_id, user_message, assistant_response, conversation_history) after transcript persistence; durable rows carry message_uid. Source: agent/turn_finalizer.py:453-477,605-658; agent/message_metadata.py:27-31; tests/agent/test_context_engine_message_uid.py:148-166. Existing POST /items handles redaction and source identity deduplication; shared MCP History handlers already provide scope, paging, lookup lineage and forgetting checks. actor_ref and source_thread_ref are historical filters, distinct from current identity. No common core/API/storage edit is needed. Source forgetting tool is not added: its existing handler lacks container scope; this slice verifies externally forgotten sources stay excluded.
 
 **Material assumptions:**
-Supported public hooks expose authoritative stable message/session identity and complete user/assistant turns. If absent, stop the affected capture path and reassess rather than invent identity or patch the host. Existing History contracts can serve this integration without changing common storage or Relay reliability.
+The released post_llm_call history contains the current durable text rows and exact UIDs. Capture only the last user-to-final-assistant pair, require valid host IDs and UIDs, simple nonempty string content and no merged/hidden/scaffolding shape. Skip unsupported or missing-identity rows with bounded diagnostics, without blocking the host turn. Treat stored content as durable transcript text, not proof of delivery. Synthetic Relay wake user markers are excluded; a valid final assistant row may be captured with explicit relay_wake origin. No transcript backfill, interrupted-turn completeness, multimodal conversion or provider-context capture is claimed. If native evidence disproves these boundaries, stop and reassess.
 
 **Plan:**
-1. Invoke Agent Workflow, create the Work Record and classify risk before code edits.
-2. Inspect public released-host hooks and reusable History APIs using cheaper bounded discovery workers.
-3. Record the minimal integration plan and obtain independent technical review before implementation.
-4. Implement trusted History capture and packaged search/expand; preserve private scope and existing lifecycle semantics.
-5. Prove real native capture-to-later-search/expand and caller-surface negative/privacy contracts in disposable profiles.
-6. Run selected validation, independent result review, align feature notes, push checkpoints and prepare a PR. No live rollout.
+1. Invoke Agent Workflow, create the immutable baseline and classify risk before code edits (done).
+2. Reuse public post_llm_call in integrations/hermes/__init__.py. Select the current durable user and final assistant rows after the last user boundary; retain exact host message_uid/session/turn as provenance. Stable source IDs hash only the configured container, exact session and UID, never text or timestamps. POST /items with source_type/agent_ref hermes, private fixed scope, role and artifact_kind message using the existing bounded loopback HTTP helper. Capture bounded simple text (20,000 code points), skip unsupported shapes/over-boundary input rather than silently truncate. Repeated callbacks deduplicate through the existing service identity contract; no new queue, outbox, database or retry machinery. Use the existing session/wake fence to exclude synthetic user markers and mark assistant wake-origin metadata without receipts.
+3. Extend app/mcp/hermes.py and integrations/hermes/mcp_bridge.py catalogs with exactly pallium_search_history, pallium_search_history_by_work_ref and pallium_expand_source. Reuse shared handlers unchanged, bind trusted requester session/container/private visibility; hide current-identity fields. Keep actor_ref/source_thread_ref as optional historical filters, do not inject actor filter. Reject model request_source_item_id because this completion-only capture does not inject an authoritative current request source. Preserve native result/page/lookup fields and validate metadata conflicts before any HTTP call. Keep all existing Relay tools and hook ownership.
+4. Update manifest, packaged skill and integrations/hermes/README.md for History scope, replay/lineage and limits; update only the Hermes feature notes after reading Minimap procedures. Setup owns the same package tree; no new configuration or launcher/dependency change.
+5. Add tests/test_hermes_history.py for actual plugin-hook to HTTP caller-surface capture and real stdio search/expand. Cover duplicate/forget non-resurrection, missing/conflicting identity, wrong scope, private/redaction/Unicode, exact work filters, paging/revision/lookup lineage, boundary/malformed/unavailable/unsupported input and concurrent sessions. Preserve protected contracts. Extend tests/test_hermes_relay_native_e2e.py through a distinct later actual Hermes conversation searching and expanding captured turns while retaining Relay wake and lifecycle assertions; reuse its released source/environment and local stub.
+6. Run focused checks, selector and full non-slow hosted CI, independent review, align feature evidence and push checkpoints/PR. Import only merged main, no unmerged reliability work. PR #320 was explicitly approved and merged as fcea3d1b, now merged into this branch at 0471c347; it resolves the old checker relationship incompatibility without new slice-specific governance edits.
+Key paths are the Hermes adapter/plugin/manifest/skill/docs and their tests. Gray integration paths and watch app/mcp/hermes.py are integration-specific; tests/roadmap/WR are blue. High privacy/identity judgment remains even without red path edits. No common contract change or forget tool exposure.
 
 **Verification plan:**
 Native released-host/local-provider-stub journey verifies capture, later search and original-source expansion through actual package tools. Focused caller-surface E2E verifies identity, visibility, duplicate/error/boundary/lifecycle controls and Relay regression. Whole-change selector, required full non-slow CI, workflow and boundary checks precede review.
 
 **Plan review:**
-Pending discovery and independent technical review.
+Pending clean-context independent technical review of the concrete post-discovery plan; existing user approval covers the History integration and isolated qualification, not live changes.
 
 **Approvals:**
 Approved by user 2026-10-19: "ok, let's start slice 3 for session history. keep it isolated from the relay reliability work, use cheaper models where it makes sense, and push the work so we don't lose it."
@@ -64,7 +65,7 @@ This approves the previously discussed History slice and isolated qualification.
 
 ## Implementation
 
-Initial applicability: application/integration/test changes require normal isolated workflow. No code edit yet. The external refreshed Workflow package is used for guidance without importing unrelated PR #320 changes. The exact Minimap source reference was resolved by its CLI against this worktree.
+Initial applicability: application/integration/test changes require normal isolated workflow. No application code edit yet. The user approved merge of the already reviewed PR #320; its merged main is now imported in this isolated branch, with no live checkout or service update. The exact Minimap source reference was resolved by its CLI against this worktree.
 
 ## Evidence
 
@@ -74,3 +75,5 @@ Pending.
 
 Pending.
 
+
+Discovery workers: /root/hermes_native_harness inspected pinned public Hermes source and /root/validate_hermes inspected existing History MCP/API contracts, read-only. Exact feature relationship decoded as declared; existing explicit Relay work association is reused. Worktree remains isolated and pushed.
