@@ -88,7 +88,7 @@ Agent technical review: `/root/refresh_plan_review`, reviewed revision `ff381aaa
 
 
 
-**State:** Ready to implement — both package refresh phases are complete and parity-checked. Final selector, syntax/runtime/Redline qualification, hosted CI, and independent result review remain pending on the coherent candidate.
+**State:** Ready to implement
 
 <!-- agent-workflow:end -->
 
@@ -215,3 +215,9 @@ Historical state before the phase-2 source pin was published: blocked pending th
 - The tested-head and merge-commit trees for `package/minimap/skills/minimap-roadmap/` are identical (`880b60dc3dba4837fa12a55e541382fbe352f202`). Exactly 53 committed files were extracted from the merge pin and copied into `.claude/skills/minimap-roadmap/`; all consumer Git blob IDs match the source, with no missing or extra files. The two approved fixes are the bounded workspace request budget and same-generation related-work pagination retention. The unrelated restart concern from PR #52 remains open and outside scope.
 - The exact source/consumer blob receipt is `build/minimap-consumer-refresh-20261017/continuation-20261019/minimap-package-parity.json`. The source checkout's existing untracked user data was not touched; only its object store/FETCH_HEAD was updated to obtain the approved merge object. No Minimap source code was edited here.
 - `git diff --check` passed. The preserved unpublished commit `675621bb`, current-main merge, Agent Workflow package mirrors, and mapped checker remain in the candidate. This phase did not run tests, the whole-change selector, Redline, or hosted qualification; the parent owns those checks once against the coherent candidate. No app/service operations, installation, push, or live rollout occurred.
+
+## Coherent candidate verification — 2026-10-19
+
+At package candidate 789c37814320fcaa5d20938e07087b66a2fa5253, the fresh whole-change selector chose full qualification over 92 paths. All 37 Minimap JS/MJS/CJS syntax checks passed; the Workflow and Minimap relationship decoders are byte-identical. The unchanged Workflow/governance surface passed all 19 focused tests in 16.87 seconds at 3e7e80544517d54305368b5986675eec4ae38df7. Logs and receipts are in build/minimap-consumer-refresh-20261017/continuation-20261019/.
+
+Fresh Redline returned the expected shadow architecture-review advisory for the mapped root checker. The first runtime check blocked on an invalid State value introduced by appending an explanatory sentence to the enum; this entry fixes the State to its allowed literal and keeps qualification pending here in prose. Rerun the failed runtime check before push; do not repeat already-passed syntax or focused tests. Full current-candidate hosted qualification and independent result acceptance remain pending.
