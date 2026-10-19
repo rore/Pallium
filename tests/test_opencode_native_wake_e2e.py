@@ -534,7 +534,9 @@ export default {...production,setup:async ctx=>{
             "active_session_ref": session, "thread_ref": session, "visibility": "private",
             "trigger_origin": "agent_pull", "limit": 50, "source_only": True})
         assert foreign_history.status_code == 200, foreign_history.text
-        assert not any(natural_marker in json.dumps(row) for row in foreign_history.json()["results"])
+        foreign_rows = [json.dumps(row, ensure_ascii=False) for row in foreign_history.json()["results"]]
+        for marker in (natural_marker, automatic_marker):
+            assert not any(marker in row for row in foreign_rows), marker
         assert all(not body["content"].startswith("[Pallium Relay wake:") for body, _ in ingested)
         stop(process, graceful=False)
         reload_message = send("RELOAD_PAYLOAD")
