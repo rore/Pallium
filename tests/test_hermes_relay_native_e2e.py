@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 from collections import Counter
 from pathlib import Path
@@ -31,15 +32,13 @@ def _port() -> int:
 
 
 def _clean_host_environment(profile: Path) -> dict[str, str]:
-    # Provider credentials and remote-provider selectors must not escape this
-    # process into Hermes, which is configured explicitly for the local stub.
-    denied = ("_API_KEY", "_API_BASE", "_BASE_URL", "_BASE", "_TOKEN", "_SECRET",
-              "_CREDENTIALS", "_ENDPOINT", "_PROVIDER")
-    env = {key: value for key, value in os.environ.items()
-           if not key.upper().endswith(denied)
-           and not key.upper().startswith(("HERMES_", "OPENAI_", "ANTHROPIC_", "GEMINI_", "GOOGLE_"))
-           and not key.upper().startswith(("PALLIUM_", "PYTHON"))
-           and key.upper() != "VIRTUAL_ENV"}
+    # Start from Windows runtime essentials only. No inherited credential,
+    # provider, Hermes, Pallium, or Python configuration reaches the host.
+    allowed = {
+        "SYSTEMROOT", "WINDIR", "SYSTEMDRIVE", "COMSPEC", "PATH", "PATHEXT",
+        "PROCESSOR_ARCHITECTURE", "NUMBER_OF_PROCESSORS", "OS",
+    }
+    env = {key: value for key, value in os.environ.items() if key.upper() in allowed}
     for name in ("tmp", "AppData/Roaming", "AppData/Local", "config", "data", "cache", "state"):
         (profile / name).mkdir(parents=True, exist_ok=True)
     env["HERMES_HOME"] = str(profile)
@@ -111,6 +110,7 @@ def test_released_hermes_idle_relay_roundtrip(client, tmp_path):
     for item in integration.iterdir():
         if item.is_file():
             shutil.copy2(item, plugins / item.name)
+    plugin_sha256 = hashlib.sha256((plugins / "__init__.py").read_bytes()).hexdigest()
 
     relay = client
     provider_requests: list[dict] = []
@@ -269,6 +269,9 @@ def test_released_hermes_idle_relay_roundtrip(client, tmp_path):
         "  api_key: local-only\n"
         "  api_mode: chat_completions\n"
         "fallback_providers: []\n"
+        "tools:\n"
+        "  tool_search:\n"
+        '    enabled: "off"\n'
         "platform_toolsets:\n"
         "  cli: [hermes-cli]\n"
         "plugins:\n"
@@ -497,7 +500,8 @@ def test_released_hermes_idle_relay_roundtrip(client, tmp_path):
             json.dumps(provider_requests, ensure_ascii=False, indent=2), encoding="utf-8")
         (tmp_path / "relay-calls.json").write_text(
             json.dumps({"requests": relay_forwarded, "responses": relay_responses,
-                        "events": event_order}, ensure_ascii=False, indent=2), encoding="utf-8")
+                        "events": event_order, "plugin_sha256": plugin_sha256},
+                       ensure_ascii=False, indent=2), encoding="utf-8")
         if seed_driver is not None and seed_driver.poll() is None:
             seed_driver.stdin.write("stop\n")
             seed_driver.stdin.flush()

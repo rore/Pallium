@@ -69,7 +69,7 @@ This approves the immediately preceding proposed slice: minimal plugin/runtime p
 **Exceptions:**
 —
 
-**State:** Ready to implement
+**State:** Blocked
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -82,72 +82,76 @@ This approves the immediately preceding proposed slice: minimal plugin/runtime p
 
 ## Evidence
 
-Pre-edit path/risk evidence: `%TEMP%\pallium-hermes-e2e-slice1-01a1489e`.
-Shared runtime/API implementation adds Hermes without changing existing runtime
-semantics. The new metadata-only HTTP route delegates to the existing exact-scope
-query. Activation remains passive/unqualified with no inferred admission evidence.
-Partial clean-context review `/root/hermes_e2e_review` found no shared-code blocker.
+The complete released-host round trip passed on 2026-10-19. Final native run:
+`python -m pytest tests/test_hermes_relay_native_e2e.py -m slow -q -n 0` —
+**1 passed in 25.34s**, with a minimal OS-only inherited environment and explicit
+disposable profile/data paths. It proves HTTP send, automatic idle marker wake,
+trusted-turn claim, complete attributed Unicode payload at the actual provider,
+integration ACK after provider observation, native reply dispatch through normal
+Hermes authorization, and original sender receipt. Wrong-recipient and closed
+endpoint controls passed. No owned host/seed processes remained after cleanup.
 
-Focused checks on the shared working diff, 2026-10-19:
-- `tests/test_hermes_relay_plugin.py`: 12 passed; a subsequently added closed/stale
-  wake node passed separately. Covers HTTP registration, scope, read-only pending,
-  validation, ACK/reply lifecycle and non-Codex callback routing.
-- `tests/test_agent_relay_e2e.py`: 64 passed.
-- `tests/test_relay_wake_contract.py`: 9 passed.
-- Implementation-readiness check: advisory only; required technical and human
-  plan approvals recognized. Redline PR checkpoints remain advisory/unsatisfied.
+- Hermes: v0.22.2, clean pinned source
+  `d923a5eb487a17c0a68801bba9ef0f56c81040a8`, Windows, existing read-only CPython
+  3.14.6 base. The venv, dependencies, profile and test data are disposable; no
+  global interpreter/PATH/configuration or live service changed. No paid model.
+- Tested plugin SHA256:
+  `e77b9e108ce8765a38585f88a6c702ab0d544444d1481c117060d833304196e4`.
+  Parent verified it matches the working file. Actual public inventory before/after,
+  strict frozen config, direct function schema, request attribution and ordered
+  provider/ACK/reply evidence are asserted by the test.
+- Final artifacts:
+  `%TEMP%\pytest-of-I347041\pytest-6339\test_released_hermes_idle_rela0`
+  (`provider-requests.json`, `relay-calls.json`, host/driver logs). The Relay artifact
+  records the copied plugin hash. Run 9 also passed before environment hardening.
+- `tests/test_hermes_relay_plugin.py`: **41 passed in 25.02s**, covering API scope,
+  read-only pending, identity/nonce matching, payload/reply bounds, stripped/history
+  context, downstream failure, profile/config/provider drift, retained reload
+  fences, normal authorization, ContextVar cleanup and unchanged other-tool behavior.
+- Unchanged shared implementation at 069f4824 retains focused evidence:
+  `tests/test_agent_relay_e2e.py` **64 passed**;
+  `tests/test_relay_wake_contract.py` **9 passed**. Native collection uses no optional
+  Hermes import in the base test environment. `git diff --check` passed.
+- Whole-change selector requires `python -m pytest tests/ -x -q`. The full non-slow
+  suite has **not run**: the reliability owner has not granted a local resource slot.
+  No PR/merge readiness or complete feature qualification is claimed.
 
-The real-host bootstrap and plugin are still in progress. These HTTP checks do
-not establish native wake or payload admission. Full-suite resource coordination
-remains pending; no full-suite run, PR readiness, or completion is claimed.
+Runtime execution corrected source-only assumptions: `on_session_end` is per turn;
+Tool Search defers registered tools by default; ordinary handler dispatch drops
+turn_id while public tool middleware retains it. The direct-tool frozen profile
+and context-local normal-dispatch bridge resolve these without host patches or
+private registry access. Arbitrary middleware hotloads, default Tool Search bridge,
+broader providers/profiles and recovery remain unqualified.
 
-Released-host bootstrap succeeded through the supported `hermes serve --isolated`
-WebSocket protocol: gateway ready, session create, prompt submit and complete seed
-turn. The loopback SSE provider stub observed `/v1/chat/completions`; no paid model
-was used. Source is pinned at d923a5eb487a17c0a68801bba9ef0f56c81040a8. Environment,
-dependencies, profile and logs are under the recorded temporary root. The venv
-reuses an existing read-only uv CPython 3.14.6 base (created 2026-06-27); no global
-interpreter, PATH, configuration or live service was changed. Seed process cleanup
-was reported by its owner; full integration cleanup remains an E2E assertion.
+The plugin and harness were assigned to cheaper workers with disjoint ownership;
+parent reviewed the trust boundaries and an independent reviewer supplied plan
+and native-seam review. Initial directory creation required a deterministic scoped
+write after apply_patch could not create the out-of-root parent; no broader paths
+were edited. Skill feedback trigger 3 dropped: these were external native-host
+integration assumptions, not an Agent Workflow defect.
 
-The plugin and native harness are separately assigned to cheaper workers with
-disjoint file ownership; parent reviews and owns shared contracts. Coordination
-fallback: the scope/test-slot Relay update remained pending despite queued wake
-evidence and a later completed recipient turn (trace gap). App-message fallback
-reported that concrete issue to the authorized reviewer. The reviewer confirmed
-the test-slot request is already with the Pallium manager; no slot is granted.
+## Result review
+
+Pending clean-context final review of the successful working result. The earlier
+partial review at dc730848 was not a complete-result endorsement. Separate human
+result review and the required full-suite gate remain open before publication.
 
 ## Recovery
 
-Latest native run 7 proves actual released-host automatic idle marker wake,
-trusted-turn claim, complete attributed provider request, then integration ACK.
-It **fails** the complete round trip: `pallium_relay_reply` is absent from the
-provider's advertised tool list, so no reply is dispatched or received. Seven
-bounded host attempts resolved SSE/title behavior, public inventory expectations,
-the per-turn `on_session_end` behavior, and tool schema/configuration issues. No
-more host runs are authorized without a concrete supported activation fix; the
-independent reviewer is examining public plugin activation/order/scope. No Hermes
-source modification or private registry mutation is permitted.
+Owner: this chat; canonical item `add-hermes-agent-integration`,
+`roadmap/features/add-hermes-agent-integration.md`. Keep this isolated branch for
+full validation and review; never install it into the live service. The native
+slice-1 proof is achieved; the broader feature remains in progress.
 
-Run 7 artifacts: `%TEMP%\pallium-hermes-e2e-slice1-01a1489e\pytest-test-run7\test_released_hermes_idle_rela0`
-(`provider-requests.json`, `relay-calls.json`, host/driver logs). The harness asserts
-actual provider tool exposure before emitting a reply call; it cannot fabricate
-success with an undeclared tool. Host/driver/server cleanup was reported by its
-owner. Frozen qualification is not established by this partial result.
+Next: independent final review, then run the selector-required full suite in the
+coordinated resource window. The original source-only feasibility branch is not a
+prerequisite for this proof; do not duplicate its probes or spend a second full-suite
+run there. Shared merge overlap with reliability remains the four additive core/API
+files and must be coordinated before publishing.
 
-Current focused plugin/API file: **37 passed**. It covers stripped/historical
-payload, wrong session/turn/provider, profile/config change, no ACK on downstream
-failure, retained reload fence, exact payload/reply bounds, and host-bound reply.
-Native-test collection needs no Hermes dependency in the base environment.
-Fresh import-linter report has zero violations. Redline remains High with API
-and architecture shadow checkpoints. Whole-change selector requires the full
-non-slow suite; the coordinated slot remains ungranted, so it has not run.
-
-The three plugin files were created through a deterministic scoped write after
-apply_patch could not create the out-of-root parent directory; no broader paths
-were edited. Skill feedback trigger 3 is dropped: native tool exposure is an
-external-host integration issue, not an Agent Workflow defect.
-
-Owner: this chat. Next action: disposable released-host/plugin round trip and
-independent result review. Keep this worktree for E2E qualification; never install
-it into the live service. The approved target is experimental slice 1 only.
+The test-slot request is with the Pallium manager. Relay scope update
+`relay-msg-8efbcc7bbf794dcfb56401e6e51c3205` remained pending despite queued wake
+and a completed recipient turn with a trace gap, so the authorized reviewer received
+an app-message fallback. Completion/validation coordination was sent separately as
+`relay-msg-bdea2fd912e44260b2b382095758f1fe`; wake evidence is not receipt or slot
+approval. No tests have been started on the reliability owner's behalf.

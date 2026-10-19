@@ -12,3 +12,4 @@ provides_hooks:
   - on_session_end
 provides_middleware:
   - llm_execution
+  - tool_execution

@@ -42,6 +42,10 @@ qualification values:
     platform_toolsets:
       cli: [hermes-cli]
 
+    tools:
+      tool_search:
+        enabled: "off"
+
     model:
       default: probe-model
       provider: custom
@@ -55,10 +59,20 @@ experiment, enables exactly this plugin, explicitly selects the existing
 `hermes-cli` toolset, selects a loopback custom provider, and has no fallback
 provider/model. The unique reply tool joins that already-selected toolset;
 this does not add a separate toolset or widen the profile's existing tool
-selection. allow_gateway_injection: true is required
+selection. Tool Search must be explicitly disabled for this direct-tool
+qualification because the native provider request must contain the reply tool
+schema directly; the full Tool Search route is not qualified here. Quote
+`"off"` in YAML so it remains Hermes' string enum. allow_gateway_injection: true is required
 by Hermes for injection into an existing TUI/Desktop gateway session. The
-pallium_relay_reply tool accepts only delivery_id and reply payload; session
-and turn identity always come from Hermes handler context.
+`pallium_relay_reply` tool accepts only `delivery_id` and `payload`. A public
+`tool_execution` middleware binds Hermes' trusted `session_id` and `turn_id` in
+a plugin-local ContextVar only while the normal host dispatch runs. The
+registered handler checks the bound turn against the admitted delivery and
+the host-supplied session. The middleware calls the normal `next_call(args)`
+path, preserving Hermes' authorization, hooks, and guardrails; other tools
+pass through unchanged. The handler refuses calls without this scoped binding
+because Hermes v0.22.2's ordinary registered-tool dispatch does not forward
+`turn_id`.
 
 Run the native test only with a clean checkout of the exact Hermes release
 source (v0.22.2, commit d923a5eb487a17c0a68801bba9ef0f56c81040a8), a disposable

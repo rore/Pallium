@@ -71,6 +71,19 @@ provider receipt before ACK. v0.22.2 exposes no public PluginContext middleware
 count or callback enumeration; arbitrary middleware hotloads and general-provider
 qualification remain blockers for broader release.
 
+**Slice-1 evidence, 2026-10-19:** the real pinned Windows gateway and local provider
+stub passed send → idle wake → full attributed request → integration ACK → native
+reply tool → original sender receipt. The same run passed wrong-recipient and
+closed-endpoint controls. This is an isolated experiment, not shipped support;
+full-suite validation, result review and the later slices remain open.
+
+Two native requirements emerged from execution. The disposable profile disables
+Tool Search with quoted `tools.tool_search.enabled: "off"` so the test can invoke
+the reply function directly. Default Tool Search bridge behavior remains later
+qualification. Registered handlers receive session ID but omit turn ID in this
+release; public `tool_execution` middleware carries both. A context-local handoff
+preserves normal host authorization and binds the reply to the admitted turn.
+
 ### Complete integration scope
 
 - A Hermes-native plugin, distributed through supported plugin mechanisms, with
@@ -107,7 +120,8 @@ qualification remain blockers for broader release.
    for all Hermes modes.
 2. Poll a bounded, read-only pending check. It must neither claim nor ACK nor
    expose message bodies. Retain existing scope and authorization boundaries.
-3. Before native submission, persist a Pallium-side wake fence tied to the exact
+3. Before native submission, persist an integration-owned metadata-only wake fence
+   in supported profile state, tied to the exact
    target and delivery. Submit at most one uncertain/accepted wake for that fence.
    A proven pre-submit refusal can permit retry; timeout or lost response cannot
    be treated as refusal. Coalesce safely without starving other pending messages.
@@ -154,7 +168,8 @@ qualification remain blockers for broader release.
 - **Acceptance is not durable execution.** Tagged tests show that accepted queued
   text is written to the session DB, but a never-drained prompt is retired on cold
   reopen after the in-memory queue is lost. A persisted row is not a replayable
-  turn. Keep the message and uncertain-attempt fence in Pallium; a restarted host
+  turn. Keep the message in Pallium and the integration-owned uncertain-attempt
+  fence in supported profile state; a restarted host
   must not trigger blind reinjection. Active-turn gateway resume is a separate
   recovery path; qualify it independently from busy-queue prompt replay.
 - **MCP identity still needs discovery.** The source review does not establish a
@@ -180,7 +195,7 @@ test/qualification claims are not inherited without inspecting their evidence.
 | Request observation after request middleware | Confirmed, with subsequent execution-middleware caveat; not provider receipt or action completion. | [Request assembly](https://github.com/NousResearch/hermes-agent/blob/v0.22.2/agent/turn_api_request.py#L43-L88), [ordering](https://github.com/NousResearch/hermes-agent/blob/v0.22.2/agent/turn_api_request.py#L142-L164), [execution wrapper](https://github.com/NousResearch/hermes-agent/blob/v0.22.2/agent/turn_api_call.py#L121-L139) |
 | Pending candidate reuse in Pallium | Confirmed locally: `core/relay.py` and `storage/sqlite_relay.py` query exact registered scope without claiming/ACKing; no generic HTTP wrapper was found. | Existing methods and their callers in `app/claude_wake.py`, `app/codex_wake.py`, and `app/dependencies.py` |
 | Bot Chat live-owner handoff and run idempotency | Confirmed source primitives; optional, not part of generic session wake. Store exposes `durable` and can fall back to memory. Tests include `test_restart_durability_and_terminal_semantics` and `test_dead_owner_nonterminal_status_becomes_interrupted`. | [Run dispatch](https://github.com/NousResearch/hermes-agent/blob/v0.22.2/gateway/platforms/api_server_runs.py#L735-L751), [idempotency store](https://github.com/NousResearch/hermes-agent/blob/v0.22.2/gateway/platforms/api_server_run_idempotency.py#L53-L84), [run tests](https://github.com/NousResearch/hermes-agent/blob/v0.22.2/tests/gateway/test_api_server_runs.py) |
-| End-to-end Pallium delivery, reset isolation, and crash recovery | Unproven. Hermes has separate interrupted-active-turn resume behavior; it does not qualify Pallium delivery or queued-prompt replay. | [Gateway active-turn recovery tests](https://github.com/NousResearch/hermes-agent/blob/v0.22.2/tests/gateway/test_restart_resume_pending.py), required qualification below |
+| End-to-end Pallium delivery, reset isolation, and crash recovery | Slice-1 idle wake/payload/ACK/reply passed in the isolated Windows gateway/local-stub topology, including wrong-recipient and closed-endpoint controls. Reset/crash recovery and queued-prompt replay remain unproven. | `tests/test_hermes_relay_native_e2e.py`; [gateway active-turn recovery tests](https://github.com/NousResearch/hermes-agent/blob/v0.22.2/tests/gateway/test_restart_resume_pending.py), remaining qualification below |
 
 ## Alternatives and Deferred Options
 

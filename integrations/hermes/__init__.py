@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import contextvars
 import json
 import logging
 import secrets
@@ -110,12 +111,15 @@ def _require_frozen_local_stub_config(plugin_id, service_url, container_ref):
     config = load_config_readonly() or {}
     plugins = config.get("plugins")
     platform_toolsets = config.get("platform_toolsets")
+    tools = config.get("tools")
+    tool_search = tools.get("tool_search") if isinstance(tools, dict) else None
     entry = plugins.get("entries", {}).get(plugin_id) if isinstance(plugins, dict) else None
     settings = entry.get("settings") if isinstance(entry, dict) else None
     model = config.get("model")
     if (not isinstance(plugins, dict) or plugins.get("enabled") != [plugin_id]
             or not isinstance(platform_toolsets, dict)
             or platform_toolsets.get("cli") != ["hermes-cli"]
+            or not isinstance(tool_search, dict) or tool_search.get("enabled") != "off"
             or not isinstance(entry, dict) or entry.get("allow_gateway_injection") is not True
             or not isinstance(settings, dict) or settings.get("experimental_frozen_local_stub") is not True
             or settings.get("service_url") != service_url or settings.get("container_ref") != container_ref
@@ -131,7 +135,8 @@ def _require_frozen_local_stub_config(plugin_id, service_url, container_ref):
             or provider_url.username or provider_url.password or provider_url.query or provider_url.fragment):
         raise ValueError("Hermes Relay qualification requires a loopback custom provider URL")
     return (model["default"], model["provider"], model["base_url"], model["api_mode"],
-            tuple(config.get("fallback_providers", [])), config.get("fallback_model"))
+            tuple(config.get("fallback_providers", [])), config.get("fallback_model"),
+            tool_search["enabled"])
 
 
 def register(ctx):
@@ -144,6 +149,7 @@ def register(ctx):
         raise ValueError("Configure an explicit loopback service_url and exact container_ref")
     profile, state = str(ctx.profile_name), ctx.state
     lock, stop = threading.RLock(), threading.Event()
+    reply_identity = contextvars.ContextVar("pallium_hermes_reply_identity", default=None)
     sessions, claims, admitted = {}, {}, {}
     poller = None
 
@@ -349,9 +355,23 @@ def register(ctx):
                 }
         return result
     def reply(args, session_id="", turn_id="", **_context):
-        if (not profile_ok() or not _text(session_id, 255) or not _text(turn_id, 255)
-                or not isinstance(args, dict)):
-            return "Relay reply refused: missing trusted host identity."
+        if not profile_ok():
+            return "Relay reply refused: frozen Hermes profile changed."
+        if not isinstance(args, dict):
+            return "Relay reply refused: invalid tool arguments."
+        identity = reply_identity.get()
+        session_present = bool(_text(session_id, 255))
+        turn_present = (isinstance(identity, tuple) and len(identity) == 2
+                        and bool(_text(identity[1], 255)))
+        if not session_present or not turn_present or identity[0] != session_id:
+            context_keys = sorted({"session_id", "turn_id", *[str(name) for name in _context.keys()]})[:16]
+            LOG.warning(
+                "Hermes Relay reply refused: trusted identity fields missing "
+                "(session_id_present=%s, turn_id_present=%s; context_keys=%s)",
+                session_present, turn_present, context_keys,
+            )
+            return "Relay reply refused: trusted host session or turn context is missing."
+        turn_id = identity[1]
         delivery_id, payload = args.get("delivery_id"), args.get("payload")
         if (not _text(delivery_id, 64) or not isinstance(payload, str)
                 or not payload.strip() or len(payload) > MAX_REPLY_CHARS):
@@ -378,6 +398,18 @@ def register(ctx):
             claims.pop(session_id, None)
         return "Relay reply sent."
 
+    def tool_execution(tool_name="", args=None, next_call=None, session_id="", turn_id="", **_context):
+        if tool_name != TOOL_NAME:
+            return next_call(args)
+        # Registered-tool dispatch omits turn_id in v0.22.2. Bind the public
+        # middleware identity only while the normal host dispatch path runs.
+        token = reply_identity.set((session_id, turn_id) if (
+            _text(session_id, 255) and _text(turn_id, 255)) else None)
+        try:
+            return next_call(args)
+        finally:
+            reply_identity.reset(token)
+
     def clear_session(session_id="", **_context):
         if isinstance(session_id, str):
             # Hermes calls on_session_end after each completed turn, not when the
@@ -395,6 +427,7 @@ def register(ctx):
 
     ctx.register_hook("pre_llm_call", pre_llm_call)
     ctx.register_middleware("llm_execution", llm_execution)
+    ctx.register_middleware("tool_execution", tool_execution)
     ctx.register_tool(
         name=TOOL_NAME, toolset="hermes-cli", is_async=False,
         description="Reply to the currently admitted Pallium Relay delivery in this Hermes turn.",

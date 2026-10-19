@@ -182,6 +182,7 @@ def plugin_context(client, monkeypatch):
                   "base_url": "http://127.0.0.1:29998/v1", "api_mode": "chat_completions"},
         "fallback_providers": [],
         "platform_toolsets": {"cli": ["hermes-cli"]},
+        "tools": {"tool_search": {"enabled": "off"}},
         "plugins": {"enabled": ["pallium-hermes-relay"], "entries": {
             "pallium-hermes-relay": {"allow_gateway_injection": True, "settings": {
                 "service_url": "http://127.0.0.1:29999", **SCOPE,
@@ -287,6 +288,22 @@ def _plugin_wake(client, create, payload="Hello שלום 🌍"):
     return ctx, marker, message
 
 
+def _plugin_reply(ctx, args, **trusted):
+    calls = []
+
+    def authorized_dispatch(actual):
+        assert actual is args
+        calls.append(actual)
+        # The released registry forwards session_id but drops turn_id.
+        return ctx.tools["pallium_relay_reply"](actual, session_id=trusted.get("session_id", ""))
+
+    result = ctx.middleware["tool_execution"](
+        tool_name="pallium_relay_reply", args=args, next_call=authorized_dispatch, **trusted,
+    )
+    assert len(calls) == 1
+    return result
+
+
 @pytest.mark.parametrize("failure", [
     "stripped", "wrong_session", "wrong_turn", "provider_error", "historical",
     "profile_changed", "config_changed", "wrong_provider",
@@ -370,13 +387,14 @@ def test_plugin_admission_then_host_bound_reply(client, plugin_context):
     assert len(calls) == 2
     assert status(client, message)["deliveries"][0]["state"] == "delivered"
     delivery_id = message["deliveries"][0]["delivery_id"]
-    tool = ctx.tools["pallium_relay_reply"]
     forged = {"delivery_id": delivery_id, "payload": "reply ✓",
               "session_id": "ses_שלום", "turn_id": "wake"}
-    assert "refused" in tool(forged, session_id="other", turn_id="other")
-    assert "refused" in tool(forged)
-    assert "sent" in tool(forged, session_id="ses_שלום", turn_id="wake")
-    assert "refused" in tool(forged, session_id="ses_שלום", turn_id="wake")
+    assert "refused" in _plugin_reply(ctx, forged, session_id="other", turn_id="other")
+    assert "refused" in _plugin_reply(ctx, forged)
+    assert "refused" in ctx.tools["pallium_relay_reply"](forged, session_id="ses_שלום")
+    assert "refused" in ctx.tools["pallium_relay_reply"](forged, session_id="ses_שלום", turn_id="wake")
+    assert "sent" in _plugin_reply(ctx, forged, session_id="ses_שלום", turn_id="wake")
+    assert "refused" in _plugin_reply(ctx, forged, session_id="ses_שלום", turn_id="wake")
     received = client.post("/relay/turn", json={
         "runtime": "claude-code", "session_ref": "sender", **SCOPE,
     }).json()["deliveries"]
@@ -385,7 +403,7 @@ def test_plugin_admission_then_host_bound_reply(client, plugin_context):
     assert received[0]["sender_session_ref"] == "ses_שלום"
 
 
-@pytest.mark.parametrize("invalid", ["opt_in", "permission", "plugins", "remote", "fallback"])
+@pytest.mark.parametrize("invalid", ["opt_in", "permission", "plugins", "remote", "fallback", "tool_search"])
 def test_plugin_refuses_unqualified_configuration(plugin_context, invalid):
     _, create, config = plugin_context
     entry = config["plugins"]["entries"]["pallium-hermes-relay"]
@@ -397,6 +415,8 @@ def test_plugin_refuses_unqualified_configuration(plugin_context, invalid):
         config["plugins"]["enabled"].append("other-plugin")
     elif invalid == "remote":
         config["model"]["base_url"] = "https://example.test/v1"
+    elif invalid == "tool_search":
+        config["tools"]["tool_search"]["enabled"] = "auto"
     else:
         config["fallback_providers"] = ["remote"]
     with pytest.raises(ValueError):
@@ -443,7 +463,7 @@ def test_plugin_reply_boundaries(client, plugin_context, payload, accepted):
         request, lambda actual: "provider accepted", session_id="ses_שלום",
         turn_id="wake", **HOST_EXECUTION,
     )
-    result = ctx.tools["pallium_relay_reply"]({
+    result = _plugin_reply(ctx, {
         "delivery_id": message["deliveries"][0]["delivery_id"], "payload": payload,
     }, session_id="ses_שלום", turn_id="wake")
     assert ("sent" in result) == accepted
@@ -453,3 +473,68 @@ def test_plugin_reply_boundaries(client, plugin_context, payload, accepted):
     assert len(received) == int(accepted)
     if accepted:
         assert received[0]["payload"] == payload
+
+
+def test_plugin_preserves_other_tool_execution(plugin_context):
+    _, create, _ = plugin_context
+    ctx = create()
+    args = {"input": "value"}
+    response = {"result": "unchanged"}
+    calls = []
+
+    def downstream(actual):
+        assert actual is args
+        calls.append(actual)
+        return response
+
+    assert ctx.middleware["tool_execution"](
+        tool_name="other_tool", args=args, next_call=downstream,
+    ) is response
+    assert len(calls) == 1
+
+    def failing(_args):
+        raise OSError("tool failed")
+
+    with pytest.raises(OSError):
+        ctx.middleware["tool_execution"](tool_name="other_tool", args=args, next_call=failing)
+
+
+@pytest.mark.parametrize("outcome", ["denied", "error"])
+def test_reply_context_preserves_host_authorization_and_resets(client, plugin_context, outcome):
+    _, create, _ = plugin_context
+    ctx, marker, message = _plugin_wake(client, create)
+    context = ctx.hooks["pre_llm_call"](
+        session_id="ses_שלום", turn_id="wake", user_message=marker,
+    )["context"]
+    request = {"model": "pallium-local", "messages": [{
+        "role": "user", "content": marker + "\n\n" + context,
+    }]}
+    ctx.middleware["llm_execution"](
+        request, lambda actual: "provider accepted", session_id="ses_שלום",
+        turn_id="wake", **HOST_EXECUTION,
+    )
+    args = {"delivery_id": message["deliveries"][0]["delivery_id"], "payload": "reply"}
+
+    def authorization(actual):
+        assert actual is args
+        if outcome == "error":
+            raise OSError("authorization failed")
+        return {"error": "host denied tool"}
+
+    def invoke():
+        return ctx.middleware["tool_execution"](
+            tool_name="pallium_relay_reply", args=args, next_call=authorization,
+            session_id="ses_שלום", turn_id="wake",
+        )
+
+    if outcome == "error":
+        with pytest.raises(OSError):
+            invoke()
+    else:
+        assert invoke() == {"error": "host denied tool"}
+    assert "refused" in ctx.tools["pallium_relay_reply"](args, session_id="ses_שלום")
+    received = client.post("/relay/turn", json={
+        "runtime": "claude-code", "session_ref": "sender", **SCOPE,
+    }).json()["deliveries"]
+    assert received == []
+    assert "sent" in _plugin_reply(ctx, args, session_id="ses_שלום", turn_id="wake")
