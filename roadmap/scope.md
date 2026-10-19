@@ -213,11 +213,12 @@ qualified behavior, current availability, fallback, and native-attempt evidence
 explicit across HTTP, MCP, and dashboard without turning acceptance into delivery.
 `add-relay-delivery-trace` shipped bounded diagnostic evidence through message
 detail, HTTP, and MCP.
-Hermes is the next runtime feature after the current reliability issues and their
-release/rollout/real-delivery acceptance gates are resolved. The queued
-`add-hermes-agent-integration` captures the initial v0.22.2 source validation,
-proposed native plugin path, admission/identity gaps, and isolated qualification
-criteria. It does not claim shipped Hermes support or advance the reliability gate.
+Hermes feasibility preparation is active in an isolated branch alongside current
+reliability work (authorized 2026-10-19). `add-hermes-agent-integration` owns the
+bounded identity/admission probes and proposed native plugin path. Shared Relay
+integration and release remain gated on the current correctness and
+release/rollout/real-delivery acceptance work. Preparation does not claim shipped
+Hermes support or advance that reliability gate.
 
 Copilot remains later runtime expansion behind its primary-runtime wake
 qualification prerequisite; delivery tracing is already shipped. Existing lifecycle hardening retains ownership of

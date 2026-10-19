@@ -42,7 +42,7 @@ Actual released code can be inspected and some relevant primitives executed with
 2. One cheaper-model read-only researcher inspects exact tagged public tool-context and execution-middleware APIs and identifies minimal runnable upstream seams; parent verifies conclusions.
 3. Add only a small reproducible qualification probe and meaningful positive/negative tests supported by those findings. Use actual pinned source functions when possible and label extracted-function or synthetic checks explicitly. If no useful executable seam exists, record that blocker rather than constructing a fake integration.
 4. Record the bounded decision and next permitted slice in the canonical feature; allow isolated preparation while shared integration/release remains gated. Keep board ordering unchanged.
-5. Run the focused probe tests without application conftest, fresh complete-change Redline/Workflow checks and test selector; use one hosted full non-slow suite if the selector requires it, avoiding the contested local application-test slot. Publish the slice for review.
+5. Run focused probe tests without application conftest, fresh complete-change Redline/Workflow checks and the test selector. Request a safe local full non-slow-suite window through existing coordination rather than competing with reliability's reserved slot; run it once when assigned. Hosted CI remains separate required validation. Until required validation completes, retain the exact outstanding gate and do not declare Ready for review.
 Key conventions: Python standard library first; no duplicate Relay queue/protocol; no production plugin or compatibility claim in this slice. Exact target paths are listed in Scope. Reassess before expanding them.
 
 **Verification plan:**
@@ -57,7 +57,7 @@ Not required at this risk level. User authorized parallel, budget-sensitive work
 **Exceptions:**
 —
 
-**State:** Ready to implement
+**State:** Blocked
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -68,15 +68,70 @@ Not required at this risk level. User authorized parallel, budget-sensitive work
 - Discovery: reused the prior source findings and checked current release/PR
   metadata. No existing research is being repeated unless needed to resolve the
   two outstanding feasibility questions.
+- Source review: parent inspected the exact `invoke_tool` concurrent callsite,
+  registry dispatch and middleware chain. Tool context is supplied from the
+  owning agent; no explicit profile ID was found. Execution middleware can
+  rewrite/short-circuit after the API observer. These are source findings, not
+  actual-host qualification. The cheaper researcher now owns only the two probe
+  code/test files; parent owns acceptance and documentation.
+- Local tooling: apply_patch could not create evals/hermes's parent outside the
+  default writable root. A narrowly scoped deterministic elevated write created
+  only the intended README and parent directory; no error 1385 occurred.
+- Coordination: the canonical Minimap association attached successfully as
+  `work:v1:20d17af89e285e7039a2f7def9e5651f87fbfef7b9d4711c889d0004110ec578`.
+  A single test-slot coordination request was saved for `@astra-reviewer` as
+  `relay-msg-86d43a5d3b7f41449ef8b0463454a58a`. Delivery is pending/unconfirmed;
+  no slot assignment or receipt is inferred.
+- Probe implementation: the cheaper worker added only qualification.py and its
+  focused test file, using deterministic writes after apply_patch could not
+  create the parent directory. Parent review corrected the probe from the tool
+  branch to the actual released LLM execution wrapper, expanded forged/empty
+  context controls, replaced a mirrored-constant test with all-source hash-order
+  validation, and verified cleanup of absent/None/existing module fixtures.
+- Focused verification: six cases passed in 0.16 seconds with the actual pinned
+  source supplied; all eight source-function assertions pass. No model, host,
+  profile, or end-to-end Relay qualification is claimed. Parent reviewed the
+  exact source callsite and final code. The test selector requires full validation.
+- Test-slot status: a read-only snapshot of @astra-reviewer's completed turn
+  confirms the request was forwarded to Pallium's manager. The coordinator
+  explicitly reported no slot granted; manager confirmation remains pending.
+  No local application suite has been started or existing test repeated.
+- Earlier probe-development checks caught a missing class-extraction case and an
+  invalid set containing a dict. Both were probe defects, fixed before final
+  verification; neither is evidence of a Hermes defect.
 
 ## Evidence
 
-Pending the bounded feasibility probe. Temporary path/risk evidence is under
-`%TEMP%\pallium-hermes-feasibility-01a1489e`; no runtime qualification claimed.
+Tested code revision: `684c9ddfec942bab099b9c3a593420c6dd2ea18c`.
+
+- `python -m pytest --noconftest -q -n 0 tests/test_hermes_qualification.py`, with
+  process-local `PALLIUM_HERMES_SOURCE_ROOT` pointing to the hash-pinned cache:
+  **6 passed in 0.16s**.
+- `python -m evals.hermes.qualification --source-root <pinned-cache>`: all eight
+  checks true; `evidence_level=source_function_probe`, `qualified_host=false`.
+- `python scripts/test-plan.py --base origin/main`: full lane,
+  `python -m pytest tests/ -x -q`. **Not run** pending a coordinated local slot;
+  this slice is not Ready for review and no PR/merge is claimed.
+- Temporary source/risk evidence is under
+  `%TEMP%\pallium-hermes-feasibility-01a1489e`. Source-function evidence is not
+  actual host/profile/provider admission or E2E support.
 
 ## Recovery
 
-The parent owns roadmap edits and acceptance. First next action: inspect the
-researcher's exact source references before choosing the minimal probe. The
-worktree is retained while this slice is active; it is not installed or shared
-with the reliability workers. Full Hermes support remains unfinished.
+The parent owns roadmap edits and acceptance. Blocking next action: obtain the
+manager-confirmed full-local-suite window, run the selected full suite once,
+inspect any failures without changing unrelated reliability behavior, then run
+fresh whole-change governance and publish the isolated slice for review. The
+coordinator forwarded the request; no slot is assumed. Branch and this committed
+record preserve the exact pending state. The worktree is retained for that
+validation and review, owned by this chat; it is not installed or shared with the
+reliability workers. Full Hermes support remains unfinished.
+
+## Result review
+
+Parent reviewed the exact upstream callsite, final probe and tests. The first
+worker draft used the tool-execution branch; the accepted draft exercises the
+released LLM wrapper and chain. Negative controls distinguish observed input from
+terminal execution and preserve fixture module state. Findings were addressed;
+function-level evidence is adequate for this bounded primitive decision, but
+full-suite validation and actual-host qualification are explicitly not satisfied.

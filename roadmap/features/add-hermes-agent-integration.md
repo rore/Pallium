@@ -1,7 +1,7 @@
 ---
 id: add-hermes-agent-integration
 title: Add Hermes Agent integration
-status: queued
+status: active
 priority: high
 commitment: committed
 milestone: pallium-relay
@@ -10,15 +10,16 @@ lane: integration
 
 ## Summary
 
-Add Hermes Agent as the next runtime integration after the current reliability
-issues are resolved. The first deliverable is Relay: register an existing Hermes
+Prepare Hermes Agent support in isolation while current reliability work proceeds.
+Shared integration and release follow the reliability gate below. The first
+deliverable is Relay: register an existing Hermes
 conversation, send/reply through the common Relay contract, deliver pending
 messages on natural turns, and qualify active wake for loaded TUI/Desktop and
 authorized messaging sessions using the released native plugin API.
 
 Initial source validation on **2026-10-17** supports investigating **Hermes
-v0.22.2**, not waiting for unreleased gateway architecture. This is a queued
-feature and a proposed integration path, not a claim of working Pallium support.
+v0.22.2**, not waiting for unreleased gateway architecture. This feature is in
+active feasibility preparation, not a claim of working Pallium support.
 Full Session History ingestion and optional derived-memory integration need their
 own discovery; the supplied research establishes neither.
 
@@ -32,9 +33,11 @@ drift after reset and duplicate actions or paid turns after ambiguous acceptance
 
 ## Sequencing
 
-- Keep this queued until the current correctness issues are resolved and the
+- Isolated feasibility research, Hermes-specific probes, and disposable-host
+  preparation may proceed in parallel, as authorized on 2026-10-19. Shared Relay
+  integration and release wait until the relevant correctness issues and
   release/rollout/real-delivery acceptance gates owned by
-  `add-wake-first-relay-delivery` are closed. This research does not satisfy those
+  `add-wake-first-relay-delivery` are closed. Preparation does not satisfy those
   gates. Hermes is the user's next feature; it precedes Copilot in runtime
   expansion without changing Copilot's existing prerequisites.
 - Consume the shipped `add-relay-activation-capability-contract` and
@@ -44,6 +47,44 @@ drift after reset and duplicate actions or paid turns after ambiguous acceptance
   v0.22.2 is the researched baseline, not a requirement to freeze, downgrade, or
   replace the user's installation. Its release notes explicitly distinguish the
   stable line from unreleased work and identify v0.22.1 as an accidental build.
+
+## Active Feasibility Slice (2026-10-19)
+
+Owner: this chat, isolated branch `feat/hermes-feasibility`; Work Record:
+`.agent-workflow/tasks/hermes-feasibility.md`. The first bounded outcome is a
+decision on trusted per-tool session identity and the safe request/admission
+boundary, backed by reproducible positive and negative probes where available.
+Use a cheaper-model focused source pass and reuse the prior injection research.
+No production Hermes plugin, shared Relay changes, or installed-host changes are
+part of this slice. Source/function-level evidence must remain distinct from a
+qualified real-host integration. Full support remains unfinished.
+
+### First probe result
+
+Released-source inspection and the offline probe in
+[`evals/hermes`](../../evals/hermes/README.md) establish useful primitives:
+
+- The inspected concurrent-tool callsite constructs `session_id` and `turn_id`
+  from its owning agent. The genuine registry dispatch function preserves those
+  separate keywords across concurrent synthetic calls despite forged identity in
+  model arguments. Missing or empty host context remains missing; a wrapper must
+  refuse it rather than infer identity.
+- Genuine `llm_execution` functions reproduce downstream request rewriting,
+  short-circuiting, downstream error propagation, and one terminal execution when
+  a wrapper raises after a successful downstream call. Earlier observation does
+  not prove the terminal request or even that the terminal was called.
+- Source hashes are verified before any extracted function executes. Fixture
+  module state is restored on success and error. Six focused cases passed,
+  including all eight real-source probe assertions. This is
+  `source_function_probe` evidence with `qualified_host: false`.
+
+No explicit per-call profile ID was found in the inspected dispatch context.
+Profile/container binding, sequential and async host paths, real-plugin
+concurrency/reset, and a defensible final admission boundary remain unqualified.
+Do not implement ACK from `pre_api_request` alone. The next independent question
+is trusted profile/container binding in an actual disposable Hermes host; shared
+Relay integration remains deferred. Required full-suite validation of the new
+probe code is pending a coordinated local test window, not silently waived.
 
 ## In Scope
 
@@ -129,10 +170,11 @@ drift after reset and duplicate actions or paid turns after ambiguous acceptance
   turn. Keep the message and uncertain-attempt fence in Pallium; a restarted host
   must not trigger blind reinjection. Active-turn gateway resume is a separate
   recovery path; qualify it independently from busy-queue prompt replay.
-- **MCP identity still needs discovery.** The source review does not establish a
-  public per-tool current-conversation API for plugin wrappers. Prove trusted
-  session propagation under concurrency; if unavailable, report the gap rather
-  than guessing from cwd, titles, profile configuration, or model arguments.
+- **Identity qualification remains incomplete.** The first source-function probe
+  establishes separate session/turn keyword forwarding, but not actual-host
+  profile/container binding or all tool execution paths. Prove those boundaries
+  before relying on session-aware wrappers; never guess from cwd, titles,
+  process-global profile configuration, or model arguments.
 
 ## Initial Validation and Evidence
 
