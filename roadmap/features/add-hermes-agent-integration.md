@@ -43,6 +43,11 @@ drift after reset and duplicate actions or paid turns after ambiguous acceptance
   `add-wake-first-relay-delivery`; this experiment does not satisfy those
   gates. Hermes precedes Copilot in runtime
   expansion without changing Copilot's existing prerequisites.
+- The user subsequently approved slice 2 on 2026-10-19: installable skill and
+  guidance, trusted MCP, Hermes-originated discovery/send/reply, setup/status and
+  safe removal. `feat/hermes-package-slice2` is isolated from reliability and
+  stacked on pushed slice-1 checkpoint `377327dd`; discovery and technical plan
+  review precede code. This does not imply live installation or a full-suite slot.
 - Consume the shipped `add-relay-activation-capability-contract` and
   `add-relay-delivery-trace`. Reuse capability, fallback, fencing, and diagnostic
   contracts rather than introducing Hermes-only delivery authority.
@@ -61,7 +66,7 @@ drift after reset and duplicate actions or paid turns after ambiguous acceptance
    integration ACK → host-bound reply → sender receipt. Keep common changes to
    runtime recognition and the metadata-only pending read. The plugin is an
    explicitly enabled qualification adapter, not a general installation.
-2. **Installable Relay package:** bundle the Pallium skill and its references,
+2. **Installable Relay package, active:** bundle the Pallium skill and its references,
    runtime guidance, supported MCP configuration and trusted per-conversation
    identity propagation, plus setup/status/removal. Extend the real-host journey
    so Hermes discovers a recipient, initiates a message and receives its reply

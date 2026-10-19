@@ -35,7 +35,7 @@ Disposable-profile E2E drives supported package setup, verifies skill/MCP discov
 Host-bound MCP identity and package setup cross trust/configuration boundaries. app/mcp/server.py is a red API checkpoint; the whole stacked branch also retains reviewed core/API red-zone changes from slice 1. No persistence or dependency change is authorized.
 
 **Discovery:**
-Slice 1 proves a native reply-only tool using public tool_execution middleware session/turn context, normal authorization and a ContextVar. Existing Pallium MCP context supports Codex request metadata and Claude runtime identity, but not Hermes. Hermes MCP connections are profile-shared, so static MCP environment cannot identify concurrent conversations. Existing setup_codex/setup_claude_code and bundled pallium-memory references provide package conventions. Two cheaper workers are inspecting public MCP identity and packaging/harness surfaces read-only; no slice-2 application edit has begun.
+Slice 1 proves a native reply-only tool using public tool_execution middleware session/turn context, normal authorization and a ContextVar. Hermes native MCP and ctx.call_mcp omit per-call metadata; configured headers are connection-scoped. A plugin-owned standard MCP ClientSession is therefore required. Actual pinned MCP 2.0.0 in the disposable Hermes venv exposes call_tool(meta=...) and public stdio; the Pallium server uses MCP 1.29.1, so real interop must be tested. Existing shared send/name tools take explicit sender/current identities, requiring server-side checks beyond proxy-schema hiding. The dedicated entry reuses shared tool registrations through a default-inert optional registration adapter and a context-local trusted scope; public tool APIs only. Hermes supports a profile skill tree and public comment-preserving config writers. Existing setup modules supply ownership/staging conventions, but blind directory deletion is unsuitable. Cheaper discovery workers supplied exact source references; no slice-2 application edit has begun.
 
 **Material assumptions:**
 A public Hermes tool/MCP boundary can carry trusted actual session/turn scope into the existing Pallium tool surface without model identity or host patching. If unsupported, record the exact blocker and reassess before code rather than relabel a native-only wrapper as MCP. Supported config/skill/plugin paths permit a merge-safe disposable-profile installer; if not, report the missing extension point. Qualification remains the explicit pinned/local-stub topology until broader evidence exists.
@@ -43,8 +43,8 @@ A public Hermes tool/MCP boundary can carry trusted actual session/turn scope in
 **Plan:**
 1. Invoke Agent Workflow, evaluate whole-change applicability, create this record and classify risk before application edits.
 2. Inspect pinned public Hermes MCP/tool/config/skill APIs and existing Pallium tool/setup contracts; choose the smallest supported identity and package path. Obtain clean-context technical plan review before implementation.
-3. Implement trusted per-call identity propagation for actual MCP dispatch, reusing common Pallium tools and preserving normal Hermes authorization. Missing/conflicting scope refuses; concurrent conversations cannot overwrite identity.
-4. Bundle the Pallium skill/references/guidance and add explicit profile-targeted setup/status/removal using existing CLI conventions. Preserve unrelated config, credentials/data, backups and changed-user artifacts; repeated setup is idempotent. Never run this against the user's live profile.
+3. Use a plugin-owned standard stdio ClientSession to app.mcp.hermes. Discover actual tool schemas and register public Hermes tool proxies. Middleware binds the trusted session/turn around normal next_call; explicitly carry that immutable pair across the MCP thread/loop in request meta, never model arguments. Exact tool allowlist: pallium_relay_address, pallium_relay_recipients, pallium_relay_discover_recipients, pallium_relay_name, pallium_relay_work_refs, pallium_relay_attach_work_ref, pallium_relay_detach_work_ref, pallium_relay_participants, pallium_relay_send, pallium_relay_reply, pallium_relay_status, pallium_relay_trace. The dedicated server also registers only that list. Hide self identity/scope/private receipts in proxy schemas and inject authoritative values in handlers; server-side guard rejects absent/malformed/conflicting metadata and identity-bearing arguments, binds exact configured scope per request and preserves normal default-server behavior. Exclude receive/ACK because hooks own claim/ACK. Reply requires the exact admitted host session/turn/delivery, adds the private receipt only inside the handler, and retires the local fence only after accepted reply; retain the native reply-only fallback when MCP is not configured. No copied Relay HTTP implementation or private registry.
+4. Bundle the Pallium skill/references/guidance and add explicit --home and --hermes-python profile-targeted setup/status/removal using existing CLI conventions. Check the optional MCP SDK and frozen local-provider/toolset/permission prerequisites before mutation; refuse incompatible settings rather than changing models, Tool Search or other integrations. Configure the plugin-owned bridge, not an unbound native MCP connection. Stage plugin and discoverable profile skill trees with ownership/fingerprint checks, preserve unrelated config/comments/credentials/data, use public Hermes config writer in the target interpreter, retain backups/rollback and changed-user artifacts; repeated setup is idempotent. Never run this against the user's live profile.
 5. Extend the real-host/provider-stub E2E from package install through discovery/send, peer reply, idle wake/receipt, repeat setup and removal. Add caller-surface identity/configuration/error/lifecycle controls.
 6. Run focused tests, whole-change selector and required workflow/boundary checks. Run the full non-slow suite only in an allocated resource window with compatible isolated dependencies. Obtain independent result review, reconcile the canonical item, push checkpoints and leave human review/remaining qualification explicit.
 Key conventions: existing app/cli setup dispatch and shared MCP tool/client contracts; integration-specific identity stays in its adapter; metadata/receipt confidentiality and exact host identity are preserved. Target files are enumerated in Scope. No dependencies, shared reliability semantics or host support expansion without reassessment.
@@ -58,7 +58,7 @@ When permissions/service/arguments/bounds fail, errors remain bounded and no fal
 When publishing the stacked change, existing contracts and imports remain valid -> test-plan selector, allocated compatible-environment full non-slow suite, workflow/import/Redline checks and independent review; protected behavior paths unchanged.
 
 **Plan review:**
-Pending clean-context technical review after the supported MCP identity seam is established. No slice-2 application implementation before acceptance.
+Agent technical review: /root/hermes_e2e_review, 2026-10-19, record checkpoint 31e11b15, accepted with the exact allowlist and server-side identity-enforcement conditions now incorporated in steps 3-4. Reviewer inspected pinned public middleware/MCP paths and shared server send/name/current-identity behavior, confirmed SDK 2.0 per-call metadata from primary source and requires actual stdio interoperability. Parent independently verified the actual disposable 2.0.0 signature. No host patch, private registry, model identity or profile-global current session. Direct stdio missing/conflicting identity and actual same-profile concurrency controls are required. Default factory registration must remain unchanged. Conditional acceptance is discharged by these concrete planning constraints; their behavioral evidence remains required before result acceptance.
 
 **Approvals:**
 Approved by user 2026-10-19: "ok, let's start slice 2. keep it isolated from the reliability work, use cheaper models where it makes sense, and push the work so we don't lose it."
@@ -67,7 +67,7 @@ This approves the immediately preceding installable-package slice and disposable
 **Exceptions:**
 —
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -76,6 +76,9 @@ This approves the immediately preceding installable-package slice and disposable
   development checkout's unrelated dirty files are preserved.
 - Pre-edit whole-change applicability is normal workflow: app/MCP/plugin/setup
   paths are outside the documentation allowlist. No documentation-only exemption.
+- Fresh pre-edit Redline report confirms architecture/API shadow checkpoints,
+  no boundary violations, High risk; whole-change union has 21 intended/changed
+  paths. Artifacts are in `%TEMP%\pallium-hermes-package-slice2-01a1489e`.
 - Read-only discovery assigned to the existing cheaper Hermes workers with
   disjoint identity and packaging/harness scopes. Parent owns this record and roadmap.
 - Coordination sent to authorized @astra-reviewer via Pallium Relay as
@@ -86,6 +89,9 @@ This approves the immediately preceding installable-package slice and disposable
 
 No slice-2 tests or application implementation yet. Slice-1 native/focused evidence
 is retained in its own Work Record; no claim of slice-2 completion or broad support.
+Pinned optional MCP 2.0.0 and 11 supporting packages were installed only into the
+existing disposable Hermes qualification venv; actual call_tool(meta=...) and
+stdio signatures were inspected. Shared/global packages were unchanged.
 
 ## Result review
 
@@ -93,8 +99,7 @@ Pending implementation and verification.
 
 ## Recovery
 
-Owner: this chat. Next: finish public identity/package discovery and clean-context
-plan review, then implement only the approved slice. State is Blocked on technical
-plan review, with independent read-only discovery continuing. Keep this worktree
+Owner: this chat. Next: implement the reviewed identity/packaging plan, run focused
+caller-surface and actual native/MCP tests, then obtain result review. Keep this worktree
 for the concrete slice-2 implementation; do not install it into everyday use.
 
