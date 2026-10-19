@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import time
+from time import monotonic_ns as _acquisition_monotonic_ns
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from difflib import SequenceMatcher
@@ -176,26 +177,53 @@ class SQLiteQueueMixin:
         if busy_backoff_seconds is None:
             busy_backoff_seconds = self._IMMEDIATE_BACKOFF_SECONDS
         first_deadline_stage = None
+        phase_elapsed_ns = {}
+
+        def busy_error(stage):
+            phase_ms = None if acquisition_deadline is None else {
+                name: elapsed_ns // 1_000_000
+                for name, elapsed_ns in phase_elapsed_ns.items()
+            }
+            return ImmediateTransactionBusyError(
+                "database is locked (immediate transaction retry exhausted)",
+                acquisition_stage=stage,
+                acquisition_phase_ms=phase_ms,
+            )
+
+        def acquire_phase(name, operation):
+            if acquisition_deadline is None:
+                return operation()
+            started_ns = _acquisition_monotonic_ns()
+            try:
+                return operation()
+            finally:
+                phase_elapsed_ns[name] = phase_elapsed_ns.get(name, 0) + (
+                    _acquisition_monotonic_ns() - started_ns
+                )
+
         for attempt in range(attempts):
             if acquisition_deadline is not None and time.monotonic() >= acquisition_deadline:
-                raise ImmediateTransactionBusyError("database is locked (immediate transaction retry exhausted)", acquisition_stage=first_deadline_stage or "pre_attempt_deadline")
-            session = session_factory()
+                raise busy_error(first_deadline_stage or "pre_attempt_deadline")
+            session = acquire_phase("session_factory", session_factory)
             try:
-                conn = session.connection(execution_options={"isolation_level": "AUTOCOMMIT"})
+                conn = acquire_phase(
+                    "session_connection",
+                    lambda: session.connection(execution_options={"isolation_level": "AUTOCOMMIT"}),
+                )
                 native_timeout_ms = busy_timeout_ms
                 if acquisition_deadline is not None:
                     remaining_ms = int((acquisition_deadline - time.monotonic()) * 1000)
                     if remaining_ms <= 0:
-                        raise ImmediateTransactionBusyError("database is locked (immediate transaction retry exhausted)", acquisition_stage="setup_deadline")
+                        raise busy_error("setup_deadline")
                     native_timeout_ms = min(native_timeout_ms, remaining_ms)
-                conn.execute(text(f"PRAGMA busy_timeout={native_timeout_ms}"))
-                conn.execute(text("BEGIN IMMEDIATE"))
+                acquire_phase("setup_pragma", lambda: conn.execute(text(f"PRAGMA busy_timeout={native_timeout_ms}")))
+                acquire_phase("begin_immediate", lambda: conn.execute(text("BEGIN IMMEDIATE")))
                 if acquisition_deadline is not None and time.monotonic() >= acquisition_deadline:
                     try:
                         conn.execute(text("ROLLBACK"))
                     except Exception:
                         pass
-                    raise ImmediateTransactionBusyError("database is locked (immediate transaction retry exhausted)", acquisition_stage="late_begin")
+                    raise busy_error("late_begin")
                 break
             except BaseException as exc:
                 if conn is not None:
@@ -212,7 +240,7 @@ class SQLiteQueueMixin:
                 if stage in ("setup_deadline", "late_begin") and first_deadline_stage is None:
                     first_deadline_stage = stage
                 if attempt == attempts - 1:
-                    raise ImmediateTransactionBusyError("database is locked (immediate transaction retry exhausted)", acquisition_stage=first_deadline_stage or "retry_exhausted") from exc
+                    raise busy_error(first_deadline_stage or "retry_exhausted") from exc
                 original = getattr(exc, "orig", exc)
                 backoff = (busy_backoff_seconds
                            if isinstance(original, sqlite3.OperationalError)
@@ -221,7 +249,7 @@ class SQLiteQueueMixin:
                 if backoff:
                     pause = backoff * (attempt + 1)
                     if acquisition_deadline is not None and time.monotonic() + pause > acquisition_deadline:
-                        raise ImmediateTransactionBusyError("database is locked (immediate transaction retry exhausted)", acquisition_stage=first_deadline_stage or "backoff_no_fit") from exc
+                        raise busy_error(first_deadline_stage or "backoff_no_fit") from exc
                     time.sleep(pause)
         assert session is not None and conn is not None
         try:

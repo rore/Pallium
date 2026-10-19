@@ -992,10 +992,24 @@ class TestBoundedReceive:
 class TestAck:
     @pytest.mark.asyncio
     async def test_ack_with_valid_receipt(self, monkeypatch: pytest.MonkeyPatch, asgi_post):
+        import time
+        from itertools import count
+        from types import SimpleNamespace
+        from storage import sqlite_queue
+
         bind_asgi_post(monkeypatch, asgi_post)
 
-        await asgi_post("/relay/turn", {"runtime": _RUNTIME, "session_ref": _SESSION, **_SCOPE})
-        await asgi_post("/relay/turn", {"runtime": "codex", "session_ref": "ack-sender", **_SCOPE})
+        native_queue_time, native_monotonic = sqlite_queue.time, time.monotonic
+        # Endpoint registration prepares the receipt/ACK journey, not an admission SLA.
+        with monkeypatch.context() as registration:
+            registration_time = SimpleNamespace(**vars(native_queue_time))
+            registration_time.monotonic = count(step=.001).__next__
+            registration.setattr(sqlite_queue, "time", registration_time)
+            await asgi_post("/relay/turn", {"runtime": _RUNTIME, "session_ref": _SESSION, **_SCOPE})
+            await asgi_post("/relay/turn", {"runtime": "codex", "session_ref": "ack-sender", **_SCOPE})
+        assert sqlite_queue.time is native_queue_time
+        assert sqlite_queue.time.monotonic is native_monotonic
+        assert time.monotonic is native_monotonic
         await asgi_post("/relay/messages", {
             "sender_runtime": "codex", "sender_session_ref": "ack-sender",
             "recipient": f"{_RUNTIME}:{_SESSION}", "payload": "ack me", **_SCOPE,
@@ -1729,12 +1743,36 @@ async def test_cross_container_fastmcp_relay_lifecycle_and_bare_runtime_rejectio
 
 @pytest.mark.asyncio
 async def test_redacted_send_and_reply_summaries_are_safe_and_bounded(
-    monkeypatch: pytest.MonkeyPatch, asgi_post, asgi_get,
+    monkeypatch: pytest.MonkeyPatch, relay_app, asgi_post, asgi_get,
 ):
+    from itertools import count
+    from threading import get_ident
+    from types import SimpleNamespace
+    from storage import sqlite_queue
+    import time
+
     bind_asgi_work_refs(monkeypatch, asgi_post, asgi_get)
     sender = "s" * 255
-    for runtime, session in ((_RUNTIME, _SESSION), ("codex", sender)):
-        await asgi_post("/relay/turn", {"runtime": runtime, "session_ref": session, **_SCOPE})
+    storage = relay_app.state.pallium_service._storage
+    native_turn, native_time = storage.relay_turn, sqlite_queue.time
+    native_monotonic = time.monotonic
+
+    def setup_turn(**kwargs):
+        provider_thread = get_ident()
+        logical_monotonic = count(step=.001).__next__
+        qualified_time = SimpleNamespace(**vars(native_time))
+        qualified_time.monotonic = lambda: (
+            logical_monotonic() if get_ident() == provider_thread else native_monotonic())
+        with monkeypatch.context() as setup:
+            setup.setattr(sqlite_queue, "time", qualified_time)
+            return native_turn(**kwargs)
+
+    with monkeypatch.context() as setup:
+        setup.setattr(storage, "relay_turn", setup_turn)
+        for runtime, session in ((_RUNTIME, _SESSION), ("codex", sender)):
+            await asgi_post("/relay/turn", {"runtime": runtime, "session_ref": session, **_SCOPE})
+    assert storage.relay_turn == native_turn and sqlite_queue.time is native_time
+    assert time.monotonic is native_monotonic
 
     server = create_server()
 

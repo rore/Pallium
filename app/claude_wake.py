@@ -12,6 +12,7 @@ import weakref
 from typing import TYPE_CHECKING, Any, Callable
 
 from app.claude_wake_transport import claude_wake_transport
+from core.relay import RelayNotFoundError
 from core.relay_activation import ActivationAttemptResult
 
 if TYPE_CHECKING:
@@ -240,6 +241,23 @@ def schedule_claude_relay_wake(
     assert worker is not None
     return worker
 
+def recover_claude_registration_intents(
+    registry: ClaudeWakeRegistry, relay_service: Any,
+) -> None:
+    """Admit persisted registrations before readiness, completing only safe intents."""
+    def complete_registration(**scope):
+        try:
+            relay_service.mark_active(**scope)
+        except RelayNotFoundError:
+            pass  # Registration before endpoint enrollment remains supported.
+        except Exception:
+            logger.warning("Claude registration activation deferred")
+            return False
+        return True
+
+    registry.recover_intents(complete_registration=complete_registration)
+
+
 def recover_claude_relay_wakes(
     registry: ClaudeWakeRegistry,
     relay_service: Any,
@@ -247,7 +265,7 @@ def recover_claude_relay_wakes(
     trace_callback: Callable[[dict[str, object]], object] | None = None,
 ) -> None:
     """Schedule only idle capabilities; unresolved reservations stay fenced."""
-    registry.recover_intents()
+    recover_claude_registration_intents(registry, relay_service)
     for candidate in registry.recovery_candidates():
         if candidate["state"] == "wake_inflight":
             continue

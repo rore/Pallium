@@ -783,9 +783,18 @@ def create_router(
                 stage = getattr(exc, "acquisition_stage", None)
                 if type(stage) is not str or stage not in ImmediateTransactionBusyError.ACQUISITION_STAGES:
                     stage = "unknown"
+                phase_ms = getattr(exc, "acquisition_phase_ms", None)
+                allowed_phases = {"session_factory", "session_connection", "setup_pragma", "begin_immediate"}
+                if (type(phase_ms) is not dict or not phase_ms or not set(phase_ms) <= allowed_phases
+                        or any(type(value) is not int or value < 0 or value > 60_000
+                               for value in phase_ms.values())):
+                    phase_ms = None
+                else:
+                    phase_ms = {key: phase_ms[key] for key in sorted(phase_ms)}
                 logger.warning(
-                    "relay operation=%s outcome=busy duration_ms=%d acquisition_stage=%s",
+                    "relay operation=%s outcome=busy duration_ms=%d acquisition_stage=%s acquisition_phase_ms=%s",
                     operation_name, int((time.monotonic() - started) * 1000), stage,
+                    phase_ms if phase_ms is not None else "unknown",
                 )
                 raise
             elapsed_ms = int((time.monotonic() - started) * 1000)
@@ -811,6 +820,8 @@ def create_router(
         service_ms: int | None = None
         outcome = "error"
         request_data = request.model_dump()
+        if request.claim_expires_at_ms is None:
+            request_data.pop("claim_expires_at_ms")
         relay_request = dict(request_data)
         relay_request["exact_delivery_id"] = relay_request.pop("wake_delivery_id", None)
         reservation = None
@@ -1146,21 +1157,18 @@ def create_router(
             payload.setdefault("idle", False)
             if not isinstance(payload["idle"], bool):
                 raise ValueError
-            if not await _run_relay_operation(lambda: wake_registry.register(**payload)):
+            def complete_registration(**scope):
+                if relay_service is not None:
+                    try:
+                        _relay_sync_call("mark_active", lambda: relay_service.mark_active(**scope))
+                    except HTTPException as exc:
+                        if exc.status_code != 404:
+                            raise
+
+            if not await _run_relay_operation(lambda: wake_registry.register(
+                **payload, complete_registration=complete_registration,
+            )):
                 raise HTTPException(status_code=409, detail="registration rejected")
-            if relay_service is not None:
-                try:
-                    await _relay_call(
-                        "mark_active",
-                        lambda: relay_service.mark_active(
-                            runtime=payload["runtime"],
-                            session_ref=payload["session_ref"],
-                            container_ref=payload["container_ref"],
-                        ),
-                    )
-                except HTTPException as exc:
-                    if exc.status_code != 404:
-                        raise
         except (TypeError, UnicodeDecodeError, ValueError, json.JSONDecodeError):
             raise HTTPException(status_code=400, detail="invalid registration")
         return Response(status_code=204)

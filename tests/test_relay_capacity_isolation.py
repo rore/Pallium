@@ -184,7 +184,7 @@ def test_tcp_ack_receipt_precedes_owned_callback_and_shutdown_drains(
         server.__enter__()
         with httpx.Client(base_url=server.base_url, timeout=2) as client:
             for session in ("sender", "target"):
-                registered = client.post("/relay/turn", json={"runtime": "codex", "session_ref": session, **scope})
+                registered = client.post("/relay/turn", json={"runtime": "codex", "session_ref": session, **scope}, timeout=5)
                 assert registered.status_code == 200, registered.text
             sent = []
             for payload in ("first café 東京", "next café 東京"):
@@ -263,6 +263,7 @@ def test_exact_codex_turn_uses_one_admission_and_preserves_phase_failures(
     tmp_path, monkeypatch, caplog, failure,
 ) -> None:
     from contextlib import ExitStack
+    from storage import sqlite_queue
     from app import dependencies, main as app_main
     from core.errors import ImmediateTransactionBusyError
     from core.relay import (
@@ -294,6 +295,18 @@ def test_exact_codex_turn_uses_one_admission_and_preserves_phase_failures(
             if failure in durable_errors:
                 error, _, _ = durable_errors[failure]
                 raise error(f"controlled {failure}")
+            # Qualify the claim prerequisite before exercising callback/caller failures.
+            provider_thread = threading.get_ident()
+            native_time = sqlite_queue.time
+            qualified_time = SimpleNamespace(**vars(native_time))
+            logical_monotonic = itertools.count(step=.001).__next__
+            qualified_time.monotonic = lambda: (logical_monotonic()
+                if threading.get_ident() == provider_thread else native_time.monotonic())
+            with monkeypatch.context() as claim_setup:
+                claim_setup.setattr(sqlite_queue, "time", qualified_time)
+                result = original_turn(self, **kwargs)
+            assert sqlite_queue.time is native_time
+            return result
         return original_turn(self, **kwargs)
 
     def observe_router(service, **kwargs):
@@ -1019,8 +1032,10 @@ def test_activation_projection_uses_tracked_relay_runner_after_admission(
 def test_relay_callbacks_use_tracked_runner_without_blocking_health(
     tmp_path, monkeypatch, phase, outcome,
 ) -> None:
+    import time
     from app import dependencies
     from core.claude_wake import ClaudeWakeRegistry
+    from storage import sqlite_queue
 
     entered, release = threading.Event(), threading.Event()
     events, callback_threads, gate_errors = [], [], []
@@ -1095,12 +1110,31 @@ def test_relay_callbacks_use_tracked_runner_without_blocking_health(
         nonlocal armed
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            with _observe_setup_writer(app.state.pallium_service._storage, monkeypatch):
-                for role in ("sender", "target"):
-                    response = await client.post("/relay/turn", json={
-                        "runtime": runtime, "session_ref": role, **scope,
-                    })
-                    assert response.status_code == 200, response.text
+            storage = app.state.pallium_service._storage
+            native_turn, native_time = storage.relay_turn, sqlite_queue.time
+            native_monotonic = native_time.monotonic
+
+            def setup_turn(**kwargs):
+                provider_thread = threading.get_ident()
+                qualified_time = SimpleNamespace(**vars(native_time))
+                logical_monotonic = itertools.count(step=.001).__next__
+                qualified_time.monotonic = lambda: (logical_monotonic()
+                    if threading.get_ident() == provider_thread else native_monotonic())
+                with monkeypatch.context() as setup_clock:
+                    setup_clock.setattr(sqlite_queue, "time", qualified_time)
+                    return native_turn(**kwargs)
+
+            with monkeypatch.context() as setup:
+                setup.setattr(storage, "relay_turn", setup_turn)
+                with _observe_setup_writer(storage, monkeypatch):
+                    for role in ("sender", "target"):
+                        response = await client.post("/relay/turn", json={
+                            "runtime": runtime, "session_ref": role, **scope,
+                        })
+                        assert response.status_code == 200, response.text
+            assert storage.relay_turn == native_turn
+            assert sqlite_queue.time is native_time
+            assert time.monotonic is native_monotonic
             message = await client.post("/relay/messages", json={
                 "sender_runtime": runtime, "sender_session_ref": "sender",
                 "recipient": f"{runtime}:target",
@@ -1583,9 +1617,37 @@ def test_closed_loop_cleanup_drains_before_storage_close_on_callback_entry_asser
     original_router = dependencies.create_router
 
     def hold_callback_until_drain(service, **kwargs):
+        from api.schemas import RelayTurnRequest
+
         callback = kwargs["relay_turn_callback"]
+        relay = kwargs["relay_service"]
+        native_turn = relay.turn
+        identity = {"runtime": "codex", "session_ref": "loop-close-target",
+                    "container_ref": "git:example.test/loop-close"}
+        request_data = RelayTurnRequest(**identity, actor_ref="capacity-user").model_dump()
+        # actor_ref is an ignored HTTP extra, not part of the existing turn schema.
+        assert "actor_ref" not in request_data
+        request_data.pop("claim_expires_at_ms")
+        request_data["exact_delivery_id"] = request_data.pop("wake_delivery_id")
+        prepared = native_turn(**request_data)
+        assert prepared["session"]["runtime"] == identity["runtime"]
+        assert prepared["session"]["session_ref"] == identity["session_ref"]
+        assert prepared["session"]["container_ref"] == identity["container_ref"]
+        assert prepared["session"]["endpoint_id"].startswith("relay-session-")
+        assert prepared["deliveries"] == []
+        app_ref.update(relay=relay, native_turn=native_turn, prepared_request=request_data, prepared_calls=[])
+
+        def prepared_once(**turn_kwargs):
+            # Only this negative control isolates callback-entry cleanup from SQL setup.
+            relay.turn = native_turn
+            assert turn_kwargs == request_data
+            app_ref["prepared_calls"].append(turn_kwargs)
+            return prepared
+
+        relay.turn = prepared_once
 
         def held_callback(*args, **callback_kwargs):
+            assert relay.turn == native_turn
             worker_entered.set()
             if not worker_gate.wait(5):
                 worker_gate_timed_out.set()
@@ -1669,8 +1731,12 @@ def test_closed_loop_cleanup_drains_before_storage_close_on_callback_entry_asser
         wait = app_ref.get("wait")
         if wait is not None:
             wait()
+        if "relay" in app_ref:
+            app_ref["relay"].turn = app_ref["native_turn"]
 
     assert failure.traceback[-1].name == "cancel_http_request"
+    assert app_ref["prepared_calls"] == [app_ref["prepared_request"]]
+    assert app_ref["relay"].turn == app_ref["native_turn"]
     assert worker_entered.is_set()
     assert not worker_gate_timed_out.is_set()
     assert worker_finished.is_set()

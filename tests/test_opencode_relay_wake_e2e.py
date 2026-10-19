@@ -203,8 +203,15 @@ def test_stale_or_wrong_binding_is_rejected(client, field, value):
     {"operation": "detach", "unexpected": True},
 ])
 def test_invalid_or_incomplete_requests_are_rejected(client, body):
-    base = _setup(client)
-    assert client.post("/relay/opencode/wake", json={**base, **body}).status_code in (409, 422)
+    base = {
+        **SCOPE,
+        "session_ref": "native",
+        "endpoint_id": "relay-session-0123456789abcdef0123456789abcdef",
+        "scope_generation": 1,
+        "native_location": "C:/work/session.json",
+        "owner_id": "opencode-owner-0123456789abcdef0123456789abcdef",
+    }
+    assert client.post("/relay/opencode/wake", json={**base, **body}).status_code == 422
 
 
 def test_max_chars_boundary_and_unicode_payload(client):

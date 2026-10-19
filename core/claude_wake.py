@@ -251,7 +251,9 @@ class ClaudeWakeRegistry:
         token: str,
         idle: bool = False,
         intent_id: str | None = None,
+        complete_registration: Callable[..., bool | None] | None = None,
     ) -> bool:
+        """Admit safety state, then consume intent only after completion (False defers)."""
         if not isinstance(idle, bool) or not self._valid_registration(
             runtime, session_ref, container_ref, socket_path, token
         ):
@@ -303,6 +305,10 @@ class ClaudeWakeRegistry:
             if self._state_dir is not None and not self._clear_unusable_locked():
                 return False
             self._registrations[key] = registration
+            if complete_registration is not None and complete_registration(
+                runtime=runtime, session_ref=session_ref, container_ref=container_ref,
+            ) is False:
+                return False
             if self._state_dir is not None:
                 self._delete_intent_locked(
                     runtime, session_ref, container_ref,
@@ -517,7 +523,9 @@ class ClaudeWakeRegistry:
                 for registration in self._registrations.values()
                 if registration.state in {"idle", "wake_inflight"}
             ]
-    def recover_intents(self) -> None:
+    def recover_intents(
+        self, *, complete_registration: Callable[..., bool | None] | None = None,
+    ) -> None:
         """Apply write-ahead intents after startup without claiming Relay work."""
         if self._intents is None:
             return
@@ -549,7 +557,10 @@ class ClaudeWakeRegistry:
                         if intent.get("closed") is True:
                             applied = self.close(**{key: intent[key] for key in ("runtime", "session_ref", "container_ref", "intent_id")})
                         else:
-                            applied = self.register(**{key: intent[key] for key in ("runtime", "session_ref", "container_ref", "socket_path", "token", "idle", "intent_id")})
+                            applied = self.register(
+                                **{key: intent[key] for key in ("runtime", "session_ref", "container_ref", "socket_path", "token", "idle", "intent_id")},
+                                complete_registration=complete_registration,
+                            )
                     except (KeyError, ValueError):
                         applied = False
                     if applied:

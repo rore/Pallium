@@ -146,6 +146,17 @@ def test_retained_hook_deadline_runs_once_in_each_windows_lane() -> None:
     assert f"--deselect={node}" in full
 
 
+def test_windows_full_runs_native_reconnect_serially_with_slow_cases() -> None:
+    path = "tests/test_codex_retained_native_reconnect.py"
+    full = _job("windows-full", "nightly-slow-smoke")
+    commands = re.findall(r"(?m)^\s+run: (python -m pytest .+)$", full)
+    serial, = [command for command in commands if path in command.split()]
+    assert "-n 0" in serial and '-m "slow or not slow"' in serial
+    assert f"--ignore={path}" in full
+    assert full.count(path) == 2
+    assert path not in _job("windows-smoke", "windows-full")
+
+
 def test_nightly_slow_smoke_is_bounded_and_hermetic() -> None:
     nightly = _job("nightly-slow-smoke", "result")
     assert "if: github.event_name == 'schedule'" in nightly

@@ -1257,11 +1257,13 @@ def test_persisted_claude_d1_d2_d3_actual_hooks(
     client, monkeypatch, tmp_path, capsys,
 ) -> None:
     from itertools import count
+    import time
 
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
     from app.dependencies import build_router
+    from storage import sqlite_queue
     from tests.test_claude_code_integration import _load_claude_hook
 
     registry = ClaudeWakeRegistry()
@@ -1301,8 +1303,39 @@ def test_persisted_claude_d1_d2_d3_actual_hooks(
             hook, "derive_actor_ref", lambda *_: "local", raising=False,
         )
 
+    storage = client.app.state.pallium_service._storage
+    native_queue_time, native_monotonic = sqlite_queue.time, time.monotonic
+
     def relay(method, path, body, timeout=0.75):
-        response = http.request(method, path, json=body)
+        if method == "POST" and path == "/relay/turn":
+            original_turn = storage.relay_turn
+            qualified = []
+
+            def provider_turn(**kwargs):
+                if qualified or any(kwargs.get(field) != body.get(field) for field in (
+                    "runtime", "session_ref", "container_ref",
+                )):
+                    return original_turn(**kwargs)
+                qualified.append(True)
+                owner = threading.get_ident()
+                ticks = count(step=.001).__next__
+                turn_time = SimpleNamespace(**vars(native_queue_time))
+                turn_time.monotonic = lambda: ticks() if threading.get_ident() == owner else native_monotonic()
+                try:
+                    with monkeypatch.context() as admission:
+                        admission.setattr(sqlite_queue, "time", turn_time)
+                        return original_turn(**kwargs)
+                finally:
+                    assert sqlite_queue.time is native_queue_time
+                    assert time.monotonic is native_monotonic
+
+            with monkeypatch.context() as provider:
+                provider.setattr(storage, "relay_turn", provider_turn)
+                response = http.request(method, path, json=body)
+            assert qualified == [True]
+        else:
+            response = http.request(method, path, json=body)
+        assert sqlite_queue.time is native_queue_time
         relay_calls.append((method, path, response.status_code))
         return response.json() if response.content else None
     def register(session, container, **kwargs):
@@ -1525,12 +1558,26 @@ def test_restart_and_claim_recovery_deliver_once_on_user_prompt(
 
     original_registry = ClaudeWakeRegistry()
     before_restart = router(original_registry)
-    assert before_restart.post("/internal/claude-wake/register", json={
-        **PAYLOAD, "session_ref": "target", "idle": True,
-    }).status_code == 204
-    assert before_restart.post("/relay/turn", json={
-        "runtime": "claude-code", "session_ref": "target", **scope,
-    }).status_code == 200
+    from itertools import count
+    import time as native_time
+    from storage import sqlite_queue
+
+    native_storage_time = sqlite_queue.time
+    native_monotonic = native_time.monotonic
+    # These establish the restart fixture; native admission deadlines have separate coverage.
+    with monkeypatch.context() as registration:
+        registration_time = SimpleNamespace(**vars(native_storage_time))
+        registration_time.monotonic = count(step=0.001).__next__
+        registration.setattr(sqlite_queue, "time", registration_time)
+        assert before_restart.post("/internal/claude-wake/register", json={
+            **PAYLOAD, "session_ref": "target", "idle": True,
+        }).status_code == 204
+        assert before_restart.post("/relay/turn", json={
+            "runtime": "claude-code", "session_ref": "target", **scope,
+        }).status_code == 200
+    assert sqlite_queue.time is native_storage_time
+    assert sqlite_queue.time.monotonic is native_monotonic
+    assert native_time.monotonic is native_monotonic
 
     restarted_registry = ClaudeWakeRegistry()
     http = router(restarted_registry)
@@ -1829,11 +1876,11 @@ def test_post_start_lost_http_intent_reconciles_without_claiming_relay(
 @pytest.mark.parametrize("lost_http", [False, True], ids=["http", "recovery"])
 def test_create_app_preserves_new_intent_during_old_cleanup(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
-    old_state: str, new_state: str, lost_http: bool,
+    old_state: str, new_state: str, lost_http: bool, *, before_cleanup=None,
 ) -> None:
     from itertools import count
     from concurrent.futures import ThreadPoolExecutor
-    from contextlib import nullcontext
+    from contextlib import ExitStack, nullcontext
 
     from fastapi.testclient import TestClient
 
@@ -1852,10 +1899,19 @@ def test_create_app_preserves_new_intent_during_old_cleanup(
     monkeypatch.setenv("PALLIUM_CLAUDE_WAKE_DIR", str(wake_dir))
     recovery_ready = threading.Event()
     recovered = threading.Event()
+    recovery_entered = threading.Event()
     original_recover = wake.recover_claude_relay_wakes
+    original_stop = wake.ClaudeWakeReconciler.stop
+
+    def stop_reconciler(reconciler):
+        recovery_ready.set()
+        return original_stop(reconciler)
+
+    monkeypatch.setattr(wake.ClaudeWakeReconciler, "stop", stop_reconciler)
 
     def controlled_recover(*args, **kwargs):
-        assert recovery_ready.wait(timeout=3)
+        recovery_entered.set()
+        recovery_ready.wait()
         original_recover(*args, **kwargs)
         recovered.set()
 
@@ -1875,7 +1931,9 @@ def test_create_app_preserves_new_intent_during_old_cleanup(
     ))
     scope = {"container_ref": PAYLOAD["container_ref"]}
 
-    with TestClient(app, client=("127.0.0.1", 50000)) as http:
+    with TestClient(app, client=("127.0.0.1", 50000)) as http, ExitStack() as release_gates:
+        release_gates.callback(recovery_ready.set)
+        assert recovery_entered.wait(timeout=5)
         common = _load_claude_hook("common", monkeypatch)
         real_time = wake_registry_module.time
         native_monotonic = real_time.monotonic
@@ -1956,6 +2014,8 @@ def test_create_app_preserves_new_intent_during_old_cleanup(
             return payload
 
         def apply(payload: dict[str, object]):
+            if payload.get("intent_id") == "old" and before_cleanup is not None:
+                before_cleanup()
             path = "/internal/claude-wake/register"
             if payload.get("closed"):
                 path = "/internal/claude-wake/close"
@@ -2033,19 +2093,25 @@ def test_create_app_preserves_new_intent_during_old_cleanup(
 
         try:
             with ThreadPoolExecutor(max_workers=2) as workers:
-                cleanup = workers.submit(apply, old)
-                assert cleanup_held.wait(timeout=1)
-                publication = workers.submit(publish_new)
-                assert published.wait(timeout=1)
-                assert native_contention.is_set()
-                assert cleanup.result(timeout=1).status_code == 204
-                newer = json.loads(target.read_text(encoding="utf-8"))
-                assert newer["intent_id"] != "old"
-                assert newer.get("closed", False) == (new_state == "closed")
-                if new_state != "closed":
-                    assert newer["idle"] == (new_state == "idle")
-                send_http.set()
-                assert publication.result(timeout=1) is (not lost_http)
+                try:
+                    cleanup = workers.submit(apply, old)
+                    # Arrival precedes the competing publisher; contention stays native.
+                    assert cleanup_held.wait(timeout=5)
+                    publication = workers.submit(publish_new)
+                    # Arrival is fixture orchestration; native lock budgets stay unchanged.
+                    assert published.wait(timeout=5)
+                    assert native_contention.is_set()
+                    assert cleanup.result(timeout=1).status_code == 204
+                    newer = json.loads(target.read_text(encoding="utf-8"))
+                    assert newer["intent_id"] != "old"
+                    assert newer.get("closed", False) == (new_state == "closed")
+                    if new_state != "closed":
+                        assert newer["idle"] == (new_state == "idle")
+                    send_http.set()
+                    assert publication.result(timeout=1) is (not lost_http)
+                finally:
+                    native_contention.set()
+                    send_http.set()
             recovery_ready.set()
             assert recovered.wait(timeout=1)
             assert not target.exists()
@@ -2140,6 +2206,7 @@ def test_create_app_preserves_new_intent_during_old_cleanup(
 
 def test_expired_claim_rewakes_once_after_real_app_restart(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    *, force_first_registration_refusal=False,
 ) -> None:
     from itertools import count
 
@@ -2210,9 +2277,21 @@ def test_expired_claim_rewakes_once_after_real_app_restart(
         assert delivery["state"] == "claimed" and delivery["attempts"] == 1
 
     clock[0] += timedelta(seconds=61)
-    monkeypatch.setattr(main, "start_claude_wake_reconciler", original_start)
+    initial_recovery = threading.Event()
+
+    def start_with_recovery_readiness(*args, claim_recovery, **kwargs):
+        def observed_recovery():
+            try:
+                return claim_recovery()
+            finally:
+                initial_recovery.set()
+
+        return original_start(*args, claim_recovery=observed_recovery, **kwargs)
+
+    monkeypatch.setattr(main, "start_claude_wake_reconciler", start_with_recovery_readiness)
     app_b = create_app(config)
     with TestClient(app_b, client=("127.0.0.1", 50000)) as http_b:
+        assert initial_recovery.wait(timeout=5), "initial appB claim recovery did not complete"
         assert transport_called.wait(timeout=1)
         assert transport_calls == [(PAYLOAD["socket_path"], PAYLOAD["token"])]
         response = http_b.get(f"/relay/messages/{sent['message_id']}", params=scope)
@@ -2234,6 +2313,8 @@ def test_expired_claim_rewakes_once_after_real_app_restart(
         registrations: list[dict[str, object]] = []
         publication_results: list[tuple[str, bool]] = []
         registration_responses: list[tuple[str, int]] = []
+        registration_failures: list[tuple[str, object, str | None]] = []
+        forced_refusals = []
         claimed_ids: list[list[str]] = []
         states_before_ack: list[str] = []
         acknowledged_ids: list[str] = []
@@ -2247,8 +2328,29 @@ def test_expired_claim_rewakes_once_after_real_app_restart(
             published = common._write_wake_intent(registration)
             publication_results.append((registration["intent_id"], published))
             assert published
-            response = http_b.post("/internal/claude-wake/register", json=registration)
+            storage = app_b.state.pallium_service._storage
+            native_mark_active = storage.relay_mark_active
+            with monkeypatch.context() as refusal:
+                if force_first_registration_refusal and registration["intent_id"] == "stop-0":
+                    from core.errors import ImmediateTransactionBusyError
+
+                    def refused_mark_active(**kwargs):
+                        assert kwargs["runtime"] == "claude-code"
+                        assert kwargs["session_ref"] == "restart-target"
+                        assert kwargs["container_ref"] == scope["container_ref"]
+                        forced_refusals.append(registration["intent_id"])
+                        raise ImmediateTransactionBusyError(
+                            "controlled mark-active acquisition refusal", acquisition_stage="setup_deadline",
+                        )
+
+                    refusal.setattr(storage, "relay_mark_active", refused_mark_active)
+                response = http_b.post("/internal/claude-wake/register", json=registration)
+            assert storage.relay_mark_active == native_mark_active
             registration_responses.append((registration["intent_id"], response.status_code))
+            if response.status_code != 204:
+                registration_failures.append((
+                    registration["intent_id"], response.json(), response.headers.get("Retry-After"),
+                ))
             return response.status_code == 204
 
         def relay(method: str, path: str, body: dict[str, object], *, timeout: float) -> object:
@@ -2291,11 +2393,21 @@ def test_expired_claim_rewakes_once_after_real_app_restart(
         diagnostics = {
             "publication_results": publication_results,
             "registration_responses": registration_responses,
+            "registration_failures": registration_failures,
         }
         assert publication_results == [(f"stop-{index}", True) for index in range(3)], diagnostics
-        assert registration_responses == [(f"stop-{index}", 204) for index in range(3)], diagnostics
+        assert registration_responses[1:] == [(f"stop-{index}", 204) for index in (1, 2)], diagnostics
+        if registration_responses[0] == ("stop-0", 503):
+            assert registration_failures == [(
+                "stop-0", {"detail": {"code": "relay_busy", "retryable": True}}, "1",
+            )], diagnostics
+        else:
+            assert registration_responses[0] == ("stop-0", 204), diagnostics
+            assert registration_failures == [], diagnostics
         assert [candidate["session_ref"] for candidate in candidates] == ["restart-target"], diagnostics
+        assert transport_calls == [(PAYLOAD["socket_path"], PAYLOAD["token"])], diagnostics
         assert all(registration["idle"] is True for registration in registrations)
+        assert forced_refusals == (["stop-0"] if force_first_registration_refusal else [])
         assert registry._clock is real_monotonic and reconciler._clock is real_monotonic
         assert real_time.monotonic is real_monotonic
     assert reconciler._thread is not None and not reconciler._thread.is_alive()

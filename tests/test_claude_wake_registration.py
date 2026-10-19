@@ -700,7 +700,18 @@ def test_unusable_claude_credentials_revoke_exact_wake(
     assert client.post("/relay/turn", json={"runtime": "claude-code", "session_ref": session_ref, "container_ref": container_ref}).status_code == 200
     assert common.register_claude_wake(session_ref, container_ref, idle=True), statuses
     assert statuses[-1][1] == 204, statuses
-    assert common.register_claude_wake(session_ref, other_container, idle=True)
+    # This valid prerequisite prepares exact revocation; native admission has separate coverage.
+    from itertools import count
+    native_hook_time, native_registry_time = common.time, wake.time
+    with monkeypatch.context() as registration:
+        hook_time = SimpleNamespace(**vars(native_hook_time))
+        hook_time.monotonic = count(step=.001).__next__
+        registry_time = SimpleNamespace(**vars(native_registry_time))
+        registry_time.monotonic = count(step=.001).__next__
+        registration.setattr(common, "time", hook_time)
+        registration.setattr(wake, "time", registry_time)
+        assert common.register_claude_wake(session_ref, other_container, idle=True)
+    assert common.time is native_hook_time and wake.time is native_registry_time
     assert statuses[-1][1] == 204, statuses
 
     def activation() -> dict:
@@ -730,7 +741,16 @@ def test_unusable_claude_credentials_revoke_exact_wake(
         monkeypatch.setenv("CLAUDE_CODE_MESSAGING_TOKEN", "é" * MAX_TOKEN_CHARS)
 
     try:
-        assert not common.register_claude_wake(session_ref, container_ref, idle=False), (statuses, stages)
+        native_hook_time, native_registry_time = common.time, wake.time
+        with monkeypatch.context() as revocation:
+            hook_time = SimpleNamespace(**vars(native_hook_time))
+            hook_time.monotonic = count(step=.001).__next__
+            registry_time = SimpleNamespace(**vars(native_registry_time))
+            registry_time.monotonic = count(step=.001).__next__
+            revocation.setattr(common, "time", hook_time)
+            revocation.setattr(wake, "time", registry_time)
+            assert not common.register_claude_wake(session_ref, container_ref, idle=False), (statuses, stages)
+        assert common.time is native_hook_time and wake.time is native_registry_time
         final = activation()
         assert final["activation"]["availability"] == "unknown", (final, statuses, stages)
         assert registry.state_for(recipient_endpoint_id="relay-session-" + "a" * 32, session_ref=session_ref, container_ref=other_container) == "idle"
@@ -1025,6 +1045,8 @@ def test_restricted_claude_prompt_still_delivers_and_acks_pending_relay(
 
 def test_hook_enforces_encoded_body_limit_before_open(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from contextlib import closing
+    from itertools import count
+    import core.claude_wake as wake
 
     common = _load_claude_hook("common", monkeypatch)
     wake_dir = tmp_path / "wake"
@@ -1037,8 +1059,14 @@ def test_hook_enforces_encoded_body_limit_before_open(tmp_path: Path, monkeypatc
     intent.parent.mkdir(parents=True)
     intent.write_text(json.dumps(opened), encoding="utf-8")
     registry = ClaudeWakeRegistry(state_dir=wake_dir)
-    with closing(_client(registry)) as admitted:
-        assert admitted.post("/internal/claude-wake/register", json=opened).status_code == 204
+    native_time = wake.time
+    with monkeypatch.context() as setup:
+        setup_time = SimpleNamespace(**vars(native_time))
+        setup_time.monotonic = count(step=.001).__next__
+        setup.setattr(wake, "time", setup_time)
+        with closing(_client(registry)) as admitted:
+            assert admitted.post("/internal/claude-wake/register", json=opened).status_code == 204
+    assert wake.time is native_time
     requested_paths: list[str] = []
 
     def unavailable_open(request, **_kwargs):
