@@ -3141,7 +3141,11 @@ body[data-app-mode="spec"] .topbar-meta { gap: 6px; }
   margin: 0 0 20px;
 }
 
-.related-work { margin: 0 0 20px; padding: 10px 14px; border: 1px solid var(--border); border-radius: 8px; }
+.preview-activity { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 12px; }
+.preview-selected-version { margin-bottom: 16px; }
+.preview-selected-version > summary { cursor: pointer; color: var(--muted); font-size: .85rem; }
+
+.related-work { margin: 0 0 20px; padding: 10px 14px; border: 1px solid var(--border); border-radius: 8px; overflow-wrap: anywhere; }
 .related-work summary { cursor: pointer; font-weight: 600; }
 .related-work ul { margin: 8px 0; padding: 0; list-style: none; }
 .related-work-row { display: block; padding: 8px 0; border-top: 1px solid var(--border); }
@@ -3792,6 +3796,10 @@ textarea {
 .scope-panel .panel-header {
   gap: 10px;
 }
+
+.board-panel .panel-header { height: auto; min-height: 44px; }
+.board-panel .panel-header-main h2 { flex-shrink: 0; }
+.board-source-status { min-width: 0; max-width: 100%; }
 
 .board-panel .panel-actions,
 .scope-panel .panel-actions {
@@ -5014,7 +5022,7 @@ body[data-setup-mode="true"] .setup-side-stack {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 10px 2px;
+  padding: 6px 2px;
   cursor: pointer;
   font-weight: 650;
   flex-wrap: wrap;
@@ -5030,26 +5038,58 @@ body[data-setup-mode="true"] .setup-side-stack {
   display: grid;
   min-height: 0;
   max-height: min(52vh, 520px);
-  gap: 10px;
-  padding: 0 2px 12px;
+  gap: 6px;
+  padding: 0 2px 8px;
   overflow-y: auto;
 }
 
 .item-participants-actions {
   display: flex;
   justify-content: flex-end;
+  gap: 6px;
+}
+
+.item-participants-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+}
+
+.item-participants-hint,
+.item-participants-partial {
+  margin: 0;
+  font-size: 0.8rem;
 }
 
 .item-participants-reference {
   display: grid;
   gap: 6px;
-  padding: 10px;
+  padding: 7px 9px;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--spec-panel-soft);
 }
 
-.item-participants-reference > div,
+.item-participants-reference > summary,
+.item-participant-details > summary,
+.item-participant-lifecycle > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.item-participants-reference-content {
+  display: grid;
+  gap: 6px;
+}
+
+.item-participants-reference-content > p {
+  margin: 0;
+}
+
+.item-participants-reference-content > div,
 .item-participant-reference-row {
   display: grid;
   grid-template-columns: 70px minmax(0, 1fr);
@@ -5073,19 +5113,34 @@ body[data-setup-mode="true"] .setup-side-stack {
 }
 
 .item-participant-group h4 {
-  margin: 0 0 6px;
-  font-size: 0.85rem;
+  display: none;
 }
 
 .item-participant-group-list {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr));
-  gap: 8px;
+  gap: 6px;
+}
+
+.item-participant-lifecycle {
+  display: grid;
+  gap: 6px;
+  padding-top: 7px;
+  border-top: 1px solid var(--border);
+}
+
+.item-participant-lifecycle:not([open]) > :not(summary),
+.item-participants-reference:not([open]) > :not(summary) {
+  display: none;
+}
+
+.item-participant-lifecycle > summary span {
+  margin-left: 4px;
 }
 
 .item-participant {
   min-width: 0;
-  padding: 10px;
+  padding: 4px 8px;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--panel);
@@ -5101,7 +5156,7 @@ body[data-setup-mode="true"] .setup-side-stack {
 
 .item-participant-heading {
   justify-content: space-between;
-  margin-bottom: 7px;
+  margin-bottom: 3px;
 }
 
 .item-participant-reference-row + .item-participant-reference-row {
@@ -5109,10 +5164,26 @@ body[data-setup-mode="true"] .setup-side-stack {
 }
 
 .item-participant-badges {
-  margin-top: 8px;
+  margin-top: 6px;
 }
 
 .item-participant-freshness {
-  margin: 8px 0 0;
+  margin: 0;
+  font-size: 0.8rem;
+}
+
+.item-participant-details[open] {
+  display: grid;
+  gap: 4px;
+}
+
+.item-participant-technical-details {
+  display: grid;
+  gap: 4px;
+  padding-top: 5px;
+}
+
+.item-participant-association-meta {
+  margin: 2px 0 0;
   font-size: 0.8rem;
 }

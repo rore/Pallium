@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
+import { setImmediate as yieldImmediate } from "node:timers/promises";
 import { AppError } from "./roadmap.js";
 import { assertSourceWriteGuard, assertSourceWritePath } from "./source-write-guard.js";
 
@@ -176,12 +177,14 @@ export function parseMarkdownOutline(text) {
   return outline;
 }
 
-function lineRangeForOffset(text, offset, length) {
-  const before = text.slice(0, offset);
-  const selected = text.slice(offset, offset + length);
-  const lineStart = before.split(/\r?\n/).length;
-  const lineEnd = lineStart + selected.split(/\r?\n/).length - 1;
-  return { lineStart, lineEnd };
+function lineNumberAtOffset(lineFeeds, offset) {
+  let low = 0, high = lineFeeds.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    if (lineFeeds[middle] < offset) low = middle + 1;
+    else high = middle;
+  }
+  return low + 1;
 }
 
 function lineTextForRange(text, lineStart, lineEnd) {
@@ -189,18 +192,14 @@ function lineTextForRange(text, lineStart, lineEnd) {
   return lines.slice(lineStart - 1, lineEnd).join("\n");
 }
 
-function headingPathForLine(text, lineNumber) {
-  const outline = parseMarkdownOutline(text);
-  let current = [];
-
-  for (const heading of outline) {
-    if (heading.lineStart > lineNumber) {
-      break;
-    }
-    current = heading.headingPath;
+function headingPathForLine(text, lineNumber, outline = parseMarkdownOutline(text)) {
+  let low = 0, high = outline.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    if (outline[middle].lineStart <= lineNumber) low = middle + 1;
+    else high = middle;
   }
-
-  return current;
+  return outline[low - 1]?.headingPath || [];
 }
 
 // Strip markdown syntax characters that often disappear when text is
@@ -224,11 +223,16 @@ function findQuoteOccurrences(text, quote) {
 
   const occurrences = [];
   let offset = text.indexOf(quote);
+  const lineFeeds = [];
+  if (offset !== -1) {
+    for (let index = text.indexOf("\n"); index !== -1; index = text.indexOf("\n", index + 1)) lineFeeds.push(index);
+  }
 
   while (offset !== -1) {
     occurrences.push({
       offset,
-      ...lineRangeForOffset(text, offset, quote.length),
+      lineStart: lineNumberAtOffset(lineFeeds, offset),
+      lineEnd: lineNumberAtOffset(lineFeeds, offset + quote.length),
     });
     offset = text.indexOf(quote, offset + Math.max(quote.length, 1));
   }
@@ -468,7 +472,8 @@ export function resolveTextAnchor(text, anchor = {}) {
     return { status: "orphaned", strategy: "quote" };
   }
 
-  const headingMatches = occurrences.filter((occurrence) => sameHeadingPath(headingPathForLine(text, occurrence.lineStart), anchor.headingPath || []));
+  const outline = parseMarkdownOutline(text);
+  const headingMatches = occurrences.filter((occurrence) => sameHeadingPath(headingPathForLine(text, occurrence.lineStart, outline), anchor.headingPath || []));
   if (headingMatches.length === 1) {
     return {
       status: "resolved",
@@ -1934,6 +1939,18 @@ export const updateFileSessionSuggestionStatus = guardedSessionMutation(updateFi
 export const applyFileSessionSuggestion = guardedSessionMutation(applyFileSessionSuggestionUnlocked, 3);
 export const rollbackFileSessionSuggestion = guardedSessionMutation(rollbackFileSessionSuggestionUnlocked, 3);
 
+async function resolveSessionAnchors(entries, text, withStatus, signal) {
+  for (let start = 0; start < entries.length; start += 8) {
+    if (signal?.aborted) throw signal.reason;
+    await yieldImmediate();
+    if (signal?.aborted) throw signal.reason;
+    for (let index = start; index < Math.min(start + 8, entries.length); index += 1) {
+      entries[index] = withStatus(entries[index], text);
+    }
+  }
+  return entries;
+}
+
 export async function getFileSessionContext(filePath, options = {}) {
   const session = await getFileSession(filePath, options);
   const minimapHome = options.minimapHome || resolveMinimapHome(options.env || process.env, options.platform || process.platform);
@@ -1941,8 +1958,10 @@ export async function getFileSessionContext(filePath, options = {}) {
   const targetPath = path.resolve(session.targetFile);
   const { buffer, text } = await readTextTarget(targetPath);
   const currentMetadata = await buildTargetMetadata(targetPath, buffer);
-  const comments = (await readJsonLines(paths.commentsJsonl)).map((comment) => withAnchorStatus(comment, text));
-  const suggestions = (await readJsonLines(paths.suggestionsJsonl)).map((suggestion) => withSuggestionAnchorStatus(suggestion, text));
+  const commentEntries = await readJsonLines(paths.commentsJsonl, options.signal);
+  const suggestionEntries = await readJsonLines(paths.suggestionsJsonl, options.signal);
+  const comments = await resolveSessionAnchors(commentEntries, text, withAnchorStatus, options.signal);
+  const suggestions = await resolveSessionAnchors(suggestionEntries, text, withSuggestionAnchorStatus, options.signal);
 
   return {
     session: {
@@ -1956,13 +1975,14 @@ export async function getFileSessionContext(filePath, options = {}) {
 }
 
 export async function getFileSessionFileContent(filePath, options = {}) {
-  const context = await getFileSessionContext(filePath, options);
-  const targetPath = path.resolve(context.session.targetFile);
-  const { text } = await readTextTarget(targetPath);
+  const session = await getFileSession(filePath, options);
+  const targetPath = path.resolve(session.targetFile);
+  const { buffer, text } = await readTextTarget(targetPath);
+  const currentMetadata = await buildTargetMetadata(targetPath, buffer);
 
   return {
-    session: context.session,
-    outline: context.outline,
+    session: { ...session, ...currentMetadata },
+    outline: currentMetadata.markdown ? parseMarkdownOutline(text) : [],
     content: text,
   };
 }

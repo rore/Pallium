@@ -2,12 +2,13 @@ import { randomUUID } from "node:crypto";
 
 const DEFAULT_LIMITS = Object.freeze({
   maxConcurrent: 2,
+  maxPriorityConcurrent: 1,
   maxQueued: 8,
   jobTimeoutMs: 30_000,
   freshMs: 30_000,
   retainMs: 5 * 60_000,
   maxEntries: 16,
-  maxBytes: 64 * 1024 * 1024,
+  maxBytes: 96 * 1024 * 1024,
 });
 
 function snapshotError(code, status, message) {
@@ -28,8 +29,8 @@ export function createRoadmapSnapshotCoordinator(options = {}) {
   const queue = [];
   let cacheBytes = 0;
   let epoch = 0;
-  let running = 0;
-  let lastAdmissionWasPriority = false;
+  let regularRunning = 0;
+  let priorityRunning = 0;
 
   function removeEntry(entry) {
     if (cache.get(entry.key) === entry) cache.delete(entry.key);
@@ -56,13 +57,9 @@ export function createRoadmapSnapshotCoordinator(options = {}) {
     return [...jobs].some((other) => other !== job && other.key === job.key && other.running);
   }
 
-  function nextQueuedJob() {
+  function nextQueuedJob(priority) {
     const eligible = queue.filter((job) => !job.finished && !job.terminalError && !hasRunningJobForKey(job));
-    if (!eligible.length) return null;
-    const priority = eligible.find((job) => job.priority);
-    const regular = eligible.find((job) => !job.priority);
-    if (priority && regular) return lastAdmissionWasPriority ? regular : priority;
-    return priority || regular;
+    return eligible.find((job) => job.priority === priority) || null;
   }
 
   function finishJob(job) {
@@ -75,7 +72,8 @@ export function createRoadmapSnapshotCoordinator(options = {}) {
     jobs.delete(job);
     if (job.running) {
       job.running = false;
-      running -= 1;
+      if (job.priority) priorityRunning -= 1;
+      else regularRunning -= 1;
     }
   }
 
@@ -192,8 +190,8 @@ export function createRoadmapSnapshotCoordinator(options = {}) {
   function start(job) {
     if (job.finished || job.terminalError || job.running || hasRunningJobForKey(job)) return;
     job.running = true;
-    running += 1;
-    lastAdmissionWasPriority = job.priority;
+    if (job.priority) priorityRunning += 1;
+    else regularRunning += 1;
     Promise.resolve()
       .then(() => {
         if (job.controller.signal.aborted) throw abortError(job.controller.signal);
@@ -211,8 +209,9 @@ export function createRoadmapSnapshotCoordinator(options = {}) {
   }
 
   function schedule() {
-    while (running < limits.maxConcurrent) {
-      const job = nextQueuedJob();
+    while (priorityRunning < limits.maxPriorityConcurrent || regularRunning < limits.maxConcurrent) {
+      const priority = priorityRunning < limits.maxPriorityConcurrent ? nextQueuedJob(true) : null;
+      const job = priority || (regularRunning < limits.maxConcurrent ? nextQueuedJob(false) : null);
       if (!job) return;
       const index = queue.indexOf(job);
       if (index !== -1) queue.splice(index, 1);
@@ -236,7 +235,7 @@ export function createRoadmapSnapshotCoordinator(options = {}) {
     });
   }
 
-  function enqueue({ key, load, signal, priority, retain }) {
+  function enqueue({ key, load, signal, priority, retain, timeoutMs }) {
     const existing = currentJob(key);
     if (existing) return subscribe(existing, signal);
     if (signal?.aborted) return Promise.reject(abortError(signal));
@@ -249,7 +248,7 @@ export function createRoadmapSnapshotCoordinator(options = {}) {
     queue.push(job);
     const promise = subscribe(job, signal);
     job.timer = setTimeout(() => abortJob(job,
-      snapshotError("snapshot_unavailable", 503, "Snapshot scan exceeded its 30-second budget.")), limits.jobTimeoutMs);
+      snapshotError("snapshot_unavailable", 503, `Snapshot scan exceeded its ${timeoutMs / 1000}-second budget.`)), timeoutMs);
     schedule();
     if (!job.running && queueCount() > limits.maxQueued) {
       abortJob(job, snapshotError("snapshot_unavailable", 503, "Snapshot queue is full."));
@@ -257,7 +256,7 @@ export function createRoadmapSnapshotCoordinator(options = {}) {
     return promise;
   }
 
-  async function read({ key, cached = false, signal, load, admit, priority = false, retain = true }) {
+  async function read({ key, cached = false, signal, load, admit, priority = false, retain = true, timeoutMs = limits.jobTimeoutMs }) {
     if (signal?.aborted) throw abortError(signal);
     expireEntries();
     if (!retain && cache.has(key)) removeEntry(cache.get(key));
@@ -281,7 +280,7 @@ export function createRoadmapSnapshotCoordinator(options = {}) {
       }
       if (cache.get(key) === entry) removeEntry(entry);
     }
-    return enqueue({ key, load, signal, priority, retain });
+    return enqueue({ key, load, signal, priority, retain, timeoutMs });
   }
 
   function getManifest(id, key) {

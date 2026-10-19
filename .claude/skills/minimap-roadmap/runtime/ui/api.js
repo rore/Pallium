@@ -84,7 +84,10 @@ export function createApi({ fetch: fetchImpl, getRepo, getSource, onMutation } =
       if (cached) query.set("cached", "1");
       if (!participants) query.set("participants", "0");
       if (compact) query.set("compact", "1");
-      return request(`/api/worktree-workspace${query.size ? `?${query}` : ""}`, options, { unbound: true }).then(expandWorktreePayload);
+      return request(`/api/worktree-workspace${query.size ? `?${query}` : ""}`, options, { unbound: true }).then((payload) => {
+        options.signal?.throwIfAborted();
+        return expandWorktreePayload(payload);
+      });
     },
     discoverWorktreeSources: () => request("/api/worktree-sources", {}, { unbound: true }),
     loadSourceWorkspace: (identity, options = {}) => request("/api/worktree-source-workspace", {

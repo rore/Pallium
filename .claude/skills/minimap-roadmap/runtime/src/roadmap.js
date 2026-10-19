@@ -1163,7 +1163,12 @@ async function loadItemIndex(roadmapRoot, signal) {
   const texts = [];
   for (let start = 0; start < files.length; start += 32) {
     if (signal?.aborted) throw signal.reason;
-    texts.push(...await Promise.all(files.slice(start, start + 32).map((entry) => fs.readFile(entry.filePath, { encoding: "utf8", signal }))));
+    const reads = await Promise.allSettled(files.slice(start, start + 32).map((entry) => fs.readFile(entry.filePath, { encoding: "utf8", signal })));
+    if (signal?.aborted) throw signal.reason;
+    for (const read of reads) {
+      if (read.status === "rejected") throw read.reason;
+      texts.push(read.value);
+    }
   }
   for (const [fileIndex, entry] of files.entries()) {
     const parsed = parseItemText(texts[fileIndex], entry.filePath);

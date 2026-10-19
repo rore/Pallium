@@ -16,7 +16,7 @@ When the user asks to **see** the roadmap, give them a URL. When they ask to **e
 ### 1. Make sure the server is running
 
 ```bash
-node <path-to-this-skill>/scripts/start-server.mjs
+node <path-to-this-skill>/scripts/start-server.cjs
 ```
 
 The launcher prints one line: `Minimap running at http://localhost:<port>` (just started) or `Minimap already running at http://localhost:<port>` (reused). Capture the port — default 4312, but the launcher falls forward if busy.
@@ -44,7 +44,7 @@ The active repo is the directory the user is working in. Always pass an absolute
 
 When completed work affects a roadmap item, reconcile its state using [Completion Reconciliation](references/roadmap-contract.md#completion-reconciliation).
 
-For metadata-first roadmaps, keep classification in item metadata and the single shared traversal order in `board.md`. A membership move changes only metadata; moving to Unassigned removes that field rather than writing a placeholder; a metadata reorder uses visible before/after neighbors, preserves filtered-out items, and cannot silently cross freeform board groups. Configure group order with `lenses.fields.<field>.order` and optionally set the top-level `defaultLens`. A valid URL lens, including `lens=board`, overrides that default; unknown values fall back with a warning. Do not perform automatic migration: check the installed skill version and follow the manual migration steps in [references/roadmap-contract.md](references/roadmap-contract.md).
+For metadata-first roadmaps, keep classification in item metadata and the single shared traversal order in `board.md`. A membership move changes only metadata; moving to Unassigned removes that field rather than writing a placeholder; a metadata reorder uses visible before/after neighbors, preserves filtered-out items, and cannot silently cross freeform board groups. Configure group order with `lenses.fields.<field>.order` and optionally set the top-level `defaultLens`. An explicit board-view URL, including `lens=board`, overrides a remembered repository/mode view; a remembered grouping overrides `defaultLens`. Unknown URL or configured groupings fall back with a warning; removed remembered groupings fall back quietly. Do not perform automatic migration: check the installed skill version and follow the manual migration steps in [references/roadmap-contract.md](references/roadmap-contract.md).
 
 For ownership rules, item shape, board rules, and edit constraints, read [references/roadmap-contract.md](references/roadmap-contract.md).
 

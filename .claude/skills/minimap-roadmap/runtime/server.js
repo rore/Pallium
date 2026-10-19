@@ -61,7 +61,7 @@ export { matchRoute };
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const launchMode = process.send ? "ipc-detached-restart"
-  : path.basename(process.argv[1] || "") === "start-server.mjs" ? "foreground-start" : "direct";
+  : ["start-server.cjs", "start-server.mjs"].includes(path.basename(process.argv[1] || "")) ? "foreground-start" : "direct";
 let lifecycleLog = createLifecycleLog({ sourcePath: __filename, launchMode });
 process.on("uncaughtExceptionMonitor", (error, origin) => {
   try { lifecycleLog("fatal", { origin, error: lifecycleError(error, __dirname) }); } catch {}
@@ -129,7 +129,7 @@ function sendJson(response, statusCode, payload, serialized = false) {
   response.end(serialized ? payload : JSON.stringify(payload));
 }
 
-function requestAbortSignal(request, response) {
+function requestAbortSignal(request, response, timeoutMs = 30_000) {
   if (request.minimapReadBudget) return request.minimapReadBudget;
   const controller = new AbortController();
   const abort = () => {
@@ -137,8 +137,8 @@ function requestAbortSignal(request, response) {
   };
   request.once("aborted", abort);
   response.once("close", abort);
-  const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]);
-  const budget = { signal, cleanup: () => {
+  const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(timeoutMs)]);
+  const budget = { signal, timeoutMs, cleanup: () => {
     request.off("aborted", abort);
     response.off("close", abort);
     if (request.minimapReadBudget === budget) delete request.minimapReadBudget;
@@ -147,13 +147,13 @@ function requestAbortSignal(request, response) {
   return budget;
 }
 
-function snapshotAppError(error, signal) {
+function snapshotAppError(error, signal, timeoutMs = 30_000) {
   if (error instanceof AppError) return error;
   if (error?.status === 503 || error?.status === 409) {
     return new AppError(error.message, error.status, error.code || "snapshot_unavailable");
   }
   if (signal?.reason?.name === "TimeoutError" || (signal?.aborted && error?.name === "AbortError")) {
-    return new AppError("Snapshot request exceeded its 30-second budget.", 503, "snapshot_unavailable");
+    return new AppError(`Snapshot request exceeded its ${timeoutMs / 1000}-second budget.`, 503, "snapshot_unavailable");
   }
   return error;
 }
@@ -522,7 +522,7 @@ async function handleBoardObservations(request, response, ctx) {
 }
 
 async function readThisSnapshot(repoRoot, { signal, cached = false } = {}) {
-  return roadmapSnapshots.read({ key: snapshotKey(repoRoot, "this"), cached, signal,
+  return roadmapSnapshots.read({ key: snapshotKey(repoRoot, "this"), cached, signal, priority: true,
     load: async ({ signal: scanSignal }) => {
       const identity = await readWorktreeIdentity(repoRoot, { signal: scanSignal });
       const workspace = await loadWorkspace(repoRoot, { signal: scanSignal });
@@ -817,35 +817,47 @@ async function handleWorktreeWorkspace(request, response) {
   const participants = participantValues.length === 0;
   const compact = compactValues.length === 1;
   const mode = openedOnly ? "opened" : "across";
-  const { signal, cleanup } = requestAbortSignal(request, response);
+  const timeoutMs = openedOnly ? 30_000 : 60_000;
+  const { signal, cleanup } = requestAbortSignal(request, response, timeoutMs);
   try {
     const repoRoot = await resolveRoadmapRepo(request);
     const key = snapshotKey(repoRoot, mode);
-    const loaded = await roadmapSnapshots.read({ key, cached, signal, priority: openedOnly,
+    const loaded = await roadmapSnapshots.read({ key, cached, signal, priority: openedOnly, timeoutMs,
       load: async ({ signal: scanSignal }) => {
         const aggregate = await loadWorktreeAggregate(repoRoot, { openedOnly, signal: scanSignal });
         await attachAggregateSpecSessions(aggregate, { signal: scanSignal,
           onMutation: () => roadmapSnapshots.invalidateAll() });
         const sources = new Map();
         const sourceChecks = aggregate.snapshotChecks || [];
-        for (const check of sourceChecks) {
-          const source = (aggregate.sources || []).find((entry) => entry.sourceKey === check.sourceKey);
-          if (!source) continue;
-          const binding = source.roadmapBinding || check.workspace;
-          const finalWorkspace = await loadWorkspace(source.repoRoot, { signal: scanSignal });
-          if (!sameWorkspaceRevision(check.workspace, finalWorkspace)) {
-            throw new AppError("Roadmap files changed while the snapshot was loading.", 409, "snapshot_invalidated");
+        for (let offset = 0; offset < sourceChecks.length; offset += 4) {
+          if (scanSignal.aborted) throw scanSignal.reason;
+          const validated = [];
+          for (const check of sourceChecks.slice(offset, offset + 4)) {
+            const source = (aggregate.sources || []).find((entry) => entry.sourceKey === check.sourceKey);
+            if (!source) continue;
+            const binding = source.roadmapBinding || check.workspace;
+            const finalWorkspace = await loadWorkspace(source.repoRoot, { signal: scanSignal });
+            if (!sameWorkspaceRevision(check.workspace, finalWorkspace)) {
+              throw new AppError("Roadmap files changed while the snapshot was loading.", 409, "snapshot_invalidated");
+            }
+            validated.push({ source, binding });
           }
-          const finalIdentity = await readWorktreeIdentity(source.repoRoot, { signal: scanSignal });
-          if (!finalIdentity) throw new AppError("Checkout identity is unavailable.", 503, "snapshot_unavailable");
-          if (!sameSourceIdentity(source, finalIdentity)) {
-            throw new AppError("Roadmap source changed while the snapshot was loading.", 409, "snapshot_invalidated");
+          if (scanSignal.aborted) throw scanSignal.reason;
+          const identities = await Promise.allSettled(validated.map(({ source }) => readWorktreeIdentity(source.repoRoot, { signal: scanSignal })));
+          if (scanSignal.aborted) throw scanSignal.reason;
+          for (const [index, read] of identities.entries()) {
+            if (read.status === "rejected") throw read.reason;
+            const { source, binding } = validated[index], finalIdentity = read.value;
+            if (!finalIdentity) throw new AppError("Checkout identity is unavailable.", 503, "snapshot_unavailable");
+            if (!sameSourceIdentity(source, finalIdentity)) {
+              throw new AppError("Roadmap source changed while the snapshot was loading.", 409, "snapshot_invalidated");
+            }
+            const admission = await captureSourceAdmission(source.repoRoot, binding, finalIdentity, scanSignal);
+            if (!admission || !sameSourceIdentity(source, admission)) {
+              throw new AppError("Roadmap source changed while the snapshot was loading.", 409, "snapshot_invalidated");
+            }
+            sources.set(source.sourceKey, admission);
           }
-          const admission = await captureSourceAdmission(source.repoRoot, binding, finalIdentity, scanSignal);
-          if (!admission || !sameSourceIdentity(source, admission)) {
-            throw new AppError("Roadmap source changed while the snapshot was loading.", 409, "snapshot_invalidated");
-          }
-          sources.set(source.sourceKey, admission);
         }
         const manifest = await buildObservationManifest(repoRoot, aggregate.workspace, openedOnly ? null : aggregate, scanSignal);
         return { value: compactWorktreePayload(aggregate), manifest: { openedRepo: canonicalPath(repoRoot), mode: openedOnly ? "this" : "across", observation: manifest },
@@ -877,7 +889,7 @@ async function handleWorktreeWorkspace(request, response) {
     if (loaded.generation !== roadmapSnapshots.generation()) throw new AppError("Snapshot changed while the request was in progress.", 409, "snapshot_invalidated");
     if (!response.destroyed) sendJson(response, 200, loaded.value);
   } catch (error) {
-    if (!response.destroyed) throw snapshotAppError(error, signal);
+    if (!response.destroyed) throw snapshotAppError(error, signal, timeoutMs);
   } finally { cleanup(); }
 }
 
@@ -1191,7 +1203,7 @@ async function handleApi(request, response, requestUrl) {
   if (!isTrustedLocalRequest(request)) {
     throw new AppError("Minimap API is available only from this local origin.", 403, "forbidden");
   }
-  const readBudget = bound && routedUrl.pathname === "/api/source/workspace"
+  const readBudget = bound && routedUrl.pathname === "/api/workspace"
     ? requestAbortSignal(request, response) : null;
   try {
   if (bound) {
@@ -1230,6 +1242,10 @@ async function handleApi(request, response, requestUrl) {
     throw error;
   }
   return true;
+  } catch (error) {
+    if (!readBudget) throw error;
+    if (!response.destroyed) throw snapshotAppError(error, readBudget.signal, readBudget.timeoutMs);
+    return true;
   } finally { readBudget?.cleanup(); }
 }
 

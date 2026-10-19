@@ -913,7 +913,7 @@ export function renderSpecComments() {
   if (!items.length) {
     DOM.specMarginElement.innerHTML = comments.length || suggestions.length
       ? '<p class="spec-margin-empty">No items match the current view.</p>'
-      : '<p class="spec-margin-empty">Hover a paragraph and click the + in the gutter to add the first comment.</p>';
+      : '<p class="spec-margin-empty">Add a comment with + in the margin.</p>';
     layoutSpecMargin();
     return;
   }
@@ -923,6 +923,12 @@ export function renderSpecComments() {
   }).join("");
   DOM.specMarginElement.innerHTML = html;
   layoutSpecMargin();
+}
+
+function locationWarningText(status, kind) {
+  if (status === "ambiguous") return "More than one matching location";
+  if (status === "orphan" || status === "orphaned") return `${kind} location not found`;
+  return "Location unavailable";
 }
 
 function renderMarginCommentCard(comment) {
@@ -959,10 +965,10 @@ function renderMarginCommentCard(comment) {
     </form>` : "";
 
   const orphanWarning = comment.anchorStatus && comment.anchorStatus.status && comment.anchorStatus.status !== "resolved"
-    ? `<p class="spec-card-orphan">Anchor ${escapeHtml(comment.anchorStatus.status)}</p>`
+    ? `<p class="spec-card-orphan">${escapeHtml(locationWarningText(comment.anchorStatus.status, "Comment"))}</p>`
     : "";
   const anchorRewritten = comment.anchorRewrittenAt && !orphanWarning
-    ? `<p class="spec-card-anchor-rewritten">Anchor updated after edit</p>`
+    ? `<p class="spec-card-anchor-rewritten">Location updated after edit</p>`
     : "";
 
   const dataAnchorId = isFile ? "__file" : `comment:${comment.id}`;
@@ -1033,7 +1039,7 @@ function renderMarginSuggestionCard(suggestion) {
   ].filter(Boolean).join(" ");
 
   const orphanWarning = suggestion.anchorStatus && suggestion.anchorStatus.status && suggestion.anchorStatus.status !== "resolved"
-    ? `<p class="spec-card-orphan">Anchor ${escapeHtml(suggestion.anchorStatus.status)}</p>`
+    ? `<p class="spec-card-orphan">${escapeHtml(locationWarningText(suggestion.anchorStatus.status, "Suggestion"))}</p>`
     : "";
 
   const actions = [];
@@ -1092,7 +1098,7 @@ function renderMarginSuggestionCard(suggestion) {
     ? `${escapeHtml(suggestion.kind)} · ${escapeHtml(status)}`
     : escapeHtml(suggestion.kind);
   const anchorRewritten = suggestion.anchorRewrittenAt
-    ? `<p class="spec-card-anchor-rewritten">Anchor updated after edit</p>`
+    ? `<p class="spec-card-anchor-rewritten">Location updated after edit</p>`
     : "";
 
   const replies = (suggestion.replies || []).map((reply) => `
