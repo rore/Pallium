@@ -1,6 +1,6 @@
 name: pallium-hermes-relay
 version: 0.1.0
-description: Experimental Pallium Relay integration for a single Hermes TUI/gateway profile.
+description: Experimental Pallium Relay and Session History for a single Hermes TUI/gateway profile.
 author: Pallium
 kind: standalone
 platforms:
@@ -18,8 +18,12 @@ provides_tools:
   - pallium_relay_reply
   - pallium_relay_status
   - pallium_relay_trace
+  - pallium_search_history
+  - pallium_search_history_by_work_ref
+  - pallium_expand_source
 provides_hooks:
   - pre_llm_call
+  - post_llm_call
   - on_session_end
 provides_middleware:
   - llm_execution

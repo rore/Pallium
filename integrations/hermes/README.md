@@ -1,4 +1,4 @@
-# Pallium Relay for Hermes
+# Pallium for Hermes
 
 This is a frozen, disposable-profile qualification package for Hermes v0.22.2. It installs a native Hermes plugin, the discoverable `pallium-memory` skill, and the plugin-owned Pallium MCP bridge. Setup never creates a global `mcp_servers` connection and does not modify model/provider, toolset, Tool Search, other plugin, credential, or data settings.
 
@@ -66,7 +66,38 @@ python -m app.run setup hermes --home C:\path\to\disposable-hermes-home `
 
 Setup is repeatable. The installer stores ownership fingerprints beside the plugin and skill. It refuses unowned collisions or edited owned artifacts rather than replacing them. Removal restores the original `plugins.enabled` state, deletes only this plugin's exact config entry, and preserves unrelated nested configuration and other enabled plugins. A conflict leaves the profile untouched. Status checks file/config fingerprints only; it does not qualify a running host or live MCP connection.
 
-The profile skill is installed under `$HERMES_HOME/skills/pallium-memory/`, so Hermes includes it in normal skill discovery. History search and derived-memory tools are not exposed by this package. Relay hook deliveries own their claim and ACK; use the reply operation for an injected delivery and never receive or ACK it again.
+The profile skill is installed under `$HERMES_HOME/skills/pallium-memory/`, so Hermes includes it in normal skill discovery. The MCP catalog includes Relay and the three Session History tools below. Derived-memory tools remain unavailable. Relay hook deliveries own their claim and ACK; use the reply operation for an injected delivery and never receive or ACK it again.
+
+## Session History
+
+The public `post_llm_call` hook captures the current plain-text user and final
+assistant pair as private, hook-observed snapshots. Each source carries the exact
+host session, turn and logical `message_uid`, with `capture_stage=post_llm_call`.
+Stable source IDs prevent duplicate callback capture and do not revive forgotten
+sources. Pallium applies its existing redaction, visibility and forgetting rules.
+This is evidence of hook observation, not proof of Hermes database commit or
+message delivery: Hermes can still invoke this hook after a transcript write fails.
+
+Capture accepts nonempty simple text up to 20,000 Unicode code points per row.
+Missing or ambiguous IDs, merged/hidden/scaffolding rows, mismatched callback text,
+multimodal rows and longer content are skipped without truncation or backfill.
+Interrupted turns without this callback are not captured. Synthetic Relay wake
+user markers are excluded; an observed final assistant response is labeled
+`capture_origin=relay_wake`. Provider context, tool output and private Relay
+receipts are never copied into the captured user row. Capture failure does not
+interrupt Hermes and has no durable retry queue.
+
+Use `pallium_search_history` for broad earlier-session search, or
+`pallium_search_history_by_work_ref` with an exact known reference. Capture copies
+work references only from a verified current-session Relay association. Failed
+association reads omit them, so exact-work search can miss otherwise searchable
+turns. Use `pallium_expand_source` with a returned `source_item_id` and that search
+page's `lookup_event_id` as `parent_lookup_id`. Keep returned offsets and revisions
+for subsequent pages. The bridge binds the current container, session and private
+visibility; `actor_ref` and `source_thread_ref` remain optional historical filters.
+Completion-only capture supplies no current `request_source_item_id`; do not invent
+one. Source forgetting remains available through existing Pallium controls; this
+package does not expose a new forget or ingestion tool.
 
 ## Native qualification limits
 

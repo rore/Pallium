@@ -33,6 +33,12 @@ HERMES_RELAY_TOOLS = frozenset({
     "pallium_relay_status",
     "pallium_relay_trace",
 })
+HERMES_HISTORY_TOOLS = frozenset({
+    "pallium_search_history",
+    "pallium_search_history_by_work_ref",
+    "pallium_expand_source",
+})
+HERMES_TOOLS = HERMES_RELAY_TOOLS | HERMES_HISTORY_TOOLS
 _META_KEY = "pallium_hermes"
 _MAX_ID_CHARS = 255
 _MAX_RECEIPT_CHARS = 64
@@ -95,15 +101,20 @@ def _validate_arguments(
     context: PalliumContext,
     identity: HermesMcpIdentity,
 ) -> None:
-    for key, expected in (
+    fixed_fields = [
         ("container_ref", context.container_ref),
         ("agent_ref", "hermes"),
         ("thread_ref", identity.session_id),
-        ("actor_ref", context.actor_ref),
         ("visibility", context.visibility),
-    ):
+    ]
+    if tool_name not in HERMES_HISTORY_TOOLS:
+        fixed_fields.append(("actor_ref", context.actor_ref))
+    for key, expected in fixed_fields:
         if key in arguments and arguments[key] is not None and arguments[key] != expected:
             raise ValueError(f"conflicting Hermes {key}")
+
+    if tool_name in HERMES_HISTORY_TOOLS and arguments.get("request_source_item_id") is not None:
+        raise ValueError("request_source_item_id is unavailable for Hermes History")
 
     identity_pairs = (
         ("sender_runtime", "sender_session_ref"),
@@ -141,7 +152,7 @@ def make_tool_adapter(context: PalliumContext) -> Callable[..., Any]:
         from mcp.server.fastmcp import ToolError
 
     def adapt(tool_name: str, handler: Callable[..., Any], get_context: Callable[[], Any]):
-        if tool_name not in HERMES_RELAY_TOOLS:
+        if tool_name not in HERMES_TOOLS:
             return None
 
         @wraps(handler)

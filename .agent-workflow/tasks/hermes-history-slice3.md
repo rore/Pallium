@@ -65,11 +65,15 @@ This approves the previously discussed History slice and isolated qualification.
 
 ## Implementation
 
-Initial applicability: application/integration/test changes require normal isolated workflow. No application code edit yet. The user approved merge of the already reviewed PR #320; its merged main is now imported in this isolated branch, with no live checkout or service update. The exact Minimap source reference was resolved by its CLI against this worktree.
+Initial applicability: application/integration/test changes require normal isolated workflow. Application edits began only after the accepted plan checkpoint 848c3c2a. The user approved merge of the already reviewed PR #320; its merged main is now imported in this isolated branch, with no live checkout or service update. The exact Minimap source reference was resolved by its CLI against this worktree.
 
 ## Evidence
 
-Pending.
+Parent focused caller-surface capture + existing Relay plugin + setup lifecycle: 95 passed, 1 skipped (Windows symlink permission), 40.83s. Private interpreter and disposable data only. The initial two fixture errors were corrected against the actual shared contracts (supported Bearer secret shape and attach response.attached); both failed nodes passed before the full affected run.
+Artifacts: %TEMP%/pallium-hermes-history-slice3-01a1489e/parent-focused.{json,log}. The receipt names the planning HEAD plus dirty implementation; final code hashes/commit are required before acceptance.
+
+First native attempt failed in the extended stub: auxiliary title requests also contained the History marker but offered no tools. A simultaneous temporary worker edit of SDK2 snake_case fields to SDK1 camelCase produced an installer source/fingerprint mismatch; status correctly refused the changed copy. Parent rejected that wrong-runtime change immediately; worker restored the qualified Hermes SDK2 contract. Production files are frozen before rerun. No host/dependency/live change occurred. This attempt is not accepted E2E evidence.
+
 
 ## Result review
 
@@ -81,3 +85,5 @@ Discovery workers: /root/hermes_native_harness inspected pinned public Hermes so
 Pre-edit risk evidence: planned-path Redline GRAY, no checkpoints, zero import boundary violations; High retained for integration privacy/identity judgment. Artifacts: %TEMP%/pallium-hermes-history-slice3-01a1489e/redline-planned.json.
 
 Implementation may begin after independent plan acceptance. The initial user instruction approves the presented History slice; no new host commit guarantee, source-forget capability or live change is introduced.
+
+Implemented integration-specific capture and three-tool access; no core/API/storage/Relay reliability implementation changed. Optional manager roadmap handoff relay-msg-0d793cf88e6c486e8b3f9e8053f8357a remains pending with native_unavailable; no receipt/ownership acceptance is claimed. Feature reconciliation must retain exact source association and preserve the dirty primary checkout.
