@@ -25,6 +25,12 @@ SCOPE = {"container_ref": "git:example.test/team/hermes-e2e"}
 PEER_PAYLOADS = {"alpha": "PEER_PAYLOAD_ALPHA_é", "beta": "PEER_PAYLOAD_BETA_漢字"}
 HERMES_REPLIES = {"alpha": "HERMES_REPLY_ALPHA_é", "beta": "HERMES_REPLY_BETA_🌍"}
 HERMES_SENDS = {"alpha": "HERMES_SEND_ALPHA_🌍", "beta": "HERMES_SEND_BETA_é"}
+HERMES_ASSISTANTS = {
+    "alpha": "HISTORY_E2E_ALPHA_答え_🌍",
+    "beta": "HISTORY_E2E_BETA_ответ_é",
+}
+HERMES_HISTORY_PROMPT = "Find and expand the original turn containing HERMES_SEND_ALPHA_🌍."
+HERMES_HISTORY_RESPONSE = "History expansion was inspected."
 PEER_SESSION = "hermes-e2e-peer"
 
 
@@ -252,6 +258,16 @@ def test_released_hermes_idle_relay_roundtrip(client, tmp_path):
 
             planned_call = None
             reply_delivery_id = None
+            history_search = next((json.loads(message["content"])
+                                   for message in reversed(messages)
+                                   if isinstance(message, dict) and message.get("role") == "tool"
+                                   and tool_result_names.get(message.get("tool_call_id")) == "pallium_search_history"
+                                   and isinstance(message.get("content"), str)), None)
+            history_expand = next((json.loads(message["content"])
+                                   for message in reversed(messages)
+                                   if isinstance(message, dict) and message.get("role") == "tool"
+                                   and tool_result_names.get(message.get("tool_call_id")) == "pallium_expand_source"
+                                   and isinstance(message.get("content"), str)), None)
             if wake_fields and "pallium_relay_reply" in tool_names:
                 delivery_id = wake_fields.get("delivery_id")
                 with send_lock:
@@ -264,14 +280,43 @@ def test_released_hermes_idle_relay_roundtrip(client, tmp_path):
                             "delivery_id": delivery_id, "message": HERMES_REPLIES[tag],
                         })
             else:
-                tag = next((key for key, value in HERMES_SENDS.items() if value in text), None)
-                if tag and "skill_view" in tool_names and "skill_view" not in seen:
+                # Hermes makes auxiliary/title requests that can include the
+                # conversation text but intentionally have no tools. Only
+                # steer the actual plugin-enabled model request here.
+                if HERMES_HISTORY_PROMPT in text and any(name.startswith("pallium_") for name in tool_names):
+                    if "pallium_search_history" not in seen:
+                        assert "pallium_search_history" in tool_names, "History search tool was not exposed to Hermes"
+                        planned_call = ("pallium_search_history", {
+                            "query": HERMES_SENDS["alpha"], "limit": 10,
+                        })
+                    elif history_search is not None and "pallium_expand_source" not in seen:
+                        rows = history_search.get("results", [])
+                        anchor = next((row for row in rows if HERMES_SENDS["alpha"] in json.dumps(row, ensure_ascii=False)), None)
+                        assert anchor, f"History search did not return the original Unicode Hermes source: {history_search}"
+                        lookup_id = history_search.get("lookup_event_id")
+                        assert isinstance(lookup_id, str) and lookup_id, f"History search omitted lookup lineage: {history_search}"
+                        assert "pallium_expand_source" in tool_names, "History expansion tool was not exposed to Hermes"
+                        planned_call = ("pallium_expand_source", {
+                            "source_item_id": anchor["source_item_id"],
+                            "parent_lookup_id": lookup_id,
+                            "before": 1,
+                            "after": 1,
+                        })
+                    elif history_expand is not None:
+                        expanded = json.dumps(history_expand, ensure_ascii=False)
+                        assert HERMES_SENDS["alpha"] in expanded, f"expanded History omitted original user text: {history_expand}"
+                        assert HERMES_ASSISTANTS["alpha"] in expanded, f"expanded History omitted original assistant text: {history_expand}"
+
+                tag = None if HERMES_HISTORY_PROMPT in text else next(
+                    (key for key, value in HERMES_SENDS.items() if value in text), None
+                )
+                if planned_call is None and tag and "skill_view" in tool_names and "skill_view" not in seen:
                     planned_call = ("skill_view", {"name": "pallium-memory"})
-                elif tag and "pallium_relay_discover_recipients" not in seen:
+                elif planned_call is None and tag and "pallium_relay_discover_recipients" not in seen:
                     planned_call = ("pallium_relay_discover_recipients", {
                         "runtime": "claude-code", "session_ref": PEER_SESSION,
                     })
-                elif tag and "pallium_relay_send" not in seen:
+                elif planned_call is None and tag and "pallium_relay_send" not in seen:
                     discovery_result = next((message.get("content") for message in reversed(messages)
                                              if isinstance(message, dict)
                                              and message.get("role") == "tool"
@@ -306,9 +351,13 @@ def test_released_hermes_idle_relay_roundtrip(client, tmp_path):
                      "choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]},
                 ]
             else:
+                assistant_text = next((HERMES_ASSISTANTS[tag] for tag, prompt in HERMES_SENDS.items()
+                                       if prompt in text), None)
+                if HERMES_HISTORY_PROMPT in text:
+                    assistant_text = HERMES_HISTORY_RESPONSE
                 chunks = [
                     {"id": "local", "object": "chat.completion.chunk", "created": 1, "model": "pallium-local",
-                     "choices": [{"index": 0, "delta": {"role": "assistant", "content": "Local qualification response complete."}, "finish_reason": None}]},
+                     "choices": [{"index": 0, "delta": {"role": "assistant", "content": assistant_text or "Local qualification response complete."}, "finish_reason": None}]},
                     {"id": "local", "object": "chat.completion.chunk", "created": 1, "model": "pallium-local",
                      "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]},
                 ]
@@ -534,6 +583,7 @@ def test_released_hermes_idle_relay_roundtrip(client, tmp_path):
             "pallium_relay_name", "pallium_relay_work_refs", "pallium_relay_attach_work_ref",
             "pallium_relay_detach_work_ref", "pallium_relay_participants", "pallium_relay_send",
             "pallium_relay_reply", "pallium_relay_status", "pallium_relay_trace",
+            "pallium_search_history", "pallium_search_history_by_work_ref", "pallium_expand_source",
         }
         provider_toolsets = [
             {tool.get("function", {}).get("name"): tool.get("function", {})
@@ -543,11 +593,20 @@ def test_released_hermes_idle_relay_roundtrip(client, tmp_path):
         ]
         assert provider_toolsets, "Hermes never offered provider tools"
         for definitions in provider_toolsets:
-            pallium_names = {name for name in definitions if name.startswith("pallium_relay_")}
+            pallium_names = {name for name in definitions if name.startswith("pallium_")}
             assert pallium_names == expected_names, f"unexpected or incomplete Pallium MCP tool catalog: {pallium_names}"
             for name in expected_names:
                 properties = definitions[name].get("parameters", {}).get("properties", {})
                 assert "container_ref" not in properties, f"profile container leaked into {name} schema"
+                if name in {"pallium_search_history", "pallium_search_history_by_work_ref",
+                            "pallium_expand_source"}:
+                    hidden_identity = {
+                        "container_ref", "thread_ref", "visibility", "agent_ref",
+                        "request_source_item_id",
+                    }
+                    assert not hidden_identity.intersection(properties), (
+                        f"trusted History identity leaked into {name} schema: {properties}"
+                    )
         send_properties = next(definitions["pallium_relay_send"].get("parameters", {}).get("properties", {})
                                for definitions in provider_toolsets if "pallium_relay_send" in definitions)
         assert not {"sender_runtime", "sender_session_ref", "container_ref"} & set(send_properties)
@@ -599,6 +658,124 @@ def test_released_hermes_idle_relay_roundtrip(client, tmp_path):
                                 and "[Pallium scope — " in message["content"]), None)
             assert orientation and json.loads(orientation.split("[Pallium scope — ", 1)[1].split("]", 1)[0])[
                 "thread_ref"] == identity["stored_session_id"], f"wrong provider orientation for {tag}"
+
+        def captured_items():
+            return [item for path, batch in relay_forwarded
+                    if path == "/items" and isinstance(batch, list)
+                    for item in batch if item.get("source_type") == "hermes"]
+
+        def assert_capture_identity(item, expected_session: str, expected_turn: str | None = None):
+            metadata = item.get("metadata", {})
+            uid = metadata.get("hermes_message_uid")
+            turn_id = metadata.get("hermes_turn_id")
+            assert isinstance(uid, str) and uid, f"capture omitted Hermes message UID: {item}"
+            assert isinstance(turn_id, str) and turn_id, f"capture omitted Hermes turn ID: {item}"
+            if expected_turn is not None:
+                assert turn_id == expected_turn, f"current user/assistant pair spans turns: {item}"
+            assert item.get("thread_ref") == expected_session, item
+            expected_source = hashlib.sha256(
+                f"{SCOPE['container_ref']}\0{expected_session}\0{uid}".encode("utf-8")
+            ).hexdigest()
+            assert item.get("source_id") == expected_source, (
+                f"History source identity does not bind exact container/session/host UID: {item}"
+            )
+            assert metadata.get("capture_stage") == "post_llm_call", metadata
+            return turn_id
+
+        captured = eventually(
+            lambda: (rows if rows else None) if (rows := captured_items()) else None,
+            "Hermes post_llm_call did not submit hook-observed History snapshots",
+        )
+        capture_rows = captured
+        for tag, identity in seed_results.items():
+            session_rows = [item for item in capture_rows if item.get("thread_ref") == identity["stored_session_id"]]
+            assert any(item.get("role") == "user" and item.get("content") == HERMES_SENDS[tag]
+                       for item in session_rows), f"missing original Unicode user snapshot for {tag}: {session_rows}"
+            user_item = next((item for item in session_rows
+                              if item.get("role") == "user" and item.get("content") == HERMES_SENDS[tag]), None)
+            assistant_item = next((item for item in session_rows
+                                   if item.get("role") == "assistant"
+                                   and item.get("content") == HERMES_ASSISTANTS[tag]), None)
+            assert user_item and assistant_item, (
+                f"missing final Unicode assistant snapshot for {tag}: {session_rows}"
+            )
+            assert user_item.get("source_id") and assistant_item.get("source_id")
+            assert user_item["source_id"] != assistant_item["source_id"]
+            user_turn = assert_capture_identity(user_item, identity["stored_session_id"])
+            assert_capture_identity(assistant_item, identity["stored_session_id"], user_turn)
+            assert user_item.get("metadata", {}).get("capture_origin") == "user_turn", user_item
+            assert assistant_item.get("metadata", {}).get("capture_origin") == "user_turn", assistant_item
+            assert all(item.get("source_type") == "hermes" and item.get("agent_ref") == "hermes"
+                       and item.get("container_ref") == SCOPE["container_ref"]
+                       and item.get("visibility") == "private"
+                       and item.get("artifact_kind") == "message"
+                       and item.get("metadata", {}).get("capture_stage") == "post_llm_call"
+                       for item in session_rows), session_rows
+
+        history_script = tmp_path / "hermes_history.py"
+        history_script.write_text(seed_script.read_text(encoding="utf-8"), encoding="utf-8")
+        history_log = (tmp_path / "hermes-history.log").open("w", encoding="utf-8")
+        seed_driver_logs.append(history_log)
+        history_driver = subprocess.Popen(
+            [str(interpreter), str(history_script), uri, str(hermes), "history", HERMES_HISTORY_PROMPT],
+            cwd=hermes, env=_clean_host_environment(profile), stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE, stderr=history_log, text=True, encoding="utf-8", errors="replace",
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+        seed_drivers.append(history_driver)
+        history_line = history_driver.stdout.readline()
+        assert history_line, f"later Hermes history session failed to report its identity: {tmp_path / 'hermes-history.log'}"
+        history_identity = json.loads(history_line)
+        assert history_identity["stored_session_id"] not in {
+            item["stored_session_id"] for item in seed_results.values()
+        }
+        history_calls = [
+            call for request in provider_requests
+            if HERMES_HISTORY_PROMPT in json.dumps(request.get("messages", []), ensure_ascii=False)
+            for message in request.get("messages", []) if isinstance(message, dict)
+            for call in message.get("tool_calls", []) if isinstance(message.get("tool_calls"), list)
+            and isinstance(call, dict)
+        ]
+        history_call_names = [call.get("function", {}).get("name") for call in history_calls]
+        assert "pallium_search_history" in history_call_names, history_call_names
+        assert "pallium_expand_source" in history_call_names, history_call_names
+        expanded_call = next(call for call in history_calls
+                             if call.get("function", {}).get("name") == "pallium_expand_source")
+        expanded_args = json.loads(expanded_call["function"]["arguments"])
+        search_result = next(json.loads(message["content"])
+                             for request in provider_requests
+                             if HERMES_HISTORY_PROMPT in json.dumps(request.get("messages", []), ensure_ascii=False)
+                             for message in request.get("messages", []) if isinstance(message, dict)
+                             and message.get("role") == "tool"
+                             and isinstance(message.get("content"), str)
+                             and any(call.get("function", {}).get("name") == "pallium_search_history"
+                                     and call.get("id") == message.get("tool_call_id")
+                                     for prior in request.get("messages", []) if isinstance(prior, dict)
+                                     for call in prior.get("tool_calls", []) if isinstance(call, dict)))
+        assert expanded_args.get("parent_lookup_id") == search_result.get("lookup_event_id"), expanded_args
+        assert expanded_args.get("source_item_id") in {
+            item.get("source_item_id") for item in search_result.get("results", [])
+        }, expanded_args
+        expanded_results = [
+            message.get("content") for request in provider_requests
+            if HERMES_HISTORY_PROMPT in json.dumps(request.get("messages", []), ensure_ascii=False)
+            for message in request.get("messages", []) if isinstance(message, dict)
+            and message.get("role") == "tool" and isinstance(message.get("content"), str)
+            and any(call.get("function", {}).get("name") == "pallium_expand_source"
+                    and call.get("id") == message.get("tool_call_id")
+                    for prior in request.get("messages", []) if isinstance(prior, dict)
+                    for call in prior.get("tool_calls", []) if isinstance(call, dict))
+        ]
+        assert any(HERMES_SENDS["alpha"] in result and HERMES_ASSISTANTS["alpha"] in result
+                   for result in expanded_results), (
+            "the later Hermes conversation did not receive the original Unicode user/assistant sources"
+        )
+        search_requests = [body for path, body in relay_forwarded
+                           if path == "/query" and isinstance(body, dict)
+                           and body.get("active_session_ref") == history_identity["stored_session_id"]]
+        assert search_requests, "History search was not scoped to the later trusted Hermes requester session"
+        assert all("actor_ref" not in body and "source_thread_ref" not in body
+                   for body in search_requests), search_requests
 
         peer_claim = http("POST", "/relay/turn", {
             "runtime": "claude-code", "session_ref": PEER_SESSION, "max_chars": 0,
@@ -684,6 +861,17 @@ def test_released_hermes_idle_relay_roundtrip(client, tmp_path):
             incoming_state = http("GET", "/relay/messages/" + peer_reply_ids[tag]
                                   + "?container_ref=" + SCOPE["container_ref"])
             assert incoming_state["deliveries"][0]["state"] == "delivered", incoming_state
+
+        wake_rows = captured_items()
+        assert not any(item.get("role") == "user" and isinstance(item.get("content"), str)
+                       and "[[PALLIUM_RELAY_WAKE:v1:" in item["content"]
+                       for item in wake_rows), "synthetic Relay wake user marker was captured as conversation text"
+        for item in wake_rows:
+            if item.get("metadata", {}).get("capture_origin") == "relay_wake":
+                assert item.get("role") == "assistant", (
+                    f"only a final assistant row may be stored for a Relay-woken turn: {item}"
+                )
+                assert_capture_identity(item, item.get("thread_ref", ""))
 
         peer_received = http("POST", "/relay/turn", {
             "runtime": "claude-code", "session_ref": PEER_SESSION, "max_chars": 0,

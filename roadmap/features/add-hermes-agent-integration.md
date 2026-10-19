@@ -19,9 +19,9 @@ that proof alone does not complete this feature.
 
 Initial source validation on **2026-10-17** supports investigating **Hermes
 v0.22.2**, not waiting for unreleased gateway architecture. Slices 1 and 2 have
-isolated native proofs and full non-slow regression passes. PR #321 is being
-prepared for publication against merged reliability work; broader qualification
-remains open. This is not general Hermes support.
+isolated native proofs and full non-slow regression passes. PR #321 merged as
+`f0ba4647`; broader qualification remains open. Slice 3 Session History is being
+implemented and qualified on `feat/hermes-history-slice3`. This is not general Hermes support.
 Session History and optional derived-memory behavior remain required integration
 scope, with discovery and E2E acceptance before claiming support. The supplied
 research establishes neither. The user explicitly confirmed full-package scope
@@ -50,8 +50,15 @@ drift after reset and duplicate actions or paid turns after ambiguous acceptance
   safe removal. `feat/hermes-package-slice2` is isolated from reliability and
   stacked on pushed slice-1 checkpoint `377327dd`. Its installed-package native
   journey and combined full-suite regression passed. The user approved preparing
-  and merging PR #321 before slice 3; its final integration gates remain required.
+  and merging PR #321 before slice 3; that PR is now merged as `f0ba4647`.
   This does not imply live installation or broad qualification.
+- The user approved slice 3 on 2026-10-19: governed Session History capture,
+  packaged broad/exact-work search and source expansion, with real later-session
+  E2E. Branch `feat/hermes-history-slice3` is isolated from reliability. Its Work
+  Record declares this exact feature relationship at creation:
+  `.agent-workflow/tasks/hermes-history-slice3.md`. Capture uses public completion
+  hooks and host-issued logical message IDs; sources are hook-observed snapshots,
+  not proof of Hermes transcript commit. No live installation is approved.
 - Consume the shipped `add-relay-activation-capability-contract` and
   `add-relay-delivery-trace`. Reuse capability, fallback, fencing, and diagnostic
   contracts rather than introducing Hermes-only delivery authority.
@@ -127,9 +134,10 @@ credentials and data. Native E2E: **1 passed in 71.22s**; focused plugin/MCP/set
 and default Relay MCP regressions also passed. Independent review accepts the
 frozen experiment. Combined hosted non-slow regression passed on Python 3.12 and
 3.13 (each **7,190 passed, 92 skipped, 2 xfailed**), plus Windows smoke; evidence
-is [draft PR #321](https://github.com/rore/Pallium/pull/321), application revision
+is [PR #321](https://github.com/rore/Pallium/pull/321), application revision
 `882546cf`. An initial 3.12 common Relay setup timeout passed one focused test
-and one hosted job recheck without code/test changes. Human review remains open.
+and one hosted job recheck without code/test changes. Publication/merge was
+separately user-approved; broader runtime qualification remains open.
 Setup requires exclusive offline profile access: the native writer has no
 atomic conflict check for overlapping writers. Live setup, ordinary providers,
 default Tool Search, History, optional memory and recovery remain unqualified.
@@ -140,9 +148,9 @@ Detailed revision, source hashes and disposable artifacts are recorded in
 without conflict at `ad30f944`. The native package journey passed again in
 104.00s, and affected MCP/plugin/setup/app-run/Relay files passed 273 tests with
 one platform-permission skip. Independent review accepts the four-file code
-composition. Final hosted checks and review are authoritative on PR #321. The
-full feature remains in progress; slice 3 is Session History, and live rollout
-requires separate environment approval.
+composition. Final hosted checks passed and PR #321 merged as `f0ba4647`. The
+full feature remains in progress; slice 3 Session History qualification is active,
+and live rollout requires separate environment approval.
 
 ### Complete integration scope
 
