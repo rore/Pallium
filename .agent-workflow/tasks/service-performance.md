@@ -87,6 +87,28 @@ Runner `build/claim-acquisition/run-ack-control-focused.ps1` SHA256
 focused private-runtime evidence for the test-control ordering only; it neither
 reproduces hosted CI nor changes the historical failure diagnosis.
 
+The one prepared non-slow Windows full qualification at the reviewed test
+commit `dead5ac631bff883bb13fe5b37ff925a50355eb8` passed 7406 tests, skipped
+45 and xfailed 2 in 424.40s (exit 0, no timeout). The existing private
+Python 3.13.14 / SQLite 3.53.1 runtime matched all 65 locked and reference
+distributions; stderr was empty, source-after was clean with `changed=[]`, and
+owned pytest PID37012/direct children remaining0. Evidence:
+`build/claim-acquisition/ack-control-full-ffd11ca9b88f4fac9f6350e24856dc67`
+(pytest log SHA256 B4E0F53BF1D78E256565C2AB1179AC0E38A74B57DBD2B1B2A79A497220E34A6C;
+JUnit 3989E5E2E346BBFA9CCA86BADB5E251A528E8492BE3BBB39CDAC7906F0B1E7FF;
+result 75B4629C71623A5ADA3D93A05E614080A20CFE7DC121D2120632C326696EB47D;
+runtime 5E5E869B578EA3AEA525BAF85593BEF8022F97CEAEFEFD35C8DA26D6A85F37A1;
+source-before E7400BE6BD78D4F5710B0006DBA362C7F2588FE5F99A0A0E539A2B092019E6DE;
+source-after 1F89A9075AB47214A98FCDD19E5896614EB82146205DAB995A73CCFCF1FC411D;
+empty stderr E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855).
+Frozen runner `build/claim-acquisition/run-ack-control-full.ps1` SHA256
+70D27FBD52C385B9516825C8B9ACED5A3AF0E64B35E7C370CCDA9D0332AFF3D9;
+manifest `build/claim-acquisition/ack-control-full-review-manifest.json` SHA256
+DAF6185DCDD84E5C069143D753C4A6E1F3D962D5830CFC1D83D60A628F91D5C8. Independent
+full-result review by /root/acquisition_source_review is GO on 2026-10-19. This private full result validates the local
+candidate only; hosted qualification and historical acquisition-cause
+classification remain open.
+
 
 ### Full qualification result and retained harness diagnosis — 2026-10-19
 
