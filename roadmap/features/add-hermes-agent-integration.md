@@ -75,7 +75,7 @@ qualification remain blockers for broader release.
 stub passed send → idle wake → full attributed request → integration ACK → native
 reply tool → original sender receipt. The same run passed wrong-recipient and
 closed-endpoint controls. This is an isolated experiment, not shipped support;
-full-suite validation, result review and the later slices remain open.
+full-suite validation, human result review and the later slices remain open.
 
 Two native requirements emerged from execution. The disposable profile disables
 Tool Search with quoted `tools.tool_search.enabled: "off"` so the test can invoke

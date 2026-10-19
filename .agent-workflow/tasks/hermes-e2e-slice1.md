@@ -174,4 +174,6 @@ approval. The completion message also remained pending/attempts 0 after its wake
 turn completed; trace reports native activation did not complete. App-message
 fallback reported that concrete failure and clarified that only the E2E branch
 needs a full-suite slot; the earlier source-only branch is superseded. No tests
-have been started on the reliability owner's behalf.
+have been started on the reliability owner's behalf. The recipient later
+confirmed that the delayed update arrived; this was delayed delivery, not proven
+permanent loss. The manager's full-suite slot decision remains pending.
