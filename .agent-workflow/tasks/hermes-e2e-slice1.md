@@ -54,6 +54,8 @@ When an idle real host has a pending message, it starts a turn automatically and
 **Plan review:**
 Agent technical review: /root/hermes_e2e_review, 2026-10-19, HEAD 79cae04af813d7736c2d0900fedb9fbced8f1eb0, accepted with the conditions below.
 
+Follow-up technical review at checkpoint dc730848 resolves the reply exposure blocker: run 7's provider Tool Search catalog contains pallium_relay_reply, proving registration succeeded. Pinned public docs and tools/tool_search.py show that Tool Search defers plugin functions behind bridge tools. The accepted smallest supported fix is tools.tool_search.enabled: off in the disposable profile before host/session startup, with that setting included in the frozen config guard and actual provider-schema assertion. No plugin toggle, private registry edit or user-environment change is needed. The default Tool Search bridge path remains later qualification. Implementation is ready again for this exact config-only narrowing and rerun.
+
 Follow-up technical review on 2026-10-19 accepts only the frozen disposable v0.22.2/local-stub experiment: public plugins.list RPC inventories actual loaded name/version/enabled state before/after, but exposes no middleware count. Strict own-plugin config is necessary; bundled auto-loads bypass that list, so pinned bundled source must be checked for execution middleware and unexpected enabled inventory refused. The harness must assert effective local provider/config and provider receipt before ACK with no hotload during the journey. Plugin revalidates its frozen config and trusted execution model/provider/base_url/api_mode. General detection of arbitrary middleware hotloads has no public PluginContext seam and remains a wider-release blocker. This narrows qualification; it does not authorize general installation or relax payload/identity proof.
 
 Accepted by clean-context reviewer `/root/hermes_e2e_review` on 2026-10-19 at HEAD 79cae04af813d7736c2d0900fedb9fbced8f1eb0. Admission must compare the complete attributed payload and host session/turn in the effective llm_execution request, forward the same request to next_call, and ACK only after successful downstream execution; the real provider stub independently verifies that request. Qualify only the explicit single-plugin/provider topology; refuse competing execution middleware. Persist the exact scoped metadata fence before injection, retain uncertainty across reload, and test identity, stripping, downstream failure and marker refusal. Hermes activation remains passive with no inferred admission evidence/fallback. Exclude Hermes from legacy Codex ACK/reply executor selection while preserving existing runtime behavior. No scope expansion or renewed human approval required.
@@ -65,7 +67,7 @@ This approves the immediately preceding proposed slice: minimal plugin/runtime p
 **Exceptions:**
 —
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
