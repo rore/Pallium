@@ -84,11 +84,31 @@ This approves the immediately preceding installable-package slice and disposable
 - Coordination sent to authorized @astra-reviewer via Pallium Relay as
   `relay-msg-74d59ba3f5aa4cbd9796b7be11029fe7`; saved/pending is not acceptance
   or a test-slot allocation.
+- Implemented the dedicated stdio catalog and request-local server guard, optional
+  plugin-owned MCP client/proxies, exact frozen profile binding and host-held reply
+  receipts. Default registration remains on the same shared MCP tool functions.
+- Implemented explicit-profile setup/status/removal and bundled skill/references.
+  Parent review corrected installer CAS rollback to preserve concurrent config
+  edits and whole-owned-entry checks to preserve user-added fields. Target filters
+  remain legitimate tool arguments; self identity stays host-bound.
+- The actual MCP 2.0 client to Pallium 1.29 stdio catalog probe passed with 12
+  tools and hidden model identity/receipt fields; the owned connection closed.
+  SDK 2 uses public snake-case result fields, which the client now follows.
+- Real-host package lifecycle/concurrent-conversation E2E is being extended by the
+  cheaper harness worker. No full non-slow run or live setup has started.
 
 ## Evidence
 
-No slice-2 tests or application implementation yet. Slice-1 native/focused evidence
-is retained in its own Work Record; no claim of slice-2 completion or broad support.
+Initial focused evidence (implementation checkpoint, native package journey still
+pending): plugin contracts **49 passed in 24.73s**; direct stdio MCP to the real
+Relay fixture **15 passed**; unchanged Relay MCP regression **165 passed**;
+setup lifecycle **10 passed, 1 skipped** (Windows symlink permission unavailable).
+The direct stdio test verifies real sender identity, send/reply state and original
+sender inbox through normal Relay reads. Parent reviewed these worker results;
+the earlier shape-only HTTP stub was replaced with the actual service fixture.
+Slice-1 native/focused evidence remains in its own Work Record; no claim of
+slice-2 completion or broad support. Full validation and human result review remain
+open. No protected behavior contract, dependency or reliability code changed.
 Pinned optional MCP 2.0.0 and 11 supporting packages were installed only into the
 existing disposable Hermes qualification venv; actual call_tool(meta=...) and
 stdio signatures were inspected. Shared/global packages were unchanged.

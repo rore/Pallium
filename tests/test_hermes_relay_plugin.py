@@ -199,6 +199,7 @@ def plugin_context(client, monkeypatch):
     path = Path(__file__).resolve().parents[1] / "integrations/hermes/__init__.py"
     spec = importlib.util.spec_from_file_location("hermes_test_plugin", path)
     module = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, spec.name, module)
     spec.loader.exec_module(module)
 
     def http(base, method, path, *, body=None, query=None):
@@ -302,6 +303,35 @@ def _plugin_reply(ctx, args, **trusted):
     )
     assert len(calls) == 1
     return result
+
+
+@pytest.mark.parametrize("outcome", ["deny", "raise"])
+def test_packaged_mcp_preserves_authorization_and_clears_binding(client, mcp_plugin_context, outcome):
+    create, _, calls = mcp_plugin_context
+    ctx = create()
+    ctx.hooks["pre_llm_call"](session_id="session_שלום", turn_id="seed", user_message="hello")
+    args = {"recipient": "@peer", "message": "hello"}
+
+    def authorized_dispatch(actual):
+        assert actual is args
+        if outcome == "raise":
+            raise PermissionError("host refusal")
+        return "denied by host"
+
+    def invoke():
+        return ctx.middleware["tool_execution"](
+            tool_name="pallium_relay_send", args=args, session_id="session_שלום", turn_id="send",
+            next_call=authorized_dispatch,
+        )
+
+    if outcome == "raise":
+        with pytest.raises(PermissionError):
+            invoke()
+    else:
+        assert invoke() == "denied by host"
+    assert not calls
+    assert "error" in json.loads(ctx.tools["pallium_relay_send"](args, session_id="session_שלום"))
+    assert not calls
 
 
 @pytest.mark.parametrize("failure", [
@@ -538,3 +568,105 @@ def test_reply_context_preserves_host_authorization_and_resets(client, plugin_co
     }).json()["deliveries"]
     assert received == []
     assert "sent" in _plugin_reply(ctx, args, session_id="ses_שלום", turn_id="wake")
+
+@pytest.fixture
+def mcp_plugin_context(plugin_context, monkeypatch):
+    module, create, config = plugin_context
+    settings = config["plugins"]["entries"]["pallium-hermes-relay"]["settings"]
+    settings.update(mcp_python=sys.executable, mcp_repo=str(Path(__file__).resolve().parents[1]),
+                    actor_ref="hermes-test", visibility="private")
+    calls = []
+    bridge_module = ModuleType(module.__name__ + ".mcp_bridge")
+
+    class Bridge:
+        def __init__(self, **_config):
+            self.catalog = [
+                {"name": "pallium_relay_send", "description": "Send", "parameters": {
+                    "properties": {"message": {}, "recipient": {}},
+                }},
+                {"name": "pallium_relay_reply", "description": "Reply", "parameters": {
+                    "properties": {"delivery_id": {}, "message": {}},
+                }},
+                {"name": "pallium_relay_address", "description": "Self", "parameters": {"properties": {}}},
+            ]
+
+        def call(self, name, arguments, identity, reply=None):
+            calls.append((name, dict(arguments), tuple(identity), dict(reply) if reply else None))
+            return json.dumps({"message_id": "relay-msg-test"})
+
+        def close(self):
+            pass
+
+    bridge_module.RelayMcpBridge = Bridge
+    monkeypatch.setitem(sys.modules, bridge_module.__name__, bridge_module)
+    return create, config, calls
+
+
+def _mcp_tool(ctx, name, args, session="session_שלום", turn="turn-1"):
+    return ctx.middleware["tool_execution"](
+        tool_name=name, args=args, session_id=session, turn_id=turn,
+        next_call=lambda actual: ctx.tools[name](actual, session_id=session),
+    )
+
+
+def test_packaged_mcp_binds_each_conversation_and_never_model_identity(client, mcp_plugin_context):
+    from concurrent.futures import ThreadPoolExecutor
+
+    create, config, calls = mcp_plugin_context
+    ctx = create()
+    for session in ("session_שלום", "session_世界"):
+        orientation = ctx.hooks["pre_llm_call"](session_id=session, turn_id="seed", user_message="hello")
+        assert json.loads(orientation["context"].split("— ", 1)[1].split("]\n", 1)[0])["thread_ref"] == session
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda session: _mcp_tool(
+            ctx, "pallium_relay_send", {"recipient": "@peer", "message": "hello 🌍"}, session=session),
+            ("session_שלום", "session_世界")))
+    assert all("message_id" in json.loads(result) for result in results)
+    assert {call[2] for call in calls} == {("session_שלום", "turn-1"), ("session_世界", "turn-1")}
+    count = len(calls)
+    for args in (
+        {"recipient": "@peer", "message": "x", "sender_session_ref": "other"},
+        {"recipient": "@peer", "message": "x", "container_ref": "elsewhere"},
+        {"recipient": "@peer", "message": "x", "receipt": "private"},
+    ):
+        assert "error" in json.loads(_mcp_tool(ctx, "pallium_relay_send", args))
+    assert "error" in json.loads(ctx.tools["pallium_relay_send"](
+        {"recipient": "@peer", "message": "x"}, session_id="session_שלום"))
+    assert len(calls) == count
+    config["plugins"]["entries"]["pallium-hermes-relay"]["settings"]["actor_ref"] = "changed"
+    assert "error" in json.loads(_mcp_tool(ctx, "pallium_relay_address", {}))
+    assert len(calls) == count
+
+
+@pytest.mark.parametrize("session,turn", [("", "turn"), ("unknown", "turn"), ("session_שלום", ""),
+                                        ("session_שלום", "bad\nturn")])
+def test_packaged_mcp_refuses_missing_or_unregistered_host_context(client, mcp_plugin_context, session, turn):
+    create, _, calls = mcp_plugin_context
+    ctx = create()
+    ctx.hooks["pre_llm_call"](session_id="session_שלום", turn_id="seed", user_message="hello")
+    result = _mcp_tool(ctx, "pallium_relay_address", {}, session=session, turn=turn)
+    assert "error" in json.loads(result)
+    assert not calls
+
+
+def test_packaged_mcp_reply_receipt_stays_in_host_memory(client, mcp_plugin_context):
+    create, _, calls = mcp_plugin_context
+    ctx, marker, message = _plugin_wake(client, create)
+    rendered = ctx.hooks["pre_llm_call"](session_id="ses_שלום", turn_id="wake", user_message=marker)["context"]
+    request = {"model": "pallium-local", "messages": [{"role": "user", "content": marker + "\n" + rendered}]}
+    ctx.middleware["llm_execution"](request, lambda actual: "provider", session_id="ses_שלום",
+                                    turn_id="wake", **HOST_EXECUTION)
+    delivery = status(client, message)["deliveries"][0]
+    args = {"delivery_id": delivery["delivery_id"], "message": "reply שלום"}
+    assert "error" in json.loads(_mcp_tool(ctx, "pallium_relay_reply", args, session="ses_שלום", turn="wrong"))
+    result = _mcp_tool(ctx, "pallium_relay_reply", args, session="ses_שלום", turn="wake")
+    assert json.loads(result)["message_id"] == "relay-msg-test"
+    assert len(calls) == 1
+    assert calls[0][1] == args
+    assert calls[0][3]["delivery_id"] == delivery["delivery_id"]
+    receipt = calls[0][3]["receipt"]
+    assert isinstance(receipt, str) and 0 < len(receipt) <= 64
+    assert delivery["receipt"] is None  # Delivered status deliberately redacts the private receipt.
+    assert receipt not in rendered and receipt not in result and receipt not in json.dumps(args)
+    assert "error" in json.loads(_mcp_tool(ctx, "pallium_relay_reply", args, session="ses_שלום", turn="wake"))
+    assert len(calls) == 1

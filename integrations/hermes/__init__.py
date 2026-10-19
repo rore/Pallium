@@ -5,6 +5,7 @@ import hashlib
 import contextvars
 import json
 import logging
+from pathlib import Path
 import secrets
 import threading
 from typing import Any
@@ -36,6 +37,10 @@ def _json_request(base, method, path, *, body=None, query=None):
 
 def _text(value, limit):
     return isinstance(value, str) and 0 < len(value) <= limit and "\x00" not in value
+
+
+def _host_id(value):
+    return _text(value, 255) and value == value.strip() and value.isprintable()
 
 
 def _current_user_text(request):
@@ -134,9 +139,15 @@ def _require_frozen_local_stub_config(plugin_id, service_url, container_ref):
     if (provider_url.scheme != "http" or provider_url.hostname not in {"127.0.0.1", "localhost", "::1"}
             or provider_url.username or provider_url.password or provider_url.query or provider_url.fragment):
         raise ValueError("Hermes Relay qualification requires a loopback custom provider URL")
+    bridge = tuple(settings.get(key) for key in ("mcp_python", "mcp_repo", "actor_ref", "visibility"))
+    if any(value is not None for value in bridge) and (
+            not all(isinstance(value, str) and value.strip() == value and value for value in bridge)
+            or not Path(bridge[0]).is_absolute() or not Path(bridge[1]).is_absolute()
+            or not _host_id(bridge[2]) or bridge[3] != "private"):
+        raise ValueError("Hermes MCP requires explicit interpreter, checkout, actor and private scope")
     return (model["default"], model["provider"], model["base_url"], model["api_mode"],
             tuple(config.get("fallback_providers", [])), config.get("fallback_model"),
-            tool_search["enabled"])
+            tool_search["enabled"], *bridge)
 
 
 def register(ctx):
@@ -152,6 +163,16 @@ def register(ctx):
     reply_identity = contextvars.ContextVar("pallium_hermes_reply_identity", default=None)
     sessions, claims, admitted = {}, {}, {}
     poller = None
+    bridge = None
+    if topology_signature[7] is not None:
+        from .mcp_bridge import RelayMcpBridge
+
+        bridge = RelayMcpBridge(
+            python=topology_signature[7], repo=topology_signature[8], base_url=base,
+            container_ref=container, actor_ref=topology_signature[9], visibility=topology_signature[10],
+        )
+        ctx.on_unload(bridge.close)
+    tool_names = {tool["name"] for tool in bridge.catalog} if bridge else {TOOL_NAME}
 
     def profile_ok():
         if str(ctx.profile_name) != profile:
@@ -254,7 +275,7 @@ def register(ctx):
                 poller.start()
 
     def pre_llm_call(session_id="", turn_id="", user_message="", **_context):
-        if not profile_ok() or not _text(session_id, 255) or not _text(turn_id, 255):
+        if not profile_ok() or not _host_id(session_id) or not _host_id(turn_id):
             return None
         text = user_message if isinstance(user_message, str) else ""
         wake = wake_scope(session_id)
@@ -262,6 +283,15 @@ def register(ctx):
             try:
                 if register_session(session_id):
                     ensure_poller()
+                    if bridge:
+                        orientation = {
+                            "container_ref": container, "thread_ref": session_id,
+                            "actor_ref": topology_signature[9], "agent_ref": RUNTIME,
+                            "visibility": topology_signature[10],
+                        }
+                        return {"context": "[Pallium scope — " + json.dumps(orientation, ensure_ascii=False)
+                                + "]\nRelay MCP tools bind this conversation automatically. "
+                                "Use the bundled pallium-memory skill. History and memory tools are not qualified in this slice."}
             except Exception:
                 LOG.debug("Hermes Relay session registration deferred", exc_info=True)
             return None
@@ -399,16 +429,69 @@ def register(ctx):
         return "Relay reply sent."
 
     def tool_execution(tool_name="", args=None, next_call=None, session_id="", turn_id="", **_context):
-        if tool_name != TOOL_NAME:
+        if tool_name not in tool_names:
             return next_call(args)
         # Registered-tool dispatch omits turn_id in v0.22.2. Bind the public
         # middleware identity only while the normal host dispatch path runs.
         token = reply_identity.set((session_id, turn_id) if (
-            _text(session_id, 255) and _text(turn_id, 255)) else None)
+            _host_id(session_id) and _host_id(turn_id)) else None)
         try:
             return next_call(args)
         finally:
             reply_identity.reset(token)
+
+    def mcp_handler(tool):
+        name = tool["name"]
+        allowed = set(tool["parameters"].get("properties", {}))
+
+        def call(args, session_id="", **_context):
+            identity = reply_identity.get()
+            if (not profile_ok() or not _host_id(session_id) or not identity
+                    or identity[0] != session_id or not _host_id(identity[1])):
+                return json.dumps({"error": "Pallium MCP requires this host's trusted session and turn"})
+            if not isinstance(args, dict) or set(args) - allowed:
+                return json.dumps({"error": "Pallium MCP received unsupported tool arguments"})
+            record = scope(session_id)
+            if not record:
+                return json.dumps({"error": "Pallium session is not registered by this host"})
+            try:
+                rows = _json_request(base, "GET", "/relay/sessions", query={
+                    "runtime": RUNTIME, "session_ref": session_id, "container_ref": container,
+                    "include_inactive": "true",
+                })
+            except Exception:
+                return json.dumps({"error": "Pallium could not verify the current session"})
+            if (not isinstance(rows, list) or len(rows) != 1
+                    or not active(rows[0], session_id, record["endpoint_id"])):
+                return json.dumps({"error": "Pallium current session is inactive or changed"})
+            current, private_reply = None, None
+            if name == TOOL_NAME:
+                delivery_id, message = args.get("delivery_id"), args.get("message")
+                with lock:
+                    current = admitted.get(session_id)
+                if (not current or current["turn_id"] != identity[1]
+                        or current["delivery_id"] != delivery_id
+                        or not _text(current.get("receipt"), 64)
+                        or not isinstance(message, str) or not message.strip()
+                        or len(message) > MAX_REPLY_CHARS):
+                    return json.dumps({"error": "No delivery is admitted for this host session and turn"})
+                private_reply = {"delivery_id": delivery_id, "receipt": current["receipt"]}
+            if not profile_ok():
+                return json.dumps({"error": "Pallium profile changed before MCP dispatch"})
+            result = bridge.call(name, args, tuple(identity), private_reply)
+            if current is not None:
+                try:
+                    accepted = json.loads(result)
+                except (TypeError, ValueError):
+                    accepted = None
+                if isinstance(accepted, dict) and accepted.get("message_id"):
+                    current["wake"]["state"] = "complete"
+                    state.set(key("wake", session_id), current["wake"])
+                    with lock:
+                        admitted.pop(session_id, None)
+                        claims.pop(session_id, None)
+            return result
+        return call
 
     def clear_session(session_id="", **_context):
         if isinstance(session_id, str):
@@ -428,15 +511,24 @@ def register(ctx):
     ctx.register_hook("pre_llm_call", pre_llm_call)
     ctx.register_middleware("llm_execution", llm_execution)
     ctx.register_middleware("tool_execution", tool_execution)
-    ctx.register_tool(
-        name=TOOL_NAME, toolset="hermes-cli", is_async=False,
-        description="Reply to the currently admitted Pallium Relay delivery in this Hermes turn.",
-        schema={"description": "Reply to the currently admitted Pallium Relay delivery in this turn.",
-                "parameters": {"type": "object", "properties": {
-            "delivery_id": {"type": "string", "maxLength": 64},
-            "payload": {"type": "string", "maxLength": MAX_REPLY_CHARS},
-        }, "required": ["delivery_id", "payload"], "additionalProperties": False}},
-        handler=reply,
-    )
+    if bridge:
+        for tool in bridge.catalog:
+            ctx.register_tool(
+                name=tool["name"], toolset="hermes-cli", is_async=False,
+                description=tool["description"],
+                schema={"description": tool["description"], "parameters": tool["parameters"]},
+                handler=mcp_handler(tool),
+            )
+    else:
+        ctx.register_tool(
+            name=TOOL_NAME, toolset="hermes-cli", is_async=False,
+            description="Reply to the currently admitted Pallium Relay delivery in this Hermes turn.",
+            schema={"description": "Reply to the currently admitted Pallium Relay delivery in this turn.",
+                    "parameters": {"type": "object", "properties": {
+                "delivery_id": {"type": "string", "maxLength": 64},
+                "payload": {"type": "string", "maxLength": MAX_REPLY_CHARS},
+            }, "required": ["delivery_id", "payload"], "additionalProperties": False}},
+            handler=reply,
+        )
     ctx.register_hook("on_session_end", clear_session)
     ctx.on_unload(unload)

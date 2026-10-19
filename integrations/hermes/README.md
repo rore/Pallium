@@ -1,94 +1,74 @@
-# Hermes Relay qualification adapter
+# Pallium Relay for Hermes
 
-This is a Windows-only disposable, frozen-profile qualification adapter for Hermes v0.22.2. It
-is not a general Hermes deployment integration. The qualification harness must
-verify the actual loaded-plugin inventory and the request received by a local
-provider stub. Competing llm_execution middleware, other providers, classic
-CLI injection, multiple profiles, and automatic recovery after an uncertain
-enqueue or claim remain unsupported. The native qualification is limited to
-the frozen, disposable Windows profile described below; it does not establish
-general compatibility.
+This is a frozen, disposable-profile qualification package for Hermes v0.22.2. It installs a native Hermes plugin, the discoverable `pallium-memory` skill, and the plugin-owned Pallium MCP bridge. Setup never creates a global `mcp_servers` connection and does not modify model/provider, toolset, Tool Search, other plugin, credential, or data settings.
 
-The public pre_llm_call hook receives Hermes session_id and turn_id. The
-adapter first polls only the payload-free pending-candidate endpoint, stores a
-profile/container/session/endpoint/delivery metadata fence, and injects a
-delivery-id/nonce wake marker. On the exact marker's actual turn, the hook
-claims with register_session: false and returns the full attributed delivery
-as request-only user context. llm_execution checks that the same marker and
-full context reached the current user message, forwards the request, and ACKs
-only after the provider call succeeds. The provider never performs Relay state
-changes. A delivery is limited to 1600 payload characters and 2400 characters
-including its attribution context. Oversized deliveries are refused. An
-uncertain enqueue or claim fence blocks blind retry; recovery is not qualified.
-Hermes emits on_session_end after each turn, so registrations remain available
-for later idle turns and are removed only when the plugin unloads.
+## Prepare an isolated profile
 
-Copy this directory to $HERMES_HOME/plugins/pallium-hermes-relay/. Configure
-an isolated Hermes profile with one enabled plugin and a loopback custom model
-stub. Replace both example ports and container scope with the disposable
-qualification values:
+The setup command requires an existing explicit profile with the qualification settings already present. It refuses to repair or silently change them. The selected profile must have no other enabled plugin, select only the existing `hermes-cli` toolset, use a loopback custom provider with no fallback, and set Tool Search to the string value `"off"`:
 
-    plugins:
-      enabled:
-        - pallium-hermes-relay
-      entries:
-        pallium-hermes-relay:
-          allow_gateway_injection: true
-          settings:
-            experimental_frozen_local_stub: true
-            service_url: http://127.0.0.1:29999
-            container_ref: git:example.test/team/hermes-e2e
+```yaml
+plugins:
+  enabled: []
+platform_toolsets:
+  cli: [hermes-cli]
+tools:
+  tool_search:
+    enabled: "off"
+model:
+  default: probe-model
+  provider: custom
+  base_url: http://127.0.0.1:57089/v1
+  api_key: local-stub
+  api_mode: chat_completions
+fallback_providers: []
+```
 
-    platform_toolsets:
-      cli: [hermes-cli]
+Use only a disposable `HERMES_HOME`, a loopback Pallium service, and a local provider stub. The installer calls the public Hermes config writer in the selected `--hermes-python` interpreter and refuses incompatible or unreadable profile config before touching package files.
 
-    tools:
-      tool_search:
-        enabled: "off"
+## Install, inspect, and remove
 
-    model:
-      default: probe-model
-      provider: custom
-      base_url: http://127.0.0.1:57089/v1
-      api_key: local-stub
-      api_mode: chat_completions
-    fallback_providers: []
+From the Pallium checkout, pass the exact profile and both Python environments:
 
-The plugin refuses startup unless the profile explicitly opts into this frozen
-experiment, enables exactly this plugin, explicitly selects the existing
-`hermes-cli` toolset, selects a loopback custom provider, and has no fallback
-provider/model. The unique reply tool joins that already-selected toolset;
-this does not add a separate toolset or widen the profile's existing tool
-selection. Tool Search must be explicitly disabled for this direct-tool
-qualification because the native provider request must contain the reply tool
-schema directly; the full Tool Search route is not qualified here. Quote
-`"off"` in YAML so it remains Hermes' string enum. allow_gateway_injection: true is required
-by Hermes for injection into an existing TUI/Desktop gateway session. The
-`pallium_relay_reply` tool accepts only `delivery_id` and `payload`. A public
-`tool_execution` middleware binds Hermes' trusted `session_id` and `turn_id` in
-a plugin-local ContextVar only while the normal host dispatch runs. The
-registered handler checks the bound turn against the admitted delivery and
-the host-supplied session. The middleware calls the normal `next_call(args)`
-path, preserving Hermes' authorization, hooks, and guardrails; other tools
-pass through unchanged. The handler refuses calls without this scoped binding
-because Hermes v0.22.2's ordinary registered-tool dispatch does not forward
-`turn_id`.
+```powershell
+python -m app.run setup hermes `
+  --home C:\path\to\disposable-hermes-home `
+  --hermes-python C:\path\to\hermes-venv\Scripts\python.exe `
+  --service-url http://127.0.0.1:29999 `
+  --container-ref git:example.test/team/hermes-e2e `
+  --actor-ref hermes-e2e `
+  --visibility private `
+  --mcp-python C:\path\to\pallium-venv\Scripts\python.exe `
+  --mcp-repo C:\path\to\Pallium
+```
 
-Run the native test only with a clean checkout of the exact Hermes release
-source (v0.22.2, commit d923a5eb487a17c0a68801bba9ef0f56c81040a8), a disposable
-virtual environment with that release's [web] dependencies, and an isolated
-HERMES_HOME/profile plus loopback Relay/provider stubs. Reuse an existing
-interpreter read-only; do not install or alter global tools or configuration.
-Set HERMES_E2E_SOURCE to that pinned source tree and HERMES_E2E_PYTHON to the
-disposable environment's Python executable, then run:
+`--mcp-python` defaults to the current Pallium interpreter and `--mcp-repo` to this checkout. Setup validates Pallium MCP SDK v1 and Hermes MCP SDK v2 before mutation. The `service-url`, container, actor and visibility values are explicit package scope; this release accepts private visibility only.
 
-    python -m pytest -m slow -q -n 0 tests/test_hermes_relay_native_e2e.py
+Inspect configured files with the same explicit profile:
 
-An optional disposable pytest base directory can be supplied with
---basetemp <temporary-directory>. The test exercises an actual Hermes host;
-the source-function qualification probe alone does not.
+```powershell
+python -m app.run setup hermes --home C:\path\to\disposable-hermes-home `
+  --hermes-python C:\path\to\hermes-venv\Scripts\python.exe --status
+```
 
-Only a successful local-provider-stub E2E run with the actual loaded inventory
-and Relay state checks establishes this narrow qualification. It does not
-qualify other Hermes releases, providers, middleware arrangements, restart
-recovery, or production use.
+Remove only unchanged package-owned files and configuration:
+
+```powershell
+python -m app.run setup hermes --home C:\path\to\disposable-hermes-home `
+  --hermes-python C:\path\to\hermes-venv\Scripts\python.exe --uninstall
+```
+
+Setup is repeatable. The installer stores ownership fingerprints beside the plugin and skill. It refuses unowned collisions or edited owned artifacts rather than replacing them. Removal restores the original `plugins.enabled` state, deletes only this plugin's exact config entry, and preserves unrelated nested configuration and other enabled plugins. A conflict leaves the profile untouched. Status checks file/config fingerprints only; it does not qualify a running host or live MCP connection.
+
+The profile skill is installed under `$HERMES_HOME/skills/pallium-memory/`, so Hermes includes it in normal skill discovery. History search and derived-memory tools are not exposed by this package. Relay hook deliveries own their claim and ACK; use the reply operation for an injected delivery and never receive or ACK it again.
+
+## Native qualification limits
+
+The native wake qualification remains limited to the pinned Hermes v0.22.2 source, explicit frozen local-provider profile, and loopback stubs. Run the focused host journey only with a clean pinned checkout and disposable Hermes environment:
+
+```powershell
+$env:HERMES_E2E_SOURCE = 'C:\path\to\pinned\hermes-agent'
+$env:HERMES_E2E_PYTHON = 'C:\path\to\hermes-venv\Scripts\python.exe'
+python -m pytest -m slow -q -n 0 tests/test_hermes_relay_native_e2e.py
+```
+
+This does not qualify other Hermes releases, remote providers, competing middleware, multiple-profile routing, recovery after uncertain enqueue/claim, or production use. It does not install into or alter a user's everyday Hermes profile.
