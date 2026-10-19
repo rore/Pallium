@@ -88,7 +88,7 @@ Agent technical review: `/root/refresh_plan_review`, reviewed revision `ff381aaa
 
 
 
-**State:** Ready to implement — phase 2 only: copy the reviewed and tested Minimap package from merge pin `283995cf8f3aae279fc51d55eb39f2c7e67b6874`. Phase 1 is complete; final selector, syntax/runtime/Redline qualification, hosted CI, and independent result review remain pending after the coherent candidate is assembled.
+**State:** Ready to implement — both package refresh phases are complete and parity-checked. Final selector, syntax/runtime/Redline qualification, hosted CI, and independent result review remain pending on the coherent candidate.
 
 <!-- agent-workflow:end -->
 
