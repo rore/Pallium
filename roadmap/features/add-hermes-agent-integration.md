@@ -1,7 +1,7 @@
 ---
 id: add-hermes-agent-integration
 title: Add Hermes Agent integration
-status: queued
+status: in-progress
 priority: high
 commitment: committed
 milestone: pallium-relay
@@ -10,17 +10,22 @@ lane: integration
 
 ## Summary
 
-Add Hermes Agent as the next runtime integration after the current reliability
-issues are resolved. The first deliverable is Relay: register an existing Hermes
-conversation, send/reply through the common Relay contract, deliver pending
-messages on natural turns, and qualify active wake for loaded TUI/Desktop and
-authorized messaging sessions using the released native plugin API.
+Ship the full Pallium integration package for Hermes Agent, covering the bundled
+skill and guidance, MCP tools, Relay, Session History capture/search/expansion,
+optional derived memory, and setup/removal support as in the existing runtime
+integrations. Deliver it in isolated slices alongside current reliability work.
+The first deliverable proves Relay through the released native plugin API;
+that proof alone does not complete this feature.
 
 Initial source validation on **2026-10-17** supports investigating **Hermes
-v0.22.2**, not waiting for unreleased gateway architecture. This is a queued
-feature and a proposed integration path, not a claim of working Pallium support.
-Full Session History ingestion and optional derived-memory integration need their
-own discovery; the supplied research establishes neither.
+v0.22.2**, not waiting for unreleased gateway architecture. Slices 1 and 2 have
+isolated native proofs and full non-slow regression passes. PR #321 is being
+prepared for publication against merged reliability work; broader qualification
+remains open. This is not general Hermes support.
+Session History and optional derived-memory behavior remain required integration
+scope, with discovery and E2E acceptance before claiming support. The supplied
+research establishes neither. The user explicitly confirmed full-package scope
+on 2026-10-19, including the skill, Session History and MCP.
 
 ## Why
 
@@ -32,11 +37,21 @@ drift after reset and duplicate actions or paid turns after ambiguous acceptance
 
 ## Sequencing
 
-- Keep this queued until the current correctness issues are resolved and the
-  release/rollout/real-delivery acceptance gates owned by
-  `add-wake-first-relay-delivery` are closed. This research does not satisfy those
-  gates. Hermes is the user's next feature; it precedes Copilot in runtime
+- On 2026-10-19 the user approved isolated slice 1 in parallel: first prove a
+  real released-host send → automatic idle wake → full payload → integration ACK
+  → reply round trip, using disposable data and a local provider stub. Branch
+  `feat/hermes-e2e-slice1` owns that experiment. No live setup is authorized.
+  Broader rollout remains behind the release/rollout/real-delivery gates owned by
+  `add-wake-first-relay-delivery`; this experiment does not satisfy those
+  gates. Hermes precedes Copilot in runtime
   expansion without changing Copilot's existing prerequisites.
+- The user subsequently approved slice 2 on 2026-10-19: installable skill and
+  guidance, trusted MCP, Hermes-originated discovery/send/reply, setup/status and
+  safe removal. `feat/hermes-package-slice2` is isolated from reliability and
+  stacked on pushed slice-1 checkpoint `377327dd`. Its installed-package native
+  journey and combined full-suite regression passed. The user approved preparing
+  and merging PR #321 before slice 3; its final integration gates remain required.
+  This does not imply live installation or broad qualification.
 - Consume the shipped `add-relay-activation-capability-contract` and
   `add-relay-delivery-trace`. Reuse capability, fallback, fencing, and diagnostic
   contracts rather than introducing Hermes-only delivery authority.
@@ -47,6 +62,107 @@ drift after reset and duplicate actions or paid turns after ambiguous acceptance
 
 ## In Scope
 
+### Agile delivery order
+
+1. **Slice 1, implemented experimental proof:** one loaded Windows Hermes v0.22.2 gateway conversation,
+   disposable profile/service data and local provider stub. Proved send → automatic
+   idle marker wake → actual-turn claim → complete attributed provider request →
+   integration ACK → host-bound reply → sender receipt. Common changes cover
+   runtime recognition and the metadata-only pending read. The plugin is an
+   explicitly enabled qualification adapter, not a general installation.
+2. **Installable Relay package, implemented experimental proof:** bundled Pallium skill and references,
+   runtime guidance, supported MCP configuration and trusted per-conversation
+   identity propagation, plus setup/status/removal. The real-host journey proves
+   Hermes discovers a recipient, initiates a message and receives its reply
+   through the packaged tools. Disposable-profile installation, repeated setup
+   and removal preserve unrelated configuration.
+3. **Session History:** capture governed user and assistant turns with stable
+   source identity and provenance. Prove a later Hermes session can search that
+   history and expand the source through MCP; preserve visibility, redaction,
+   forgetting, pagination and lookup lineage. This is required feature scope,
+   not an unrelated follow-up.
+4. **Optional derived memory:** package the existing configured memory tools and
+   guidance, and qualify any supported capture/query/injection hooks. Preserve
+   opt-in behavior and private defaults; Relay and History work without enabling
+   memory processing or provisioning a new inference provider.
+5. **Normal-use and recovery qualification:** busy-session queueing, concurrent
+   sessions, reset/close, restarts, ambiguous injection/ACK and stale routes.
+   Extend real-host E2E coverage and coordinate generic fixes with the Relay
+   reliability owner. Feature completion requires the complete package and its
+   qualified lifecycle, not only the slice-1 round trip.
+
+The frozen slice-1 topology must assert actual loaded plugin inventory before and
+after, strict profile/provider configuration, clean pinned bundled source and
+provider receipt before ACK. v0.22.2 exposes no public PluginContext middleware
+count or callback enumeration; arbitrary middleware hotloads and general-provider
+qualification remain blockers for broader release.
+
+**Slice-1 evidence, 2026-10-19:** the real pinned Windows gateway and local provider
+stub passed send → idle wake → full attributed request → integration ACK → native
+reply tool → original sender receipt. The same run passed wrong-recipient and
+closed-endpoint controls. This is an isolated experiment, not shipped support;
+human result review and the later slices remain open.
+The allocated full non-slow run stopped after 5,395 passes on an unchanged AnyIO
+limiter test: the shared test environment has 4.12.1 while this branch requires
+4.14.2 or newer. That exact test passes with locked 4.14.2 in a disposable overlay;
+the shared environment was not changed. A compatible-environment full rerun still
+needed a coordinated slot; the combined hosted validation below supersedes that request.
+
+Two native requirements emerged from execution. The disposable profile disables
+Tool Search with quoted `tools.tool_search.enabled: "off"` so the test can invoke
+the reply function directly. Default Tool Search bridge behavior remains later
+qualification. Registered handlers receive session ID but omit turn ID in this
+release; public `tool_execution` middleware carries both. A context-local handoff
+preserves normal host authorization and binds the reply to the admitted turn.
+
+**Slice-2 evidence, 2026-10-19:** production setup installed the skill and trusted
+12-tool MCP package into a disposable profile. The pinned released host loaded
+the skill and ran two conversations with overlapping discovery calls and distinct
+sender identities. Both sent through MCP, received peer replies by automatic
+wake, forwarded full attributed Unicode context to the local provider, ACKed
+after provider completion and replied through MCP to the peer. Wrong-recipient
+and closed-session controls retained pending messages without claims or ACKs.
+Repeated offline setup, status and removal preserved unrelated config, comments,
+credentials and data. Native E2E: **1 passed in 71.22s**; focused plugin/MCP/setup
+and default Relay MCP regressions also passed. Independent review accepts the
+frozen experiment. Combined hosted non-slow regression passed on Python 3.12 and
+3.13 (each **7,190 passed, 92 skipped, 2 xfailed**), plus Windows smoke; evidence
+is [draft PR #321](https://github.com/rore/Pallium/pull/321), application revision
+`882546cf`. An initial 3.12 common Relay setup timeout passed one focused test
+and one hosted job recheck without code/test changes. Human review remains open.
+Setup requires exclusive offline profile access: the native writer has no
+atomic conflict check for overlapping writers. Live setup, ordinary providers,
+default Tool Search, History, optional memory and recovery remain unqualified.
+Detailed revision, source hashes and disposable artifacts are recorded in
+`.agent-workflow/tasks/hermes-package-slice2.md`.
+
+**Publication integration:** merged main `cf4e8ece` (PR #314) was incorporated
+without conflict at `ad30f944`. The native package journey passed again in
+104.00s, and affected MCP/plugin/setup/app-run/Relay files passed 273 tests with
+one platform-permission skip. Independent review accepts the four-file code
+composition. Final hosted checks and review are authoritative on PR #321. The
+full feature remains in progress; slice 3 is Session History, and live rollout
+requires separate environment approval.
+
+### Complete integration scope
+
+- Bundle the `pallium-memory` skill, its applicable reference procedures and
+  Hermes-native orientation guidance. Cover Relay, Session History, optional
+  derived memory and work associations without inventing a second policy.
+- Expose the existing applicable Pallium MCP tool surface using supported Hermes
+  configuration and trusted live session/container identity. Qualify both normal
+  and Relay-woken tool use, concurrent conversations and permission refusal;
+  a static profile-wide MCP identity is not proof of the requesting conversation.
+  Reuse shared tools and contracts rather than building Hermes-specific copies.
+- Capture governed user and assistant turns for Session History, with stable
+  upstream event identities, idempotence, exact scope and provenance. Support
+  broad/exact-work search and source expansion through MCP, including bounded
+  replay and the existing visibility/redaction/forgetting contracts.
+- Support the existing optional derived-memory capabilities through the package,
+  with explicit configuration, private defaults and source provenance. Retrieval
+  alone never changes accessibility/ranking. Discover host hook support before
+  advertising automatic memory injection; do not require memory processing for
+  Relay or History.
 - A Hermes-native plugin, distributed through supported plugin mechanisms, with
   explicit setup, permission checks, compatibility detection, removal, and bounded
   lifecycle cleanup. Keep Hermes-specific behavior inside its integration.
@@ -55,8 +171,10 @@ drift after reset and duplicate actions or paid turns after ambiguous acceptance
   from trusted host turn context; never let the model select its own identity or
   use a static profile MCP connection as proof of the current conversation.
 - Natural-turn delivery through `pre_llm_call`, with payload admission/ACK
-  verification using the corresponding `pre_api_request` observation, subject to
-  the qualification limits below. Preserve attribution, scope, claim leases,
+  verification at the effective `llm_execution` request and successful downstream
+  execution in the explicit single-plugin/provider topology. The real local
+  provider stub must independently observe the complete attributed content;
+  `pre_api_request` alone is insufficient. Preserve attribution, scope, claim leases,
   `claim_attempt`, and `possible_redelivery`.
 - A small outbound pending-work poller in the owning Hermes host, using
   `ctx.inject_message("Pallium Relay wake: <delivery-id>", role="user",
@@ -64,9 +182,8 @@ drift after reset and duplicate actions or paid turns after ambiguous acceptance
   marker; the actionable payload stays in Pallium until claimed.
 - Reuse `RelayService.pending_candidate()` and
   `SQLiteRelayMixin.relay_pending_candidate()`'s exact-scope read-only
-  semantics. There is currently no generic pending-candidate HTTP route: a
-  host-bound, scoped wrapper
-  is a proposed change requiring API/security review, not an existing public API.
+  semantics. Slice 1 adds the scoped metadata-only HTTP wrapper; it remains
+  experimental on the isolated branch until validation/review and merge.
 - Integrate runtime validation, HTTP/MCP schemas, registration/activation,
   diagnostics/dashboard, setup and user guidance, and E2E coverage wherever the
   existing supported-runtime contract requires it. Audit these callers together;
@@ -79,7 +196,8 @@ drift after reset and duplicate actions or paid turns after ambiguous acceptance
    for all Hermes modes.
 2. Poll a bounded, read-only pending check. It must neither claim nor ACK nor
    expose message bodies. Retain existing scope and authorization boundaries.
-3. Before native submission, persist a Pallium-side wake fence tied to the exact
+3. Before native submission, persist an integration-owned metadata-only wake fence
+   in supported profile state, tied to the exact
    target and delivery. Submit at most one uncertain/accepted wake for that fence.
    A proven pre-submit refusal can permit retry; timeout or lost response cannot
    be treated as refusal. Coalesce safely without starving other pending messages.
@@ -126,7 +244,8 @@ drift after reset and duplicate actions or paid turns after ambiguous acceptance
 - **Acceptance is not durable execution.** Tagged tests show that accepted queued
   text is written to the session DB, but a never-drained prompt is retired on cold
   reopen after the in-memory queue is lost. A persisted row is not a replayable
-  turn. Keep the message and uncertain-attempt fence in Pallium; a restarted host
+  turn. Keep the message in Pallium and the integration-owned uncertain-attempt
+  fence in supported profile state; a restarted host
   must not trigger blind reinjection. Active-turn gateway resume is a separate
   recovery path; qualify it independently from busy-queue prompt replay.
 - **MCP identity still needs discovery.** The source review does not establish a
@@ -152,7 +271,7 @@ test/qualification claims are not inherited without inspecting their evidence.
 | Request observation after request middleware | Confirmed, with subsequent execution-middleware caveat; not provider receipt or action completion. | [Request assembly](https://github.com/NousResearch/hermes-agent/blob/v0.22.2/agent/turn_api_request.py#L43-L88), [ordering](https://github.com/NousResearch/hermes-agent/blob/v0.22.2/agent/turn_api_request.py#L142-L164), [execution wrapper](https://github.com/NousResearch/hermes-agent/blob/v0.22.2/agent/turn_api_call.py#L121-L139) |
 | Pending candidate reuse in Pallium | Confirmed locally: `core/relay.py` and `storage/sqlite_relay.py` query exact registered scope without claiming/ACKing; no generic HTTP wrapper was found. | Existing methods and their callers in `app/claude_wake.py`, `app/codex_wake.py`, and `app/dependencies.py` |
 | Bot Chat live-owner handoff and run idempotency | Confirmed source primitives; optional, not part of generic session wake. Store exposes `durable` and can fall back to memory. Tests include `test_restart_durability_and_terminal_semantics` and `test_dead_owner_nonterminal_status_becomes_interrupted`. | [Run dispatch](https://github.com/NousResearch/hermes-agent/blob/v0.22.2/gateway/platforms/api_server_runs.py#L735-L751), [idempotency store](https://github.com/NousResearch/hermes-agent/blob/v0.22.2/gateway/platforms/api_server_run_idempotency.py#L53-L84), [run tests](https://github.com/NousResearch/hermes-agent/blob/v0.22.2/tests/gateway/test_api_server_runs.py) |
-| End-to-end Pallium delivery, reset isolation, and crash recovery | Unproven. Hermes has separate interrupted-active-turn resume behavior; it does not qualify Pallium delivery or queued-prompt replay. | [Gateway active-turn recovery tests](https://github.com/NousResearch/hermes-agent/blob/v0.22.2/tests/gateway/test_restart_resume_pending.py), required qualification below |
+| End-to-end Pallium delivery, reset isolation, and crash recovery | Slice-1 idle wake/payload/ACK/reply passed in the isolated Windows gateway/local-stub topology, including wrong-recipient and closed-endpoint controls. Reset/crash recovery and queued-prompt replay remain unproven. | `tests/test_hermes_relay_native_e2e.py`; [gateway active-turn recovery tests](https://github.com/NousResearch/hermes-agent/blob/v0.22.2/tests/gateway/test_restart_resume_pending.py), remaining qualification below |
 
 ## Alternatives and Deferred Options
 
@@ -183,11 +302,29 @@ test/qualification claims are not inherited without inspecting their evidence.
 - A Hermes-side HTTP listener, second durable delivery queue, general orchestration
   engine, automatic takeover, or automatic host upgrade/migration.
 - Native Bot Chat transport in the first deliverable unless separately justified.
-  No new inference provider, broad Session History ingestion, or derived-memory
-  dependency is implied by Relay support.
+  No new inference provider or mandatory derived-memory processing dependency.
+  Session History capture and access, skill packaging and MCP are required parts
+  of this feature even though they were not part of the first Relay experiment.
 
 ## Done When
 
+- [ ] A supported installable Hermes package includes the Pallium skill and
+  references, runtime guidance, MCP connection and trusted identity plumbing,
+  plugin hooks, setup/status/removal documentation and compatibility reporting.
+  Disposable-profile E2E proves install → use → repeated setup → remove and
+  preserves unrelated configuration, credentials and user data.
+- [ ] Real Hermes tool calls exercise the applicable common MCP capabilities,
+  including Relay initiation/reply, broad and exact-work History search, source
+  expansion, work associations and configured optional memory operations.
+  Concurrent sessions cannot impersonate one another, and missing trusted
+  identity or permission fails closed. Normal and Relay-woken turns are covered.
+- [ ] History E2E captures user and assistant turns in Hermes, finds them from a
+  later session and expands the original source, with stable provenance,
+  duplicate suppression, bounded paging and lookup lineage. Visibility,
+  redaction, forgetting and service failure retain their existing contracts.
+- [ ] Optional derived-memory support is documented and tested in its supported
+  modes; disabled mode leaves Relay and History usable. Private defaults,
+  correction/forget provenance and the retrieval accessibility invariant hold.
 - [ ] Exact released build, supported host/OS/provider modes, permissions,
   trustworthy identity propagation, lifecycle hooks, and middleware admission
   boundary are documented with a tested capability/fallback matrix.
