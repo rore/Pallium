@@ -76,6 +76,11 @@ stub passed send → idle wake → full attributed request → integration ACK �
 reply tool → original sender receipt. The same run passed wrong-recipient and
 closed-endpoint controls. This is an isolated experiment, not shipped support;
 full-suite validation, human result review and the later slices remain open.
+The allocated full non-slow run stopped after 5,395 passes on an unchanged AnyIO
+limiter test: the shared test environment has 4.12.1 while this branch requires
+4.14.2 or newer. That exact test passes with locked 4.14.2 in a disposable overlay;
+the shared environment was not changed. A compatible-environment full rerun still
+needs a coordinated slot.
 
 Two native requirements emerged from execution. The disposable profile disables
 Tool Search with quoted `tools.tool_search.enabled: "off"` so the test can invoke

@@ -112,9 +112,23 @@ endpoint controls passed. No owned host/seed processes remained after cleanup.
   `tests/test_agent_relay_e2e.py` **64 passed**;
   `tests/test_relay_wake_contract.py` **9 passed**. Native collection uses no optional
   Hermes import in the base test environment. `git diff --check` passed.
-- Whole-change selector requires `python -m pytest tests/ -x -q`. The full non-slow
-  suite has **not run**: the reliability owner has not granted a local resource slot.
-  No PR/merge readiness or complete feature qualification is claimed.
+- Whole-change selector requires `python -m pytest tests/ -x -q`. Allocated run
+  `hermes-full-b4621fa5-20261019T100434Z` at clean b4621fa5 completed with
+  **1 failed, 5395 passed, 2 skipped, 2 xfailed in 395.81s** (pytest exit 2),
+  stopping at `tests/test_relay_capacity_isolation.py::test_capacity_limiter_reserves_released_token_for_waiting_borrower`:
+  borrowed tokens 5 exceeded the configured 4. This test, pyproject.toml and
+  uv.lock are unchanged from base 701608cd. The shared test interpreter contains
+  AnyIO 4.12.1; this branch requires >=4.14.2,<5 and locks 4.14.2. An audit of
+  declared runtime/dev requirements found this sole mismatch and no missing
+  packages. The exact node fails alone on 4.12.1 and passes with locked 4.14.2
+  loaded from a disposable child-only PYTHONPATH overlay (**1 passed in 0.16s**).
+  No shared/global package or persistent environment changed; no code/test fix.
+  The full gate remains unsatisfied pending a coordinated compatible-environment
+  rerun. No PR/merge readiness or complete feature qualification is claimed.
+- Full-run log and PID/exit metadata:
+  `%TEMP%\pallium-hermes-e2e-slice1-01a1489e\hermes-full-b4621fa5-20261019T100434Z\{pytest.log,run.json}`.
+  PID 69084 and captured descendants exited; remaining owned count zero. The
+  allocated slot was released through Relay before the focused diagnosis.
 
 Runtime execution corrected source-only assumptions: `on_session_end` is per turn;
 Tool Search defers registered tools by default; ordinary handler dispatch drops
@@ -159,8 +173,10 @@ Owner: this chat; canonical item `add-hermes-agent-integration`,
 full validation and review; never install it into the live service. The native
 slice-1 proof is achieved; the broader feature remains in progress.
 
-Next: independent final review, then run the selector-required full suite in the
-coordinated resource window. The original source-only feasibility branch is not a
+Next: rerun the selector-required full suite with the isolated locked-AnyIO overlay
+after a replacement resource slot is allocated, then obtain separate human result
+review. Independent technical result review is already accepted for unchanged
+application/test bytes. The original source-only feasibility branch is not a
 prerequisite for this proof; do not duplicate its probes or spend a second full-suite
 run there. Shared merge overlap with reliability remains the four additive core/API
 files and must be coordinated before publishing.
@@ -176,4 +192,13 @@ fallback reported that concrete failure and clarified that only the E2E branch
 needs a full-suite slot; the earlier source-only branch is superseded. No tests
 have been started on the reliability owner's behalf. The recipient later
 confirmed that the delayed update arrived; this was delayed delivery, not proven
-permanent loss. The manager's full-suite slot decision remains pending.
+permanent loss. The manager subsequently allocated one full-suite run via
+`relay-delivery-a37298921c47437089a281ced563e38b`; current b4621fa5 differs from
+the allocated reviewed 8840efed only in the Work Record and roadmap documentation.
+Acceptance and PID ownership were reported before execution. Completion and slot
+release were sent as `relay-msg-8fba3a58117e463c89db285ad5716150`; dependency
+diagnosis and replacement-slot request as `relay-msg-a01dd79d737e4fdb84f10d6c31498dcc`
+to the authorized reviewer for manager forwarding (no verified direct manager
+route). These sends were pending when returned; they are not receipt evidence.
+State remains Blocked on the replacement coordinated full-suite slot. Do not
+start another full run without allocation or modify the shared environment.
