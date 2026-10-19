@@ -214,9 +214,11 @@ explicit across HTTP, MCP, and dashboard without turning acceptance into deliver
 `add-relay-delivery-trace` shipped bounded diagnostic evidence through message
 detail, HTTP, and MCP.
 Hermes slice 1 has a real released-host round-trip proof with a local provider
-stub; compatible-environment full validation remains open. Slice 2 starts in a
-separate stacked checkout: an installable skill/guidance and trusted MCP package
-with Hermes-originated discovery/send, reply/wake and safe setup/removal.
+stub; compatible-environment full validation remains open. Slice 2's separate
+stacked checkout also proves the installed skill, trusted MCP, two concurrent
+Hermes conversations, discovery/send/reply/wake and offline setup/removal with
+unrelated data preserved. Full validation and human review remain open; live
+installation and overlapping profile writers are unqualified.
 `add-hermes-agent-integration` owns the full Hermes package: skill/guidance, MCP
 with trusted session identity, Relay, Session History capture/search/expansion,
 optional derived memory, setup/removal and lifecycle qualification. The narrow

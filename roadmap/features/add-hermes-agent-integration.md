@@ -18,8 +18,8 @@ The first deliverable proves Relay through the released native plugin API;
 that proof alone does not complete this feature.
 
 Initial source validation on **2026-10-17** supports investigating **Hermes
-v0.22.2**, not waiting for unreleased gateway architecture. Slice 1 is in progress
-in an isolated checkout; this is not a claim of shipped Pallium support.
+v0.22.2**, not waiting for unreleased gateway architecture. Slices 1 and 2 have
+isolated native proofs; full validation remains open. This is not shipped support.
 Session History and optional derived-memory behavior remain required integration
 scope, with discovery and E2E acceptance before claiming support. The supplied
 research establishes neither. The user explicitly confirmed full-package scope
@@ -46,8 +46,9 @@ drift after reset and duplicate actions or paid turns after ambiguous acceptance
 - The user subsequently approved slice 2 on 2026-10-19: installable skill and
   guidance, trusted MCP, Hermes-originated discovery/send/reply, setup/status and
   safe removal. `feat/hermes-package-slice2` is isolated from reliability and
-  stacked on pushed slice-1 checkpoint `377327dd`; discovery and technical plan
-  review precede code. This does not imply live installation or a full-suite slot.
+  stacked on pushed slice-1 checkpoint `377327dd`. Its installed-package native
+  journey passed; a combined full-suite slot and human result review remain open.
+  This does not imply live installation or broad qualification.
 - Consume the shipped `add-relay-activation-capability-contract` and
   `add-relay-delivery-trace`. Reuse capability, fallback, fencing, and diagnostic
   contracts rather than introducing Hermes-only delivery authority.
@@ -110,6 +111,23 @@ the reply function directly. Default Tool Search bridge behavior remains later
 qualification. Registered handlers receive session ID but omit turn ID in this
 release; public `tool_execution` middleware carries both. A context-local handoff
 preserves normal host authorization and binds the reply to the admitted turn.
+
+**Slice-2 evidence, 2026-10-19:** production setup installed the skill and trusted
+12-tool MCP package into a disposable profile. The pinned released host loaded
+the skill and ran two conversations with overlapping discovery calls and distinct
+sender identities. Both sent through MCP, received peer replies by automatic
+wake, forwarded full attributed Unicode context to the local provider, ACKed
+after provider completion and replied through MCP to the peer. Wrong-recipient
+and closed-session controls retained pending messages without claims or ACKs.
+Repeated offline setup, status and removal preserved unrelated config, comments,
+credentials and data. Native E2E: **1 passed in 71.22s**; focused plugin/MCP/setup
+and default Relay MCP regressions also passed. Independent review accepts the
+frozen experiment; combined full non-slow validation and human review remain
+open. Setup requires exclusive offline profile access: the native writer has no
+atomic conflict check for overlapping writers. Live setup, ordinary providers,
+default Tool Search, History, optional memory and recovery remain unqualified.
+Detailed revision, source hashes and disposable artifacts are recorded in
+`.agent-workflow/tasks/hermes-package-slice2.md`.
 
 ### Complete integration scope
 

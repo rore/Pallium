@@ -68,7 +68,7 @@ This approves the immediately preceding installable-package slice and disposable
 **Exceptions:**
 —
 
-**State:** Ready to implement
+**State:** Blocked
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -102,8 +102,10 @@ This approves the immediately preceding installable-package slice and disposable
 - The actual MCP 2.0 client to Pallium 1.29 stdio catalog probe passed with 12
   tools and hidden model identity/receipt fields; the owned connection closed.
   SDK 2 uses public snake-case result fields, which the client now follows.
-- Real-host package lifecycle/concurrent-conversation E2E is being extended by the
-  cheaper harness worker. No full non-slow run or live setup has started.
+- Real-host package lifecycle/concurrent-conversation E2E passed through the
+  production installer and actual pinned host. No full non-slow run or live setup
+  has started. The only external verification blocker is a coordinated full-suite
+  slot; human result review remains required after technical validation.
 
 ## Evidence
 
@@ -124,6 +126,41 @@ Pinned optional MCP 2.0.0 and 11 supporting packages were installed only into th
 existing disposable Hermes qualification venv; actual call_tool(meta=...) and
 stdio signatures were inspected. Shared/global packages were unchanged.
 
+Native package journey: **1 passed in 71.22s** against application checkpoint
+`c250aec2df49c920ba23f1466ba60e824c4dac4d` and the accompanying native test diff.
+The real host loaded the installed skill via `skill_view`, offered the exact 12
+MCP tool schemas, and ran two conversations with distinct trusted identities and
+overlapping discovery requests (two arrivals, peak two, no barrier error).
+Both initiated sends through MCP, received the peer reply by automatic idle wake,
+forwarded full attributed Unicode context to the local provider, ACKed after its
+completion, and replied through MCP. Normal Relay reads verified delivered state
+and peer receipt. Actual inbound receipts/tokens were absent from provider traffic.
+Wrong-recipient and closed-session controls never claimed/ACKed the payload.
+Offline repeat setup/status/removal preserved unrelated configuration, comments,
+credentials and user data. No owned Hermes-venv process remained after cleanup.
+
+Artifacts: `%TEMP%\pytest-of-I347041\pytest-6372\test_released_hermes_idle_rela0`
+(`provider-requests.json`, `relay-calls.json`, host/driver logs and disposable DBs).
+Pinned Hermes source: `d923a5eb487a17c0a68801bba9ef0f56c81040a8`.
+Installed plugin SHA-256:
+`5883e2f003d605b9c4f480bef77f0921d85b42510291372a0015b1240d15e4d5`;
+bridge SHA-256:
+`c27491c90ab4e5fb2b0f353dc191ac53a7cd63dcdb90880218a55bab65173567`.
+Parent verified these and every installed skill hash against current source.
+After the pass, only explicit no-barrier-error/two-arrival assertions were added;
+syntax compiled and captured evidence satisfies both without another native run.
+
+Whole-change selector requires `python -m pytest tests/ -x -q`. Not run yet:
+waiting for one coordinated combined slice-1/2 slot; the shared AnyIO 4.12.1
+environment is incompatible, so the run must use the existing child-only TEMP
+4.14.2 overlay. Import boundaries: zero violations. Redline: High, architecture/API
+shadow checkpoints and whole-stack size warning (25 non-record files, 4,173
+changed lines); no protected behavior contract edits or boundary violations.
+The workflow's commit-order advisory includes inherited slice-1 commits; this
+slice's record checkpoint `31e11b15` precedes its application edits at `e25f73df`.
+Slot request `relay-msg-c46e71b504ab4361ac50e067307056b1` was sent to authorized
+`@astra-reviewer`; queued/ACKed transport does not allocate a slot.
+
 ## Result review
 
 Agent technical review: /root/hermes_e2e_review, 2026-10-19, accepted the code for
@@ -132,8 +169,8 @@ writer-contract and skill corrections. No remaining actionable code blocker.
 Reviewed revision: e25f73df plus the inspected corrective diff in setup_hermes.py,
 README, mcp_bridge.py, skill/wait guidance and corresponding setup tests.
 Verification adequacy: focused code/stdio tests and actual MCP SDK interoperability
-support the narrow code verdict. Native package/concurrent-host E2E, the full
-non-slow suite and separate human result review still gate overall completion.
+support the narrow code verdict. The full non-slow suite and separate human
+result review still gate overall completion.
 
 Review verified per-call middleware identity in metadata, server-side fixed scope
 and self-identity checks, private admission receipts, host-session revalidation,
@@ -141,9 +178,30 @@ context reset, exact tool catalog and unchanged default registration. Offline
 exclusive profile access is the accepted setup boundary; the writer's digest
 check is not atomic CAS. No production or overlapping-config-writer claim.
 
+Incremental agent technical review: /root/hermes_e2e_review, 2026-10-19, accepted
+the final native harness and pytest-6372 artifacts. Reviewed revision: application
+`c250aec2` plus the native-test diff recorded with this evidence. No actionable
+harness gap remains. Verification adequacy: production install/use/removal,
+installed skill, real MCP catalog/discovery/send/reply, two overlapping host
+conversations, attribution, provider-before-ACK-before-reply ordering, private
+receipt exclusion, delivered state reads and negative controls support the narrow
+frozen-profile outcome. Reviewer independently checked source/artifact pinning,
+event order, zero private-value leaks and removed package files. Unchanged
+application review is reused; the post-pass assertion-only addition is discharged
+by saved evidence and syntax compilation. High risk and the size advisory remain;
+this does not replace the full-suite or separate human review gates.
+
 ## Recovery
 
-Owner: this chat. Next: implement the reviewed identity/packaging plan, run focused
-caller-surface and actual native/MCP tests, then obtain result review. Keep this worktree
-for the concrete slice-2 implementation; do not install it into everyday use.
+Owner: this chat. Branch `feat/hermes-package-slice2`; last pushed application
+checkpoint `c250aec2df49c920ba23f1466ba60e824c4dac4d`. Native evidence and its final
+review are being checkpointed next. First remaining action: obtain the coordinated
+full-suite slot and run the selector's check with the isolated compatible overlay;
+then reconcile failures or evidence and obtain separate human result review.
+The full feature stays in progress; History, optional memory, recovery and broad
+host/provider support remain future slices. Retain this worktree for concrete
+validation/review; do not install it into everyday use. No live setup is authorized.
+
+Skill feedback trigger 2 dropped: review corrected application/test implementation,
+not an Agent Workflow instruction or product defect.
 
