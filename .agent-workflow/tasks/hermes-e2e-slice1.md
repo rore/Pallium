@@ -202,3 +202,21 @@ to the authorized reviewer for manager forwarding (no verified direct manager
 route). These sends were pending when returned; they are not receipt evidence.
 State remains Blocked on the replacement coordinated full-suite slot. Do not
 start another full run without allocation or modify the shared environment.
+
+## Overall feature scope clarification, 2026-10-19
+
+The user explicitly requires the complete Hermes Pallium package, including the
+skill, Session History and MCP (request `5a3ea48b-41ff-45be-9500-1a1a3e80f936`).
+The canonical item and scope narrative now require bundled guidance/references,
+trusted MCP identity and applicable shared tools, governed History capture and
+search/expansion, configured optional memory support, setup/status/removal and
+lifecycle E2E. Existing Codex/Claude skill packages, integration guides and the
+OpenCode README provide the local parity baseline. Previous roadmap language
+leaving History as separate discovery was incomplete and is corrected.
+
+This reconciliation edits only this record and its already-scoped roadmap files.
+It does not expand the slice-1 code, change its approved requirement baseline or
+claim that the full package exists. Subsequent packaging implementation needs
+its own scoped discovery, risk classification and review before code edits.
+The complete feature remains in progress; full validation and human review of
+the first slice are still open. Preserve its isolation from reliability work.

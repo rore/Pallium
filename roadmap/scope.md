@@ -216,8 +216,11 @@ detail, HTTP, and MCP.
 Hermes slice 1 is in progress in an isolated checkout alongside reliability work:
 prove a real released-host send, automatic idle wake, complete payload, integration
 ACK and reply using disposable data and a local provider stub.
-`add-hermes-agent-integration` owns this narrow experiment and the remaining
-admission/identity and qualification work. Broader rollout remains behind the
+`add-hermes-agent-integration` owns the full Hermes package: skill/guidance, MCP
+with trusted session identity, Relay, Session History capture/search/expansion,
+optional derived memory, setup/removal and lifecycle qualification. The narrow
+round-trip experiment is its first slice; packaging and History remain required
+scope. Broader rollout remains behind the
 current release/rollout/real-delivery gates; this is not shipped Hermes support.
 
 Copilot remains later runtime expansion behind its primary-runtime wake

@@ -10,17 +10,20 @@ lane: integration
 
 ## Summary
 
-Add Hermes Agent as the next runtime integration, with isolated preparation in
-parallel with current reliability work. The first deliverable is Relay: register an existing Hermes
-conversation, send/reply through the common Relay contract, deliver pending
-messages on natural turns, and qualify active wake for loaded TUI/Desktop and
-authorized messaging sessions using the released native plugin API.
+Ship the full Pallium integration package for Hermes Agent, covering the bundled
+skill and guidance, MCP tools, Relay, Session History capture/search/expansion,
+optional derived memory, and setup/removal support as in the existing runtime
+integrations. Deliver it in isolated slices alongside current reliability work.
+The first deliverable proves Relay through the released native plugin API;
+that proof alone does not complete this feature.
 
 Initial source validation on **2026-10-17** supports investigating **Hermes
 v0.22.2**, not waiting for unreleased gateway architecture. Slice 1 is in progress
 in an isolated checkout; this is not a claim of shipped Pallium support.
-Full Session History ingestion and optional derived-memory integration need their
-own discovery; the supplied research establishes neither.
+Session History and optional derived-memory behavior remain required integration
+scope, with discovery and E2E acceptance before claiming support. The supplied
+research establishes neither. The user explicitly confirmed full-package scope
+on 2026-10-19, including the skill, Session History and MCP.
 
 ## Why
 
@@ -58,12 +61,26 @@ drift after reset and duplicate actions or paid turns after ambiguous acceptance
    integration ACK → host-bound reply → sender receipt. Keep common changes to
    runtime recognition and the metadata-only pending read. The plugin is an
    explicitly enabled qualification adapter, not a general installation.
-2. **Normal use:** busy-session queueing, concurrent loaded sessions and basic
-   send/address usability, extending the same real-host E2E journey.
-3. **Recovery:** restarts, ambiguous injection/ACK, stale routes and lifecycle
-   transitions, coordinated with the generic Relay reliability owner.
-4. **Incremental parity:** setup/removal and remaining supported Relay features.
-   Session History and derived memory retain separate discovery and acceptance.
+2. **Installable Relay package:** bundle the Pallium skill and its references,
+   runtime guidance, supported MCP configuration and trusted per-conversation
+   identity propagation, plus setup/status/removal. Extend the real-host journey
+   so Hermes discovers a recipient, initiates a message and receives its reply
+   through the packaged tools. Verify installation in a disposable profile,
+   repeat setup safely, remove it and preserve unrelated configuration.
+3. **Session History:** capture governed user and assistant turns with stable
+   source identity and provenance. Prove a later Hermes session can search that
+   history and expand the source through MCP; preserve visibility, redaction,
+   forgetting, pagination and lookup lineage. This is required feature scope,
+   not an unrelated follow-up.
+4. **Optional derived memory:** package the existing configured memory tools and
+   guidance, and qualify any supported capture/query/injection hooks. Preserve
+   opt-in behavior and private defaults; Relay and History work without enabling
+   memory processing or provisioning a new inference provider.
+5. **Normal-use and recovery qualification:** busy-session queueing, concurrent
+   sessions, reset/close, restarts, ambiguous injection/ACK and stale routes.
+   Extend real-host E2E coverage and coordinate generic fixes with the Relay
+   reliability owner. Feature completion requires the complete package and its
+   qualified lifecycle, not only the slice-1 round trip.
 
 The frozen slice-1 topology must assert actual loaded plugin inventory before and
 after, strict profile/provider configuration, clean pinned bundled source and
@@ -91,6 +108,23 @@ preserves normal host authorization and binds the reply to the admitted turn.
 
 ### Complete integration scope
 
+- Bundle the `pallium-memory` skill, its applicable reference procedures and
+  Hermes-native orientation guidance. Cover Relay, Session History, optional
+  derived memory and work associations without inventing a second policy.
+- Expose the existing applicable Pallium MCP tool surface using supported Hermes
+  configuration and trusted live session/container identity. Qualify both normal
+  and Relay-woken tool use, concurrent conversations and permission refusal;
+  a static profile-wide MCP identity is not proof of the requesting conversation.
+  Reuse shared tools and contracts rather than building Hermes-specific copies.
+- Capture governed user and assistant turns for Session History, with stable
+  upstream event identities, idempotence, exact scope and provenance. Support
+  broad/exact-work search and source expansion through MCP, including bounded
+  replay and the existing visibility/redaction/forgetting contracts.
+- Support the existing optional derived-memory capabilities through the package,
+  with explicit configuration, private defaults and source provenance. Retrieval
+  alone never changes accessibility/ranking. Discover host hook support before
+  advertising automatic memory injection; do not require memory processing for
+  Relay or History.
 - A Hermes-native plugin, distributed through supported plugin mechanisms, with
   explicit setup, permission checks, compatibility detection, removal, and bounded
   lifecycle cleanup. Keep Hermes-specific behavior inside its integration.
@@ -110,9 +144,8 @@ preserves normal host authorization and binds the reply to the admitted turn.
   marker; the actionable payload stays in Pallium until claimed.
 - Reuse `RelayService.pending_candidate()` and
   `SQLiteRelayMixin.relay_pending_candidate()`'s exact-scope read-only
-  semantics. There is currently no generic pending-candidate HTTP route: a
-  host-bound, scoped wrapper
-  is a proposed change requiring API/security review, not an existing public API.
+  semantics. Slice 1 adds the scoped metadata-only HTTP wrapper; it remains
+  experimental on the isolated branch until validation/review and merge.
 - Integrate runtime validation, HTTP/MCP schemas, registration/activation,
   diagnostics/dashboard, setup and user guidance, and E2E coverage wherever the
   existing supported-runtime contract requires it. Audit these callers together;
@@ -231,11 +264,29 @@ test/qualification claims are not inherited without inspecting their evidence.
 - A Hermes-side HTTP listener, second durable delivery queue, general orchestration
   engine, automatic takeover, or automatic host upgrade/migration.
 - Native Bot Chat transport in the first deliverable unless separately justified.
-  No new inference provider, broad Session History ingestion, or derived-memory
-  dependency is implied by Relay support.
+  No new inference provider or mandatory derived-memory processing dependency.
+  Session History capture and access, skill packaging and MCP are required parts
+  of this feature even though they were not part of the first Relay experiment.
 
 ## Done When
 
+- [ ] A supported installable Hermes package includes the Pallium skill and
+  references, runtime guidance, MCP connection and trusted identity plumbing,
+  plugin hooks, setup/status/removal documentation and compatibility reporting.
+  Disposable-profile E2E proves install → use → repeated setup → remove and
+  preserves unrelated configuration, credentials and user data.
+- [ ] Real Hermes tool calls exercise the applicable common MCP capabilities,
+  including Relay initiation/reply, broad and exact-work History search, source
+  expansion, work associations and configured optional memory operations.
+  Concurrent sessions cannot impersonate one another, and missing trusted
+  identity or permission fails closed. Normal and Relay-woken turns are covered.
+- [ ] History E2E captures user and assistant turns in Hermes, finds them from a
+  later session and expands the original source, with stable provenance,
+  duplicate suppression, bounded paging and lookup lineage. Visibility,
+  redaction, forgetting and service failure retain their existing contracts.
+- [ ] Optional derived-memory support is documented and tested in its supported
+  modes; disabled mode leaves Relay and History usable. Private defaults,
+  correction/forget provenance and the retrieval accessibility invariant hold.
 - [ ] Exact released build, supported host/OS/provider modes, permissions,
   trustworthy identity propagation, lifecycle hooks, and middleware admission
   boundary are documented with a tested capability/fallback matrix.
