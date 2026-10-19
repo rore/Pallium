@@ -61,6 +61,7 @@ When publishing the stacked change, existing contracts and imports remain valid 
 
 **Plan review:**
 Agent technical review: /root/hermes_e2e_review, 2026-10-19, record checkpoint 31e11b15, accepted with the exact allowlist and server-side identity-enforcement conditions now incorporated in steps 3-4. Reviewer inspected pinned public middleware/MCP paths and shared server send/name/current-identity behavior, confirmed SDK 2.0 per-call metadata from primary source and requires actual stdio interoperability. Parent independently verified the actual disposable 2.0.0 signature. No host patch, private registry, model identity or profile-global current session. Direct stdio missing/conflicting identity and actual same-profile concurrency controls are required. Default factory registration must remain unchanged. Conditional acceptance is discharged by these concrete planning constraints; their behavioral evidence remains required before result acceptance.
+Publication plan review: /root/hermes_e2e_review, 2026-10-19, accepted `acaf2875` against merged main `cf4e8ece`. Four overlapping files have disjoint hunks; preserve main's optional claim expiry forwarding and startup ownership. Actual native package E2E, focused Relay turn/claim and app.run checks, fresh boundary/risk checks and hosted full non-slow CI are required. Earlier unchanged integration review is reused. No new host behavior or live installation is approved.
 
 **Approvals:**
 Approved by user 2026-10-19: "ok, let's start slice 2. keep it isolated from the reliability work, use cheaper models where it makes sense, and push the work so we don't lose it."
@@ -84,6 +85,11 @@ Approved by user 2026-10-19: "let's do it", in direct response to preparing PR #
   test, CI, storage or dependency edit is planned. Fresh integration/native
   evidence is required before accepting this composition. The original baseline
   and frozen experimental qualification are unchanged.
+- Fresh pre-integration Redline remains High with architecture/API shadow
+  checkpoints and size advisory; zero import/boundary violations. The independent
+  reviewer accepted the composition plan before merging. The last docs-only
+  hosted run has new failures; a cheaper worker is comparing their exact paths
+  against merged main before any rerun or change.
 
 - Created an isolated managed worktree from the pushed slice-1 branch; the shared
   development checkout's unrelated dirty files are preserved.
