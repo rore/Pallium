@@ -20,8 +20,7 @@ that proof alone does not complete this feature.
 Initial source validation on **2026-10-17** supports investigating **Hermes
 v0.22.2**, not waiting for unreleased gateway architecture. Slices 1 and 2 have
 isolated native proofs and full non-slow regression passes. PR #321 merged as
-`f0ba4647`; broader qualification remains open. Slice 3 Session History is being
-implemented and qualified on `feat/hermes-history-slice3`. This is not general Hermes support.
+`f0ba4647`; broader qualification remains open. Slice 3 Session History has an isolated native proof on `feat/hermes-history-slice3`. This is not general Hermes support.
 Session History and optional derived-memory behavior remain required integration
 scope, with discovery and E2E acceptance before claiming support. The supplied
 research establishes neither. The user explicitly confirmed full-package scope
@@ -151,6 +150,22 @@ one platform-permission skip. Independent review accepts the four-file code
 composition. Final hosted checks passed and PR #321 merged as `f0ba4647`. The
 full feature remains in progress; slice 3 Session History qualification is active,
 and live rollout requires separate environment approval.
+
+**Slice-3 evidence, 2026-10-19:** [PR #322](https://github.com/rore/Pallium/pull/322)
+adds private hook-observed user/final-assistant snapshots, stable host message IDs,
+verified exact-session work associations, and packaged broad/exact-work search
+plus source expansion. Real Hermes E2E passed in **101.11s** at application
+`016cce03`: a distinct later conversation searched and expanded original Unicode
+turns, alongside existing Relay concurrency/wake and install/removal checks.
+Focused capture/Relay/setup: **95 passed, 1 skipped**; real stdio MCP: **17 passed**.
+Independent technical review accepted the bounded implementation; required hosted
+full-suite status and human result review are authoritative on the PR.
+The source claim is hook observation, not Hermes database commit. Capture skips
+unsupported/oversized/ambiguous rows and synthetic wake user markers. Forgetting,
+redaction, private scope, paging and lookup lineage reuse existing contracts.
+There is no new forget tool, supported-memory expansion or durable capture retry.
+Broader normal-provider, Tool Search, optional-memory and recovery qualification
+remain open. Work Record: `.agent-workflow/tasks/hermes-history-slice3.md`.
 
 ### Complete integration scope
 
