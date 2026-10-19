@@ -104,8 +104,9 @@ This approves the immediately preceding installable-package slice and disposable
   SDK 2 uses public snake-case result fields, which the client now follows.
 - Real-host package lifecycle/concurrent-conversation E2E passed through the
   production installer and actual pinned host. No full non-slow run or live setup
-  has started. The only external verification blocker is a coordinated full-suite
-  slot; human result review remains required after technical validation.
+  has started locally. Draft PR #321 now owns the hosted full-suite evidence;
+  the local slot request is on hold to avoid duplicating that run. Human result
+  review remains required after technical validation.
 
 ## Evidence
 
@@ -150,16 +151,20 @@ Parent verified these and every installed skill hash against current source.
 After the pass, only explicit no-barrier-error/two-arrival assertions were added;
 syntax compiled and captured evidence satisfies both without another native run.
 
-Whole-change selector requires `python -m pytest tests/ -x -q`. Not run yet:
-waiting for one coordinated combined slice-1/2 slot; the shared AnyIO 4.12.1
-environment is incompatible, so the run must use the existing child-only TEMP
-4.14.2 overlay. Import boundaries: zero violations. Redline: High, architecture/API
+Whole-change selector requires `python -m pytest tests/ -x -q`. Authoritative
+hosted results are the `test` matrix checks on
+[draft PR #321](https://github.com/rore/Pallium/pull/321); PR CI installs declared
+compatible dependencies. The local full-suite request is on hold to avoid a
+duplicate run. If a local run becomes necessary, shared AnyIO 4.12.1 is
+incompatible and requires the existing child-only TEMP 4.14.2 overlay, not a
+shared dependency update. Import boundaries: zero violations. Redline: High, architecture/API
 shadow checkpoints and whole-stack size warning (25 non-record files, 4,173
 changed lines); no protected behavior contract edits or boundary violations.
 The workflow's commit-order advisory includes inherited slice-1 commits; this
 slice's record checkpoint `31e11b15` precedes its application edits at `e25f73df`.
 Slot request `relay-msg-c46e71b504ab4361ac50e067307056b1` was sent to authorized
-`@astra-reviewer`; queued/ACKed transport does not allocate a slot.
+`@astra-reviewer`; queued/ACKed transport does not allocate a slot. Follow-up
+`relay-msg-c0d039db0d194c4f8221a95d03b15427` holds that request while hosted CI runs.
 
 ## Result review
 
@@ -193,11 +198,11 @@ this does not replace the full-suite or separate human review gates.
 
 ## Recovery
 
-Owner: this chat. Branch `feat/hermes-package-slice2`; last pushed application
-checkpoint `c250aec2df49c920ba23f1466ba60e824c4dac4d`. Native evidence and its final
-review are being checkpointed next. First remaining action: obtain the coordinated
-full-suite slot and run the selector's check with the isolated compatible overlay;
-then reconcile failures or evidence and obtain separate human result review.
+Owner: this chat. Branch `feat/hermes-package-slice2`; pushed implementation/native
+checkpoint `a43f66707c6b352df2d2630c8cef0d38013c02a1`. Draft PR #321 is open against
+main. First remaining action: inspect its hosted full non-slow test checks, fix
+failures if present, and obtain separate human result review. Do not start a
+duplicate local full suite without an allocated slot and compatible overlay.
 The full feature stays in progress; History, optional memory, recovery and broad
 host/provider support remain future slices. Retain this worktree for concrete
 validation/review; do not install it into everyday use. No live setup is authorized.
