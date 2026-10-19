@@ -4,27 +4,29 @@
 
 
 
-**Target:** Pallium repository.
+**Target:** Pallium repository; continue the existing PR #320 on branch `feat/minimap-consumer-refresh` in `C:\Dev\rore\Pallium-minimap-consumer-refresh`. Preserve unpublished documentation commit `675621bb9e4205c177357f7621a9e13c0f264a48` and integrate current `origin/main` without dropping its custody-test fix or newer assertions.
 
 
 
-**Scope:** The existing `.agents/skills/agent-workflow/**` and `.claude/skills/agent-workflow/**` mirrors, mapped `scripts/agent-workflow-check.py`, `.claude/skills/minimap-roadmap/**`, and this Work Record.
+**Scope:** The existing `.agents/skills/agent-workflow/**` and `.claude/skills/agent-workflow/**` mirrors, mapped `scripts/agent-workflow-check.py`, `.claude/skills/minimap-roadmap/**`, the existing Windows lock-owner custody correction in `tests/test_claude_wake_durability.py`, and this Work Record.
 
+**Constraints:** Preserve Pallium applicability, policy, shadow mode, boundaries, import-linter, CI, hooks, settings, AGENTS guidance, and all consumer customizations. Use only committed package blobs from owner-approved pins. Do not alter other paths, installed tools, or service state. Publication is limited to updating the existing PR #320 branch for review.
 
-
-**Constraints:** Preserve Pallium applicability, policy, shadow mode, boundaries, import-linter, CI, hooks, settings, AGENTS guidance, and all consumer customizations. Use only committed package blobs from the assigned pins. Do not alter other paths, installed tools, service state, or publish.
-
-
-
-**Completion criteria:** Only scoped consumer paths and this Work Record change; upstream updates are reconciled with Pallium customizations; source manifests and blob parity are recorded; applicable non-application checks pass.
-
-
+**Completion criteria:** Only scoped consumer paths, the existing custody-test correction, and this Work Record change; upstream updates are reconciled with Pallium customizations; source manifests and blob parity are recorded; selected verification and independent review pass; the existing PR #320 reflects current pins and any unresolved blockers.
 
 **Requirement baseline:**
 
 {"source":"work-record-initial","outcome":"Pallium's tracked Agent Workflow and Minimap roadmap consumers reflect the approved upstream source pins while retaining Pallium-specific behavior.","scope":"The existing `.agents/skills/agent-workflow/**` and `.claude/skills/agent-workflow/**` mirrors, mapped `scripts/agent-workflow-check.py`, `.claude/skills/minimap-roadmap/**`, and this Work Record.","constraints":"Preserve Pallium applicability, policy, shadow mode, boundaries, import-linter, CI, hooks, settings, AGENTS guidance, and all consumer customizations. Use only committed package blobs from the assigned pins. Do not alter other paths, installed tools, service state, or publish.","completion_criteria":"Only scoped consumer paths and this Work Record change; upstream updates are reconciled with Pallium customizations; source manifests and blob parity are recorded; applicable non-application checks pass."}
 
 
+
+**Behavior changes:**
+
+[{"target": "task-context.scope", "classification": "equivalent", "before": "The existing `.agents/skills/agent-workflow/**` and `.claude/skills/agent-workflow/**` mirrors, mapped `scripts/agent-workflow-check.py`, `.claude/skills/minimap-roadmap/**`, and this Work Record.", "after": "The existing `.agents/skills/agent-workflow/**` and `.claude/skills/agent-workflow/**` mirrors, mapped `scripts/agent-workflow-check.py`, `.claude/skills/minimap-roadmap/**`, the existing Windows lock-owner custody correction in `tests/test_claude_wake_durability.py`, and this Work Record.", "reason": "Resume the same user-authorized existing PR: explicitly record its already-present custody-test correction and replace the original worker-only publication handoff with review delivery on that PR. The required product behavior and live-environment protections are unchanged."}, {"target": "task-context.constraints", "classification": "equivalent", "before": "Preserve Pallium applicability, policy, shadow mode, boundaries, import-linter, CI, hooks, settings, AGENTS guidance, and all consumer customizations. Use only committed package blobs from the assigned pins. Do not alter other paths, installed tools, service state, or publish.", "after": "Preserve Pallium applicability, policy, shadow mode, boundaries, import-linter, CI, hooks, settings, AGENTS guidance, and all consumer customizations. Use only committed package blobs from owner-approved pins. Do not alter other paths, installed tools, or service state. Publication is limited to updating the existing PR #320 branch for review.", "reason": "Resume the same user-authorized existing PR: explicitly record its already-present custody-test correction and replace the original worker-only publication handoff with review delivery on that PR. The required product behavior and live-environment protections are unchanged."}, {"target": "task-context.completion_criteria", "classification": "coverage-only", "before": "Only scoped consumer paths and this Work Record change; upstream updates are reconciled with Pallium customizations; source manifests and blob parity are recorded; applicable non-application checks pass.", "after": "Only scoped consumer paths, the existing custody-test correction, and this Work Record change; upstream updates are reconciled with Pallium customizations; source manifests and blob parity are recorded; selected verification and independent review pass; the existing PR #320 reflects current pins and any unresolved blockers.", "reason": "Resume the same user-authorized existing PR: explicitly record its already-present custody-test correction and replace the original worker-only publication handoff with review delivery on that PR. The required product behavior and live-environment protections are unchanged."}]
+
+**Relationships:**
+
+{"schema_version": 1, "sources": null, "pull_requests": ["https://github.com/rore/Pallium/pull/320"]}
 
 **Risk:** Elevated
 
@@ -34,13 +36,17 @@
 
 
 
-**Reason:** The mirrored `.agents` consumer includes unclassified paths, setting the provisional Elevated floor. Multiple consumer trees and a mapped checker need coordinated source parity and compatibility review.
+**Reason:** Elevated is the existing Redline floor because mapped `scripts/agent-workflow-check.py` is an architecture-review red-zone path. The package refresh does not change Pallium policy, security, persistence, or behavior-contract definitions. Complexity remains Moderate because two package mirrors, a mapped checker, and the Minimap runtime bundle must stay in source parity and preserve the existing PR's newer tests.
 
 
 
 **Discovery:**
 
-The reserved branch was clean at `f062cc72` with no branch-only commits, then fast-forwarded to fetched `origin/main` `f602753edf46d0b7a5d88bcd79725a143e311dba`. Whole-change documentation-only applicability does not apply: the scope includes workflow skill trees and a root checker outside the configured allowlist. The committed source pins match the requested revisions: Agent Workflow `2e1233634263695dc7c4a41eaf5122825158b2e6`; Minimap `5072122c7353f7519c1aeda4fcac072682b55b26`. Only the specified source package paths are candidates; the source checkouts contain unrelated dirty/untracked files and those were excluded.
+The original refresh discovery and pins below describe the prior candidate. On the 2026-10-19 continuation, checkout `675621bb9e4205c177357f7621a9e13c0f264a48` was verified against `origin/main` `f0ba46470bbe3f6703ab69d9b66ca5ada962ccce`. Current committed upstream pins are Agent Workflow `c6a3b3dab215d5b26737165fdac70a23cbfc6bb7` and Minimap `5fc52f06e971d400f835d49a8cbef4c60a0b2b68`.
+
+The canonical Agent Workflow package is `dist/agent-workflow/` (77 files including `manifest.txt`, which enumerates 76 other files); its mapped checker is `dist/agent-workflow/scripts/agent-workflow-check.py` → Pallium `scripts/agent-workflow-check.py`. The canonical Minimap package is `package/minimap/skills/minimap-roadmap/` (53 files at the current pin). At `675621bb`, both Workflow mirrors and the mapped checker exactly match the prior pin, and the Minimap mirror exactly matches its prior pin; no package-specific consumer changes need hand-merging. The Workflow delta has three modified files and no path additions/deletions: `agent-redline/scripts/agent-redline-report.py`, `manifest.txt`, and `operating-mode.md`. The Minimap delta has 19 modified files and one addition (`scripts/start-server.cjs`), including runtime and UI code. Only committed blobs under those package paths are eligible; unrelated source-checkout changes are excluded.
+
+The Workflow Unicode concern was resolved by an actual temporary Git C-quoted filename reproduction using a non-ASCII `é` path against the current source. Two Minimap source findings remain: enforcing a bound workspace request budget and retaining related-work pagination for the same generation. The task owner explicitly authorized both upstream fixes with “Yes, include both upstream fixes” (source item `20c86ff0-96cc-4cb0-b1dc-32b12e26f4ea`); the authorization was routed to the Minimap source owner, who owns those edits and tests. This consumer task must wait for the owner's published, tested source pin containing both fixes. Current Minimap pin `5fc52f06e971d400f835d49a8cbef4c60a0b2b68` is a baseline for the pending fixes, not the final vendoring candidate. Do not edit or vendor-patch Minimap upstream code in Pallium, copy the current pin as final, or claim either finding resolved before the tested pin is available.
 
 
 
@@ -50,25 +56,25 @@ The initial comparison used stale Agent Workflow baseline `a940b846` and incorre
 
 **Material assumptions:**
 
-The two assigned committed source pins remain authoritative. If source manifests or committed blobs do not match the pins, stop and report the mismatch before copying.
+For this continuation, Agent Workflow pin `c6a3b3dab215d5b26737165fdac70a23cbfc6bb7` is the current committed candidate. The current Minimap pin is not final: use only the exact Minimap pin published and tested by its source owner after implementing both authorized fixes. Historical pins below apply only to the old candidate. If manifests or committed package blobs do not match, stop and report before copying. No vendor-side workaround or behavior weakening is allowed.
 
 
 
 **Plan:**
 
-Copy the exact committed 77-file Agent Workflow package to both existing mirrors and copy its mapped checker to `scripts/agent-workflow-check.py`. Include package `.gitattributes` inside each skill mirror; do not install package templates into root configuration or guidance. Copy the exact 52-file Minimap package only into `.claude/skills/minimap-roadmap/`. Preserve all out-of-scope Pallium config, policy, CI, hooks, settings, AGENTS, and documentation mirrors. Compare source manifests, both-mirror identity, and root checker blobs. Run the focused governance compatibility checks, Redline, and diff hygiene. Minimap JavaScript changes select full application qualification; do not start it while another agent owns the shared test slot. Stop on any out-of-scope path or unexpected source/package mismatch.
+Wait for the Minimap owner to publish and test an exact source pin containing both user-authorized fixes, then obtain fresh independent clean-context plan review against that pin. Only after review, integrate current `origin/main` `f0ba46470bbe3f6703ab69d9b66ca5ada962ccce` while preserving commit `675621bb` and all current-main behavior assertions, including the existing custody test. Stage a matched refresh from committed blobs only: the exact 77-file Agent Workflow package into both existing mirrors (including package `.gitattributes`), its mapped root checker into `scripts/agent-workflow-check.py`, and the complete Minimap package from the owner's accepted tested pin only into `.claude/skills/minimap-roadmap/`. Do not copy current Minimap pin `5fc52f0` as final or install package templates into root configuration/guidance. Preserve all other Pallium policy, CI, hooks, settings, AGENTS and documentation. Update only the existing PR #320; do not create or publish another PR. Stop on missing owner pin/tests, unresolved review findings, unexpected source/package mismatch, changed scope, or any out-of-scope path. Preserve existing assertions and required behavior contracts; coverage claims may establish only equivalence of the task mechanics they directly test, not waive required behavior.
 
 
 
 **Verification plan:**
 
-Only scoped consumer paths and this Work Record change; Pallium root configuration and guidance remain intact → inspect final diff and path inventory. Both Agent Workflow mirrors equal the 77-file pinned package and each other; mapped root checker equals its source blob → compare package manifests and Git blob IDs. The Minimap skill equals its 52-file pinned package → compare package manifest and Git blob IDs. Focused governance compatibility checks, Redline, and diff hygiene pass → run those checks; full qualification waits for the shared test slot.
+The current-main merge retains the unpublished `675621bb` documentation commit, custody-test fix, and newer assertions, with no unplanned paths → review ancestry, diff and path inventory. Both Workflow mirrors match all 77 blobs at `c6a3b3d` and each other, and the mapped root checker matches the same pin → compare the current manifest and Git object IDs. The Minimap package includes both authorized source fixes at the owner's published, tested pin → verify the exact source pin, package manifest and copy parity; current pin `5fc52f0` alone does not satisfy this criterion. The Workflow Unicode reproduction passes against selected source, with source evidence retained → verify the C-quoted non-ASCII path reproduction. Focused Workflow compatibility tests, Minimap syntax checks, Redline, and diff hygiene pass → run scoped governance checks and all package JS/MJS syntax checks. The current whole-change selector is evaluated after the final diff; do not start a shared local full suite. The final candidate passes hosted full qualification and receives independent result review → use the existing PR #320 checks and record the separate review before claiming completion.
 
 
 
 **Plan review:**
 
-Agent technical review: `/root/consumer_plan_review` (native agent result delivered to root; reviewed this Work Record at `f602753e`). Reviewer returned REVISE; root accepted the revisions recorded here. All 13 apparent workflow conflicts are exact prior upstream blobs, so the plan is exact pinned-package sync with no hand-merge. Minimap JavaScript changes select full qualification, deferred until the shared test slot is available.
+Prior review `/root/consumer_plan_review` covered the previous pins and plan only; it does not approve this continuation. The task owner authorized both Minimap upstream fixes in source item `20c86ff0-96cc-4cb0-b1dc-32b12e26f4ea`; source-owner implementation and tested pin are pending. Fresh independent clean-context plan review is pending for the resulting pin and current-main merge. Do not copy any package until the reviewed tested pin is available and the updated plan is accepted. After implementation, retain the existing PR #320 result-review path and obtain independent final result review; hosted full qualification is required by the selector and no shared local full-suite run is planned.
 
 
 
@@ -80,9 +86,17 @@ Agent technical review: `/root/consumer_plan_review` (native agent result delive
 
 
 
-**State:** Ready for review
+**State:** Blocked or returned to planning
 
 <!-- agent-workflow:end -->
+
+## Refresh continuation — 2026-10-19
+
+The task owner requested: “let's refresh workflow. there's an open pr about it but i don't know if it's recent”. The Pallium manager released this existing checkout and PR #320 to the Hermes support chat after confirming no active worker owns either. Preserve unpublished documentation commit `675621bb9e4205c177357f7621a9e13c0f264a48`; leave the reserved workflow-only checkout, dirty development checkout, installed checkout, integrations, configuration, data, and services untouched.
+
+Return to planning before updating packages. Workflow owner approved current committed package `c6a3b3dab215d5b26737165fdac70a23cbfc6bb7`; current Minimap package is `5fc52f06e971d400f835d49a8cbef4c60a0b2b68`. Both existing Workflow mirrors and mapped checker exactly match the prior assigned Workflow pin; Minimap exactly matches its prior assigned pin. No package-specific customization needs a hand merge. Upstream source checkout dirt is excluded by reading committed blobs only.
+
+The old PR has two locally corrected documentation findings and three code concerns under renewed assessment. The Workflow Unicode concern was resolved by upstream PR #55, verified with an actual temporary Git C-quoted Unicode reproduction against c6a3b3d; all three path sets decoded to U+00E9 and matched. Two Minimap findings (bound workspace request budget and same-generation related-work pagination retention) were routed to the Minimap owner; source disposition is pending. Do not patch vendor code locally or claim result acceptance while findings remain unresolved. Historical qualification below applies to the old candidate only. A refreshed candidate needs focused package/governance verification, current whole-change selection, hosted full qualification, and independent review.
 
 
 
@@ -181,3 +195,7 @@ Limits: The review did not resolve the shadow architecture-review advisory or su
 - The earlier full attempt with longer temporary paths exited 2 after `-x` stopped on two failures: 3,726 passed, 2 skipped, 1 xfailed, 2 failed in 288.45s. The first failure was `tests/test_hook_common_parity.py::test_work_refs_stops_parent_walk_at_64[cc_common_parity]`; at line 999, `deep.mkdir()` failed with `FileNotFoundError [WinError 206]` when the nested xdist temporary path exceeded the Windows path-length limit. The second was `tests/test_health.py::test_production_factory_drains_claude_wake_thread_before_storage_close[transport]`; before shutdown/teardown, `write_json_atomic(registration_path, registration)` failed on its first `temporary.write_text(...)` with `FileNotFoundError [Errno 2]` under the test's `intents` directory. The first failure was explained by the overlong path; the second remains strongly consistent with path constraints but was not conclusively explained. Neither failure was treated as an application defect or fixed.
 - Neither failing test file nor `app/claude_wake_binding.py` differs from `origin/main`; no vendor-refresh path touches those test files. Pre/post source SHA256 values match for all 86 selector paths and HEAD remained `c9c5cc29c82e570701214a94f693764e83396f6d`.
 - The one corrected short-path full run, selected by the unchanged 86-path selector, exited 0: 7,169 passed, 34 skipped, 2 xfailed in 411.53s. It used the isolated private CPython 3.13.14 environment, short temp root `C:\Users\I347041\AppData\Local\Temp\f18`, `TEMP/TMP/TMPDIR` at `...\f18\t`, and pytest `--basetemp ...\f18\b`; these paths are distinct, plugin autoload remained enabled, and no package installation occurred. Pre/post hashes matched for all 86 selected paths; HEAD remained `c9c5cc29c82e570701214a94f693764e83396f6d`. A post-run exact-interpreter query found zero remaining owned processes. Logs, exit, before/after source manifests, and drain receipt are retained under `build/minimap-consumer-refresh-20261017/full-suite-shortpath-20261018/`. No further app test run, source fix, waiver, installed change, push, or PR has occurred.
+
+## Continuation gate
+
+Blocked pending the Minimap source owner’s published tested pin containing both user-authorized fixes and fresh clean-context plan review. The initial requirement baseline remains unchanged. Historical result review and test outcomes below do not qualify the resumed candidate. No merge or live rollout is authorized by this continuation.
