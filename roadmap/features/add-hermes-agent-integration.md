@@ -19,8 +19,9 @@ that proof alone does not complete this feature.
 
 Initial source validation on **2026-10-17** supports investigating **Hermes
 v0.22.2**, not waiting for unreleased gateway architecture. Slices 1 and 2 have
-isolated native proofs and full non-slow regression passes; human review and
-broader qualification remain open. This is not shipped support.
+isolated native proofs and full non-slow regression passes. PR #321 is being
+prepared for publication against merged reliability work; broader qualification
+remains open. This is not general Hermes support.
 Session History and optional derived-memory behavior remain required integration
 scope, with discovery and E2E acceptance before claiming support. The supplied
 research establishes neither. The user explicitly confirmed full-package scope
@@ -48,7 +49,8 @@ drift after reset and duplicate actions or paid turns after ambiguous acceptance
   guidance, trusted MCP, Hermes-originated discovery/send/reply, setup/status and
   safe removal. `feat/hermes-package-slice2` is isolated from reliability and
   stacked on pushed slice-1 checkpoint `377327dd`. Its installed-package native
-  journey and combined full-suite regression passed; human result review remains open.
+  journey and combined full-suite regression passed. The user approved preparing
+  and merging PR #321 before slice 3; its final integration gates remain required.
   This does not imply live installation or broad qualification.
 - Consume the shipped `add-relay-activation-capability-contract` and
   `add-relay-delivery-trace`. Reuse capability, fallback, fencing, and diagnostic
@@ -62,18 +64,18 @@ drift after reset and duplicate actions or paid turns after ambiguous acceptance
 
 ### Agile delivery order
 
-1. **Slice 1, active:** one loaded Windows Hermes v0.22.2 gateway conversation,
-   disposable profile/service data and local provider stub. Prove send → automatic
+1. **Slice 1, implemented experimental proof:** one loaded Windows Hermes v0.22.2 gateway conversation,
+   disposable profile/service data and local provider stub. Proved send → automatic
    idle marker wake → actual-turn claim → complete attributed provider request →
-   integration ACK → host-bound reply → sender receipt. Keep common changes to
+   integration ACK → host-bound reply → sender receipt. Common changes cover
    runtime recognition and the metadata-only pending read. The plugin is an
    explicitly enabled qualification adapter, not a general installation.
-2. **Installable Relay package, active:** bundle the Pallium skill and its references,
+2. **Installable Relay package, implemented experimental proof:** bundled Pallium skill and references,
    runtime guidance, supported MCP configuration and trusted per-conversation
-   identity propagation, plus setup/status/removal. Extend the real-host journey
-   so Hermes discovers a recipient, initiates a message and receives its reply
-   through the packaged tools. Verify installation in a disposable profile,
-   repeat setup safely, remove it and preserve unrelated configuration.
+   identity propagation, plus setup/status/removal. The real-host journey proves
+   Hermes discovers a recipient, initiates a message and receives its reply
+   through the packaged tools. Disposable-profile installation, repeated setup
+   and removal preserve unrelated configuration.
 3. **Session History:** capture governed user and assistant turns with stable
    source identity and provenance. Prove a later Hermes session can search that
    history and expand the source through MCP; preserve visibility, redaction,
@@ -133,6 +135,14 @@ atomic conflict check for overlapping writers. Live setup, ordinary providers,
 default Tool Search, History, optional memory and recovery remain unqualified.
 Detailed revision, source hashes and disposable artifacts are recorded in
 `.agent-workflow/tasks/hermes-package-slice2.md`.
+
+**Publication integration:** merged main `cf4e8ece` (PR #314) was incorporated
+without conflict at `ad30f944`. The native package journey passed again in
+104.00s, and affected MCP/plugin/setup/app-run/Relay files passed 273 tests with
+one platform-permission skip. Independent review accepts the four-file code
+composition. Final hosted checks and review are authoritative on PR #321. The
+full feature remains in progress; slice 3 is Session History, and live rollout
+requires separate environment approval.
 
 ### Complete integration scope
 

@@ -217,12 +217,13 @@ Hermes slice 1 has a real released-host round-trip proof with a local provider
 stub; combined hosted full non-slow regression passed. Slice 2's separate
 stacked checkout also proves the installed skill, trusted MCP, two concurrent
 Hermes conversations, discovery/send/reply/wake and offline setup/removal with
-unrelated data preserved. Human review and broader qualification remain open; live
+unrelated data preserved. PR #321 is being finalized against merged reliability
+work before Session History; broader qualification remains open. Live
 installation and overlapping profile writers are unqualified.
 `add-hermes-agent-integration` owns the full Hermes package: skill/guidance, MCP
 with trusted session identity, Relay, Session History capture/search/expansion,
 optional derived memory, setup/removal and lifecycle qualification. The narrow
-round-trip experiment is its first slice; packaging and History remain required
+round-trip experiment and frozen Relay package are implemented; History remains required
 scope. Broader rollout remains behind the
 current release/rollout/real-delivery gates; this is not shipped Hermes support.
 

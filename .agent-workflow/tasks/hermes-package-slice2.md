@@ -4,7 +4,8 @@ Canonical item: `roadmap/features/add-hermes-agent-integration.md`
 (`add-hermes-agent-integration`). Branch `feat/hermes-package-slice2`.
 Owner checkout: `C:\Users\I347041\.codex\worktrees\hermes-package-slice2\Pallium`.
 Stack base: pushed slice-1 checkpoint `377327dd39d3660284224f0e8cfcae7c2b4ac725`.
-Main merge base: `701608cd0f666fe5106bf7c91e2e98bf0fe21d0c`.
+Original main merge base: `701608cd0f666fe5106bf7c91e2e98bf0fe21d0c`.
+Publication baseline: merged main `cf4e8eceff28d601554ade615f2a9ecbed8ba500`.
 Combined pre-integration validation passed as recorded below. Consume only merged
 reliability changes from main; do not import an unmerged candidate or repeat probes.
 
@@ -71,7 +72,7 @@ Approved by user 2026-10-19: "let's do it", in direct response to preparing PR #
 **Exceptions:**
 —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -216,6 +217,56 @@ this does not replace the full-suite or separate human review gates.
 
 ## Recovery
 
+### Publication integration, 2026-10-19
+
+Integrated merged main with a clean, history-preserving merge at
+`ad30f944d6676876931b9f2b8614987fd0b9a37b`. Independent composition review accepted
+the four shared paths: main's optional claim-expiry forwarding and owned startup
+survive alongside the unchanged Hermes runtime, pending read and setup dispatch.
+Final diff against main has no CI, storage or protected behavior-contract edits.
+Risk remains High; import boundaries have zero violations and architecture/API
+shadow checkpoints plus the size advisory remain explicit.
+
+The actual native package journey passed again: **1 passed in 104.00s**, using
+the same disposable pinned Hermes source and process-only AnyIO 4.14.2 overlay.
+The worker reported the same package hashes, two-party overlap and provider → ACK
+→ reply ordering, with no owned Hermes process left. Subsequent pytest retention
+pruned raw pytest-6374 traces before independent reinspection. The reviewer
+accepted normal successful test output plus the unchanged reviewed assertions
+as sufficient for this incremental composition check; no independent post-merge
+raw-artifact audit is claimed. Future evidence must use a durable task location.
+
+Affected files passed: **273 passed, 1 skipped in 79.30s** (`test_hermes_mcp`,
+`test_hermes_relay_plugin`, `test_setup_hermes`, `test_app_run`,
+`test_relay_exact_claim_e2e`, `test_relay_mcp_tools`; `-q -n 0`). Exact prior CI
+failure nodes passed once: **2 passed in 2.08s**. The initial six-file result was
+lost and is not counted; the authoritative replacement has direct log/exit
+capture in `%TEMP%\pallium-hermes-package-slice2-01a1489e\affected-six-files.{log,json}`.
+It records clean ad30f944, AnyIO 4.14.2, command and zero exit status. No shared
+dependency, live config, timeout or test behavior changed.
+
+These focused/native results support review, not a claim that final hosted CI is
+already green. The previous final-doc CI failed two unchanged initial Relay
+setup calls; phase logs show 1.3s/2.1s setup_pragma exhausting the existing bound.
+That recurring validation issue was sent to the authorized reviewer as
+`relay-msg-beeac98ff7c94428963d77a9dbc697f4`. Publish one fresh integrated PR run;
+diagnose any failure rather than repeatedly rerunning full suites to green.
+Authoritative final-head full-suite, platform checks and review threads are on
+[PR #321](https://github.com/rore/Pallium/pull/321). Earlier results below are
+historical and do not replace validation of this composed head.
+
+The user's "let's do it" authorizes finishing and merging this concrete PR after
+the reported result and integration checks; it does not authorize live rollout.
+Repository merge is the current delivery objective. The local post-merge rule
+also requires two clean checkouts, fast-forward and installed service restart,
+but the standing environment directive requires separate exact-scope approval.
+Shared development still has unrelated dirty roadmap/untracked data; installed
+checkout is clean at 65a4e5ad. Neither has been changed. Retain this managed
+worktree for final PR checks/merge and any approved rollout handoff; preserve
+all user's existing work. No Hermes live profile installation is proposed.
+
+### Earlier validation checkpoint
+
 Owner: this chat. Branch `feat/hermes-package-slice2`; pushed implementation/native
 checkpoint `a43f66707c6b352df2d2630c8cef0d38013c02a1`. Draft PR #321 is open against
 main. The application validation revision is `882546cf8054923d5a59cd01b71155b1b44cdb6b`.
@@ -238,4 +289,3 @@ validation/review; do not install it into everyday use. No live setup is authori
 
 Skill feedback trigger 2 dropped: review corrected application/test implementation,
 not an Agent Workflow instruction or product defect.
-
