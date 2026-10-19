@@ -51,7 +51,7 @@ Key paths are the Hermes adapter/plugin/manifest/skill/docs and their tests. Gra
 Native released-host/local-provider-stub journey verifies capture, later search and original-source expansion through actual package tools. Focused caller-surface E2E verifies identity, visibility, duplicate/error/boundary/lifecycle controls and Relay regression. Whole-change selector, required full non-slow CI, workflow and boundary checks precede review.
 
 **Plan review:**
-Initial technical review by /root/history_plan_review at c30d947e found an unsupported host-durability claim and unspecified work-ref propagation. Both are clarified above: public hook-observed snapshots with explicit stage metadata and exact verified session association reads. Re-review pending; existing user approval covers the History integration and isolated qualification, not live changes.
+Initial technical review by /root/history_plan_review at c30d947e found an unsupported host-durability claim and unspecified work-ref propagation. Both are clarified above: public hook-observed snapshots with explicit stage metadata and exact verified session association reads. Agent technical review: /root/history_plan_review, 2026-10-19, accepted on reassessment after inspecting c30d947e and pinned Hermes d923a5eb; conditions (hook-observed stage labeling, strict current-row identity, fixed private ingestion, validated optional session refs and positive/negative caller-surface evidence) are incorporated in 23d6774b. Reviewer explicitly confirms these clarifications preserve the approved baseline and require no renewed human plan approval. Existing user approval covers the History integration and isolated qualification, not live changes.
 
 **Approvals:**
 Approved by user 2026-10-19: "ok, let's start slice 3 for session history. keep it isolated from the relay reliability work, use cheaper models where it makes sense, and push the work so we don't lose it."
@@ -60,7 +60,7 @@ This approves the previously discussed History slice and isolated qualification.
 **Exceptions:**
 —
 
-**State:** Blocked or returned to planning
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -79,3 +79,5 @@ Pending.
 Discovery workers: /root/hermes_native_harness inspected pinned public Hermes source and /root/validate_hermes inspected existing History MCP/API contracts, read-only. Exact feature relationship decoded as declared; existing explicit Relay work association is reused. Worktree remains isolated and pushed.
 
 Pre-edit risk evidence: planned-path Redline GRAY, no checkpoints, zero import boundary violations; High retained for integration privacy/identity judgment. Artifacts: %TEMP%/pallium-hermes-history-slice3-01a1489e/redline-planned.json.
+
+Implementation may begin after independent plan acceptance. The initial user instruction approves the presented History slice; no new host commit guarantee, source-forget capability or live change is introduced.
