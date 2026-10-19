@@ -68,7 +68,7 @@ This approves the immediately preceding installable-package slice and disposable
 **Exceptions:**
 —
 
-**State:** Blocked
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -200,8 +200,19 @@ this does not replace the full-suite or separate human review gates.
 
 Owner: this chat. Branch `feat/hermes-package-slice2`; pushed implementation/native
 checkpoint `a43f66707c6b352df2d2630c8cef0d38013c02a1`. Draft PR #321 is open against
-main. First remaining action: inspect its hosted full non-slow test checks, fix
-failures if present, and obtain separate human result review. Do not start a
+main. The application validation revision is `882546cf8054923d5a59cd01b71155b1b44cdb6b`.
+Both hosted full non-slow matrix jobs passed: Python 3.13 had **7,190 passed,
+92 skipped, 2 xfailed in 443.83s**; Python 3.12 had the same counts in **437.47s**
+on one bounded job recheck. Windows smoke, import boundaries and workflow checks
+passed (review/size advisories remain). Authoritative evidence is PR #321,
+CI run `39246450582`, attempts 1/2. The initial 3.12 run returned retryable
+`relay_busy` at a common setup deadline in an unchanged cross-container alias
+test; its exact node passed locally once, then the failed hosted job alone was
+rerun successfully. No timeout, retry policy or test was weakened. Successful
+jobs were reused; no shared-machine full suite or dependency change was needed.
+This final checkpoint changes only documentation; unchanged application/test
+evidence and independent reviews are reused. Next: obtain separate human result
+review and inspect final-head PR checks before any merge. Do not start a
 duplicate local full suite without an allocated slot and compatible overlay.
 The full feature stays in progress; History, optional memory, recovery and broad
 host/provider support remain future slices. Retain this worktree for concrete

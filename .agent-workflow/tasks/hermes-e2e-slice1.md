@@ -69,7 +69,7 @@ This approves the immediately preceding proposed slice: minimal plugin/runtime p
 **Exceptions:**
 —
 
-**State:** Blocked
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -173,9 +173,9 @@ Owner: this chat; canonical item `add-hermes-agent-integration`,
 full validation and review; never install it into the live service. The native
 slice-1 proof is achieved; the broader feature remains in progress.
 
-Next: rerun the selector-required full suite with the isolated locked-AnyIO overlay
-after a replacement resource slot is allocated, then obtain separate human result
-review. Independent technical result review is already accepted for unchanged
+The original next action was a replacement compatible-environment full run;
+combined hosted validation below now discharges it. Next: obtain separate human
+result review. Independent technical result review is already accepted for unchanged
 application/test bytes. The original source-only feasibility branch is not a
 prerequisite for this proof; do not duplicate its probes or spend a second full-suite
 run there. Shared merge overlap with reliability remains the four additive core/API
@@ -200,8 +200,9 @@ release were sent as `relay-msg-8fba3a58117e463c89db285ad5716150`; dependency
 diagnosis and replacement-slot request as `relay-msg-a01dd79d737e4fdb84f10d6c31498dcc`
 to the authorized reviewer for manager forwarding (no verified direct manager
 route). These sends were pending when returned; they are not receipt evidence.
-State remains Blocked on the replacement coordinated full-suite slot. Do not
-start another full run without allocation or modify the shared environment.
+That checkpoint was blocked on a replacement coordinated full-suite slot. The
+combined slice-2 hosted validation below supersedes that resource request; do not
+start another local full run or modify the shared environment.
 
 ## Overall feature scope clarification, 2026-10-19
 
@@ -218,5 +219,13 @@ This reconciliation edits only this record and its already-scoped roadmap files.
 It does not expand the slice-1 code, change its approved requirement baseline or
 claim that the full package exists. Subsequent packaging implementation needs
 its own scoped discovery, risk classification and review before code edits.
-The complete feature remains in progress; full validation and human review of
-the first slice are still open. Preserve its isolation from reliability work.
+The complete feature remains in progress. Combined-stack validation at
+`882546cf8054923d5a59cd01b71155b1b44cdb6b` passed on hosted Python 3.12 and 3.13
+(each 7,190 passed, 92 skipped, 2 xfailed) and Windows smoke; see draft PR #321,
+CI run `39246450582` and the slice-2 Work Record. The initial 3.12 common Relay
+setup-deadline failure passed an exact local test and one hosted job recheck;
+no reliability behavior or test was changed. The newer installed-package native
+journey and independent review extend the original proof to two overlapping
+conversations. These results discharge the combined full-suite gate without a
+second local slot. Separate human result review and broad qualification remain
+open. Preserve isolation from reliability and never install into everyday use.

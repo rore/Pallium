@@ -19,7 +19,8 @@ that proof alone does not complete this feature.
 
 Initial source validation on **2026-10-17** supports investigating **Hermes
 v0.22.2**, not waiting for unreleased gateway architecture. Slices 1 and 2 have
-isolated native proofs; full validation remains open. This is not shipped support.
+isolated native proofs and full non-slow regression passes; human review and
+broader qualification remain open. This is not shipped support.
 Session History and optional derived-memory behavior remain required integration
 scope, with discovery and E2E acceptance before claiming support. The supplied
 research establishes neither. The user explicitly confirmed full-package scope
@@ -47,7 +48,7 @@ drift after reset and duplicate actions or paid turns after ambiguous acceptance
   guidance, trusted MCP, Hermes-originated discovery/send/reply, setup/status and
   safe removal. `feat/hermes-package-slice2` is isolated from reliability and
   stacked on pushed slice-1 checkpoint `377327dd`. Its installed-package native
-  journey passed; a combined full-suite slot and human result review remain open.
+  journey and combined full-suite regression passed; human result review remains open.
   This does not imply live installation or broad qualification.
 - Consume the shipped `add-relay-activation-capability-contract` and
   `add-relay-delivery-trace`. Reuse capability, fallback, fencing, and diagnostic
@@ -98,12 +99,12 @@ qualification remain blockers for broader release.
 stub passed send → idle wake → full attributed request → integration ACK → native
 reply tool → original sender receipt. The same run passed wrong-recipient and
 closed-endpoint controls. This is an isolated experiment, not shipped support;
-full-suite validation, human result review and the later slices remain open.
+human result review and the later slices remain open.
 The allocated full non-slow run stopped after 5,395 passes on an unchanged AnyIO
 limiter test: the shared test environment has 4.12.1 while this branch requires
 4.14.2 or newer. That exact test passes with locked 4.14.2 in a disposable overlay;
 the shared environment was not changed. A compatible-environment full rerun still
-needs a coordinated slot.
+needed a coordinated slot; the combined hosted validation below supersedes that request.
 
 Two native requirements emerged from execution. The disposable profile disables
 Tool Search with quoted `tools.tool_search.enabled: "off"` so the test can invoke
@@ -122,8 +123,12 @@ and closed-session controls retained pending messages without claims or ACKs.
 Repeated offline setup, status and removal preserved unrelated config, comments,
 credentials and data. Native E2E: **1 passed in 71.22s**; focused plugin/MCP/setup
 and default Relay MCP regressions also passed. Independent review accepts the
-frozen experiment; combined full non-slow validation and human review remain
-open. Setup requires exclusive offline profile access: the native writer has no
+frozen experiment. Combined hosted non-slow regression passed on Python 3.12 and
+3.13 (each **7,190 passed, 92 skipped, 2 xfailed**), plus Windows smoke; evidence
+is [draft PR #321](https://github.com/rore/Pallium/pull/321), application revision
+`882546cf`. An initial 3.12 common Relay setup timeout passed one focused test
+and one hosted job recheck without code/test changes. Human review remains open.
+Setup requires exclusive offline profile access: the native writer has no
 atomic conflict check for overlapping writers. Live setup, ordinary providers,
 default Tool Search, History, optional memory and recovery remain unqualified.
 Detailed revision, source hashes and disposable artifacts are recorded in
