@@ -54,6 +54,8 @@ When an idle real host has a pending message, it starts a turn automatically and
 **Plan review:**
 Agent technical review: /root/hermes_e2e_review, 2026-10-19, HEAD 79cae04af813d7736c2d0900fedb9fbced8f1eb0, accepted with the conditions below.
 
+Follow-up technical review on 2026-10-19 accepts only the frozen disposable v0.22.2/local-stub experiment: public plugins.list RPC inventories actual loaded name/version/enabled state before/after, but exposes no middleware count. Strict own-plugin config is necessary; bundled auto-loads bypass that list, so pinned bundled source must be checked for execution middleware and unexpected enabled inventory refused. The harness must assert effective local provider/config and provider receipt before ACK with no hotload during the journey. Plugin revalidates its frozen config and trusted execution model/provider/base_url/api_mode. General detection of arbitrary middleware hotloads has no public PluginContext seam and remains a wider-release blocker. This narrows qualification; it does not authorize general installation or relax payload/identity proof.
+
 Accepted by clean-context reviewer `/root/hermes_e2e_review` on 2026-10-19 at HEAD 79cae04af813d7736c2d0900fedb9fbced8f1eb0. Admission must compare the complete attributed payload and host session/turn in the effective llm_execution request, forward the same request to next_call, and ACK only after successful downstream execution; the real provider stub independently verifies that request. Qualify only the explicit single-plugin/provider topology; refuse competing execution middleware. Persist the exact scoped metadata fence before injection, retain uncertainty across reload, and test identity, stripping, downstream failure and marker refusal. Hermes activation remains passive with no inferred admission evidence/fallback. Exclude Hermes from legacy Codex ACK/reply executor selection while preserving existing runtime behavior. No scope expansion or renewed human approval required.
 
 **Approvals:**
@@ -63,7 +65,7 @@ This approves the immediately preceding proposed slice: minimal plugin/runtime p
 **Exceptions:**
 —
 
-**State:** Ready to implement
+**State:** Blocked
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -95,7 +97,52 @@ The real-host bootstrap and plugin are still in progress. These HTTP checks do
 not establish native wake or payload admission. Full-suite resource coordination
 remains pending; no full-suite run, PR readiness, or completion is claimed.
 
+Released-host bootstrap succeeded through the supported `hermes serve --isolated`
+WebSocket protocol: gateway ready, session create, prompt submit and complete seed
+turn. The loopback SSE provider stub observed `/v1/chat/completions`; no paid model
+was used. Source is pinned at d923a5eb487a17c0a68801bba9ef0f56c81040a8. Environment,
+dependencies, profile and logs are under the recorded temporary root. The venv
+reuses an existing read-only uv CPython 3.14.6 base (created 2026-06-27); no global
+interpreter, PATH, configuration or live service was changed. Seed process cleanup
+was reported by its owner; full integration cleanup remains an E2E assertion.
+
+The plugin and native harness are separately assigned to cheaper workers with
+disjoint file ownership; parent reviews and owns shared contracts. Coordination
+fallback: the scope/test-slot Relay update remained pending despite queued wake
+evidence and a later completed recipient turn (trace gap). App-message fallback
+reported that concrete issue to the authorized reviewer. The reviewer confirmed
+the test-slot request is already with the Pallium manager; no slot is granted.
+
 ## Recovery
+
+Latest native run 7 proves actual released-host automatic idle marker wake,
+trusted-turn claim, complete attributed provider request, then integration ACK.
+It **fails** the complete round trip: `pallium_relay_reply` is absent from the
+provider's advertised tool list, so no reply is dispatched or received. Seven
+bounded host attempts resolved SSE/title behavior, public inventory expectations,
+the per-turn `on_session_end` behavior, and tool schema/configuration issues. No
+more host runs are authorized without a concrete supported activation fix; the
+independent reviewer is examining public plugin activation/order/scope. No Hermes
+source modification or private registry mutation is permitted.
+
+Run 7 artifacts: `%TEMP%\pallium-hermes-e2e-slice1-01a1489e\pytest-test-run7\test_released_hermes_idle_rela0`
+(`provider-requests.json`, `relay-calls.json`, host/driver logs). The harness asserts
+actual provider tool exposure before emitting a reply call; it cannot fabricate
+success with an undeclared tool. Host/driver/server cleanup was reported by its
+owner. Frozen qualification is not established by this partial result.
+
+Current focused plugin/API file: **37 passed**. It covers stripped/historical
+payload, wrong session/turn/provider, profile/config change, no ACK on downstream
+failure, retained reload fence, exact payload/reply bounds, and host-bound reply.
+Native-test collection needs no Hermes dependency in the base environment.
+Fresh import-linter report has zero violations. Redline remains High with API
+and architecture shadow checkpoints. Whole-change selector requires the full
+non-slow suite; the coordinated slot remains ungranted, so it has not run.
+
+The three plugin files were created through a deterministic scoped write after
+apply_patch could not create the out-of-root parent directory; no broader paths
+were edited. Skill feedback trigger 3 is dropped: native tool exposure is an
+external-host integration issue, not an Agent Workflow defect.
 
 Owner: this chat. Next action: disposable released-host/plugin round trip and
 independent result review. Keep this worktree for E2E qualification; never install

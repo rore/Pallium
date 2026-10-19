@@ -1,0 +1,14 @@
+name: pallium-hermes-relay
+version: 0.1.0
+description: Experimental Pallium Relay integration for a single Hermes TUI/gateway profile.
+author: Pallium
+kind: standalone
+platforms:
+  - windows
+provides_tools:
+  - pallium_relay_reply
+provides_hooks:
+  - pre_llm_call
+  - on_session_end
+provides_middleware:
+  - llm_execution

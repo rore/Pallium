@@ -1,6 +1,13 @@
 """Caller-visible Relay contracts for the experimental Hermes integration."""
 from __future__ import annotations
 
+import importlib.util
+import json
+from pathlib import Path
+import sys
+import time
+from types import ModuleType
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -10,6 +17,10 @@ from core.relay import RelayService
 
 
 SCOPE = {"container_ref": "git:example.test/team/relay"}
+HOST_EXECUTION = {
+    "provider": "custom", "model": "pallium-local", "api_mode": "chat_completions",
+    "base_url": "http://127.0.0.1:29998/v1",
+}
 
 
 def turn(client, session="ses_שלום", **extra):
@@ -107,6 +118,7 @@ def test_pending_rejects_invalid_scope(client, field, value):
 
 def test_pending_boundaries_and_unsupported_backend(client):
     assert pending(client, session_ref="s" * 255).status_code == 200
+    assert pending(client, container_ref="c" * 512).status_code == 200
     assert client.get("/relay/pending-candidate", params=SCOPE).status_code == 422
     app = FastAPI()
     app.include_router(create_router(client.app.state.pallium_service))
@@ -160,3 +172,284 @@ def test_hermes_callbacks_do_not_use_codex_executor(client):
         }).status_code == 200
     assert len(callbacks) == 2
     assert all(row["recipient_runtime"] == "hermes" for row in callbacks)
+
+
+@pytest.fixture
+def plugin_context(client, monkeypatch):
+    """Exercise public plugin callbacks against the real Relay caller surface."""
+    config = {
+        "model": {"provider": "custom", "default": "pallium-local",
+                  "base_url": "http://127.0.0.1:29998/v1", "api_mode": "chat_completions"},
+        "fallback_providers": [],
+        "platform_toolsets": {"cli": ["hermes-cli"]},
+        "plugins": {"enabled": ["pallium-hermes-relay"], "entries": {
+            "pallium-hermes-relay": {"allow_gateway_injection": True, "settings": {
+                "service_url": "http://127.0.0.1:29999", **SCOPE,
+                "experimental_frozen_local_stub": True,
+            }},
+        }},
+    }
+    host = ModuleType("hermes_cli")
+    host.__path__ = []
+    host_config = ModuleType("hermes_cli.config")
+    host_config.load_config_readonly = lambda: config
+    monkeypatch.setitem(sys.modules, "hermes_cli", host)
+    monkeypatch.setitem(sys.modules, "hermes_cli.config", host_config)
+    path = Path(__file__).resolve().parents[1] / "integrations/hermes/__init__.py"
+    spec = importlib.util.spec_from_file_location("hermes_test_plugin", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    def http(base, method, path, *, body=None, query=None):
+        response = client.request(method, path, json=body, params=query)
+        if response.status_code >= 400:
+            raise RuntimeError(f"Relay HTTP {response.status_code}")
+        return response.json()
+
+    monkeypatch.setattr(module, "_json_request", http)
+
+    class State:
+        def __init__(self):
+            self.values = {}
+
+        def get(self, key, default=None):
+            return json.loads(json.dumps(self.values.get(key, default)))
+
+        def set(self, key, value):
+            self.values[key] = json.loads(json.dumps(value))
+
+    class Context:
+        profile_name = "disposable-profile"
+        plugin_id = "pallium-hermes-relay"
+
+        def __init__(self, state):
+            self.state, self.hooks, self.middleware = state, {}, {}
+            self.tools, self.cleanups, self.injections = {}, [], []
+
+        def get_config(self, key, default=None):
+            return config["plugins"]["entries"][self.plugin_id]["settings"].get(key, default)
+
+        def has_capability(self, _name):
+            return True
+
+        def register_hook(self, name, callback):
+            self.hooks[name] = callback
+
+        def register_middleware(self, kind, callback):
+            self.middleware[kind] = callback
+
+        def register_tool(self, **kwargs):
+            self.tools[kwargs["name"]] = kwargs["handler"]
+
+        def on_unload(self, callback):
+            self.cleanups.append(callback)
+
+        def inject_message(self, text, **kwargs):
+            self.injections.append((text, kwargs))
+            return True
+
+    contexts = []
+
+    def create(state=None):
+        ctx = Context(state or State())
+        module.register(ctx)
+        contexts.append(ctx)
+        return ctx
+
+    yield module, create, config
+    for ctx in reversed(contexts):
+        for callback in ctx.cleanups:
+            callback()
+
+
+def _await(check):
+    deadline = time.monotonic() + 3
+    while time.monotonic() < deadline:
+        value = check()
+        if value:
+            return value
+        time.sleep(.02)
+    pytest.fail("plugin did not reach the expected observable state")
+
+
+def _plugin_wake(client, create, payload="Hello שלום 🌍"):
+    ctx = create()
+    ctx.hooks["pre_llm_call"](session_id="ses_שלום", turn_id="seed", user_message="seed")
+    ctx.hooks["on_session_end"](session_id="ses_שלום")
+    rows = client.get("/relay/sessions", params={"runtime": "hermes", **SCOPE}).json()
+    assert len(rows) == 1
+    message = send(client, rows[0]["endpoint_id"], payload=payload)
+    _await(lambda: ctx.injections)
+    marker, target = ctx.injections[0]
+    assert target == {"role": "user", "session_key": "ses_שלום"}
+    assert message["payload"] not in marker
+    assert status(client, message)["deliveries"][0]["attempts"] == 0
+    return ctx, marker, message
+
+
+@pytest.mark.parametrize("failure", [
+    "stripped", "wrong_session", "wrong_turn", "provider_error", "historical",
+    "profile_changed", "config_changed", "wrong_provider",
+])
+def test_plugin_never_acks_unproven_admission(client, plugin_context, failure):
+    module, create, config = plugin_context
+    ctx, marker, message = _plugin_wake(client, create)
+    hook = ctx.hooks["pre_llm_call"]
+    assert hook(session_id="ses_other", turn_id="wake", user_message=marker) is None
+    assert status(client, message)["deliveries"][0]["attempts"] == 0
+    assert hook(session_id="ses_שלום", turn_id="wake", user_message="quoted " + marker) is None
+    assert status(client, message)["deliveries"][0]["attempts"] == 0
+    context = hook(session_id="ses_שלום", turn_id="wake", user_message=marker)["context"]
+    assert hook(session_id="ses_שלום", turn_id="wake", user_message=marker)["context"] == context
+    delivery = status(client, message)["deliveries"][0]
+    assert delivery["state"] == "claimed"
+    assert delivery["claim_token"] not in context
+    assert delivery["receipt"] not in context
+    text = marker + "\n\n" + context
+    request = {"model": "pallium-local", "messages": [{"role": "user", "content": text}]}
+    if failure == "stripped":
+        request["messages"][0]["content"] = marker
+    if failure == "historical":
+        request["messages"].append({"role": "user", "content": "a later input"})
+    if failure == "profile_changed":
+        ctx.profile_name = "other-profile"
+    if failure == "config_changed":
+        config["plugins"]["enabled"].append("other-plugin")
+
+    def downstream(actual):
+        assert actual is request
+        if failure == "provider_error":
+            raise OSError("local provider failed")
+        return "provider result"
+
+    kwargs = {"session_id": "ses_other" if failure == "wrong_session" else "ses_שלום",
+              "turn_id": "other" if failure == "wrong_turn" else "wake", **HOST_EXECUTION}
+    if failure == "wrong_provider":
+        kwargs["base_url"] = "http://127.0.0.1:29997/v1"
+    if failure == "provider_error":
+        with pytest.raises(OSError):
+            ctx.middleware["llm_execution"](request, downstream, **kwargs)
+    else:
+        ctx.middleware["llm_execution"](request, downstream, **kwargs)
+    after = status(client, message)["deliveries"][0]
+    assert after["state"] == "claimed"
+    assert after["delivered_at"] is None
+
+
+def test_plugin_retains_uncertain_fence_on_reload(client, plugin_context):
+    _, create, _ = plugin_context
+    ctx, marker, message = _plugin_wake(client, create)
+    for callback in ctx.cleanups:
+        callback()
+    reloaded = create(ctx.state)
+    reloaded.hooks["pre_llm_call"](session_id="ses_שלום", turn_id="after-reload", user_message="seed")
+    time.sleep(.6)
+    assert reloaded.injections == []
+    assert status(client, message)["deliveries"][0]["attempts"] == 0
+
+
+def test_plugin_admission_then_host_bound_reply(client, plugin_context):
+    _, create, _ = plugin_context
+    ctx, marker, message = _plugin_wake(client, create)
+    context = ctx.hooks["pre_llm_call"](
+        session_id="ses_שלום", turn_id="wake", user_message=marker,
+    )["context"]
+    request = {"model": "pallium-local", "messages": [{"role": "user", "content": marker + "\n\n" + context}]}
+    calls = []
+
+    def provider(actual):
+        assert actual is request
+        assert status(client, message)["deliveries"][0]["state"] == ("delivered" if calls else "claimed")
+        calls.append(actual)
+        return "provider accepted"
+
+    for _ in range(2):
+        assert ctx.middleware["llm_execution"](
+            request, provider, session_id="ses_שלום", turn_id="wake", **HOST_EXECUTION,
+        ) == "provider accepted"
+    assert len(calls) == 2
+    assert status(client, message)["deliveries"][0]["state"] == "delivered"
+    delivery_id = message["deliveries"][0]["delivery_id"]
+    tool = ctx.tools["pallium_relay_reply"]
+    forged = {"delivery_id": delivery_id, "payload": "reply ✓",
+              "session_id": "ses_שלום", "turn_id": "wake"}
+    assert "refused" in tool(forged, session_id="other", turn_id="other")
+    assert "refused" in tool(forged)
+    assert "sent" in tool(forged, session_id="ses_שלום", turn_id="wake")
+    assert "refused" in tool(forged, session_id="ses_שלום", turn_id="wake")
+    received = client.post("/relay/turn", json={
+        "runtime": "claude-code", "session_ref": "sender", **SCOPE,
+    }).json()["deliveries"]
+    assert len(received) == 1
+    assert received[0]["payload"] == "reply ✓"
+    assert received[0]["sender_session_ref"] == "ses_שלום"
+
+
+@pytest.mark.parametrize("invalid", ["opt_in", "permission", "plugins", "remote", "fallback"])
+def test_plugin_refuses_unqualified_configuration(plugin_context, invalid):
+    _, create, config = plugin_context
+    entry = config["plugins"]["entries"]["pallium-hermes-relay"]
+    if invalid == "opt_in":
+        entry["settings"].pop("experimental_frozen_local_stub")
+    elif invalid == "permission":
+        entry["allow_gateway_injection"] = False
+    elif invalid == "plugins":
+        config["plugins"]["enabled"].append("other-plugin")
+    elif invalid == "remote":
+        config["model"]["base_url"] = "https://example.test/v1"
+    else:
+        config["fallback_providers"] = ["remote"]
+    with pytest.raises(ValueError):
+        create()
+
+
+@pytest.mark.parametrize("size,admitted", [(1, True), (1600, True), (1601, False), (16000, False)])
+def test_plugin_payload_boundaries_never_ack_a_preview(client, plugin_context, size, admitted):
+    _, create, _ = plugin_context
+    payload = "é" * size
+    ctx, marker, message = _plugin_wake(client, create, payload)
+    result = ctx.hooks["pre_llm_call"](
+        session_id="ses_שלום", turn_id="wake", user_message=marker,
+    )
+    if admitted:
+        assert payload in result["context"]
+        request = {"model": "pallium-local", "messages": [{
+            "role": "user", "content": marker + "\n\n" + result["context"],
+        }]}
+        ctx.middleware["llm_execution"](
+            request, lambda actual: "provider accepted", session_id="ses_שלום",
+            turn_id="wake", **HOST_EXECUTION,
+        )
+    else:
+        assert result is None
+    delivery = status(client, message)["deliveries"][0]
+    assert delivery["state"] == ("delivered" if admitted else "claimed")
+    assert (delivery["delivered_at"] is not None) == admitted
+
+
+@pytest.mark.parametrize("payload,accepted", [
+    ("", False), ("  ", False), (None, False), ("é" * 2400, True), ("é" * 2401, False),
+])
+def test_plugin_reply_boundaries(client, plugin_context, payload, accepted):
+    _, create, _ = plugin_context
+    ctx, marker, message = _plugin_wake(client, create)
+    context = ctx.hooks["pre_llm_call"](
+        session_id="ses_שלום", turn_id="wake", user_message=marker,
+    )["context"]
+    request = {"model": "pallium-local", "messages": [{
+        "role": "user", "content": marker + "\n\n" + context,
+    }]}
+    ctx.middleware["llm_execution"](
+        request, lambda actual: "provider accepted", session_id="ses_שלום",
+        turn_id="wake", **HOST_EXECUTION,
+    )
+    result = ctx.tools["pallium_relay_reply"]({
+        "delivery_id": message["deliveries"][0]["delivery_id"], "payload": payload,
+    }, session_id="ses_שלום", turn_id="wake")
+    assert ("sent" in result) == accepted
+    received = client.post("/relay/turn", json={
+        "runtime": "claude-code", "session_ref": "sender", **SCOPE,
+    }).json()["deliveries"]
+    assert len(received) == int(accepted)
+    if accepted:
+        assert received[0]["payload"] == payload

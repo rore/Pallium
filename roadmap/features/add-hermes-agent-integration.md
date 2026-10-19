@@ -50,6 +50,29 @@ drift after reset and duplicate actions or paid turns after ambiguous acceptance
 
 ## In Scope
 
+### Agile delivery order
+
+1. **Slice 1, active:** one loaded Windows Hermes v0.22.2 gateway conversation,
+   disposable profile/service data and local provider stub. Prove send → automatic
+   idle marker wake → actual-turn claim → complete attributed provider request →
+   integration ACK → host-bound reply → sender receipt. Keep common changes to
+   runtime recognition and the metadata-only pending read. The plugin is an
+   explicitly enabled qualification adapter, not a general installation.
+2. **Normal use:** busy-session queueing, concurrent loaded sessions and basic
+   send/address usability, extending the same real-host E2E journey.
+3. **Recovery:** restarts, ambiguous injection/ACK, stale routes and lifecycle
+   transitions, coordinated with the generic Relay reliability owner.
+4. **Incremental parity:** setup/removal and remaining supported Relay features.
+   Session History and derived memory retain separate discovery and acceptance.
+
+The frozen slice-1 topology must assert actual loaded plugin inventory before and
+after, strict profile/provider configuration, clean pinned bundled source and
+provider receipt before ACK. v0.22.2 exposes no public PluginContext middleware
+count or callback enumeration; arbitrary middleware hotloads and general-provider
+qualification remain blockers for broader release.
+
+### Complete integration scope
+
 - A Hermes-native plugin, distributed through supported plugin mechanisms, with
   explicit setup, permission checks, compatibility detection, removal, and bounded
   lifecycle cleanup. Keep Hermes-specific behavior inside its integration.
