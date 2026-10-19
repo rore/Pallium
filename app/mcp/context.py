@@ -5,8 +5,11 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Mapping
+from contextlib import contextmanager
+from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Iterator
 
 from core.container_ref import canonicalize_container_ref
 
@@ -25,6 +28,40 @@ class PalliumContext:
     @property
     def is_configured(self) -> bool:
         return self.base_url is not None
+
+
+@dataclass(frozen=True)
+class HermesMcpIdentity:
+    """Trusted host identity and optional admitted reply data for one MCP request."""
+
+    session_id: str
+    turn_id: str
+    reply_delivery_id: str | None = None
+    reply_receipt: str | None = None
+
+
+@dataclass(frozen=True)
+class HermesMcpRequest:
+    """Immutable per-request Hermes scope; never stored in process environment."""
+
+    context: PalliumContext
+    identity: HermesMcpIdentity
+
+
+_hermes_request: ContextVar[HermesMcpRequest | None] = ContextVar("pallium_hermes_mcp_request", default=None)
+
+
+def current_hermes_request() -> HermesMcpRequest | None:
+    return _hermes_request.get()
+
+
+@contextmanager
+def bind_hermes_request(request: HermesMcpRequest) -> Iterator[None]:
+    token: Token[HermesMcpRequest | None] = _hermes_request.set(request)
+    try:
+        yield
+    finally:
+        _hermes_request.reset(token)
 
 
 def _canonicalize_container_ref(value: str | None) -> str | None:
@@ -106,6 +143,17 @@ def resolve_context(
 
     Resolution order: explicit parameter > environment variable > None.
     """
+    hermes_request = current_hermes_request()
+    if hermes_request is not None:
+        return PalliumContext(
+            base_url=hermes_request.context.base_url,
+            container_ref=hermes_request.context.container_ref,
+            thread_ref=hermes_request.identity.session_id,
+            actor_ref=hermes_request.context.actor_ref,
+            agent_ref="hermes",
+            visibility=hermes_request.context.visibility,
+        )
+
     resolved_agent = agent_ref if agent_ref is not None else os.environ.get("PALLIUM_AGENT_REF")
     resolved_thread = thread_ref if thread_ref is not None else os.environ.get("PALLIUM_THREAD_REF")
     return PalliumContext(
@@ -130,6 +178,16 @@ def resolve_relay_context(
     *, container_ref: str | None = None
 ) -> tuple[PalliumContext | None, str | None]:
     """Resolve the trusted Relay container scope."""
+    hermes_request = current_hermes_request()
+    if hermes_request is not None:
+        supplied = _valid_relay_scope_value(container_ref, max_chars=_RELAY_CONTAINER_REF_MAX_CHARS)
+        if container_ref is not None and supplied is None:
+            return None, "Error: Relay scope requires a non-blank container_ref."
+        requested = _canonicalize_container_ref(supplied) if supplied is not None else None
+        if requested is not None and requested != hermes_request.context.container_ref:
+            return None, "Error: Relay scope conflicts with configured Hermes scope."
+        return resolve_context(), None
+
     supplied_container = _valid_relay_scope_value(
         container_ref, max_chars=_RELAY_CONTAINER_REF_MAX_CHARS
     )

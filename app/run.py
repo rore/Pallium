@@ -161,6 +161,9 @@ def run(args: list[str] | None = None) -> int:
         if remaining and remaining[0] == "codex":
             from app.cli.setup_codex import main as setup_codex_main
             return setup_codex_main(remaining[1:])
+        if remaining and remaining[0] == "hermes":
+            from app.cli.setup_hermes import main as setup_hermes_main
+            return setup_hermes_main(remaining[1:])
         from app.cli.setup_claude_code import main as setup_main
         return setup_main(remaining)
     if parsed.mode == "service":

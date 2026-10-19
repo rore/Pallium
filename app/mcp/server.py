@@ -22,7 +22,7 @@ from urllib.parse import urlsplit
 from pydantic import BeforeValidator, Field, StrictInt, StrictStr
 
 from app.mcp.client import PalliumMcpClient
-from app.mcp.context import resolve_codex_thread_ref, resolve_context, resolve_relay_context
+from app.mcp.context import current_hermes_request, resolve_codex_thread_ref, resolve_context, resolve_relay_context
 from core.history_presentation import compact_history
 from core.relay import RELAY_TRACE_MAX_SEQUENCE, _RELAY_EXPIRY_OMITTED, _opaque, parse_selector, validate_alias, validate_runtime
 from core.work_ref import readable_work_ref
@@ -1165,7 +1165,7 @@ def _codex_bridge_caller_pair(request) -> dict[str, str] | None:
 
 def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None,
                   codex_shadow: bool = False, codex_inventory: bool = False,
-                  codex_retained: bool = False) -> FastMCP:
+                  codex_retained: bool = False, tool_adapter=None) -> FastMCP:
     """Create a FastMCP server with Pallium tools registered."""
     from mcp.server.fastmcp import Context, FastMCP
     try:
@@ -1178,6 +1178,15 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None,
     # holding a session id from before the restart get -32600 "Session not
     # found" and have to reinitialize.
     server = FastMCP("pallium", host=host, port=port, stateless_http=True, lifespan=lifespan)
+
+    def register_tool(tool):
+        """Register through FastMCP, optionally adapting or excluding a public tool."""
+        exposed = tool
+        if tool_adapter is not None:
+            exposed = tool_adapter(tool.__name__, tool, server.get_context)
+            if exposed is None:
+                return tool
+        return server.tool()(exposed)
 
     if codex_shadow:
         async def shadow_request(operation: str, ctx) -> str:
@@ -1206,7 +1215,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None,
 
         for tool in (pallium_codex_bridge_shadow_enroll, pallium_codex_bridge_shadow_status):
             tool.__annotations__["ctx"] = Context
-            server.tool()(tool)
+            register_tool(tool)
 
     if codex_inventory:
         async def pallium_codex_bridge_inventory_register(ctx) -> str:
@@ -1224,7 +1233,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None,
             return json.dumps(inventory_status(result))
 
         pallium_codex_bridge_inventory_register.__annotations__["ctx"] = Context
-        server.tool()(pallium_codex_bridge_inventory_register)
+        register_tool(pallium_codex_bridge_inventory_register)
 
     def relay_tool(function):
         @wraps(function)
@@ -1276,6 +1285,9 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None,
         return wrapped
 
     def current_relay_identity(ctx, request_ctx):
+        hermes_request = current_hermes_request()
+        if hermes_request is not None:
+            return "hermes", hermes_request.identity.session_id, None
         runtime = ctx.agent_ref
         session_ref = ctx.thread_ref
         if not runtime:
@@ -1302,7 +1314,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None,
                 "require integration-injected session identity."
             )
         return runtime, session_ref, None
-    @server.tool()
+    @register_tool
     async def pallium_query(
         query: str,
         limit: int = 5,
@@ -1324,7 +1336,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None,
         result = await client.query(query, limit=limit)
         return json.dumps(result, indent=2, default=str)
 
-    @server.tool()
+    @register_tool
     async def pallium_search_history_by_work_ref(
         work_ref: Annotated[str, BeforeValidator(_mask_invalid_work_ref)],
         query: str | None = None, limit: Annotated[StrictInt, Field(ge=1, le=50)] = 3,
@@ -1406,7 +1418,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None,
                 return _json_text(_history_finalization_timeout_payload(delivery_attempt_id))
             return _json_text(_history_timeout_payload())
 
-    @server.tool()
+    @register_tool
     async def pallium_search_history(
         query: str,
         limit: Annotated[StrictInt, Field(ge=1, le=50)] = 3,
@@ -1551,7 +1563,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None,
                 ]
         return payload
 
-    @server.tool()
+    @register_tool
     async def pallium_create_history_diagnostic(
         query: str,
         idempotency_key: Annotated[StrictStr, Field(min_length=1, max_length=128)],
@@ -1583,7 +1595,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None,
             return _json_text(_history_timeout_payload())
         return _json_text(_bounded_history_diagnostic(result))
 
-    @server.tool()
+    @register_tool
     async def pallium_read_history_diagnostic(
         diagnostic_id: str,
         container_ref: str | None = None,
@@ -1599,7 +1611,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None,
         except asyncio.TimeoutError:
             return _json_text(_history_timeout_payload())
         return _json_text(_bounded_history_diagnostic(result))
-    @server.tool()
+    @register_tool
     async def pallium_query_debug(
         query: str,
         container_ref: str | None = None,
@@ -1620,7 +1632,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None,
         result = await client.query_debug(query)
         return json.dumps(result, indent=2, default=str)
 
-    @server.tool()
+    @register_tool
     async def pallium_ingest(
         content: str,
         source_type: str = "agent_artifact",
@@ -1651,7 +1663,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None,
         )
         return json.dumps(result, indent=2, default=str)
 
-    @server.tool()
+    @register_tool
     async def pallium_expand(
         memory_object_id: str,
         container_ref: str | None = None,
@@ -1677,7 +1689,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None,
         result = await client.get_memory_expand(memory_object_id)
         return json.dumps(result, indent=2, default=str)
 
-    @server.tool()
+    @register_tool
     async def pallium_expand_source(
         source_item_id: str,
         before: int = 1,
@@ -1746,7 +1758,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None,
             if receipt.get("error"):
                 return _json_text(receipt)
         return _json_text(bounded)
-    @server.tool()
+    @register_tool
     async def pallium_flag_memory(
         memory_object_id: str,
         reason: str,
@@ -1767,7 +1779,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None,
         )
         return json.dumps(result, indent=2, default=str)
 
-    @server.tool()
+    @register_tool
     async def pallium_rate_memory(
         memory_object_id: str,
         rating: Literal["relevant", "not_relevant"],
@@ -1797,7 +1809,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None,
         )
         return json.dumps(result, indent=2, default=str)
 
-    @server.tool()
+    @register_tool
     async def pallium_status() -> str:
         """Check Pallium system health and stats. Shows ingestion metrics (pending queue, source items, memory objects, storage) and injection/query stats (total queries, injection rate, skip reasons, flags). Use to diagnose whether memory is being stored and returned correctly."""
         ctx = resolve_context()
@@ -1864,9 +1876,9 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None,
         return _json_text(response)
 
     pallium_relay_address.__annotations__["request_ctx"] = Context | None
-    server.tool()(relay_tool(pallium_relay_address))
+    register_tool(relay_tool(pallium_relay_address))
 
-    @server.tool()
+    @register_tool
     @relay_tool
     async def pallium_relay_recipients(
         runtime: str | None = None,
@@ -1888,7 +1900,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None,
         )
         return _relay_recipients_text(result, offset)
 
-    @server.tool()
+    @register_tool
     @relay_tool
     async def pallium_relay_discover_recipients(
         runtime: str | None = None,
@@ -1919,7 +1931,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None,
         )
         return _relay_global_recipients_text(result, offset, session_ref is not None)
 
-    @server.tool()
+    @register_tool
     @relay_tool
     async def pallium_relay_name(
         current_runtime: str,
@@ -1970,7 +1982,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None,
         )
 
     pallium_relay_work_refs.__annotations__["request_ctx"] = Context | None
-    server.tool()(relay_tool(pallium_relay_work_refs))
+    register_tool(relay_tool(pallium_relay_work_refs))
 
     async def pallium_relay_attach_work_ref(
         scope_ref: str,
@@ -2004,7 +2016,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None,
         )
 
     pallium_relay_attach_work_ref.__annotations__["request_ctx"] = Context | None
-    server.tool()(relay_tool(pallium_relay_attach_work_ref))
+    register_tool(relay_tool(pallium_relay_attach_work_ref))
 
     async def pallium_relay_detach_work_ref(
         scope_ref: str,
@@ -2038,9 +2050,9 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None,
         )
 
     pallium_relay_detach_work_ref.__annotations__["request_ctx"] = Context | None
-    server.tool()(relay_tool(pallium_relay_detach_work_ref))
+    register_tool(relay_tool(pallium_relay_detach_work_ref))
 
-    @server.tool()
+    @register_tool
     @relay_tool
     async def pallium_relay_participants(
         scope_ref: str,
@@ -2097,7 +2109,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None,
             {"error": "relay participant response exceeds the response budget"},
             _MCP_RELAY_WORK_REFS_MAX_CHARS,
         )
-    @server.tool()
+    @register_tool
     @relay_tool
     async def pallium_relay_send(
         message: str,
@@ -2122,7 +2134,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None,
         )
         return _relay_text(result)
 
-    @server.tool()
+    @register_tool
     @relay_tool
     async def pallium_relay_reply(
         delivery_id: str,
@@ -2144,7 +2156,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None,
             expires_in_seconds=expires_in_seconds,
         )
         return _relay_text(result)
-    @server.tool()
+    @register_tool
     @relay_tool
     async def pallium_relay_status(
         message_id: str,
@@ -2164,7 +2176,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None,
         )
         return _relay_status_text(result, offset)
 
-    @server.tool()
+    @register_tool
     @relay_tool
     async def pallium_relay_trace(
         message_id: str,
@@ -2295,9 +2307,9 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None,
         return rendered
 
     pallium_relay_receive.__annotations__["request_ctx"] = Context | None
-    server.tool()(relay_tool(pallium_relay_receive))
+    register_tool(relay_tool(pallium_relay_receive))
 
-    @server.tool()
+    @register_tool
     @relay_tool
     async def pallium_relay_ack(
         delivery_id: str,
@@ -2323,7 +2335,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None,
     # Invariant 1 (retrieval is not use): none of these tools update
     # retrieval ranking or accessibility state. Confidence is audit-only.
 
-    @server.tool()
+    @register_tool
     async def pallium_remember(
         text: str,
         type: str,
@@ -2364,7 +2376,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None,
         )
         return json.dumps(result, indent=2, default=str)
 
-    @server.tool()
+    @register_tool
     async def pallium_correct(
         memory_object_id: str,
         corrected_text: str,
@@ -2388,7 +2400,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None,
         )
         return json.dumps(result, indent=2, default=str)
 
-    @server.tool()
+    @register_tool
     async def pallium_supersede(
         new_text: str,
         supersedes_id: str,
@@ -2426,7 +2438,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None,
         )
         return json.dumps(result, indent=2, default=str)
 
-    @server.tool()
+    @register_tool
     async def pallium_forget(
         memory_object_id: str,
         reason: str,
@@ -2447,7 +2459,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None,
         result = await client.forget_memory(memory_object_id, reason=reason)
         return json.dumps(result, indent=2, default=str)
 
-    @server.tool()
+    @register_tool
     async def pallium_forget_source(
         reason: str,
         source_item_id: str | None = None,
@@ -2476,7 +2488,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None,
         )
         return json.dumps(result, indent=2, default=str)
 
-    @server.tool()
+    @register_tool
     async def pallium_record_outcome(
         procedure_id: str,
         outcome: Literal["success", "failure", "inconclusive"],

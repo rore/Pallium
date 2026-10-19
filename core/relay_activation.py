@@ -67,7 +67,7 @@ def relay_activation_snapshot(
     endpoint_id, endpoint_ok = _coherent(row, endpoint_names)
     session_ref, session_ok = _coherent(row, ("session_ref", "recipient_session_ref"))
     container_ref, container_ok = _coherent(row, ("container_ref", "recipient_container_ref"))
-    runtime = runtime if runtime in {"codex", "claude-code", "opencode"} else "unknown"
+    runtime = runtime if runtime in {"codex", "claude-code", "opencode", "hermes"} else "unknown"
     platform = platform if platform in {"windows", "linux", "macos", "other"} else "unknown"
 
     state = row.get("state")
@@ -111,6 +111,8 @@ def relay_activation_snapshot(
         integration, behavior = "claude_peer", "idle_wake" if qualified else "passive"
     elif runtime == "opencode":
         integration, behavior = ("opencode_queue", "busy_queue") if qualified else ("hook_only", "passive")
+    elif runtime == "hermes":
+        integration, behavior = "hook_only", "passive"
     else:
         integration, behavior = "unknown", "unknown"
 
@@ -118,6 +120,10 @@ def relay_activation_snapshot(
         qualification, qualification_source = "unknown", "none"
         fallback = "unknown"
         evidence: list[str] = []
+    elif runtime == "hermes":
+        qualification, qualification_source = "unqualified", "none"
+        fallback = "unknown"
+        evidence = []
     elif qualified:
         qualification, qualification_source = "qualified", "installed_witness"
         if runtime == "opencode":
