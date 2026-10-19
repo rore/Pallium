@@ -293,12 +293,17 @@ def test_nullable_legacy_retry_deadline_recovers_and_hook_acks(http_wake, monkey
 @pytest.mark.parametrize("restart", [False, True])
 def test_unloaded_hook_claim_failure_recovers_original_and_backlog(
     client, http_wake, monkeypatch, tmp_path, capsys, fault, moved, restart, request,
-    *, force_backlog_refusal=False,
+    *, force_backlog_refusal=False, force_retry_refusal=False,
 ):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
+    from sqlalchemy import select
     from app.dependencies import build_router
+    from storage.sqlite_schema import (
+        RelayDeliveryRecord, RelayCodexWakeStateRecord, RelayCodexWakeReservationRecord,
+    )
 
+    assert not force_retry_refusal or (moved and restart and fault == "claim-response")
     test_request = request
     http, relay, registry, service, desktop, _, workers = http_wake
     now = [datetime(2030, 9, 5, tzinfo=timezone.utc)]
@@ -503,7 +508,58 @@ def test_unloaded_hook_claim_failure_recovers_original_and_backlog(
             recover(journey)
             assert len(desktop.owners) == 1  # Active claim is excluded, even after restart.
             now[0] += timedelta(seconds=0.001)
+
+            def authority():
+                with relay._store._relay_engine.connect() as db:
+                    return tuple(tuple(db.execute(select(*[
+                        column for column in model.__table__.columns
+                        if column.name not in {"trace_version", "trace_truncated", "trace_pruned"}
+                    ]).order_by(*model.__table__.primary_key.columns)).all()) for model in (
+                        RelayCodexWakeStateRecord, RelayCodexWakeReservationRecord, RelayDeliveryRecord,
+                    ))
+
+            def deliveries():
+                result = []
+                for message_id in ("claim-failure-original", "claim-failure-backlog"):
+                    response = http.get(f"/relay/messages/{message_id}", params=sender_scope)
+                    assert response.status_code == 200, response.text
+                    delivery, = response.json()["deliveries"]
+                    result.append(delivery)
+                return result
+
+            before = authority()
+            fence = registry.snapshot(first["recipient_endpoint_id"])
+            assert fence is not None and fence.delivery_id == first["delivery_id"]
+            before_deliveries = deliveries()
+            assert before_deliveries[0]["delivery_id"] == first["delivery_id"]
+            assert [(row["state"], row["attempts"]) for row in before_deliveries] == [("claimed", 1), ("pending", 0)]
+            native_before = len(desktop.writes)
+            owners_before, events_before = tuple(desktop.owners), tuple(events)
+            attempts = _observe_transition_attempts(
+                journey, monkeypatch, "retry", force_refusal=force_retry_refusal,
+            )
             recover(journey)  # Exactly at lease expiry, not only after it.
+            refused = (_single_typed_transition_refusal(attempts)
+                       and attempts[0].get("acquisition_stage") == "late_begin")
+            assert not force_retry_refusal or (refused and attempts[0].get("forced") is True)
+            if refused:
+                assert attempts[0]["reservation"] == fence
+                assert authority() == before and registry.snapshot(first["recipient_endpoint_id"]) == fence
+                assert deliveries() == before_deliveries
+                assert tuple(desktop.owners) == owners_before
+                assert tuple(events) == events_before
+                assert all(row["method"] == "tools/list" or (
+                    row["method"] == "tools/call" and row["params"]["tool"] == "read_thread"
+                ) for row in desktop.writes[native_before:])
+                recover(journey)  # Model one later production sweep after the proven refusal.
+            assert len(attempts) == (2 if refused else 1)
+            assert "error_type" not in attempts[-1]
+            replacement = attempts[-1].get("result")
+            assert isinstance(replacement, type(fence)) and replacement.generation > fence.generation
+            assert (replacement.delivery_id, replacement.recipient_endpoint_id,
+                    replacement.session_ref, replacement.container_ref) == (
+                first["delivery_id"], first["recipient_endpoint_id"], TARGET, SCOPE["container_ref"],
+            )
         else:
             recover(journey)
         for message_id in ("claim-failure-original", "claim-failure-backlog"):
@@ -528,6 +584,15 @@ def test_unloaded_backlog_precommit_refusal_preserves_claim_and_recovery(
     test_unloaded_hook_claim_failure_recovers_original_and_backlog(
         client, http_wake, monkeypatch, tmp_path, capsys,
         "ack-before-commit", True, True, request, force_backlog_refusal=True,
+    )
+
+
+def test_unloaded_expired_retry_refusal_preserves_claim_and_recovers_backlog(
+    client, http_wake, monkeypatch, tmp_path, capsys, request,
+):
+    test_unloaded_hook_claim_failure_recovers_original_and_backlog(
+        client, http_wake, monkeypatch, tmp_path, capsys,
+        "claim-response", True, True, request, force_retry_refusal=True,
     )
 
 
