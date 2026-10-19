@@ -281,8 +281,76 @@ class TestImmediateTransactionRetry:
             if boundary == "begin_expired":
                 assert statements.count("ROLLBACK") == 1
 
+    @pytest.mark.parametrize(
+        ("attempt_count", "setup_expired", "expected_stage", "expected_phases"),
+        [
+            (2, False, "retry_exhausted", {
+                "session_factory": 2, "session_connection": 4,
+                "setup_pragma": 6, "begin_immediate": 8,
+            }),
+            (1, True, "setup_deadline", {"session_factory": 1, "session_connection": 2}),
+        ],
+    )
+    def test_relay_busy_error_sums_deadline_acquisition_phases(self, storage, monkeypatch, attempt_count, setup_expired, expected_stage, expected_phases):
+        from storage import sqlite_queue
+        import sqlite3
+
+        monkeypatch.setattr(storage, "_RELAY_IMMEDIATE_ATTEMPTS", attempt_count)
+        clock_ns = [0]
+        def advance(milliseconds):
+            clock_ns[0] += milliseconds * 1_000_000
+        monkeypatch.setattr(sqlite_queue, "_acquisition_monotonic_ns", lambda: clock_ns[0])
+        monotonic_calls = [0]
+        def monotonic():
+            monotonic_calls[0] += 1
+            return .46 if setup_expired and monotonic_calls[0] == 4 else 0.0
+        monkeypatch.setattr(sqlite_queue, "time", SimpleNamespace(
+            **{**vars(sqlite_queue.time), "monotonic": monotonic},
+        ))
+        session, connection = MagicMock(), MagicMock()
+        def factory():
+            advance(1)
+            return session
+        def connect(**_kwargs):
+            advance(2)
+            return connection
+        def execute(statement):
+            statement = str(statement)
+            if statement == f"PRAGMA busy_timeout={storage._RELAY_IMMEDIATE_BUSY_TIMEOUT_MS}":
+                advance(3)
+            elif statement == "BEGIN IMMEDIATE":
+                advance(4)
+                error = _make_sa_operational_error("database is locked")
+                error.orig.sqlite_errorcode = sqlite3.SQLITE_BUSY
+                raise error
+        session.connection.side_effect = connect
+        connection.execute.side_effect = execute
+        storage._relay_session_factory = factory
+        bodies = []
+
+        with pytest.raises(ImmediateTransactionBusyError) as refusal:
+            with storage._begin_relay_immediate():
+                bodies.append(1)
+
+        assert refusal.value.args == ("database is locked (immediate transaction retry exhausted)",)
+        assert refusal.value.acquisition_stage == expected_stage
+        assert refusal.value.acquisition_phase_ms == expected_phases
+        assert bodies == [] and session.close.call_count == attempt_count and session.flush.call_count == 0
+        statements = [str(call.args[0]) for call in connection.execute.call_args_list]
+        assert statements.count("BEGIN IMMEDIATE") == (0 if setup_expired else attempt_count)
+        assert not storage._relay_writer_lock.locked()
+
     @pytest.mark.parametrize("failure", ["setup", "begin", "body", "flush", "commit", "rollback", "close"])
-    def test_relay_writer_releases_on_every_exception_before_fresh_acquisition(self, storage, failure):
+    def test_relay_writer_releases_on_every_exception_before_fresh_acquisition(self, storage, failure, monkeypatch):
+        from storage import sqlite_queue
+
+        # Exception cleanup is modeled here; native deadlines have separate coverage.
+        native_monotonic = time.monotonic
+        monkeypatch.setattr(sqlite_queue, "time", SimpleNamespace(
+            **{**vars(time), "monotonic": lambda: 0.0},
+        ))
+        assert time.monotonic is native_monotonic
+        assert sqlite_queue.time.sleep is time.sleep
         session, connection = MagicMock(), MagicMock()
         session.connection.return_value = connection
         storage._relay_session_factory = lambda: session
@@ -318,6 +386,8 @@ class TestImmediateTransactionRetry:
             assert active is fresh
         assert fresh.flush.call_count == fresh.close.call_count == 1
         assert not storage._relay_writer_lock.locked()
+        assert time.monotonic is native_monotonic
+        assert sqlite_queue.time.sleep is time.sleep
 
     def test_same_provider_writer_waits_locally_before_native_begin(self, storage):
         from sqlalchemy import event
@@ -525,10 +595,11 @@ class TestImmediateTransactionRetry:
 
     def test_immediate_transaction_busy_has_a_stable_error(self, storage):
         legacy = ImmediateTransactionBusyError("legacy", 7)
-        annotated = ImmediateTransactionBusyError("legacy", 7, acquisition_stage="retry_exhausted")
+        annotated = ImmediateTransactionBusyError("legacy", 7, acquisition_stage="retry_exhausted", acquisition_phase_ms={"begin_immediate": 2})
         assert legacy.args == annotated.args == ("legacy", 7)
         assert str(legacy) == str(annotated) == str(RuntimeError("legacy", 7))
         assert legacy.acquisition_stage is None and annotated.acquisition_stage == "retry_exhausted"
+        assert legacy.acquisition_phase_ms is None and annotated.acquisition_phase_ms == {"begin_immediate": 2}
         session = MagicMock()
         connection = MagicMock()
         session.connection.return_value = connection

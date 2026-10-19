@@ -68,6 +68,13 @@ remain open, with its old caller and fingerprint. No request is replayed or
 provenance updated. First enrollment and automatic reconnect still reject busy;
 all other failures retain their existing teardown and identity fences.
 
+A resolved transport/deadline failure during a previously admitted caller's
+registration may retire the source channel when the readiness probe also fails
+with that category and the existing owner, bootstrap and continuity checks hold.
+Only a fresh genuine request from the same caller may reconstruct and register
+that channel; the failed request is not replayed. Unresolved I/O, refusal or a
+trust change does not enable this retirement path.
+
 These user-approved decisions supersede the earlier experimental requirements
 below for normal product mode, including manual finite destination grants and an
 absolute non-interruption guarantee. They do not change the restrictions of

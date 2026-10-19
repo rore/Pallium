@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 import hashlib
@@ -33,6 +34,18 @@ from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
 SCOPE = {
     "container_ref": "git:example.test/wake",
 }
+
+
+class _CapturedWakeThread:
+    """No native thread: callers retain args and run the target manually."""
+    def start(self):
+        pass
+
+    def is_alive(self):
+        return False
+
+    def join(self):
+        pass
 
 
 def test_codex_test_clock_patches_do_not_change_shared_time(monkeypatch):
@@ -83,7 +96,7 @@ def _log_fp(value: str) -> str:
 
 
 @pytest.fixture(autouse=True)
-def isolated_codex_registry(monkeypatch: pytest.MonkeyPatch) -> CodexWakeRegistry:
+def isolated_codex_registry(monkeypatch: pytest.MonkeyPatch) -> Iterator[CodexWakeRegistry]:
     # This module exercises the legacy queue transport; retained mode has its own suite.
     monkeypatch.setattr("app.codex_bridge_pipe.retained_wake_enabled", lambda: False)
     registry = CodexWakeRegistry()
@@ -91,7 +104,11 @@ def isolated_codex_registry(monkeypatch: pytest.MonkeyPatch) -> CodexWakeRegistr
     process.communicate.return_value = (None, "")
     monkeypatch.setattr(codex_wake, "get_codex_wake_registry", lambda *_args, **_kwargs: registry)
     monkeypatch.setattr(codex_wake, "_popen", lambda *_args, **_kwargs: process)
-    return registry
+    try:
+        yield registry
+    finally:
+        codex_wake.stop_codex_relay_wake_admission(registry)
+        codex_wake.drain_codex_relay_wakes(registry)
 
 
 def setup_function() -> None:
@@ -100,6 +117,99 @@ def setup_function() -> None:
     codex_wake._scheduled_session_generations.clear()
     codex_wake._scheduled_session_delivery_ids.clear()
     codex_wake._scheduled_session_attempt_ids.clear()
+
+
+@pytest.mark.parametrize("phase", ["reserved", "prepared_trace"])
+@pytest.mark.parametrize("outcome", ["prepared", "uncertain"])
+def test_closing_admission_releases_only_unspent_exact_generation(monkeypatch, phase, outcome):
+    registry = CodexWakeRegistry()
+    reservation = registry.reserve(
+        recipient_endpoint_id="relay-session-" + "a" * 32,
+        delivery_id="relay-delivery-" + "b" * 32,
+        session_ref="target-session", container_ref=SCOPE["container_ref"],
+    )
+    assert reservation is not None
+    if outcome == "uncertain":
+        reservation = registry.begin_native_attempt(reservation)
+        assert reservation is not None
+    native = []
+    monkeypatch.setattr(codex_wake, "_popen", lambda *a, **kw: native.append(True))
+    releases = []
+    release = registry.release_generation
+    def exact_release(current):
+        assert not codex_wake._scheduled_lock.locked()
+        releases.append(current)
+        return release(current)
+    monkeypatch.setattr(registry, "release_generation", exact_release)
+    if phase == "reserved":
+        codex_wake.stop_codex_relay_wake_admission(registry)
+    def trace(event):
+        if event["stage"] == "prepared":
+            codex_wake.stop_codex_relay_wake_admission(registry)
+    assert codex_wake._schedule_reserved_codex_relay_wake(
+        reservation, registry, trace_callback=trace,
+    ) is None
+    codex_wake.drain_codex_relay_wakes(registry)
+    assert native == []
+    assert releases == ([reservation] if outcome == "prepared" else [])
+    assert registry.snapshot(reservation.recipient_endpoint_id) == (
+        None if outcome == "prepared" else reservation)
+
+
+def test_codex_drain_waits_for_final_trace_and_isolates_other_registry(monkeypatch):
+    registry, other = CodexWakeRegistry(), CodexWakeRegistry()
+    entered, release, drained = threading.Event(), threading.Event(), threading.Event()
+    errors = []
+    monkeypatch.setattr(codex_wake, "_DEBOUNCE_SECONDS", 0)
+    def trace(event):
+        if event["stage"] == "completed":
+            with pytest.raises(RuntimeError, match="Cannot drain Codex"):
+                codex_wake.drain_codex_relay_wakes(registry)
+            entered.set()
+            assert release.wait(5)
+    worker = codex_wake.schedule_codex_relay_wake(_delivery(), SCOPE, registry=registry, trace_callback=trace)
+    assert worker is not None
+    def drain():
+        try:
+            codex_wake.drain_codex_relay_wakes(registry)
+            drained.set()
+        except BaseException as exc:
+            errors.append(exc)
+    owner = threading.Thread(target=drain)
+    try:
+        assert entered.wait(5)
+        codex_wake.stop_codex_relay_wake_admission(registry)
+        codex_wake.drain_codex_relay_wakes(other)
+        owner.start()
+        assert not drained.wait(.05) and worker.is_alive()
+        assert codex_wake.schedule_codex_relay_wake(_delivery("other"), SCOPE, registry=registry) is None
+    finally:
+        release.set()
+        worker.join()
+        if owner.ident is not None:
+            owner.join()
+    assert drained.is_set() and errors == [] and not worker.is_alive()
+    codex_wake.drain_codex_relay_wakes(registry)
+
+
+def test_codex_failed_worker_start_cleans_before_return(monkeypatch):
+    registry = CodexWakeRegistry()
+    events = []
+    original_thread = threading.Thread
+    class FailedThread(original_thread):
+        def start(self):
+            raise RuntimeError("test worker start failure")
+    monkeypatch.setattr(codex_wake, "threading", SimpleNamespace(
+        **{**{name: getattr(threading, name) for name in dir(threading) if not name.startswith("__")},
+           "Thread": FailedThread},
+    ))
+    assert codex_wake.schedule_codex_relay_wake(
+        _delivery(), SCOPE, registry=registry, trace_callback=events.append,
+    ) is None
+    assert [event["stage"] for event in events] == ["prepared", "completed"]
+    assert events[-1]["reason"] == "worker_start_failed"
+    assert registry.reservations() == ()
+    assert not any(owner == id(registry) for owner, _ in codex_wake._workers)
 
 
 def test_delivery_specific_wake_prompt_is_truthful_and_narrow() -> None:
@@ -497,6 +607,8 @@ def test_expired_wake_reconciliation_serializes_an_ordinary_reclaim(
     client, monkeypatch: pytest.MonkeyPatch, tmp_path,
 ) -> None:
     import storage.sqlite_relay as sqlite_relay
+    from core.errors import ImmediateTransactionBusyError
+    import time as native_time
 
     clock = [datetime(2030, 9, 5, tzinfo=timezone.utc)]
 
@@ -546,6 +658,14 @@ def test_expired_wake_reconciliation_serializes_an_ordinary_reclaim(
     assert reservation is not None
     clock[0] += timedelta(seconds=61)
 
+    # Separate read-only WAL snapshots observe only committed authority.
+    before_status = relay.message_status(message_id=sent["message_id"], **SCOPE)
+    before_reservations = registry.reservations_if_usable()
+    assert before_status["deliveries"][0]["state"] == "claimed"
+    assert before_status["deliveries"][0]["attempts"] == 1
+    assert before_status["deliveries"][0]["claim_token"] == claimed["claim_token"]
+    assert before_reservations == (reservation,)
+
     replacement_written = threading.Event()
     allow_reconcile = threading.Event()
     native_gate = threading.Event()
@@ -576,56 +696,96 @@ def test_expired_wake_reconciliation_serializes_an_ordinary_reclaim(
 
     monkeypatch.setattr(storage, "_begin_relay_immediate", hold_reconciliation_commit)
     monkeypatch.setattr(registry, "begin_native_attempt", begin_native_attempt)
-    monkeypatch.setattr(
-        codex_wake.time, "sleep", lambda _seconds: native_gate.wait(2)
-    )
+    native_sleep, native_monotonic = native_time.sleep, native_time.monotonic
+    monkeypatch.setattr(codex_wake, "time", SimpleNamespace(
+        **{**vars(native_time), "sleep": lambda _seconds: native_gate.wait()},
+    ))
+    assert native_time.sleep is native_sleep
+    assert native_time.monotonic is codex_wake.time.monotonic is native_monotonic
     monkeypatch.setattr(
         codex_wake, "_start_launch",
         lambda *_args: (launches.append(_args), (None, ("queued", None, 0)))[1],
     )
 
     reconciled = []
+    reconcile_errors = []
     reclaim = []
+    claim_errors = []
     claim_finished = threading.Event()
-    reconcile_thread = threading.Thread(
-        target=lambda: reconciled.append(
-            codex_wake.reconcile_codex_relay_wake_reservations(
-                relay, registry=registry
-            )
-        )
-    )
-    reconcile_thread.start()
-    assert replacement_written.wait(2)
+
+    def reconcile():
+        try:
+            reconciled.append(codex_wake.reconcile_codex_relay_wake_reservations(
+                relay, registry=registry,
+            ))
+        except BaseException as error:
+            reconcile_errors.append(error)
 
     def ordinary_reclaim():
-        reclaim.append(relay.turn(
-            runtime="codex", session_ref="target", **SCOPE
-        ))
-        claim_finished.set()
+        try:
+            reclaim.append(relay.turn(
+                runtime="codex", session_ref="target", **SCOPE,
+            ))
+        except BaseException as error:
+            claim_errors.append(error)
+        finally:
+            claim_finished.set()
 
+    reconcile_thread = threading.Thread(target=reconcile)
     claim_thread = threading.Thread(target=ordinary_reclaim)
-    claim_thread.start()
-    assert not claim_finished.wait(0.05)
-    allow_reconcile.set()
-    reconcile_thread.join(timeout=2)
-    claim_thread.join(timeout=2)
-    assert not reconcile_thread.is_alive()
-    assert not claim_thread.is_alive()
-    assert reconciled == [1]
-    assert reclaim[0]["deliveries"][0]["attempts"] == 2
-    current = registry.snapshot(endpoint_id)
-    assert current is not None
-    assert current.generation > reservation.generation
-    assert current.correlated_claim_attempts is None
+    try:
+        reconcile_thread.start()
+        assert replacement_written.wait(2)
+        claim_thread.start()
+        # The real writer remains held until this bounded caller has refused.
+        assert claim_finished.wait(2)
+        claim_thread.join(timeout=2)
+        assert not claim_thread.is_alive()
+        assert reclaim == []
+        assert len(claim_errors) == 1
+        assert type(claim_errors[0]) is ImmediateTransactionBusyError
+        assert claim_errors[0].acquisition_stage == "local_gate"
+        assert not allow_reconcile.is_set()
+        assert relay.message_status(message_id=sent["message_id"], **SCOPE) == before_status
+        assert registry.reservations_if_usable() == before_reservations
 
-    native_gate.set()
-    assert begin_checked.wait(2)
-    assert begin_results == [None]
-    assert launches == []
-    current = registry.snapshot(endpoint_id)
-    assert current is not None
-    assert current.outcome == "prepared"
-    assert current.correlated_claim_attempts is None
+        allow_reconcile.set()
+        reconcile_thread.join(timeout=2)
+        assert not reconcile_thread.is_alive()
+        assert reconcile_errors == []
+        assert reconciled == [1]
+        assert begin_results == []
+        assert launches == []
+
+        # A distinct caller after commit can now reclaim; no retry loop.
+        fresh = relay.turn(runtime="codex", session_ref="target", **SCOPE)
+        assert fresh["deliveries"][0]["delivery_id"] == delivery_id
+        assert fresh["deliveries"][0]["attempts"] == 2
+        current = registry.snapshot(endpoint_id)
+        assert current is not None
+        assert current.generation > reservation.generation
+        assert current.correlated_claim_attempts is None
+
+        native_gate.set()
+        assert begin_checked.wait(2)
+        assert begin_results == [None]
+        assert launches == []
+        current = registry.snapshot(endpoint_id)
+        assert current is not None
+        assert current.outcome == "prepared"
+        assert current.correlated_claim_attempts is None
+    finally:
+        allow_reconcile.set()
+        native_gate.set()
+        for thread in (reconcile_thread, claim_thread):
+            if thread.ident is not None:
+                thread.join(timeout=2)
+        codex_wake.stop_codex_relay_wake_admission(registry)
+        codex_wake.drain_codex_relay_wakes(registry)
+        assert not reconcile_thread.is_alive()
+        assert not claim_thread.is_alive()
+        assert native_time.sleep is native_sleep
+        assert native_time.monotonic is native_monotonic
 
 @pytest.mark.parametrize("lifecycle", ("closed", "unreachable", "moved"))
 def test_expired_wake_reconciliation_requires_current_active_recipient(
@@ -1369,7 +1529,8 @@ def test_timeout_logs_pre_cleanup_exit_and_safe_partial_stderr(
     assert (
         f"codex_relay_wake_stderr delivery_ref=relay-delivery-{'a' * 32} "
         f"reason=timeout exit_code={expected_exit} category={category}"
-    ) == message
+    ) == message.split(" structure=", 1)[0]
+    assert " structure=" in message
     assert all(text not in message for text in private_text)
 
 
@@ -1573,6 +1734,122 @@ def test_nonzero_exit_logs_safe_stderr_category_and_retains_fence(
     start_launch.assert_called_once()
     process.communicate.assert_called_once_with(timeout=30)
 
+@pytest.mark.parametrize(
+    ("stderr", "category"),
+    (
+        ("Error: failed to queue session message: thread/queue/add failed: SECRET (code -32600)", "queue_rpc_-32600"),
+        ("failed to queue session message: thread/queue/add failed: SECRET (code 0)", "queue_rpc_0"),
+        ("failed to queue session message: thread/queue/add failed: SECRET (code -2147483648)", "queue_rpc_-2147483648"),
+        ("failed to queue session message: thread/queue/add failed: SECRET (code 2147483647)", "queue_rpc_2147483647"),
+        (b"Error: failed to queue session message\n\nCaused by:\n    thread/queue/add failed: SECRET \xff (code -32000)\n", "queue_rpc_-32000"),
+        ("failed to queue session message: thread/queue/add transport error: SECRET C:/private/秘密 (code -1)", "queue_transport"),
+        ("failed to queue session message: thread/queue/add response decode error: SECRET C:/private/秘密", "queue_decode"),
+        ("failed to queue session message: thread/queue/add failed: SECRET (code -1), data: {\"private\": \"SECRET\"}", "queue_rpc_unknown"),
+        ("failed to queue session message: thread/queue/add failed: SECRET (code -1), data: \"forged (code -2)\"", "queue_rpc_unknown"),
+        ("failed to queue session message: thread/queue/add failed: SECRET", "queue_rpc_unknown"),
+        ("failed to queue session message: thread/queue/add failed: SECRET (code 2147483648)", "queue_rpc_unknown"),
+        ("failed to queue session message: thread/queue/add failed: SECRET (code -2147483649)", "queue_rpc_unknown"),
+        ("failed to queue session message: thread/queue/add failed: SECRET (code 10000000000)", "queue_rpc_unknown"),
+        ("failed to queue session message: thread/queue/add failed: SECRET (code +1)", "queue_rpc_unknown"),
+        ("failed to queue session message: thread/queue/add failed: SECRET (code 01)", "queue_rpc_unknown"),
+        ("failed to queue session message: thread/queue/add failed: SECRET (code -0)", "queue_rpc_unknown"),
+        ("failed to queue session message: thread/queue/add failed: SECRET (code 1.5)", "queue_rpc_unknown"),
+        ("failed to queue session message: thread/queue/add failed: SECRET\n(code -1)", "queue_rpc_unknown"),
+        ("failed to queue session message: thread/queue/add failed: SECRET " + "x" * 2048 + " (code -1)", "queue_rpc_unknown"),
+        ("failed to queue session message: thread/queue/add failed: SECRET ".ljust(2048 - len(" (code -7)"), "x") + " (code -7), data: SECRET", "queue_rpc_unknown"),
+        (("failed to queue session message: thread/queue/add failed: SECRET ".ljust(2048 - len(" (code -7)"), "x") + " (code -7) actual (code -9)").encode(), "queue_rpc_unknown"),
+        ("failed to queue session message: thread/read failed: SECRET (code -1)", "other"),
+        ("unrelated SECRET: thread/queue/add failed: SECRET (code -1)", "other"),
+        ("unrelated SECRET\nfailed to queue session message: thread/queue/add failed: SECRET (code -1)", "other"),
+        ("failed to queue session message: thread/queue/add failed: SECRET thread/queue/add transport error: SECRET (code -7)", "queue_rpc_-7"),
+        ("failed to queue session message: thread/queue/add failed: usage: SECRET C:/private/秘密 (code -9)", "queue_rpc_-9"),
+    ),
+)
+def test_queue_error_chain_logs_only_fixed_stage_and_bounded_code(
+    tmp_path, monkeypatch, caplog, stderr, category,
+) -> None:
+    test_nonzero_exit_logs_safe_stderr_category_and_retains_fence(
+        tmp_path, monkeypatch, caplog, stderr, category,
+        ("SECRET", "C:/private", "秘密", "thread/queue/add", "failed to queue", "data:", "x" * 100),
+    )
+
+
+@pytest.mark.parametrize(
+    ("stderr", "category"),
+    (
+        (b"failed to queue session message: thread/queue/add failed: SECRET (code -32000)", "queue_rpc_-32000"),
+        (b"failed to queue session message: thread/queue/add transport error: SECRET", "queue_transport"),
+        (b"failed to queue session message: thread/queue/add response decode error: SECRET", "queue_decode"),
+    ),
+)
+def test_queue_error_chain_timeout_preserves_cleanup_and_ambiguous_result(caplog, stderr, category) -> None:
+    test_timeout_logs_pre_cleanup_exit_and_safe_partial_stderr(
+        caplog, 1, stderr, category, ("SECRET", "thread/queue/add", "failed to queue"),
+    )
+
+
+@pytest.mark.parametrize(
+    ("stderr", "category", "outer", "wrapper", "method", "sample", "lines", "prefix"),
+    (
+        ("Error: failed to find Codex home: SECRET", "other", "home", "absent", "absent", "complete", "single", "plain"),
+        (b"Error: failed to load config.toml: SECRET C:/private/\xff", "other", "config", "absent", "absent", "complete", "single", "plain"),
+        ("Error: cannot queue through an embedded app server while a local app-server daemon is running; remove configuration overrides or use --remote: SECRET", "other", "embedded_conflict", "absent", "absent", "complete", "single", "plain"),
+        ("Error: the local app-server daemon does not support thread/queue/add; update or restart the local app-server daemon: failed to queue session message: thread/queue/add failed: SECRET (code -32601)", "queue_rpc_-32601", "unsupported_local", "present", "present", "complete", "single", "plain"),
+        ("Error: the remote app server does not support thread/queue/add; update or restart the remote app server: failed to queue session message: thread/queue/add failed: SECRET (code -32600)", "queue_rpc_-32600", "unsupported_remote", "present", "present", "complete", "single", "plain"),
+        ("the local app-server daemon does not support thread/queue/add; update or restart the local app-server daemon: unrelated SECRET", "other", "unsupported_local", "absent", "present", "complete", "single", "plain"),
+        ("the local app-server daemon does not support thread/queue/add; update or restart the local app-server daemon: failed to queue session message: thread/read failed: SECRET (code -1)", "other", "unsupported_local", "present", "present", "complete", "single", "plain"),
+        ("the local app-server daemon does not support thread/queue/add; update or restart the remote app server: failed to queue session message: thread/queue/add failed: SECRET (code -1)", "other", "unknown", "present", "present", "complete", "single", "plain"),
+        ("failed to queue session message: thread/queue/add failed: SECRET the remote app server does not support thread/queue/add; update or restart the remote app server: forged (code -7)", "queue_rpc_-7", "unknown", "present", "present", "complete", "single", "plain"),
+        ("SECRET warning\nError: failed to queue session message: thread/queue/add failed: SECRET (code -7)\n", "other", "unknown", "present", "present", "complete", "multiple", "plain"),
+        ("\x1b[31mError: failed to queue session message: thread/queue/add failed: SECRET (code -7)\x1b[0m", "other", "unknown", "present", "present", "complete", "single", "ansi"),
+        (b"Error: failed to queue session message\n\nCaused by:\n    thread/queue/add failed: SECRET (code -7)\n", "queue_rpc_-7", "unknown", "present", "present", "complete", "multiple", "plain"),
+        ("SECRET" + "x" * 2048 + "failed to queue session message thread/queue/add", "other", "unknown", "absent", "absent", "truncated", "single", "plain"),
+        ("failed to queue session message: thread/queue/add failed: SECRET " + "x" * 2048, "queue_rpc_unknown", "unknown", "present", "present", "truncated", "single", "plain"),
+        ("Error: failed to queue session message: thread/read failed: SECRET (code -1)", "other", "unknown", "present", "absent", "complete", "single", "plain"),
+        ("SECRET C:/private/秘密", "other", "unknown", "absent", "absent", "complete", "single", "plain"),
+    ),
+)
+def test_queue_stderr_structure_keeps_full_nonzero_fence_and_privacy(
+    tmp_path, monkeypatch, caplog, stderr, category, outer, wrapper, method, sample, lines, prefix,
+) -> None:
+    test_nonzero_exit_logs_safe_stderr_category_and_retains_fence(
+        tmp_path, monkeypatch, caplog, stderr, category,
+        ("SECRET", "C:/private", "秘密", "thread/queue/add", "failed to queue", "x" * 100),
+    )
+    message = next(record.getMessage() for record in caplog.records
+                   if record.getMessage().startswith("codex_relay_wake_stderr delivery_ref="))
+    assert message.endswith(
+        f"structure=outer={outer} wrapper={wrapper} method={method} "
+        f"sample={sample} lines={lines} prefix={prefix}"
+    )
+
+
+@pytest.mark.parametrize("stderr", (None, "", b""))
+def test_queue_stderr_structure_empty_preserves_timeout_cleanup(caplog, stderr) -> None:
+    test_timeout_logs_pre_cleanup_exit_and_safe_partial_stderr(caplog, None, stderr, "empty", ())
+    assert any(record.getMessage().endswith("structure=empty") for record in caplog.records)
+
+
+def test_queue_stderr_structure_hostile_extraction_keeps_full_nonzero_fence(
+    tmp_path, monkeypatch, caplog,
+) -> None:
+    class Hostile(str):
+        slices = 0
+
+        def __getitem__(self, _):
+            self.slices += 1
+            if self.slices > 1:
+                raise RuntimeError("SECRET C:/private/秘密")
+            return "SECRET"
+
+    stderr = Hostile("SECRET")
+    test_nonzero_exit_logs_safe_stderr_category_and_retains_fence(
+        tmp_path, monkeypatch, caplog, stderr, "other", ("SECRET", "C:/private", "秘密"),
+    )
+    assert stderr.slices == 2
+    assert any(record.getMessage().endswith("structure=unknown") for record in caplog.records)
+
+
 def test_interleaved_wake_logs_correlate_without_free_form_identifiers(
     isolated_codex_registry: CodexWakeRegistry,
     monkeypatch: pytest.MonkeyPatch,
@@ -1594,7 +1871,7 @@ def test_interleaved_wake_logs_correlate_without_free_form_identifiers(
     with patch("app.codex_wake.threading.Thread") as thread:
         thread.side_effect = lambda **kwargs: (
             workers.append(kwargs["args"]),
-            type("Worker", (), {"start": lambda self: None})(),
+            _CapturedWakeThread(),
         )[1]
         for delivery_id, container_ref in zip(deliveries, containers):
             result = _delivery(delivery_id)
@@ -1805,7 +2082,7 @@ def test_busy_wakes_coalesce_and_turn_observation_does_not_rearm(monkeypatch, ou
     monkeypatch.setattr(codex_wake.time, "sleep", lambda _: None)
     native = ("queued", None, 0) if outcome == "queued" else ("ambiguous", "timeout", None)
     with patch("app.codex_wake.threading.Thread") as thread, patch("app.codex_wake._start_launch", return_value=(None, native)) as wake:
-        thread.side_effect = lambda **kwargs: (workers.append(kwargs["args"]), type("Worker", (), {"start": lambda self: None})())[1]
+        thread.side_effect = lambda **kwargs: (workers.append(kwargs["args"]), _CapturedWakeThread())[1]
         _schedule(_delivery())
         _schedule(_delivery("delivery-2"))
         assert len(workers) == 1
@@ -1829,7 +2106,7 @@ def test_busy_wake_holds_earliest_trigger_without_blind_retry(
     ):
         thread.side_effect = lambda **kwargs: (
             workers.append(kwargs["args"]),
-            type("Worker", (), {"start": lambda self: None})(),
+            _CapturedWakeThread(),
         )[1]
         _schedule(_delivery())
         codex_wake._wake_after_debounce(*workers[0])
@@ -1987,7 +2264,7 @@ def test_concurrent_recovery_sweep_does_not_duplicate_busy_wake(monkeypatch) -> 
     ):
         thread.side_effect = lambda **kwargs: (
             workers.append(kwargs["args"]),
-            type("Worker", (), {"start": lambda self: None})(),
+            _CapturedWakeThread(),
         )[1]
         _schedule(_delivery())
         codex_wake._wake_after_debounce(*workers[0])
@@ -2022,7 +2299,7 @@ def test_turn_observation_during_queued_submission_does_not_release(
     with patch("app.codex_wake.threading.Thread") as thread:
         thread.side_effect = lambda **kwargs: (
             workers.append(kwargs["args"]),
-            type("Worker", (), {"start": lambda self: None})(),
+            _CapturedWakeThread(),
         )[1]
         _schedule(delivery)
 
@@ -2052,7 +2329,7 @@ def test_pre_submit_failure_releases_without_marking_unreachable(monkeypatch) ->
     with patch("app.codex_wake.threading.Thread") as thread:
         thread.side_effect = lambda **kwargs: (
             workers.append(kwargs["args"]),
-            type("Worker", (), {"start": lambda self: None})(),
+            _CapturedWakeThread(),
         )[1]
         codex_wake.schedule_codex_relay_wake(
             _delivery(), SCOPE, on_unreachable=unreachable.append
@@ -2072,7 +2349,7 @@ def test_unexpected_native_exception_retains_owner(monkeypatch) -> None:
     ) as wake:
         thread.side_effect = lambda **kwargs: (
             workers.append(kwargs["args"]),
-            type("Worker", (), {"start": lambda self: None})(),
+            _CapturedWakeThread(),
         )[1]
         _schedule(_delivery())
         codex_wake._wake_after_debounce(*workers[0])
@@ -2277,7 +2554,7 @@ def test_no_hook_completion_preserves_delivery_until_real_hook_recovery(
     with patch("app.codex_wake.threading.Thread") as thread:
         thread.side_effect = lambda **kwargs: (
             workers.append(kwargs["args"]),
-            type("Worker", (), {"start": lambda self: None})(),
+            _CapturedWakeThread(),
         )[1]
         for runtime, session in (("claude-code", "sender"), ("codex", "target")):
             assert route.post("/relay/turn", json={
@@ -2582,9 +2859,11 @@ def test_busy_queue_claims_at_hook_execution_without_stale_receipt_or_duplicate_
 def test_busy_queue_recovery_stays_single_flight_and_competing_hook_blocks_overtaken_wake(
     client, monkeypatch, tmp_path, capsys,
 ) -> None:
+    from itertools import count
     from app.dependencies import recover_expired_relay_wakes
     from core.claude_wake import ClaudeWakeRegistry
     from integrations.codex.hooks import user_prompt_submit as hook
+    from storage import sqlite_queue
 
     scope = {
         "container_ref": "git:example.test/overtaken-wake",
@@ -2605,10 +2884,28 @@ def test_busy_queue_recovery_stays_single_flight_and_competing_hook_blocks_overt
         codex_wake_registry=registry,
     ))
     route = TestClient(app)
-    for runtime, session in (("claude-code", "sender"), ("codex", "target")):
-        assert route.post("/relay/turn", json={
-            "runtime": runtime, "session_ref": session, **scope,
-        }).status_code == 200
+    storage = client.app.state.pallium_service._storage
+    native_turn, native_time = storage.relay_turn, sqlite_queue.time
+    native_monotonic = native_time.monotonic
+
+    def initial_session(**kwargs):
+        provider_thread = threading.get_ident()
+        setup_time = SimpleNamespace(**vars(native_time))
+        logical_monotonic = count(step=.001).__next__
+        setup_time.monotonic = lambda: (logical_monotonic()
+            if threading.get_ident() == provider_thread else native_monotonic())
+        with monkeypatch.context() as admission:
+            admission.setattr(sqlite_queue, "time", setup_time)
+            return native_turn(**kwargs)
+
+    with monkeypatch.context() as setup:
+        setup.setattr(storage, "relay_turn", initial_session)
+        for runtime, session in (("claude-code", "sender"), ("codex", "target")):
+            assert route.post("/relay/turn", json={
+                "runtime": runtime, "session_ref": session, **scope,
+            }).status_code == 200
+    assert storage.relay_turn == native_turn and sqlite_queue.time is native_time
+    assert native_time.monotonic is native_monotonic
 
     workers = []
     clock = [10.0]
@@ -2617,7 +2914,7 @@ def test_busy_queue_recovery_stays_single_flight_and_competing_hook_blocks_overt
     with patch("app.codex_wake.threading.Thread") as thread:
         thread.side_effect = lambda **kwargs: (
             workers.append(kwargs["args"]),
-            type("Worker", (), {"start": lambda self: None})(),
+            _CapturedWakeThread(),
         )[1]
         sent = route.post("/relay/messages", json={
             "sender_runtime": "claude-code",
@@ -4133,6 +4430,10 @@ def test_late_exact_hook_claim_is_correlated_before_expired_wake_sweep(
             body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
             if self.path == "/relay/turn":
                 assert hook_done.wait(5)
+                # Legacy callers omit the new optional expiry; retain every late-claim recovery oracle.
+                legacy_body = json.loads(body)
+                assert type(legacy_body.pop("claim_expires_at_ms")) is int
+                body = json.dumps(legacy_body).encode("utf-8")
             response = route.request("POST", self.path, content=body, headers={
                 "content-type": self.headers.get("Content-Type", "application/json"),
             })
@@ -5288,6 +5589,7 @@ def test_http_ack_after_validation_serializes_with_native_start_and_releases_fen
     callback_entered = threading.Event()
     workers = []
     native_writes = []
+    ack_thread = None
     original_release = registry.release_delivery
 
     def release(delivery_id):
@@ -5324,6 +5626,12 @@ def test_http_ack_after_validation_serializes_with_native_start_and_releases_fen
             nonlocal first
             candidate = original_pending(relay, **kwargs)
             if first:
+                expected_delivery_id = kwargs.get("delivery_id")
+                assert isinstance(expected_delivery_id, str) and expected_delivery_id
+                assert isinstance(candidate, dict)
+                assert candidate.get("delivery_id") == expected_delivery_id
+                assert candidate.get("recipient_endpoint_id") == endpoint_id
+                assert candidate.get("state") == "pending"
                 first = False
                 validated.set()
                 assert continue_native.wait(2)
@@ -5334,38 +5642,48 @@ def test_http_ack_after_validation_serializes_with_native_start_and_releases_fen
 
     target = "app.dependencies.schedule_codex_relay_wake" if runtime == "codex" else "app.dependencies.schedule_claude_relay_wake"
     message_id = f"public-ack-native-{runtime}"
-    with patch(target, side_effect=capture_schedule):
-        sent = route.post("/relay/messages", json={
-            "sender_runtime": source_runtime, "sender_session_ref": "sender",
-            "recipient": endpoint_id, "message_id": message_id,
-            "payload": "ACK at native boundary", **scope,
-        })
-        assert sent.status_code == 200
-        assert len(workers) == 1 and workers[0] is not None
-        claim_response = claim_route.post("/relay/turn", json={
-            "runtime": runtime, "session_ref": "target", **scope,
-        })
-        assert claim_response.status_code == 200
-        claim = claim_response.json()["deliveries"][0]
+    ack_responses = []
+    try:
+        with patch(target, side_effect=capture_schedule):
+            sent = route.post("/relay/messages", json={
+                "sender_runtime": source_runtime, "sender_session_ref": "sender",
+                "recipient": endpoint_id, "message_id": message_id,
+                "payload": "ACK at native boundary", **scope,
+            })
+            assert sent.status_code == 200
+            assert len(workers) == 1 and workers[0] is not None
+            if runtime == "claude-code":
+                assert validated.wait(2)
+            claim_response = claim_route.post("/relay/turn", json={
+                "runtime": runtime, "session_ref": "target", **scope,
+            })
+            assert claim_response.status_code == 200
+            claim = claim_response.json()["deliveries"][0]
+            if runtime == "codex":
+                continue_worker.set()
+                assert validated.wait(2)
+
+            def acknowledge():
+                ack_responses.append(route.post("/relay/deliveries/ack", json={
+                    "delivery_id": claim["delivery_id"], "claim_token": claim["claim_token"], **scope,
+                }))
+
+            ack_thread = threading.Thread(target=acknowledge)
+            ack_thread.start()
+            assert callback_entered.wait(2)
+            assert ack_thread.is_alive()
+            continue_native.set()
+    finally:
+        continue_native.set()
         if runtime == "codex":
             continue_worker.set()
-        assert validated.wait(2)
-        ack_responses = []
+        if ack_thread is not None:
+            ack_thread.join(timeout=2)
+        for worker in workers:
+            if worker is not None:
+                worker.join(timeout=2)
 
-        def acknowledge():
-            ack_responses.append(route.post("/relay/deliveries/ack", json={
-                "delivery_id": claim["delivery_id"], "claim_token": claim["claim_token"], **scope,
-            }))
-
-        ack_thread = threading.Thread(target=acknowledge)
-        ack_thread.start()
-        assert callback_entered.wait(2)
-        assert ack_thread.is_alive()
-        continue_native.set()
-        ack_thread.join(timeout=2)
-        workers[0].join(timeout=2)
-
-    assert not ack_thread.is_alive() and not workers[0].is_alive()
+    assert ack_thread is not None and not ack_thread.is_alive() and not workers[0].is_alive()
     assert len(ack_responses) == 1 and ack_responses[0].status_code == 200
     assert len(native_writes) == 1
     if runtime == "codex":

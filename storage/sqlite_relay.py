@@ -1447,6 +1447,7 @@ class SQLiteRelayMixin:
         max_messages: int,
         lease_seconds: int,
         exact_delivery_id: str | None = None,
+        claim_expires_at_ms: int | None = None,
         codex_wake_endpoint_id: str | None = None,
         codex_wake_generation: int | None = None,
         opencode_wake: dict[str, Any] | None = None,
@@ -1463,8 +1464,27 @@ class SQLiteRelayMixin:
         ):
             raise RelayConflictError("scope transitions require session registration")
 
+        claim_deadline = None
+        if claim_expires_at_ms is not None:
+            if type(claim_expires_at_ms) is not int or not 1 <= claim_expires_at_ms <= 2**53 - 1:
+                raise ValueError("invalid Relay claim expiry")
+            claim_deadline = time.monotonic() + (claim_expires_at_ms / 1000 - time.time())
+
+        def check_claim_expiry():
+            if claim_deadline is not None and time.monotonic() >= claim_deadline:
+                raise RelayConflictError("Relay claim request expired")
+
+        check_claim_expiry()
         current = _now(now)
         with self._begin_relay_immediate() as db:
+            check_claim_expiry()
+
+            def finalize(result):
+                if claim_deadline is not None:
+                    db.flush()
+                    check_claim_expiry()  # Still inside the transaction: expiration rolls everything back.
+                return result
+
             wake = None
             if opencode_wake is not None:
                 if runtime != "opencode" or register_session or exact_delivery_id is None:
@@ -1492,13 +1512,13 @@ class SQLiteRelayMixin:
                     reusable = reusable and _delivery_render_safe(delivery, message) and (
                         not max_chars or len(_delivery_text(delivery, message, view)) <= max_chars
                     )
-                    return {
+                    return finalize({
                         "session": self._relay_session_view(db, registered, current, RELAY_RECENT_SECONDS),
                         "wake": self._opencode_wake_view(wake),
                         "deliveries": [view] if reusable else [],
                         "restored": reusable and delivery.state == "delivered",
                         "has_more": False, "remaining_count": 0,
-                    }
+                    })
             current_scope = db.execute(
                 select(RelaySessionRecord, RelayEndpointGenerationRecord)
                 .outerjoin(
@@ -1543,12 +1563,12 @@ class SQLiteRelayMixin:
                         generation_row.generation = generation
                     registered = source
             if registered is None and not register_session:
-                return {
+                return finalize({
                     "session": None,
                     "deliveries": [],
                     "has_more": False,
                     "remaining_count": 0,
-                }
+                })
             if registered is None:
                 registered = RelaySessionRecord(
                     id=f"relay-session-{uuid.uuid4().hex}",
@@ -1564,12 +1584,12 @@ class SQLiteRelayMixin:
                 db.flush()
             else:
                 if not register_session and registered.state != "active":
-                    return {
+                    return finalize({
                         "session": self._relay_session_view(db, registered, current, 24 * 60 * 60),
                         "deliveries": [],
                         "has_more": False,
                         "remaining_count": 0,
-                    }
+                    })
                 if register_session:
                     registered.state = "active"
                     registered.closed_at = None
@@ -1691,6 +1711,7 @@ class SQLiteRelayMixin:
                         break
 
             claimed: list[dict[str, Any]] = []
+            check_claim_expiry()
             for delivery, message, view, _, token in selected:
                 delivery.state = "claimed"
                 delivery.claim_token = token
@@ -1719,7 +1740,7 @@ class SQLiteRelayMixin:
                     payload_limit=len(view["payload"]) if view["content_truncated"] else None,
                 ))
 
-            return response(claimed)
+            return finalize(response(claimed))
 
     def relay_refresh_structural_work_refs(
         self,

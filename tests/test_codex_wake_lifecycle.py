@@ -48,6 +48,8 @@ def test_fresh_foreground_initializes_before_native_start_without_installed_unit
         return 0
 
     monkeypatch.setattr(run_module.uvicorn, "run", native)
+    monkeypatch.setattr(run_module.uvicorn.Server, "run", lambda server: (
+        native() or setattr(server, "started", True)))
     monkeypatch.setattr(run_module, "run_supervisor", native)
     monkeypatch.setattr(service, "assert_service_stopped", lambda *a: pytest.fail("fresh install required service metadata"))
     assert run_module.run([mode]) == 0

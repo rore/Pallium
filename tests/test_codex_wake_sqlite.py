@@ -202,11 +202,14 @@ def test_endpoint_view_preserves_current_session_fields_and_generation(
     from sqlalchemy import event
 
     relay, storage, database = relay_store
-    endpoint = _send(relay)["recipient_endpoint_id"]
+    endpoint = "relay-session-" + "a" * 32
     now = datetime.now(timezone.utc)
     container = "git:example.test/moved-東京" if state == "moved" else SCOPE["container_ref"]
     seen = now - timedelta(days=2) if state == "dormant" else now
     with sqlite3.connect(database) as db:
+        db.execute("INSERT INTO relay_sessions(id,runtime,session_ref,container_ref,first_seen_at,last_seen_at,state,trial_enrolled) VALUES (?,?,?,?,?,?,?,?)",
+            (endpoint, "codex", "target", SCOPE["container_ref"], now.strftime("%Y-%m-%d %H:%M:%S.%f"),
+             now.strftime("%Y-%m-%d %H:%M:%S.%f"), "active", 0))
         db.execute("UPDATE relay_sessions SET container_ref=?,title=?,alias=?,state=?,last_seen_at=?,closed_at=? WHERE id=?",
             (container, "Fresh title 東京", "current", "closed" if state == "closed" else "busy" if state == "busy" else "idle",
              seen.strftime("%Y-%m-%d %H:%M:%S.%f"), now.strftime("%Y-%m-%d %H:%M:%S.%f") if state == "closed" else None, endpoint))
@@ -864,10 +867,13 @@ def test_persistent_observation_preserves_endpoint_canonicalization_and_full_val
     (1, "high_water"), (0, "extra_marker"), (0, "absent_marker"),
 ])
 def test_authority_reads_preserve_all_fields_without_global_orm_hydration(
-    relay_store, tmp_path, count, damage,
+    relay_store, tmp_path, count, damage, monkeypatch,
 ):
+    from itertools import count as clock_ticks
+    import time
     from sqlalchemy import event
     from sqlalchemy.orm import Session
+    from storage import sqlite_queue
     from storage.sqlite_schema import RelayCodexWakeReservationRecord, RelayCodexWakeStateRecord
 
     relay, storage, database = relay_store
@@ -935,12 +941,21 @@ def test_authority_reads_preserve_all_fields_without_global_orm_hydration(
         # All unrelated rows remain validated during a write transition too.
         statements.clear()
         hydrated.clear()
-        if invalid:
-            with pytest.raises(ValueError, match="invalid persisted Codex wake authority"):
-                storage.relay_codex_wake_transition(operation="release", reservations=())
-        else:
-            released = storage.relay_codex_wake_transition(operation="release", reservations=())
-            assert released == (None if damage == "absent_marker" else ())
+        native_queue_time, native_monotonic = sqlite_queue.time, time.monotonic
+        # This tests substantive write validation/SQL shape, not acquisition latency.
+        with monkeypatch.context() as write_validation:
+            validation_time = SimpleNamespace(**vars(native_queue_time))
+            validation_time.monotonic = clock_ticks(step=.001).__next__
+            write_validation.setattr(sqlite_queue, "time", validation_time)
+            if invalid:
+                with pytest.raises(ValueError, match="invalid persisted Codex wake authority"):
+                    storage.relay_codex_wake_transition(operation="release", reservations=())
+            else:
+                released = storage.relay_codex_wake_transition(operation="release", reservations=())
+                assert released == (None if damage == "absent_marker" else ())
+        assert sqlite_queue.time is native_queue_time
+        assert sqlite_queue.time.monotonic is native_monotonic
+        assert time.monotonic is native_monotonic
         assert [statement.split()[0] for statement in statements] == [
             "PRAGMA", "BEGIN", "SELECT", "SELECT", "SELECT",
             "ROLLBACK" if invalid else "COMMIT", "PRAGMA",
@@ -1131,13 +1146,18 @@ def test_http_response_projection_uses_fresh_authority_and_distinct_health(
 
 @pytest.mark.parametrize("callback_mode", ["custom", "delegate", "factory_raises", "factory_invalid"])
 def test_http_projection_factory_preserves_overrides_and_error_fallback(
-    relay_store, tmp_path, monkeypatch, caplog, callback_mode,
+    relay_store, tmp_path, monkeypatch, caplog, callback_mode, *, force_setup_refusal=False,
 ):
     from app import dependencies
+    from tests.codex_wake_setup import initialize_empty_wake_registry
 
-    relay, storage, _ = relay_store
-    registry = _registry(relay, tmp_path / "legacy")
-    assert registry.initialize(old_owner_drained=True)
+    relay, storage, database = relay_store
+    legacy = tmp_path / "legacy"
+    registry = _registry(relay, legacy)
+    initialize_empty_wake_registry(
+        registry, relay, storage, expected_database=database, legacy=legacy,
+        monkeypatch=monkeypatch, force_refusal=force_setup_refusal,
+    )
     reservation = _reserve(registry, _send(relay))
     spent = registry.begin_native_attempt(reservation)
     assert spent is not None and registry.record_outcome(spent, "accepted")
@@ -1202,10 +1222,22 @@ def test_http_claim_correlation_uses_fresh_identity_and_preserves_authority(
     relay_store, tmp_path, monkeypatch, change,
 ):
     from app import dependencies
+    from itertools import count
+    from storage import sqlite_queue
 
     relay, storage, database = relay_store
     registry = _registry(relay, tmp_path / "legacy")
-    assert registry.initialize(old_owner_drained=True)
+    native_time = sqlite_queue.time
+    native_monotonic = native_time.monotonic
+    provider_thread = threading.get_ident()
+    setup_time = SimpleNamespace(**vars(native_time))
+    logical_monotonic = count(step=.001).__next__
+    setup_time.monotonic = lambda: (logical_monotonic()
+        if threading.get_ident() == provider_thread else native_monotonic())
+    with monkeypatch.context() as setup:
+        setup.setattr(sqlite_queue, "time", setup_time)
+        assert registry.initialize(old_owner_drained=True)
+    assert sqlite_queue.time is native_time and native_time.monotonic is native_monotonic
     reservation = _reserve(registry, _send(relay))
     current = registry.begin_native_attempt(reservation)
     assert current is not None
@@ -1214,8 +1246,24 @@ def test_http_claim_correlation_uses_fresh_identity_and_preserves_authority(
     original_router = dependencies.create_router
     original_correlate = registry.correlate_claim
     original_begin = storage._begin_relay_immediate
+    native_turn = storage.relay_turn
     results = []
     expected = [current]
+
+    def qualified_claim(*args, **kwargs):
+        # Correlation faults start after acquisition; native expiry is covered below.
+        assert kwargs["exact_delivery_id"] == current.delivery_id
+        claim_thread = threading.get_ident()
+        claim_time = SimpleNamespace(**vars(native_time))
+        claim_clock = count(step=.001).__next__
+        claim_time.monotonic = lambda: (claim_clock()
+            if threading.get_ident() == claim_thread else native_monotonic())
+        try:
+            with monkeypatch.context() as acquisition:
+                acquisition.setattr(sqlite_queue, "time", claim_time)
+                return native_turn(*args, **kwargs)
+        finally:
+            monkeypatch.setattr(storage, "relay_turn", native_turn)
 
     def correlate(**kwargs):
         mismatches = {
@@ -1240,6 +1288,8 @@ def test_http_claim_correlation_uses_fresh_identity_and_preserves_authority(
             )
 
         def change_before_correlation(request, result, captured):
+            assert sqlite_queue.time is native_time and native_time.monotonic is native_monotonic
+            assert storage.relay_turn == native_turn
             assert captured == current
             assert result["deliveries"][0]["attempts"] == 1
             if change == "outcome":
@@ -1282,10 +1332,13 @@ def test_http_claim_correlation_uses_fresh_identity_and_preserves_authority(
     app = FastAPI()
     app.include_router(build_router(SimpleNamespace(), relay_storage=storage, codex_wake_registry=registry))
     with TestClient(app) as http:
+        monkeypatch.setattr(storage, "relay_turn", qualified_claim)
         response = http.post("/relay/turn", json={
             "runtime": "codex", "session_ref": "target",
             "wake_delivery_id": current.delivery_id, **SCOPE,
         })
+        assert sqlite_queue.time is native_time and native_time.monotonic is native_monotonic
+        assert storage.relay_turn == native_turn
         assert response.status_code == 200, response.text
         claimed, = response.json()["deliveries"]
         assert claimed["delivery_id"] == current.delivery_id and claimed["attempts"] == 1
@@ -1302,11 +1355,144 @@ def test_http_claim_correlation_uses_fresh_identity_and_preserves_authority(
         assert retained["state"] == "claimed" and retained["attempts"] == 1
 
 
+@pytest.mark.parametrize("boundary", ["setup_expired", "late_begin"])
+def test_http_claim_native_acquisition_expiry_preserves_pending_delivery(
+    relay_store, tmp_path, monkeypatch, boundary,
+):
+    import time
+    from app import dependencies
+    from storage import sqlite_queue
+
+    relay, storage, database = relay_store
+    registry = _registry(relay, tmp_path / "legacy")
+    assert registry.initialize(old_owner_drained=True)
+    sent = _send(relay)
+    current = registry.begin_native_attempt(_reserve(registry, sent))
+    assert current is not None
+    authority = _stored_items(database)
+    native_time = sqlite_queue.time
+    native_monotonic = time.monotonic
+    native_turn = storage.relay_turn
+    native_factory = storage._relay_session_factory
+    original_router = dependencies.create_router
+    callbacks, sessions, statements, holds = [], [], [], []
+    claim_thread = [None]
+
+    def observe_router(service, **kwargs):
+        kwargs["relay_turn_admission_callback"] = lambda *args: callbacks.append(args)
+        return original_router(service, **kwargs)
+
+    def hold():
+        started = time.monotonic()
+        time.sleep(.5)
+        holds.append(time.monotonic() - started)
+
+    def factory(*args, **kwargs):
+        session = native_factory(*args, **kwargs)
+        if threading.get_ident() != claim_thread[0]:
+            return session
+        native_connection, native_close = session.connection, session.close
+        observed = {"session": session, "closed": 0}
+        sessions.append(observed)
+
+        def connection(*args, **kwargs):
+            conn = native_connection(*args, **kwargs)
+            observed["connection"] = conn
+            execute = conn.execute
+
+            def execute_observed(statement, *args, **kwargs):
+                result = execute(statement, *args, **kwargs)
+                sql = str(statement).strip().upper()
+                statements.append(sql)
+                if sql == "BEGIN IMMEDIATE" and boundary == "late_begin":
+                    assert conn.connection.driver_connection.in_transaction
+                    hold()
+                return result
+
+            attempt.setattr(conn, "execute", execute_observed)
+            if boundary == "setup_expired":
+                assert not conn.connection.driver_connection.in_transaction
+                hold()
+            return conn
+
+        def close():
+            try:
+                conn = observed["connection"]
+                observed["busy_timeout"] = conn.exec_driver_sql("PRAGMA busy_timeout").scalar()
+                observed["in_transaction"] = conn.connection.driver_connection.in_transaction
+            finally:
+                native_close()
+                observed["closed"] += 1
+
+        attempt.setattr(session, "connection", connection)
+        attempt.setattr(session, "close", close)
+        return session
+
+    def turn(*args, **kwargs):
+        claim_thread[0] = threading.get_ident()
+        try:
+            return native_turn(*args, **kwargs)
+        finally:
+            claim_thread[0] = None
+
+    monkeypatch.setattr(dependencies, "create_router", observe_router)
+    app = FastAPI()
+    app.include_router(build_router(SimpleNamespace(), relay_storage=storage, codex_wake_registry=registry))
+    body = {"runtime": "codex", "session_ref": "target",
+            "wake_delivery_id": current.delivery_id, **SCOPE}
+    with TestClient(app) as http:
+        before = http.get(f"/relay/messages/{sent['message_id']}", params=SCOPE)
+        with monkeypatch.context() as attempt:
+            attempt.setattr(storage, "relay_turn", turn)
+            attempt.setattr(storage, "_relay_session_factory", factory)
+            response = http.post("/relay/turn", json=body)
+        assert sqlite_queue.time is native_time and time.monotonic is native_monotonic
+        assert storage.relay_turn == native_turn and storage._relay_session_factory == native_factory
+        assert response.status_code == 503, response.text
+        assert response.json() == {"detail": {"code": "relay_busy", "retryable": True}}
+        assert response.headers["Retry-After"] == "1"
+        assert len(holds) == len(sessions) == 1 and holds[0] >= .5
+        assert statements.count("BEGIN IMMEDIATE") == (boundary == "late_begin")
+        assert statements.count("ROLLBACK") == (boundary == "late_begin")
+        assert statements.count("PRAGMA BUSY_TIMEOUT=15000") == 1
+        assert "COMMIT" not in statements and callbacks == []
+        assert sessions[0]["closed"] == 1 and sessions[0]["connection"].closed
+        assert not sessions[0]["session"].in_transaction()
+        assert not storage._relay_writer_lock.locked()
+        assert sessions[0]["busy_timeout"] == 15000
+        assert sessions[0]["in_transaction"] is False
+        assert _stored_items(database) == authority
+        # Readback and the fresh caller run with every acquisition seam removed.
+        assert before.status_code == 200, before.text
+        message_id = before.json()["message_id"]
+        pending = http.get(f"/relay/messages/{message_id}", params=SCOPE)
+        assert pending.status_code == 200, pending.text
+        assert pending.json()["deliveries"] == before.json()["deliveries"]
+        delivery, = pending.json()["deliveries"]
+        assert delivery["state"] == "pending" and delivery["attempts"] == 0
+        fresh = http.post("/relay/turn", json=body)
+        assert fresh.status_code == 200, fresh.text
+        claimed, = fresh.json()["deliveries"]
+        assert claimed["delivery_id"] == current.delivery_id and claimed["attempts"] == 1
+        assert len(callbacks) == 1
+        ack = http.post("/relay/deliveries/ack", json={
+            "delivery_id": claimed["delivery_id"], "claim_token": claimed["claim_token"], **SCOPE})
+        assert ack.status_code == 200, ack.text
+        delivered = http.get(f"/relay/messages/{message_id}", params=SCOPE)
+        assert delivered.status_code == 200, delivered.text
+        retained, = delivered.json()["deliveries"]
+        assert retained["state"] == "delivered" and retained["attempts"] == 1
+
+
 @pytest.mark.parametrize("authority", ["reserved", "absent", "uninitialized", "malformed", "failed"])
 @pytest.mark.parametrize("runtime", ["codex", "claude-code"])
 def test_http_activation_reads_authority_once_and_fails_closed(relay_store, tmp_path, monkeypatch, authority, runtime):
-    relay, storage, _ = relay_store
-    endpoint = relay.turn(runtime=runtime, session_ref="target", **SCOPE)["session"]["endpoint_id"]
+    relay, storage, database = relay_store
+    endpoint = "relay-session-" + "a" * 32
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")
+    with sqlite3.connect(database) as db:
+        db.execute("INSERT INTO relay_sessions(id,runtime,session_ref,container_ref,first_seen_at,last_seen_at,state,trial_enrolled) VALUES (?,?,?,?,?,?,?,?)",
+            (endpoint, runtime, "target", SCOPE["container_ref"], now, now, "active", 0))
     registry = _registry(relay, tmp_path / "legacy")
     reservation = CodexWakeReservation(endpoint, "delivery", "target", SCOPE["container_ref"], 1)
     reads = []
@@ -1334,12 +1520,24 @@ def test_http_activation_reads_authority_once_and_fails_closed(relay_store, tmp_
     assert len(reads) == (1 if runtime == "codex" else 0)
 
 
-def test_existing_relay_database_adds_trial_endpoint_marker_without_enrolling(tmp_path):
+def test_existing_relay_database_adds_trial_endpoint_marker_without_enrolling(tmp_path, monkeypatch):
     relay_db = tmp_path / "relay.db"
     main_db = tmp_path / "main.db"
     storage = SQLiteStorageProvider(f"sqlite:///{main_db}", f"sqlite:///{relay_db}")
-    endpoint = RelayService(storage).turn(runtime="codex", session_ref="target", **SCOPE)["session"]["endpoint_id"]
-    storage.close()
+    from itertools import count
+    from storage import sqlite_queue
+
+    native_time = sqlite_queue.time
+    try:
+        # Endpoint creation prepares the old schema; acquisition deadlines have separate coverage.
+        with monkeypatch.context() as seed:
+            seed_time = SimpleNamespace(**vars(native_time))
+            seed_time.monotonic = count(step=0.001).__next__
+            seed.setattr(sqlite_queue, "time", seed_time)
+            endpoint = RelayService(storage).turn(runtime="codex", session_ref="target", **SCOPE)["session"]["endpoint_id"]
+    finally:
+        storage.close()
+    assert sqlite_queue.time is native_time
     with sqlite3.connect(relay_db) as db:
         db.execute("ALTER TABLE relay_sessions DROP COLUMN trial_enrolled")
         db.execute("DROP TABLE relay_codex_trial")
@@ -1714,8 +1912,16 @@ def test_http_pre_cas_worker_exception_clears_marker_for_same_process_resume(cli
     app.include_router(build_router(client.app.state.pallium_service, relay_storage=storage,
                                    codex_wake_registry=registry))
     http = TestClient(app)
-    for session in ("sender", "target"):
-        assert http.post("/relay/turn", json={"runtime": "codex", "session_ref": session, **SCOPE}).status_code == 200
+    from storage import sqlite_queue
+    native_storage_time = sqlite_queue.time
+    with monkeypatch.context() as registration:
+        registration_time = SimpleNamespace(**vars(native_storage_time))
+        from itertools import count
+        registration_time.monotonic = count(step=0.001).__next__
+        registration.setattr(sqlite_queue, "time", registration_time)
+        for session in ("sender", "target"):
+            assert http.post("/relay/turn", json={"runtime": "codex", "session_ref": session, **SCOPE}).status_code == 200
+    assert sqlite_queue.time is native_storage_time
 
     original_begin = registry.begin_native_attempt
     fail_once = [True]
@@ -2329,7 +2535,8 @@ def test_explicit_empty_initialization_and_stored_claim_generation_high_water(
 @pytest.mark.parametrize("bad_input", ["corrupt", "duplicate_endpoint", "duplicate_delivery", "invalid_outcome", "invalid_generation", "unsupported_version", "over_capacity"])
 def test_invalid_legacy_import_leaves_no_marker_or_partial_rows(relay_store, tmp_path, bad_input):
     relay, _, database = relay_store
-    item = _item(_send(relay), outcome="accepted")
+    item = _item({"recipient_endpoint_id": "relay-session-" + "a" * 32,
+                  "delivery_id": "relay-delivery-" + "b" * 32}, outcome="accepted")
     path = _legacy(tmp_path / "legacy", [item])
     data = json.loads(path.read_text(encoding="utf-8"))
     if bad_input == "corrupt":

@@ -46,7 +46,7 @@ def isolate_codex_wake(monkeypatch):
         state.clear()
 
 def test_busy_queue_recovery_stays_single_flight_and_competing_hook_blocks_overtaken_wake(
-    client, monkeypatch, tmp_path, capsys, isolate_codex_wake, retained,
+    client, monkeypatch, tmp_path, capsys, isolate_codex_wake, retained, request,
 ) -> None:
     """RW-022: accepted busy Codex wakes retry only after durable cooldown.
 
@@ -60,11 +60,15 @@ def test_busy_queue_recovery_stays_single_flight_and_competing_hook_blocks_overt
     from app.dependencies import recover_expired_relay_wakes
     from core.claude_wake import ClaudeWakeRegistry
     from integrations.codex.hooks import user_prompt_submit as hook
-    from tests.test_codex_wake import _sqlite_wake_registry
+    from tests.test_codex_wake import _CapturedWakeThread, _sqlite_wake_registry
 
     service, desktop = register(retained)
     desktop.state = "idle"
     isolate_codex_wake = _sqlite_wake_registry(client.app.state.pallium_service._storage)
+    def drain_owned_registry():
+        codex_wake.stop_codex_relay_wake_admission(isolate_codex_wake)
+        codex_wake.drain_codex_relay_wakes(isolate_codex_wake)
+    request.addfinalizer(drain_owned_registry)
     isolate_codex_wake.retained_service = service
     monkeypatch.setattr(codex_wake, "get_codex_wake_registry", lambda *_args, **_kwargs: isolate_codex_wake)
     monkeypatch.setattr(codex_wake, "_start_launch", _REAL_START_LAUNCH)
@@ -106,7 +110,7 @@ def test_busy_queue_recovery_stays_single_flight_and_competing_hook_blocks_overt
     with patch("app.codex_wake.threading.Thread") as thread:
         thread.side_effect = lambda **kwargs: (
             workers.append(kwargs["args"]),
-            type("Worker", (), {"start": lambda self: None})(),
+            _CapturedWakeThread(),
         )[1]
         sent = route.post("/relay/messages", json={
             "sender_runtime": "claude-code",
