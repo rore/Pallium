@@ -5,8 +5,8 @@ Canonical item: `roadmap/features/add-hermes-agent-integration.md`
 Owner checkout: `C:\Users\I347041\.codex\worktrees\hermes-package-slice2\Pallium`.
 Stack base: pushed slice-1 checkpoint `377327dd39d3660284224f0e8cfcae7c2b4ac725`.
 Main merge base: `701608cd0f666fe5106bf7c91e2e98bf0fe21d0c`.
-Slice 1 remains separately pending compatible-environment full validation; do not
-silently import an unmerged reliability candidate or repeat source-only probes.
+Combined pre-integration validation passed as recorded below. Consume only merged
+reliability changes from main; do not import an unmerged candidate or repeat probes.
 
 <!-- agent-workflow:start -->
 **Outcome:**
@@ -48,6 +48,7 @@ Setup/removal requires exclusive offline access to that profile; Hermes' public 
 4. Bundle the Pallium skill/references/guidance and add explicit --home and --hermes-python profile-targeted setup/status/removal using existing CLI conventions. Check the optional MCP SDK and frozen local-provider/toolset/permission prerequisites before mutation; refuse incompatible settings rather than changing models, Tool Search or other integrations. Configure the plugin-owned bridge, not an unbound native MCP connection. Stage plugin and discoverable profile skill trees with ownership/fingerprint checks, preserve unrelated config/comments/credentials/data, use public Hermes config writer in the target interpreter, retain backups/rollback and changed-user artifacts; repeated setup is idempotent. Never run this against the user's live profile.
 5. Extend the real-host/provider-stub E2E from package install through discovery/send, peer reply, idle wake/receipt, repeat setup and removal. Add caller-surface identity/configuration/error/lifecycle controls.
 6. Run focused tests, whole-change selector and required workflow/boundary checks. Run the full non-slow suite only in an allocated resource window with compatible isolated dependencies. Obtain independent result review, reconcile the canonical item, push checkpoints and leave human review/remaining qualification explicit.
+7. Resume through Agent Workflow before edits: merge current origin/main into this pushed branch, inspect the four shared paths, rerun actual native package E2E and affected caller-surface checks, refresh final PR risk/review evidence, publish and merge PR #321 after required gates pass. Reuse unchanged review/test evidence where valid. Imported main changes are existing approved upstream work, not new reliability implementation or protected-contract changes in this PR.
 Key conventions: existing app/cli setup dispatch and shared MCP tool/client contracts; integration-specific identity stays in its adapter; metadata/receipt confidentiality and exact host identity are preserved. Target files are enumerated in Scope. No dependencies, shared reliability semantics or host support expansion without reassessment.
 
 **Verification plan:**
@@ -64,14 +65,25 @@ Agent technical review: /root/hermes_e2e_review, 2026-10-19, record checkpoint 3
 **Approvals:**
 Approved by user 2026-10-19: "ok, let's start slice 2. keep it isolated from the reliability work, use cheaper models where it makes sense, and push the work so we don't lose it."
 This approves the immediately preceding installable-package slice and disposable-profile acceptance journey, not live environment changes or broader History/memory implementation.
+Approved by user 2026-10-19: "let's do it", in direct response to preparing PR #321 with current main, validating, reviewing and merging it before slice 3. This authorizes repository integration and publication. Live checkout/service updates remain outside this approval; prepare exact impact and rollback for a separate decision.
 
 **Exceptions:**
 —
 
-**State:** Ready for review
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
+
+- Publication resume, 2026-10-19: PR #321 is open/draft at `857e0853`; the
+  isolated checkout is clean. Whole-change applicability remains normal workflow
+  (application/MCP/setup paths); no documentation exemption. Risk remains High,
+  complexity Moderate. Current main is `cf4e8eceff28d601554ade615f2a9ecbed8ba500`,
+  merged PR #314. Read-only merge preview has no conflict markers; shared paths
+  are api/routes.py, api/schemas.py, app/run.py and core/relay.py. No new protected
+  test, CI, storage or dependency edit is planned. Fresh integration/native
+  evidence is required before accepting this composition. The original baseline
+  and frozen experimental qualification are unchanged.
 
 - Created an isolated managed worktree from the pushed slice-1 branch; the shared
   development checkout's unrelated dirty files are preserved.
