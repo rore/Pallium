@@ -783,9 +783,18 @@ def create_router(
                 stage = getattr(exc, "acquisition_stage", None)
                 if type(stage) is not str or stage not in ImmediateTransactionBusyError.ACQUISITION_STAGES:
                     stage = "unknown"
+                phase_ms = getattr(exc, "acquisition_phase_ms", None)
+                allowed_phases = {"session_factory", "session_connection", "setup_pragma", "begin_immediate"}
+                if (type(phase_ms) is not dict or not phase_ms or not set(phase_ms) <= allowed_phases
+                        or any(type(value) is not int or value < 0 or value > 60_000
+                               for value in phase_ms.values())):
+                    phase_ms = None
+                else:
+                    phase_ms = {key: phase_ms[key] for key in sorted(phase_ms)}
                 logger.warning(
-                    "relay operation=%s outcome=busy duration_ms=%d acquisition_stage=%s",
+                    "relay operation=%s outcome=busy duration_ms=%d acquisition_stage=%s acquisition_phase_ms=%s",
                     operation_name, int((time.monotonic() - started) * 1000), stage,
+                    phase_ms if phase_ms is not None else "unknown",
                 )
                 raise
             elapsed_ms = int((time.monotonic() - started) * 1000)

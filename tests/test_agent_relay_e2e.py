@@ -1470,6 +1470,30 @@ def test_relay_busy_is_retryable_and_does_not_expose_sqlite_details(client, rela
     assert SCOPE["container_ref"] not in caplog.text
     assert "actor-ref" not in caplog.text
 
+
+@pytest.mark.parametrize(
+    ("phase_ms", "logged"),
+    [
+        ({"session_factory": 1, "session_connection": 2, "setup_pragma": 3, "begin_immediate": 4},
+         "acquisition_phase_ms={'begin_immediate': 4, 'session_connection': 2, 'session_factory': 1, 'setup_pragma': 3}"),
+        ({"session_factory": 10**1000}, "acquisition_phase_ms=unknown"),
+        ({"session_factory": float("nan")}, "acquisition_phase_ms=unknown"),
+        ({"session_factory": True}, "acquisition_phase_ms=unknown"),
+        ({"unknown": 1}, "acquisition_phase_ms=unknown"),
+    ],
+)
+def test_relay_busy_logs_only_bounded_acquisition_phase_timings(client, relay_storage, monkeypatch, caplog, phase_ms, logged):
+    def busy_transaction():
+        raise ImmediateTransactionBusyError("database is locked", acquisition_stage="setup_deadline", acquisition_phase_ms=phase_ms)
+
+    monkeypatch.setattr(relay_storage, "_begin_relay_immediate", busy_transaction)
+    response = client.post("/relay/turn", json={"runtime": "codex", "session_ref": "busy", **SCOPE})
+    assert response.status_code == 503
+    assert response.headers["retry-after"] == "1"
+    assert response.json()["detail"] == {"code": "relay_busy", "retryable": True}
+    assert logged in caplog.text
+    assert SCOPE["container_ref"] not in caplog.text and "actor-ref" not in caplog.text
+
 def test_atomic_reply_busy_uses_retryable_contract(client, relay_storage, monkeypatch, caplog):
     _turn(client, "claude-code", "sender")
     _turn(client, "codex", "target")

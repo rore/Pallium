@@ -20,9 +20,10 @@ class ImmediateTransactionBusyError(RuntimeError):
         "retry_exhausted", "backoff_no_fit",
     })
 
-    def __init__(self, *args, acquisition_stage=None):
+    def __init__(self, *args, acquisition_stage=None, acquisition_phase_ms=None):
         super().__init__(*args)
         self.acquisition_stage = acquisition_stage
+        self.acquisition_phase_ms = acquisition_phase_ms
 
 
 def is_transient_error(exc: Exception) -> bool:
