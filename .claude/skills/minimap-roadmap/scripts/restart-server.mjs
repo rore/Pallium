@@ -114,6 +114,7 @@ if (palliumConfig.dashboardEndpoint && !palliumConfig.endpoint) {
 }
 const expectedConfigId = palliumConfigId(palliumConfig);
 const childEnv = { ...process.env, PORT: String(requestedPort) };
+if (!Object.hasOwn(childEnv, "UV_THREADPOOL_SIZE")) childEnv.UV_THREADPOOL_SIZE = "8";
 if (palliumConfig.endpoint) childEnv.MINIMAP_PALLIUM_ENDPOINT = palliumConfig.endpoint;
 else delete childEnv.MINIMAP_PALLIUM_ENDPOINT;
 if (palliumConfig.dashboardEndpoint) childEnv.MINIMAP_PALLIUM_DASHBOARD_ENDPOINT = palliumConfig.dashboardEndpoint;

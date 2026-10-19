@@ -57,6 +57,11 @@ _RUNTIME_HOOKS = {
     ],
 }
 
+_CODEX_STATUS_MESSAGES = {
+    "UserPromptSubmit": "Agent Workflow: load workflow rules",
+    "PreToolUse": "Agent Workflow: check structured edits",
+}
+
 
 def _existing_command(event_groups, command):
     for group in event_groups:
@@ -173,14 +178,22 @@ def main():
             sys.stderr.write("error: hooks.%s is not a list; refusing to modify.\n" % event)
             return 1
         existing = _existing_command(groups, command)
+        status_message = _CODEX_STATUS_MESSAGES[event] if args.runtime == "codex" else None
         if existing is not None:
+            changed = False
             if command_windows and existing.get("commandWindows") != command_windows:
                 existing["commandWindows"] = command_windows
-                added += 1
+                changed = True
+            if status_message and existing.get("statusMessage") != status_message:
+                existing["statusMessage"] = status_message
+                changed = True
+            added += int(changed)
             continue
         hook = {"type": "command", "command": command}
         if command_windows:
             hook["commandWindows"] = command_windows
+        if status_message:
+            hook["statusMessage"] = status_message
         entry = {"hooks": [hook]}
         if matcher:
             entry["matcher"] = matcher

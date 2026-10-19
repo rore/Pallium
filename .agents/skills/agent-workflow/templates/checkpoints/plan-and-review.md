@@ -1,6 +1,6 @@
 # plan-and-review
 
-Write the plan, then a reviewer (self / clean-context agent / human) signs off before implementation. Fields differ by shape; rules differ by Risk level.
+Write the plan, then a reviewer (self / clean-context agent / human) signs off before implementation.
 
 ## Fields
 
@@ -11,12 +11,16 @@ Write the plan, then a reviewer (self / clean-context agent / human) signs off b
 Self-review is sufficient; no Plan review field on compact.
 
 **Expanded shape — four fields:**
-- **Plan** — approach + sequence + deviations + stop conditions. For expanded tasks, also include:
+- **Plan** — approach + sequence + deviations + stop conditions, including:
   - *Key conventions:* naming patterns, existing utilities, or architectural rules this implementation must follow (surfaced during discovery).
-  - *Target files or classes:* specific locations in scope, derived from the repository's conventions. Listing these before implementation starts makes scope drift visible.
-- **Verification plan** — each completion criterion → check (one line per criterion). Use the same observable-outcome form as the criterion itself: *`When <trigger>, the <system> shall <outcome> → <method>`*. Example: `When concurrent retries arrive, the system shall produce one wallet → concurrency integration test`.
+  - *Target files or classes:* specific locations in scope, derived from the repository's conventions.
+- **Verification plan** — each completion criterion → check (one line per criterion); use its observable-outcome form.
 - **Plan review** — reference to the review that happened. Format depends on Risk; see below.
 - **Approvals** — required at High Risk; "Not required at this risk level" otherwise.
+
+## Approach
+
+Separate required outcomes and safety/compatibility guarantees from chosen mechanisms. Establish what behavior a mechanism protects before replacing it; code or tests depending on it do not make it mandatory. Assess the approach's necessity and proportionality, not just patch correctness. Prefer simpler supported options only when they preserve required behavior, explicitly required mechanisms and scope. Apply [behavioral integrity](behavioral-integrity.md); simplification never authorizes weakening protected tests or contracts.
 
 ## Plan review by Risk
 
@@ -26,7 +30,7 @@ Self-review is sufficient; no Plan review field on compact.
 | **Elevated** | Clean-context agent review required. Use operating-mode §Clean-context delegation; probe material uncertainty and record the result under Plan review in the Work Record. |
 | **High** | Clean-context agent technical review **plus** separate human plan review and approval. Stop until both are complete; record human approval verbatim in Approvals. |
 
-Record `Agent technical review: <source ref>` in Plan review for Elevated/High. The non-implementer agent assesses risk and verification-plan adequacy, citing revision, inspected evidence, findings, and disposition. Human approval alone proves neither review. Use the least costly capable reviewer; preserve human/specialist duties and user-selected settings. Reuse valid unchanged review.
+Record `Agent technical review: <source ref>` in Plan review for Elevated/High. The non-implementer agent assesses risk and verification-plan adequacy, citing revision, inspected evidence, findings, and disposition. Human approval alone proves neither review. Reviewer selection and unchanged-application reuse follow [Clean-context delegation](../../operating-mode.md#clean-context-delegation).
 
 **Predicates:**
 - `approval.elevated_clean_context_review_present` / `approval.high_clean_context_review_present` — require a distinct agent technical review reference at Elevated / High.

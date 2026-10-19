@@ -394,11 +394,15 @@ def calibrate(
         return []
 
     suggestions: list[dict] = []
+    files_by_pr = {
+        pr["number"]: runner.pr_changed_files(repo, pr["number"])
+        for pr in prs
+    }
     for rule in red_rules:
         path_glob = rule["path"]
         fired = 0
         for pr in prs:
-            files = runner.pr_changed_files(repo, pr["number"])
+            files = files_by_pr[pr["number"]]
             if any(_path_matches_rule(f, path_glob) for f in files):
                 fired += 1
         rate = fired / len(prs)
