@@ -88,11 +88,13 @@ Agent technical review: `/root/refresh_plan_review`, reviewed revision `ff381aaa
 
 
 
-**State:** Ready to implement
+**State:** Ready for review
 
 <!-- agent-workflow:end -->
 
 ## Refresh continuation — 2026-10-19
+
+Historical discovery snapshot; the current structured fields and final qualification below supersede its pending gates.
 
 The task owner requested: “let's refresh workflow. there's an open pr about it but i don't know if it's recent”. The Pallium manager released this existing checkout and PR #320 to the Hermes support chat after confirming no active worker owns either. Preserve unpublished documentation commit `675621bb9e4205c177357f7621a9e13c0f264a48`; leave the reserved workflow-only checkout, dirty development checkout, installed checkout, integrations, configuration, data, and services untouched.
 
@@ -185,7 +187,7 @@ The old PR has two locally corrected documentation findings and three code conce
 
 
 
-## Result review
+## Historical result review — prior candidate
 
 Agent technical review: /root/encoded_setup_review (independent final candidate review; result delivered to root).
 Reviewed revision: c48318945efcb47ab552baa96919735ed22f927e.
@@ -198,7 +200,7 @@ Limits: The review did not resolve the shadow architecture-review advisory or su
 - Neither failing test file nor `app/claude_wake_binding.py` differs from `origin/main`; no vendor-refresh path touches those test files. Pre/post source SHA256 values match for all 86 selector paths and HEAD remained `c9c5cc29c82e570701214a94f693764e83396f6d`.
 - The one corrected short-path full run, selected by the unchanged 86-path selector, exited 0: 7,169 passed, 34 skipped, 2 xfailed in 411.53s. It used the isolated private CPython 3.13.14 environment, short temp root `C:\Users\I347041\AppData\Local\Temp\f18`, `TEMP/TMP/TMPDIR` at `...\f18\t`, and pytest `--basetemp ...\f18\b`; these paths are distinct, plugin autoload remained enabled, and no package installation occurred. Pre/post hashes matched for all 86 selected paths; HEAD remained `c9c5cc29c82e570701214a94f693764e83396f6d`. A post-run exact-interpreter query found zero remaining owned processes. Logs, exit, before/after source manifests, and drain receipt are retained under `build/minimap-consumer-refresh-20261017/full-suite-shortpath-20261018/`. No further app test run, source fix, waiver, installed change, push, or PR has occurred.
 
-## Continuation gate
+## Historical continuation gate — resolved by phase 2
 
 Historical state before the phase-2 source pin was published: blocked pending the Minimap source owner’s tested pin. The initial requirement baseline remains unchanged. Historical result review and test outcomes above do not qualify the resumed candidate. No live rollout is authorized by this continuation.
 
@@ -221,3 +223,21 @@ Historical state before the phase-2 source pin was published: blocked pending th
 At package candidate 789c37814320fcaa5d20938e07087b66a2fa5253, the fresh whole-change selector chose full qualification over 92 paths. All 37 Minimap JS/MJS/CJS syntax checks passed; the Workflow and Minimap relationship decoders are byte-identical. The unchanged Workflow/governance surface passed all 19 focused tests in 16.87 seconds at 3e7e80544517d54305368b5986675eec4ae38df7. Logs and receipts are in build/minimap-consumer-refresh-20261017/continuation-20261019/.
 
 Fresh Redline returned the expected shadow architecture-review advisory for the mapped root checker. The first runtime check blocked on an invalid State value introduced by appending an explanatory sentence to the enum; this entry fixes the State to its allowed literal and keeps qualification pending here in prose. Rerun the failed runtime check before push; do not repeat already-passed syntax or focused tests. Full current-candidate hosted qualification and independent result acceptance remain pending.
+
+## Final qualification — 2026-10-19
+
+The coherent code candidate is published in existing PR #320 at 1ded6d8eaf3fcdf4b358c83c6f7c5e145f5d17f0. Full hosted CI passed in run 39260860789: Python 3.12 and 3.13 each recorded 7,438 passed, 92 skipped, and 2 xfailed (460.28 and 351.26 seconds); Windows smoke and the aggregate passed. Workflow/Redline run 39260860673 passed. These qualify this refresh rather than the historical candidate. The final metadata commit changes this Work Record only; package, application, test and governance executable bytes are unchanged.
+
+Both Workflow mirrors remain exact 77-file c6a3b3d consumers, the mapped checker is exact, and Minimap is the exact 53-file 283995cf package. The final selector selected full over 92 paths. All 37 JS/MJS/CJS syntax checks and the 19 focused governance tests passed. After correcting the State enum, the prescribed runtime check returned advisory exit 1 with no blocking predicates; only the existing shadow architecture-review and historical commit-order advisories remain. Local receipts are in build/minimap-consumer-refresh-20261017/continuation-20261019/; the PR carries hosted evidence.
+
+## Result review
+
+Agent technical review: /root/hermes_e2e_review (independent non-implementer result delivered to parent).
+Reviewed revision: 1ded6d8eaf3fcdf4b358c83c6f7c5e145f5d17f0; application/package/test/runtime content is unchanged from independently inspected 789c3781. The subsequent change is Work Record completion metadata only.
+Verification adequacy: Adequate for the approved exact pinned-package refresh. The reviewer inspected scope, source/package parity, preserved main/documentation/custody ancestry, source fixes and regression evidence, and all original review findings. Parent verified exact-head full hosted success, focused/syntax/runtime receipts and the immutable baseline chain. Technical GO; no broad Minimap correctness or Pallium reliability claim.
+
+The new cache comment https://github.com/rore/Pallium/pull/320#discussion_r4314496245 is confirmed but nonblocking: invalidated cached admission can cause an avoidable HTTP 409 and uncached retry. The server rejects stale generations and the UI performs the documented single retry; the normal mutation journey succeeds with scope/freshness guards intact. A temporary coordinator reproduction demonstrated generation 0 returned stale while current generation was 1. Independent review accepts this adoption with the extra request/latency limitation. Feedback is queued to the Minimap owner as relay-msg-79fbc22d97444f0ba6f4cd6fb0bd1fea; queued transport is not confirmed receipt. No vendor patch or additional upstream implementation is included.
+
+## Handoff
+
+The existing PR #320 is the sole Pallium delivery surface; no main merge or live rollout was performed. Preserve this isolated branch/check-out for that open PR and its retained qualification evidence; the Hermes support chat owns its review handoff. The reserved workflow-only checkout, dirty primary checkout, installed checkout, everyday integrations, configuration, data and services remain unchanged. The source owner merged Minimap PR #67; PR #52 retains only its separately owned restart-work disposition. Hermes feature work remains in progress, and its historical Work Records still need a separately verified Relationships backfill; this refresh does not invent those links or change roadmap status.
