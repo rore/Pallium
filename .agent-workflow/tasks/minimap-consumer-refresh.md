@@ -88,7 +88,7 @@ Agent technical review: `/root/refresh_plan_review`, reviewed revision `ff381aaa
 
 
 
-**State:** Ready to implement — phase 1 only (current-main integration plus the pinned Agent Workflow package and mapped checker). Phase 2 is blocked pending the Minimap owner's published, tested pin containing both authorized fixes; no Minimap package copy until that pin receives source review.
+**State:** Blocked or returned to planning — phase 1 Agent Workflow refresh is implemented and parity-checked. Phase 2 and final candidate qualification await the Minimap owner's published, tested pin containing both authorized fixes and its source review; no Minimap package copy has occurred.
 
 <!-- agent-workflow:end -->
 
@@ -201,3 +201,10 @@ Limits: The review did not resolve the shadow architecture-review advisory or su
 ## Continuation gate
 
 Blocked pending the Minimap source owner’s published tested pin containing both user-authorized fixes and fresh clean-context plan review. The initial requirement baseline remains unchanged. Historical result review and test outcomes below do not qualify the resumed candidate. No merge or live rollout is authorized by this continuation.
+
+## Phase 1 execution — 2026-10-19
+
+- Independent review `/root/refresh_plan_review` at `ff381aaa42a47b74e01eaa6f6e62328161557c9f` approved the phase reorder: the current Agent Workflow pin can be refreshed independently while Minimap waits for its source-owner fixes and a reviewed tested pin. The phase-specific plan checkpoint was committed as `54fab399` before package edits.
+- Merged current `origin/main` `f0ba46470bbe3f6703ab69d9b66ca5ada962ccce` into `feat/minimap-consumer-refresh` with merge commit `07e36784078cbca6e1724f3cfb2ad991cc1e2c85`. Both unpublished commit `675621bb9e4205c177357f7621a9e13c0f264a48` and current main are ancestors. The existing custody correction remains: `tests/test_claude_wake_durability.py` launches via `sys._base_executable` and checks the child PID against `Popen.pid`.
+- Copied only committed Agent Workflow pin `c6a3b3dab215d5b26737165fdac70a23cbfc6bb7` from `dist/agent-workflow/` (77 files) into both existing mirrors and copied the mapped checker to `scripts/agent-workflow-check.py`. Each mirror is exact by Git blob ID (77/77, no missing or extra files); the root checker matches source blob `b7d6c9e3f949b69a165ab8a934f372bcae98b6f3`. The only staged package changes are the three source-updated files in each mirror: `agent-redline/scripts/agent-redline-report.py`, `manifest.txt`, and `operating-mode.md`. Minimap was not copied or changed.
+- Source and consumer blob manifests plus the parity receipt are retained under `build/minimap-consumer-refresh-20261017/continuation-20261019/` (`agent-workflow-source-blobs.txt`, `agent-workflow-agents-index-blobs.txt`, `agent-workflow-claude-index-blobs.txt`, and `agent-workflow-parity.json`). `git diff --check` and staged-scope/ancestry checks passed. Focused tests, governance checks, Redline, selector, and hosted qualification were not run in this phase; run them once after the Minimap source pin is available and both package phases form the final candidate. No shared full local suite, source-repo edit, installed change, or push was performed.

@@ -2141,7 +2141,12 @@ def load_diff_from_files(
             raise ValueError("NUL-delimited changed-files path is not valid UTF-8") from e
         _validate_git_paths(files)
     else:
-        files = [line.strip() for line in changed_files_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        files = [
+            _decode_git_path_header(line.strip())
+            for line in changed_files_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        _validate_git_paths(files)
 
     lines_by_file: dict[str, int] | None = None
     if lines_per_file_z_path is not None:
@@ -2161,7 +2166,7 @@ def load_diff_from_files(
             added_s, deleted_s, path = parts[0], parts[1], "\t".join(parts[2:])
             added = int(added_s) if added_s.isdigit() else 0
             deleted = int(deleted_s) if deleted_s.isdigit() else 0
-            lines_by_file[path] = added + deleted
+            lines_by_file[_decode_git_path_header(path)] = added + deleted
         # When numstat is given, derive the scalar from it for consistency.
         # (The workflow's `git diff --shortstat` and `git diff --numstat`
         # see the same diff, so the totals should match; we recompute
