@@ -180,27 +180,25 @@ api:
         set +e
         # Compute the changed-files list at PR time.
         mkdir -p build
-        git diff --name-only \
-          ${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }} \
-          > build/changed-files.txt
+        BASE_SHA="${{ github.event.pull_request.base.sha }}"
+        HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+        MERGE_BASE=$(git merge-base "$BASE_SHA" "$HEAD_SHA") || exit 1
+        git diff --name-only -z --no-renames "$MERGE_BASE" "$HEAD_SHA" > build/changed-files.z
         # Per-file line counts so policy.excludes applies to prSize
         # (without --lines-per-file, excluded files silently inflate
         # the size budget).
-        git diff --numstat \
-          ${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }} \
-          > build/lines-per-file.txt
+        git diff --numstat -z --no-renames "$MERGE_BASE" "$HEAD_SHA" > build/lines-per-file.z
         # `--unified=0`: added-line scan for suppression markers.
-        git diff --unified=0 \
-          ${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }} \
-          > build/diff-unified.patch
+        git diff --no-ext-diff --no-textconv --unified=0 --no-renames "$MERGE_BASE" "$HEAD_SHA" > build/diff-unified.patch
         # The reporter reads policy.boundaryAdapter to find the ArchUnit
         # JUnit XML; for openapi-from-controllers it also takes the two
         # generated specs explicitly.
         python scripts/agent-redline-report.py \
           --policy agent-redline-policy.yaml \
-          --changed-files build/changed-files.txt \
-          --lines-per-file build/lines-per-file.txt \
+          --changed-files-z build/changed-files.z \
+          --lines-per-file-z build/lines-per-file.z \
           --diff-unified build/diff-unified.patch \
+          --head-ref "$HEAD_SHA" \
           --api-spec-base /tmp/spec_base.yaml \
           --api-spec-head /tmp/spec_head.yaml \
           --pr-labels "$(jq -r '.pull_request.labels[].name' "$GITHUB_EVENT_PATH" | paste -sd,)" \

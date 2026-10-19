@@ -112,16 +112,16 @@ function renderedBlockOccurrenceIndex(block, needle) {
 
 export function specAnchorSummary(mode, value) {
   if (mode === "global") {
-    return "File-level comment";
+    return "Whole file comment";
   }
   if (mode === "section") {
-    return value ? `Anchored to section: ${value}` : "Anchored to section";
+    return value ? `Section: ${value}` : "Section";
   }
   if (!value) {
-    return "Anchored to selected text";
+    return "Selected text";
   }
   const normalized = normalizeVisibleText(value);
-  return `Anchored to: ${normalized.length > 96 ? `${normalized.slice(0, 96)}...` : normalized}`;
+  return `Selected text: ${normalized.length > 96 ? `${normalized.slice(0, 96)}...` : normalized}`;
 }
 
 export function setSpecCommentAnchorMode(mode) {

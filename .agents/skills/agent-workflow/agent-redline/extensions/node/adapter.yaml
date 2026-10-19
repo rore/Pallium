@@ -1,0 +1,3 @@
+# Node ships no boundary-rule backend.
+boundaryAdapter:
+  outputFormat: none

@@ -79,6 +79,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--file", required=True, help="instruction file (AGENTS.md/CLAUDE.md)")
     ap.add_argument("--template", required=True, help="agents-section.md.template to render into the block")
+    ap.add_argument("--redline-docs-path", choices=("docs/agent/", "docs/agent-redline/skills/"),
+                    default="docs/agent/", help="effective Redline checkpoint-doc path")
     args = ap.parse_args()
 
     try:
@@ -97,6 +99,7 @@ def main():
         sys.stderr.write("error: cannot read %s (%s)\n" % (args.template, exc))
         return 1
 
+    template_body = template_body.replace("docs/agent/", args.redline_docs_path)
     new_text, status = reconcile(text, template_body)
     if status == "malformed":
         sys.stderr.write("error: %s has a start or end marker but not a valid pair\n" % args.file)

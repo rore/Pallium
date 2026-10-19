@@ -1390,12 +1390,12 @@ with path.open("a+b") as lock:
     else:
         import fcntl
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-    Path(sys.argv[2]).write_text("locked", encoding="utf-8")
+    Path(sys.argv[2]).write_text(str(os.getpid()), encoding="utf-8")
     print("locked", flush=True)
     sys.stdin.read()
 """
     process = subprocess.Popen(
-        [sys.executable, "-c", script, str(path), str(ready)],
+        [sys._base_executable, "-c", script, str(path), str(ready)],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         text=True,
     )
@@ -1408,6 +1408,7 @@ with path.open("a+b") as lock:
             process.stderr.read() if process.poll() is not None and process.stderr is not None
             else "child did not acquire the real intent lock before startup timeout"
         )
+        assert int(ready.read_text(encoding="utf-8")) == process.pid
         assert process.poll() is None, "intent lock owner exited before the caller journey"
         monkeypatch.setenv("PALLIUM_CLAUDE_WAKE_DIR", str(state_dir))
         common = _load_claude_hook("common", monkeypatch)

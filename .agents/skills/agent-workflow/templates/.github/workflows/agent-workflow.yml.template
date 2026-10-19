@@ -62,6 +62,8 @@ jobs:
             exit 1
           }
           git diff --name-only -z --no-renames "${MERGE_BASE}" "${HEAD_SHA}" > changed-files.z
+          git diff --numstat -z --no-renames "${MERGE_BASE}" "${HEAD_SHA}" > lines-per-file.z
+          git diff --no-ext-diff --no-textconv --unified=0 --no-renames "${MERGE_BASE}" "${HEAD_SHA}" > diff-unified.patch
           echo "merge_base=${MERGE_BASE}" >> "$GITHUB_OUTPUT"
           echo "--- changed-files.z ---"
           python -c 'import sys; print(open(sys.argv[1], "rb").read().split(b"\0"))' changed-files.z
@@ -137,6 +139,8 @@ jobs:
 
       - name: Run agent-redline reporter
         id: report
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set +e
           # Optional --boundary-report: when a consumer commits a
@@ -152,6 +156,9 @@ jobs:
           python scripts/agent-redline-report.py \
             --policy agent-redline-policy.yaml \
             --changed-files-z changed-files.z \
+            --lines-per-file-z lines-per-file.z \
+            --diff-unified diff-unified.patch \
+            --head-ref "$HEAD_SHA" \
             --codeowners-file base-CODEOWNERS \
             --pr-labels "${{ steps.review_inputs.outputs.labels }}" \
             --codeowner-approvals "${{ steps.review_inputs.outputs.codeowner_approvals }}" \

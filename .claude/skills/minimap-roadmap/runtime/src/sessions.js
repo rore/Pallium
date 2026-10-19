@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
+import { setImmediate as yieldImmediate } from "node:timers/promises";
 import { AppError } from "./roadmap.js";
 import { assertSourceWriteGuard, assertSourceWritePath } from "./source-write-guard.js";
 
@@ -176,12 +177,14 @@ export function parseMarkdownOutline(text) {
   return outline;
 }
 
-function lineRangeForOffset(text, offset, length) {
-  const before = text.slice(0, offset);
-  const selected = text.slice(offset, offset + length);
-  const lineStart = before.split(/\r?\n/).length;
-  const lineEnd = lineStart + selected.split(/\r?\n/).length - 1;
-  return { lineStart, lineEnd };
+function lineNumberAtOffset(lineFeeds, offset) {
+  let low = 0, high = lineFeeds.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    if (lineFeeds[middle] < offset) low = middle + 1;
+    else high = middle;
+  }
+  return low + 1;
 }
 
 function lineTextForRange(text, lineStart, lineEnd) {
@@ -189,18 +192,14 @@ function lineTextForRange(text, lineStart, lineEnd) {
   return lines.slice(lineStart - 1, lineEnd).join("\n");
 }
 
-function headingPathForLine(text, lineNumber) {
-  const outline = parseMarkdownOutline(text);
-  let current = [];
-
-  for (const heading of outline) {
-    if (heading.lineStart > lineNumber) {
-      break;
-    }
-    current = heading.headingPath;
+function headingPathForLine(text, lineNumber, outline = parseMarkdownOutline(text)) {
+  let low = 0, high = outline.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    if (outline[middle].lineStart <= lineNumber) low = middle + 1;
+    else high = middle;
   }
-
-  return current;
+  return outline[low - 1]?.headingPath || [];
 }
 
 // Strip markdown syntax characters that often disappear when text is
@@ -224,11 +223,16 @@ function findQuoteOccurrences(text, quote) {
 
   const occurrences = [];
   let offset = text.indexOf(quote);
+  const lineFeeds = [];
+  if (offset !== -1) {
+    for (let index = text.indexOf("\n"); index !== -1; index = text.indexOf("\n", index + 1)) lineFeeds.push(index);
+  }
 
   while (offset !== -1) {
     occurrences.push({
       offset,
-      ...lineRangeForOffset(text, offset, quote.length),
+      lineStart: lineNumberAtOffset(lineFeeds, offset),
+      lineEnd: lineNumberAtOffset(lineFeeds, offset + quote.length),
     });
     offset = text.indexOf(quote, offset + Math.max(quote.length, 1));
   }
@@ -468,7 +472,8 @@ export function resolveTextAnchor(text, anchor = {}) {
     return { status: "orphaned", strategy: "quote" };
   }
 
-  const headingMatches = occurrences.filter((occurrence) => sameHeadingPath(headingPathForLine(text, occurrence.lineStart), anchor.headingPath || []));
+  const outline = parseMarkdownOutline(text);
+  const headingMatches = occurrences.filter((occurrence) => sameHeadingPath(headingPathForLine(text, occurrence.lineStart, outline), anchor.headingPath || []));
   if (headingMatches.length === 1) {
     return {
       status: "resolved",
@@ -598,9 +603,9 @@ function makeSessionPaths(minimapHome, sessionId) {
   };
 }
 
-async function readJson(filePath, fallback) {
+async function readJson(filePath, fallback, signal) {
   try {
-    return JSON.parse(await fs.readFile(filePath, "utf8"));
+    return JSON.parse(await fs.readFile(filePath, { encoding: "utf8", signal }));
   } catch (error) {
     if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
       return fallback;
@@ -637,8 +642,8 @@ async function writeJson(filePath, value) {
   await writeFileAtomic(filePath, `${JSON.stringify(value, null, 2)}\n`);
 }
 
-async function readJsonLines(filePath) {
-  const content = await fs.readFile(filePath, "utf8").catch((error) => {
+async function readJsonLines(filePath, signal) {
+  const content = await fs.readFile(filePath, { encoding: "utf8", signal }).catch((error) => {
     if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
       return "";
     }
@@ -699,12 +704,13 @@ async function staleSessionLock(lockPath) {
   catch (error) { return error?.code === "ESRCH"; }
 }
 
-async function withSessionMutationLock(paths, work) {
+async function withSessionMutationLock(paths, work, signal) {
   const lockPath = path.join(paths.sessionDir, SESSION_LOCK);
   const reclaimPath = lockPath + ".reclaim";
   const token = crypto.randomUUID();
   const deadline = Date.now() + 10_000;
   while (true) {
+    if (signal?.aborted) throw signal.reason;
     try {
       await fs.writeFile(lockPath, JSON.stringify({ pid: process.pid, token }), { flag: "wx" });
       if (!(await pathExists(reclaimPath))) break;
@@ -729,7 +735,13 @@ async function withSessionMutationLock(paths, work) {
       }
     }
     if (Date.now() >= deadline) throw new AppError("Another session edit is still running.", 409, "session_busy");
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(done, 50);
+      function done() { signal?.removeEventListener("abort", abort); resolve(); }
+      function abort() { clearTimeout(timer); signal.removeEventListener("abort", abort); reject(signal.reason); }
+      signal?.addEventListener("abort", abort, { once: true });
+      if (signal?.aborted) abort();
+    });
   }
   try {
     await assertSourceWriteGuard();
@@ -745,7 +757,7 @@ async function withSessionMutationLock(paths, work) {
 
 async function recoverSuggestionTransactionUnlocked(paths) {
   const journalPath = path.join(paths.sessionDir, SUGGESTION_JOURNAL);
-  if (!(await pathExists(journalPath))) return;
+  if (!(await pathExists(journalPath))) return false;
 
   let journal;
   try { journal = JSON.parse(await fs.readFile(journalPath, "utf8")); } catch {
@@ -784,11 +796,15 @@ async function recoverSuggestionTransactionUnlocked(paths) {
   }
   if (targetHash === journal.afterHash) await writeAllOrNothing(journal.writes);
   await fs.unlink(journalPath);
+  return true;
 }
 
-async function recoverSuggestionTransaction(paths) {
-  if (!(await pathExists(path.join(paths.sessionDir, SUGGESTION_JOURNAL)))) return;
-  return withSessionMutationLock(paths, () => recoverSuggestionTransactionUnlocked(paths));
+async function recoverSuggestionTransaction(paths, { signal, onMutation } = {}) {
+  if (signal?.aborted) throw signal.reason;
+  if (!(await pathExists(path.join(paths.sessionDir, SUGGESTION_JOURNAL)))) return false;
+  const recovered = await withSessionMutationLock(paths, () => recoverSuggestionTransactionUnlocked(paths), signal);
+  if (recovered) await onMutation?.();
+  return recovered;
 }
 
 async function withSessionMutation(filePath, options, work) {
@@ -796,7 +812,8 @@ async function withSessionMutation(filePath, options, work) {
   const home = options.minimapHome || resolveMinimapHome(options.env || process.env, options.platform || process.platform);
   const paths = makeSessionPaths(home, session.id);
   return withSessionMutationLock(paths, async () => {
-    await recoverSuggestionTransactionUnlocked(paths);
+    const recovered = await recoverSuggestionTransactionUnlocked(paths);
+    if (recovered) await options.onMutation?.();
     return work();
   });
 }
@@ -1049,9 +1066,9 @@ export function resolveMinimapHome(env = process.env, platform = process.platfor
   return path.join(os.homedir(), ".minimap");
 }
 
-export async function loadSessionIndex(minimapHome = resolveMinimapHome()) {
+export async function loadSessionIndex(minimapHome = resolveMinimapHome(), { signal } = {}) {
   const indexPath = path.join(minimapHome, SESSION_INDEX_FILE);
-  const index = await readJson(indexPath, { version: SESSION_INDEX_VERSION, files: {} });
+  const index = await readJson(indexPath, { version: SESSION_INDEX_VERSION, files: {} }, signal);
   return {
     version: SESSION_INDEX_VERSION,
     files: index?.files && typeof index.files === "object" && !Array.isArray(index.files) ? index.files : {},
@@ -1120,7 +1137,8 @@ async function withSessionLifecycle(filePath, options, create, work) {
   const paths = makeSessionPaths(home, sessionId);
   if (create) { await assertSourceWriteGuard(); await fs.mkdir(paths.sessionDir, { recursive: true }); }
   return withSessionMutationLock(paths, async () => {
-    await recoverSuggestionTransactionUnlocked(paths);
+    const recovered = await recoverSuggestionTransactionUnlocked(paths);
+    if (recovered) await options.onMutation?.();
     return work();
   });
 }
@@ -1210,7 +1228,7 @@ export async function getFileSession(filePath, options = {}) {
   const minimapHome = options.minimapHome || resolveMinimapHome(options.env || process.env, options.platform || process.platform);
   const targetPath = path.resolve(cwd, filePath);
   const fileKey = normalizeFileKey(targetPath, options.platform || process.platform);
-  const index = await loadSessionIndex(minimapHome);
+  const index = await loadSessionIndex(minimapHome, { signal: options.signal });
   const sessionId = index.files[fileKey];
 
   if (!sessionId) {
@@ -1218,8 +1236,8 @@ export async function getFileSession(filePath, options = {}) {
   }
 
   const paths = makeSessionPaths(minimapHome, sessionId);
-  await recoverSuggestionTransaction(paths);
-  const session = await readJson(paths.sessionJson, null);
+  await recoverSuggestionTransaction(paths, { signal: options.signal, onMutation: options.onMutation });
+  const session = await readJson(paths.sessionJson, null, options.signal);
   if (!session) {
     throw new AppError(`Session metadata is missing for ${filePath}.`, 404, "not_found");
   }
@@ -1921,6 +1939,18 @@ export const updateFileSessionSuggestionStatus = guardedSessionMutation(updateFi
 export const applyFileSessionSuggestion = guardedSessionMutation(applyFileSessionSuggestionUnlocked, 3);
 export const rollbackFileSessionSuggestion = guardedSessionMutation(rollbackFileSessionSuggestionUnlocked, 3);
 
+async function resolveSessionAnchors(entries, text, withStatus, signal) {
+  for (let start = 0; start < entries.length; start += 8) {
+    if (signal?.aborted) throw signal.reason;
+    await yieldImmediate();
+    if (signal?.aborted) throw signal.reason;
+    for (let index = start; index < Math.min(start + 8, entries.length); index += 1) {
+      entries[index] = withStatus(entries[index], text);
+    }
+  }
+  return entries;
+}
+
 export async function getFileSessionContext(filePath, options = {}) {
   const session = await getFileSession(filePath, options);
   const minimapHome = options.minimapHome || resolveMinimapHome(options.env || process.env, options.platform || process.platform);
@@ -1928,8 +1958,10 @@ export async function getFileSessionContext(filePath, options = {}) {
   const targetPath = path.resolve(session.targetFile);
   const { buffer, text } = await readTextTarget(targetPath);
   const currentMetadata = await buildTargetMetadata(targetPath, buffer);
-  const comments = (await readJsonLines(paths.commentsJsonl)).map((comment) => withAnchorStatus(comment, text));
-  const suggestions = (await readJsonLines(paths.suggestionsJsonl)).map((suggestion) => withSuggestionAnchorStatus(suggestion, text));
+  const commentEntries = await readJsonLines(paths.commentsJsonl, options.signal);
+  const suggestionEntries = await readJsonLines(paths.suggestionsJsonl, options.signal);
+  const comments = await resolveSessionAnchors(commentEntries, text, withAnchorStatus, options.signal);
+  const suggestions = await resolveSessionAnchors(suggestionEntries, text, withSuggestionAnchorStatus, options.signal);
 
   return {
     session: {
@@ -1943,37 +1975,43 @@ export async function getFileSessionContext(filePath, options = {}) {
 }
 
 export async function getFileSessionFileContent(filePath, options = {}) {
-  const context = await getFileSessionContext(filePath, options);
-  const targetPath = path.resolve(context.session.targetFile);
-  const { text } = await readTextTarget(targetPath);
+  const session = await getFileSession(filePath, options);
+  const targetPath = path.resolve(session.targetFile);
+  const { buffer, text } = await readTextTarget(targetPath);
+  const currentMetadata = await buildTargetMetadata(targetPath, buffer);
 
   return {
-    session: context.session,
-    outline: context.outline,
+    session: { ...session, ...currentMetadata },
+    outline: currentMetadata.markdown ? parseMarkdownOutline(text) : [],
     content: text,
   };
 }
 
 export async function listFileSessions(options = {}) {
   const minimapHome = options.minimapHome || resolveMinimapHome(options.env || process.env, options.platform || process.platform);
-  const index = await loadSessionIndex(minimapHome);
+  const index = await loadSessionIndex(minimapHome, { signal: options.signal });
   const sessions = [];
+  const targets = options.targetFiles === undefined ? null
+    : new Set(options.targetFiles.map((file) => normalizeFileKey(file, options.platform || process.platform)));
 
   for (const [fileKey, sessionId] of Object.entries(index.files)) {
+    if (options.signal?.aborted) throw options.signal.reason;
+    if (targets && !targets.has(fileKey)) continue;
     const paths = makeSessionPaths(minimapHome, sessionId);
     let session;
     try {
-      await recoverSuggestionTransaction(paths);
-      session = await readJson(paths.sessionJson, null);
+      await recoverSuggestionTransaction(paths, { signal: options.signal, onMutation: options.onMutation });
+      session = await readJson(paths.sessionJson, null, options.signal);
       if (!session) continue;
       // Keep counts out of the full context; one bad session must not hide others.
-      const comments = await readJsonLines(paths.commentsJsonl);
-      const suggestions = await readJsonLines(paths.suggestionsJsonl);
+      const comments = await readJsonLines(paths.commentsJsonl, options.signal);
+      const suggestions = await readJsonLines(paths.suggestionsJsonl, options.signal);
       session.counts = {
         openComments: comments.filter((c) => c.status !== "resolved").length,
         pendingSuggestions: suggestions.filter((s) => s.status === "pending" || s.status === "accepted").length,
       };
     } catch (error) {
+      if (options.signal?.aborted) throw options.signal.reason || error;
       session = session || await readJson(paths.sessionJson, null).catch(() => null)
         || { id: sessionId, targetFile: normalizeDisplayPath(fileKey), title: path.basename(fileKey) };
       delete session.counts;

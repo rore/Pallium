@@ -1,8 +1,6 @@
 <!-- agent-workflow:start -->
-<!-- A `**Label:**` at the start of a line inside this block is parsed as a field
-     header; an unexpected one (unknown or duplicate) fails the record. Keep bold
-     sub-headings out of a field's prose value (put such structure below the block,
-     or use plain text). -->
+<!-- Line-start **Label:** is a field header; unknown/duplicate fields fail.
+     Keep prose subheadings outside markers or use plain text. -->
 **Outcome:**
 <!-- what should be true when complete -->
 
@@ -21,6 +19,10 @@
 **Requirement baseline:**
 <!-- Before discovery, copy exact Task Context values into this JSON object. Use an authoritative source reference when available. -->
 {"source":"work-record-initial","outcome":"...","scope":"...","constraints":"...","completion_criteria":"..."}
+
+**Relationships:**
+{"schema_version":1,"sources":null,"pull_requests":[]}
+<!-- Copy supplied exact provider/scope_ref/local_ref tuples; [] only for known no-source. -->
 
 **Risk:**
 <!-- Routine | Elevated | High. Required for expanded shape: anything except (Routine, Simple). -->

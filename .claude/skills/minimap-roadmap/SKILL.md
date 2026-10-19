@@ -16,7 +16,7 @@ When the user asks to **see** the roadmap, give them a URL. When they ask to **e
 ### 1. Make sure the server is running
 
 ```bash
-node <path-to-this-skill>/scripts/start-server.mjs
+node <path-to-this-skill>/scripts/start-server.cjs
 ```
 
 The launcher prints one line: `Minimap running at http://localhost:<port>` (just started) or `Minimap already running at http://localhost:<port>` (reused). Capture the port — default 4312, but the launcher falls forward if busy.
@@ -44,7 +44,7 @@ The active repo is the directory the user is working in. Always pass an absolute
 
 When completed work affects a roadmap item, reconcile its state using [Completion Reconciliation](references/roadmap-contract.md#completion-reconciliation).
 
-For metadata-first roadmaps, keep classification in item metadata and the single shared traversal order in `board.md`. A membership move changes only metadata; moving to Unassigned removes that field rather than writing a placeholder; a metadata reorder uses visible before/after neighbors, preserves filtered-out items, and cannot silently cross freeform board groups. Configure group order with `lenses.fields.<field>.order` and optionally set the top-level `defaultLens`. A valid URL lens, including `lens=board`, overrides that default; unknown values fall back with a warning. Do not perform automatic migration: check the installed skill version and follow the manual migration steps in [references/roadmap-contract.md](references/roadmap-contract.md).
+For metadata-first roadmaps, keep classification in item metadata and the single shared traversal order in `board.md`. A membership move changes only metadata; moving to Unassigned removes that field rather than writing a placeholder; a metadata reorder uses visible before/after neighbors, preserves filtered-out items, and cannot silently cross freeform board groups. Configure group order with `lenses.fields.<field>.order` and optionally set the top-level `defaultLens`. An explicit board-view URL, including `lens=board`, overrides a remembered repository/mode view; a remembered grouping overrides `defaultLens`. Unknown URL or configured groupings fall back with a warning; removed remembered groupings fall back quietly. Do not perform automatic migration: check the installed skill version and follow the manual migration steps in [references/roadmap-contract.md](references/roadmap-contract.md).
 
 For ownership rules, item shape, board rules, and edit constraints, read [references/roadmap-contract.md](references/roadmap-contract.md).
 
@@ -52,7 +52,17 @@ Pallium is optional: never install it, use shell/HTTP substitutes, or block ordi
 
 ## Agent Handoffs
 
-For assigned roadmap work, use the manager-designated shared checkout and make roadmap edits there; do not automatically sync changes across worktrees. On pickup or resume, confirm the canonical item id and read its current file and relevant roadmap state. On pause or handoff, report the exact item id and repository-relative item path (and exact Pallium `scope_ref`/`local_ref` when applicable), changed files, and current worktree state, including any uncommitted work. The receiving agent re-reads the item and attaches its own Pallium association when applicable; the sender detaches only an association it attached and only after leaving the work. On completion, reconcile the owning roadmap item under [Completion Reconciliation](references/roadmap-contract.md#completion-reconciliation) and report the resulting state and changed files. These notes do not transfer roadmap file ownership or imply an Agent Workflow requirement.
+For assigned roadmap work, use the manager-designated shared checkout and make roadmap edits there; do not automatically sync changes across worktrees. On pickup or resume, confirm the canonical item id and read its current file and relevant roadmap state. On pause or handoff, report the exact item id, repository-relative item path, [feature reference](#feature-references-in-handoffs) when available, changed files, and current worktree state, including any uncommitted work. The receiving agent re-reads the item and attaches its own Pallium association when applicable; the sender detaches only an association it attached and only after leaving the work. On completion, reconcile the owning roadmap item under [Completion Reconciliation](references/roadmap-contract.md#completion-reconciliation) and report the resulting state and changed files. These notes do not transfer roadmap file ownership or imply an Agent Workflow requirement.
+
+### Feature references in handoffs
+
+When an assigned feature is named but its exact reference was not supplied, read its canonical roadmap item and resolve the tuple with Minimap's existing CLI:
+
+```bash
+node <skill>/runtime/cli.js roadmap item-ref <item-id> --repo <absolute-repo-path> --json
+```
+
+The result supplies `scope_ref` and `local_ref`; carry `provider: minimap` and those exact returned values in the manager handoff. Do not reconstruct them from a title, branch, path, or item id. If repository or item identity cannot be resolved, say the source reference is unverified; do not report an empty source list or guess a tuple. When a supported Agent Workflow relationship capture procedure is available, pass the exact tuple to its Work Record capture/save/readback procedure at creation or transition. Agent Workflow owns the stored relationship and verification; this skill does not write a backlink or replace that procedure. Otherwise, continue ordinary roadmap work and the handoff without claiming a stored Work Record relationship. Pallium participation remains separately optional.
 
 ## Composing With Spec Review
 

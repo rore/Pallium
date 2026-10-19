@@ -13,10 +13,10 @@ Generated <date>.
 | Vendored agent-redline reporter | `scripts/agent-redline-report.py` | Built from agent-redline <upstream-commit> |
 | Runtime adapters | `scripts/agent-workflow-runtime.py/.sh/.ps1` | Shared guard; shell mutation remains outside runtime enforcement |
 | Runtime settings | `.claude/settings.json`, `.codex/hooks.json` | Merged without removing third-party hooks; Codex project trust required |
-| Suppression markers | `.agent-redline/suppressions.yaml` | Default exemptions: `**/tests/**` |
+| Suppression markers | `.agent-redline/suppressions.yaml` | `exemptPaths`: <exact configured list> |
 | Root AGENTS.md reference section | `AGENTS.md` | <owned marker created/reconciled; other instruction files preserved> |
 | Per-checkpoint docs (agent-workflow) | `.claude/skills/agent-workflow/templates/checkpoints/`; `.agents/skills/agent-workflow/templates/checkpoints/` | Installed skill package |
-| Per-checkpoint docs (redline) | `docs/agent-redline/skills/` | blue-zone, red-zone, gray-zone, boundary-violation, pr-discipline |
+| Per-checkpoint docs (redline) | <effective path: `docs/agent/` or existing legacy path> | blue-zone, red-zone, gray-zone, boundary-violation, pr-discipline |
 | Work Record skeleton | `.agent-workflow/tasks/README.md` | Explains the `{slug}.md` convention |
 | OpenCode plugin | `.opencode/plugins/agent-workflow.mjs` | Stable OpenCode 1.x seed + structured-mutation guard; OpenCode 2 beta excluded |
 | CI workflow | `.github/workflows/agent-workflow.yml` | <installed in Phase 5 / NOT installed — see "needs human action" below> |
@@ -35,29 +35,32 @@ Installation, trust, and direct checks do not verify coverage.
 
 | Control | Path | Notes |
 |---|---|---|
-| CI proposal | `docs/agent-workflow-ci-proposal.md` | Workflow file, required-status-checks, CODEOWNERS additions |
+| CI proposal | `docs/agent-workflow-ci-proposal.md` | <workflow, exact required-check and CODEOWNERS status> |
 
 ## Needs human action
 
 | Control | What's missing | How to address |
 |---|---|---|
-| Branch protection rules | Required checks `agent-workflow` and `redline` (bare job names, NOT `workflow / job` — that's display-only) are not in branch protection | Apply via repo settings → Branches → Add rule. The proposal doc names the exact check names. |
-| CODEOWNERS additions | `agent-redline/` and `agent-workflow.yaml` not owned in CODEOWNERS | Edit `.github/CODEOWNERS`. The proposal doc names suggested owners. |
-| Redline mode flip | Currently `shadow` | After 4 weeks / 30 PRs, flip to `binding` per redline's Phase 5 recommendation. |
-| CI workflow installation | (Only if Phase 5 was declined) | Apply `.github/workflows/agent-workflow.yml` from the proposal doc when ready. |
+| Branch protection | <verified required-check status, or unavailable> | <human action, if needed> |
+| CODEOWNERS | <verified ownership status, or unavailable> | <human action, if needed> |
+| Redline mode | <configured mode and any evidence-based next step> | <human action, if needed> |
 
 ## Backend reachability probe
 
 Bootstrap probed the Work Record backend:
 
 - **Backend:** local
-- **Interpreter:** <selected executable>
-- **Probe:** ran adapter `codex check --repo-root . --slug _probe` on temporary `_probe.md`
-- **Outcome:** <pass / fail with reason>
-- **Cleanup:** `_probe.md` removed after the probe
+- **Interpreter:** <path, version, dependency result>
+- **Evidence:** <changed paths, line-count/diff sources, verified head SHA or "not verified">
+- **Required Redline evidence:** `risk.redline_findings_available` <pass/fail + detail>
+- **Task gates:** <overall checker status + independent blockers>
 
 ## Could not verify
 
 List every item bootstrap could not verify:
 
 - <each item bootstrap deferred — e.g. "GHES vs cloud GitHub" for the artifact-action version, etc.>
+
+## Feedback disposition
+
+<skill-feedback triggers: none / recorded at path; sent / deferred with reason>
