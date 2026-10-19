@@ -329,6 +329,7 @@ class WorkRecord(TypedDict):
     state: str
     requirement_baseline: NotRequired[RequirementBaseline]
     behavior_changes: NotRequired[list[BehaviorChange]]
+    relationships: NotRequired[str]
 
 
 class ExpandedWorkRecord(TypedDict):
@@ -371,6 +372,7 @@ class ExpandedWorkRecord(TypedDict):
     state: str
     requirement_baseline: NotRequired[RequirementBaseline]
     behavior_changes: NotRequired[list[BehaviorChange]]
+    relationships: NotRequired[str]
 
 
 Shape = Literal["routine", "expanded"]
@@ -458,11 +460,16 @@ _OPTIONAL_JSON_FIELDS: dict[str, str] = {
     "Requirement baseline": "requirement_baseline",
     "Behavior changes": "behavior_changes",
 }
+_OPTIONAL_RAW_FIELDS: dict[str, str] = {"Relationships": "relationships"}
 _EXPANDED_OPTIONAL_EXTRA_FIELDS: dict[str, str] = {
     **_OPTIONAL_JSON_FIELDS,
+    **_OPTIONAL_RAW_FIELDS,
     "Exceptions": "exceptions",
 }
-_ROUTINE_OPTIONAL_EXTRA_FIELDS: dict[str, str] = dict(_OPTIONAL_JSON_FIELDS)
+_ROUTINE_OPTIONAL_EXTRA_FIELDS: dict[str, str] = {
+    **_OPTIONAL_JSON_FIELDS,
+    **_OPTIONAL_RAW_FIELDS,
+}
 
 # Fields whose value is allowed to be empty on each shape. Everything
 # else is rejected as malformed when its value is blank. On the routine
@@ -497,7 +504,7 @@ _LABELS_BY_KEY = {key: label for label, key in _FIELD_SCHEMA}
 # every line. The captured group is the label text; trailing content on
 # that line and subsequent lines (up to the next match or end-of-block)
 # is the field value.
-_FIELD_HEADER_RE = re.compile(r"^\*\*([^*]+?):\*\*\s*", re.MULTILINE)
+_FIELD_HEADER_RE = re.compile(r"^\*\*([^*]+?):\*\*[ \t]*", re.MULTILINE)
 
 
 # ---------------------------------------------------------------------------
@@ -578,7 +585,12 @@ def _extract_fields(block: str) -> dict[str, str]:
         label = match.group(1).strip()
         value_start = match.end()
         value_end = matches[i + 1].start() if i + 1 < len(matches) else len(block)
-        value = _HTML_COMMENT_RE.sub("", block[value_start:value_end]).strip()
+        raw_value = block[value_start:value_end]
+        value = (
+            _strip_surrounding_hints(raw_value)
+            if label == "Relationships"
+            else _HTML_COMMENT_RE.sub("", raw_value).strip()
+        )
         if label in out:
             raise WorkRecordParseError(
                 f"duplicate field {label!r} in Work Record block — "
@@ -944,6 +956,8 @@ def _parse_optional_integrity_fields(
         )
     if "Behavior changes" in found:
         record["behavior_changes"] = parse_behavior_changes(found["Behavior changes"])
+    if "Relationships" in found:
+        record["relationships"] = found["Relationships"]
 
 
 # ---------------------------------------------------------------------------
@@ -1271,11 +1285,17 @@ def _render_against(
             # ``record.get`` works because TypedDicts are dicts at runtime;
             # emit the field only when present.
             value = record.get(key)  # type: ignore[misc]
-            if value is None or (key not in _OPTIONAL_JSON_FIELDS.values() and value == ""):
+            if value is None or (
+                key not in _OPTIONAL_JSON_FIELDS.values()
+                and key not in _OPTIONAL_RAW_FIELDS.values()
+                and value == ""
+            ):
                 continue
             rendered = (
                 _integrity_json_value(key, value)
                 if key in _OPTIONAL_JSON_FIELDS.values()
+                else str(value)
+                if key in _OPTIONAL_RAW_FIELDS.values()
                 else str(value)
             )
             line = f"**{label}:** {rendered}"
@@ -1344,6 +1364,201 @@ def find_block_span(text: str) -> tuple[int, int] | None:
 # ---------------------------------------------------------------------------
 # Internal helpers (kept private)
 # ---------------------------------------------------------------------------
+
+# ----- core/work_record/relationships.py -----
+
+"""Strict validator for the optional Work Record Relationships field."""
+
+
+import math
+import unicodedata
+
+
+def _object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate key")
+        result[key] = value
+    return result
+
+
+def _control(value: str) -> bool:
+    return any(unicodedata.category(char) == "Cc" for char in value)
+
+
+def _https_url_authority(value: str) -> str | None:
+    """Validate one literal HTTPS authority without IDNA or URL-parser repair."""
+    if _control(value) or _has_surrogate(value) or any(char.isspace() for char in value) or "\\" in value:
+        return None
+    match = re.match(r"^https://([^/?#]+)", value, re.IGNORECASE | re.ASCII)
+    if not match:
+        return None
+    authority = match.group(1)
+    if "@" in authority or "%" in authority:
+        return None
+    if authority.startswith("["):
+        closing = authority.find("]")
+        if closing < 0 or authority[closing + 1:] not in ("",) and not re.fullmatch(r":[0-9]+", authority[closing + 1:], re.ASCII):
+            return None
+        if authority[closing + 1:].startswith(":"):
+            port = authority[closing + 2:].lstrip("0") or "0"
+            if len(port) > 5 or (len(port) == 5 and port > "65535"):
+                return None
+        try:
+            from ipaddress import IPv6Address
+
+            IPv6Address(authority[1:closing])
+        except ValueError:
+            return None
+        return "supported"
+
+    if authority.count(":") > 1:
+        return None
+    host, separator, port = authority.partition(":")
+    if separator:
+        if not re.fullmatch(r"[0-9]+", port, re.ASCII):
+            return None
+        port = port.lstrip("0") or "0"
+        if len(port) > 5 or (len(port) == 5 and port > "65535"):
+            return None
+    if not host:
+        return None
+    final_dot = host.endswith(".")
+    host_without_dot = host[:-1] if final_dot else host
+    labels = host_without_dot.split(".")
+    if not host_without_dot or any(not label for label in labels):
+        return None
+    if any(ord(char) > 127 for char in host):
+        if len(host_without_dot) > 253 or any(len(label) > 63 for label in labels):
+            return None
+        if any(not re.fullmatch(r"(?:[A-Za-z0-9_-]|[^\x00-\x7f])+", label) for label in labels):
+            return None
+        if re.fullmatch(r"(?:[0-9]+|0[xX][0-9A-Fa-f]*)", labels[-1], re.ASCII):
+            return None
+        return "unsupported"
+    if len(host_without_dot) > 253 or any(len(label) > 63 for label in labels):
+        return None
+    if any(not re.fullmatch(r"[A-Za-z0-9_-]+", label, re.ASCII) for label in labels):
+        return None
+    if re.fullmatch(r"(?:[0-9]+|0[xX][0-9A-Fa-f]*)", labels[-1], re.ASCII):
+        if final_dot or len(labels) != 4 or any(
+            not re.fullmatch(r"(?:0|[1-9][0-9]*)", octet, re.ASCII) or int(octet) > 255
+            for octet in labels
+        ):
+            return None
+    return "supported"
+
+
+def _strip_surrounding_hints(raw: str) -> str:
+    raw = raw.strip(" \t\r\n")
+    while raw.startswith("<!--"):
+        end = raw.find("-->", 4)
+        if end < 0:
+            break
+        raw = raw[end + 3:].strip(" \t\r\n")
+    while raw.endswith("-->"):
+        start = raw.rfind("<!--", 0, len(raw) - 3)
+        if start < 0:
+            break
+        raw = raw[:start].strip(" \t\r\n")
+    return raw
+
+
+def decode_relationships(raw: str | None) -> dict[str, object]:
+    """Return ``status`` plus a validated v1 object or a stable failure reason."""
+    if raw is None:
+        return {"status": "legacy"}
+    try:
+        text = _strip_surrounding_hints(raw)
+        if len(text.encode("utf-8", errors="strict")) > 65536:
+            return {"status": "invalid", "reason": "relationships_too_large"}
+        value = json.loads(
+            text,
+            object_pairs_hook=_object,
+            parse_constant=lambda _: (_ for _ in ()).throw(ValueError("invalid constant")),
+        )
+    except (TypeError, ValueError, RecursionError, UnicodeError):
+        return {"status": "invalid", "reason": "invalid_json"}
+
+    if not isinstance(value, dict) or set(value) != {"schema_version", "sources", "pull_requests"}:
+        return {"status": "invalid", "reason": "invalid_relationships"}
+    version = value["schema_version"]
+    if isinstance(version, bool) or not isinstance(version, (int, float)):
+        return {"status": "invalid", "reason": "invalid_relationships"}
+    if isinstance(version, float) and (not math.isfinite(version) or not version.is_integer()):
+        return {"status": "invalid", "reason": "invalid_relationships"}
+    if version > 1:
+        return {"status": "unsupported", "reason": "unsupported_relationship_version"}
+    if version != 1:
+        return {"status": "invalid", "reason": "invalid_relationships"}
+
+    sources = value["sources"]
+    if sources is not None and not isinstance(sources, list):
+        return {"status": "invalid", "reason": "invalid_relationships"}
+    source_ids: set[tuple[str, str, str]] = set()
+    unsupported_source_url = False
+    if sources is not None:
+        for source in sources:
+            if not isinstance(source, dict) or set(source) - {"provider", "scope_ref", "local_ref", "url"} or not {"provider", "scope_ref", "local_ref"} <= set(source):
+                return {"status": "invalid", "reason": "invalid_relationships"}
+            identity = tuple(source[key] for key in ("provider", "scope_ref", "local_ref"))
+            if any(
+                not isinstance(item, str)
+                or not item.strip()
+                or _control(item)
+                or _has_surrogate(item)
+                for item in identity
+            ):
+                return {"status": "invalid", "reason": "invalid_relationships"}
+            if identity in source_ids:
+                return {"status": "invalid", "reason": "invalid_relationships"}
+            source_ids.add(identity)
+            if "url" in source:
+                url = source["url"]
+                if not isinstance(url, str):
+                    return {"status": "invalid", "reason": "invalid_relationships"}
+                url_profile = _https_url_authority(url)
+                if url_profile is None:
+                    return {"status": "invalid", "reason": "invalid_relationships"}
+                unsupported_source_url |= url_profile == "unsupported"
+
+    pull_requests = value["pull_requests"]
+    if not isinstance(pull_requests, list):
+        return {"status": "invalid", "reason": "invalid_relationships"}
+    pr_ids: set[tuple[str, str, str]] = set()
+    unsupported_pr = False
+    for url in pull_requests:
+        if not isinstance(url, str):
+            return {"status": "invalid", "reason": "invalid_relationships"}
+        profile = _https_url_authority(url)
+        if profile is None:
+            return {"status": "invalid", "reason": "invalid_relationships"}
+        match = re.fullmatch(
+            r"https://github\.com/([A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)/"
+            r"([A-Za-z0-9_.-]+)/pull/([1-9][0-9]*)",
+            url,
+            re.IGNORECASE | re.ASCII,
+        )
+        if not match:
+            unsupported_pr = True
+            continue
+        owner, repository, number = match.groups()
+        if repository in {".", ".."}:
+            return {"status": "invalid", "reason": "invalid_relationships"}
+        identity = (owner.lower(), repository.lower(), number)
+        if identity in pr_ids:
+            return {"status": "invalid", "reason": "invalid_relationships"}
+        pr_ids.add(identity)
+    if unsupported_pr:
+        return {"status": "unsupported", "reason": "unsupported_pr_url"}
+    if unsupported_source_url:
+        return {"status": "unsupported", "reason": "unsupported_source_url"}
+    return {"status": "declared", "relationships": value}
+
+
+def _has_surrogate(value: str) -> bool:
+    return any(0xD800 <= ord(char) <= 0xDFFF for char in value)
 
 # ----- core/work_record/backend.py -----
 
@@ -3000,6 +3215,40 @@ def workrecord_state_valid(ctx: CheckerContext) -> PredicateResult:
     )
 
 
+def workrecord_relationships_valid(ctx: CheckerContext) -> PredicateResult:
+    """Validate declared Relationships without making core parsing depend on them."""
+    if ctx.record is None:
+        return PredicateResult(
+            name="workrecord.relationships_valid",
+            passed=True,
+            detail="skipped — Work Record could not be parsed.",
+            blocking=False,
+        )
+    result = decode_relationships(ctx.record.get("relationships"))
+    status = result["status"]
+    if status == "invalid":
+        return PredicateResult(
+            name="workrecord.relationships_valid",
+            passed=False,
+            detail=f"Relationships are invalid ({result['reason']}).",
+            blocking=True,
+        )
+    if status == "unsupported":
+        return PredicateResult(
+            name="workrecord.relationships_valid",
+            passed=True,
+            detail=f"Relationships are unsupported ({result['reason']}); metadata was retained.",
+            blocking=False,
+        )
+    detail = "Relationships are legacy/unknown." if status == "legacy" else "Relationships are valid."
+    return PredicateResult(
+        name="workrecord.relationships_valid",
+        passed=True,
+        detail=detail,
+        blocking=True,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Redline predicates (slice B)
 # ---------------------------------------------------------------------------
@@ -4194,6 +4443,7 @@ PREDICATE_SOURCE: dict[str, str] = {
     "workrecord.routine_fields_present": "core",
     "workrecord.expanded_fields_present": "core",
     "workrecord.state_valid": "core",
+    "workrecord.relationships_valid": "core",
     "workrecord.implementation_ready": "core",
     "exceptions.well_formed": "core",
     "exceptions.not_against_boundary": "core",
@@ -4450,6 +4700,7 @@ PREDICATES: tuple = (
     shape_matches_classification,
     workrecord_fields_present,
     workrecord_state_valid,
+    workrecord_relationships_valid,
     # --- redline predicates (slice B) -------------------------------
     risk_redline_findings_available,
     risk_boundary_violation_absent,

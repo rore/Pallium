@@ -4,6 +4,23 @@ const UNASSIGNED_KEY = "__unassigned__";
 const UNASSIGNED_LABEL = "Unassigned";
 const CONFLICT_FIELDS = ["title", "status", "priority", "commitment", "milestone", "kind", "revision"];
 
+// Summarize saved file states in this placement/filter, never session activity.
+export function recordedStatusSummary(item) {
+  const values = item?.matchingVersions
+    ? item.matchingVersions.map((version) => version.summary?.status ?? version.summary?.metadata?.status)
+    : [item?.metadata?.status ?? item?.status];
+  const statuses = [...new Set(values.map((value) => {
+    const token = String(value || "").trim().toLowerCase().replace(/[\s_]+/g, "-");
+    return ["active", "in-progress"].includes(token) ? "active" : token || "unknown";
+  }))];
+  const active = statuses.includes("active"), blocked = statuses.includes("blocked");
+  const differs = statuses.length > 1;
+  const label = active && blocked ? "Active · Blocked" : active ? "Active" : blocked ? "Blocked"
+    : differs ? "Statuses differ" : !statuses.length || statuses[0] === "unknown" ? "Status unavailable"
+      : statuses[0].charAt(0).toUpperCase() + statuses[0].slice(1).replaceAll("-", " ");
+  return { label, differs, tone: blocked ? "blocked" : active ? "progress" : statuses.length === 1 && statuses[0] === "done" ? "done" : "" };
+}
+
 export function versionDifferences(version, selected) {
   if (!selected || version.sourceKey === selected.sourceKey) return [];
   const differences = CONFLICT_FIELDS.filter((field) => field !== "revision")
@@ -38,8 +55,12 @@ export function projectWorktreeGroups(aggregate, {
   const derived = lens !== "board" && Boolean(definition);
   const preferred = derived ? definition.values || [] : [];
   const groups = new Map();
+  const cardsByGroup = new Map();
   const addGroup = (key, name, kind, originalIndex) => {
-    if (!groups.has(key)) groups.set(key, { name, kind, groupKey: key, originalIndex, items: [] });
+    if (!groups.has(key)) {
+      groups.set(key, { name, kind, groupKey: key, originalIndex, items: [] });
+      if (derived) cardsByGroup.set(key, new Map());
+    }
     return groups.get(key);
   };
 
@@ -47,13 +68,14 @@ export function projectWorktreeGroups(aggregate, {
   else aggregate.groups.forEach((group, index) => addGroup(`${group.kind}:${group.name}`, group.name, group.kind, index));
 
   const idCounts = new Map();
+  const featuresByKey = new Map(aggregate.features.map((feature) => [feature.key, feature]));
   for (const feature of aggregate.features) {
     const id = canonicalId(feature.id);
     idCounts.set(id, (idCounts.get(id) || 0) + 1);
   }
   for (const group of aggregate.groups || []) {
     for (const item of group.items || []) {
-      const feature = aggregate.features.find((entry) => entry.key === item.key);
+      const feature = featuresByKey.get(item.key);
       if (!feature && item.missing) {
         if (!filtersActive && !derived) addGroup(`${group.kind}:${group.name}`, group.name, group.kind, 0).items.push({ ...item, title: item.id, sourceVersion: item.versions?.[0] });
         continue;
@@ -81,7 +103,7 @@ export function projectWorktreeGroups(aggregate, {
         const index = derived ? preferred.indexOf(entry.name) : aggregate.groups.findIndex((value) => value.kind === entry.kind && value.name === entry.name);
         const projected = addGroup(key, entry.name, entry.kind, index < 0 ? preferred.length + groups.size : index);
         const appearanceId = JSON.stringify([feature.key, entry.kind, entry.name]);
-        const existing = derived && projected.items.find((card) => card.featureKey === feature.key);
+        const existing = derived && cardsByGroup.get(key).get(feature.key);
         if (existing) {
           const sources = new Set(existing.matchingVersions.map((version) => `${version.sourceKey}\0${version.groupKind}\0${version.group}`));
           existing.matchingVersions.push(...entry.versions.filter((version) => !sources.has(`${version.sourceKey}\0${version.groupKind}\0${version.group}`)));
@@ -97,9 +119,11 @@ export function projectWorktreeGroups(aggregate, {
           });
           continue;
         }
-        projected.items.push({ ...entry.versions[0].summary, id: appearanceId, featureKey: feature.key,
+        const card = { ...entry.versions[0].summary, id: appearanceId, featureKey: feature.key,
           title: entry.versions[0].summary.title || feature.id, versions: entry.versions, matchingVersions: entry.versions,
-          conflicts: conflictsForVersions(entry.versions), sourceVersion: entry.versions[0] });
+          conflicts: conflictsForVersions(entry.versions), sourceVersion: entry.versions[0] };
+        projected.items.push(card);
+        if (derived) cardsByGroup.get(key).set(feature.key, card);
       }
     }
   }
@@ -109,4 +133,18 @@ export function projectWorktreeGroups(aggregate, {
 
 export function countDistinctWorktreeFeatures(groups) {
   return new Set(groups.flatMap((group) => group.items.filter((item) => !item.missing).map((item) => item.featureKey || item.id))).size;
+}
+
+/** Retain only the current view. Consumers must treat its groups/items as read-only. */
+export function createWorktreeProjector() {
+  let previous;
+  return (aggregate, options = {}) => {
+    const signature = JSON.stringify([options.lens, options.searchQuery, options.activeFilters, options.inPlay, options.showEmptyGroups]);
+    if (previous?.aggregate === aggregate && previous.signature === signature && previous.counts === options.participantCounts) return previous.result;
+    const groups = projectWorktreeGroups(aggregate, options);
+    const items = new Map(groups.flatMap((group) => group.items.filter((item) => !item.missing).map((item) => [item.id, item])));
+    const result = { groups, items, features: new Map((aggregate?.features || []).map((feature) => [feature.key, feature])) };
+    previous = { aggregate, signature, counts: options.participantCounts, result };
+    return result;
+  };
 }

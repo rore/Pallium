@@ -14,7 +14,7 @@
           <p id="mode-eyebrow" class="eyebrow"></p>
           <h1><span id="mode-title">Roadmap</span><span id="repo-name"></span></h1>
           <div class="board-source-control">
-            <button id="board-source-toggle" class="ghost-button" type="button" aria-expanded="false" aria-controls="board-source-menu">This checkout ▾</button>
+            <button id="board-source-toggle" class="ghost-button" type="button" aria-expanded="false" aria-controls="board-source-menu">This worktree ▾</button>
             <div id="board-source-menu" class="board-source-menu" hidden></div>
           </div>
         </div>
@@ -143,13 +143,13 @@
         <!-- Hidden composers — reused by JS for both inline and modal flows.
              These keep all the existing form fields (and the JS that drives them) intact. -->
         <form id="spec-comment-form" class="spec-composer" hidden>
-          <p id="spec-comment-anchor-summary" class="spec-anchor-summary">Global comment</p>
+          <p id="spec-comment-anchor-summary" class="spec-anchor-summary">Whole file comment</p>
           <label class="spec-composer-text">
             <textarea id="spec-comment-text" rows="3" placeholder="Write a comment…"></textarea>
           </label>
           <div class="spec-form-grid spec-advanced-fields" hidden>
             <label>
-              <span>Actor</span>
+              <span>Author</span>
               <input id="spec-comment-by" type="text" value="human" spellcheck="false" />
             </label>
             <label>
@@ -166,8 +166,8 @@
               </select>
             </label>
           </div>
-          <div class="spec-anchor-mode spec-advanced-fields" role="tablist" aria-label="Comment anchor mode" hidden>
-            <button class="spec-anchor-mode-button is-active" type="button" data-comment-anchor-mode="global" role="tab" aria-selected="true">Global</button>
+          <div class="spec-anchor-mode spec-advanced-fields" role="tablist" aria-label="Comment location" hidden>
+            <button class="spec-anchor-mode-button is-active" type="button" data-comment-anchor-mode="global" role="tab" aria-selected="true">Whole file</button>
             <button class="spec-anchor-mode-button" type="button" data-comment-anchor-mode="section" role="tab" aria-selected="false">Section</button>
             <button class="spec-anchor-mode-button" type="button" data-comment-anchor-mode="quote" role="tab" aria-selected="false">Quote</button>
           </div>
@@ -178,7 +178,7 @@
           <div class="spec-composer-actions">
             <label class="spec-global-toggle" hidden>
               <input id="spec-comment-global" type="checkbox" />
-              <span>Global</span>
+              <span>Whole file</span>
             </label>
             <span class="spec-composer-actions-spacer"></span>
             <button id="spec-comment-cancel-button" class="spec-toolbar-button" type="button">Cancel</button>
@@ -186,10 +186,10 @@
           </div>
         </form>
         <form id="spec-suggestion-form" class="spec-composer" hidden>
-          <p id="spec-suggestion-anchor-summary" class="spec-anchor-summary">Anchored to selected text</p>
+          <p id="spec-suggestion-anchor-summary" class="spec-anchor-summary">Selected text</p>
           <div class="spec-form-grid">
             <label class="spec-advanced-fields" hidden>
-              <span>Actor</span>
+              <span>Author</span>
               <input id="spec-suggestion-by" type="text" value="human" spellcheck="false" />
             </label>
             <label>
@@ -201,7 +201,7 @@
               </select>
             </label>
           </div>
-          <div class="spec-anchor-mode spec-advanced-fields" role="tablist" aria-label="Suggestion anchor mode" hidden>
+          <div class="spec-anchor-mode spec-advanced-fields" role="tablist" aria-label="Suggestion location" hidden>
             <button class="spec-anchor-mode-button is-active" type="button" data-suggestion-anchor-mode="quote" role="tab" aria-selected="true">Quote</button>
             <button class="spec-anchor-mode-button" type="button" data-suggestion-anchor-mode="section" role="tab" aria-selected="false">Section</button>
           </div>
@@ -214,7 +214,7 @@
             <textarea id="spec-suggestion-content" rows="3" placeholder="Replacement or inserted text. Leave empty for delete."></textarea>
           </label>
           <label>
-            <span>Rationale</span>
+            <span>Reason</span>
             <textarea id="spec-suggestion-rationale" rows="2" placeholder="Why this change should be considered."></textarea>
           </label>
           <div class="spec-composer-actions">
@@ -261,7 +261,7 @@
               <div class="board-control-actions">
                 <label class="board-focus-label" for="board-focus-milestone"><span class="visually-hidden">Focus milestone</span><select id="board-focus-milestone" aria-label="Focus milestone"><option value="">All milestones</option></select></label>
                 <button id="board-focus-unfinished" class="ghost-button board-focus-unfinished" type="button" aria-pressed="false" title="Hide done, shipped, superseded, and canceled items">Unfinished</button>
-                <button id="board-focus-in-play" class="ghost-button board-focus-unfinished" type="button" aria-pressed="false" title="Show active or in-progress items, or items with attached non-closed sessions, including dormant sessions. Association does not mean work is happening now.">In play</button>
+                <button id="board-focus-in-play" class="ghost-button board-focus-unfinished" type="button" aria-pressed="false" title="Show active, in-progress, or blocked items, or items with attached non-closed sessions, including dormant sessions. Association does not mean work is happening now.">In play</button>
                 <button id="board-filter-toggle" class="ghost-button board-filter-toggle" type="button" aria-expanded="false">Filters</button>
                 <button id="board-clear-filters" class="ghost-button board-clear-button" type="button">Clear</button>
                 <span id="board-participant-status" class="board-participant-status" role="status" hidden></span>
@@ -302,25 +302,33 @@
 
           <details id="item-participants" class="item-participants" hidden>
             <summary class="item-participants-summary">
-              <span>Participants</span>
+              <span>Linked sessions</span>
               <span id="item-participants-status" class="muted">Unavailable</span>
             </summary>
             <div class="item-participants-body">
-              <div class="item-participants-actions">
-                <button id="item-participants-refresh" class="ghost-button" type="button">Refresh</button>
-              </div>
-              <div id="item-participants-reference" class="item-participants-reference" hidden>
-                <div>
-                  <span class="muted">Scope</span>
-                  <code id="item-participants-scope"></code>
+              <div class="item-participants-toolbar">
+                <div class="item-participants-actions">
+                  <button id="item-participants-refresh" class="ghost-button" type="button">Refresh</button>
+                  <button id="item-participants-copy" class="ghost-button" type="button">Copy reference</button>
                 </div>
-                <div>
-                  <span class="muted">Item</span>
-                  <code id="item-participants-local"></code>
-                </div>
-                <button id="item-participants-copy" class="ghost-button" type="button">Copy reference</button>
               </div>
-              <div id="item-participants-list" class="item-participants-list" role="list" aria-live="polite"></div>
+              <div id="item-participants-list" class="item-participants-list" aria-live="polite"></div>
+              <details id="item-participants-reference" class="item-participants-reference" hidden>
+                <summary>Technical details</summary>
+                <div class="item-participants-reference-content">
+                  <div>
+                    <span class="muted">Scope</span>
+                    <code id="item-participants-scope"></code>
+                  </div>
+                  <div>
+                    <span class="muted">Item</span>
+                    <code id="item-participants-local"></code>
+                  </div>
+                  <p class="muted">Last seen is session activity. It does not show work on this feature.</p>
+                  <p class="muted item-participants-across-guidance" hidden>Links apply to this feature across worktrees.</p>
+                  <p class="muted item-participants-session-guidance" hidden>Manage manual links in Pallium. Other links update from their source. History is unchanged and may be incomplete.</p>
+                </div>
+              </details>
             </div>
           </details>
 
@@ -331,7 +339,6 @@
               <details class="metadata-details">
                 <summary id="metadata-toggle" class="metadata-summary">
                   <span class="metadata-summary-title">Item details</span>
-                  <span class="metadata-summary-copy">Title, board group, status, priority, commitment, milestone, and repo metadata</span>
                 </summary>
 
                 <div class="metadata-grid">
@@ -385,7 +392,7 @@
                   <div id="extra-metadata-fields" class="metadata-extra-fields" hidden></div>
                 </div>
 
-                <p class="muted editor-note">Markdown is allowed inside every section. Minimap keeps unknown frontmatter and extra sections intact.</p>
+                <p class="muted editor-note">Supports Markdown. Other fields and sections are preserved.</p>
               </details>
 
               <div id="sections-container" class="section-stack structured-sections"></div>
@@ -393,6 +400,7 @@
 
             <section class="editor-pane" data-mode-pane="preview" hidden>
               <div id="item-preview" class="preview-surface preview-empty">Choose an item from the board to read it here.</div>
+              <dialog id="related-record-dialog" aria-label="Work Record"><div class="related-record-dialog-head"><strong id="related-record-title"></strong><button id="related-record-close" class="ghost-button" type="button">Close</button></div><p id="related-record-meta" class="muted"></p><div id="related-record-content" class="preview-markdown"></div></dialog>
             </section>
 
             <section class="editor-pane raw-pane" data-mode-pane="raw" hidden>

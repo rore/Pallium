@@ -34,7 +34,7 @@ Each phase ends with developer review or a defined notification. Do not skip ahe
 
 ## Before Phase 1 — write the Work Record for THIS task
 
-Bootstrap is itself an engineering task. Operating-mode discipline applies: **write a Work Record before starting.**
+Bootstrap is itself an engineering task. Before writing its Work Record, capture target Git `HEAD` as the bootstrap baseline (separate from the requirements baseline); record it under Evidence. If unavailable, mark the probe unverified.
 
 Path: `.agent-workflow/tasks/bootstrap-<repo-name>.md` in the **target** repo. Use the **expanded shape** — bootstrap touches CI, policy, and AGENTS surfaces (default profile §3 classifies as Elevated; never compact).
 
@@ -44,15 +44,16 @@ Minimum fields before Phase 1:
 - **Target:** the repo's name + branch
 - **Scope:** what bootstrap will write (the skill under `.claude/skills/agent-workflow/` + config + policy + binaries + AGENTS.md + per-checkpoint docs + CI workflow if confirmed)
 - **Constraints:** hard rules from this skill (never overwrite, never modify CI without confirmation, etc.)
-- **Completion criteria:** Phase 6 self-summary written + backend probe pass
+- **Completion criteria:** rendered Phase 6 summary + probe evidence + feedback disposition
 - **Risk:** Elevated (default; raise to High if the target repo is canonical or has live consumers)
 - **Complexity:** Simple for stub / fresh repos; Moderate for repos with existing tools to compose with
 - **Reason:** "bootstrap installs CI gates and AGENTS.md — default profile §3 Elevated"
 - **Plan:** "walk bootstrap's six phases per the skill"
-- **Verification plan:** "Phase 6 self-summary's backend probe + CI green on the resulting PR"
+- **Verification plan:** Phase 6 full-diff reporter, adapter, summary, feedback disposition; then PR CI.
+- **Evidence:** bootstrap baseline, summary, reporter artifact, probe, feedback disposition.
 - **State:** `Ready to implement`
 
-Update State to `Ready for review` when Phase 6 finishes. Populate Implementation prose one line per phase as you go. Evidence prose names the probe outcome + (post-PR) the CI verdict.
+Update State to `Ready for review` when Phase 6 finishes. Record the rendered summary, feedback disposition, probe predicate and blockers; add the PR CI verdict later.
 
 If the delegating agent already wrote a Work Record for the bootstrap task, **read it** and update its sections as you go. Don't write a second one.
 
@@ -93,7 +94,7 @@ Then invoke redline's Phase 1 (extension pick, build files, source layout, bound
 
 **YAML-formatting gate:** <yes (Spotless/jackson-YAML — `agent-workflow.yaml` + policy must be canonical) / no>
 **Detected flow mode:** <PR-driven / push-driven / mixed>
-**Detected language extension** (from redline's Phase 1): <jvm-archunit / python / other / zone-only>
+**Detected language extension** (from redline's Phase 1): <jvm-archunit / python / node / other / zone-only>
 **Detected language shape** (if applicable): <layered service / library / zone-only fallback>
 **Boundary-rule backend setup found:** <yes (path) / no>
 **Pre-push hook found:** <yes (path) / no>
@@ -169,18 +170,19 @@ Write the committed artifacts. Branch each step on existing files; never overwri
 
 | Step | Path | Branch on existing |
 |---|---|---|
-| 4.0 | `.claude/skills/agent-workflow/` + `.agents/skills/agent-workflow/` | Copy the whole package verbatim from one install source (`dist/agent-workflow/` or `<install-root>`) to both paths; verify both manifests match. Existing installs are updated through operating mode, preserving config, hooks, and historical Work Records; never delete them to re-bootstrap. |
-| 4.1 | `agent-workflow.yaml` | If exists, you should have switched to operating-mode — sanity-check and stop. Otherwise write the Phase 3 draft. **If Phase 1 found a YAML-formatting gate** (Spotless/jackson-YAML), emit it in the formatter's canonical style so it survives `./gradlew build` — same rule the redline policy uses (`agent-redline/bootstrap-mode.md` §Phase 4): **no `#` comments** (put rationale in the WR/PR, not the YAML) and **quote every string scalar**; keep block sequences (the template is already block-form — do not collapse to `["src/"]`). Do not assume a `---` document-start; match whatever the formatter emits. Run `./gradlew spotlessApply` (or the repo's format task) after writing and commit the result so CI starts clean. |
+| 4.0 | `.claude/skills/agent-workflow/` + `.agents/skills/agent-workflow/` | Copy the whole package verbatim to both paths; verify manifests. Existing installs use operating mode, preserving config, hooks, and Work Records. |
+| 4.1 | `agent-workflow.yaml` | If present, switch to operating-mode and stop. Otherwise write the Phase 3 draft. If Phase 1 found a YAML formatter, follow its canonical style: no comments, quote string scalars, keep block sequences and match document-start; run the formatter and commit its output. |
 | 4.2 | `agent-redline-policy.yaml` | If exists, do **not** overwrite. Mirror existing in the finding; adopt. Otherwise write the Phase 3 draft. If the PR harness is absent, omit the selected `behaviorContracts` block pending Phase 5. |
 | 4.3 | `scripts/agent-workflow-check.py` | Always write. Build from dev repo via `bash scripts/build-vendored-checker.sh <output>`. If you can't run that, copy from `<install-root>/scripts/agent-workflow-check.py`. If neither, stop and tell the developer. |
 | 4.3 | `scripts/format-verdict-comment.py` | Copy `<install-root>/scripts/format-verdict-comment.py`. The CI workflow step `Format verdict for PR comment` invokes it. |
 | 4.3 | `scripts/agent-redline-report.py` | Copy `<install-root>/agent-redline/scripts/agent-redline-report.py`. |
-| 4.3r | `scripts/agent-workflow-runtime.py`, `.sh`, `.ps1` | Copy all three runtime adapters. Structured file mutations use the shared guard; shell mutations bypass it and remain covered by final-artifact/applicability CI only. |
+| 4.3r | `scripts/agent-workflow-runtime.py`, `.sh`, `.ps1` | Copy all three. Structured mutations use the shared guard; shell mutations remain unchecked until final-artifact/applicability CI. |
 | 4.3h | `.claude/hooks/` + `.claude/settings.json`; `.codex/hooks.json` | Merge Claude seed/gate/reinforce hooks and Codex UserPromptSubmit/PreToolUse hooks without removing third-party hooks. Record installation and Codex project trust; do not infer mutation coverage. |
+| 4.3a | root `.gitattributes` | Preserve existing rules; append only missing lines from `templates/agent-workflow-consumer.gitattributes`. Preserve package Git modes; mark installed shell entrypoints executable. |
 | 4.3o | `.opencode/plugins/agent-workflow.mjs` | Install the stable OpenCode 1.x plugin with its seed and structured-mutation guard; OpenCode 2 beta is outside the support claim. |
-| 4.4 | root `AGENTS.md` owned reference section | Always create or reconcile only the marker-wrapped section in root `AGENTS.md`; preserve every other instruction file, surrounding prose, and third-party hooks. Existing markers are reconciled idempotently. |
+| 4.4 | root `AGENTS.md` owned reference section | Append rendered template (`docs/agent/` fresh; existing legacy path otherwise). Reconcile with `hooks/merge-agents-section.py --redline-docs-path <chosen path>`; default is `docs/agent/`. Preserve other instructions, prose, and hooks. |
 | 4.5 | `.agent-redline/suppressions.yaml` | Invoke redline's Phase 4 write step. |
-| 4.6 | `docs/agent-redline/skills/` | Invoke redline's Phase 4 write step. |
+| 4.6 | Redline checkpoint docs | Fresh installs use `docs/agent/`. If checkpoint docs already live in `docs/agent-redline/skills/`, preserve and use that legacy path; don't create a second tree. |
 | 4.7 | `.agent-workflow/tasks/README.md` | Skeleton explaining the `{slug}.md` convention; references operating-mode.md. |
 
 ### 4.4 marker shape
@@ -196,6 +198,7 @@ Write the committed artifacts. Branch each step on existing files; never overwri
 - Never overwrite an existing `agent-workflow.yaml` without explicit developer confirmation.
 - Never overwrite an existing `agent-redline-policy.yaml` (composition only — adopt the existing policy).
 - Always create or reconcile only the owned marker in root `AGENTS.md`; preserve every other instruction file, surrounding prose, and third-party hooks.
+- Preserve existing `.gitattributes` and executable modes; keep managed Claude hook and deployed script entrypoints executable.
 - Read workflow checkpoint guidance from the installed skill. Leave any existing `docs/agent-workflow/` mirror and links intact on upgrades; do not create or refresh it.
 - Never modify boundary-rule backend definitions (existing ArchUnit tests, import-linter configs). The redline policy's `boundaries:` mirrors them; the existing test stays authoritative.
 - Never write `.github/workflows/*.yml` in Phase 4. That's Phase 5's job, and only with confirmation.
@@ -249,15 +252,9 @@ Write `docs/agent-workflow-bootstrap-summary.md` from [`templates/bootstrap-summ
 
 ### Run the probe
 
-Before writing the summary's "Backend reachability probe" section, actually run the probe:
+For committed Phase 4, compare the saved baseline with the verified install commit. For uncommitted Phase 6, initialize a temporary `GIT_INDEX_FILE` with `git read-tree HEAD`, then `git add -A`; derive NUL paths, NUL numstat, and `-U0` patch from `git diff --cached <saved baseline>` using that same index. Keep evidence files outside the repo and never alter the user's index. Follow the reporter recipe in `templates/.github/workflows/agent-workflow.yml.template`; pass `--head-ref` only when the complete diff exactly matches a verified commit. Otherwise omit it; scan conservatively and report catalog masking unverified.
 
-1. Write a temporary Work Record at `.agent-workflow/tasks/_probe.md` — minimal compact-shape with `**State:** Ready for review`.
-2. Run through the installed runtime adapter: POSIX `bash scripts/agent-workflow-runtime.sh codex check --repo-root . --slug _probe`; PowerShell `& scripts/agent-workflow-runtime.ps1 codex check --repo-root . --slug _probe`.
-   Clean or advisory is expected. Missing Python, `PyYAML`, or `jsonschema` blocks; show its repository-`.venv` repair command and get approval before installing.
-3. Record the outcome in the self-summary.
-4. Delete the probe file.
-
-If the probe fails, name the reason in the self-summary's "Could not verify" section and do not delete the probe file — leave it for the developer to inspect.
+Run the installed checker with its actual slug and evidence: POSIX `bash scripts/agent-workflow-runtime.sh codex check --repo-root . --slug <bootstrap-slug> --changed-files-z changed-files.z --redline-verdict redline-verdict.json`; PowerShell `& scripts/agent-workflow-runtime.ps1 codex check --repo-root . --slug <bootstrap-slug> --changed-files-z changed-files.z --redline-verdict redline-verdict.json`. Keep `redline: required`; report `risk.redline_findings_available` apart from task-gate status. Missing complete evidence means unverified. Get approval before installing missing prerequisites.
 
 ### Verify the install is real (not just written)
 
@@ -265,7 +262,7 @@ Two things a green probe does NOT catch — check both; both have silently passe
 
 - **Skill resolvable.** Confirm `.claude/skills/agent-workflow/SKILL.md` exists in the target repo. If absent, the CLAUDE.md pointer at `/agent-workflow` is a dead reference (see Phase 4 step 4.0) — hard-fail the bootstrap, tell the developer, don't write the summary as success.
 - **Policy schema-valid.** Confirm `agent-redline-policy.yaml` validates against `.agent-redline/agent-policy.schema.json` (redline Phase 4 ran this; re-assert). A schema-invalid policy passes CI green while its semantics are dead.
-**Skill install complete.** Confirm every file in both `.claude/skills/agent-workflow/manifest.txt` and `.agents/skills/agent-workflow/manifest.txt` exists with the recorded byte size and that the manifests match. Missing/size-mismatch means recopy from one source; do not proceed. (Do not fail on extra files.)
+**Skill install complete.** Confirm manifests match and every listed file has its recorded byte size. Recopy from one source on a missing file or mismatch; extra files are allowed.
 
 ### Show the self-summary in conversation
 

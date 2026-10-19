@@ -1,0 +1,15 @@
+.agents/skills/agent-workflow/** text eol=lf
+.claude/skills/agent-workflow/** text eol=lf
+.claude/hooks/seed-workflow.sh text eol=lf
+.claude/hooks/check-plan.sh text eol=lf
+.claude/hooks/reinforce-workflow.sh text eol=lf
+.claude/hooks/check-plan.py text eol=lf
+.claude/hooks/guarded-paths.json text eol=lf
+scripts/agent-workflow-check.py text eol=lf
+scripts/agent-workflow-runtime.py text eol=lf
+scripts/agent-workflow-runtime.sh text eol=lf
+scripts/agent-workflow-runtime.ps1 text eol=lf
+scripts/agent-redline-report.py text eol=lf
+scripts/agent-redline-check.sh text eol=lf
+scripts/format-verdict-comment.py text eol=lf
+.github/workflows/agent-workflow.yml text eol=lf
