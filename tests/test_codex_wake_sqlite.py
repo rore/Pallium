@@ -1018,6 +1018,9 @@ def test_authority_envelope_fallback_keeps_global_validation(relay_store, monkey
 def test_http_exact_claim_uses_fresh_authority_and_committed_generation(
     relay_store, tmp_path, monkeypatch,
 ):
+    from itertools import count
+    from storage import sqlite_queue
+
     relay, storage, _ = relay_store
     registry = _registry(relay, tmp_path / "legacy")
     assert registry.initialize(old_owner_drained=True)
@@ -1026,11 +1029,32 @@ def test_http_exact_claim_uses_fresh_authority_and_committed_generation(
     assert spent is not None and registry.record_outcome(spent, "accepted")
     before = registry.snapshot(reservation.recipient_endpoint_id)
     original_snapshot = relay.codex_wake_snapshot
+    native_time = sqlite_queue.time
+    native_monotonic = native_time.monotonic
+    native_turn = storage.relay_turn
     reads = []
     armed = False
 
+    def qualified_claim(*args, **kwargs):
+        # Qualify the default successful path; native acquisition expiry has separate coverage below.
+        assert kwargs["exact_delivery_id"] == reservation.delivery_id
+        claim_thread = threading.get_ident()
+        claim_time = SimpleNamespace(**vars(native_time))
+        claim_clock = count(step=.001).__next__
+        claim_time.monotonic = lambda: (claim_clock()
+            if threading.get_ident() == claim_thread else native_monotonic())
+        try:
+            with monkeypatch.context() as acquisition:
+                acquisition.setattr(sqlite_queue, "time", claim_time)
+                return native_turn(*args, **kwargs)
+        finally:
+            monkeypatch.setattr(storage, "relay_turn", native_turn)
+
     def snapshot():
         if armed:
+            assert sqlite_queue.time is native_time and native_time.monotonic is native_monotonic
+            if reads:
+                assert storage.relay_turn == native_turn
             reads.append(1)
         return original_snapshot()
 
@@ -1039,6 +1063,7 @@ def test_http_exact_claim_uses_fresh_authority_and_committed_generation(
     app = FastAPI()
     app.include_router(build_router(SimpleNamespace(), relay_storage=storage, codex_wake_registry=registry))
     with TestClient(app) as http:
+        monkeypatch.setattr(storage, "relay_turn", qualified_claim)
         armed = True
         try:
             response = http.post("/relay/turn", json={
@@ -1047,6 +1072,8 @@ def test_http_exact_claim_uses_fresh_authority_and_committed_generation(
             })
         finally:
             armed = False
+        assert sqlite_queue.time is native_time and native_time.monotonic is native_monotonic
+        assert storage.relay_turn == native_turn
         assert response.status_code == 200, response.text
         claimed, = response.json()["deliveries"]
         assert claimed["delivery_id"] == reservation.delivery_id
