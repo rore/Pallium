@@ -501,6 +501,8 @@ class ScriptedProvider:
         if latest.startswith("native-ui-memory-"):
             latest = composer_text(latest, self.memory_enabled)
         if HISTORY_PROMPT in latest:
+            if "pallium_relay_address" not in results:
+                return None, discover_call("pallium_relay_address", {}, results, available)
             if "pallium_search_history" not in results:
                 return None, discover_call("pallium_search_history", {
                     "query": "native-ui-origin", "limit": 10,
@@ -694,6 +696,47 @@ def test_native_memory_off_uses_search_and_refuses_ambiguous_tool_result(decorat
     assert ScriptedProvider().respond(initial) == (None, ("skill_view", {"name": "pallium-memory"}))
 
 
+def verify_closed_identities(python, identities, env):
+    code = """import json,pathlib,psutil,sys
+alive=[]
+for pid,birthtime,executable in json.loads(sys.argv[1]):
+    try:
+        proc=psutil.Process(pid)
+        if proc.create_time()==birthtime and pathlib.Path(proc.exe()).resolve()==pathlib.Path(executable).resolve():
+            alive.append(pid)
+    except psutil.NoSuchProcess:
+        pass
+print(json.dumps({'alive':alive}))
+"""
+    result = subprocess.run([str(python), "-I", "-c", code, json.dumps(sorted(identities))],
+                            env=env, capture_output=True, text=True, timeout=15, check=True)
+    evidence = json.loads(result.stdout)
+    assert evidence["alive"] == [], "first-leg owned process identity survived close"
+    return evidence
+
+
+@pytest.mark.parametrize("alive", [[], [123]])
+def test_native_restart_verifies_exact_dead_identities_with_owned_runtime(monkeypatch, alive):
+    from types import SimpleNamespace
+
+    identities = {(123, 456.0, "owned-runtime.exe")}
+    env = {"synthetic": "only"}
+
+    def inspect(argv, **kwargs):
+        assert argv[0:3] == ["hermes-sdk2.exe", "-I", "-c"]
+        assert json.loads(argv[4]) == [[123, 456.0, "owned-runtime.exe"]]
+        assert kwargs["env"] is env and kwargs["check"] is True
+        compile(argv[3], "owned-identity-check", "exec")
+        return SimpleNamespace(stdout=json.dumps({"alive": alive}))
+
+    monkeypatch.setattr(subprocess, "run", inspect)
+    if alive:
+        with pytest.raises(AssertionError, match="identity survived"):
+            verify_closed_identities("hermes-sdk2.exe", identities, env)
+    else:
+        assert verify_closed_identities("hermes-sdk2.exe", identities, env) == {"alive": []}
+
+
 class NativeDriver:
     def __init__(self, python, spec, env):
         helper = Path(__file__).parent / "fixtures" / "hermes_tui_driver.py"
@@ -740,7 +783,8 @@ class NativeDriver:
             report = stop_owned_driver(self.proc, self.python, self.helper, self.artifacts, self.env)
             report["driver_returncode"] = self.proc.returncode
             (self.artifacts / "cleanup.json").write_text(json.dumps(report), encoding="utf-8")
-            assert not report["forced"] and not report["recovered"], "driver needed forced/orphan cleanup"
+            assert not report["forced"] and not report["recovered"] and not report["alive"], (
+                "driver needed forced/orphan cleanup")
         finally:
             self.reader.join(2)
             self.log.close()
@@ -1155,7 +1199,9 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
         assert settings.get("memory_enabled", False) is memory_enabled
         peer = client.post("/relay/turn", json={"runtime": "claude-code", "session_ref": PEER, **SCOPE})
         assert peer.status_code == 200, peer.text
-        spec = artifacts / "driver-spec.json"
+        leg_one = artifacts / "leg-1"
+        leg_one.mkdir()
+        spec = leg_one / "driver-spec.json"
         spec.write_text(json.dumps({"home": str(home), "source": str(source), "python": str(python),
                                     "surface": surface,
                                     "bundle_sha256": os.environ["HERMES_TUI_BUNDLE_SHA256"],
@@ -1164,6 +1210,69 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
                                     "parent_pid": os.getpid()}), encoding="utf-8")
         driver = NativeDriver(python, spec, env)
         assert driver.read(155) == {"ready": True}
+
+        def restart_same_profile():
+            nonlocal driver
+
+            first_processes = driver.command("inspect")["processes"]
+            (leg_one / "owned-processes.json").write_text(json.dumps(first_processes, indent=2), encoding="utf-8")
+            first_bridges = [row for row in first_processes if "app.mcp.hermes" in row["argv"]]
+            assert first_bridges, "first native leg had no owned Hermes MCP process"
+            old_ids = {(row["pid"], row["birthtime"], str(Path(row["exe"]).resolve()))
+                       for row in first_processes}
+            driver.close()
+            driver = None
+            close_report = json.loads((leg_one / "cleanup.json").read_text(encoding="utf-8"))
+            assert close_report["driver_returncode"] == 0 and not close_report["forced"] \
+                and not close_report["recovered"] and not close_report["alive"], close_report
+            outcome["restart_leg_one_cleanup"] = close_report
+            outcome["restart_dead_before_relaunch"] = verify_closed_identities(python, old_ids, env)
+            leg_two = artifacts / "leg-2"
+            leg_two.mkdir()
+            next_spec = leg_two / "driver-spec.json"
+            next_spec.write_text(json.dumps({"home": str(home), "source": str(source),
+                "python": str(python), "surface": surface,
+                "bundle_sha256": os.environ["HERMES_TUI_BUNDLE_SHA256"],
+                "python_base": runtime_versions["python_base"],
+                "python_base_sha256": runtime_versions["python_base_sha256"],
+                "parent_pid": os.getpid(), "previous_spec": str(spec),
+                "reuse_user_data": surface == "desktop"}), encoding="utf-8")
+            driver = NativeDriver(python, next_spec, env)
+            assert driver.read(155) == {"ready": True}
+            driver.command("new")
+            if memory_enabled:
+                driver.command("submit", text=MEMORY_SESSION_PROMPT, marker="native-ui-memory-session")
+                driver.command("wait", text="Fresh session verified.")
+                memory_session = provider.completed[MEMORY_SESSION_PROMPT]
+                next_session = memory_session["pallium_relay_address"]["session_ref"]
+                assert next_session and next_session != session_id
+            else:
+                driver.command("submit", text=HISTORY_PROMPT, marker="native-ui-history")
+                driver.command("wait", text=HISTORY_ANSWER)
+                next_session = provider.completed[HISTORY_PROMPT]["pallium_relay_address"]["session_ref"]
+                assert next_session and next_session != session_id
+            if not memory_enabled:
+                post_restart_queries = [row["body"] for row in forwarded if row["path"] == "/query"]
+                assert post_restart_queries and post_restart_queries[-1]["active_session_ref"] == next_session
+            next_processes = driver.command("inspect")["processes"]
+            next_bridges = [row for row in next_processes if "app.mcp.hermes" in row["argv"]]
+            assert next_bridges, "restarted native leg has no owned Hermes MCP process"
+            new_ids = {(row["pid"], row["birthtime"], str(Path(row["exe"]).resolve()))
+                       for row in next_processes}
+            assert old_ids.isdisjoint(new_ids), "host/backend/MCP process generation was reused"
+            outcome["restart_dead_after_relaunch"] = verify_closed_identities(python, old_ids, env)
+            for bridge_row in next_bridges:
+                assert Path(bridge_row["exe"]).resolve() in {
+                    Path(sys.executable).resolve(), Path(sys._base_executable).resolve()}, bridge_row
+                assert bridge_row["env"]["USERPROFILE"] == str(home)
+                bridge_args = bridge_row["argv"]
+                assert bridge_args[bridge_args.index("--base-url") + 1] == base_url
+                assert bridge_args[bridge_args.index("--container-ref") + 1] == SCOPE["container_ref"]
+                assert ("--memory-enabled" in bridge_args) is memory_enabled
+            outcome["restart_leg_two_processes"] = next_processes
+            outcome["restart_generations"] = {"first": sorted(old_ids), "second": sorted(new_ids)}
+            return next_session
+
         driver.command("submit", text=PROMPT, marker="native-ui-origin")
         driver.command("wait", text=ANSWER)
         original = provider.completed[PROMPT]
@@ -1284,11 +1393,7 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
             stage = MEMORY_PROMPTS["remember"]
             driver.command("submit", text=stage, marker="native-ui-memory-remember")
             driver.command("wait", text="Completed remember.")
-            driver.command("new")
-            driver.command("submit", text=MEMORY_SESSION_PROMPT, marker="native-ui-memory-session")
-            driver.command("wait", text="Fresh session verified.")
-            memory_session_id = provider.completed[MEMORY_SESSION_PROMPT]["pallium_relay_address"]["session_ref"]
-            assert memory_session_id and memory_session_id != session_id
+            memory_session_id = restart_same_profile()
             for name, stage in MEMORY_PROMPTS.items():
                 if name == "remember":
                     continue
@@ -1316,6 +1421,7 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
             driver.command("submit", text=prompt, marker="native-ui-memory-off")
             driver.command("wait", text="Optional memory is absent.")
             assert "pallium_remember" not in provider.completed[prompt]["tool_search"]
+            restart_same_profile()
 
         if memory_enabled:
             remember_request = next(row["body"] for row in forwarded if row["path"] == "/memory/remember")
@@ -1325,9 +1431,10 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
             assert memory_query["active_session_ref"] == memory_session_id
         assert user["source_id"] == hashlib.sha256((SCOPE["container_ref"] + "\0" + session_id + "\0"
                                                     + user["metadata"]["hermes_message_uid"]).encode()).hexdigest()
-        driver.command("new")
-        driver.command("submit", text=HISTORY_PROMPT, marker="native-ui-history")
-        driver.command("wait", text=HISTORY_ANSWER)
+        if memory_enabled:
+            driver.command("new")
+            driver.command("submit", text=HISTORY_PROMPT, marker="native-ui-history")
+            driver.command("wait", text=HISTORY_ANSWER)
         history = provider.completed[HISTORY_PROMPT]
         anchor_id = next(row["source_item_id"] for row in history["pallium_search_history"]["results"]
                          if PROMPT in json.dumps(row, ensure_ascii=False))

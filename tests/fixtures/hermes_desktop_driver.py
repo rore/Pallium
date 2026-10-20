@@ -8,6 +8,7 @@ from pathlib import Path
 import queue
 import re
 import subprocess
+import sys
 import threading
 import time
 
@@ -56,10 +57,37 @@ def desktop_env(env: dict[str, str], source: Path, python: Path, home: Path) -> 
     return result
 
 
+def validate_user_data_reuse(home: Path, source: Path, python: Path, previous_spec: Path) -> None:
+    prior = json.loads(previous_spec.read_text(encoding="utf-8"))
+    assert Path(prior["home"]).resolve() == home.resolve(), "prior close profile mismatch"
+    assert Path(prior["source"]).resolve() == source.resolve(), "prior close source mismatch"
+    assert Path(prior["python"]).resolve() == python.resolve(), "prior close runtime mismatch"
+    python_base = Path(sys._base_executable).resolve()
+    assert Path(prior["python_base"]).resolve() == python_base, "prior close base runtime mismatch"
+    assert prior["python_base_sha256"] == hashlib.sha256(python_base.read_bytes()).hexdigest(), (
+        "prior close base runtime hash mismatch")
+    prior_artifacts = previous_spec.parent
+    cleanup = json.loads((prior_artifacts / "cleanup.json").read_text(encoding="utf-8"))
+    assert cleanup.get("driver_returncode") == 0 and cleanup.get("forced") is False \
+        and cleanup.get("recovered") == [] and cleanup.get("alive") == [], "prior Desktop close was not clean"
+    ledger = json.loads((prior_artifacts / "owned-processes-ledger.json").read_text(encoding="utf-8"))
+    assert isinstance(ledger, list) and ledger, "prior owned identity ledger is missing"
+    import psutil
+    for row in ledger:
+        try:
+            proc = psutil.Process(row["pid"])
+            assert not (proc.create_time() == row["birthtime"]
+                        and Path(proc.exe()).resolve() == Path(row["exe"]).resolve()), (
+                "prior owned Desktop identity is still alive")
+        except psutil.NoSuchProcess:
+            pass
+
+
 class DesktopConsole:
     """Drive only the owned renderer's ordinary composer and New session button."""
 
-    def __init__(self, python, source, home, env, artifacts, stopped, tree):
+    def __init__(self, python, source, home, env, artifacts, stopped, tree, *, reuse_user_data=False,
+                 previous_spec=None):
         self.tree, self.stopped, self.artifacts = tree, stopped, artifacts
         self.replies = queue.Queue()
         self.cdp = None
@@ -73,7 +101,16 @@ class DesktopConsole:
         expected = env.get("HERMES_DESKTOP_EXE_SHA256", "")
         assert re.fullmatch(r"[0-9a-fA-F]{64}", expected), "explicit Desktop binary hash required"
         assert hashlib.sha256(executable.read_bytes()).hexdigest() == expected.lower(), "Desktop binary drift"
-        assert not (home / "desktop-user-data").exists(), "Desktop userData must be fresh"
+        assert isinstance(reuse_user_data, bool), "userData reuse must be a boolean"
+        user_data = home / "desktop-user-data"
+        contained_path(home, user_data)
+        if reuse_user_data:
+            assert previous_spec is not None, "same-profile reuse requires a prior close spec"
+            contained_path(Path(env["RUNNER_TEMP"]), Path(previous_spec))
+            validate_user_data_reuse(home, source, python, Path(previous_spec))
+            assert user_data.is_dir(), "same-profile reuse requires existing Desktop userData"
+        else:
+            assert not user_data.exists(), "Desktop userData must be fresh"
         self.child_env = desktop_env(env, source, python, home)
         self.proc = subprocess.Popen([
             str(executable), "--remote-debugging-address=127.0.0.1", "--remote-debugging-port=0",

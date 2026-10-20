@@ -96,6 +96,14 @@ submit control to mount; unexpected stage text and ambiguous controls still fail
 It also checks an enabled, harmless peer hook and a bounded forwarding-endpoint
 outage before the first no-reply wake. These additions require native proof;
 endpoint downtime does not establish full service-process or MCP restart recovery.
+The next candidate also splits each journey into two owned process generations
+using the same synthetic profile. It verifies exact old PID/birth/executable
+identities are gone before and after relaunch, then requires a real new-session
+MCP call and persisted memory/History reads. Desktop userData reuse requires the
+same prior profile/runtime/source, successful dispatcher cleanup and contained
+non-reparse paths. Both legs retain separate evidence. This is controlled
+owned-tree teardown and relaunch, without a graceful native Quit or automatic
+standalone MCP-reconnect claim. Native proof remains pending.
 Python network guards do not confine Electron/Chromium networking, and hosted
 runner environment markers are only accidental-launch guards, not an OS sandbox.
 The recorded approval covers this disposable runner and its bounded manual runs.

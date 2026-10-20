@@ -1,8 +1,9 @@
 """Pre-launch checks only: these tests never start Hermes or Electron."""
-from pathlib import Path
 import hashlib
 import io
 import json
+from pathlib import Path
+import sys
 import threading
 from types import SimpleNamespace
 
@@ -10,6 +11,7 @@ import pytest
 
 from tests.fixtures.hermes_desktop_driver import (
     DesktopConsole, RUNNER_MARKERS, contained_path, desktop_env, require_runner_gate,
+    validate_user_data_reuse,
 )
 
 
@@ -116,3 +118,81 @@ def test_desktop_owned_startup_and_ui_protocol_without_native_process(tmp_path, 
     assert all("NODE_OPTIONS" not in kwargs["env"] for _, kwargs in calls)
     assert json.loads(cdp.stdin.getvalue().splitlines()[1])["text"] == "hello 漢字 🌍"
     assert (artifacts / "desktop-output.json").is_file()
+
+
+def test_desktop_user_data_reuse_requires_matching_clean_prior_close(tmp_path, monkeypatch):
+    no_such_process = type("NoSuchProcess", (Exception,), {})
+    psutil_stub = SimpleNamespace(NoSuchProcess=no_such_process,
+        Process=lambda _pid: (_ for _ in ()).throw(no_such_process()))
+    monkeypatch.setitem(sys.modules, "psutil", psutil_stub)
+    home, source, python = (tmp_path / name for name in ("home", "source", "python.exe"))
+    home.mkdir(); source.mkdir(); python.write_bytes(b"runtime")
+    first = tmp_path / "leg-1"
+    first.mkdir()
+    prior_spec = first / "driver-spec.json"
+    python_base = Path(sys._base_executable).resolve()
+    prior_spec.write_text(json.dumps({"home": str(home), "source": str(source), "python": str(python),
+        "python_base": str(python_base), "python_base_sha256": hashlib.sha256(python_base.read_bytes()).hexdigest()}))
+    (first / "cleanup.json").write_text(json.dumps({"driver_returncode": 0, "forced": False,
+        "recovered": [], "alive": []}))
+    (first / "owned-processes-ledger.json").write_text(json.dumps([
+        {"pid": 1, "birthtime": 2.0, "exe": str(python)}]))
+    with pytest.raises(AssertionError, match="profile mismatch"):
+        validate_user_data_reuse(home / "other", source, python, prior_spec)
+    with pytest.raises(AssertionError, match="not clean"):
+        (first / "cleanup.json").write_text(json.dumps({"driver_returncode": 0, "forced": True,
+            "recovered": [], "alive": []}))
+        validate_user_data_reuse(home, source, python, prior_spec)
+
+
+def test_desktop_same_profile_reuse_is_typed_and_keeps_fresh_default(tmp_path, monkeypatch):
+    no_such_process = type("NoSuchProcess", (Exception,), {})
+    monkeypatch.setitem(sys.modules, "psutil", SimpleNamespace(NoSuchProcess=no_such_process,
+        Process=lambda _pid: (_ for _ in ()).throw(no_such_process())))
+    source, home, artifacts = (tmp_path / name for name in ("source", "home", "artifacts"))
+    binary = source / "apps" / "desktop" / "release" / "win-unpacked" / "Hermes.exe"
+    binary.parent.mkdir(parents=True); binary.write_bytes(b"synthetic non-executable")
+    artifacts.mkdir(); (home / "desktop-user-data").mkdir(parents=True)
+    prior_dir = tmp_path / "leg-1"; prior_dir.mkdir()
+    prior_spec = prior_dir / "driver-spec.json"
+    python_base = Path(sys._base_executable).resolve()
+    prior_spec.write_text(json.dumps({"home": str(home), "source": str(source),
+        "python": str(tmp_path / "python.exe"), "python_base": str(python_base),
+        "python_base_sha256": hashlib.sha256(python_base.read_bytes()).hexdigest()}))
+    (prior_dir / "cleanup.json").write_text(json.dumps({"driver_returncode": 0, "forced": False,
+        "recovered": [], "alive": []}))
+    (prior_dir / "owned-processes-ledger.json").write_text(json.dumps([
+        {"pid": 1, "birthtime": 2.0, "exe": str(tmp_path / "python.exe")}]))
+    env = {**RUNNER_MARKERS, "RUNNER_TEMP": str(tmp_path), "USERPROFILE": str(tmp_path.parent),
+           "HERMES_NODE": str(tmp_path / "node.exe"),
+           "HERMES_DESKTOP_EXE_SHA256": hashlib.sha256(binary.read_bytes()).hexdigest()}
+    monkeypatch.setattr("subprocess.CREATE_NO_WINDOW", 0, raising=False)
+    calls = []
+    monkeypatch.setattr("subprocess.Popen", lambda *args, **kwargs: calls.append((args, kwargs)))
+    with pytest.raises(AssertionError, match="userData must be fresh"):
+        DesktopConsole(tmp_path / "python.exe", source, home, env, artifacts, threading.Event(), None)
+    assert calls == []
+    with pytest.raises(AssertionError, match="must be a boolean"):
+        DesktopConsole(tmp_path / "python.exe", source, home, env, artifacts, threading.Event(), None,
+                       reuse_user_data="false")
+    assert calls == []
+    with pytest.raises(AssertionError, match="prior close spec"):
+        DesktopConsole(tmp_path / "python.exe", source, home, env, artifacts, threading.Event(), None,
+                       reuse_user_data=True)
+    assert calls == []
+    def admitted(*args, **kwargs):
+        calls.append((args, kwargs))
+        raise RuntimeError("mocked launch admitted")
+    monkeypatch.setattr("subprocess.Popen", admitted)
+    with monkeypatch.context() as scoped:
+        scoped.setattr(Path, "is_junction", lambda self: self == home / "desktop-user-data")
+        with pytest.raises(AssertionError, match="reparse"):
+            DesktopConsole(tmp_path / "python.exe", source, home, env, artifacts, threading.Event(), None,
+                           reuse_user_data=True, previous_spec=prior_spec)
+    assert calls == []
+    with pytest.raises(RuntimeError, match="mocked launch admitted"):
+        DesktopConsole(tmp_path / "python.exe", source, home, env, artifacts, threading.Event(),
+                       SimpleNamespace(error=None, psutil=SimpleNamespace(Process=lambda pid: pid),
+                                       record=lambda _identity: None),
+                       reuse_user_data=True, previous_spec=prior_spec)
+    assert len(calls) == 1 and calls[0][0][0][0] == str(binary)

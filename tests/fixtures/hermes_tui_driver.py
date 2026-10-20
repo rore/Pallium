@@ -626,7 +626,9 @@ def driver_main(spec_path: Path):
         # Retain a partial Desktop constructor so failed startup logs can still be closed and saved.
         if surface == "desktop":
             console = console_class.__new__(console_class)
-            console.__init__(python, source, home, dict(os.environ), spec_path.parent, stopped, tree)
+            console.__init__(python, source, home, dict(os.environ), spec_path.parent, stopped, tree,
+                             reuse_user_data=spec.get("reuse_user_data", False),
+                             previous_spec=spec.get("previous_spec"))
         else:
             console = console_class(python, source, home, dict(os.environ), spec_path.parent, stopped, tree)
         console.ready()
