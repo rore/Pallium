@@ -9,10 +9,11 @@ jobs:
     timeout-minutes: 20
     env:
       DIAGNOSTICS_SHA: ${{ github.sha }}
-      PALLIUM_DIAGNOSTIC_OUTPUT: ${{ runner.temp }}/pr297-evidence
     steps:
       - name: Start bounded diagnostic clock
-        run: echo "JOB_STARTED=$(date +%s)" >> "$GITHUB_ENV"
+        run: |
+          echo "JOB_STARTED=$(date +%s)" >> "$GITHUB_ENV"
+          echo "PALLIUM_DIAGNOSTIC_OUTPUT=$RUNNER_TEMP/pr297-evidence" >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
         with:
           ref: 07697ac2b8f74e8503534a6586fb13dbb30bdeb4
