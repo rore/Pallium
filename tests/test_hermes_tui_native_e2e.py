@@ -28,6 +28,7 @@ from tests.fixtures.hermes_tui_driver import (
     python_guard_source,
     TuiConsole,
     self_check_guards,
+    seed_models_dev_cache,
     stop_owned_driver,
     verify_runtimes,
     verify_source,
@@ -426,19 +427,142 @@ class NativeDriver:
         raise TimeoutError("native driver response timed out; inspect driver-errors.txt")
 
     def command(self, op, **fields):
-        self.proc.stdin.write(json.dumps({"op": op, **fields}, ensure_ascii=False) + "\n")
+        # Windows pipe decoding follows the child locale; ASCII JSON preserves all Unicode independently.
+        self.proc.stdin.write(json.dumps({"op": op, **fields}, ensure_ascii=True) + "\n")
         self.proc.stdin.flush()
         return self.read(timeout=fields.get("timeout", 90) + 10)
 
     def close(self):
         try:
             report = stop_owned_driver(self.proc, self.python, self.helper, self.artifacts, self.env)
+            report["driver_returncode"] = self.proc.returncode
             (self.artifacts / "cleanup.json").write_text(json.dumps(report), encoding="utf-8")
             assert not report["forced"] and not report["recovered"], "driver needed forced/orphan cleanup"
         finally:
             self.reader.join(2)
             self.log.close()
-        assert self.proc.returncode == 0, f"native driver failed: {self.proc.returncode}"
+
+
+def test_hermes_tui_command_pipe_preserves_unicode_across_child_locale(tmp_path):
+    from io import StringIO
+    from types import SimpleNamespace
+
+    interpreter = os.environ.get("HERMES_E2E_PYTHON")
+    if not interpreter:
+        pytest.skip("set explicit Hermes 3.14 interpreter for the Unicode pipe check")
+    wire = StringIO()
+    driver = NativeDriver.__new__(NativeDriver)
+    driver.proc = SimpleNamespace(stdin=wire)
+    driver.read = lambda **_kwargs: {"ok": "submit"}
+    assert driver.command("submit", text=PROMPT, marker="native-ui-origin") == {"ok": "submit"}
+    assert wire.getvalue().isascii()
+    code = ("import json,sys; assert sys.version_info[:2]==(3,14); "
+            "request=json.loads(sys.stdin.readline()); "
+            "print(json.dumps({'text':request['text'],'stdin_encoding':sys.stdin.encoding}))")
+    env = {key: os.environ[key] for key in ("SYSTEMROOT", "WINDIR") if key in os.environ}
+    env["PYTHONIOENCODING"] = "cp1252"
+    result = subprocess.run([interpreter, "-X", "utf8=0", "-c", code], cwd=tmp_path, env=env,
+                            input=wire.getvalue(), capture_output=True, text=True, encoding="ascii", timeout=10)
+    assert result.returncode == 0, result.stderr
+    response = json.loads(result.stdout)
+    assert response == {"text": PROMPT, "stdin_encoding": "cp1252"}
+    assert response["text"].encode("utf-8") == PROMPT.encode("utf-8")
+
+
+def test_hermes_tui_submit_accepts_fragmented_echo_and_rejects_surrogates():
+    from types import SimpleNamespace
+
+    writes = []
+    console = TuiConsole.__new__(TuiConsole)
+    console.parts = ['Try "explain this codebase"\nforging session…']
+    console.stopped = threading.Event()
+    console.tree = SimpleNamespace(error=None)
+    console.read_error = None
+
+    def write(text):
+        writes.append(text)
+        if text == PROMPT:
+            console.parts.extend(["Grüße\x1b[10C日本語\n", "native-ui-origin"])
+
+    console.proc = SimpleNamespace(write=write, isalive=lambda: True)
+    with pytest.raises(TimeoutError):
+        console.wait("ready │", timeout=.01)
+    console.parts.append("\nready │ pallium-local")
+    console.wait("ready │", timeout=.01)
+    console.submit(PROMPT, marker="native-ui-origin")
+    assert writes == [PROMPT, "\r"]
+    assert PROMPT not in console.text, "fixture must reproduce fragmented Unicode echo"
+    with pytest.raises(UnicodeEncodeError):
+        console.submit("bad \udc80 native-ui-origin", marker="native-ui-origin")
+    assert writes == [PROMPT, "\r"], "surrogate-corrupted input reached the PTY"
+
+
+def test_hermes_tui_provider_requires_complete_unicode_prompt():
+    provider = ScriptedProvider()
+    body = {"tools": [{"function": {"name": "skill_view"}}],
+            "messages": [{"role": "user", "content": PROMPT}]}
+    assert provider.respond(body)[1] == ("skill_view", {"name": "pallium-memory"})
+    body["messages"][0]["content"] = PROMPT.replace("👍🏽", "�")
+    with pytest.raises(AssertionError, match="unexpected main provider prompt"):
+        provider.respond(body)
+
+
+def test_hermes_tui_failed_driver_does_not_mask_successful_cleanup(tmp_path, monkeypatch):
+    from io import StringIO
+    from types import SimpleNamespace
+
+    driver = NativeDriver.__new__(NativeDriver)
+    driver.proc = SimpleNamespace(returncode=1)
+    driver.python = driver.helper = driver.env = None
+    driver.artifacts = tmp_path
+    driver.reader = SimpleNamespace(join=lambda _timeout: None)
+    driver.log = StringIO()
+    monkeypatch.setattr("tests.test_hermes_tui_native_e2e.stop_owned_driver",
+                        lambda *_args: {"forced": False, "recovered": [], "alive": []})
+    driver.close()
+    assert driver.log.closed
+    assert json.loads((tmp_path / "cleanup.json").read_text(encoding="utf-8")) == {
+        "forced": False, "recovered": [], "alive": [], "driver_returncode": 1,
+    }
+
+
+def test_hermes_tui_offline_model_catalog_cache(tmp_path):
+    source = os.environ.get("HERMES_E2E_SOURCE")
+    interpreter = os.environ.get("HERMES_E2E_PYTHON")
+    if not source or not interpreter:
+        pytest.skip("set explicit Hermes source and 3.14 interpreter for the native cache-reader self-check")
+    source, python = Path(source).resolve(), Path(interpreter).resolve()
+    assert not (source / ".env").exists(), "Hermes project .env must be absent"
+    home = tmp_path / "synthetic-home"
+    for relative in ("scratch", "managed-empty", "Temp", "AppData/Roaming", "AppData/Local", ".config",
+                     ".cache", ".local/share", ".local/state", ".hermes"):
+        (home / relative).mkdir(parents=True)
+    profile = home / ".hermes"
+    cache = seed_models_dev_cache(profile)
+    with pytest.raises(FileExistsError):
+        seed_models_dev_cache(profile)
+    (profile / "config.yaml").write_text(yaml.safe_dump({"model_catalog": {"enabled": False}}), encoding="utf-8")
+    guard_dir = tmp_path / "guard"
+    guard_dir.mkdir()
+    (guard_dir / "sitecustomize.py").write_text(python_guard_source(), encoding="utf-8")
+    egress = tmp_path / "egress.jsonl"
+    env = isolated_env(home, source=source, python=python, node=tmp_path / "unused-node.exe", guard_dir=guard_dir,
+                       preload=tmp_path / "unused-node-preload.cjs", egress_log=egress,
+                       endpoints=[("127.0.0.1", _port())])
+    code = '''import json, pathlib, sys
+assert sys.version_info[:2] == (3, 14)
+from agent.models_dev import fetch_models_dev
+from hermes_cli.model_catalog import get_catalog
+expected=json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+assert fetch_models_dev() == expected
+assert get_catalog() == {}
+print("fresh native model cache and disabled manifest loaded without network")
+'''
+    result = subprocess.run([str(python), "-c", code, str(cache)], env=env, cwd=home / "scratch",
+                            capture_output=True, text=True, encoding="utf-8", timeout=20)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "without network" in result.stdout
+    assert not egress.exists() or not egress.read_text(encoding="utf-8").strip(), "cache-reader self-check attempted egress"
 
 
 def test_released_hermes_actual_tui_journey(client, tmp_path):
@@ -547,9 +671,11 @@ def test_released_hermes_actual_tui_journey(client, tmp_path):
                          "base_url": f"http://127.0.0.1:{provider_server.server_port}/v1"},
               "agent": {"api_max_retries": 1}, "fallback_providers": [],
               "platform_toolsets": {"cli": ["hermes-cli"]}, "updates": {"check": False},
+              "model_catalog": {"enabled": False},
               "wake_word": {"enabled": False}, "display": {"compact": True},
               "telemetry": {"shared_metrics": {"enabled": False, "send": False, "offer_version": 2}}}
     (profile / "config.yaml").write_text(yaml.safe_dump(config), encoding="utf-8")
+    seed_models_dev_cache(profile)
     driver = None
     outcome = {"release": release, "runtimes": runtime_versions, "pallium_revision": revision,
                "surface": "public winpty.PTY ConPTY into released hermes --tui Ink",
@@ -583,8 +709,8 @@ def test_released_hermes_actual_tui_journey(client, tmp_path):
                                     "python_base_sha256": runtime_versions["python_base_sha256"],
                                     "parent_pid": os.getpid()}), encoding="utf-8")
         driver = NativeDriver(python, spec, env)
-        assert driver.read(75) == {"ready": True}
-        driver.command("submit", text=PROMPT)
+        assert driver.read(155) == {"ready": True}
+        driver.command("submit", text=PROMPT, marker="native-ui-origin")
         driver.command("wait", text=ANSWER)
         original = provider.completed[PROMPT]
         address = original["pallium_relay_address"]
@@ -639,7 +765,7 @@ def test_released_hermes_actual_tui_journey(client, tmp_path):
         assert user["source_id"] == hashlib.sha256((SCOPE["container_ref"] + "\0" + session_id + "\0"
                                                     + user["metadata"]["hermes_message_uid"]).encode()).hexdigest()
         driver.command("new")
-        driver.command("submit", text=HISTORY_PROMPT)
+        driver.command("submit", text=HISTORY_PROMPT, marker="native-ui-history")
         driver.command("wait", text=HISTORY_ANSWER)
         history = provider.completed[HISTORY_PROMPT]
         anchor_id = next(row["source_item_id"] for row in history["pallium_search_history"]["results"]
@@ -660,11 +786,16 @@ def test_released_hermes_actual_tui_journey(client, tmp_path):
         assert not any(secret in json.dumps(provider.requests) for secret in secrets), "private Relay receipt reached provider"
         outcome.update(journey_assertions="passed", original_session_id=session_id, history_session_id=query["active_session_ref"],
                        history_anchor_id=anchor_id)
+    except BaseException as exc:
+        outcome["journey_error"] = repr(exc)
+        raise
     finally:
         try:
             if driver is not None:
                 driver.close()
                 outcome["owned_process_cleanup"] = "passed"
+                outcome["driver_returncode"] = driver.proc.returncode
+                outcome["driver_outcome"] = "passed" if driver.proc.returncode == 0 else "failed"
         except BaseException as exc:
             outcome["cleanup_error"] = repr(exc)
             raise
@@ -681,6 +812,8 @@ def test_released_hermes_actual_tui_journey(client, tmp_path):
                 outcome["source_postcondition"] = "passed"
             finally:
                 if (outcome.get("journey_assertions") == "passed" and outcome.get("owned_process_cleanup") == "passed"
-                        and outcome.get("source_postcondition") == "passed"):
+                        and outcome.get("source_postcondition") == "passed" and outcome.get("driver_returncode") == 0):
                     outcome["status"] = "passed"
                 (artifacts / "result.json").write_text(json.dumps(outcome, ensure_ascii=False, indent=2), encoding="utf-8")
+                if outcome.get("journey_assertions") == "passed":
+                    assert outcome.get("driver_returncode") == 0, "journey completed but native driver failed"

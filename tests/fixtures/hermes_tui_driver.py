@@ -17,6 +17,17 @@ RELEASES = {
 }
 
 
+def seed_models_dev_cache(profile: Path) -> Path:
+    """Use the native provider/models/limit disk shape; a fresh cache avoids registry startup I/O."""
+    registry = {"local": {"id": "local", "name": "Synthetic local provider", "models": {
+        "pallium-local": {"id": "pallium-local", "limit": {"context": 128000, "output": 4096}},
+    }}}
+    path = profile / "models_dev_cache.json"
+    with path.open("x", encoding="utf-8") as handle:
+        json.dump(registry, handle)
+    return path
+
+
 def python_guard_source() -> str:
     return '''import json, os, socket, threading
 
@@ -478,16 +489,19 @@ class TuiConsole:
             time.sleep(.1)
         raise TimeoutError(f"TUI did not render {expected!r}: {self.text[-3000:]}")
 
-    def submit(self, prompt: str):
+    def submit(self, prompt: str, *, marker: str):
+        prompt.encode("utf-8", errors="strict")
+        assert marker and marker.isascii() and marker in prompt, "expected a unique visible ASCII input marker"
         offset = len(self.text)
         self.proc.write(prompt)
-        self.wait(prompt, after=offset, timeout=20)
+        # Ink redraws and grapheme wrapping can split the echoed Unicode input; the provider checks it in full.
+        self.wait(marker, after=offset, timeout=20)
         self.proc.write("\r")
 
     def close(self):
         self.proc.cancel_io()
         self.reader.join(2)
-        (self.artifacts / "terminal.txt").write_text("".join(self.parts), encoding="utf-8")
+        (self.artifacts / "terminal.txt").write_text("".join(self.parts), encoding="utf-8", errors="backslashreplace")
 
 
 def driver_main(spec_path: Path):
@@ -556,6 +570,7 @@ def driver_main(spec_path: Path):
         while not any(token in console.text for token in ("Ask me anything", 'Try "')):
             assert not stopped.is_set() and time.monotonic() < deadline and console.proc.isalive(), console.text[-3000:]
             time.sleep(.1)
+        console.wait("ready │", timeout=90)
         print(json.dumps({"ready": True}), flush=True)
         while not stopped.is_set():
             try:
@@ -564,16 +579,17 @@ def driver_main(spec_path: Path):
                 continue
             op = command["op"]
             if op == "submit":
-                console.submit(command["text"])
+                console.submit(command["text"], marker=command["marker"])
             elif op == "wait":
                 console.wait(command["text"], timeout=command.get("timeout", 90))
             elif op == "new":
                 offset = len(console.text)
-                console.submit("/new")
+                console.submit("/new", marker="/new")
                 console.wait("Start a new session?", after=offset, timeout=20)
                 # Both released ConfirmPrompt implementations expose the normal affirmative 'y' shortcut.
                 console.proc.write("y")
                 console.wait("new session started", after=offset, timeout=30)
+                console.wait("ready │", after=offset, timeout=60)
             elif op == "inspect":
                 print(json.dumps({"processes": console.tree.snapshot()}), flush=True)
                 continue
