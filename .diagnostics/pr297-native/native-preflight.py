@@ -36,8 +36,8 @@ def symbols(path, wanted):
 
 
 assert sys.platform == "linux" and sys.version_info[:3] == (3, 13, 16)
-assert os.environ.get("ImageVersion") == "20261012.334.1", "Unreviewed image"
-assert command("/usr/bin/uname", "-r").strip() == "6.17.0-1022-azure"
+assert os.environ.get("ImageVersion") == "20261018.339.1", "Unreviewed image"
+assert command("/usr/bin/uname", "-r").strip() == "7.0.0-1017-azure"
 python = Path(sys.executable).resolve(strict=True)
 assert hashlib.sha256(python.read_bytes()).hexdigest() == EXPECTED_PYTHON
 assert _sqlite3.sqlite_version == "3.45.1"

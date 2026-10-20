@@ -36,7 +36,7 @@ jobs:
           def blob(path):
               return subprocess.check_output(["git", "show", sha + ":" + path])
           raw_manifest = blob(prefix + "manifest.json")
-          assert hashlib.sha256(raw_manifest).hexdigest() == "d305d2d656e9ee780468aea6aa70a74b0afcc713b5fcf5d2418d67bdf82b4f08"
+          assert hashlib.sha256(raw_manifest).hexdigest() == "48b2da8a77bb922dc7c0d5fb94d619e7da32623e2ab6b376bcb71c99ace5c164"
           manifest = json.loads(raw_manifest)
           paths = ["launch.py", "restore-context.py", "native-controller.py", "native-preflight.py", "native.bt.in", "probe-map.json", "qualification.py", "acquisition_observer.py", "guard/sitecustomize.py"]
           assert set(manifest["sha256"]) == set(paths)
