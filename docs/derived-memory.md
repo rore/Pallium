@@ -13,6 +13,11 @@ Disabling a package preserves stored derived data but prevents new processing.
 Read [How Pallium Works](how-it-works.md) for the product-level architecture and
 [Configuration](configuration.md) for the current setup.
 
+The [experimental Hermes package](hermes-integration.md) currently exposes Relay
+and Session History only. Enabling shared semantic packages does not add qualified
+Hermes memory tools or automatic memory injection; memory parity remains a
+production release gate for that integration.
+
 ## What Goes In
 
 Pallium stores selected evidence, not everything. For the current conversation

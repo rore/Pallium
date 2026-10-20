@@ -83,6 +83,11 @@ and reinstalling the integration.
 OpenCode uses a local plugin path. Follow the
 [OpenCode integration guide](../integrations/opencode/README.md).
 
+Hermes has a separate [experimental integration guide](hermes-integration.md).
+Its setup requires an explicit disposable profile and frozen local-provider
+configuration. Everyday Desktop/TUI use and normal-provider setup are not yet
+qualified; follow that guide rather than the default-profile commands above.
+
 Open two sessions in the same Git repository after setup. Pallium derives their
 shared container from the repository identity while keeping each session
 separately addressable.

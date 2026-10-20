@@ -119,6 +119,13 @@ cross-user sharing or authorization system.
 
 ## Available now
 
+Integration catalogs differ. The [experimental Hermes package](hermes-integration.md)
+exposes the three search/expansion tools below and captures private hook-observed
+text snapshots, with later-session gateway proof on two released Hermes versions.
+It does not expose History diagnostics, source-forget or memory tools, and has
+no current `request_source_item_id`. Actual Desktop/TUI capture and recovery
+qualification remain open; see its guide for capture limits and provenance.
+
 - broad topic search across accessible earlier sessions with `pallium_search_history`
 - exact-reference search with `pallium_search_history_by_work_ref`
 - bounded, revision-checked result paging for both search tools

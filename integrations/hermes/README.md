@@ -2,6 +2,9 @@
 
 This is a frozen, disposable-profile qualification package tested against Hermes v0.22.0 and v0.22.2 through gateway RPC. It installs a native Hermes plugin, the discoverable `pallium-memory` skill, and the plugin-owned Pallium MCP bridge. Setup never creates a global `mcp_servers` connection and does not modify model/provider, toolset, Tool Search, other plugin, credential, or data settings.
 
+For the public capability overview and support boundaries, see the
+[Hermes integration guide](../../docs/hermes-integration.md).
+
 ## Production qualification in progress
 
 The release target covers both Windows **Desktop and TUI**, with public API
@@ -17,6 +20,7 @@ supported-version claim.
 | Full package | Skill, Relay, History and opt-in memory lifecycle; memory off leaves Relay/History functional | Relay/History bounded proof exists; shared memory target-scope contracts need work |
 | Recovery | Busy/concurrent sessions, reset/close, host/service/MCP restart, stale routes and ambiguous outcomes | Native coverage incomplete |
 | Lifecycle | Disposable install/update/remove/rollback, repeated use and owned-process cleanup | Existing ownership/conflict coverage; actual UI/update qualification pending |
+| Public documentation | Public entry points, setup/capability guides and bundled skill match final verified behavior; commands and links checked | Initial alignment audit updated the guides; final production review still required |
 
 The [v0.22.2 release notes](https://github.com/NousResearch/hermes-agent/releases/tag/v0.22.2)
 identify v0.22.1 as an accidental build with a session-deletion issue; exclude it

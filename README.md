@@ -56,6 +56,11 @@ in its current form, but setup and behavior still have rough edges.
 
 ## Current status
 
+The [Hermes integration](docs/hermes-integration.md) is experimental. Its package
+has gateway Relay and Session History proof on two released Hermes versions;
+actual Desktop/TUI, normal-provider, memory and recovery qualification remain
+open. It is not included in the supported delivery guarantees below.
+
 Relay works across the current integrations. Every supported path has durable
 next-turn delivery; some qualified paths can also start a new turn. See the
 [Relay support details](docs/agent-relay.md#delivery-and-wake-behavior).
@@ -133,6 +138,7 @@ cross-user authorization model.
 - [Claude Code integration](docs/claude-code-integration.md)
 - [Codex integration](docs/codex-integration.md)
 - [OpenCode integration](integrations/opencode/README.md)
+- [Hermes integration (experimental)](docs/hermes-integration.md)
 - [HTTP API](docs/http-api.md)
 - [Privacy and visibility](docs/privacy-and-visibility.md)
 - [Dashboard](docs/dashboard.md)
