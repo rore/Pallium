@@ -83,6 +83,8 @@ Agent technical review: /root/hermes_shared_plan_review, 2026-10-20, independent
 Agent technical review: /root/hermes_phaseb_result_review, 2026-10-20, independent clean-context GO for raw public llm_execution entry replacing the initially proposed pre_api_request observer, on exact released source call sites. Static result review accepted the corrected bounded shared-memory/bridge/setup/admission implementation; focused and full regression evidence remains required. Remaining production blockers are recorded below; this is not whole-feature acceptance.
 
 **Approvals:**
+Approved by user 2026-10-20: "Approved. And I told you this is a night job. Get this done"
+This answers the concrete proposal to add/merge the separate disposable Windows runner and run at most two manual qualifications capped at four runner-hours. It does not authorize local installation, environment recovery or everyday changes.
 Approved by user 2026-10-20: "i want to get to a production ready state so that i can finally use it, so if you need extend slice 4 to include all that is needed to get this integration to production readiness"
 Approved by user 2026-10-20: "we should support both desktop and tui. also make sure we're not bound to a single hermes version."
 Approved by user 2026-10-20: "also part of "production ready" is to see that are public docs are aligned and we have updated them"
@@ -91,7 +93,7 @@ These approve isolated implementation and qualification within this scope. They 
 **Exceptions:**
 —
 
-**State:** Blocked or returned to planning
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
