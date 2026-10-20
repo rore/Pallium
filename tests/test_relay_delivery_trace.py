@@ -354,28 +354,96 @@ def test_trace_paging_freezes_later_appends(relay):
         )
 
 
+@pytest.mark.parametrize("consumer", ["trace", "cleanup"])
+def test_busy_correctness_gate_refuses_optional_trace_before_database_admission(
+    relay, monkeypatch, consumer,
+):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from api.routes import create_router
+
+    storage, service, _ = relay
+    message = _message(service)
+    trace_event = {"attempt_id": "relay-activation-" + "7" * 32,
+                   "delivery_id": message["deliveries"][0]["delivery_id"], "stage": "prepared"}
+    sessions = []
+    original_factory = storage._relay_session_factory
+
+    def session_factory(*args, **kwargs):
+        sessions.append(True)
+        return original_factory(*args, **kwargs)
+
+    assert storage._relay_writer_lock.acquire(blocking=False)
+    try:
+        with monkeypatch.context() as observed:
+            observed.setattr(storage, "_relay_session_factory", session_factory)
+            result = (storage.relay_record_trace_event(trace_event) if consumer == "trace"
+                      else storage.relay_cleanup_trace())
+    finally:
+        storage._relay_writer_lock.release()
+
+    assert storage.relay_record_trace_event(trace_event) is True
+    app = FastAPI()
+    app.include_router(create_router(SimpleNamespace(), relay_service=service))
+    with TestClient(app) as http:
+        scope = {"container_ref": "git:test"}
+        claim = http.post("/relay/turn", json={"runtime": "codex", "session_ref": "receiver", **scope})
+        assert claim.status_code == 200, claim.text
+        delivery, = claim.json()["deliveries"]
+        assert delivery["delivery_id"] == trace_event["delivery_id"] and delivery["attempts"] == 1
+        ack = http.post("/relay/deliveries/ack", json={"delivery_id": delivery["delivery_id"],
+                        "claim_token": delivery["claim_token"], **scope})
+        assert ack.status_code == 200, ack.text
+        retained = http.get(f"/relay/messages/{message['message_id']}", params=scope)
+        assert retained.status_code == 200, retained.text
+        actual, = retained.json()["deliveries"]
+        assert actual["state"] == "delivered" and actual["attempts"] == 1
+        trace = http.get(f"/relay/messages/{message['message_id']}/trace")
+        assert trace.status_code == 200, trace.text
+        assert len(trace.json()["events"]) == 1
+    assert result is False if consumer == "trace" else result == 0
+    assert sessions == [], "optional writer inspected the database while correctness gate was occupied"
+
+
 def test_trace_bound_checks_do_not_reserve_the_correctness_writer(relay):
+    import sys
+    import traceback
+
     storage, service, _ = relay
     message = _message(service)
     reached = threading.Event()
     release = threading.Event()
     trace_errors = []
+    trace_state = {"phase": "not_started"}
+    join_diagnostics = None
 
     def pause_trace_read(
         _conn, _cursor, statement, _parameters, _context, _executemany
     ):
+        if threading.current_thread().name != "trace-contention-test":
+            return
+        trace_state.update(phase="sql_entered", sql_entered=statement[:256])
         if (
-            threading.current_thread().name == "trace-contention-test"
-            and "count(" in statement.lower()
+            "count(" in statement.lower()
             and "relay_delivery_trace" in statement.lower()
             and not reached.is_set()
         ):
+            trace_state["phase"] = "pause_wait"
             reached.set()
-            assert release.wait(timeout=2)
+            trace_state["pause_released"] = release.wait(timeout=2)
+            trace_state["phase"] = "pause_returned"
+            assert trace_state["pause_released"]
+
+    def completed_trace_sql(
+        _conn, _cursor, statement, _parameters, _context, _executemany
+    ):
+        if threading.current_thread().name == "trace-contention-test":
+            trace_state.update(phase="sql_completed", sql_completed=statement[:256])
 
     def record_trace():
+        trace_state["phase"] = "record_trace"
         try:
-            _event(
+            trace_state["result"] = _event(
                 storage,
                 message,
                 "relay-activation-" + "8" * 32,
@@ -383,8 +451,17 @@ def test_trace_bound_checks_do_not_reserve_the_correctness_writer(relay):
             )
         except Exception as exc:
             trace_errors.append(exc)
+            original = getattr(exc, "orig", exc)
+            trace_state["error"] = {
+                "type": type(exc).__name__,
+                "sqlite_errorcode": getattr(original, "sqlite_errorcode", None),
+                "sqlite_errorname": getattr(original, "sqlite_errorname", None),
+            }
+        finally:
+            trace_state["phase"] = "finished"
 
     event.listen(storage._relay_engine, "before_cursor_execute", pause_trace_read)
+    event.listen(storage._relay_engine, "after_cursor_execute", completed_trace_sql)
     worker = threading.Thread(target=record_trace, name="trace-contention-test")
     worker.start()
     try:
@@ -396,8 +473,16 @@ def test_trace_bound_checks_do_not_reserve_the_correctness_writer(relay):
     finally:
         release.set()
         worker.join(timeout=2)
+        joined = not worker.is_alive()
+        if not joined:
+            frame = sys._current_frames().get(worker.ident)
+            join_diagnostics = {
+                "trace": trace_state.copy(),
+                "stack": traceback.format_stack(frame, limit=12) if frame else [],
+            }
         event.remove(storage._relay_engine, "before_cursor_execute", pause_trace_read)
-    assert not worker.is_alive()
+        event.remove(storage._relay_engine, "after_cursor_execute", completed_trace_sql)
+    assert joined, join_diagnostics
     assert all(is_transient_error(exc) for exc in trace_errors)
 
 
@@ -506,38 +591,40 @@ def test_claude_scheduler_coalesces_one_attempt_and_forwards_completion(relay, m
         token="local-token",
         idle=True,
     )
-    started = threading.Event()
     release = threading.Event()
     calls = []
 
     def transport(*_args):
         calls.append(True)
-        started.set()
-        assert release.wait(timeout=2)
+        release.wait()
         return "accepted"
 
     monkeypatch.setattr(claude_wake, "claude_wake_transport", transport)
     events = []
-    worker = claude_wake.schedule_claude_relay_wake(
-        first,
-        {"container_ref": "git:test"},
-        registry=registry,
-        relay_service=service,
-        trace_callback=events.append,
-    )
-    assert worker is not None and started.wait(timeout=2)
-    assert (
-        claude_wake.schedule_claude_relay_wake(
-            second,
+    worker = None
+    try:
+        worker = claude_wake.schedule_claude_relay_wake(
+            first,
             {"container_ref": "git:test"},
             registry=registry,
             relay_service=service,
             trace_callback=events.append,
         )
-        is None
-    )
-    release.set()
-    worker.join(timeout=2)
+        assert worker is not None
+        assert (
+            claude_wake.schedule_claude_relay_wake(
+                second,
+                {"container_ref": "git:test"},
+                registry=registry,
+                relay_service=service,
+                trace_callback=events.append,
+            )
+            is None
+        )
+    finally:
+        release.set()
+        claude_wake.stop_claude_relay_wake_admission(registry)
+        claude_wake.drain_claude_relay_wakes(registry)
     assert not worker.is_alive() and calls == [True]
     assert [event["stage"] for event in events] == [
         "prepared",
@@ -553,11 +640,15 @@ def test_claude_scheduler_coalesces_one_attempt_and_forwards_completion(relay, m
     assert endpoint
 
 
-def test_codex_scheduler_coalesces_without_starting_another_worker(relay, monkeypatch):
+def test_codex_scheduler_coalesces_without_starting_another_worker(relay, monkeypatch, request):
     _storage, service, _endpoint = relay
     first = _message(service)
     second = _message(service)
     registry = CodexWakeRegistry()
+    def drain_owned_registry():
+        codex_wake.stop_codex_relay_wake_admission(registry)
+        codex_wake.drain_codex_relay_wakes(registry)
+    request.addfinalizer(drain_owned_registry)
     events = []
 
     class ParkedThread:
@@ -565,6 +656,13 @@ def test_codex_scheduler_coalesces_without_starting_another_worker(relay, monkey
             self.kwargs = kwargs
 
         def start(self):
+            return None
+
+        # This fixture captures work without starting a native thread.
+        def is_alive(self):
+            return False
+
+        def join(self):
             return None
 
     monkeypatch.setattr(codex_wake.threading, "Thread", ParkedThread)

@@ -1,14 +1,148 @@
 ---
 id: add-wake-first-relay-delivery
 title: Add wake-first Relay delivery
-status: queued
+status: active
 priority: high
 commitment: committed
 milestone: pallium-relay
 lane: capability
 ---
 
-## Current execution status (reconciled 2026-10-07)
+## Incident execution checklist (updated 2026-10-13)
+
+Root owns this ordered checklist and the final installed result. A component report,
+queued assignment, passing experiment, or healthy HTTP endpoint does not close it.
+Existing Work Records apply; no separate tracker or duplicate implementation.
+
+| Step | Owner | State | Completion evidence / next handoff |
+|---|---|---|---|
+| 1. Implement bounded Relay writer coordination. | Performance developer (`discovery_contract_review`) | Implemented and integrated at `631d3dd2`. | Provider-owned mutex with one shared 450 ms acquisition allowance, at most three attempts, unchanged caller deadlines, release on every exit, and native SQLite arbitration across providers/processes. |
+| 2. Review and test the production implementation. | Architecture reviewer + performance developer | Component review and regressions accepted. | Lock-order/non-recursion audit; deadline, external-writer, multi-provider, cancellation/cleanup and non-BUSY recovery regressions passed; no weakened budgets. |
+| 3. Pass the real delivery acceptance test. | Performance developer + architecture reviewer | PASSED on the combined authority-envelope and AnyIO 4.14.2 candidate. | Original shared-process 50-thread barrier, 750 ms claim and 500 ms ACK budgets, observer-free: all 50 claim/emission/ACK/public-readback journeys passed in 7.58 seconds. Five owned processes drained; guards empty. Private `162e969e6fea4be3887795dada126ed2`, stdout `15079EFEF17F01663F43FF77E1F514BE0674CCD47044CCFA593B7CA729DA7E1A`. Earlier failures remain preserved. One qualified sample is not universal reliability or installed receipt; final combined full, CI and step 7 remain required. |
+| 4. Integrate all accepted incident fixes. | Root | Integrated at `d9bedaca`; combined corrections in progress. | Recovery, ACK completion, writer coordination, retention, startup, inventory, shutdown and exact wake-continuity guidance combined. Installed emergency changes and unrelated work preserved. |
+| 5. Finish combined regression and independent review. | Root + reviewer | Fresh configured full PASSED; final evidence review underway. | 6,992 passed, 45 skipped, two xfail in 392.56 seconds on isolated AnyIO 4.14.2, verified in the master and all four workers. All 79 owned identities drained; guards empty. Private `0f0f27c3ef5f4b328aa06017319ecf95`, stdout `BECC98F8D183621501C30FBC67F56D7E95D7F2896FF4C21BAF8C2CFFD942CA54`. Focused authority 49, affected authority/retry 206 and original 50-message test also pass. Historical hosted timeout causes remain unproved. |
+| 6. Publish and merge. | Root | Preparing the qualified update to [PR #312](https://github.com/rore/Pallium/pull/312); current remote head `cafc9a85`. Independent TLS PR313 merged at `428d796f`. | Prior CI `38371648429` failed Linux 3.13 on absent observation entry and post-restart send-busy; bounded diagnostics retain original assertions/deadlines, and exact nodes pass on the fixed runtime. Fresh 6,992-test full and original 50-message acceptance now pass. Publish the reviewed candidate, inspect every review thread and run one final-head Linux/Windows full matrix. No merge past failed or pending selected CI. |
+| 7. Deploy and verify the installed service. | Root | Waiting on step 6; installed backup prepared and rollout scope explained. | Preserve code/data/settings and rollback; reconcile the three-file emergency hotfix; use installed restart wrapper; verify health/status/queue/embedding and real Relay receipt after restart. Reuse exact approvals; surface only genuinely additional live scope. |
+| 8. Resume coordinated dogfooding. | Root | Waiting on step 7. | Notify managers through Relay with truthful qualification/known limits; verify representative actual receipts, not only pending send results. |
+| 9. Reconcile every remaining bug and close the incident honestly. | Root; recovery reviewer for independent triage | Open. | Each REL row has verified closure or an explicit unresolved cause/host limitation and next action. REL-11 historical cause, REL-12 archived-target eligibility and REL-13 task continuity must not disappear behind the load-test success. Preserve evidence and complete checkout cleanup only when safe. |
+
+Latest load investigation: fresh endpoint projection was reduced from three reads to one, with 138 focused tests passing, but clean synchronized load still completed only 37/50. Capacity and static authority-query experiments did not improve delivery and were reverted. A separate-server-process comparison also failed (35/50), ruling out shared server/client GIL contention alone. The bounded authority-read probe measured 1,045 of 1,304 ms of aggregate read wall time in row execution/fetch/materialization; connection churn and validation were not the dominant cost. Raw DBAPI fetch passed nine boundary checks and reached 44/50, with all 44 emitted payloads ACKed, but six claim refusals still block acceptance. One sample is not stability proof. A bounded aggregate-read candidate preserved exact values and passed 51 boundary/compatibility checks but reached only 34/50; its additional codec was withdrawn. In that run every claim route logged ready within 648 ms while outer hook claims reached 774 ms. The next bounded capture separates execute/fetch, request-thread entry/exit and outer hook return, paired by delivery, before another source change. Proxy/scheduler attribution is unproved. No installed changes, deadline increases or release acceptance.
+
+Follow-up attribution supersedes the aggregate candidate's initial withdrawal: paired captures reached 41/50 with raw fetch and 39/50 with the identical reviewed aggregate reader. Both fail acceptance. All refusals occurred before HTTP-result admission, never in final confirmation writes; cold registration still requires its durable intent. The aggregate reader reduced 100 snapshot reads from 1,068 to 306 ms and total 50-worker residence from 2,119 to 1,692 ms, so it is retained provisionally with its 51 passing parity checks. Writer acquisition time increased as reads completed faster; these overlapping durations are not additive elapsed time. Next accepted small change joins the initial session/generation lookup and disables unnecessary ORM synchronization for unchanged global expiry SQL. Scope, expiry and OpenCode caller regressions precede another clean load check. No deadline relaxation or installed update.
+
+Rollout preflight: all three approved installed hotfix files match current integrated source byte-for-byte; existing iteration-2 backup and candidate hashes were verified. No dependency or integration reinstall is indicated. Recheck against the final merged revision before reconciling only those files. Wrapper health alone does not establish readiness: root must also verify initialized/ready, embedding, native custody and actual payload/ACK. Stage2 publishing remains after verified installed Stage1, with Stage1 as rollback floor.
+
+Writer lookup/expiry correction passed causal RED and 74 lifecycle checks, but clean synchronized load still completed only 37/50; release remains blocked. Review then found best-effort trace/cleanup work starts even while correctness owns local writer admission. Holding that mutex across diagnostic reads was rejected because the existing paused-trace test requires later correctness work to proceed. The accepted next candidate is only an advisory early skip when the mutex is already locked, with existing DEFERRED/25 ms SQLite arbitration unchanged and expected busy refusal returning false/zero. Both concurrency directions must pass; this is not a new fairness or priority guarantee. No additional queue, configuration or deadline change.
+
+Current acceptance checkpoint: the advisory trace/cleanup preflight passed 123 regressions, including the opposite-direction paused-trace contract, but clean synchronized load completed only 44/50. Exact request pairing then located substantial delay after request transmission and before ASGI entry; no proxy-bypass calls occurred. An instrumented 50/50 pass does not supersede the clean failure. Architecture approved one observer-free comparison of the current candidate with the service in a separate process, matching installed topology. The earlier separate-process failure predates the current read/writer improvements. All caller deadlines, 50 journeys and lifecycle assertions remain unchanged; process isolation alone is not a proven cause or fix.
+
+The current observer-free separate-service comparison also failed: 40/50 completed and ACKed, ten claim refusals, all seven owned processes drained (`51cfaa18849a49f7af4c957936146b06`). Process separation is therefore insufficient for this candidate. A one-query exact-candidate/count alternative was rejected without a production edit: paired settled writer time worsened from 31.36 to 34.63 ms across 50 calls. The next actual writer-phase capture reproduced 42/50 completed and ACKed, eight refusals (`abf3334d540c49a08b6d0372a55a5b9c`); all five owned processes drained. Its query/flush/commit/cleanup attribution is under review. Release stays blocked. No blind repeat or installed update.
+
+Cold-client cause reproduced on Python 3.13: the default HTTP opener eagerly initializes HTTPS/TLS for plain localhost HTTP. Fifty independent cold hook processes measured opener construction at median 229.14 ms / maximum 295.56 ms, while nested proxy discovery was median 0.158 ms. This explains a substantial client-side budget cost, not every prior threaded failure. Both hook integrations now have a reviewed local lazy HTTPS handler candidate that delegates original TLS initialization on actual HTTPS, retaining certificate/hostname verification, proxies, redirects and credential redirect restrictions. Corrected RED evidence: six failures demonstrated eager initialization; two were fixture route-parsing failures, and the initial HTTP redirect fixture did not actually redirect. The fixture is being corrected with route assertions. Twelve final boundary tests, affected callers and clean load remain required before acceptance. No installed update yet.
+
+Lazy TLS qualification: all twelve corrected boundary tests pass. The affected run passed 753 tests with two skips and two state-write failures; both failed nodes subsequently passed unchanged contracts with transparent operation diagnostics. Original write failures remain unattributed and preserved. The fixed-source observer-free independent-process 50-message test passed all claim/emission/ACK/public-readback and health assertions in 18.77 seconds; all 90 tracked owned processes drained (`5b5bc70e91954c41b6875c6e8fea0553`). This qualifies that topology only. Original threaded load and remaining final validation, CI, merge and installed verification are still pending.
+
+Release split: the original observer-free threaded synchronized case still fails on the TLS-fixed candidate (36/50; all 36 ACKed). PR312 remains blocked on that requirement. Root assigned the recovery developer a minimal independent lazy-TLS patch against current main, excluding combined REL-14/REL-15 and storage changes, with exact-base regression/CI before publication and merge. The performance developer retains the load issue and will move child assignment parsing before a second ready barrier for a more faithful process comparison. Neither that comparison nor the partial TLS release closes the threaded failure or unexplained atomic-write failures.
+
+Independent TLS slice (`fix/hook-lazy-tls`, base `cf558114`): six exact-base reproductions fail for eager TLS initialization; all twelve boundary regressions and 667 affected tests pass. The small paired warm-call sample showed approximately 0–1.2 ms median overhead; review accepted it without adding shared caching. Required full validation is running. The revised process test stopped before release on two assignment-file PermissionErrors, with no hook requests and all 107 owned processes drained. A reviewed pre-release-only retry stays within its existing readiness allowance; underlying file denial remains unattributed. The original threaded failure remains open. A private complete ACK-transaction comparison is the next measured candidate, preserving validation, expiry, idempotence and transaction boundaries; no production ACK change is accepted yet.
+
+Independent release checkpoint: [PR #313](https://github.com/rore/Pallium/pull/313) published at `14eccb74ac5b07776ea46b4bb8ab295d99258cd1`, with independent publication acceptance and workflow/import checks clean. Full main-base validation passed 6,629 tests with 45 skips and two expected failures; all 85 owned processes drained. CI is running; the additional installed two-hook-file scope is awaiting the human's answer. Preserve all three existing emergency service patches during this independent fast-forward. Corrected process qualification subsequently passed all 50 journeys with a 5.224 ms start spread. The private ACK rewrite saved only 1.829 ms across 50 settled transactions and was rejected without a production edit. One current-source separate-service/threaded-client comparison will isolate service placement; original threaded failure remains open.
+
+Latest release qualification: PR313 is now at `3edb101125cd9966f669cc03ab8c603172363c41`, with CI run `38327515995`. Previous hosted failures exposed an unattributed delayed HTTP response and a cold-route arrival timeout in a cancellation fixture. The fixture now verifies a rejected, operation-free warmup before testing steady-state settlement; real SQLite, cancellation and deadlines remain unchanged. Bounded timing metadata is captured in failure logs. Six focused cases passed in 9.69 seconds, with all three owned processes drained. This is test isolation and diagnostic evidence, not proof that the historical delays were fixed. The combined performance candidate's final non-slow suite is running on frozen source. No merge or installed update has occurred.
+
+PR313 merged at `428d796ff7e5d46768316017c9085128acfa5fb5` after CI `38327515995` passed Linux 3.12, Linux 3.13 and Windows smoke, workflow checks passed and no unresolved review threads remained. Development main is synchronized, preserving local roadmap and unrelated files. Installed deployment still awaits the already-asked two-hook-file scope approval; all three emergency service patches remain untouched. PR312's frozen combined full suite is still running. Neither the threaded-load failure nor historical timeout attribution is closed by this merge.
+
+Combined qualification correction: the frozen full run mistakenly retained the focused runner's `-n 0` override instead of repository-default four workers. It reached 96% without visible failures but hit its unchanged 1,800-second outer watchdog; this is incomplete evidence, not a pass or a product failure. All 76 owned identities drained and guards were empty (`f2e71422830243048ad635e9e154b9a3`, stdout SHA256 `304015B53D159CC2D006267D355BC220CB2A512653F6541EC6DCEAB0604BCD86`). Preserve this result, checkpoint the candidate and merge the already-reviewed PR313 overlap before one final configured four-worker run. No production deadline changes.
+
+Current investigation checkpoint (`1136a58a`): the private separate-service threaded scheduling comparison completed 50/50 at both the actual default 5 ms client switch interval and 1 ms. Maximum claim/ACK times were 663.066/84.699 ms and 719.159/92.191 ms respectively. The second arm required a separate invocation after correcting private wake-directory isolation; the default arm was not repeated. Both services retained their default interval, clients restored it, all owned children drained, and caller deadlines/assertions stayed unchanged. This did not reproduce the prior threaded failures or justify tuning; those failures remain unexplained.
+
+PR CI `38364824821` failed on both Linux versions: a Codex retry-edge hook received `relay_busy`, a Claude durability setup registration returned false, and a reconnect retry-deadline assertion failed. The full matrix `38364892014` is already running; do not duplicate it. The existing Busy error conflates local mutex refusal, connection/setup deadline expiry, native SQLite exhaustion and successful BEGIN followed by deadline expiry. The incident owner is adding bounded, correlated test-only attribution without changing deadlines or refusal behavior; the performance owner is examining registration and full-matrix evidence. Local health/status/queue checks still return HTTP 200 with embedding healthy, which does not establish Relay receipt. No new installed changes.
+
+Management rule: at each test result, review completion, handoff or user status
+request, root checks actual agent state and resolves the next dependency. Resume a
+completed agent with a follow-up task, not a message that leaves it idle. A worker
+waiting for a root decision is root's active task. Report verified milestones and
+new blockers; never describe pending transport as accepted work. Minimap refresh
+remains deferred until incident stability; do not add unrelated work here.
+
+## Open reliability bugs (updated 2026-10-12)
+
+This is the current consolidated closure list, maintained by the Pallium manager.
+The historical delivery and merge evidence below does not close these incidents.
+Every row remains open until its regression passes, the reviewed fix is merged,
+and the installed result is verified. Shared causes may close multiple rows with
+one fix; do not create separate mechanisms merely to match the rows.
+
+| ID | Bug / evidence | Owner and current state | Required closure evidence |
+|---|---|---|---|
+| REL-01 | Concurrent claims and ACKs exceeded their budgets; repeated authority reads and a reproduced AnyIO limiter handoff defect contributed avoidable work and unsafe capacity accounting. | Combined authority-envelope and upstream AnyIO fix passed the original observer-free shared-process 50-message test: 50/50, claim maximum 649.654 ms, ACK maximum 83.807 ms under unchanged 750/500 ms limits. Earlier failures remain preserved; full regression, CI and installed verification are pending. | Complete combined regression, merge and installed real-delivery verification. One load sample does not establish universal stability or explain every earlier refusal. No budget increase or blind rerun. |
+| REL-02 | Retained Codex enrollment disappears while the service survives; subsequent reconnects fail. | Resolved idle-readiness failure permanently disabling the worker reproduced and corrected in `08b2f078` (229 affected tests passed). Approved local hotfix installed; service-owned idle wake delivered one real payload and hook ACK at 15:07:40 UTC. Earlier live failure trigger remains unproved; combined merge and broader acceptance remain open. | Same-service-epoch connection-loss reproduction becomes green; authenticated recovery preserves peer identity, continuity, and uncertain-I/O fences, without replaying application operations. |
+| REL-03 | Messages remain pending and arrive much later, including old developer reports received here. | Performance/recovery owners share cause analysis; root owns integration. | Busy-to-idle and multiple pending messages on one endpoint progress through real scheduler, hook and ACK without loss or duplicate action; growing delivered history covered. |
+| REL-04 | Live Relay operations take up to five seconds. | Performance developer, active; do not assume identical cause to REL-01. | Locate wait versus work; compare before/after under concurrent load and verify installed delivery. |
+| REL-05 | Database lock failures and exhausted retries; retention unnecessarily holds the writer while doing later reads. | Reviewed fix integrated at `351ad670`; 33 retention checks pass. Writer interval sample 70.38 to 5.69 ms; total elapsed sample increased, so no overall throughput claim. | Fresh protection/lease checks and deletion correctness survive concurrent writes; measured writer hold reduction and contention regression. Historical live writer attribution remains open. |
+| REL-06 | Heavy startup can block responsiveness; readiness must reflect completed initialization. | `relaydev` handed off reviewed startup fix; root combined validation passed, deployment pending. | Real lifecycle tests keep HTTP responsive during initialization, gate readiness correctly, and expose failure; installed startup verification. |
+| REL-07 | Rebuild inventory performs repeated reads and hydrates already-indexed sources. | Reviewed fix integrated and combined checks passed. At 5,000 rows all-present sample improved 2,899 to 8 ms; deployment pending. | Eligibility, missing-tail, resume, cancellation and startup caller tests; comparable measurement. Single private samples are not live attribution. |
+| REL-08 | Shutdown can skip cleanup after worker start/stop failure or close storage before active children drain. | `relaydev` handed off reviewed correction; root combined validation passed, deployment pending. | Start/stop failure and held-child caller regressions; actual workers drain before storage closes, including error paths. |
+| REL-09 | Embedded NUL text exposes disagreement between SQL and Python length eligibility. | Reviewed fix integrated at `dc8b9798`; combined verification and deployment pending. | Preserve actual end-to-end eligibility at 39/40 characters and across pages, including Unicode and NUL; verify subsequent eligibility rechecks too. |
+| REL-10 | Healthy service does not imply working native wake; generic `peer-mismatch` also represents absent registration and can obscure the initiating failure. | Missing status allowlist entry corrected in `0aaf20ff`, four HTTP regressions passed and approved installed correction verified. Bounded source-channel/maintenance failure logs added; installed status now exposes registered custody with no unresolved handles. Combined merge remains open. | Distinguish unavailable registration from actual peer mismatch, retain initiating failure evidence, and verify status reflects wake availability without claiming receipt. |
+| REL-11 | Historical outage and remaining unexplained startup duration are not fully attributed. | Root + startup developer; investigation open. | Identify reproducible causes or explicitly document evidence limits; measure startup phases and prove relevant regressions. A 120-second allowance is mitigation, not closure. |
+| REL-12 | Two old pending deliveries repeatedly receive native owner refusal despite healthy retained custody. Both exact target chats are archived, confirmed through supported archive listing; readable `notLoaded` alone was insufficient. | Bounded recovery review complete: current per-wake `read_thread` and hooks expose no archive signal, and owner refusal is untyped. No justified eligibility change yet; no resend or unarchive. | Needs authoritative messageability or typed refusal to use existing unreachable fencing while preserving payloads. Do not infer archival from age, `notLoaded`, or generic failure. Archived status is established; exact refusal attribution remains pending. |
+| REL-13 | Downstream manager reports an agent ended an unfinished implementation turn after handling an empty wake, then needed direct resumption. | Reported turn completed normally after trace calls; runtime cancellation was not established. Exact continuation guidance and backward-compatible hook matching integrated at `d9bedaca`, focused tests pass. | Autonomous task-continuation witness remains unproved; text regression is not proof of agent behavior. |
+| REL-14 | Full regression observed Claude registration still advertising ready after unusable credentials. | `incident_integration_review` owns the staged correction; real-lock RED reproduced stale ready. Exact-admission correction passed 22 focused, 216 affected plus corrected fixture and seven malformed-notice checks. Reader-compatible Stage1 is integrated in PR312 development; it emits legacy rows and no deferred notices. Stage2 checkpoint `3edac09a` passed causal RED and 38 focused checks with independent acceptance; final combined validation remains. Stage2 stays separate until installed Stage1 is verified, then rollback must target Stage1 or newer. Legacy publication refusal and historical attribution remain open; Stage1 alone does not fix them. | Deterministically exercise publisher-lock refusal through the hook and public state. Durable recovery must preserve newer valid registrations: generation alone is unsafe because it can be reused after deletion/restart. Verify actual Stage1→Stage2→Stage1 current-state compatibility without restoring stale state; no weakened authority or deadlines. |
+| REL-15 | Full local regression observed a Codex repository switch leaving the previous session pin. | `discovery_contract_review` owns the correction. Real-lock RED proved new context cached with an old pin and wrong-scope history on the next turn. Initial prevention and legacy repair passed 281 affected tests with two skips. Final review found unqualified hook callers could revalidate the wrong association, and older writers could retain an association while replacing its context. Both are corrected with caller regressions and exact scope/context binding, integrated at `546dc733`. The combined full exposed only an outdated observer mock; its one-line signature correction passed the whole 90-test file. Separate file-write refusals remain unattributed and are not erased by later green runs. | Preserve real clocks and scope-generation fencing; prove next-turn recovery, existing poisoned-state repair, unqualified callers and rollback/re-upgrade through actual hook/history/pin paths. Verified warm resolution must avoid extra Git lookup. A later green run alone does not close an unexplained refusal. |
+
+Execution: delivery performance and authenticated recovery are independent developer
+lanes; relaydev finishes startup/cleanup. Keep source ownership explicit. Run heavy
+private qualifications serially on this machine to avoid contaminating timings;
+source analysis, implementation, and review proceed in parallel. Root merges the
+lanes, runs combined validation, and owns rollout and live receipt verification.
+Current implementation records are `service-performance`, `service-async-startup`,
+and `codex-enrollment-recovery`.
+Preserve installed configuration/data and use the approved installed restart wrapper.
+
+Integration checkpoint: startup component `88004c9b` and recovery `ff8d9825` are
+combined in development at `dcf2d0a3`; neither is deployed. Recovery has a genuine
+same-epoch loss RED/GREEN, 34 recovery/guard checks, 86 worker checks, and 20 final
+race/caller checks passing (overlapping selections, not an additive total).
+Startup affected evidence is 214 passed / 2 skipped plus the two corrected fixture
+nodes passing separately. Performance remains open: the diagnostic found about
+755 ms of serialized correctness-transaction hold time during the failed burst;
+commit execution was not the dominant tail. Accepted performance baseline
+`b16d1467` and the NUL eligibility fix are now combined at `dc8b9798`.
+The separate completion-capacity candidate passes 58 safety checks but fails
+instrumented 24/50-message acceptance. It remains unaccepted and unmerged.
+The next exact 50-message qualification disables heavy diagnostic observers
+while preserving real caller deadlines and every delivery/ACK assertion.
+Combined startup/recovery/inventory checks passed 228 cases plus one corrected
+completed-checkpoint node separately. Reviewed checkpoint `4caecee8` records the
+evidence; no installed change occurred. The observer-off 50-message check still
+failed (19 completed, 31 claim refusals), so instrumentation is not the sole cause.
+Retention and read-only native lock separation are now integrated locally at
+`9db51338`. The latter has 104 passing focused checks, but does not resolve the
+50-message failure. A two-slot admission experiment was withdrawn; original
+capacity still produced 27 claims and no ACKs. The current simplification reuses
+the exact claim's durable generation instead of duplicating correlation writes,
+with native/recovery consumers and legacy behavior covered together. It remains
+incomplete until load evidence passes. The canonical generation and native guard
+correction is independently reviewed and integrated at `4fc8f457`, with 116
+focused checks passing. Its clean load run reached 39 claims/emissions but only
+three confirmed ACKs; this is not release acceptance. One private execution slot
+is shared between lanes; no installed change has occurred.
+
+Final acceptance must run the slow ordinary and synchronized 24/50-message
+HTTP/hook tests separately: the default full suite excludes them. These bursts
+use distinct endpoints; existing same-endpoint backlog and restart regressions
+cover their functional contracts separately. Do not claim a combined
+same-endpoint restart/load witness from these results.
+
+Additional live incident, inspected October 12: message
+`relay-msg-0717eb474c454a7698ab0adf071738cf` was prepared at 12:42:18 UTC,
+repeatedly deferred as `native_unavailable`, and claimed/ACKed once at
+14:25:25 UTC. The bounded trace is incomplete. This proves a delivery delay of
+about 103 minutes, not its complete cause or duplicate claiming. It remains
+part of REL-02/REL-03 installed recovery acceptance; no receive or resend was used.
+
+## Historical execution status (reconciled 2026-10-07)
 
 The closure follow-up is owned by relaydev in
 `.agent-workflow/tasks/relay-recovery-closure.md`. On October 6 the user explicitly
@@ -528,17 +662,27 @@ Remaining work:
   of runtime, platform, interruption, existing evidence, and missing witness.
   Reuse passed recovery tests and live witnesses; do not repeat them without cause.
 - Qualify Claude/Codex on macOS when that platform is needed.
-- Implement and qualify OpenCode automatic activation. Its existing Relay
-  integration and claim-timeout fix do not establish automatic wake support.
-  Owner: `@pal-dev1`, assigned by the human on 2026-10-07; Work Record:
+- OpenCode V2 automatic wake has a happy-path live witness on the native Windows CLI
+  and desktop 2.0.24. The configured-model witness delivered the exact Unicode
+  payload unattended and verified its response and ACK; all 87 existing sessions
+  and settings were retained. The earlier 2.0.22 qualification is historical. PR #292
+  is merged and its consumer switch is installed. The V2 native inbox uses stable
+  native IDs, coordinated by Pallium's existing endpoint state and one scheduling
+  fence; there is no separate plugin pending-delivery ledger. PR #297's minimal
+  assistant-directory ownership guard remains a separate open follow-up in PR #297;
+  exact-head qualification and merge remain outstanding. Do not treat that guard or broader
+  restart/OS qualification as complete. Reviewed wake-anchor, lifecycle,
+  capture-idempotence and latency gaps are tracked in
+  [Fix OpenCode plugin reliability](fix-opencode-plugin-reliability.md); the
+  happy-path witness does not qualify overall reliability. Owner: `@pal-dev1`; Work Record:
   [OpenCode Relay wake](../../.agent-workflow/tasks/opencode-relay-wake.md).
-  Discovery targets released V2 2.0.22 on Windows: model-bound receipt and ordinary
-  turn capture, native busy/retry/restart behavior, and an overtaken wake's no-work
-  behavior. Source capabilities are not installed qualification. Preserve Pallium
-  delivery/ACK authority and the installed V1 passive integration while qualifying
-  an isolated V2 runtime. Codex/restart ownership remains with relaydev.
+  Preserve V1 compatibility; the everyday installed integration is V2. Codex/restart ownership remains
+  with relaydev.
 
-OpenCode wake remains a dependency of Copilot expansion. These residual gates do
+OpenCode activation remains a dependency of Copilot expansion; its native Windows
+2.0.24 V2 wake has a happy-path witness, while the assistant-directory guard follow-up
+remains unmerged in PR #297. OC-2/OC-5 disposal fixes merged in PR #302;
+remaining reliability gaps stay open in [Fix OpenCode plugin reliability](fix-opencode-plugin-reliability.md). These residual gates do
 not block activation capabilities, traces, work associations, or future
 Claude/Codex workflow examples. A new correctness incident takes priority if one is found.
 The milestone and incident history below preserves evidence; it is not a list of
@@ -586,7 +730,7 @@ when and whom to message, and Pallium only persists, addresses, activates, and
 reports delivery. `fix-relay-claim-before-context-emission` (`RF-005`) is a release
 prerequisite because both wake and fallback must be loss-safe.
 
-### Milestone order (user priority, 2026-08-31)
+### Historical milestone order (user priority, 2026-08-31; OpenCode sequence superseded by PR #292)
 
 1. **Codex↔Codex dogfood first — Windows-qualified:** the existing Codex architect and developer
    sessions exchange a bounded task → result → review → remediation/verdict
@@ -597,7 +741,7 @@ prerequisite because both wake and fallback must be loss-safe.
 2. **Claude↔Codex next — Claude wake qualified on Windows and Linux:** the
    cross-runtime journey is proven without a manual recipient turn. Claude macOS
    and Codex macOS qualification remain S4; neither reopens milestone 1.
-3. **OpenCode later:** add its adapter after the first two milestones.
+3. **OpenCode later (original sequence):** add its adapter after the first two milestones.
 
 Milestone 1 includes the smallest persist-first coordinator needed by Codex,
 dedupe, correlated admission, loss-safe active-writer fallback, wake/fallback claim-race protection,
@@ -637,13 +781,14 @@ retries, runtime callbacks, and hook fallback idempotent.
 ## Runtime Feasibility and Constraints
 
 Deeper source review on 2026-08-26 corrected the initial Phase 0 verdict. The
-installed versions are Claude Code 2.1.250, Codex CLI 0.149.1, and OpenCode
-1.18.19 on native Windows.
+installed versions recorded then were Claude Code 2.1.250, Codex CLI 0.149.1, and
+OpenCode 1.18.19 on native Windows; OpenCode has since moved through the historically
+qualified 2.0.22 release to the supported native CLI and desktop 2.0.24.
 
 | Runtime | Current verdict | Proven mechanism | Remaining qualification |
 |---|---|---|---|
 | Codex | **Windows and Linux exact-session wake proven for runtime-loaded tasks; Windows overtaken-wake suppression proven** | Pallium writes a generic trigger through `codex queue --thread` from a validated neutral Codex home. The cross-process watcher starts a real turn when the target is loaded; for an unloaded target, Pallium keeps the Relay delivery pending until a later supported hook turn. Native unloaded-queue persistence is not claimed. The installed UserPromptSubmit hook claims and injects only after admission, and blocks an exact internal wake without verified rendered delivery before memory or model work. A recognized wake whose payload or block output fails before emission exits 2 without ACK; any existing claim remains recoverable after its lease expires. This failure contract has simulated caller-surface and subprocess coverage, not separate installed-host qualification. An installed Ubuntu 24.04 / WSL2 witness with Codex 0.153.4 proved loaded exact-session automatic wake, hook delivery, and return to idle. | Windows and Linux loaded-task live send → wake are proven. Windows atomic reply, reply-only idle-sender wake, and a no-manual-turn remediation round trip are proven. Do not claim unattended unloaded-task resume without a supported runtime workspace API; qualify macOS and remaining interrupted/restart variants before calling the adapter cross-platform complete. |
-| OpenCode | Supported with a Pallium/OpenCode plugin coordinator | Server/plugin APIs expose stable sessions and async prompts. Agent Intercom demonstrates persist-first delivery, application metadata correlation, history verification before replay, safe busy deferral, and restart recovery. | A bare prompt_async 204 is transport acknowledgement only. Pallium needs the plugin-owned durable pending ledger and a Windows E2E proof. Deferred to after Claude Code wake is proven. |
+| OpenCode | **Native Windows CLI/desktop 2.0.24 happy-path wake witnessed** | OpenCode's native inbox admits exact sessions with stable native IDs; Pallium coordinates pending work through existing endpoint state and one scheduling fence, without a separate plugin pending-delivery ledger. The configured-model live witness verified unattended exact Unicode response and ACK; all 87 sessions and settings were retained. Shipped isolated native lifecycle E2E passed on 2.0.24; this does not qualify overall reliability. | [Fix OpenCode plugin reliability](fix-opencode-plugin-reliability.md) tracks reviewed wake-anchor, lifecycle, capture-idempotence and latency gaps. PR #297's minimal assistant-directory ownership guard remains separate and unmerged in PR #297. OC-2/OC-5 are merged in PR #302; remaining findings are open. Do not count the guard as merged or installed. |
 | Claude Code | **Windows and Linux S1A+S1B qualified** | Installed Windows and Ubuntu 24.04 / Claude Code 2.1.250 witnesses proved native peer Relay → exact restart-surviving capability → Stop claim/injection/ACK → Claude reply without another human prompt. Linux used the installed UDS path. | Installed UDS qualification on macOS remains S4. |
 
 **Claude registration foundation:** Windows and Linux S1A+S1B are live-witness qualified: trusted-local exact-session persistence, write-ahead intents, fail-closed rehydration, and event-driven idle-pending reconciliation survived the installed witnesses. The Linux witness used Ubuntu 24.04, Claude Code 2.1.250, and the installed UDS path. No DPAPI, silent time expiry, or lifetime redesign was added. Installed UDS qualification on macOS remains S4.
@@ -651,12 +796,17 @@ installed versions are Claude Code 2.1.250, Codex CLI 0.149.1, and OpenCode
 
 **Codex:** Write one generic trigger through hidden `codex queue --thread` from a validated resolved local Codex home. The owning runtime watcher starts a loaded task; for an unloaded task, Pallium keeps the Relay delivery pending until a later supported hook turn, without relying on native queue persistence. After admission, the installed UserPromptSubmit hook claims and injects the bounded backlog under the target's pinned scope, then acknowledges hook delivery. If the exact internal wake cannot render a verified delivery because the response is empty, unavailable, malformed, timed out, or invalidly scoped, the hook emits Codex's native structured block decision before memory or model work. Queue launch failure leaves the delivery pending for startup/periodic recovery or ordinary next-turn delivery. No private App Server attachment or Codex state lookup is required.
 
-**OpenCode:** the plugin persists the Relay item before broker acknowledgement,
-checks recent session history for metadata.palliumRelayId, defers submission to a
-safe boundary, calls the supported prompt API, and marks admission only when
-session messages/events contain that exact ID. On restart it replays only items
-not proven admitted. A server plugin can cover normal OpenCode sessions without
-requiring every session to be launched by a Pallium wrapper.
+**OpenCode:** the installed V2 plugin uses OpenCode's native durable inbox and
+stable native message IDs. Pallium coordinates delivery with its existing endpoint
+state and one scheduling fence; there is no separate plugin pending-delivery ledger.
+The earlier Windows 2.0.22 qualification is historical. The supported native CLI
+and desktop witness used official unmodified 2.0.24; the configured-model live witness
+verified an unattended Unicode response and ACK, and shipped isolated native
+lifecycle E2E passed on 2.0.24. The assistant-directory ownership guard remains a
+separate unmerged PR #297 pending exact-head qualification and merge.
+Reviewed wake-anchor, lifecycle, capture-idempotence and latency gaps remain open
+in [Fix OpenCode plugin reliability](fix-opencode-plugin-reliability.md); this
+happy-path witness does not qualify overall reliability.
 
 **Claude Code:** Native peer frames start text turns but Claude 2.1.250 classifies them as internal `isMeta` events, so S0/S0.5 are misqualified for UserPromptSubmit admission. Claude reproduced S1A Stop continuation: every Stop registers idle; a non-recursive Stop makes one exact-scope `/relay/turn` with authoritative storage `max_chars=2360`, route admission marks busy, and renders the returned claimed set plus any compact backlog notice inside a fixed 2,400-character output budget, emits that exact set to stderr, then ACKs the emitted claims individually before exit 2 requests one continuation. Partial failure leaves unACKed claims lease-recoverable; all failure exits 0 and every non-continuing path re-registers idle after route admission. Storage budgets the exact emitted control template. `has_more` and `remaining_count` remain pending and are qualified under S1B rearm/continuation; the S1A witness historically proved one bounded batch. The `stop_hook_active` continuation Stop re-registers idle, ingests, and exits 0 without re-probing. No MCP/pin change belongs in S1A; durable state/reconciliation is S1B.
 
@@ -706,7 +856,7 @@ concrete wake-correlation diagnosis gap without changing delivery behavior. The
 remediation journey.
 The closed-recipient lifecycle slice subsequently shipped in PR #148 and
 first-run setup qualification completed on 2026-09-08. Retention cleanup is paused
-pending operational evidence. Relay reliability remains first: qualify the current hook-definition readiness and exact-recipient diagnostics before new wake-first activation qualification. Other activation capabilities, traces, work associations, and Claude/Codex validation may proceed independently. Wake-first retains the residual qualification listed at the top of this file; macOS is demand-driven and OpenCode activation precedes Copilot.
+pending operational evidence. Relay reliability remains first: qualify the current hook-definition readiness and exact-recipient diagnostics. Other activation capabilities, traces, work associations, and Claude/Codex validation may proceed independently. Wake-first retains the residual qualification listed at the top of this file; macOS is demand-driven. OpenCode native Windows 2.0.24 wake has a happy-path witness. Its assistant-directory guard follow-up remains open pending exact-head qualification and merge; [reviewed reliability gaps](fix-opencode-plugin-reliability.md) also remain open before Copilot expansion.
 
 1. **S2 contract gate — complete in PR #98.** Delivery lifecycle
    (`pending`, `claimed`, `delivered`, `expired`; `failed` only on separate
@@ -786,16 +936,20 @@ pending operational evidence. Relay reliability remains first: qualify the curre
 12. **S4 additional platforms.** Qualify installed Claude UDS and Codex wake on
    macOS. Windows/Linux Claude and Windows/Linux loaded-task Codex wake remain
    complete and must not be reopened without contrary evidence.
-13. **OpenCode active wake — implementation and review in progress.** The human assigned
-    the OpenCode slice to `@pal-dev1` on 2026-10-07. Follow the Work Record and
-    qualification gates above; retain the installed V1 passive integration while
-    qualifying V2. Isolated Windows OpenCode 2.0.22 now passes automatic idle/busy
-    delivery, ACK-to-tool continuation across a Pallium restart, pre-claim retry,
-    hard restart and service startup recovery. Full local validation and independent
-    technical result review passed; human result review and coordinated installed
-    rollout remain. The V2 native inbox and one
-    Pallium scheduling fence replace the older proposed plugin delivery ledger;
-    broader Claude/Codex gates and historical qualification remain open.
+13. **OpenCode V2 active wake — merged; happy-path witnessed, reliability remediation open.**
+    PR #292 is merged. The native Windows CLI and desktop witness used official
+    unmodified 2.0.24; 2.0.22 is the historical qualification. The configured-model
+    live witness verified an unattended exact Unicode response and ACK while
+    retaining all 87 sessions and settings. Shipped isolated native lifecycle E2E
+    also passed on 2.0.24; earlier isolated Windows validation also
+    covers automatic idle/busy delivery, ACK-to-tool continuation across a Pallium
+    restart, pre-claim retry, hard restart, and service startup recovery. The V2
+    native inbox and one Pallium scheduling fence replace the older proposed
+    plugin pending-delivery ledger. PR #297 tracks the minimal assistant-directory
+    ownership guard; it remains a separate unmerged follow-up pending exact-head qualification and merge. Do not claim guard merge or installed deployment.
+    [Fix OpenCode plugin reliability](fix-opencode-plugin-reliability.md) tracks
+    the reviewed wake-anchor, lifecycle, capture-idempotence and latency gaps.
+    Passing existing lifecycle tests or the live happy path does not close them.
 
 ### Wake dogfood defect ledger
 
@@ -877,14 +1031,17 @@ release gates.
 Do not wait for a second adapter or build speculative multi-runtime machinery.
 Choose bounded limits from Codex evidence; revisit only when adding another adapter.
 
-### Implementation sequence — Codex first
+### Historical implementation sequence — Codex first
 
 **Codex (Windows/Linux loaded-task):** `codex queue --thread T` writes one generic trigger from a validated neutral Codex home. The owning Desktop watcher starts the loaded task; for an unloaded task, Pallium keeps the Relay delivery pending until an ordinary supported hook turn and does not rely on native queue persistence. The admitted UserPromptSubmit hook claims and injects the attributed batch under the target scope. Any exact internal trigger that cannot render a verified delivery is blocked before memory/model work, whether the Relay result is empty, unavailable, timed out, malformed, or invalidly scoped. MCP receive remains a separate fail-closed recovery path. Keep the adapter runtime/version-qualified until the remaining OS and lifecycle gates pass.
 
 **Claude Code:** S0/S0.5 are misqualified because Claude 2.1.250 peer frames bypass `UserPromptSubmit` as internal `isMeta` events. Claude reproduced S1A Stop continuation; Codex architect review is clean, exact-scope bounded Stop `/relay/turn`, one emit of the successfully rendered claim set followed by individual ACKs, and one exit-2 continuation—not MCP—provide peer-wake admission. Do not treat generic native notice as delivery.
 Keep Channels deferred and macOS passive until installed UDS E2E passes.
 
-**OpenCode:** Deferred until after Claude Code AND Codex are both proven.
+**OpenCode:** This was the original deferral. PR #292 superseded it; Windows V2
+automatic wake had an installed happy-path witness on native 2.0.24; 2.0.22 was
+the historical qualification. The separate PR #297 assistant-directory guard
+remains unmerged pending exact-head qualification and merge; the [reviewed reliability gaps](fix-opencode-plugin-reliability.md) remain open.
 
 ## In Scope
 
@@ -965,7 +1122,7 @@ Implementation plan: [wake-first Relay delivery](../../docs/plans/2026-08-26-wak
 Phase 0 decision and installed-runtime evidence:
 [Relay wake Phase 0 decision record](../../docs/designs/017-relay-wake-phase0.md).
 
-Current result: Codex exact-session wake writes one hidden `codex queue --thread` trigger from a validated neutral Codex home. A runtime that already loaded the target starts a real turn; for an unloaded target, Pallium retains the pending Relay delivery until its next supported hook turn and claims no native queue persistence. RW-024 removed hidden `codex exec resume` because inheriting the service cwd could mutate task workspace and Relay scope. Queue launch remains best-effort with durable natural-turn fallback on failure. The adapter encodes Relay prompts as UTF-8, and the pre-fix claim-before-queue behavior reproduced a 409 `claim lease has expired` when a delivery was claimed before queueing and the queued turn executed after the lease. The installed UserPromptSubmit hook claims only at admitted-turn execution; delayed busy-target caller-surface E2E proves no stale receipt, loss, or duplicate action. A later live empty turn exposed the native accepted-prompt race: another admitted turn can consume the delivery after Codex accepts the queued trigger. The original guard blocked only the complete canonical no-work response; RW-019 strengthens it so any exact internal trigger without a verified rendered delivery stops before memory/model work. Deterministic caller-surface coverage preserves successful delivery, proves a competing real hook consumes and ACKs exactly once, and stores a safe marker when redaction expansion would otherwise exceed the render budget. An installed exact-session witness queued the trigger and recorded hook context followed by `task_complete` with `last_agent_message=null` and no user or assistant transcript item. Later sustained busy-target dogfood exposed RW-022: periodic recovery resubmitted the accepted non-idempotent prompt until admission. The scheduler now retains one confirmed or ambiguous native write per live generation without blind retry; deterministic caller-surface coverage proves recovery sweeps do not add queued turns. Hook-delivery wake and per-session burst coalescing are proven for the tested Windows paths. A Relay-wide read-only sweep now re-wakes eligible expired claims for active exact Codex and Claude sessions immediately at service startup and every 30 seconds, then the admitted hook reclaims and ACKs normally; controlled-clock real-hook E2E covers both runtimes and both full-app restarts. An installed Windows Codex witness deliberately abandoned a claimed delivery, then observed automatic hook delivery on attempt two after the 60-second lease expired, without a manual wake. Codex MCP receive and bounded automatic backlog drain are Windows-qualified. An installed Ubuntu 24.04 / WSL2 witness with Codex 0.153.4 targeted session `01a0776f-337d-7013-8170-f55b37a32f30`; parent `relay-msg-c55a51edc4a9469e81068a4f5adc4763` / delivery `relay-delivery-0dcd69097ce040d5858a6103956773d7` moved from pending attempts=0 to delivered attempts=1, produced `CODEX_LINUX_WAKE_DELIVERED_TRUSTED_20260906`, and returned idle. Explicit repository and exact-hook hash trust were used, never the trust-bypass flag. Sender-side reply admission and the bounded no-ping remediation journey were re-proven on 2026-09-08 with both original sender resumes caused solely by Relay and no manual recipient turn. Remaining interrupted/restart reliability and macOS qualification remain. Startup recovery now enumerates all eligible coalesced pending/expired candidates in oldest-first order, while default reads remain one-per-endpoint and exact rechecks remain unchanged. RW-026 now correlates each attempted Codex wake and recovery candidate with bounded identifiers and safe launch categories; it improves diagnosis only and does not claim the observed failed wake was repaired. Claude Windows and installed Linux UDS wake are complete; macOS remains S4, and OpenCode remains deferred.
+Historical Codex/Claude implementation result record (OpenCode deferral later superseded by PR #292): Codex exact-session wake writes one hidden `codex queue --thread` trigger from a validated neutral Codex home. A runtime that already loaded the target starts a real turn; for an unloaded target, Pallium retains the pending Relay delivery until its next supported hook turn and claims no native queue persistence. RW-024 removed hidden `codex exec resume` because inheriting the service cwd could mutate task workspace and Relay scope. Queue launch remains best-effort with durable natural-turn fallback on failure. The adapter encodes Relay prompts as UTF-8, and the pre-fix claim-before-queue behavior reproduced a 409 `claim lease has expired` when a delivery was claimed before queueing and the queued turn executed after the lease. The installed UserPromptSubmit hook claims only at admitted-turn execution; delayed busy-target caller-surface E2E proves no stale receipt, loss, or duplicate action. A later live empty turn exposed the native accepted-prompt race: another admitted turn can consume the delivery after Codex accepts the queued trigger. The original guard blocked only the complete canonical no-work response; RW-019 strengthens it so any exact internal trigger without a verified rendered delivery stops before memory/model work. Deterministic caller-surface coverage preserves successful delivery, proves a competing real hook consumes and ACKs exactly once, and stores a safe marker when redaction expansion would otherwise exceed the render budget. An installed exact-session witness queued the trigger and recorded hook context followed by `task_complete` with `last_agent_message=null` and no user or assistant transcript item. Later sustained busy-target dogfood exposed RW-022: periodic recovery resubmitted the accepted non-idempotent prompt until admission. The scheduler now retains one confirmed or ambiguous native write per live generation without blind retry; deterministic caller-surface coverage proves recovery sweeps do not add queued turns. Hook-delivery wake and per-session burst coalescing are proven for the tested Windows paths. A Relay-wide read-only sweep now re-wakes eligible expired claims for active exact Codex and Claude sessions immediately at service startup and every 30 seconds, then the admitted hook reclaims and ACKs normally; controlled-clock real-hook E2E covers both runtimes and both full-app restarts. An installed Windows Codex witness deliberately abandoned a claimed delivery, then observed automatic hook delivery on attempt two after the 60-second lease expired, without a manual wake. Codex MCP receive and bounded automatic backlog drain are Windows-qualified. An installed Ubuntu 24.04 / WSL2 witness with Codex 0.153.4 targeted session `01a0776f-337d-7013-8170-f55b37a32f30`; parent `relay-msg-c55a51edc4a9469e81068a4f5adc4763` / delivery `relay-delivery-0dcd69097ce040d5858a6103956773d7` moved from pending attempts=0 to delivered attempts=1, produced `CODEX_LINUX_WAKE_DELIVERED_TRUSTED_20260906`, and returned idle. Explicit repository and exact-hook hash trust were used, never the trust-bypass flag. Sender-side reply admission and the bounded no-ping remediation journey were re-proven on 2026-09-08 with both original sender resumes caused solely by Relay and no manual recipient turn. Remaining interrupted/restart reliability and macOS qualification remain. Startup recovery now enumerates all eligible coalesced pending/expired candidates in oldest-first order, while default reads remain one-per-endpoint and exact rechecks remain unchanged. RW-026 now correlates each attempted Codex wake and recovery candidate with bounded identifiers and safe launch categories; it improves diagnosis only and does not claim the observed failed wake was repaired. Claude Windows and installed Linux UDS wake are complete; macOS remains S4, OpenCode's native Windows 2.0.24 wake has a happy-path witness; reliability remediation remains open in [Fix OpenCode plugin reliability](fix-opencode-plugin-reliability.md).
 
 ## Research References
 

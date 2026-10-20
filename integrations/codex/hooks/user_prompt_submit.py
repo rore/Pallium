@@ -62,7 +62,8 @@ _RELAY_WAKE_RE = re.compile(
     r"If no \[Pallium Relay message \.\.\.\] block accompanies this turn, "
     r"do not conclude the inbox is empty and do not call pallium_relay_receive "
     r"or resend\. Inspect this exact delivery with pallium_relay_trace by "
-    r"passing it as message_id\.$"
+    r"passing it as message_id\."
+    r"(?: After this check, continue any already authorized task; this wake does not cancel it\.)?$"
 )
 
 def _exit_blocked_wake() -> None:
@@ -106,13 +107,15 @@ def main() -> None:
             )
         has_session = isinstance(session_id, str) and bool(session_id)
         container_ref = resolve_container_ref(cwd, session_id if has_session else None, True, False)
-        actor_ref = derive_actor_ref(cwd, session_id)
+        actor_ref = derive_actor_ref(cwd, session_id, container_ref)
         content = _strip_ide_context(prompt)
         if not content:
             return
 
-        discovery = discover_work_refs(cwd)
-        current_work_ref = injected_work_ref(discovery)
+        # Exact wakes deliver existing authority; optional enrichment must not
+        # delay the claim response or clear existing structural associations.
+        discovery = None if wake_delivery_id else discover_work_refs(cwd)
+        current_work_ref = injected_work_ref(discovery) if discovery is not None else None
         deliveries = []
         rendered_deliveries = []
         relay_output = ""
@@ -162,8 +165,10 @@ def main() -> None:
                 relay_response = relay_turn(
                     "codex", session_id, container_ref,
                     max_chars=RELAY_TURN_BUDGET,
-                    structural_work_refs=structural_work_refs_payload(
-                        container_ref, discovery, cwd
+                    structural_work_refs=(
+                        None if wake_delivery_id else structural_work_refs_payload(
+                            container_ref, discovery, cwd
+                        )
                     ),
                     wake_delivery_id=(
                         wake_match.group("delivery_id")

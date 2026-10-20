@@ -6,8 +6,12 @@ All tests use fake time, fake processes, and injectable parameters.
 No real processes are spawned.  Not marked slow (fast, no real sleeping).
 """
 
+from contextlib import contextmanager
 import itertools
+import os
 from unittest.mock import patch
+
+import pytest
 
 from app.supervisor import (
     _API_HEALTH_PROBE_FAIL_THRESHOLD,
@@ -15,6 +19,27 @@ from app.supervisor import (
     _MAX_RAPID_RESTARTS,
     run_supervisor,
 )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_supervisor_runtime(monkeypatch: pytest.MonkeyPatch, tmp_path):
+    home = tmp_path / "pallium"
+    private_env = {
+        "HOME": str(tmp_path / "profile"),
+        "USERPROFILE": str(tmp_path / "profile"),
+        "APPDATA": str(tmp_path / "profile" / "AppData" / "Roaming"),
+        "PALLIUM_HOME": str(home),
+        "PALLIUM_CONFIG_FILE": str(tmp_path / "config.toml"),
+        "PALLIUM_ENV_FILE": str(tmp_path / ".env"),
+        "PALLIUM_STORAGE_BACKEND": "memory",
+        "PALLIUM_SQLITE_URL": f"sqlite:///{tmp_path / 'pallium.db'}",
+        "PALLIUM_SNAPSHOT_ENABLED": "false",
+        "PALLIUM_SNAPSHOT_PATH": str(tmp_path / "snapshots"),
+        "PALLIUM_CODEX_WAKE_DIR": str(tmp_path / "codex-wake"),
+        "PALLIUM_CLAUDE_WAKE_DIR": str(tmp_path / "claude-wake"),
+    }
+    for key, value in private_env.items():
+        monkeypatch.setenv(key, value)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -99,6 +124,14 @@ def _counter_stop(n):
 _BASE_ARGS = ["--host", "127.0.0.1", "--port", "19999", "--processors", "1", "--cleaners", "0"]
 
 
+def _use_stop(monkeypatch, stop):
+    @contextmanager
+    def fake_graceful_stop(*, install=True):
+        yield stop
+
+    monkeypatch.setattr("app.supervisor.graceful_stop", fake_graceful_stop)
+
+
 def test_zero_processors_keeps_api_available_without_worker():
     api_proc = FakePopen(poll_returns=[])
     commands = []
@@ -119,6 +152,250 @@ def test_zero_processors_keeps_api_available_without_worker():
     assert result == 0
     assert len(commands) == 1
     assert "serve" in commands[0]
+
+
+def test_initial_api_retry_exhaustion_is_failure(monkeypatch):
+    killed = []
+    monkeypatch.setattr("app.supervisor._kill_tree", lambda proc, **_kw: killed.append(proc.pid))
+    result = run_supervisor(
+        ["--processors", "0", "--cleaners", "0"],
+        popen_factory=lambda *_args, **_kwargs: FakePopen(),
+        sleep_fn=lambda _: None,
+        wait_for_api_fn=lambda *_args, **_kwargs: False,
+        kill_fn=_fake_kill_fn,
+    )
+
+    assert result == 1
+    assert len(killed) == 5
+
+
+def test_stop_during_initial_readiness_keeps_child_owned_and_skips_helpers(monkeypatch):
+    from types import SimpleNamespace
+
+    stop = SimpleNamespace(requested=False)
+    _use_stop(monkeypatch, stop)
+    processes = []
+    commands = []
+
+    def popen_factory(command, **_kwargs):
+        commands.append(command)
+        proc = FakePopen()
+        processes.append(proc)
+        return proc
+
+    def ready_then_stop(*_args, **_kwargs):
+        stop.requested = True
+        return True
+
+    result = run_supervisor(
+        ["--processors", "1", "--cleaners", "1"],
+        popen_factory=popen_factory,
+        wait_for_api_fn=ready_then_stop,
+        sleep_fn=lambda _: None,
+        kill_fn=_fake_kill_fn,
+    )
+
+    assert result == 0
+    assert len(commands) == 1
+    assert processes[0]._terminated
+
+
+def test_stop_before_initial_retry_starts_no_child(monkeypatch):
+    from types import SimpleNamespace
+
+    stop = SimpleNamespace(requested=True)
+    _use_stop(monkeypatch, stop)
+    calls = []
+
+    result = run_supervisor(
+        ["--processors", "0", "--cleaners", "0"],
+        popen_factory=lambda *_args, **_kwargs: calls.append(True),
+        wait_for_api_fn=lambda *_args, **_kwargs: False,
+        kill_fn=_fake_kill_fn,
+    )
+
+    assert result == 0
+    assert calls == []
+
+
+def test_runtime_api_retry_exhaustion_is_failure(monkeypatch):
+    popen_calls = []
+
+    def popen_factory(*_args, **_kwargs):
+        proc = FakePopen(poll_returns=[1]) if not popen_calls else FakePopen()
+        popen_calls.append(proc)
+        return proc
+
+    monkeypatch.setattr("app.supervisor._kill_tree", lambda *_args, **_kwargs: None)
+    wait_calls = [0]
+
+    def wait_for_api(*_args, **_kwargs):
+        wait_calls[0] += 1
+        return wait_calls[0] == 1
+
+    result = run_supervisor(
+        ["--processors", "0", "--cleaners", "0"],
+        popen_factory=popen_factory,
+        wait_for_api_fn=wait_for_api,
+        sleep_fn=lambda _: None,
+        should_stop=lambda: False,
+        clock=lambda: 0.0,
+        kill_fn=_fake_kill_fn,
+    )
+
+    assert result == 1
+    assert len(popen_calls) == 6
+
+
+def test_stop_during_runtime_retry_is_success(monkeypatch):
+    from types import SimpleNamespace
+
+    stop = SimpleNamespace(requested=False)
+    _use_stop(monkeypatch, stop)
+    popen_calls = []
+    retry_kills = []
+
+    def popen_factory(*_args, **_kwargs):
+        proc = FakePopen(poll_returns=[1]) if not popen_calls else FakePopen()
+        popen_calls.append(proc)
+        return proc
+
+    monkeypatch.setattr("app.supervisor._kill_tree", lambda proc, **_kw: retry_kills.append(proc.pid))
+    wait_calls = [0]
+
+    def wait_for_api(*_args, **_kwargs):
+        wait_calls[0] += 1
+        if wait_calls[0] == 1:
+            return True
+        stop.requested = True
+        return False
+
+    result = run_supervisor(
+        ["--processors", "0", "--cleaners", "0"],
+        popen_factory=popen_factory,
+        wait_for_api_fn=wait_for_api,
+        sleep_fn=lambda _: None,
+        should_stop=lambda: False,
+        clock=lambda: 0.0,
+        kill_fn=_fake_kill_fn,
+    )
+
+    assert result == 0
+    assert retry_kills == [popen_calls[1].pid]
+
+
+def test_stop_during_successful_runtime_replacement_cleans_owned_child(monkeypatch):
+    from types import SimpleNamespace
+
+    stop = SimpleNamespace(requested=False)
+    _use_stop(monkeypatch, stop)
+    processes = []
+    commands = []
+
+    def popen_factory(command, **_kwargs):
+        commands.append(command)
+        proc = FakePopen(poll_returns=[1]) if not processes else FakePopen()
+        processes.append(proc)
+        return proc
+
+    readiness_calls = 0
+
+    def ready_then_stop(*_args, **_kwargs):
+        nonlocal readiness_calls
+        readiness_calls += 1
+        if readiness_calls == 2:
+            stop.requested = True
+        return True
+
+    result = run_supervisor(
+        ["--processors", "1", "--cleaners", "0"],
+        popen_factory=popen_factory,
+        wait_for_api_fn=ready_then_stop,
+        sleep_fn=lambda _: None,
+        should_stop=lambda: False,
+        clock=lambda: 0.0,
+        kill_fn=_fake_kill_fn,
+    )
+
+    assert result == 0
+    assert readiness_calls == 2
+    assert len(commands) == 3  # initial API, one processor, replacement API
+    assert processes[1]._terminated
+    assert processes[2]._terminated
+
+
+def test_stop_during_slot_poll_skips_exit_restart(monkeypatch):
+    from types import SimpleNamespace
+
+    stop = SimpleNamespace(requested=False)
+    _use_stop(monkeypatch, stop)
+
+    class StopOnPoll(FakePopen):
+        def poll(self):
+            stop.requested = True
+            return 1
+
+    calls = []
+    result = run_supervisor(
+        ["--processors", "0", "--cleaners", "0"],
+        popen_factory=lambda *_args, **_kwargs: calls.append(True) or StopOnPoll(),
+        wait_for_api_fn=lambda *_args, **_kwargs: True,
+        should_stop=lambda: False,
+        kill_fn=_fake_kill_fn,
+    )
+
+    assert result == 0
+    assert calls == [True]
+
+
+def test_repeated_zero_code_api_exits_are_failure():
+    class RepeatedZeroExit(FakePopen):
+        def poll(self):
+            return 0
+
+    result = run_supervisor(
+        ["--processors", "0", "--cleaners", "0"],
+        popen_factory=lambda *_args, **_kwargs: RepeatedZeroExit(),
+        wait_for_api_fn=lambda *_args, **_kwargs: True,
+        should_stop=lambda: False,
+        clock=lambda: 0.0,
+        kill_fn=_fake_kill_fn,
+    )
+
+    assert result == 1
+
+
+def test_readiness_wait_observes_requested_stop(monkeypatch):
+    from types import SimpleNamespace
+    from app.supervisor import _wait_for_api
+
+    stop = SimpleNamespace(requested=False)
+
+    class RefusedSocket:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def settimeout(self, _timeout):
+            pass
+
+        def connect(self, _address):
+            raise ConnectionRefusedError
+
+    import socket
+    monkeypatch.setattr(socket, "socket", lambda *_args, **_kwargs: RefusedSocket())
+
+    def request_stop(_delay):
+        stop.requested = True
+
+    assert not _wait_for_api(
+        "127.0.0.1", 19999, timeout=5,
+        sleep_fn=request_stop,
+        stop=stop,
+        clock=lambda: 0,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -406,8 +683,19 @@ def test_api_rapid_restart_budget_triggers_shutdown():
 # ---------------------------------------------------------------------------
 
 import json as _json
+import http.client as _http_client
+import socket as _socket
+import threading as _threading
+import time as _time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from threading import Thread
 
-from app.supervisor import _wait_for_api, _generate_launch_token, _start_api_with_retry
+from app.supervisor import (
+    _probe_initialized_health,
+    _wait_for_api,
+    _generate_launch_token,
+    _start_api_with_retry,
+)
 
 
 def _stub_socket_factory(connect_results: list[bool]):
@@ -444,6 +732,7 @@ def test_wait_for_api_succeeds_when_token_matches(tmp_path, monkeypatch):
 
     # TCP succeeds on first try
     monkeypatch.setattr("socket.socket", _stub_socket_factory([True]))
+    monkeypatch.setattr("app.supervisor._probe_initialized_health", lambda *_args, **_kwargs: True, raising=False)
 
     times = iter([0.0, 0.1, 0.2])
     clock = lambda: next(times, 0.5)
@@ -540,12 +829,12 @@ def test_wait_for_api_orphan_then_token_cleanup_must_not_grace_through(tmp_path,
 
 
 def test_wait_for_api_falls_back_after_grace_when_token_missing(tmp_path, monkeypatch):
-    """No token file (e.g. older child not implementing token write) →
-    after grace period, trust TCP alone (back-compat)."""
+    """Missing-token grace still requires a healthy initialized HTTP response."""
     run_dir = tmp_path / "run"
     run_dir.mkdir()  # but no api_token file
 
     monkeypatch.setattr("socket.socket", _stub_socket_factory([True] * 100))
+    monkeypatch.setattr("app.supervisor._probe_initialized_health", lambda *_args, **_kwargs: True, raising=False)
 
     # Each clock() call jumps far enough that grace period elapses on the
     # second iteration after TCP starts succeeding.
@@ -566,8 +855,9 @@ def test_wait_for_api_falls_back_after_grace_when_token_missing(tmp_path, monkey
 
 
 def test_wait_for_api_no_self_id_legacy_path(tmp_path, monkeypatch):
-    """Without expected_nonce/run_dir, behavior is legacy: TCP success → True."""
+    """Without a token identity, the legacy path still requires initialized HTTP."""
     monkeypatch.setattr("socket.socket", _stub_socket_factory([True]))
+    monkeypatch.setattr("app.supervisor._probe_initialized_health", lambda *_args, **_kwargs: True, raising=False)
     result = _wait_for_api(
         "127.0.0.1", 19999, timeout=5.0, sleep_fn=lambda _: None,
     )
@@ -591,13 +881,13 @@ def test_wait_for_api_returns_false_when_process_dies(tmp_path, monkeypatch):
 
 
 def test_wait_for_api_handles_corrupt_token_file(tmp_path, monkeypatch):
-    """Garbled token file → treated as 'absent', falls back via grace period.
-    Avoids supervisor wedging on a partially-written file from a crashed write."""
+    """Garbled token uses grace, then still requires initialized HTTP health."""
     run_dir = tmp_path / "run"
     run_dir.mkdir()
     (run_dir / "api_token").write_text("not valid json {{{", encoding="utf-8")
 
     monkeypatch.setattr("socket.socket", _stub_socket_factory([True] * 100))
+    monkeypatch.setattr("app.supervisor._probe_initialized_health", lambda *_args, **_kwargs: True, raising=False)
 
     t = [0.0]
     def clock():
@@ -613,6 +903,245 @@ def test_wait_for_api_handles_corrupt_token_file(tmp_path, monkeypatch):
         clock=clock,
     )
     assert result is True, "corrupt JSON → treated as absent, grace fallback applies"
+
+
+@pytest.mark.parametrize("identity", ["nonce", "legacy", "grace", "corrupt_grace"])
+def test_wait_for_api_requires_initialized_http_after_tcp(identity, tmp_path, monkeypatch):
+    """TCP plus any existing identity route is insufficient while HTTP is initializing."""
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    kwargs = {}
+    if identity == "nonce":
+        nonce = "expected-token"
+        (run_dir / "api_token").write_text(_json.dumps({"nonce": nonce}), encoding="utf-8")
+        kwargs.update(expected_nonce=nonce, run_dir=run_dir)
+    elif identity in {"grace", "corrupt_grace"}:
+        if identity == "corrupt_grace":
+            (run_dir / "api_token").write_text("not json", encoding="utf-8")
+        kwargs.update(expected_nonce="missing-token", run_dir=run_dir, grace_period=0.0)
+
+    monkeypatch.setattr("socket.socket", _stub_socket_factory([True] * 10))
+    probes = []
+    monkeypatch.setattr(
+        "app.supervisor._probe_initialized_health",
+        lambda *_args, **_kwargs: probes.append(True) or False,
+        raising=False,
+    )
+    ticks = iter(range(100))
+    result = _wait_for_api(
+        "127.0.0.1", 19999, timeout=10.0, sleep_fn=lambda _: None,
+        clock=lambda: next(ticks) * 0.6, **kwargs,
+    )
+
+    assert result is False
+    assert probes, "a TCP/ownership candidate must be checked through HTTP"
+
+
+@pytest.mark.parametrize(
+    ("status_code", "health", "expected"),
+    [
+        (503, {"status": "initializing", "initialized": True}, True),
+        (200, {"status": "degraded", "initialized": True}, True),
+        (200, {"status": "ok"}, True),
+        (503, {"status": "initializing", "initialized": False}, False),
+        (200, {"status": "unknown"}, False),
+        (200, {"status": []}, False),
+        (200, {"status": "ok", "initialized": None}, False),
+        (200, {"status": "ok", "padding": "x" * (65 * 1024)}, False),
+    ],
+)
+def test_health_probe_accepts_only_initialized_or_legacy_healthy_http(
+    status_code, health, expected, monkeypatch,
+):
+    body = _json.dumps(health).encode("utf-8")
+    real_connection = _http_client.HTTPConnection
+    real_timer = _threading.Timer
+    timeouts = []
+    timers = []
+    timer_delays = []
+
+    def make_connection(host, port, *, timeout):
+        timeouts.append(timeout)
+        return real_connection(host, port, timeout=timeout)
+
+    def make_timer(*args, **kwargs):
+        timer_delays.append(args[0])
+        timer = real_timer(*args, **kwargs)
+        timers.append(timer)
+        return timer
+
+    class HealthHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            assert self.path == "/health"
+            self.send_response(status_code)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), HealthHandler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    monkeypatch.setattr("app.supervisor.http.client.HTTPConnection", make_connection)
+    monkeypatch.setattr("app.supervisor.threading.Timer", make_timer)
+    try:
+        assert _probe_initialized_health("127.0.0.1", server.server_port, 1.0) is expected
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=1.0)
+    assert timeouts == [1.0]
+    assert len(timer_delays) == 1 and 0 < timer_delays[0] <= timeouts[0]
+    assert len(timers) == 1 and not timers[0].is_alive()
+
+
+@pytest.mark.parametrize("phase", ["headers", "body"])
+def test_health_probe_enforces_total_deadline_on_trickled_http(phase):
+    response_body = _json.dumps({"status": "ok", "padding": "x" * 100}).encode()
+    headers = (
+        b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: "
+        + str(len(response_body)).encode()
+        + b"\r\nConnection: close\r\n\r\n"
+    )
+    listener = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    port = listener.getsockname()[1]
+
+    def serve_slowly():
+        try:
+            client, _ = listener.accept()
+            with client:
+                client.recv(4096)
+                if phase == "headers":
+                    for byte in headers:
+                        client.sendall(bytes([byte]))
+                        _time.sleep(0.01)
+                    client.sendall(response_body)
+                else:
+                    client.sendall(headers)
+                    for byte in response_body:
+                        client.sendall(bytes([byte]))
+                        _time.sleep(0.01)
+        except OSError:
+            pass
+
+    thread = Thread(target=serve_slowly, daemon=True)
+    thread.start()
+    started = _time.monotonic()
+    try:
+        assert _probe_initialized_health("127.0.0.1", port, 0.12) is False
+        assert _time.monotonic() - started < 0.9
+    finally:
+        listener.close()
+        thread.join(timeout=1.0)
+    assert not thread.is_alive()
+
+
+@pytest.mark.parametrize("fence", ["deadline", "stop", "process"])
+def test_wait_for_api_rechecks_fences_after_health_probe(fence, tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    elapsed = [0.0]
+    stop = SimpleNamespace(requested=False)
+    process = SimpleNamespace(returncode=None)
+    process.poll = lambda: process.returncode
+
+    def accept_then_trip_fence(*_args, **_kwargs):
+        if fence == "deadline":
+            elapsed[0] = 3.0
+        elif fence == "stop":
+            stop.requested = True
+        else:
+            process.returncode = 1
+        return True
+
+    monkeypatch.setattr("socket.socket", _stub_socket_factory([True]))
+    monkeypatch.setattr("app.supervisor._probe_initialized_health", accept_then_trip_fence)
+    nonce = "owned-token"
+    (tmp_path / "api_token").write_text(_json.dumps({"nonce": nonce}), encoding="utf-8")
+    result = _wait_for_api(
+        "127.0.0.1", 19999, timeout=2.0, sleep_fn=lambda _: None,
+        process=process, stop=stop, expected_nonce=nonce,
+        run_dir=tmp_path, clock=lambda: elapsed[0],
+    )
+
+    assert result is False
+
+
+@pytest.mark.parametrize("scenario", [
+    "owned", "foreign", "missing", "legacy", "nonce_changed", "stopped", "exited",
+    "initializing", "degraded", "malformed",
+])
+def test_wait_for_api_terminal_failure_requires_owned_nonce(scenario, tmp_path):
+    from types import SimpleNamespace
+
+    nonce = "terminal-failure-owner"
+    token_path = tmp_path / "api_token"
+    if scenario not in {"missing", "legacy"}:
+        token_path.write_text(_json.dumps({"nonce": "foreign" if scenario == "foreign" else nonce}))
+    health = {"status": "failed", "initialized": False, "ready": False,
+              "initialization_error": "service_initialization_failed"}
+    status_code = 503
+    if scenario == "initializing":
+        health = {"status": "initializing", "initialized": False, "ready": False}
+    elif scenario == "degraded":
+        health = {"status": "degraded", "initialized": True, "ready": False}
+        status_code = 200
+    elif scenario == "malformed":
+        health["ready"] = True
+    process = SimpleNamespace(returncode=None)
+    process.poll = lambda: process.returncode
+    stop = SimpleNamespace(requested=False)
+    elapsed, sleeps, requests = [0.0], [], []
+
+    class HealthHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            requests.append(self.path)
+            if scenario == "nonce_changed":
+                token_path.write_text(_json.dumps({"nonce": "replacement"}))
+            elif scenario == "stopped":
+                stop.requested = True
+            elif scenario == "exited":
+                process.returncode = 1
+            body = _json.dumps(health).encode()
+            self.send_response(status_code)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_args):
+            pass
+
+    def advance(seconds):
+        sleeps.append(seconds)
+        elapsed[0] += seconds
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), HealthHandler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        result = _wait_for_api(
+            "127.0.0.1", server.server_port, timeout=2, sleep_fn=advance,
+            process=process, stop=stop, expected_nonce=None if scenario == "legacy" else nonce,
+            run_dir=tmp_path, grace_period=0, clock=lambda: elapsed[0],
+        )
+        assert result is (scenario == "degraded")
+        if scenario == "owned":
+            assert requests == ["/health"]
+            assert sleeps == [], "terminal owned failure must not consume the startup budget"
+        elif scenario == "degraded":
+            assert requests == ["/health"]
+            assert sleeps == []
+        elif scenario not in {"stopped", "exited"}:
+            assert elapsed[0] == 2, "unverified or nonterminal response must retain the wait policy"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=1)
+    assert not thread.is_alive()
 
 
 def test_generate_launch_token_is_unique():
@@ -745,3 +1274,67 @@ def test_start_api_with_retry_kills_alive_unverified_proc(tmp_path, monkeypatch)
     )
     # And the retry budget should have been exhausted (multiple Popen calls)
     assert len(procs) == 5, f"expected 5 attempts, got {len(procs)}"
+
+
+@pytest.mark.parametrize("scenario", ["slow_ready", "timeout", "foreign", "stopped", "dead"])
+def test_startup_budget_preserves_real_probe_fencing(tmp_path, monkeypatch, caplog, scenario):
+    from types import SimpleNamespace
+
+    elapsed = [0.0]
+    stop = SimpleNamespace(requested=False)
+    nonce = "private-test-nonce"
+    (tmp_path / "api_token").write_text(
+        _json.dumps({"nonce": "foreign" if scenario == "foreign" else nonce}), encoding="utf-8",
+    )
+    process = SimpleNamespace(pid=123, returncode=1 if scenario == "dead" else None)
+    process.poll = lambda: process.returncode
+    spawned, killed, budgets, durations = [], [], [], []
+
+    class ProbeSocket:
+        def __init__(self, *_args): pass
+        def __enter__(self): return self
+        def __exit__(self, *_args): return False
+        def settimeout(self, _timeout): pass
+        def connect(self, _address):
+            if scenario == "timeout" or elapsed[0] < 45:
+                raise ConnectionRefusedError
+
+    def advance(delay):
+        elapsed[0] += delay
+        if scenario == "stopped":
+            stop.requested = True
+
+    def spawn(*_args, **_kwargs):
+        elapsed[0] = 0
+        spawned.append(process)
+        return process
+
+    def wait(host, port, **kwargs):
+        budgets.append(kwargs["timeout"])
+        result = _wait_for_api(host, port, **kwargs, clock=lambda: elapsed[0], sleep_fn=advance)
+        durations.append(elapsed[0])
+        return result
+
+    monkeypatch.setattr("socket.socket", ProbeSocket)
+    monkeypatch.setattr("app.supervisor._probe_initialized_health", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr("app.supervisor._kill_tree", lambda proc, **_kw: killed.append(proc))
+    caplog.set_level("INFO")
+    result = _start_api_with_retry(
+        ["unused"], "127.0.0.1", 19999, popen_factory=spawn,
+        sleep_fn=lambda _delay: None, wait_for_api_fn=wait, stop=stop,
+        run_dir=tmp_path, token_fn=lambda: nonce,
+    )
+    assert budgets == [120.0] * len(spawned)
+    assert nonce not in caplog.text
+    if scenario == "slow_ready":
+        assert result is process
+        assert durations == [45.0]
+        assert len(spawned) == 1 and killed == []
+        assert "outcome=ready" in caplog.text
+    else:
+        assert result is None
+        assert "outcome=unverified" in caplog.text
+        assert len(spawned) == (1 if scenario == "stopped" else 5)
+        assert len(killed) == (0 if scenario == "dead" else len(spawned))
+        if scenario in {"timeout", "foreign"}:
+            assert durations == [120.0] * 5

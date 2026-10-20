@@ -4,6 +4,7 @@
 // `node --test` with an injected fetch. All HTTP traffic for the UI flows
 // through here; call sites use the named methods rather than building URLs
 // or calling fetch directly.
+import { expandWorktreePayload } from "./worktree-payload.js";
 
 const ROADMAP_PREFIXES = [
   "/api/workspace",
@@ -32,7 +33,7 @@ export function normalizeError(response, payload) {
 
 // `getRepo` is a function (not a string) so the caller can pass a live
 // pointer at `state.repoPath`; api.js doesn't need to know about state.
-export function createApi({ fetch: fetchImpl, getRepo, getSource } = {}) {
+export function createApi({ fetch: fetchImpl, getRepo, getSource, onMutation } = {}) {
   const f = fetchImpl || (typeof globalThis.fetch === "function" ? globalThis.fetch.bind(globalThis) : null);
   if (!f) throw new Error("createApi: no fetch implementation available");
   const repo = typeof getRepo === "function" ? getRepo : () => "";
@@ -63,6 +64,7 @@ export function createApi({ fetch: fetchImpl, getRepo, getSource } = {}) {
     let payload = null;
     try { payload = await response.json(); } catch {}
     if (!response.ok) throw normalizeError(response, payload);
+    if (init.method && init.method !== "GET" && !/\/suggestions\/[^/]+\/preview$/.test(url) && typeof onMutation === "function") onMutation(url);
     return payload;
   }
 
@@ -75,10 +77,21 @@ export function createApi({ fetch: fetchImpl, getRepo, getSource } = {}) {
 
   return {
     // Roadmap
-    loadWorkspace: () => request("/api/workspace"),
-    loadWorktreeWorkspace: ({ openedOnly = false } = {}) => request(`/api/worktree-workspace${openedOnly ? "?openedOnly=1" : ""}`, {}, { unbound: true }),
+    loadWorkspace: ({ cached = false, ...options } = {}) => request(`/api/workspace${cached ? "?cached=1" : ""}`, options),
+    loadWorktreeWorkspace: ({ openedOnly = false, cached = false, participants = true, compact = false, ...options } = {}) => {
+      const query = new URLSearchParams();
+      if (openedOnly) query.set("openedOnly", "1");
+      if (cached) query.set("cached", "1");
+      if (!participants) query.set("participants", "0");
+      if (compact) query.set("compact", "1");
+      return request(`/api/worktree-workspace${query.size ? `?${query}` : ""}`, options, { unbound: true }).then((payload) => {
+        options.signal?.throwIfAborted();
+        return expandWorktreePayload(payload);
+      });
+    },
     discoverWorktreeSources: () => request("/api/worktree-sources", {}, { unbound: true }),
-    loadSourceWorkspace: (identity) => request("/api/worktree-source-workspace", {
+    loadSourceWorkspace: (identity, options = {}) => request("/api/worktree-source-workspace", {
+      ...options,
       headers: { "X-Minimap-Source-Context": JSON.stringify(identity).replace(/[\u007f-\uffff]/g, (character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`) },
     }, { unbound: true, repoRoot: identity.repoRoot }),
     initializeWorkspace: () => request("/api/setup/initialize", { method: "POST" }),
@@ -87,8 +100,20 @@ export function createApi({ fetch: fetchImpl, getRepo, getSource } = {}) {
     reorderLensGroup: (field, payload) => postJson(`/api/lenses/${id(field)}/order`, payload),
     saveScope: (scopeText, expectedRevision = null) => postJson("/api/scope", { scopeText, expectedRevision }),
     readItem: (itemId, options = {}) => request(`/api/items/${id(itemId)}`, options),
+    readRelatedWork: (itemId, { generation, offset, record, fresh = false, ...options } = {}) => {
+      const query = new URLSearchParams();
+      if (generation) query.set("generation", generation);
+      if (offset != null) query.set("offset", String(offset));
+      if (record) query.set("record", record);
+      if (fresh) query.set("fresh", "1");
+      return request(`/api/items/${id(itemId)}/related-work${query.size ? `?${query}` : ""}`, options);
+    },
     readBoardParticipantCounts: ({ includeCompleted = false, ...options } = {}) => request(
       `/api/board/participant-counts${includeCompleted === true ? "?includeCompleted=1" : ""}`, options,
+    ),
+    readBoardObservations: ({ snapshot, includeCompleted = false, ...options }) => request(
+      `/api/board/observations?snapshot=${id(snapshot)}${includeCompleted ? "&includeCompleted=1" : ""}`,
+      options, { unbound: true },
     ),
     readItemParticipants: (itemId, options = {}) => request(`/api/items/${id(itemId)}/participants`, options),
     saveItem: (itemId, payload) => postJson(`/api/items/${id(itemId)}`, payload),

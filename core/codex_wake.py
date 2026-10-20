@@ -12,6 +12,8 @@ import threading
 import time
 from typing import Callable, TypeVar
 
+from core.errors import ImmediateTransactionBusyError
+
 MAX_RESERVATIONS = 256
 WAKE_RETRY_COOLDOWN_SECONDS = 60
 # The old writer escaped each astral character as two six-character escapes.
@@ -56,13 +58,25 @@ class CodexWakeRegistry:
             # data is read only by explicit offline SQLite initialization.
             self._usable = False
 
+    def _validated_persistent_snapshot(self):
+        initialized, items = self._relay.codex_wake_snapshot()
+        if len(items) > MAX_RESERVATIONS or any(not self._valid_item(item) for item in items):
+            raise ValueError("invalid persisted Codex wake fence")
+        return initialized, items
+
+    def _observe_persistent_authority(self) -> tuple[CodexWakeReservation, ...]:
+        try:
+            initialized, items = self._validated_persistent_snapshot()
+            return tuple({item.recipient_endpoint_id: item for item in items}.values()) if initialized else ()
+        except Exception as exc:
+            logger.warning("codex_wake_authority_read_failed error_type=%s", type(exc).__name__)
+            return ()
+
     def _refresh(self) -> None:
         if self._relay is None:
             return
         try:
-            initialized, items = self._relay.codex_wake_snapshot()
-            if len(items) > MAX_RESERVATIONS or any(not self._valid_item(item) for item in items):
-                raise ValueError("invalid persisted Codex wake fence")
+            initialized, items = self._validated_persistent_snapshot()
             self._usable = initialized
             self._initialized = initialized
             self._reservations = {item.recipient_endpoint_id: item for item in items}
@@ -110,7 +124,11 @@ class CodexWakeRegistry:
         try:
             return self._relay.codex_wake_transition(operation, **kwargs)
         except Exception as exc:
-            logger.warning("codex_wake_transition_failed operation=%s error_type=%s", operation, type(exc).__name__)
+            stage = getattr(exc, "acquisition_stage", None) if isinstance(exc, ImmediateTransactionBusyError) else None
+            if type(stage) is not str or stage not in ImmediateTransactionBusyError.ACQUISITION_STAGES:
+                stage = "unknown"
+            logger.warning("codex_wake_transition_failed operation=%s error_type=%s acquisition_stage=%s",
+                           operation, type(exc).__name__, stage)
             # A commit/return error can be ambiguous. Never launch from its
             # return value; the next operation reads the durable authority.
             return None
@@ -173,6 +191,24 @@ class CodexWakeRegistry:
                 return False, None
             if self._reservations.get(reservation.recipient_endpoint_id) != reservation:
                 return False, None
+            if self._relay is not None:
+                try:
+                    state = self._relay.codex_wake_reservation_state(delivery_id=reservation.delivery_id)
+                except Exception as exc:
+                    logger.warning("codex_wake_native_state_read_failed error_type=%s", type(exc).__name__)
+                    return False, None
+                if (
+                    not isinstance(state, dict)
+                    or state.get("delivery_id") != reservation.delivery_id
+                    or state.get("recipient_endpoint_id") != reservation.recipient_endpoint_id
+                    or state.get("state") not in {"pending", "claimed"}
+                    or state.get("stored_state") not in {"pending", "claimed"}
+                    or (
+                        state.get("stored_state") == "claimed"
+                        and state.get("codex_wake_generation") == reservation.generation
+                    )
+                ):
+                    return False, None
             return True, operation()
 
     def record_outcome(self, reservation: CodexWakeReservation, outcome: str) -> bool:
@@ -248,6 +284,15 @@ class CodexWakeRegistry:
         ):
             return False
         with self._lock:
+            if self._relay is not None:
+                if attempts >= 2**63 or expected_generation >= 2**63:
+                    return False
+                return self._transition(
+                    "correlate", delivery_id=delivery_id,
+                    recipient_endpoint_id=recipient_endpoint_id,
+                    session_ref=session_ref, container_ref=container_ref,
+                    attempts=attempts, expected_generation=expected_generation,
+                ) is not None
             self._refresh()
             current = self._reservations.get(recipient_endpoint_id)
             if (
@@ -259,8 +304,6 @@ class CodexWakeRegistry:
                 or current.correlated_claim_attempts not in (None, attempts)
             ):
                 return False
-            if self._relay is not None:
-                return self._transition("correlate", reservation=current, attempts=attempts) is not None
             updated_item = replace(current, correlated_claim_attempts=attempts)
             updated = {**self._reservations, recipient_endpoint_id: updated_item}
             if not self._write_locked(updated):
@@ -375,10 +418,10 @@ class CodexWakeRegistry:
 
     def release_delivery(self, delivery_id: str) -> CodexWakeReservation | None:
         with self._lock:
+            if self._relay is not None:
+                return self._transition("release_delivery", delivery_id=delivery_id)
             self._refresh()
             match = next((item for item in self._reservations.values() if item.delivery_id == delivery_id), None)
-            if self._relay is not None:
-                return match if match is not None and self.release_generation(match) else None
             if match is None or not self._remove_locked(match.recipient_endpoint_id):
                 return None
             return match
@@ -393,10 +436,26 @@ class CodexWakeRegistry:
             self._refresh()
             return self._reservations.get(recipient_endpoint_id)
 
+    def snapshot_if_usable(self, recipient_endpoint_id: str) -> CodexWakeReservation | None:
+        if self._relay is not None:
+            return next((item for item in self._observe_persistent_authority()
+                         if item.recipient_endpoint_id == recipient_endpoint_id), None)
+        with self._lock:
+            self._refresh()
+            return self._reservations.get(recipient_endpoint_id) if self._usable else None
+
     def reservations(self) -> tuple[CodexWakeReservation, ...]:
         with self._lock:
             self._refresh()
             return tuple(self._reservations.values())
+
+    def reservations_if_usable(self) -> tuple[CodexWakeReservation, ...]:
+        if self._relay is not None:
+            # Immutable SQL observations do not take Native action ownership or publish cache state.
+            return self._observe_persistent_authority()
+        with self._lock:
+            self._refresh()
+            return tuple(self._reservations.values()) if self._usable else ()
 
     def _remove_locked(self, endpoint_id: str) -> bool:
         updated = dict(self._reservations)

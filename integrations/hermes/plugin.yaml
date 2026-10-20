@@ -1,0 +1,30 @@
+name: pallium-hermes-relay
+version: 0.1.0
+description: Experimental Pallium Relay and Session History for a single Hermes TUI/gateway profile.
+author: Pallium
+kind: standalone
+platforms:
+  - windows
+provides_tools:
+  - pallium_relay_address
+  - pallium_relay_recipients
+  - pallium_relay_discover_recipients
+  - pallium_relay_name
+  - pallium_relay_work_refs
+  - pallium_relay_attach_work_ref
+  - pallium_relay_detach_work_ref
+  - pallium_relay_participants
+  - pallium_relay_send
+  - pallium_relay_reply
+  - pallium_relay_status
+  - pallium_relay_trace
+  - pallium_search_history
+  - pallium_search_history_by_work_ref
+  - pallium_expand_source
+provides_hooks:
+  - pre_llm_call
+  - post_llm_call
+  - on_session_end
+provides_middleware:
+  - llm_execution
+  - tool_execution

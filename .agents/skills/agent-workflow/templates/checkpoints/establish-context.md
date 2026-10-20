@@ -1,10 +1,12 @@
 # establish-context
 
-Routine path. Five fields, each one line where possible: **Outcome**, **Target**, **Scope**, **Constraints**, **Completion criteria**. Write all five before you read code.
+Write **Outcome**, **Target**, **Scope**, **Constraints**, and **Completion criteria** before reading code; keep routine fields to one line where possible.
 
 If the task arrived from an authoritative source item, link it in surrounding prose and record only task-local context; do not copy it into a competing local specification.
 
-The point of this checkpoint is to write down what you would otherwise *infer*. Agents fill gaps confidently and silently; the marker block makes the gap-filling visible to a reviewer.
+## Relationships
+
+At creation/pickup, copy supplied exact tuples; if an identified feature/issue lacks refs, resolve through its owning tool. Never guess/title-match or normalize identity. Write `(provider, scope_ref, local_ref)` tuples in the same record edit; preserve/correct on resume/handoff. Append the owning PR tool's returned URL in the PR-creation edit. Read back against expected refs; never rewrite the baseline. Unavailable/ambiguous resolution: keep `sources: null`/unverified, report the gap, continue safe independent work. `[]` means known no-source; missing stays legacy unknown. This discovery/edit/check is not automatic capture or proof no input was missed. No human backlink task. Rules: SPEC §13.1.
 
 ## Field-by-field
 

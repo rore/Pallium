@@ -142,6 +142,69 @@ test("V2 ignores another directory and treats an uncommitted marker as ordinary 
   } finally { globalThis.fetch = oldFetch; }
 });
 
+test("assistant completion and compaction ingest only sessions owned by this directory", async () => {
+  const oldFetch = globalThis.fetch;
+  const hooks = {};
+  const eventQueue = [];
+  let wakeEvent;
+  let releaseEvent;
+  const events = new Promise((resolve) => { releaseEvent = resolve; });
+  let contextReads = 0;
+  const ingested = [];
+  const messages = [{ type: "assistant", id: "msg_assistant", content: [{ type: "text", text: "owned answer" }] }];
+  globalThis.fetch = async (url, init) => {
+    const path = new URL(url).pathname;
+    if (path === "/items") ingested.push(JSON.parse(init.body)[0]);
+    return { ok: true, text: async () => JSON.stringify(path === "/items" ? [{ source_item_id: "owned" }] : {}) };
+  };
+  const ctx = {
+    location: { directory: location }, app: { log() {} },
+    session: {
+      hook: async (name, fn) => { hooks[name] = fn; return { dispose: async () => {} }; },
+      get: async ({ sessionID: id }) => {
+        if (id === "ses_failed") throw new Error("native lookup failed");
+        return { location: { directory: id === "ses_foreign" ? "/tmp/other" : location } };
+      },
+      context: async () => { contextReads++; return { data: messages }; },
+    },
+    event: { subscribe: async function* ({ signal }) {
+      wakeEvent = () => releaseEvent();
+      while (!signal.aborted) {
+        await events;
+        const next = eventQueue.shift();
+        if (next) yield next;
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+    } },
+  };
+  let dispose;
+  try {
+    dispose = await v2.setup(ctx);
+    const emit = async (id) => {
+      eventQueue.push({ type: "session.execution.succeeded", data: { sessionID: id } });
+      wakeEvent();
+      await pause();
+    };
+    await emit("ses_owned");
+    const ownedReads = contextReads;
+    const ownedWrites = ingested.length;
+    await emit("ses_foreign");
+    await emit("ses_failed");
+    assert.ok(ownedReads > 0);
+    assert.equal(contextReads, ownedReads);
+    assert.equal(ingested.length, ownedWrites);
+    assert.equal(ownedWrites, 1);
+    await hooks.compaction({ sessionID: "ses_foreign" });
+    await hooks.compaction({ sessionID: "ses_failed" });
+    assert.equal(contextReads, ownedReads);
+    assert.equal(ingested.length, ownedWrites);
+    await hooks.compaction({ sessionID: "ses_owned" });
+    assert.equal(ingested.length, ownedWrites);
+  } finally {
+    try { await dispose?.(); } finally { globalThis.fetch = oldFetch; }
+  }
+});
+
 const pause = () => new Promise((resolve) => setTimeout(resolve, 20));
 const snapshot = (overrides = {}) => ({ generation: 1, delivery_id: deliveryID, native_input_id: nativeID,
   native_location: location, scope_generation: 0, admitted: false, terminal: false, ...overrides });
@@ -637,6 +700,247 @@ for (const retire of ["delete", "rebind"]) {
     } finally { firstGate.release(); successorGate.release(); await first; await successor; await f.close(); }
   });
 }
+
+test("fresh owned assistant completion captures once while foreign and failed lookups read no context", async () => {
+  const id = "ses_first_completion";
+  const captured = barrier();
+  const reads = [];
+  const history = [{ type: "assistant", id: "msg_first_answer", content: [{ type: "text", text: "first owned answer" }] }];
+  const f = await callerFixture({ history, get: async ({ sessionID: requested }) => {
+    if (requested === "ses_failed_completion") throw new Error("native lookup failed");
+    return { location: { directory: requested === "ses_foreign_completion" ? "/tmp/foreign" : location } };
+  }, context: async ({ sessionID: requested }) => { reads.push(requested); return { data: history }; },
+  response: async (route) => { if (route === "/items") { await captured.wait(); return [{ source_item_id: "first-answer" }]; } } });
+  try {
+    await f.emit({ type: "session.execution.succeeded", data: { sessionID: id } });
+    await captured.entered;
+    captured.release();
+    await new Promise(setImmediate);
+    await f.hooks.compaction({ sessionID: id });
+    const items = f.calls.filter((call) => call.path === "/items");
+    assert.equal(items.length, 1);
+    assert.equal(items[0].body[0].thread_ref, id);
+    assert.equal(items[0].body[0].container_ref, container);
+    assert.equal(items[0].body[0].content, "first owned answer");
+    const ownedReads = reads.length;
+    for (const requested of ["ses_foreign_completion", "ses_failed_completion"]) {
+      await f.hooks.compaction({ sessionID: requested });
+    }
+    assert.equal(reads.length, ownedReads);
+    assert.equal(f.calls.filter((call) => call.path === "/items").length, 1);
+  } finally { captured.release(); await f.close(); }
+});
+
+test("fresh assistant ownership lookup cannot read context after disposal", async () => {
+  const id = "ses_initial_disposal";
+  const gate = barrier();
+  let reads = 0;
+  const f = await callerFixture({ get: async ({ sessionID: requested }) => {
+    if (requested === id) await gate.wait();
+    return { location: { directory: location } };
+  }, context: async () => { reads++; return { data: [] }; } });
+  const running = f.hooks.compaction({ sessionID: id });
+  try {
+    await gate.entered;
+    await f.dispose();
+    gate.release();
+    await running;
+    assert.equal(reads, 0);
+    assert.equal(f.calls.filter((call) => call.path === "/items").length, 0);
+  } finally { gate.release(); await running; await f.close(); }
+});
+
+for (const deleted of [false, true]) {
+  test(`fresh assistant ownership lookup ${deleted ? "rejects deletion and recreation" : "accepts benign concurrent creation"}`, async () => {
+    const id = deleted ? "ses_initial_replaced" : "ses_initial_created";
+    const gate = barrier();
+    const history = [{ type: "assistant", id: "msg_initial_answer", content: [{ type: "text", text: "current answer" }] }];
+    let lookups = 0, reads = 0;
+    const f = await callerFixture({ history, get: async ({ sessionID: requested }) => {
+      if (requested === id && ++lookups === 1) await gate.wait();
+      return { location: { directory: location } };
+    }, context: async () => { reads++; return { data: history }; } });
+    const running = f.hooks.compaction({ sessionID: id });
+    try {
+      await gate.entered;
+      if (deleted) await f.emit({ type: "session.deleted", data: { sessionID: id } });
+      await f.emit({ type: "session.created", data: { sessionID: id } });
+      assert.ok(lookups > 1, "the public creation event creates successor state during the lookup");
+      gate.release();
+      await running;
+      assert.equal(reads, deleted ? 0 : 1);
+      assert.equal(f.calls.filter((call) => call.path === "/items").length, deleted ? 0 : 1);
+      if (deleted) {
+        await f.hooks.compaction({ sessionID: id });
+        assert.equal(reads, 1);
+        assert.equal(f.calls.filter((call) => call.path === "/items").length, 1);
+      }
+    } finally { gate.release(); await running; await f.close(); }
+  });
+}
+
+for (const existing of [false, true]) {
+  test(`unrelated session retirement preserves ${existing ? "existing" : "fresh"} assistant capture`, async () => {
+    const id = `ses_assistant_${existing ? "existing" : "fresh"}`;
+    const gate = barrier();
+    const history = [{ type: "assistant", id: "msg_unrelated_retirement", content: [{ type: "text", text: "captured answer" }] }];
+    let block = false, reads = 0;
+    const f = await callerFixture({ history, get: async ({ sessionID: requested }) => {
+      if (block && requested === id) await gate.wait();
+      return { location: { directory: location } };
+    }, context: async () => { reads++; return { data: history }; } });
+    try {
+      if (existing) await f.hooks.context({ sessionID: id, messages: [natural("msg_seed_existing")] });
+      const initialReads = reads;
+      block = true;
+      const running = f.hooks.compaction({ sessionID: id });
+      await gate.entered;
+      await f.emit({ type: "session.deleted", data: { sessionID: "ses_unrelated_retirement" } });
+      gate.release();
+      await running;
+      assert.equal(reads, initialReads + 1);
+      assert.equal(f.calls.filter((call) => call.path === "/items").length, 1);
+    } finally { gate.release(); await f.close(); }
+  });
+}
+
+test("concurrent assistant probes keep successor retirement tokens through stale cleanup", async () => {
+  const id = "ses_concurrent_assistant";
+  const oldGate = barrier(), successorGate = barrier();
+  let gets = 0, reads = 0;
+  const history = [{ type: "assistant", id: "msg_concurrent_assistant", content: [{ type: "text", text: "answer" }] }];
+  const f = await callerFixture({ history, get: async ({ sessionID: requested }) => {
+    if (requested !== id) return { location: { directory: location } };
+    const call = ++gets;
+    if (call <= 2) await oldGate.wait();
+    else await successorGate.wait();
+    return { location: { directory: location } };
+  }, context: async () => { reads++; return { data: history }; } });
+  const old = [f.hooks.compaction({ sessionID: id }), f.hooks.compaction({ sessionID: id })];
+  let successor;
+  try {
+    await oldGate.entered;
+    assert.equal(gets, 2, "both same-ID probes registered before retirement");
+    await f.emit({ type: "session.deleted", data: { sessionID: id } });
+    successor = f.hooks.compaction({ sessionID: id });
+    await successorGate.entered;
+    oldGate.release();
+    await Promise.all(old);
+    await f.emit({ type: "session.deleted", data: { sessionID: id } });
+    successorGate.release();
+    await successor;
+    assert.equal(reads, 0, "the second deletion must still find and invalidate the successor probe");
+    assert.equal(f.calls.filter((call) => call.path === "/items").length, 0);
+  } finally { oldGate.release(); successorGate.release(); await Promise.all([...old, successor]); await f.close(); }
+});
+
+for (const sameSession of [true, false]) test(`${sameSession ? "same-session" : "unrelated"} deletion after ownership ${sameSession ? "fences" : "preserves"} assistant completion`, async () => {
+  const id = "ses_helper_success_retired";
+  const retiredId = sameSession ? id : "ses_helper_unrelated";
+  const deletion = barrier();
+  const previousFetch = globalThis.fetch;
+  const previousInterval = globalThis.setInterval;
+  const previousClear = globalThis.clearInterval;
+  const hooks = {};
+  const calls = [];
+  let nextEvent, reads = 0, ownedLocationReads = 0;
+  let dispose;
+  globalThis.setInterval = () => ({ unref() {} });
+  globalThis.clearInterval = () => {};
+  globalThis.fetch = async (url, init) => {
+    const route = new URL(url).pathname;
+    calls.push({ path: route, body: init?.body ? JSON.parse(init.body) : {} });
+    if (route === "/relay/sessions/close") await deletion.wait();
+    return jsonResponse(route === "/relay/sessions" ? [] : {});
+  };
+  const ctx = {
+    location: { directory: location }, app: { log() {} },
+    session: {
+      hook: async (name, callback) => { hooks[name] = callback; return { dispose() {} }; },
+      get: async ({ sessionID: requested }) => {
+        assert.equal(requested, id, "only the fresh completion performs this lookup");
+        return { location: { get directory() {
+        ownedLocationReads++;
+        assert.equal(ownedLocationReads, 1, "queue this deletion only once");
+        assert.equal(typeof nextEvent, "function", "the public subscriber already awaits its next event");
+        // Resolve the supported event iterator after owned's final current check.
+        // Its consumer retires the absent entry in the next microtask, before
+        // ingestAssistant resumes from the successfully resolved owned promise.
+        nextEvent({ value: { type: "session.deleted", data: { sessionID: retiredId } }, done: false });
+        return location;
+      } } };
+      },
+      context: async () => {
+        reads++;
+        return { data: [{ type: "assistant", id: "msg_overtaken_answer", content: [{ type: "text", text: "retired answer" }] }] };
+      },
+    },
+    event: { subscribe: ({ signal }) => ({
+      [Symbol.asyncIterator]() { return this; },
+      next() {
+        if (signal.aborted) return Promise.resolve({ done: true });
+        return new Promise((resolve) => {
+          nextEvent = resolve;
+          signal.addEventListener("abort", () => resolve({ done: true }), { once: true });
+        });
+      },
+    }) },
+  };
+  try {
+    removeSessionPin(id);
+    dispose = await v2.setup(ctx);
+    await hooks.compaction({ sessionID: id });
+    assert.equal(reads, sameSession ? 0 : 1);
+    assert.equal(calls.filter((call) => call.path === "/items").length, sameSession ? 0 : 1);
+    await deletion.entered;
+    deletion.release();
+    assert.equal(ownedLocationReads, 1, "the supported location read succeeds before deletion");
+    assert.equal(calls.filter((call) => call.path === "/relay/sessions/close" && call.body.session_ref === retiredId).length, 1,
+      "the public deletion callback retired the absent entry and issued its close");
+    assert.equal(getPinnedContainer(id), null);
+    await dispose();
+    assert.equal(calls.filter((call) => call.body.operation === "detach").length, 0,
+      "the retired callback must not recreate state with a remote endpoint");
+  } finally {
+    deletion.release();
+    try { await dispose?.(); } finally {
+      globalThis.fetch = previousFetch;
+      globalThis.setInterval = previousInterval;
+      globalThis.clearInterval = previousClear;
+    }
+  }
+});
+
+test("assistant ownership helper cannot mark a rebound lifetime as captured", async () => {
+  const captureOwned = barrier(), rebindOwned = barrier();
+  let captureCheck = false, rebindCheck = false, generation = 0;
+  const f = await callerFixture({ history: [completedAssistant()], get: () => {
+    if (captureCheck) { captureCheck = false; return captureOwned.wait().then(() => ({ location: { directory: location } })); }
+    if (rebindCheck) { rebindCheck = false; return rebindOwned.wait().then(() => ({ location: { directory: location } })); }
+    return { location: { directory: location } };
+  }, fetch: async (route) => {
+    if (route === "/items") { captureCheck = true; return jsonResponse(captureReceipt); }
+  }, response: async (route) => {
+    if (route === "/relay/turn") { rebindCheck = true; return { session: { ...relaySession, scope_generation: generation }, deliveries: [] }; }
+    if (route === "/relay/opencode/wake") return { session: { ...relaySession, scope_generation: generation }, wake: null, deliveries: [] };
+  } });
+  let rebound;
+  const first = f.hooks.compaction({ sessionID });
+  try {
+    await captureOwned.entered;
+    generation = 1;
+    rebound = f.hooks.context({ sessionID, messages: [natural("msg_helper_rebind")] });
+    await rebindOwned.entered;
+    // Both helpers finish under the old lifetime; rebind resumes before capture.
+    rebindOwned.release();
+    captureOwned.release();
+    await Promise.all([rebound, first]);
+    assert.equal(captureCalls(f)[0].signal.aborted, true);
+    await f.hooks.compaction({ sessionID });
+    assert.equal(captureCalls(f).length, 2, "old success must not suppress the successor's capture");
+    assert.equal(captureCalls(f)[0].body[0].source_id, captureCalls(f)[1].body[0].source_id);
+  } finally { captureOwned.release(); rebindOwned.release(); await first; await rebound; await f.close(); }
+});
 
 for (const bodyStall of [false, true]) {
   test(`retired natural context cannot attach or ACK after stalled Relay ${bodyStall ? "body" : "turn"}`, async () => {

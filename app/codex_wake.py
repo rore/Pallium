@@ -11,7 +11,7 @@ import subprocess
 import threading
 import time
 import uuid
-from weakref import WeakValueDictionary
+from weakref import WeakSet, WeakValueDictionary
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
@@ -32,12 +32,33 @@ _scheduled_session_generations: dict[tuple[int, str, str], int] = {}
 _scheduled_session_delivery_ids: dict[tuple[int, str, str], str] = {}
 _scheduled_session_attempt_ids: dict[tuple[int, str, str], str] = {}
 _scheduled_lock = threading.Lock()
+_closing_registries = WeakSet()
+_workers: set[tuple[int, threading.Thread]] = set()
 _registry_lock = threading.Lock()
 _default_registry: CodexWakeRegistry | None = None
 _default_registry_dir: Path | None = None
 _database_guards: WeakValueDictionary = WeakValueDictionary()
 logger = logging.getLogger(__name__)
 _popen = subprocess.Popen
+
+
+def stop_codex_relay_wake_admission(registry: CodexWakeRegistry) -> None:
+    """Prevent this app's registry from starting another native wake worker."""
+    with _scheduled_lock:
+        _closing_registries.add(registry)
+
+
+def drain_codex_relay_wakes(registry: CodexWakeRegistry) -> None:
+    """Join owned workers through their final durable and trace operations."""
+    registry_id = id(registry)
+    with _scheduled_lock:
+        workers = [worker for owner, worker in _workers if owner == registry_id]
+    if threading.current_thread() in workers:
+        raise RuntimeError("Cannot drain Codex wake workers from a wake worker")
+    for worker in workers:
+        worker.join()
+    with _scheduled_lock:
+        _workers.difference_update((registry_id, worker) for worker in workers)
 
 
 def get_codex_wake_registry(state_dir: Path | None = None) -> CodexWakeRegistry:
@@ -152,6 +173,9 @@ def reconcile_codex_relay_wake_reservations(
 ) -> int:
     """Remove terminal fences and atomically replace expired wake claims."""
     registry = registry or get_codex_wake_registry()
+    with _scheduled_lock:
+        if registry in _closing_registries:
+            return 0
     candidates = registry.reservations() if reservations is None else reservations
     if registry.persistent:
         reconciled = 0
@@ -412,13 +436,19 @@ def _schedule_reserved_codex_relay_wake(
     wake_key = (id(registry), reservation.session_ref, reservation.container_ref)
     attempt_id = f"relay-activation-{uuid.uuid4().hex}"
     with _scheduled_lock:
-        if (_scheduled_session_generations.get(wake_key) == reservation.generation
+        closing = registry in _closing_registries
+        if not closing and (_scheduled_session_generations.get(wake_key) == reservation.generation
                 and _scheduled_session_delivery_ids.get(wake_key) == reservation.delivery_id):
             return None
-        _scheduled_delivery_ids.add(reservation.delivery_id)
-        _scheduled_session_delivery_ids[wake_key] = reservation.delivery_id
-        _scheduled_session_generations[wake_key] = reservation.generation
-        _scheduled_session_attempt_ids[wake_key] = attempt_id
+        if not closing:
+            _scheduled_delivery_ids.add(reservation.delivery_id)
+            _scheduled_session_delivery_ids[wake_key] = reservation.delivery_id
+            _scheduled_session_generations[wake_key] = reservation.generation
+            _scheduled_session_attempt_ids[wake_key] = attempt_id
+    if closing:
+        if reservation.outcome == "prepared":
+            registry.release_generation(reservation)
+        return None
     _emit_trace(
         trace_callback, attempt_id, reservation.delivery_id,
         reservation.recipient_endpoint_id, "prepared",
@@ -428,9 +458,22 @@ def _schedule_reserved_codex_relay_wake(
         args=(reservation, registry, attempt_id, trace_callback),
         daemon=True,
     )
+    closing = False
     try:
-        worker.start()
-    except RuntimeError:
+        with _scheduled_lock:
+            if registry in _closing_registries:
+                closing = True
+            else:
+                _workers.difference_update(
+                    (owner, old) for owner, old in tuple(_workers) if not old.is_alive()
+                )
+                _workers.add((id(registry), worker))
+                try:
+                    worker.start()
+                except Exception:
+                    _workers.discard((id(registry), worker))
+                    raise
+    except Exception:
         if reservation.outcome == "prepared":
             registry.release_generation(reservation)
         _clear_schedule(reservation, registry)
@@ -440,6 +483,18 @@ def _schedule_reserved_codex_relay_wake(
             ActivationAttemptResult(
                 "deferred", "worker_start_failed",
                 native_retry_safe=reservation.outcome == "prepared",
+            ),
+        )
+        return None
+    if closing:
+        if reservation.outcome == "prepared":
+            registry.release_generation(reservation)
+        _clear_schedule(reservation, registry)
+        _emit_trace(
+            trace_callback, attempt_id, reservation.delivery_id,
+            reservation.recipient_endpoint_id, "completed",
+            ActivationAttemptResult(
+                "deferred", "shutdown", native_retry_safe=reservation.outcome == "prepared",
             ),
         )
         return None
@@ -492,6 +547,10 @@ def schedule_codex_relay_wake(
         return None
 
     registry = registry or get_codex_wake_registry()
+
+    with _scheduled_lock:
+        if registry in _closing_registries:
+            return None
 
     def still_pending() -> bool:
         if relay_service is None:
@@ -827,6 +886,28 @@ def _stderr_category(stderr: str | bytes | None) -> str:
         stderr[:2048].decode("utf-8", errors="replace").lower()
         if isinstance(stderr, bytes) else stderr[:2048].lower()
     )
+    text = sample.removeprefix("error: ")
+    for server in ("local app-server daemon", "remote app server"):
+        prefix = f"the {server} does not support thread/queue/add; update or restart the {server}: "
+        if text.startswith(prefix):
+            sample = text[len(prefix):]
+            break
+    queue = re.match(
+        r"(?:error: )?failed to queue session message(?:: |\s+caused by:\s*)"
+        r"thread/queue/add (transport error: |response decode error: |failed: )", sample,
+    )
+    if queue is not None:
+        if queue[1] == "transport error: ":
+            return "queue_transport"
+        if queue[1] == "response decode error: ":
+            return "queue_decode"
+        detail = sample[queue.end():]
+        # Server message/data are arbitrary text. Only an unambiguous terminal code is safe.
+        code = (re.fullmatch(r"[^\r\n]* \(code (0|-?[1-9][0-9]{0,9})\)\s*", detail)
+                if len(stderr) <= 2048 and ", data:" not in detail else None)
+        if code is not None and -(1 << 31) <= int(code[1]) < (1 << 31):
+            return f"queue_rpc_{int(code[1])}"
+        return "queue_rpc_unknown"
     if "usage:" in sample or "unexpected argument" in sample:
         return "cli_usage"
     if any(term in sample for term in ("thread not found", "unknown thread", "no such thread")):
@@ -834,6 +915,37 @@ def _stderr_category(stderr: str | bytes | None) -> str:
     if any(term in sample for term in ("connection refused", "transport error", "timed out")):
         return "transport"
     return "other"
+
+
+def _stderr_structure(stderr: str | bytes | None) -> str:
+    """Report fixed observations, never arbitrary error content or a trusted cause."""
+    try:
+        if not stderr:
+            return "empty"
+        sample = (stderr[:2048].decode("utf-8", errors="replace")
+                  if isinstance(stderr, bytes) else stderr[:2048]).lower()
+        outer = "unknown"
+        text = sample.removeprefix("error: ")
+        for marker, name in (
+            ("the local app-server daemon does not support thread/queue/add; update or restart the local app-server daemon: ", "unsupported_local"),
+            ("the remote app server does not support thread/queue/add; update or restart the remote app server: ", "unsupported_remote"),
+            ("cannot queue through an embedded app server while a local app-server daemon is running; remove configuration overrides or use --remote", "embedded_conflict"),
+            ("failed to find codex home:", "home"),
+            ("failed to load config.toml:", "config"),
+        ):
+            if text.startswith(marker):
+                outer = name
+                break
+        return " ".join((
+            f"outer={outer}",
+            "wrapper=" + ("present" if "failed to queue session message" in sample else "absent"),
+            "method=" + ("present" if "thread/queue/add" in sample else "absent"),
+            "sample=" + ("truncated" if len(stderr) > 2048 else "complete"),
+            "lines=" + ("multiple" if any(c in sample.rstrip("\r\n") for c in "\r\n") else "single"),
+            "prefix=" + ("ansi" if sample.startswith("\x1b[") else "plain"),
+        ))
+    except Exception:
+        return "unknown"
 
 
 def _finish_launch(
@@ -879,10 +991,11 @@ def _finish_launch(
                     else _log_fingerprint(delivery_id)
                 )
                 logger.info(
-                    "codex_relay_wake_stderr delivery_ref=%s reason=timeout exit_code=%s category=%s",
+                    "codex_relay_wake_stderr delivery_ref=%s reason=timeout exit_code=%s category=%s structure=%s",
                     delivery_ref,
                     exit_code,
                     category,
+                    _stderr_structure(exc.stderr),
                 )
             except Exception:
                 pass
@@ -898,8 +1011,8 @@ def _finish_launch(
             else _log_fingerprint(delivery_id)
         )
         logger.info(
-            "codex_relay_wake_stderr delivery_ref=%s exit_code=%s category=%s",
-            delivery_ref, process.returncode, _stderr_category(stderr),
+            "codex_relay_wake_stderr delivery_ref=%s exit_code=%s category=%s structure=%s",
+            delivery_ref, process.returncode, _stderr_category(stderr), _stderr_structure(stderr),
         )
     return "failed", "nonzero_exit", process.returncode
 
@@ -976,7 +1089,8 @@ def _wake_prompt(delivery_id: str | None = None) -> str:
         f"Pallium Relay wake for {delivery_id}. If no [Pallium Relay message ...] "
         "block accompanies this turn, do not conclude the inbox is empty and do not "
         "call pallium_relay_receive or resend. Inspect this exact delivery with "
-        "pallium_relay_trace by passing it as message_id."
+        "pallium_relay_trace by passing it as message_id. "
+        "After this check, continue any already authorized task; this wake does not cancel it."
     )
 
 

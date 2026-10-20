@@ -21,6 +21,7 @@ export default {
     const cwd = ctx.location.directory;
     const ownerId = "opencode-owner-" + randomUUID().replaceAll("-", "");
     const sessions = new Map();
+    const assistantChecks = new Map();
     const registrations = [];
     const abort = new AbortController();
     let disposed = false;
@@ -38,7 +39,12 @@ export default {
       sessions.get(id) === item && item.abort.signal === signal && !signal.aborted;
     const retire = (id, item) => {
       item?.abort.abort();
-      if (sessions.get(id) === item) { sessions.delete(id); retirement++; }
+      if (sessions.get(id) === item) {
+        sessions.delete(id);
+        retirement++;
+        const pending = assistantChecks.get(id);
+        if (pending) { for (const token of pending) token.valid = false; assistantChecks.delete(id); }
+      }
     };
     const scope = (id) => pallium.resolveContainerRef(cwd, id);
     const base = (id, item) => ({
@@ -66,11 +72,14 @@ export default {
       item.scopeGeneration = session.scope_generation;
       return true;
     };
-    const owned = async (id, item, signal = item?.abort.signal) => {
+    const owned = async (id, item = sessions.get(id), signal = item?.abort.signal, token) => {
+      const started = retirement;
+      const current = () => (!token || token.valid) && (item ? live(id, item, signal) : !disposed && (token != null || retirement === started) &&
+        (!sessions.has(id) || live(id, sessions.get(id))));
       try {
-        if (!live(id, item, signal)) return false;
+        if (!current()) return false;
         const session = await ctx.session.get({ sessionID: id });
-        return live(id, item, signal) && sameLocation(session?.location?.directory, cwd);
+        return current() && sameLocation(session?.location?.directory, cwd);
       } catch { return false; }
     };
     const detach = async (id, item) => {
@@ -146,7 +155,19 @@ export default {
       } finally { if (live(id, item, signal)) item.busy = false; }
     };
     const ingestAssistant = async (id) => {
-      const item = state(id);
+      const token = { valid: true };
+      let pending = assistantChecks.get(id);
+      if (!pending) assistantChecks.set(id, pending = new Set());
+      pending.add(token);
+      let item;
+      try {
+        if (!await owned(id, sessions.get(id), undefined, token) || disposed || !token.valid) return;
+        item = state(id);
+      } finally {
+        token.valid = false;
+        pending.delete(token);
+        if (!pending.size && assistantChecks.get(id) === pending) assistantChecks.delete(id);
+      }
       const signal = item?.abort.signal;
       const captures = item?.captures;
       let sourceId;
@@ -177,7 +198,7 @@ export default {
           visibility: "private", artifact_kind: "message", ...(Object.keys(metadata).length ? { metadata } : {}),
         }], signal);
         if (Array.isArray(response) && response.length === 1 && typeof response[0]?.source_item_id === "string" &&
-            response[0].source_item_id.trim() && await owned(id, item, signal)) item.lastAssistant = sourceId;
+            response[0].source_item_id.trim() && await owned(id, item, signal) && live(id, item, signal)) item.lastAssistant = sourceId;
       } catch (error) { log(`V2 assistant ingest failed: ${String(error)}`); }
       finally { if (reserved) captures.delete(sourceId); }
     };

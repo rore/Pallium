@@ -1,4 +1,5 @@
 import re
+import shlex
 import shutil
 import json
 import os
@@ -7,6 +8,7 @@ import sys
 import textwrap
 from pathlib import Path
 
+import pytest
 
 WORKFLOW = (Path(__file__).parents[1] / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
 
@@ -57,10 +59,102 @@ def test_required_linux_lane_cannot_skip_mcp_tests() -> None:
     assert "--durations=20" in linux
 
 
+def test_windows_smoke_installs_mcp_for_actual_logging_regression() -> None:
+    smoke = _job("windows-smoke", "windows-full")
+    assert "tests/test_runtime_logging.py" in smoke
+    assert 'pip install -e ".[dev,vector,mcp]"' in smoke
+
+
+def test_only_manual_full_lanes_continue_after_pytest_failures() -> None:
+    flag = "${{ github.event_name != 'workflow_dispatch' && '-x' || '' }}"
+    for job, next_job, count in (("test", "windows-smoke", 1),
+                                 ("windows-smoke", "windows-full", 2),
+                                 ("windows-full", "nightly-slow-smoke", 2)):
+        block = _job(job, next_job)
+        commands = ["python -m pytest" + part.split("\n\n", 1)[0]
+                    for part in block.split("python -m pytest")[1:]]
+        assert len(commands) == count
+        for command in commands:
+            assert command.count(flag) == 1
+            for event in ("workflow_dispatch", "pull_request", "push", "schedule"):
+                tokens = shlex.split(command.replace(flag, "" if event == "workflow_dispatch" else "-x"))
+                assert ("-x" in tokens) == (event != "workflow_dispatch")
+        if job != "test":
+            assert block.count("continue-on-error: ${{ github.event_name == 'workflow_dispatch' }}") == 2
+            assert "id: serial" in block and "id: remaining" in block
+    assert flag not in _job("nightly-slow-smoke", "result")
+
+
+def test_manual_windows_final_checks_reject_any_incomplete_selection() -> None:
+    checks = []
+    for job, next_job in (("windows-smoke", "windows-full"), ("windows-full", "nightly-slow-smoke")):
+        block = _job(job, next_job).split("      - name: Preserve manual selection failures\n", 1)[1]
+        assert "if: always() && github.event_name == 'workflow_dispatch'" in block
+        assert "SERIAL: ${{ steps.serial.outcome }}" in block
+        assert "REMAINING: ${{ steps.remaining.outcome }}" in block
+        checks.append(textwrap.dedent(block.split("        run: |\n", 1)[1]))
+    shell = shutil.which("pwsh") or shutil.which("powershell")
+    if not shell and os.name != "nt":
+        pytest.skip("PowerShell is unavailable for executing the Windows CI outcome checks")
+    assert shell, "PowerShell is required to verify Windows CI failure preservation"
+    for code in checks:
+        for serial, remaining in (("success", "success"), ("failure", "success"),
+                                  ("success", "failure"), ("failure", "failure"),
+                                  ("skipped", "success"), ("success", "skipped"),
+                                  ("", "success"), ("success", "")):
+            result = subprocess.run([shell, "-NoLogo", "-NoProfile", "-Command", code],
+                                    capture_output=True, text=True, timeout=10,
+                                    env={**os.environ, "SERIAL": serial, "REMAINING": remaining})
+            assert (result.returncode == 0) == (serial == remaining == "success"), result.stderr
+
+
+def test_windows_stop_verifier_runs_serially_for_pr_and_full_windows_lanes() -> None:
+    node = "tests/test_service.py::test_windows_stop_verifier_executes_new_and_legacy_launcher_parsers"
+    launcher = "tests/test_service_launcher_lifecycle.py"
+    smoke = _job("windows-smoke", "windows-full")
+    full = _job("windows-full", "nightly-slow-smoke")
+    assert "github.event_name != 'pull_request'" not in smoke
+    for block in (smoke, full):
+        commands = re.findall(r"(?m)^\s+run: (python -m pytest .+)$", block)
+        for path in (node, launcher):
+            selected = [command for command in commands if path in command.split()]
+            assert len(selected) == 1
+            assert "-n 0" in selected[0]
+    for path in (node, launcher):
+        assert smoke.count(path) == 1
+        assert full.count(path) == 2
+    assert f"--deselect={node}" in full
+    assert f"--ignore={launcher}" in full
+
+
 def test_all_test_commands_report_slowest_tests() -> None:
     commands = WORKFLOW.split("python -m pytest")[1:]
     assert len(commands) >= 5
     assert all("--durations=20" in command.split("\n\n", 1)[0] for command in commands)
+
+
+def test_retained_hook_deadline_runs_once_in_each_windows_lane() -> None:
+    node = "tests/test_codex_retained_wake.py::test_session_start_lock_budget_claims_emits_and_acks_once"
+    smoke = _job("windows-smoke", "windows-full")
+    full = _job("windows-full", "nightly-slow-smoke")
+    for block in (smoke, full):
+        commands = re.findall(r"(?m)^\s+run: (python -m pytest .+)$", block)
+        selected = [command for command in commands if node in command.split()]
+        assert len(selected) == 1 and "-n 0" in selected[0]
+    assert smoke.count(node) == 1
+    assert full.count(node) == 2
+    assert f"--deselect={node}" in full
+
+
+def test_windows_full_runs_native_reconnect_serially_with_slow_cases() -> None:
+    path = "tests/test_codex_retained_native_reconnect.py"
+    full = _job("windows-full", "nightly-slow-smoke")
+    commands = re.findall(r"(?m)^\s+run: (python -m pytest .+)$", full)
+    serial, = [command for command in commands if path in command.split()]
+    assert "-n 0" in serial and '-m "slow or not slow"' in serial
+    assert f"--ignore={path}" in full
+    assert full.count(path) == 2
+    assert path not in _job("windows-smoke", "windows-full")
 
 
 def test_nightly_slow_smoke_is_bounded_and_hermetic() -> None:

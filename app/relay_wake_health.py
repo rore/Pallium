@@ -12,7 +12,7 @@ _ENROLLMENT_FAILURE_REASONS = {
     "invalid-policy", "invalid-policy-lock", "invalid-response", "message-limit", "native-failed",
     "native-tool-failed", "path-unavailable", "peer-gone", "peer-mismatch", "peer-unavailable",
     "policy-busy", "policy-changed", "policy-inactive", "stopped", "timeout", "transport-failed",
-    "unsafe-acl", "unsafe-owner", "unsafe-path", "unsupported-acl",
+    "unsafe-acl", "unsafe-owner", "unsafe-path", "unsupported-acl", "registration-missing",
 }
 
 

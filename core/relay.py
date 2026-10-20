@@ -12,7 +12,7 @@ from core.work_ref import readable_work_ref, validate_work_ref_key
 from redaction import redact_sensitive
 
 
-RELAY_RUNTIMES = frozenset({"claude-code", "codex", "opencode"})
+RELAY_RUNTIMES = frozenset({"claude-code", "codex", "opencode", "hermes"})
 RELAY_MESSAGE_MAX_CHARS = 16000
 RELAY_MESSAGE_PAGE_DEFAULT_CHARS = 2000
 RELAY_TURN_MAX_CHARS = 2400
@@ -204,6 +204,7 @@ class RelayService:
         register_session: bool = True,
         structural_work_refs: Any = None,
         exact_delivery_id: str | None = None,
+        claim_expires_at_ms: int | None = None,
         codex_wake_endpoint_id: str | None = None,
         codex_wake_generation: int | None = None,
         previous_container_ref: str | None = None,
@@ -218,6 +219,10 @@ class RelayService:
             raise ValueError("max_response_chars must be >= 0 (0 = no limit)")
         if max_messages < 0:
             raise ValueError("max_messages must be >= 0 (0 = no limit)")
+        if claim_expires_at_ms is not None and (
+            type(claim_expires_at_ms) is not int or not 1 <= claim_expires_at_ms <= 2**53 - 1
+        ):
+            raise ValueError("invalid Relay claim expiry")
         runtime = validate_runtime(runtime)
         session_ref = _opaque(session_ref, "session_ref")
         if exact_delivery_id is not None:
@@ -263,6 +268,7 @@ class RelayService:
             max_messages=max_messages,
             lease_seconds=RELAY_CLAIM_LEASE_SECONDS,
             **({"exact_delivery_id": exact_delivery_id} if exact_delivery_id is not None else {}),
+            **({"claim_expires_at_ms": claim_expires_at_ms} if claim_expires_at_ms is not None else {}),
             **({
                 "codex_wake_endpoint_id": codex_wake_endpoint_id,
                 "codex_wake_generation": codex_wake_generation,
@@ -733,6 +739,30 @@ class RelayService:
         if not callable(resolve):
             raise RelayUnavailableError("relay endpoint scope lookup is not supported")
         return resolve(endpoint_id)
+
+    def session_view_by_endpoint(
+        self, endpoint_id: str, *, now: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Read the exact endpoint's fresh session view, including scope generation."""
+        endpoint_id = _opaque(endpoint_id, "endpoint_id", maximum=46)
+        if not _ENDPOINT_ID_RE.fullmatch(endpoint_id):
+            raise ValueError("endpoint_id must be a canonical Relay endpoint")
+        query = getattr(self._store, "relay_session_view_by_endpoint", None)
+        if callable(query):
+            view = query(endpoint_id, recent_seconds=RELAY_RECENT_SECONDS, now=now)
+            # Keep the scope validation previously performed by list_sessions.
+            if (view.get("endpoint_id") != endpoint_id
+                    or self._scope(view["container_ref"]) != view["container_ref"]
+                    or validate_runtime(view["runtime"]) != view["runtime"]
+                    or _opaque(view["session_ref"], "session_ref") != view["session_ref"]):
+                raise RelayNotFoundError("relay endpoint scope not found")
+            return view
+        scope = self.session_scope_by_endpoint(endpoint_id)
+        matches = [row for row in self.list_sessions(**scope, include_inactive=True, now=now)
+                   if row.get("endpoint_id") == endpoint_id]
+        if len(matches) != 1:
+            raise RelayNotFoundError("relay endpoint not found")
+        return matches[0]
 
     def codex_wake_reservation_state(
         self, *, delivery_id: str

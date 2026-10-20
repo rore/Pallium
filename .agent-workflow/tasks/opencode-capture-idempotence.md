@@ -41,6 +41,8 @@ Resume verification: run the affected OpenCode package suite; caller-surface HTT
 
 ## Implementation
 
+- Resume implementation: normally merged actual main178fea16; retained both native lost-response and directory-marker state and default-compaction summary. Inspected automatic plugin and caller merges. Added only the reviewed caller-side lifetime check after receipt ownership plus deterministic helper-return/rebind regression; captured-Set cleanup remains unchanged. Actual-source review and fresh coherent tests are pending, with no earlier evidence relabeled.
+
 - Created isolated managed branch `feat/opencode-capture-idempotence` at e9eb3956, invoked Agent Workflow and classified full intent before source edits. No application/test change.
 - Source trace confirms production backend uniqueness is global over source_type/source_id, so the stable source identity must include the capture's full scope rather than assistant ID alone. No backend change proposed.
 - Independent discovery confirms completed native tool/text steps use distinct assistant IDs and timestamps before idle; it does not prove public context inside active compaction or a delayed completion read cannot select an unfinished assistant. Bounded isolated native qualification delegated to /root/disposal_native_qualification, ignored artifacts only. No speculative snapshot-version ledger/hash contract adopted.

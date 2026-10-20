@@ -9,6 +9,7 @@ import subprocess
 import sys
 import threading
 import time
+from itertools import count
 
 import pytest
 
@@ -368,13 +369,16 @@ def _configure_observation_hook(module, tmp_path, *, rendered=True,
     """Drive the real hook main() with deterministic local dependencies."""
     operations = []
     emitted = []
-    module.start_hook_deadline = lambda *a, **k: None
+    original_start_deadline = module.start_hook_deadline
+    module.start_hook_deadline = lambda *a, **k: original_start_deadline(
+        *a, **k, clock=count(start=10, step=.001).__next__
+    )
     module.read_hook_input = lambda: {
         "source": "resume", "cwd": str(tmp_path), "session_id": SID,
         "prompt": "ordinary user prompt",
     }
     module.derive_container_ref = lambda cwd: "container"
-    module.derive_actor_ref = lambda cwd, session: "actor"
+    module.derive_actor_ref = lambda cwd, session, expected_container_ref=None: "actor"
     module.pin_container = lambda *a, **k: None
     module.resolve_container_ref = lambda *a, **k: "container"
     module.discover_work_refs = lambda *a, **k: {}
@@ -506,7 +510,7 @@ def test_observer_distinguishes_unavailable_from_malformed_target_response(
     module, tmp_path, response_case, observation_reader
 ):
     manifest, evidence, _ = setup_manifest(tmp_path, "observe")
-    _configure_observation_hook(
+    operations, _, _ = _configure_observation_hook(
         module, tmp_path, unavailable=response_case == "unavailable",
         malformed=response_case == "malformed",
     )
@@ -518,10 +522,11 @@ def test_observer_distinguishes_unavailable_from_malformed_target_response(
         undo()
     rows = [json.loads(line) for line in observation_reader["wait"](evidence).splitlines()]
     response_targets = [row["target_present"] for row in rows if row["stage"] == "relay_response"]
-    assert any(response_targets) is (response_case == "malformed")
+    diagnostic = (response_targets, rows, operations)
+    assert any(response_targets) is (response_case == "malformed"), diagnostic
     assert not any(row["target_present"] for row in rows if row["stage"] == "format_relay")
     assert not any(row["target_present"] for row in rows if row["stage"] == "acknowledge_relay")
-    assert any(row["delivery_id"] == DELIVERY for row in rows) is (response_case == "malformed")
+    assert any(row["delivery_id"] == DELIVERY for row in rows) is (response_case == "malformed"), diagnostic
 
 
 def test_observer_rejects_post_response_state_write_and_does_not_mark_rendered(module, tmp_path, observation_reader):
@@ -926,6 +931,9 @@ def test_observer_preserves_real_http_hook_emission_and_ack(http_wake, monkeypat
             "payload": "observer caller-surface payload", **WAKE_SCOPE,
         })
         assert response.status_code == 200, response.text
+        for worker in http_wake[6]:
+            worker.join(5)
+            assert not worker.is_alive(), "native wake blocked hook/registry"
         return response.json()["deliveries"][0]
 
     baseline = send("observer-baseline")
@@ -954,10 +962,32 @@ def test_observer_preserves_real_http_hook_emission_and_ack(http_wake, monkeypat
         return result
 
     monkeypatch.setattr(hook, "acknowledge_relay", acknowledge)
+    # Compare hook behavior independently of disk time spent on local admission.
+    from itertools import count
+
+    common = hook._common
+    native_clock = time.monotonic
+    clock = count(start=10.0, step=.001).__next__
+    original_start = hook.start_hook_deadline
+
+    def start_deadline(*args, **kwargs):
+        return original_start(*args, **kwargs, clock=clock)
+
+    monkeypatch.setattr(hook, "start_hook_deadline", start_deadline)
     hook_runner()
     baseline_events = list(events)
     baseline_stdout = capsys.readouterr().out
     baseline_requests = list(request_log)
+    assert baseline_requests == [("POST", "/relay/turn"), ("POST", "/relay/deliveries/ack")]
+    assert [event[0] for event in baseline_events] == ["emit", "ack"]
+    assert "observer caller-surface payload" in baseline_events[0][2]
+    baseline_status = original_request(
+        "GET", "/relay/messages/observer-baseline", params=WAKE_SCOPE,
+    )
+    assert baseline_status.status_code == 200, baseline_status.text
+    baseline_delivery = baseline_status.json()["deliveries"][0]
+    assert baseline_delivery["state"] == "delivered" and baseline_delivery["attempts"] == 1
+    assert common.hook_deadline().clock is clock and time.monotonic is native_clock
 
     observed = send("observer-target")
     events.clear()

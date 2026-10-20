@@ -25,6 +25,158 @@ from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
 pytestmark = pytest.mark.slow
 
 
+@pytest.mark.parametrize("existing,phase,retired", [
+    (False, "lookup", "other"), (True, "lookup", "other"),
+    (False, "caller", "other"), (True, "caller", "other"),
+    (False, "lookup", "same"), (False, "lookup", "recreated"),
+    (False, "lookup", "dispose"), (False, "lookup", "created"),
+])
+def test_assistant_ownership_retirement_through_http_and_history(client, tmp_path, existing, phase, retired):
+    """Public plugin callbacks use a controlled native client and real Pallium HTTP."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    subprocess.run(["git", "init", "-q", str(workspace)], check=True)
+    subprocess.run(["git", "-C", str(workspace), "remote", "add", "origin",
+                    "https://example.test/team/ownership.git"], check=True)
+    attempted, stored, closed = [], [], []
+
+    class OwnershipHTTP(BaseHTTPRequestHandler):
+        def log_message(self, *_):
+            pass
+
+        def forward(self):
+            raw = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            body = json.loads(raw) if raw else None
+            if self.path == "/items":
+                attempted.extend(body)
+            if self.path == "/relay/sessions/close":
+                closed.append(body["session_ref"])
+            response = client.request(self.command, self.path, content=raw or None,
+                                      headers={"Content-Type": "application/json"})
+            if self.path == "/items" and response.is_success:
+                stored.extend(zip(body, response.json()))
+            payload = response.content
+            try:
+                self.send_response(response.status_code)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                pass
+
+        do_GET = do_POST = forward
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), OwnershipHTTP)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    program = tmp_path / "ownership-caller.mjs"
+    program.write_text(r"""import assert from 'node:assert/strict';
+import {writeFileSync} from 'node:fs';
+const {default:production}=await import(process.env.OWNERSHIP_PLUGIN);
+const config=JSON.parse(process.env.OWNERSHIP_CASE),cwd=process.env.OWNERSHIP_DIRECTORY;
+const sessionID='ses_ownership_a',other='ses_ownership_b',hooks={},disposed=[];
+const defer=()=>{let resolve;const promise=new Promise(done=>resolve=done);return{promise,resolve}};
+const entered=defer(),release=defer();
+let waiting,acknowledge,lookup=false,gap=false,eventDone,contextReads=0,locationReads=0;
+let text='OWNERSHIP_שלום',cleanup;
+const deliver=(id,type='session.deleted')=>{
+ assert.equal(typeof waiting,'function','subscriber must await the public event');
+ const done=defer();acknowledge=done.resolve;
+ const resolve=waiting;waiting=null;resolve({value:{type,data:{sessionID:id}},done:false});
+ return done.promise;
+};
+const ctx={location:{directory:cwd},app:{log(){}},session:{
+ hook:async(name,callback)=>{hooks[name]=callback;return{dispose:()=>disposed.push(name)}},
+ get:async({sessionID:id})=>{
+  if(id===sessionID&&lookup){lookup=false;entered.resolve();await release.promise}
+  return{location:{get directory(){
+   if(id===sessionID&&gap){gap=false;locationReads++;eventDone=deliver(other)}
+   return cwd;
+  }}};
+ },
+ context:async()=>{contextReads++;return{data:[
+  {type:'assistant',id:'msg_ownership_'+(text.startsWith('SUCCESSOR')?'new':'old'),
+   time:{created:0,completed:1},content:[{type:'text',text}]},
+ ]}},
+},event:{subscribe:({signal})=>({
+ [Symbol.asyncIterator](){return this},
+ next(){
+  acknowledge?.();acknowledge=null;
+  if(signal.aborted)return Promise.resolve({done:true});
+  return new Promise(resolve=>{waiting=resolve;
+   signal.addEventListener('abort',()=>resolve({done:true}),{once:true});
+  });
+ },
+})}};
+try{
+ cleanup=await production.setup(ctx);
+ if(config.existing)await hooks.prompt({sessionID,messageID:'msg_ownership_seed',prompt:{text:'generic seed'}});
+ lookup=config.phase==='lookup';gap=config.phase==='caller';
+ const capture=hooks.compaction({sessionID});
+ if(config.phase==='lookup'){
+  await entered.promise;
+  if(config.retired==='dispose')await cleanup();
+  else if(config.retired==='created')await deliver(sessionID,'session.created');
+  else{
+   await deliver(config.retired==='other'?other:sessionID);
+   if(config.retired==='recreated')await deliver(sessionID,'session.created');
+  }
+  release.resolve();
+ }
+ await capture;
+ if(eventDone)await eventDone;
+ const initialReads=contextReads;
+ if(['same','recreated'].includes(config.retired)){
+  text='SUCCESSOR_שלום';await hooks.compaction({sessionID});
+ }
+ writeFileSync(process.env.OWNERSHIP_REPORT,JSON.stringify({initialReads,contextReads,locationReads}));
+}finally{
+ release.resolve();await cleanup?.();
+ assert.deepEqual([...disposed].sort(),['compaction','context','prompt']);
+}
+""", encoding="utf-8")
+    root = Path(__file__).resolve().parents[1]
+    env = {key: value for key, value in os.environ.items()
+           if not key.startswith(("PALLIUM_", "OPENCODE_", "OPENAI_", "ANTHROPIC_"))
+           and not key.endswith("API_KEY")}
+    private = tmp_path / "profile"
+    private.mkdir()
+    for key in ("HOME", "USERPROFILE", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME"):
+        env[key] = str(private)
+    env.update(PALLIUM_PORT=str(server.server_port), PALLIUM_HOOK_ACTOR_REF="ownership-actor",
+               OWNERSHIP_PLUGIN=(root / "integrations/opencode/.opencode/plugins/pallium-v2.mjs").as_uri(),
+               OWNERSHIP_DIRECTORY=str(workspace), OWNERSHIP_REPORT=str(tmp_path / "ownership-report.json"),
+               OWNERSHIP_CASE=json.dumps({"existing": existing, "phase": phase, "retired": retired}))
+    try:
+        result = subprocess.run([shutil.which("node") or "node", str(program)], env=env, cwd=workspace,
+                                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
+        (tmp_path / "ownership-caller.log").write_text(result.stdout + result.stderr, encoding="utf-8")
+        assert result.returncode == 0, result.stdout + result.stderr
+        report = json.loads((tmp_path / "ownership-report.json").read_text(encoding="utf-8"))
+        expected = ["SUCCESSOR_שלום"] if retired in ("same", "recreated") else [] if retired == "dispose" else ["OWNERSHIP_שלום"]
+        assert [body["content"] for body in attempted] == expected
+        assert len(stored) == len(expected)
+        assert report["initialReads"] == (0 if retired in ("same", "recreated", "dispose") else 1)
+        assert report["locationReads"] == (1 if phase == "caller" else 0)
+        if retired not in ("dispose", "created"):
+            assert ("ses_ownership_b" if retired == "other" else "ses_ownership_a") in closed
+        client.app.state.pallium_service.drain_processing_queue(worker_id="ownership-history")
+        for body, receipt in stored:
+            assert body["thread_ref"] == "ses_ownership_a" and body["actor_ref"] == "ownership-actor"
+            assert body["container_ref"] == "git:example.test/team/ownership"
+            history = client.post("/query", json={"text": body["content"], "container_ref": body["container_ref"],
+                "active_session_ref": body["thread_ref"], "thread_ref": body["thread_ref"],
+                "actor_ref": body["actor_ref"], "visibility": "private", "trigger_origin": "agent_pull",
+                "limit": 50, "source_only": True})
+            assert history.status_code == 200 and receipt["source_item_id"] in history.text
+            expanded = client.get("/source/" + receipt["source_item_id"] + "/context", params={
+                "container_ref": body["container_ref"], "query_actor_ref": body["actor_ref"], "before": 0, "after": 0})
+            assert expanded.status_code == 200 and body["content"] in expanded.text
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 def test_released_native_idle_busy_and_reload(client, tmp_path, test_db_url, monkeypatch):
     import hashlib
 
@@ -36,6 +188,13 @@ def test_released_native_idle_busy_and_reload(client, tmp_path, test_db_url, mon
     workspace.mkdir()
     subprocess.run(["git", "init", "-q", str(workspace)], check=True)
     subprocess.run(["git", "-C", str(workspace), "remote", "add", "origin", "https://example.test/team/relay.git"], check=True)
+    locations = [workspace / name for name in ("one", "two", "three")]
+    for directory in locations:
+        directory.mkdir()
+    foreign = tmp_path / "foreign"
+    foreign.mkdir()
+    subprocess.run(["git", "init", "-q", str(foreign)], check=True)
+    subprocess.run(["git", "-C", str(foreign), "remote", "add", "origin", "https://example.test/team/foreign.git"], check=True)
     scope = {"container_ref": "git:example.test/team/relay"}
     requests = []
     release = threading.Event()
@@ -51,6 +210,7 @@ def test_released_native_idle_busy_and_reload(client, tmp_path, test_db_url, mon
     capture_reply_lost = threading.Event()
     capture_reply_lost.set()
     lost_captures = []
+    assistant_outputs = []
     retirement_armed = threading.Event()
     retirement_blocked = threading.Event()
     retirement_release = threading.Event()
@@ -116,6 +276,9 @@ def test_released_native_idle_busy_and_reload(client, tmp_path, test_db_url, mon
             entered.set()
             assert release.wait(40), "provider not released"
             tool = "IDLE_PAYLOAD_שלום" in json.dumps(body, ensure_ascii=False) and not tool_emitted.is_set()
+            assistant_marker = f"NATIVE_ASSISTANT_שלום_{len(requests)}"
+            if not tool:
+                assistant_outputs.append((assistant_marker, body))
             if tool:
                 tool_emitted.set()
                 # ACK already happened before this model request. Rebuild the
@@ -159,7 +322,7 @@ def test_released_native_idle_busy_and_reload(client, tmp_path, test_db_url, mon
             ] if tool else [
                 {"id": "local", "object": "chat.completion.chunk", "created": 1,
                  "model": "mock-model", "choices": [{"index": 0, "delta": {
-                     "role": "assistant", "content": summary if compacting else "NATIVE_ASSISTANT_שלום"}, "finish_reason": None}]},
+                     "role": "assistant", "content": summary if compacting else assistant_marker}, "finish_reason": None}]},
                 {"id": "local", "object": "chat.completion.chunk", "created": 1,
                  "model": "mock-model", "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
                  "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}},
@@ -251,13 +414,17 @@ export default {...production,setup:async ctx=>{
                 return process, json.loads(line)["url"]
         pytest.fail("native server did not start: " + str(logs[-15:]))
 
-    def api(method, path, body=None):
+    def api(method, path, body=None, headers=None):
         auth = base64.b64encode(b"opencode:local-test").decode()
         request = Request(url + path, method=method, data=None if body is None else json.dumps(body).encode(),
-                          headers={"Authorization": "Basic " + auth, "Content-Type": "application/json"})
+                          headers={"Authorization": "Basic " + auth, "Content-Type": "application/json", **(headers or {})})
         with urlopen(request, timeout=45) as response:
-            raw = response.read()
-            return json.loads(raw) if raw else None
+                raw = response.read()
+                return json.loads(raw) if raw else None
+
+    def activate_plugin(directory):
+        plugins = api("GET", "/api/plugin", headers={"x-opencode-directory": str(directory).replace("\\", "/")})
+        return plugins if "pallium-v2" in json.dumps(plugins).lower() else None
 
     def eventually(check):
         deadline = time.monotonic() + 25
@@ -282,7 +449,9 @@ export default {...production,setup:async ctx=>{
 
     try:
         process, url = start()
-        session = api("POST", "/api/session", {})["data"]["id"]
+        for directory in [workspace, *locations, foreign]:
+            eventually(lambda: activate_plugin(directory))
+        session = api("POST", "/api/session", {"location": {"directory": str(workspace).replace("\\", "/")}})["data"]["id"]
         prefix = "/api/session/" + session
         api("POST", prefix + "/prompt", {"id": "msg_natural_first", "text": "NATIVE_USER_שלום", "delivery": "queue"})
         api("POST", "/api/experimental/session/" + session + "/wait")
@@ -441,12 +610,41 @@ export default {...production,setup:async ctx=>{
             expanded = client.get("/source/" + result["source_item_id"] + "/context", params={**scope,
                 "query_actor_ref": body["actor_ref"], "before": 0, "after": 0})
             assert expanded.status_code == 200 and marker in expanded.text
+        assistant_sources = [body for body, _ in ingested if body.get("role") == "assistant"]
+        natural_marker = assistant_sources[0]["content"]
+        automatic_marker = next(marker for marker, model_body in assistant_outputs
+            if "IDLE_PAYLOAD_שלום" in json.dumps(model_body, ensure_ascii=False)
+            and any(body["content"] == marker for body in assistant_sources))
+        assistant_actor = assistant_sources[0]["actor_ref"]
+        history_client = relay_client[0]
+        history_client.app.state.pallium_service.drain_processing_queue(worker_id="opencode-native-history")
+        for marker in (natural_marker, automatic_marker):
+            sources = [(body, result) for body, result in ingested
+                if body.get("role") == "assistant" and body["content"] == marker]
+            assert len(sources) == 1, (marker, [body["content"] for body, _ in ingested if body.get("role") == "assistant"])
+            body, result = sources[0]
+            assert body["container_ref"] == container and body["thread_ref"] == session and body["actor_ref"] == assistant_actor
+            history = history_client.post("/query", json={"text": "NATIVE", "container_ref": container,
+                "active_session_ref": session, "thread_ref": session, "actor_ref": assistant_actor,
+                "visibility": "private", "trigger_origin": "agent_pull", "limit": 50, "source_only": True})
+            assert history.status_code == 200, history.text
+            assert result["source_item_id"] in json.dumps(history.json())
+            expanded = history_client.get("/source/" + result["source_item_id"] + "/context", params={**scope,
+                "query_actor_ref": assistant_actor, "before": 0, "after": 0})
+            assert expanded.status_code == 200 and marker in expanded.text
+        foreign_history = history_client.post("/query", json={"text": "NATIVE", "container_ref": "git:example.test/team/foreign",
+            "active_session_ref": session, "thread_ref": session, "visibility": "private",
+            "trigger_origin": "agent_pull", "limit": 50, "source_only": True})
+        assert foreign_history.status_code == 200, foreign_history.text
+        foreign_rows = [json.dumps(row, ensure_ascii=False) for row in foreign_history.json()["results"]]
+        for marker in (natural_marker, automatic_marker):
+            assert not any(marker in row for row in foreign_rows), marker
         assert all(not body["content"].startswith("[Pallium Relay wake:") for body, _ in ingested)
         stop(process, graceful=False)
         reload_message = send("RELOAD_PAYLOAD")
         service_unavailable.set()
         process, url = start()
-        api("GET", "/api/plugin?directory=" + str(workspace).replace("\\", "/"))
+        eventually(lambda: activate_plugin(workspace))
         time.sleep(3)
         service_unavailable.clear()
         eventually(lambda: delivered(reload_message))

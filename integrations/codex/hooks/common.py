@@ -21,6 +21,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable
 
@@ -403,6 +404,8 @@ def discover_work_refs(cwd: object) -> WorkRefDiscovery:
 def structural_work_refs_payload(
     container_ref: str, discovery: WorkRefDiscovery, cwd: str | None = None
 ) -> list[dict[str, str]]:
+    if not discovery.structural_refs:
+        return []
     repository_ref = repository_scope_ref(cwd) if cwd else None
     if cwd and not repository_ref:
         return []
@@ -899,19 +902,122 @@ def _sweep_old_session_pins() -> None:
         pass
 
 
+@contextmanager
+def _open_atomic_state_file(path: Path):
+    if os.name != "nt":
+        with path.open("r", encoding="utf-8") as stream:
+            yield stream
+        return
+    filename = os.fspath(path)
+    if "\0" in filename:
+        raise ValueError("embedded null character")
+    import ctypes
+    from ctypes import wintypes
+    import msvcrt
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    create = kernel.CreateFileW
+    create.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                       wintypes.LPVOID, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+    create.restype = wintypes.HANDLE
+    close = kernel.CloseHandle
+    close.argtypes = [wintypes.HANDLE]
+    close.restype = wintypes.BOOL
+    # Atomic replacement must not be blocked by an ordinary state reader.
+    handle = create(filename, 0x80000000, 0x1 | 0x2 | 0x4, None, 3, 0x80, None)
+    if handle == ctypes.c_void_p(-1).value:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        descriptor = msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY)
+    except BaseException:
+        close(handle)
+        raise
+    try:
+        with os.fdopen(descriptor, "r", encoding="utf-8", closefd=False) as stream:
+            yield stream
+    finally:
+        os.close(descriptor)
+
+
+def _replace_atomic_state_file(source: Path, destination: Path) -> None:
+    if os.name != "nt":
+        os.replace(source, destination)
+        return
+    import ctypes
+    from ctypes import wintypes
+
+    source_name, destination_name = os.fspath(source), os.fspath(destination)
+    if "\0" in source_name or "\0" in destination_name:
+        raise ValueError("embedded null character")
+    destination_name = os.path.abspath(destination_name)
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    create = kernel.CreateFileW
+    create.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                       wintypes.LPVOID, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+    create.restype = wintypes.HANDLE
+    close = kernel.CloseHandle
+    close.argtypes = [wintypes.HANDLE]
+    close.restype = wintypes.BOOL
+    rename = kernel.SetFileInformationByHandle
+    rename.argtypes = [wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD]
+    rename.restype = wintypes.BOOL
+
+    class RenameInfo(ctypes.Structure):
+        _fields_ = [("Flags", wintypes.DWORD), ("RootDirectory", wintypes.HANDLE),
+                    ("FileNameLength", wintypes.DWORD), ("FileName", wintypes.WCHAR * 1)]
+
+    filename = destination_name.encode("utf-16-le", errors="surrogatepass")
+    buffer = ctypes.create_string_buffer(ctypes.sizeof(RenameInfo) + len(filename) + 2)
+    info = ctypes.cast(buffer, ctypes.POINTER(RenameInfo)).contents
+    info.Flags, info.RootDirectory, info.FileNameLength = 3, None, len(filename)
+    ctypes.memmove(ctypes.addressof(buffer) + RenameInfo.FileName.offset, filename, len(filename))
+    # DELETE access; rename the source entry itself, including a reparse point.
+    handle = create(source_name, 0x10000, 7, None, 3, 0x80 | 0x00200000, None)
+    if handle == ctypes.c_void_p(-1).value:
+        raise ctypes.WinError(ctypes.get_last_error())
+    failure = None
+    try:
+        if not rename(handle, 22, buffer, len(buffer)):
+            failure = ctypes.WinError(ctypes.get_last_error())
+    finally:
+        if not close(handle):
+            raise ctypes.WinError(ctypes.get_last_error())
+    if failure is not None:
+        if failure.winerror in {1, 50, 87}:
+            # Preserve the original platform semantics when the extended call is rejected.
+            os.replace(source_name, destination_name)
+        else:
+            raise failure
+
+
 def _read_session_state(session_id: str) -> dict[str, Any] | None:
     try:
-        data = json.loads(
-            (SESSIONS_DIR / f"{session_id}.json").read_text(encoding="utf-8")
-        )
+        with _open_atomic_state_file(SESSIONS_DIR / f"{session_id}.json") as stream:
+            text = stream.read()
+        data = json.loads(text)
     except (json.JSONDecodeError, OSError, ValueError):
         return None
     return data if isinstance(data, dict) else None
 
 
+def _report_session_state_failure(phase: str, error: BaseException | None = None) -> None:
+    try:
+        errno = error.errno if type(getattr(error, "errno", None)) is int else None
+        winerror = error.winerror if type(getattr(error, "winerror", None)) is int else None
+        print(
+            f"pallium hook: session_state_write_failed phase={phase} "
+            f"error={type(error).__name__ if error is not None else None} errno={errno} winerror={winerror}",
+            file=sys.stderr,
+        )
+    except Exception:
+        pass
+
+
 def _acquire_session_lock(
     session_id: str, *, timeout: float = 0.1, deadline: HookDeadline | None = None,
 ):
+    phase = "lock_setup"
+    native_attempted, last_native_error, last_prepare_error = False, None, None
     try:
         SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
         lock_file = open(SESSIONS_DIR / f"{session_id}.lock", "a+b")
@@ -919,29 +1025,59 @@ def _acquire_session_lock(
         if lock_file.tell() == 0:
             lock_file.write(b"0")
             lock_file.flush()
-        wait_budget = min(timeout, remaining_safe_time(), remaining_safe_time(deadline))
+        clock = deadline.clock if deadline is not None else time.monotonic
+        # Keep the timeout endpoint; caller/global budgets stay in their own clocks.
+        lock_deadline = clock() + max(0.0, timeout)
+        wait_budget = min(
+            timeout, remaining_safe_time(), remaining_safe_time(deadline),
+        )
         if wait_budget <= 0:
+            _report_session_state_failure("lock_budget_exhausted")
+            phase = "lock_close"
             lock_file.close()
             return None
-        clock = deadline.clock if deadline is not None else time.monotonic
-        lock_deadline = clock() + wait_budget
-        while clock() < lock_deadline:
+        while min(
+            lock_deadline - clock(), remaining_safe_time(), remaining_safe_time(deadline),
+        ) > 0:
             try:
+                phase = "native_prepare"
                 lock_file.seek(0)
                 if os.name == "nt":
                     import msvcrt
+                    phase = "native_lock"
+                    native_attempted = True
                     msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
                 else:
                     import fcntl
+                    phase = "native_lock"
+                    native_attempted = True
                     fcntl.flock(
                         lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB
                     )
+                last_native_error = last_prepare_error = None
                 return lock_file
-            except OSError:
-                time.sleep(min(0.01, max(0.0, lock_deadline - clock())))
+            except OSError as error:
+                if phase == "native_lock":
+                    last_native_error = error
+                else:
+                    last_prepare_error = error
+                time.sleep(min(
+                    0.01, max(0.0, lock_deadline - clock()),
+                    remaining_safe_time(), remaining_safe_time(deadline),
+                ))
+        _report_session_state_failure(
+            "native_wait_exhausted" if native_attempted else (
+                "native_prepare" if last_prepare_error is not None else "pre_attempt_deadline"
+            ),
+            last_native_error if native_attempted else last_prepare_error,
+        )
+        last_native_error = last_prepare_error = None
+        phase = "lock_close"
         lock_file.close()
         return None
-    except OSError:
+    except OSError as error:
+        _report_session_state_failure(phase, error)
+        last_native_error = last_prepare_error = None
         return None
 
 
@@ -968,18 +1104,23 @@ def _update_session_state(
     if lock_file is None:
         return False
     temporary: Path | None = None
+    phase = "state_read"
     try:
         current = _read_session_state(session_id) or {}
+        phase = "state_update"
         updated = update(dict(current))
         if updated is None:
             return True
+        phase = "temporary_write"  # Includes JSON encoding and the native write.
         temporary = SESSIONS_DIR / (
             f".{session_id}.{os.getpid()}.{uuid.uuid4().hex}.tmp"
         )
         temporary.write_text(json.dumps(updated), encoding="utf-8")
-        os.replace(temporary, SESSIONS_DIR / f"{session_id}.json")
+        phase = "atomic_replace"
+        _replace_atomic_state_file(temporary, SESSIONS_DIR / f"{session_id}.json")
         return True
-    except (OSError, TypeError, ValueError):
+    except (OSError, TypeError, ValueError) as error:
+        _report_session_state_failure(phase, error)
         return False
     finally:
         if temporary is not None:
@@ -1052,15 +1193,26 @@ def _cache_identity_context(
     context: dict[str, str] | None,
     *,
     actor_ref: str | None = None,
+    expected_container_ref: str | None = None,
 ) -> bool:
     sid = _safe_session_id(session_id)
     if sid is None or context is None:
         return False
 
-    def update(state: dict[str, Any]) -> dict[str, Any]:
+    def update(state: dict[str, Any]) -> dict[str, Any] | None:
+        if expected_container_ref is not None and state.get("container_ref") != expected_container_ref:
+            return None
         if not _identity_context_matches(state, context):
             state.pop("actor_ref", None)
         state.update(context)
+        if expected_container_ref is not None:
+            state["identity_container_ref"] = {
+                "container_ref": expected_container_ref,
+                "identity_cwd": context.get("identity_cwd"),
+                "repo_config_fingerprint": context.get("repo_config_fingerprint"),
+            }
+        else:
+            state.pop("identity_container_ref", None)
         state.pop("provisional_identity_context", None)
         if actor_ref:
             state["actor_ref"] = actor_ref
@@ -1142,6 +1294,7 @@ def pin_container(
         ):
             state.pop("identity_cwd", None)
             state.pop("repo_config_fingerprint", None)
+            state.pop("identity_container_ref", None)
             state.pop("actor_ref", None)
         return state
 
@@ -1239,11 +1392,15 @@ def resolve_container_ref(
     context = _identity_context(cwd)
     sid = _safe_session_id(session_id)
     state = _read_session_state(sid) if sid is not None else None
+    binding = state.get("identity_container_ref") if state is not None else None
     if (
         pinned
         and context is not None
         and state is not None
         and _identity_context_matches(state, context)
+        and isinstance(binding, dict)
+        and binding.get("container_ref") == pinned
+        and _identity_context_matches(binding, context)
     ):
         return pinned
     if (
@@ -1262,18 +1419,20 @@ def resolve_container_ref(
         if not updated:
             return pinned or current
         pinned = current
-    _cache_identity_context(session_id, context)
+    _cache_identity_context(session_id, context, expected_container_ref=pinned or current)
     return pinned or current
 
 
 def derive_actor_ref(
     cwd: str | None = None,
     session_id: str | None = None,
+    expected_container_ref: str | None = None,
 ) -> str:
     """Get actor_ref from the session cache or Git, falling back to 'local'."""
     context = _identity_context(cwd) if cwd is not None else None
     sid = _safe_session_id(session_id)
     state = _read_session_state(sid) if sid is not None else None
+    binding = state.get("identity_container_ref") if state is not None else None
     # A non-persisting project switch is provisional until Relay confirms it.
     # Do not cache its identity context, or the next failed turn will make the
     # old pin look current and bounce the provisional scope back.
@@ -1290,20 +1449,30 @@ def derive_actor_ref(
             and cached
             and context is not None
             and _identity_context_matches(state, context)
+            and (
+                expected_container_ref is None
+                or (
+                    isinstance(binding, dict)
+                    and binding.get("container_ref") == state.get("container_ref") == expected_container_ref
+                    and _identity_context_matches(binding, context)
+                )
+            )
         ):
             return cached
 
     actor_ref = os.environ.get("PALLIUM_HOOK_ACTOR_REF", "").strip()
     if actor_ref:
         if not transient_scope:
-            _cache_identity_context(session_id, context, actor_ref=actor_ref)
+            _cache_identity_context(session_id, context, actor_ref=actor_ref,
+                                    expected_container_ref=expected_container_ref)
         return actor_ref
 
     actor_ref = "local"
     timeout = _bounded_timeout(SUBPROCESS_TIMEOUT)
     if timeout <= 0:
         if not transient_scope:
-            _cache_identity_context(session_id, context, actor_ref=actor_ref)
+            _cache_identity_context(session_id, context, actor_ref=actor_ref,
+                                    expected_container_ref=expected_container_ref)
         return actor_ref
     try:
         result = subprocess.run(
@@ -1318,8 +1487,34 @@ def derive_actor_ref(
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         pass
     if not transient_scope:
-        _cache_identity_context(session_id, context, actor_ref=actor_ref)
+        _cache_identity_context(session_id, context, actor_ref=actor_ref,
+                                expected_container_ref=expected_container_ref)
     return actor_ref
+
+
+class _LazyHTTPSHandler(urllib.request.HTTPSHandler):
+    """Keep standard TLS verification, initializing it only for HTTPS."""
+
+    def __init__(self):
+        urllib.request.AbstractHTTPHandler.__init__(self)
+        self._context = None
+        self._https_initialized = False
+
+    def https_open(self, request):
+        if not self._https_initialized:
+            super().__init__(debuglevel=self._debuglevel)
+            self._https_initialized = True
+        return super().https_open(request)
+
+
+def _build_opener(*handlers):
+    return urllib.request.build_opener(*handlers, _LazyHTTPSHandler())
+
+
+def _urlopen(request, *, timeout):
+    return _build_opener().open(request, timeout=timeout)
+
+
 def pallium_request(
     method: str,
     path: str,
@@ -1343,7 +1538,7 @@ def pallium_request(
         return None
     try:
         def request_json():
-            with urllib.request.urlopen(req, timeout=request_timeout) as resp:
+            with _urlopen(req, timeout=request_timeout) as resp:
                 return json.loads(resp.read().decode("utf-8"))
 
         return _run_before_deadline(request_json, deadline)
@@ -1355,7 +1550,7 @@ def pallium_request(
 
 def relay_request(
     method: str, path: str, payload: Any, *, timeout: float, deadline: HookDeadline | None = None
-) -> dict | None:
+) -> dict | list | None:
     """Short-deadline Relay request; failures never block a host turn."""
     url = f"{PALLIUM_BASE_URL}{path}"
     body = None
@@ -1375,7 +1570,7 @@ def relay_request(
     started = time.monotonic()
     try:
         def request_json():
-            with urllib.request.urlopen(req, timeout=request_timeout) as resp:
+            with _urlopen(req, timeout=request_timeout) as resp:
                 return json.loads(resp.read().decode("utf-8"))
 
         return _run_before_deadline(request_json, deadline)
@@ -2320,12 +2515,24 @@ def build_work_trace_metadata(turn_data: TurnData) -> dict | None:
 def _write_session_state_locked(session_id: str, state: dict[str, Any]) -> bool:
     """Atomically persist state while the caller owns the session lock."""
     temporary: Path | None = None
+    phase = "temporary_write"
     try:
         temporary = SESSIONS_DIR / f".{session_id}.{os.getpid()}.{uuid.uuid4().hex}.tmp"
         temporary.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
-        os.replace(temporary, SESSIONS_DIR / f"{session_id}.json")
+        phase = "atomic_replace"
+        _replace_atomic_state_file(temporary, SESSIONS_DIR / f"{session_id}.json")
         return True
-    except (OSError, TypeError, ValueError):
+    except (OSError, TypeError, ValueError) as exc:
+        try:
+            errno = exc.errno if type(getattr(exc, "errno", None)) is int else None
+            winerror = exc.winerror if type(getattr(exc, "winerror", None)) is int else None
+            print(
+                f"pallium hook: session_state_write_failed phase={phase} "
+                f"error={type(exc).__name__} errno={errno} winerror={winerror}",
+                file=sys.stderr,
+            )
+        except Exception:
+            pass
         return False
     finally:
         if temporary is not None:
@@ -2347,7 +2554,7 @@ def relay_turn(
     wake_delivery_id: str | None = None,
     register_session: bool = True,
     deadline: HookDeadline | None = None,
-    request: Callable[..., dict[str, Any] | None] | None = None,
+    request: Callable[..., dict[str, Any] | list[Any] | None] | None = None,
 ) -> dict[str, Any] | None:
     """Serialize a turn, recover durable intent, and confirm its exact scope."""
     sid = _safe_session_id(session_ref if isinstance(session_ref, str) else None)
@@ -2432,9 +2639,6 @@ def relay_turn(
                 "runtime": runtime,
                 "session_ref": sid,
                 "container_ref": source_candidate,
-                "max_chars": 1,
-                "max_messages": 1,
-                "register_session": False,
             }
             remaining = deadline.remaining()
             if remaining <= 0:
@@ -2443,11 +2647,11 @@ def relay_turn(
             if pass_deadline:
                 request_options["deadline"] = deadline
             bootstrap = (request or relay_request)(
-                "POST", "/relay/turn", bootstrap_payload, **request_options
+                "GET", "/relay/sessions", bootstrap_payload, **request_options
             )
-            if not isinstance(bootstrap, dict):
+            if not isinstance(bootstrap, list) or len(bootstrap) != 1:
                 return None
-            bootstrap_session = bootstrap.get("session")
+            bootstrap_session = bootstrap[0]
             if not isinstance(bootstrap_session, dict):
                 return None
             bootstrap_endpoint = bootstrap_session.get("endpoint_id")
@@ -2456,6 +2660,8 @@ def relay_turn(
             if not (
                 isinstance(bootstrap_endpoint, str)
                 and bootstrap_endpoint
+                and bootstrap_session.get("runtime") == runtime
+                and bootstrap_session.get("session_ref") == sid
                 and bootstrap_container == source_candidate
                 and type(bootstrap_generation) is int
                 and bootstrap_generation >= 0
@@ -2531,9 +2737,13 @@ def relay_turn(
                     previous_endpoint_id=endpoint,
                     previous_scope_generation=generation,
                 )
+            # Read UTC before the existing remaining-budget check; never extend the caller deadline.
+            claim_now_ms = int(time.time() * 1000) if "wake_delivery_id" in payload else None
             remaining = deadline.remaining()
             if remaining <= 0:
                 return None
+            if claim_now_ms is not None:
+                payload["claim_expires_at_ms"] = claim_now_ms + int(remaining * 1000)
             request_options = {"timeout": remaining}
             if pass_deadline:
                 request_options["deadline"] = deadline
@@ -2566,7 +2776,7 @@ def relay_turn(
                 return invalid_response
 
             if isinstance(source, str) and source != confirmed_container:
-                for key in ("identity_cwd", "repo_config_fingerprint", "actor_ref", "provisional_identity_context"):
+                for key in ("identity_cwd", "repo_config_fingerprint", "identity_container_ref", "actor_ref", "provisional_identity_context"):
                     state.pop(key, None)
             state["last_confirmed_container_ref"] = confirmed_container
             state["last_confirmed_endpoint_id"] = endpoint_id

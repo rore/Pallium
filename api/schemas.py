@@ -342,6 +342,8 @@ class SourceContextResponse(BaseModel):
     # exposed-source-ids audit; expansions are not lookups.
     parent_lookup_id: str | None = None
     delivery_attempt_id: str | None = None
+    # Navigation only: first eligible following message omitted by the budget.
+    next_source_item_id: str | None = None
 
 
 class HistoricalDeliveryItem(BaseModel):
@@ -849,7 +851,13 @@ class RecordOutcomeResponse(BaseModel):
     recorded: bool
 
 
-RelayRuntime = Literal["claude-code", "codex", "opencode"]
+RelayRuntime = Literal["claude-code", "codex", "opencode", "hermes"]
+
+
+class RelayPendingCandidateResponse(BaseModel):
+    delivery_id: str
+    state: Literal["pending", "claimed"]
+    recipient_endpoint_id: str
 
 
 class RelayTurnRequest(BaseModel):
@@ -868,6 +876,10 @@ class RelayTurnRequest(BaseModel):
     structural_work_refs: Any = None
     wake_delivery_id: str | None = Field(
         default=None, pattern=r"^relay-delivery-[0-9a-f]{32}$"
+    )
+    claim_expires_at_ms: int | None = Field(
+        default=None, strict=True, ge=1, le=2**53 - 1,
+        description="Optional caller UTC Unix-ms expiry for claim admission, not the claim lease.",
     )
     previous_container_ref: str | None = Field(default=None, min_length=1, max_length=512)
     previous_endpoint_id: str | None = Field(default=None, min_length=1, max_length=128)
@@ -954,7 +966,7 @@ class RelayAckRequest(BaseModel):
 
 class RelayActivationResponse(BaseModel):
     contract: Literal["relay-activation/v1"]
-    runtime: Literal["codex", "claude-code", "opencode", "unknown"]
+    runtime: Literal["codex", "claude-code", "opencode", "hermes", "unknown"]
     platform: Literal["windows", "linux", "macos", "other", "unknown"]
     integration: Literal["codex_queue", "claude_peer", "opencode_queue", "hook_only", "unknown"]
     topology: Literal["existing_session", "none", "unknown"]

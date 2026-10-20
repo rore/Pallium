@@ -213,8 +213,22 @@ qualified behavior, current availability, fallback, and native-attempt evidence
 explicit across HTTP, MCP, and dashboard without turning acceptance into delivery.
 `add-relay-delivery-trace` shipped bounded diagnostic evidence through message
 detail, HTTP, and MCP.
-Copilot is later runtime expansion, still blocked on delivery tracing and OpenCode
-wake qualification. Existing lifecycle hardening retains ownership of
+Hermes slice 1 has a real released-host round-trip proof with a local provider
+stub; combined hosted full non-slow regression passed. Slice 2's separate
+stacked checkout also proves the installed skill, trusted MCP, two concurrent
+Hermes conversations, discovery/send/reply/wake and offline setup/removal with
+unrelated data preserved. PR #321 is being finalized against merged reliability
+work before Session History; broader qualification remains open. Live
+installation and overlapping profile writers are unqualified.
+`add-hermes-agent-integration` owns the full Hermes package: skill/guidance, MCP
+with trusted session identity, Relay, Session History capture/search/expansion,
+optional derived memory, setup/removal and lifecycle qualification. The narrow
+round-trip experiment and frozen Relay package are implemented; History remains required
+scope. Broader rollout remains behind the
+current release/rollout/real-delivery gates; this is not shipped Hermes support.
+
+Copilot remains later runtime expansion behind its primary-runtime wake
+qualification prerequisite; delivery tracing is already shipped. Existing lifecycle hardening retains ownership of
 delivery/session state and retention; trace recording never becomes delivery
 authority. The paused Relay workflow-example catalog is reserved for future public
 positioning and usage guidance; it is not a product gate. Add only further extensions repeatedly

@@ -1,0 +1,8 @@
+# Copied to .agent-redline/suppressions.yaml during Node bootstrap.
+suppressions:
+  inlineComments:
+    - "// @ts-ignore"
+    - "// @ts-nocheck"
+    - "// eslint-disable"
+    - "/* eslint-disable"
+    - "// nosemgrep"

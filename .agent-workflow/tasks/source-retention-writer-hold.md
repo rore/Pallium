@@ -1,0 +1,61 @@
+<!-- agent-workflow:start -->
+**Outcome:** Source retention scans protected candidates without holding SQLite writer ownership, then deletes only freshly eligible/unprotected sources with atomic cursor progress.
+**Target:** SQLite source-retention chunk and existing retention caller tests.
+**Scope:** storage/sqlite_retention.py; tests/test_retention.py; this Work Record. Root owns REL-05 ledger, combined integration and release.
+**Constraints:** Preserve delete cascades, raw TTL, completed/failed/skipped status, processing and retention leases, durable/working protection, bounded scan/delete limits and retry/busy settings. Fresh writer session must own write lock before safety rereads. Cursor tracks captured scanned key, including NULL/start/wrap; conflicting cursor/marker retries entire preparation with bounded explicit failure. No framework/config/schema/live changes or tests until root allocates slot.
+**Completion criteria:** Real competing SQLite writer can progress during held protected preparation; final deletion is guarded under actual writer ownership even when maintenance row is absent. New protection/processing lease/lease loss/cursor or marker conflict/source deletion or created_at changes are handled safely. Rollback preserves cursor and survivors; normal stats, cascades, bounded progress and lease-less callers remain compatible.
+**Requirement baseline:**
+{"source":"parent-REL05-assignment-2026-10-12","outcome":"Source retention scans protected candidates without holding SQLite writer ownership, then deletes only freshly eligible/unprotected sources with atomic cursor progress.","scope":"storage/sqlite_retention.py; tests/test_retention.py; this Work Record. Root owns REL-05 ledger, combined integration and release.","constraints":"Preserve delete cascades, raw TTL, completed/failed/skipped status, processing and retention leases, durable/working protection, bounded scan/delete limits and retry/busy settings. Fresh writer session must own write lock before safety rereads. Cursor tracks captured scanned key, including NULL/start/wrap; conflicting cursor/marker retries entire preparation with bounded explicit failure. No framework/config/schema/live changes or tests until root allocates slot.","completion_criteria":"Real competing SQLite writer can progress during held protected preparation; final deletion is guarded under actual writer ownership even when maintenance row is absent. New protection/processing lease/lease loss/cursor or marker conflict/source deletion or created_at changes are handled safely. Rollback preserves cursor and survivors; normal stats, cascades, bounded progress and lease-less callers remain compatible."}
+**Risk:** High
+**Complexity:** Moderate
+**Reason:** Retention deletes persisted source evidence and advances a shared cursor. Transaction/lease/protection races must fail closed without broadening deletion or falsely completing a pass.
+**Discovery:** Saved retention-writer-baseline has identical 410 SQL statements/1 deletion/200 protected sources: first-deletion interval 70.38 ms vs protected-first 1.89 ms, totals 74.89/76.13 ms. Controlled competitor reported SQLITE_BUSY 5 after first write. Existing chunk interleaves classification/deletion; maintenance ensure also flushes INSERT. Interval includes commit/return and 201-scan fixture explicitly exceeds normal 200 cap; this does not attribute historical outage.
+**Material assumptions:** First UPDATE, including zero-row absent-marker case, must acquire actual SQLite writer ownership before final safety reads; prove it with competing real connection. Read phase must not ensure/create marker. Caller-supplied lease identity is authoritative; no inferred ownership. If cursor/marker changes, retry complete preparation, never stale progress.
+**Plan:** Invoke Agent Workflow, classify risk and create record before source/test edits. Application change is non-exempt. Use read-only candidate/protection preparation; cap prefix at planned delete limit. Fresh existing _with_retry transaction first performs NULL-aware maintenance cursor CAS/no-op UPDATE, handles missing-marker creation under writer lock, validates caller lease, rereads current candidate source/status/TTL/processing lease/protection, uses unchanged cascades and atomically advances captured cursor. Retry preparation on cursor/marker conflict up to existing retry count; explicit exhaustion. Pass optional existing lease/lease_now to source chunk, retaining lease-less behavior. Add focused races in existing test file; prepare guarded RED/GREEN but do not execute until root slot handoff. Root reuses original measurement and owns full/release.
+**Verification plan:** Writer-hold mechanism -> actual SQLite competing writer at protected preparation, original-source RED and candidate GREEN with unchanged survivors/stats/readback.
+Writer ownership and safety -> real zero-row/absent marker writer refusal, added protection/processing lease, expected lease replacement/expiry, cursor advance/marker creation, source deletion/created_at change and rollback races.
+Compatibility -> existing retention file/caller/service tests and equal-fixture baseline probe; no arbitrary latency threshold or historical attribution.
+Whole change -> static/governance checks and root combined full; no live database or installed service.
+**Plan review:** Agent technical review: architecture_check 2026-10-12 GO on exact CAS/lease shape. Fresh session first UPDATE before safety rereads; prove absent-marker lock with real SQLite; NULL-aware expected cursor and caller lease; bounded whole-preparation retry; captured cursor key and conservative protected deferral. Root implementation GO, no additional plan gate.
+**Approvals:** Approved by user 2026-10-12: "So keep driving this with the developers until the 50-message test passes and the remaining bottlenecks are fixed. Keep it simple, verify the fixes, and get them merged and deployed. Don't stop at another report." Additional direct human scope: "these are all bugs we should make sure we fix" and "so we should track this list - this all should be fixed. also, see if there are things here we can parallalize with a second developer". Root forwarded verbatim; no source-item ID available or invented. Repository work only, no live scope.
+**Exceptions:** —
+**State:** Ready for review
+<!-- agent-workflow:end -->
+
+## Implementation
+
+2026-10-12: Isolated branch fix/source-retention-writer-hold created from accepted NUL fix a3c9c744, preserving its commits. Record written before source/test edits. Root/discovery own current test slots; preparation only. Recovery/NUL sources remain unchanged.
+
+2026-10-12: Implemented read-only preparation and fresh guarded writer phase using existing retry/busy settings, optional caller lease and captured cursor. Architecture found preparation SELECTs had lost their old retry behavior; corrected by invoking pure preparation through existing _with_retry and added transient-success/exhaustion regressions. No marker ensure/flush in preparation. Source/test review then accepted pending proof, now fulfilled. Source-mode runner temporarily restored original source from accepted commit for RED and restored exact candidate bytes/hash in finally. No apply_patch fallback required.
+
+## Evidence
+
+- Actual public retention RED: private `pallium-full-suite-run-5ca0922f2b1e415691d9c244f4a2f6ba`, one failure in 0.85 s at competing BEGIN IMMEDIATE while protected suffix check was held; database locked. Stdout SHA `C47021A4A43D23D7FE60667E56F9C318FC0995307C28CBA7BCF45878BEDC0959`.
+- Exact candidate GREEN: private `pallium-full-suite-run-0f198ca4f1d5407bbaa00a3929674f16`, one pass in 0.28 s; competing writer commits during protected preparation, deletion/protected survivors and stats preserved. Stdout SHA `88BD8DFDB7A94B6010BA5E505610DE7AF6F1C0243A48A0FDF1FE146C619A4FA4`.
+- Entire existing retention file: private `pallium-full-suite-run-df9609db80b14c3c81b5af46ee5e8b8f`, 33 passed in 8.77 s including 19 new safety cases. Stdout SHA `B918C1B717D4291DD063D7F52C95EF77EFD14CEDD45F83C52065C2D655C405A3`.
+- All runs guards/stderr empty and three identity-matched owned processes drained. Candidate source finally restored byte/hash exact `D47EA55FFEB5BB5DE95E65EDFA6D64056606B51A4E8F3F5C13189A4A71E248EE`. Slot released to discovery immediately after drain; no live changes or duplicate full.
+- Reviewed focused runner SHA `615514AE6FBEF4F2CCDB66C1B2808CD5DBC1B9CDF03BE96950A4610811242643`, source-mode wrapper SHA `A51EF04A16EF6AC5E3820239873207695353BA9658860E0F43BADC31CC137E55`; affected change was selector-only within same exact scope/HEAD/isolation.
+- Import-linter exit 0, AST/diff checks clean; fresh three-path slice Redline and Agent Workflow checker clean 0 with no failed predicates. Selector requires full validation, assigned to root combined run. Evidence preserved under `C:/Dev/rore/Pallium/build/service-performance-20261012/retention-writer-candidate`, manifest SHA `79B13A99F9A7752EDE31A8563055210F55D812ABDF5D6E8763C01757FC859906`.
+
+## Result review
+
+Agent technical review: architecture_check 2026-10-12 final acceptance of corrected source, causal RED/GREEN and 33-file pass/all 19 safety cases, no outstanding finding.
+
+Reviewed revision: accepted baseline `a3c9c7443840d0b6b439ac005d6c8d27a4905d6c` plus frozen two-path source/test delta and this record; candidate source hash above.
+
+Verification adequacy: real SQLite writer progresses during protected preparation and is refused during final safety rereads for both present and absent maintenance marker. Race cases cover new protection/processing lease/TTL/status, expected lease replacement/expiry, cursor/marker/start/wrap conflicts and bounded exhaustion, source deletion/created_at change, flushed rollback/FTS restoration and transient preparation retry/exhaustion. Root owns integrated full and any equal-fixture followup timing. Historical installed contention attribution remains unknown.
+
+## Equal-fixture timing followup
+
+2026-10-12: Ran the unchanged original private probe once on accepted source commit `7f4ac56a1d301037a166fa10eb2a4bebb90a1d72`. Private run `pallium-full-suite-run-3464356c27254da2b7c3750bb7dc6080` exited 0; guards/stderr empty, three owned identities drained. All deletion/survivor/stats/cursor assertions passed. Source hash remained `D47EA55FFEB5BB5DE95E65EDFA6D64056606B51A4E8F3F5C13189A4A71E248EE`. No live attribution or further timing rerun.
+
+| Protected rows | Ordering | SQL before → after | Total ms before → after | First-write-to-return ms before → after |
+|---|---|---|---|---|
+| 50 | Deletable first | 110 → 114 | 21.17 → 29.18 | 18.26 → 4.06 |
+| 50 | Protected first | 110 → 114 | 23.57 → 25.46 | 1.67 → 3.93 |
+| 200 | Deletable first | 410 → 414 | 74.89 → 132.22 | 70.38 → 5.69 |
+| 200 | Protected first | 410 → 414 | 76.13 → 103.89 | 1.89 → 5.74 |
+
+The worst writer-residence proxy fell from 70.38 to 5.69 ms, while total elapsed increased in this sample. This supports shorter writer occupancy, not overall throughput improvement. First-write-to-return includes commit/return overhead; these are single instrumented private samples. The 200-protected fixture scans 201 rows; the normal caller cap remains 200. The unchanged gated SELECT after first DML now observes final fresh safety checking rather than the old protected suffix, so gated timings are not comparable substages. The independent caller RED/GREEN proves the protected preparation mechanism. Historical installed lock contention remains unattributed; deployment and combined validation remain root-owned.
+
+Evidence preserved under `C:/Dev/rore/Pallium/build/service-performance-20261012/retention-writer-candidate`: timing JSON SHA `673EA19E4413295F6D3E84573846367A66F74EB1AFCFFACD31152B1E4FDFED4B`; comparison JSON SHA `18D537FB86F501419DEA0E38A741C4DFBB8CC02F909A05B4899673C864153107`; updated manifest SHA `3E5490E1E36881D2FF19F3BD210EE4ED00527147CA63D074DEA064739F8CEDDE`. Stdout SHA `B8E6B4A24A9F26902AD2702269A9605C87DBE8B91C9546CAD38C15D2D9C7F3C6`; unchanged probe SHA `2B0E70F145C4A005BC4D2CC5AD0430682BCD746CAB074A68FE70CB1AB401D03F`; candidate runner SHA `ACF23771C85B022F3E2D9664D7FCA96A2490D9DC6126F6ECD2BED4485B3167A1`. Baseline JSON SHA `FD9CD44B2F23C345655D6CCC11F9FB28ADB41C9E9AE9D0DCCAF02605338BF3E0`.

@@ -396,16 +396,16 @@ def test_manifest_and_store_boundaries_fail_closed(client, tmp_path, monkeypatch
     for dispositions in ([], [{"delivery_id": f"relay-delivery-{index:032x}", "disposition": "suppress"} for index in range(513)]):
         with pytest.raises(ValueError, match="1..512"):
             _validate_inputs([SOURCE_A, SOURCE_B], DESTINATION, scopes, dispositions)
-    with storage._begin_relay_immediate() as db:
+    with storage._relay_session_factory.begin() as db:
         db.add(RelayEndpointGenerationRecord(endpoint_id=SOURCE_A, generation=-1))
     with pytest.raises(ValueError, match="generation"):
         _manifest(storage, [{"delivery_id": DELIVERY_A, "disposition": "suppress"}, {"delivery_id": DELIVERY_B, "disposition": "suppress"}])
-    with storage._begin_relay_immediate() as db:
+    with storage._relay_session_factory.begin() as db:
         db.delete(db.get(RelayEndpointGenerationRecord, SOURCE_A))
         db.get(RelaySessionRecord, DESTINATION).alias = "orphan"
     with pytest.raises(ValueError, match="alias ownership"):
         _manifest(storage, [{"delivery_id": DELIVERY_A, "disposition": "suppress"}, {"delivery_id": DELIVERY_B, "disposition": "suppress"}])
-    with storage._begin_relay_immediate() as db:
+    with storage._relay_session_factory.begin() as db:
         db.get(RelaySessionRecord, DESTINATION).alias = None
     (claude / "capabilities.json").write_text("{", encoding="utf-8")
     with pytest.raises(ValueError, match="malformed wake store"):

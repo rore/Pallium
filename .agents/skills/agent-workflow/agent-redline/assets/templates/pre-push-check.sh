@@ -65,15 +65,13 @@ if ! BASE_SHA=$(git rev-parse "$BASE_REF" 2>/dev/null); then
   fi
 fi
 HEAD_SHA=$(git rev-parse HEAD)
+MERGE_BASE=$(git merge-base "$BASE_SHA" "$HEAD_SHA") || {
+  echo "error: cannot resolve a merge base for $BASE_REF and HEAD" >&2
+  exit 1
+}
 
-# Compute the changed-files list, per-file line counts, and total lines.
-# Empty diffs (BASE == HEAD) produce no shortstat output; the awk pipeline
-# would emit nothing without the END block, and `--lines-changed ""` would
-# be rejected by argparse `type=int`. END{print s+0} guarantees a numeric
-# value; the `:-0` is belt-and-suspenders.
-#
-# `git diff --numstat` emits one row per changed file: added<TAB>deleted<TAB>path.
-# The reporter uses it (when --lines-per-file is passed) to apply
+# NUL-delimited Git outputs preserve whitespace and non-ASCII filenames.
+# The reporter uses numstat (when --lines-per-file-z is passed) to apply
 # policy.excludes to the prSize check. Without it, excludes affects only
 # zone classification and excluded files (generated/, vendored/, *_pb2.py,
 # etc.) silently inflate the size budget.
@@ -81,15 +79,12 @@ CHANGED_FILES_LIST="$(mktemp)"
 LINES_PER_FILE="$(mktemp)"
 DIFF_UNIFIED="$(mktemp)"
 trap 'rm -f "$CHANGED_FILES_LIST" "$LINES_PER_FILE" "$DIFF_UNIFIED"' EXIT
-git diff --name-only "$BASE_SHA"..."$HEAD_SHA" > "$CHANGED_FILES_LIST"
-git diff --numstat   "$BASE_SHA"..."$HEAD_SHA" > "$LINES_PER_FILE"
+git diff --name-only -z --no-renames "$MERGE_BASE" "$HEAD_SHA" > "$CHANGED_FILES_LIST"
+git diff --numstat -z --no-renames "$MERGE_BASE" "$HEAD_SHA" > "$LINES_PER_FILE"
 # `--unified=0` so the reporter can scan only added lines for suppression
 # markers (noqa / @SuppressWarnings / etc.). Without this, suppressions in
 # unchanged context would be falsely attributed to this push.
-git diff --unified=0 "$BASE_SHA"..."$HEAD_SHA" > "$DIFF_UNIFIED"
-LINES_CHANGED=$(git diff --shortstat "$BASE_SHA"..."$HEAD_SHA" \
-  | awk '{for (i=1;i<=NF;i++) if ($i ~ /insertions?|deletions?/) s+=$(i-1)} END{print s+0}')
-LINES_CHANGED=${LINES_CHANGED:-0}
+git diff --no-ext-diff --no-textconv --unified=0 --no-renames "$MERGE_BASE" "$HEAD_SHA" > "$DIFF_UNIFIED"
 
 # Optional pre-step: run the Python extension's adapter so the reporter has
 # a fresh json-violations report to read. Skipped silently if the adapter
@@ -106,8 +101,8 @@ fi
 # explicitly; the policy is the source of truth.
 exec python "$REPORTER_PY" \
   --policy "$POLICY" \
-  --changed-files "$CHANGED_FILES_LIST" \
-  --lines-per-file "$LINES_PER_FILE" \
+  --changed-files-z "$CHANGED_FILES_LIST" \
+  --lines-per-file-z "$LINES_PER_FILE" \
   --diff-unified "$DIFF_UNIFIED" \
-  --lines-changed "$LINES_CHANGED" \
+  --head-ref "$HEAD_SHA" \
   --default-mode "${MODE:-shadow}"

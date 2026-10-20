@@ -1,5 +1,6 @@
 # First · Relay Reliability
 - add-wake-first-relay-delivery
+- fix-opencode-plugin-reliability
 
 # Parallel · Session History
 - investigate-history-navigation-and-on-demand-compression
@@ -8,6 +9,7 @@
 - validate-relay-dependency-workflows
 
 # Later · Runtime Expansion
+- add-hermes-agent-integration
 - add-copilot-relay-integration
 
 # P1 · Reuse Measurement

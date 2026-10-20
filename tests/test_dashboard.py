@@ -1803,15 +1803,17 @@ def test_dashboard_relay_exact_session_lookup_is_validated_and_read_only(tmp_pat
     app = create_app(_test_config(tmp_path))
     now = datetime.now(timezone.utc)
     with TestClient(app) as client:
-        ids = {}
-        for session_ref in ("recent", "dormant", "closed", "page-tail"):
-            turn = client.post(
-                "/relay/turn",
-                json={"runtime": "codex", "session_ref": session_ref, "container_ref": "git:deep-link"},
-            )
-            assert turn.status_code == 200
-            ids[session_ref] = turn.json()["session"]["endpoint_id"]
         storage = app.state.pallium_service._storage
+        ids = {}
+        with storage._relay_session_factory.begin() as session:
+            for index, session_ref in enumerate(("recent", "dormant", "closed", "page-tail"), 1):
+                endpoint_id = "relay-session-" + f"{index:032x}"
+                ids[session_ref] = endpoint_id
+                session.add(RelaySessionRecord(
+                    id=endpoint_id, runtime="codex", session_ref=session_ref,
+                    container_ref="git:deep-link", state="active",
+                    first_seen_at=now, last_seen_at=now,
+                ))
         alias_target = "relay-session-" + "e" * 32
         with storage._relay_session_factory() as session:
             rows = {row.session_ref: row for row in session.query(RelaySessionRecord)}
