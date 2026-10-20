@@ -875,7 +875,9 @@ def test_hermes_tui_submit_accepts_fragmented_echo_and_rejects_surrogates():
 
     writes = []
     console = TuiConsole.__new__(TuiConsole)
-    console.parts = ['Try "explain this codebase"\nforging session…']
+    console.parts = []
+    console._init_screen_observer()
+    console.feed_output('Try "explain this codebase"\nforging session…')
     console.stopped = threading.Event()
     console.tree = SimpleNamespace(error=None)
     console.read_error = None
@@ -883,12 +885,13 @@ def test_hermes_tui_submit_accepts_fragmented_echo_and_rejects_surrogates():
     def write(text):
         writes.append(text)
         if text == PROMPT:
-            console.parts.extend(["Grüße\x1b[10C日本語\n", "native-ui-origin"])
+            for chunk in ("Grüße\x1b[10C日本語\n", "native-ui-origin"):
+                console.feed_output(chunk)
 
     console.proc = SimpleNamespace(write=write, isalive=lambda: True)
     with pytest.raises(TimeoutError):
         console.wait("ready │", timeout=.01)
-    console.parts.append("\nready │ pallium-local")
+    console.feed_output("\nready │ pallium-local")
     console.wait("ready │", timeout=.01)
     console.submit(PROMPT, marker="native-ui-origin")
     assert writes == [PROMPT, "\r"]
@@ -902,15 +905,18 @@ def test_hermes_tui_wait_uses_raw_cursor_across_fragmented_osc_redraws():
     from types import SimpleNamespace
 
     console = TuiConsole.__new__(TuiConsole)
-    console.parts = ["\x1b]0;old title\x1b\\old visible\x1b]0;unfinished title"]
+    console.parts = []
+    console._init_screen_observer()
+    console.feed_output("\x1b]0;old title\x1b\\old visible\x1b]0;unfinished title")
     console.stopped = threading.Event()
     console.tree = SimpleNamespace(error=None)
     console.proc = SimpleNamespace(isalive=lambda: True)
     console.read_error = None
-    cursor = len(console.raw_text)
+    cursor = console.mark()
     old_text_length = len(console.text)
-    console.parts.extend(["\x1b", "\\\r\x1b[2KGrüße 日本語 😂👍🏽 native-ui-", "\x1b[3C", "origin",
-                          "\x1b]0;second title\x1b", "\\new session started\x1b]0;third title", "\x07ready │"])
+    for chunk in ("\x1b", "\\\r\x1b[2", "KGrüße 日本語 😂👍🏽 native-ui-", "origin",
+                  "\x1b]0;second title\x1b", "\\new session started\x1b]0;third title", "\x07ready │"):
+        console.feed_output(chunk)
     assert "native-ui-origin" in console.text
     assert "title" not in console.text
     assert len(console.text.split("Grüße", 1)[0]) < old_text_length
@@ -926,7 +932,9 @@ def test_hermes_tui_new_session_requires_fresh_success(render_new):
     from types import SimpleNamespace
 
     console = TuiConsole.__new__(TuiConsole)
-    console.parts = ["old new session started\nold ready │"]
+    console.parts = []
+    console._init_screen_observer()
+    console.feed_output("old new session started\nold ready │")
     console.stopped = threading.Event()
     console.tree = SimpleNamespace(error=None)
     console.read_error = None
@@ -935,9 +943,9 @@ def test_hermes_tui_new_session_requires_fresh_success(render_new):
     def write(text):
         writes.append(text)
         if text == "/new":
-            console.parts.append("/new")
+            console.feed_output("/new")
         elif text == "\r" and render_new:
-            console.parts.append("new session started\nready │")
+            console.feed_output("new session started\nready │")
 
     console.proc = SimpleNamespace(write=write, isalive=lambda: True)
     wait = console.wait
@@ -1228,6 +1236,12 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
     api_server_thread.start()
     provider_server_thread.start()
     try:
+        if surface == "tui":
+            from tests.fixtures.hermes_terminal_runtime import prepare_terminal_runtime
+
+            observer_runtime = prepare_terminal_runtime(python, source, home, artifacts, env)
+            (artifacts / "terminal-observer-runtime.json").write_text(
+                json.dumps(observer_runtime, indent=2), encoding="utf-8")
         setup_args = [sys.executable, "-m", "app.run", "setup", "hermes", "--home", str(profile),
                                 "--hermes-python", str(python), "--service-url", base_url,
                                 "--container-ref", SCOPE["container_ref"], "--actor-ref", "native-ui-actor",

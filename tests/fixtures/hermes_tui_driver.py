@@ -471,6 +471,7 @@ class TuiConsole:
         from winpty import PTY, Backend, WinptyError
 
         self.parts = []
+        self._init_screen_observer()
         self.read_error = None
         self.pty_error = WinptyError
         self.artifacts = artifacts
@@ -496,12 +497,33 @@ class TuiConsole:
         self.reader = threading.Thread(target=self._pump, daemon=True)
         self.reader.start()
 
+    def _init_screen_observer(self):
+        if __package__:
+            from .hermes_terminal_screen import TerminalScreen
+        else:
+            from hermes_terminal_screen import TerminalScreen
+
+        self._capture_lock = threading.RLock()
+        self._raw_offset = 0
+        self.screen = TerminalScreen(200, 55)
+
+    def feed_output(self, chunk: str):
+        """Append and parse one PTY chunk under the same cursor lock used by marks."""
+        with self._capture_lock:
+            self.parts.append(chunk)
+            self._raw_offset += len(chunk)
+            self.screen.feed(chunk)
+
+    def mark(self):
+        with self._capture_lock:
+            return self.screen.mark(self._raw_offset)
+
     def _pump(self):
         while True:
             try:
                 chunk = self.proc.read(blocking=False)
                 if chunk:
-                    self.parts.append(chunk)
+                    self.feed_output(chunk)
                 elif not self.proc.isalive():
                     return
                 else:
@@ -512,35 +534,43 @@ class TuiConsole:
 
     @property
     def raw_text(self):
-        return "".join(self.parts)
+        with self._capture_lock:
+            return "".join(self.parts)
 
     @property
     def text(self):
         return ANSI.sub("", self.raw_text)
 
     def wait(self, expected: str, *, after: int = 0, timeout: float = 90):
-        """Keep cursors in raw output; completing an escape sequence can shrink normalized text."""
+        """Wait for exact logical cell text rendered after a synchronized output mark."""
         deadline = time.monotonic() + timeout
+        with self._capture_lock:
+            visible = self.screen.rendered
         while time.monotonic() < deadline:
             assert not self.stopped.is_set(), "driver shutdown requested"
-            if expected in ANSI.sub("", self.raw_text[after:]):
+            with self._capture_lock:
+                visible = self.screen.rendered
+                observed = self.screen.contains(expected, after=after)
+            if observed:
                 return
-            assert self.proc.isalive(), f"TUI exited early: {self.read_error}; {self.text[-2000:]}"
+            assert self.proc.isalive(), (
+                f"TUI exited early: {self.read_error}; screen={visible[-2000:]}; raw={self.text[-1000:]}"
+            )
             assert self.tree.error is None, self.tree.error
             time.sleep(.1)
-        raise TimeoutError(f"TUI did not render {expected!r}: {self.text[-3000:]}")
+        raise TimeoutError(f"TUI did not render {expected!r}: {visible[-3000:]}")
 
     def submit(self, prompt: str, *, marker: str):
         prompt.encode("utf-8", errors="strict")
         assert marker and marker.isascii() and marker in prompt, "expected a unique visible ASCII input marker"
-        offset = len(self.raw_text)
+        offset = self.mark()
         self.proc.write(prompt)
         # Ink redraws and grapheme wrapping can split the echoed Unicode input; the provider checks it in full.
         self.wait(marker, after=offset, timeout=20)
         self.proc.write("\r")
 
     def new_session(self):
-        offset = len(self.raw_text)
+        offset = self.mark()
         self.submit("/new", marker="/new")
         self.wait("new session started", after=offset, timeout=30)
         self.wait("ready │", after=offset, timeout=60)
@@ -555,7 +585,11 @@ class TuiConsole:
     def close(self):
         self.proc.cancel_io()
         self.reader.join(2)
-        (self.artifacts / "terminal.txt").write_text("".join(self.parts), encoding="utf-8", errors="backslashreplace")
+        with self._capture_lock:
+            raw = "".join(self.parts)
+            rendered = self.screen.rendered
+        (self.artifacts / "terminal.txt").write_text(raw, encoding="utf-8", errors="backslashreplace")
+        (self.artifacts / "terminal-screen.txt").write_text(rendered, encoding="utf-8", errors="backslashreplace")
 
 
 def driver_main(spec_path: Path):
