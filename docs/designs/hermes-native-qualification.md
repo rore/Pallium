@@ -17,9 +17,12 @@ concurrency protection and a 60-minute limit per release. Use only synthetic
 profiles and loopback service/provider stubs; no paid inference.
 
 GitHub requires a manual workflow to exist on the default branch before it can
-be dispatched. Land an approved runner-only change separately, then dispatch the
-Hermes feature branch; do not merge an unqualified feature merely to register its
-test workflow. See [GitHub's manual workflow instructions](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow).
+be dispatched. Land an approved runner-only change separately. Dispatch that
+registered workflow on main with a required full candidate commit input, and
+verify its checkout before source execution and again before qualification.
+The feature branch need not contain the runner workflow. Do not merge an
+unqualified feature merely to register its test workflow. See
+[GitHub's manual workflow instructions](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow).
 
 | Release | Immutable source revision |
 |---|---|

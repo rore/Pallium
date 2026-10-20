@@ -99,6 +99,8 @@ def test_desktop_owned_startup_and_ui_protocol_without_native_process(tmp_path, 
         return app if len(calls) == 1 else cdp
 
     monkeypatch.setattr("subprocess.Popen", popen)
+    # The mocked Windows launch also runs on Linux, which does not define this native flag.
+    monkeypatch.setattr("subprocess.CREATE_NO_WINDOW", 0, raising=False)
     tree = SimpleNamespace(error=None, psutil=SimpleNamespace(Process=lambda pid: pid), record=identities.append)
     console = DesktopConsole(tmp_path / "python.exe", source, home, env, artifacts, threading.Event(), tree)
     try:
