@@ -1,5 +1,6 @@
 // Disposable native boundary probe; no SQL, parameters, stacks or payloads.
 // Render only validated absolute ELF paths; command child starts after attachment.
+// shortcut: concurrent increments can be lost; use atomic counting if this soft cap must become exact.
 BEGIN { @owned_tid[cpid] = 1; }
 tracepoint:sched:sched_process_fork /@owned_tid[args->parent_pid]/ {
   @owned_tid[args->child_pid] = 1;
@@ -15,7 +16,7 @@ tracepoint:sched:sched_switch {
     @switches = count();
     if ($end-$start >= 1000000) {
       if (@emitted < 10000) {
-        @emitted = count();
+        @emitted = @emitted + 1;
         printf("S,%d,%d,%llu,%llu,%lld\n",@tgid[args->next_pid],args->next_pid,$start,$end,@state[args->next_pid]);
       } else { @output_cap = count(); }
     }
@@ -39,7 +40,7 @@ uretprobe:__SQLITE__:sqlite3_prepare_v2 /@owned_tid[tid]/ {
     $start = @start[tid,1]; $end = nsecs(monotonic);
     if ($end-$start >= 1000000) {
       if (@emitted < 10000) {
-        @emitted = count();
+        @emitted = @emitted + 1;
         printf("N,%d,%d,1,%llu,%llu\n",pid,tid,$start,$end);
       } else { @output_cap = count(); }
     }
@@ -63,7 +64,7 @@ uretprobe:__SQLITE__:sqlite3_step /@owned_tid[tid]/ {
     $start = @start[tid,2]; $end = nsecs(monotonic);
     if ($end-$start >= 1000000) {
       if (@emitted < 10000) {
-        @emitted = count();
+        @emitted = @emitted + 1;
         printf("N,%d,%d,2,%llu,%llu\n",pid,tid,$start,$end);
       } else { @output_cap = count(); }
     }
@@ -87,7 +88,7 @@ uretprobe:__SQLITE__:sqlite3_reset /@owned_tid[tid]/ {
     $start = @start[tid,3]; $end = nsecs(monotonic);
     if ($end-$start >= 1000000) {
       if (@emitted < 10000) {
-        @emitted = count();
+        @emitted = @emitted + 1;
         printf("N,%d,%d,3,%llu,%llu\n",pid,tid,$start,$end);
       } else { @output_cap = count(); }
     }
@@ -111,7 +112,7 @@ uretprobe:__SQLITE__:sqlite3_column_count /@owned_tid[tid]/ {
     $start = @start[tid,4]; $end = nsecs(monotonic);
     if ($end-$start >= 1000000) {
       if (@emitted < 10000) {
-        @emitted = count();
+        @emitted = @emitted + 1;
         printf("N,%d,%d,4,%llu,%llu\n",pid,tid,$start,$end);
       } else { @output_cap = count(); }
     }
@@ -135,7 +136,7 @@ uretprobe:__SQLITE__:sqlite3_last_insert_rowid /@owned_tid[tid]/ {
     $start = @start[tid,5]; $end = nsecs(monotonic);
     if ($end-$start >= 1000000) {
       if (@emitted < 10000) {
-        @emitted = count();
+        @emitted = @emitted + 1;
         printf("N,%d,%d,5,%llu,%llu\n",pid,tid,$start,$end);
       } else { @output_cap = count(); }
     }
@@ -159,7 +160,7 @@ uretprobe:__PYTHON__:PyEval_RestoreThread /@owned_tid[tid]/ {
     $start = @start[tid,6]; $end = nsecs(monotonic);
     if ($end-$start >= 1000000) {
       if (@emitted < 10000) {
-        @emitted = count();
+        @emitted = @emitted + 1;
         printf("N,%d,%d,6,%llu,%llu\n",pid,tid,$start,$end);
       } else { @output_cap = count(); }
     }
