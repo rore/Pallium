@@ -935,7 +935,8 @@ test("assistant ownership helper cannot mark a rebound lifetime as captured", as
     rebindOwned.release();
     captureOwned.release();
     await Promise.all([rebound, first]);
-    assert.equal(captureCalls(f)[0].signal.aborted, true);
+    assert.ok(f.calls.some((call) => call.body.operation === "enroll" && call.body.scope_generation === 1),
+      "same-item rebind must establish the successor generation");
     await f.hooks.compaction({ sessionID });
     assert.equal(captureCalls(f).length, 2, "old success must not suppress the successor's capture");
     assert.equal(captureCalls(f)[0].body[0].source_id, captureCalls(f)[1].body[0].source_id);

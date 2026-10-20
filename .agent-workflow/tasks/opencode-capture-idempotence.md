@@ -41,6 +41,8 @@ Resume verification: run the affected OpenCode package suite; caller-surface HTT
 
 ## Implementation
 
+- Independent actual-source review accepted f45a73a8 and both native conflict resolutions. The initial new-test witness incorrectly inspected a completed HTTP request signal whose abort link had already been removed; preserved its failure without claiming reproduction. Corrected the new assertion to observe public successor-generation enrollment. The deterministic gap then failed without the caller live check (old success suppressed successor POST: 1 versus 2) and passed with it, preserving identical stable source IDs. Evidence: build/pr306-current-main-20261020/helper-gap-v2-{before,after}.log and helper-gap-v2-witness.json. No existing/protected assertion changed and production bytes restored exactly after the witness.
+
 - Resume implementation: normally merged actual main178fea16; retained both native lost-response and directory-marker state and default-compaction summary. Inspected automatic plugin and caller merges. Added only the reviewed caller-side lifetime check after receipt ownership plus deterministic helper-return/rebind regression; captured-Set cleanup remains unchanged. Actual-source review and fresh coherent tests are pending, with no earlier evidence relabeled.
 
 - Created isolated managed branch `feat/opencode-capture-idempotence` at e9eb3956, invoked Agent Workflow and classified full intent before source edits. No application/test change.
