@@ -39,7 +39,11 @@ Related umbrella: [Add wake-first Relay delivery](add-wake-first-relay-delivery.
 Its unfinished Codex recovery and shared native-wake incident remain separately
 owned; do not absorb, reopen or claim them fixed here.
 
-## Current disposition (2026-10-18)
+## Current disposition (2026-10-20)
+
+OC-3's PR306 subsequently merged as `2ac9e2b66b9cd72ff7af9e7aeda9ecf061360b1f`, qualified head `37fc691380f86db307b2de8932b09948a736db12`, against actual PR297 main. Local full coverage passed 7,531 tests, package coverage passed 139 with seven existing skips, and real-HTTP plus isolated native OpenCode 2.0.24 checks passed. Required hosted checks passed after one independently reviewed Linux 3.12 retry; prior failures remain preserved. Actual logs and merge conditions received independent review. Receipt: `C:/Users/I347041/.codex/worktrees/opencode-capture-idempotence/Pallium/build/pr306-current-main-20261020/verified-merge.json`. No installed deployment occurred; remaining findings keep this item active.
+
+PR297 merged as `178fea16e36946ffed68fb4bdd93da76056d5f73` from exact qualified head `07697ac2b8f74e8503534a6586fb13dbb30bdeb4`. Its final ordinary Linux 3.13 and Windows 3.12 retries passed; passing lanes were reused, actual results and main compatibility received independent review, and all four review threads were resolved. Earlier failures remain recorded. Evidence: `C:/Users/I347041/.codex/worktrees/opencode-297-resume/Pallium/build/pr297-final-two-job-retry-20261020/verified-merge.json`. This closes PR297's merge gate, not installed deployment or this broader reliability feature.
 
 The findings below preserve the reviewed 2026-10-07 baseline and its reproduction
 contracts. Their original line references and behavior descriptions are historical;
@@ -49,11 +53,11 @@ re-resolve them before implementing remaining work.
 |---|---|
 | OC-1 wake-anchor liveness | Open; no verified closure recorded. Preserve the activation/completion distinction and native qualification gates. |
 | OC-2 retired callbacks | Implemented, independently reviewed and merged in [PR302](https://github.com/rore/Pallium/pull/302), merge `e9eb3956ce4990f9dc15d0a24520f40d67246883`. Installed deployment is not established by that merge. |
-| OC-3 capture idempotence | Reviewed implementation remains open in [PR306](https://github.com/rore/Pallium/pull/306), head `05a11db0f566c93138e1d129e109db85e08fb340`; publication-head qualification and merge remain separate gates. |
+| OC-3 capture idempotence | Independently reviewed, qualified and merged in [PR306](https://github.com/rore/Pallium/pull/306), merge `2ac9e2b66b9cd72ff7af9e7aeda9ecf061360b1f`. Installed deployment remains separate. |
 | OC-4 aggregate optional latency | Open; preserve the caller-visible budget and fail-open requirements below. |
 | OC-5 bounded disposal | Implemented, independently reviewed and merged with OC-2 in PR302. Its isolated native 2.0.22/2.0.24 evidence does not establish installed deployment or arbitrary-version support. |
 | OC-6 synchronous discovery | Open; synchronous Git discovery remains in the shared helper. |
-| OC-7 directory ownership | Separate open [PR297](https://github.com/rore/Pallium/pull/297), head `45c30cd800e60b03fdcd3c0aab0fc1e66860a459`; qualification and merge remain outstanding. |
+| OC-7 directory ownership | Independently reviewed, qualified and merged in [PR297](https://github.com/rore/Pallium/pull/297), merge `178fea16e36946ffed68fb4bdd93da76056d5f73`. Installed deployment remains separate. |
 | OC-8 deletion authority | Native reachability/qualification question remains open; do not promote the mock concern to a confirmed native defect. |
 
 PR302's accepted result and evidence are recorded in
@@ -267,9 +271,9 @@ records. Earlier native negative-control evidence produced five records with
 the guard removed.
 
 **Existing correction:** [PR297](https://github.com/rore/Pallium/pull/297) adds
-the ownership guard and has separate source/native review evidence. It remains
-unmerged and undeployed, subject to its CI dependency and the human's current
-environment-protection directive. Verify its live status before reuse.
+the ownership guard and merged as `178fea16e36946ffed68fb4bdd93da76056d5f73`
+after qualification and independent review. Installed deployment remains separate
+under the human's environment-protection directive.
 
 **Required outcome:** reconcile and reuse that smallest guard without overlapping
 ownership or claiming it fixes OC-3. Verify same-repository different folders,
@@ -332,14 +336,14 @@ bug or discard it without evidence.
   records 96 package passes with seven Windows skips, 6,332 Python passes with
   45 skips and two expected failures, and isolated native 2.0.24/2.0.22 checks.
   These results supersede the earlier 93-test/source-only checkpoint; installed
-  deployment is not established here. OC-1/4/6/8 remain open; OC-3 and OC-7 retain
-  their separate PR306 and PR297 qualification/merge dependencies.
+  deployment is not established here. OC-1/4/6/8 remain open; OC-3 and OC-7 are
+  qualified and merged in PR306 and PR297, with installed deployment separate.
 - Authorize repository fixes and isolated tests under the user's request; use
   Agent Workflow before any implementation edits. Classify the actual combined
   change and trigger architecture/API/persistence review for any wake-authority
   or persisted transition change. This feature document is not an approved
   concrete implementation plan or a substitute for required review.
-- Reconcile PR297 and relaydev's independent Codex CI/registration incident work.
+- Reuse merged PR297's ownership guard and reconcile relaydev's independent Codex CI/registration incident work.
   Do not create competing ownership fixes or restart the shared backend.
 - Prefer one accountable implementation owner with bounded helpers where useful.
   Distinct reviewers must assess their actual scopes, and the lead must reconcile
@@ -356,7 +360,7 @@ bug or discard it without evidence.
   The manager reviews the combined documentation before publication; temporary
   checkout and branch coordination stays in the private handoff.
 - The first bounded slice, OC-2 plus OC-5, is merged; do not reimplement it.
-  Reconcile the reviewed OC-3/OC-7 follow-ups in PR306/PR297 without duplicating
+  Reuse the merged OC-3/OC-7 slices and reviewed evidence in PR306/PR297 without duplicating
   their work. OC-1 safe anchor retirement needs its separate contract review;
   no guessed completion or ACK-only retirement. OC-4/OC-6 optional I/O and
   event-loop latency remain open, and OC-8 needs isolated native qualification.
