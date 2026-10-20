@@ -1,0 +1,26 @@
+{
+  "1": {
+    "library": "SQLITE",
+    "function": "sqlite3_prepare_v2"
+  },
+  "2": {
+    "library": "SQLITE",
+    "function": "sqlite3_step"
+  },
+  "3": {
+    "library": "SQLITE",
+    "function": "sqlite3_reset"
+  },
+  "4": {
+    "library": "SQLITE",
+    "function": "sqlite3_column_count"
+  },
+  "5": {
+    "library": "SQLITE",
+    "function": "sqlite3_last_insert_rowid"
+  },
+  "6": {
+    "library": "PYTHON",
+    "function": "PyEval_RestoreThread"
+  }
+}

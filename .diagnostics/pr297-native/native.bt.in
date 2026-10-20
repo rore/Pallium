@@ -1,0 +1,184 @@
+// Disposable native boundary probe; no SQL, parameters, stacks or payloads.
+// Render only validated absolute ELF paths; command child starts after attachment.
+BEGIN { @owned_tid[cpid] = 1; }
+tracepoint:sched:sched_process_fork /@owned_tid[args->parent_pid]/ {
+  @owned_tid[args->child_pid] = 1;
+  if (!@owned_tid[args->child_pid]) { @map_failure = count(); }
+}
+tracepoint:sched:sched_switch {
+  if (@owned_tid[args->prev_pid] && @active[args->prev_pid]) {
+    @off[args->prev_pid] = nsecs(monotonic);
+    @state[args->prev_pid] = args->prev_state;
+  }
+  if (@off[args->next_pid]) {
+    $start = @off[args->next_pid]; $end = nsecs(monotonic);
+    @switches = count();
+    if ($end-$start >= 1000000) {
+      if (@emitted < 10000) {
+        @emitted = count();
+        printf("S,%d,%d,%llu,%llu,%lld\n",@tgid[args->next_pid],args->next_pid,$start,$end,@state[args->next_pid]);
+      } else { @output_cap = count(); }
+    }
+    delete(@off[args->next_pid]); delete(@state[args->next_pid]);
+  }
+}
+
+uprobe:__SQLITE__:sqlite3_prepare_v2 /@owned_tid[tid]/ {
+  @tgid[tid] = pid;
+  if (@tgid[tid] != pid) { @map_failure = count(); }
+  @entry[1] = count();
+  if (@start[tid,1]) { @nesting = count(); }
+  $now = nsecs(monotonic); @start[tid,1] = $now;
+  if (@start[tid,1] != $now) { @map_failure = count(); }
+  $depth = @active[tid]+1; @active[tid] = $depth;
+  if (@active[tid] != $depth) { @map_failure = count(); }
+}
+uretprobe:__SQLITE__:sqlite3_prepare_v2 /@owned_tid[tid]/ {
+  @returned[1] = count();
+  if (@start[tid,1]) {
+    $start = @start[tid,1]; $end = nsecs(monotonic);
+    if ($end-$start >= 1000000) {
+      if (@emitted < 10000) {
+        @emitted = count();
+        printf("N,%d,%d,1,%llu,%llu\n",pid,tid,$start,$end);
+      } else { @output_cap = count(); }
+    }
+    delete(@start[tid,1]); @active[tid] = @active[tid]-1;
+  } else { @missing_entry = count(); }
+}
+
+uprobe:__SQLITE__:sqlite3_step /@owned_tid[tid]/ {
+  @tgid[tid] = pid;
+  if (@tgid[tid] != pid) { @map_failure = count(); }
+  @entry[2] = count();
+  if (@start[tid,2]) { @nesting = count(); }
+  $now = nsecs(monotonic); @start[tid,2] = $now;
+  if (@start[tid,2] != $now) { @map_failure = count(); }
+  $depth = @active[tid]+1; @active[tid] = $depth;
+  if (@active[tid] != $depth) { @map_failure = count(); }
+}
+uretprobe:__SQLITE__:sqlite3_step /@owned_tid[tid]/ {
+  @returned[2] = count();
+  if (@start[tid,2]) {
+    $start = @start[tid,2]; $end = nsecs(monotonic);
+    if ($end-$start >= 1000000) {
+      if (@emitted < 10000) {
+        @emitted = count();
+        printf("N,%d,%d,2,%llu,%llu\n",pid,tid,$start,$end);
+      } else { @output_cap = count(); }
+    }
+    delete(@start[tid,2]); @active[tid] = @active[tid]-1;
+  } else { @missing_entry = count(); }
+}
+
+uprobe:__SQLITE__:sqlite3_reset /@owned_tid[tid]/ {
+  @tgid[tid] = pid;
+  if (@tgid[tid] != pid) { @map_failure = count(); }
+  @entry[3] = count();
+  if (@start[tid,3]) { @nesting = count(); }
+  $now = nsecs(monotonic); @start[tid,3] = $now;
+  if (@start[tid,3] != $now) { @map_failure = count(); }
+  $depth = @active[tid]+1; @active[tid] = $depth;
+  if (@active[tid] != $depth) { @map_failure = count(); }
+}
+uretprobe:__SQLITE__:sqlite3_reset /@owned_tid[tid]/ {
+  @returned[3] = count();
+  if (@start[tid,3]) {
+    $start = @start[tid,3]; $end = nsecs(monotonic);
+    if ($end-$start >= 1000000) {
+      if (@emitted < 10000) {
+        @emitted = count();
+        printf("N,%d,%d,3,%llu,%llu\n",pid,tid,$start,$end);
+      } else { @output_cap = count(); }
+    }
+    delete(@start[tid,3]); @active[tid] = @active[tid]-1;
+  } else { @missing_entry = count(); }
+}
+
+uprobe:__SQLITE__:sqlite3_column_count /@owned_tid[tid]/ {
+  @tgid[tid] = pid;
+  if (@tgid[tid] != pid) { @map_failure = count(); }
+  @entry[4] = count();
+  if (@start[tid,4]) { @nesting = count(); }
+  $now = nsecs(monotonic); @start[tid,4] = $now;
+  if (@start[tid,4] != $now) { @map_failure = count(); }
+  $depth = @active[tid]+1; @active[tid] = $depth;
+  if (@active[tid] != $depth) { @map_failure = count(); }
+}
+uretprobe:__SQLITE__:sqlite3_column_count /@owned_tid[tid]/ {
+  @returned[4] = count();
+  if (@start[tid,4]) {
+    $start = @start[tid,4]; $end = nsecs(monotonic);
+    if ($end-$start >= 1000000) {
+      if (@emitted < 10000) {
+        @emitted = count();
+        printf("N,%d,%d,4,%llu,%llu\n",pid,tid,$start,$end);
+      } else { @output_cap = count(); }
+    }
+    delete(@start[tid,4]); @active[tid] = @active[tid]-1;
+  } else { @missing_entry = count(); }
+}
+
+uprobe:__SQLITE__:sqlite3_last_insert_rowid /@owned_tid[tid]/ {
+  @tgid[tid] = pid;
+  if (@tgid[tid] != pid) { @map_failure = count(); }
+  @entry[5] = count();
+  if (@start[tid,5]) { @nesting = count(); }
+  $now = nsecs(monotonic); @start[tid,5] = $now;
+  if (@start[tid,5] != $now) { @map_failure = count(); }
+  $depth = @active[tid]+1; @active[tid] = $depth;
+  if (@active[tid] != $depth) { @map_failure = count(); }
+}
+uretprobe:__SQLITE__:sqlite3_last_insert_rowid /@owned_tid[tid]/ {
+  @returned[5] = count();
+  if (@start[tid,5]) {
+    $start = @start[tid,5]; $end = nsecs(monotonic);
+    if ($end-$start >= 1000000) {
+      if (@emitted < 10000) {
+        @emitted = count();
+        printf("N,%d,%d,5,%llu,%llu\n",pid,tid,$start,$end);
+      } else { @output_cap = count(); }
+    }
+    delete(@start[tid,5]); @active[tid] = @active[tid]-1;
+  } else { @missing_entry = count(); }
+}
+
+uprobe:__PYTHON__:PyEval_RestoreThread /@owned_tid[tid]/ {
+  @tgid[tid] = pid;
+  if (@tgid[tid] != pid) { @map_failure = count(); }
+  @entry[6] = count();
+  if (@start[tid,6]) { @nesting = count(); }
+  $now = nsecs(monotonic); @start[tid,6] = $now;
+  if (@start[tid,6] != $now) { @map_failure = count(); }
+  $depth = @active[tid]+1; @active[tid] = $depth;
+  if (@active[tid] != $depth) { @map_failure = count(); }
+}
+uretprobe:__PYTHON__:PyEval_RestoreThread /@owned_tid[tid]/ {
+  @returned[6] = count();
+  if (@start[tid,6]) {
+    $start = @start[tid,6]; $end = nsecs(monotonic);
+    if ($end-$start >= 1000000) {
+      if (@emitted < 10000) {
+        @emitted = count();
+        printf("N,%d,%d,6,%llu,%llu\n",pid,tid,$start,$end);
+      } else { @output_cap = count(); }
+    }
+    delete(@start[tid,6]); @active[tid] = @active[tid]-1;
+  } else { @missing_entry = count(); }
+}
+
+tracepoint:sched:sched_process_exit /@owned_tid[tid]/ {
+  if (@active[tid]) { @unfinished_exit = count(); }
+  delete(@owned_tid[tid]); delete(@tgid[tid]); delete(@active[tid]); delete(@off[tid]); delete(@state[tid]);
+  delete(@start[tid,1]);
+  delete(@start[tid,2]);
+  delete(@start[tid,3]);
+  delete(@start[tid,4]);
+  delete(@start[tid,5]);
+  delete(@start[tid,6]);
+}
+END {
+  // Preserve unreturned spans/active depths before discarding live maps.
+  print(@start); print(@active);
+  clear(@owned_tid); clear(@tgid); clear(@active); clear(@off); clear(@state); clear(@start);
+}

@@ -1,0 +1,37 @@
+{
+  "budgets": {
+    "controller_from_job_start_seconds": 1020,
+    "hosted_job_minutes": 20,
+    "native_stream_bytes": 8388608
+  },
+  "contract": "pr297-native-diagnostic-preparation/v1",
+  "entrypoint": "python \"$RUNNER_TEMP/pr297-native/launch.py\"",
+  "exclusions": [
+    "no installs or changes to user applications/services/configuration/data",
+    "no application/native probe execution or publication/dispatch in preparation",
+    "no repeated test, serial lane, relaxed deadline, retries or changed fault/clock behavior"
+  ],
+  "guards": [
+    "runtime image/kernel/Python/symbol/native-attachment preflight before pytest; abort without install/fallback",
+    "fixed original UID/GID/supplementary groups/environment/cwd/umask restored before application Python",
+    "root tracer only; process-local child subreaper plus PID/start/pidfd ownership and bounded TERM/KILL drain",
+    "PID/nativeTID/CLOCK_MONOTONIC correlation; native event and map/loss completeness gates",
+    "pytest failure and original coverage inadequacy remain failures; no qualification waiver"
+  ],
+  "limitation": "Source review and syntax checks are not proof of runtime probe permission, privilege restoration, or cleanup; a hard host SIGKILL cannot execute controller cleanup.",
+  "product": "07697ac2b8f74e8503534a6586fb13dbb30bdeb4",
+  "sha256": {
+    "acquisition_observer.py": "757d1de894d68e708f18fcaced042a556df1839a223f625f59b633c056097581",
+    "guard/sitecustomize.py": "2c8068ca14dad1d88e0e1276c57838cbbbfab12fbdc216d3257f98d7a231235c",
+    "launch.py": "2a304da15cab198cab91f82ef0e166dcdd0e275fe6524e494759ac79940b926f",
+    "native-controller.py": "3773da2545d502d7fe6706afea442289fb1840dab1ad43afed7fb853ff365d57",
+    "native-preflight.py": "c36194b1cef22ec1c3f51841d730f2d4d95a0132f8cb6c9d102546008f1d53c9",
+    "native.bt.in": "b7fbaabfafd9facb855ac2c26373f1b8b4bd90adf2c1389d591dbd7fe3c10c6e",
+    "probe-map.json": "2bb7d3d4fc83ab80b5cc54515ce9989c446332b6e44199e963aa0fbd7a578157",
+    "qualification.py": "8461736295d6d1ce51cedf9844fa11e10118e5c7478c21fa6755d7415a7cbddd",
+    "restore-context.py": "3ebdf5d1c6368c92852b5ff57e76a6f5cd7b6055d8e7e591e00daf058cc74871"
+  },
+  "status": "PREPARATION_COMPLETE_NO_EXECUTION_RELEASE",
+  "unchanged_baseline": "f9439245762aa98dfca882c5c75fda682148bc28",
+  "unchanged_pytest_command": "python -m pytest tests/ -q --durations=20"
+}
