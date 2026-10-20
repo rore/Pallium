@@ -174,7 +174,6 @@ def test_relay_guidance_covers_stale_delivery_and_recipient_identity() -> None:
         "pending unconfirmed",
         "let work finish",
         "ordinary turn if needed",
-        "use it when continuity helps",
         "do not resend",
     )
     assert all(all(rule in skill.read_text(encoding="utf-8") for rule in sender_rules) for skill in skills)
@@ -224,9 +223,10 @@ def test_work_association_guidance_is_lazy_aligned_and_safe() -> None:
     assert references[1:] == references[:-1]
     for path in skill_paths:
         skill = path.read_text(encoding="utf-8")
-        assert "For exact work/link correction, load [work associations](references/work-associations.md)." in skill
-        assert "For explicitly assigned Minimap implementation, investigation, testing, or substantive review" in skill
-        assert "casual browsing, passive inspection, and clerical edits do not qualify" in skill
+        assert "On pickup, resume, departure, or exact link correction" in skill
+        assert "follow canonical [work participation](references/work-associations.md)" in skill
+        assert "Accepted assigned implementation, investigation, testing, and substantive review qualify" in skill
+        assert "casual browsing, passive inspection, and clerical edits do not" in skill
         assert (path.parent / "references" / "work-associations.md").is_file()
 
     detail = reference_paths[0].read_text(encoding="utf-8")
@@ -237,27 +237,51 @@ def test_work_association_guidance_is_lazy_aligned_and_safe() -> None:
     assert "node <skill>/runtime/cli.js roadmap item-ref <item-id> --repo <absolute-repo-path> --json" in detail
     assert "returned exact `scope_ref` and `local_ref`" in detail
     assert detail.index("If the exact pair is absent") < detail.index("attach the exact CLI-returned pair")
-    assert "A successful list is authoritative" in generic
-    assert "Invoke each named Pallium MCP operation only when that operation is callable" in generic
+    assert "A successful list proves observed state" in generic
+    assert "Invoke each named Pallium MCP operation only when callable" in generic
     assert "only its successful result is authoritative" in generic
+    assert "This applies to list, attach, detach, participants, and History operations named here" in generic
     for operation in ("pallium_relay_work_refs", "pallium_relay_attach_work_ref", "pallium_relay_detach_work_ref", "pallium_relay_participants", "pallium_search_history_by_work_ref", "pallium_search_history"):
-        assert f"`{operation}`" in generic
-    assert "only a successful attach proves mutation" in generic
-    assert "only when the operation is callable" in generic
-    assert "Only a successful detach result proves mutation" in generic
+        assert operation in detail or all(operation in path.read_text(encoding="utf-8") for path in skill_paths)
+    assert "only a successful mutation proves attachment or detachment" in generic
     assert "required tool is unavailable or fails" in generic
     assert "missing or invalid scope/local refs" in minimap
-    assert "skip attachment, continue ordinary work" in generic
+    assert "continue ordinary work and report the limitation when relevant" in generic
     assert "capacity prevents attach" in generic
+    assert "at most three explicit references in addition to its structural references" in generic
+    assert "never evict an unrelated reference" in generic
+    assert "stable, exact `scope_ref`/`local_ref` pair from its authoritative source" in generic
+    assert "a tracker key needs its project scope" in generic
+    assert "identifiers must never be guessed" in generic
+    assert "Do not claim success, invent references, use shell/HTTP substitutes" in generic
+    assert "This read does not send or wake agents" in generic
+    assert "include_closed=true` only when closed sessions matter" in generic
+    assert "route with the returned canonical selector" in generic
     assert "A successful attach does not backfill untagged prior turns" in minimap
     assert "Older eligible items already carrying the same canonical key" in minimap
     assert "eligible later turns can carry it only when per-turn association lookup succeeds" in minimap
-    assert "Detach only the exact pair this flow successfully attached" in detail
+    for requirement in (
+        "On pickup or resume, call `pallium_relay_work_refs`",
+        "actual accepted substantive assignments",
+        "Reuse an exact listed association",
+        "current-session explicit origin successfully attached in an earlier turn",
+        "Attach an absent exact assigned pair",
+        "Keep each explicit association throughout its assignment, including ordinary waits",
+        "When that assignment ends, is cancelled, or transfers away",
+        "for its exact current-session explicit origin, even if the feature remains unfinished",
+        "Preserve unrelated references and other sessions' links",
+        "unknown assignment state is not permission to detach",
+        "Branch and Agent Workflow references are hook-owned structural origins",
+        "do not attach explicit duplicates or attempt to detach structural origins manually",
+        "Producers refresh them from the current branch and matching Work Record",
+        "ending an assignment alone does not clear them while that structural context remains",
+        "does not resolve custom/resumed Work Record discovery gaps",
+    ):
+        assert requirement in generic
     assert "API removes only the current session's explicit origin" in detail
     assert "may report `structural_remains`" in detail
-    assert "Never attempt to remove a structural origin or detach merely because an optional provider is absent" in detail
+    assert "or detach merely because an optional provider is absent" in generic
     assert "task ownership, activity, acceptance, completion, receipt, or History/memory access" in detail
-    assert "custom/resumed scope gap is not solved" in detail
 def test_field_feedback_guidance_is_lazy_aligned_and_safe() -> None:
     skill_paths = [
         Path(f"integrations/{runtime}/skills/pallium-memory/SKILL.md")
