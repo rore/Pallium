@@ -2682,6 +2682,41 @@ class SQLiteRelayMixin:
         receipt from the stale claim will not match the new claim_token → 409.
         Idempotent: returns success if already delivered.
         """
+        reject = False
+        read_db = None
+        read_connection = None
+        try:
+            try:
+                read_db = self._relay_session_factory()
+                read_connection = read_db.connection()
+                row = read_db.execute(
+                    select(RelayDeliveryRecord.state, RelayDeliveryRecord.claim_token)
+                    .join(RelayMessageRecord, RelayMessageRecord.id == RelayDeliveryRecord.message_id)
+                    .where(RelayDeliveryRecord.id == delivery_id)
+                ).one_or_none()
+                if row is not None and row.state == "delivered":
+                    expected = _delivery_receipt(row.claim_token)
+                    reject = expected is None or not hmac.compare_digest(expected, receipt)
+            except Exception:
+                pass
+        finally:
+            if read_db is not None:
+                try:
+                    read_db.close()
+                except Exception:
+                    for cleanup in (
+                        read_connection.invalidate if read_connection is not None else None,
+                        read_connection.close if read_connection is not None else None,
+                        read_db.invalidate,
+                    ):
+                        if cleanup is not None:
+                            try:
+                                cleanup()
+                            except Exception:
+                                pass
+                    raise
+        if reject:
+            raise RelayConflictError("receipt does not match delivered claim")
         current = _now(now)
         with self._begin_relay_immediate() as db:
             row = db.execute(
