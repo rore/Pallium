@@ -92,7 +92,8 @@ def test_manual_windows_final_checks_reject_any_incomplete_selection() -> None:
         assert "if: always() && github.event_name == 'workflow_dispatch'" in block
         assert "SERIAL: ${{ steps.serial.outcome }}" in block
         assert "REMAINING: ${{ steps.remaining.outcome }}" in block
-        checks.append(textwrap.dedent(block.split("        run: |\n", 1)[1]))
+        script = block.split("        run: |\n", 1)[1].split("\n      - ", 1)[0]
+        checks.append(textwrap.dedent(script))
     shell = shutil.which("pwsh") or shutil.which("powershell")
     if not shell and os.name != "nt":
         pytest.skip("PowerShell is unavailable for executing the Windows CI outcome checks")
