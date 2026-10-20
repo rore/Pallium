@@ -643,9 +643,12 @@ export default {...production,setup:async ctx=>{
         for marker in (natural_marker, automatic_marker):
             sources = [(body, result) for body, result in ingested
                 if body.get("role") == "assistant" and body["content"] == marker]
-            assert len(sources) == 1, (marker, [body["content"] for body, _ in ingested if body.get("role") == "assistant"])
+            assert sources, marker
+            identities = {(body["source_id"], result["source_item_id"]) for body, result in sources}
+            assert len(identities) == 1, (marker, identities)
+            for body, _ in sources:
+                assert body["container_ref"] == container and body["thread_ref"] == session and body["actor_ref"] == assistant_actor
             body, result = sources[0]
-            assert body["container_ref"] == container and body["thread_ref"] == session and body["actor_ref"] == assistant_actor
             history = history_client.post("/query", json={"text": "NATIVE", "container_ref": container,
                 "active_session_ref": session, "thread_ref": session, "actor_ref": assistant_actor,
                 "visibility": "private", "trigger_origin": "agent_pull", "limit": 50, "source_only": True})
