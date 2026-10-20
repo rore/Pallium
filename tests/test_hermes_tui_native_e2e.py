@@ -567,14 +567,26 @@ class ScriptedProvider:
                     self.memory_issued.add(stage)
                 return None, call
             value = results[name]
-            ids = [row["memory_object_id"] for row in value.get("results", [])]
+            memory_hits = []
+            if name == "pallium_query":
+                assert isinstance(value, dict) and isinstance(value.get("results"), list), value
+                for row in value["results"]:
+                    assert isinstance(row, dict), row
+                    if row.get("result_kind") == "memory_hit":
+                        assert isinstance(row.get("memory_object_id"), str) and row["memory_object_id"], row
+                        memory_hits.append(row)
+                    else:
+                        assert row.get("result_kind") == "source_hit", row
+                        assert isinstance(row.get("source_item_id"), str) and row["source_item_id"], row
+                        assert row.get("memory_object_id") is None, row
+            ids = [row["memory_object_id"] for row in memory_hits]
             if stage == "remember":
                 assert value["memory_object_id"], value
                 self.memory_ids["first"] = value["memory_object_id"]
             elif stage in {"query_original", "query_corrected"}:
                 assert ids == [first], (stage, value)
                 if stage == "query_corrected":
-                    assert "Opal compass stays in archive" in json.dumps(value), value
+                    assert "Opal compass stays in archive" in json.dumps(memory_hits[0]["payload"]), value
             elif stage in {"expand", "expand_corrected", "expand_current"}:
                 expected_id = current if stage == "expand_current" else first
                 assert value["memory_object_id"] == expected_id, value
@@ -665,6 +677,48 @@ def test_native_memory_script_uses_discovered_schemas_and_exact_returned_ids(dec
     run_stage("forget", "pallium_forget", {"forgotten": True})
     assert set(provider.completed) == {MEMORY_PROMPTS[stage] for stage in (
         "remember", "supersede_one", "supersede_two", "forget")}
+
+
+@pytest.mark.parametrize("stage,rows,accepted", [
+    ("query_original", [{"result_kind": "memory_hit", "memory_object_id": "first"},
+                        {"result_kind": "source_hit", "source_item_id": "history"}], True),
+    ("query_original", [{"result_kind": "memory_hit", "memory_object_id": "wrong"}], False),
+    ("query_original", [{"result_kind": "memory_hit", "memory_object_id": "first"},
+                        {"result_kind": "memory_hit", "memory_object_id": "extra"}], False),
+    ("query_original", [{"result_kind": "memory_hit", "memory_object_id": "first"}] * 2, False),
+    ("query_original", [{"result_kind": "unknown", "memory_object_id": "first"}], False),
+    ("query_original", [{"result_kind": "memory_hit", "memory_object_id": None}], False),
+    ("query_original", [{"result_kind": "source_hit", "source_item_id": ""}], False),
+    ("query_original", [{"result_kind": "source_hit", "source_item_id": "history",
+                         "memory_object_id": "first"}], False),
+    ("query_original", [None], False),
+    ("query_original", None, False),
+    ("query_current", [{"result_kind": "memory_hit", "memory_object_id": "current"}], True),
+    ("query_superseded", [{"result_kind": "memory_hit", "memory_object_id": "first"}], False),
+    ("query_forgotten", [{"result_kind": "source_hit", "source_item_id": "history"}], True),
+    ("query_forgotten", [{"result_kind": "memory_hit", "memory_object_id": "current"}], False),
+    ("query_corrected", [{"result_kind": "memory_hit", "memory_object_id": "first",
+                         "payload": {"statement": "Quartz lantern remains in vault"}},
+                        {"result_kind": "source_hit", "source_item_id": "history",
+                         "excerpt": "Opal compass stays in archive"}], False),
+    ("query_corrected", [{"result_kind": "memory_hit", "memory_object_id": "first",
+                         "payload": {"statement": "Opal compass stays in archive"}},
+                        {"result_kind": "source_hit", "source_item_id": "history"}], True),
+])
+def test_native_memory_query_distinguishes_history_without_hiding_wrong_memories(stage, rows, accepted):
+    provider = ScriptedProvider(memory_enabled=True)
+    provider.memory_ids = {"first": "first", "second": "second", "current": "current"}
+    body = {"tools": [{"function": {"name": "pallium_query"}}], "messages": [
+        {"role": "user", "content": MEMORY_PROMPTS[stage]},
+        {"role": "assistant", "tool_calls": [{"id": "query", "function": {
+            "name": "pallium_query", "arguments": "{}"}}]},
+        {"role": "tool", "tool_call_id": "query", "content": json.dumps({"results": rows})},
+    ]}
+    if accepted:
+        assert provider.respond(body) == (f"Completed {stage}.", None)
+    else:
+        with pytest.raises(AssertionError):
+            provider.respond(body)
 
 
 @pytest.mark.parametrize("decorated", [False, True])

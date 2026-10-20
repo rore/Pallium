@@ -11,7 +11,12 @@ Those partial observations do not qualify the full integration. The final approv
 run [39483789032](https://github.com/rore/Pallium/actions/runs/39483789032) is testing
 reviewed candidate `91ffe1ad3158786f922c57ba5ed11e024cad9390` after full CI passed.
 Both authorized runs are allocated; no additional dispatch or rerun is authorized.
-Its native result remains pending.
+It failed three native cases after 42 checks passed, including the complete
+v0.22.0 Desktop memory-off journey. TUI off/on failed rendered-text observation;
+Desktop memory-on rejected a legitimate mixed memory/History query response.
+Fail-fast cancelled v0.22.2. Owned cleanup and source postconditions passed in
+all four cases. Both attempts are exhausted; further native execution needs a
+new explicit budget approval. Harness repair and pure replay are not a native pass.
 Hermes remains experimental. This approval excludes local recovery and everyday
 installation or rollout.
 
@@ -49,8 +54,8 @@ Windows x64 archive hash before executing it from runner temp. Use supported Nod
 `npm run build --workspace ui-tui` and the unpacked Desktop using
 `npm run pack --workspace apps/desktop`. Fail explicitly on each native command
 error and missing or ambiguous output; do not install MSIX packages or patch
-upstream source. Build prerequisites and the unpacked executable layout still
-need verification on the runner.
+upstream source. Build prerequisites and the unpacked executable layout passed
+on v0.22.0; v0.22.2 native build/execution remains unverified by this workflow.
 
 Dependency install scripts and Desktop startup can write outside redirected
 profile paths. A temporary profile does not isolate those effects: all further

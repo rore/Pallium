@@ -12,6 +12,14 @@ These checks do not establish actual Desktop or TUI
 interaction, normal provider/default Tool Search behavior, memory parity or later
 release compatibility.
 
+One complete native Desktop memory-off journey passed on v0.22.0 in a disposable
+Windows Server 2025 VM with an unpacked app and synthetic provider. It covered
+default Tool Search, Relay/wake, later-session History, a harmless peer hook,
+endpoint outage, controlled host/MCP relaunch and profile update/status/removal.
+The TUI off/on and Desktop memory-on cases failed; v0.22.2 was cancelled by
+fail-fast. This partial matrix does not establish production readiness. See the
+[retained run](https://github.com/rore/Pallium/actions/runs/39483789032).
+
 ## Available in the experimental package
 
 | Capability | Current boundary |
@@ -107,8 +115,8 @@ writers. No everyday profile or host updater should be replaced for qualificatio
 - Desktop qualification needs Windows 11 22H2 or later and separate backend,
   Electron and process-home data paths inside a disposable OS/account, or a
   supported registration opt-out. Profile directories alone do not isolate
-  native URL-handler registration. No full Pallium Desktop/TUI journey has
-  passed; gateway success does not resolve that gate.
+  native URL-handler registration. One hosted Desktop memory-off journey passed;
+  complete Desktop/TUI and opt-in memory coverage remain open.
 - Caller tests cover explicit-memory recall/correction and successive wakes
   after admitted no-reply turns. Actual UI lifecycle qualification remains a
   release gate; a successful write or tool call alone is insufficient evidence.
