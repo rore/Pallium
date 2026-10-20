@@ -24,7 +24,7 @@ Native multi-step/tool-plus-text and reload -> released isolated binary with loc
 **Plan review:** Agent technical review: /root/capture_contract_discovery, approved exact recorded plan at `3f367ef2a8a86fe78dd4e146bfb23d8d089c63d5` within existing best-effort latest-user capture semantics; see Technical plan review below. Elevated/Moderate appropriate. No historical backfill or guarantee every completed native turn is retained. Native prerequisite evidence alone does not approve implementation results.
 **Approvals:** Separate human plan approval not required at Elevated risk; user authorized the remediation. No live deployment authorization in this record.
 **Exceptions:** —
-**State:** Blocked or returned to planning
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Resume after PR297 merge (2026-10-20)
@@ -33,7 +33,7 @@ Owner remains @pal-dev1. Manager forwarded the human directive "stop asking me, 
 
 Current actual main is PR297 merge `178fea16e36946ffed68fb4bdd93da76056d5f73`. This supersedes historical statements that PR297 is open; immutable original requirements and past evidence remain retained. Existing OC-3 implementation and accepted capture contract are unchanged. No independent owner is editing this branch. Canonical reliability roadmap remains manager-owned in C:/Dev/rore/Pallium; no shared roadmap edits here. Scoped Pallium work-ref lookup is unavailable without an injected container_ref, so no scope is guessed or attachment claimed.
 
-Risk stays Elevated / Moderate: gray OpenCode plugin/docs, blue existing caller/native tests and Work Record; no new imports across application layers, API/schema/backend, protected contracts, governance or installed environment edits. Resume plan review is pending before the source merge.
+Risk stays Elevated / Moderate: gray OpenCode plugin/docs, blue existing caller/native tests and Work Record; no new imports across application layers, API/schema/backend, protected contracts, governance or installed environment edits. Resume plan review: independent /root/opencode297_resume_plan_review approves the bounded merge with one narrow addition: deterministic ownership-helper-return-gap regression and a caller-side live(item,signal) check immediately before the capture success marker. The two proposed native conflict resolutions are approved. Preserve captured-Set cleanup and all existing contracts; no backend expansion. Add this regression/check before behavioral validation and obtain actual-source review.
 
 Resume plan: invoke Agent Workflow and resolve existing `agent-workflow:opencode-capture-idempotence` before source edits; normally merge actual main without rebase/force push. Preserve PR297's initial directory ownership check, per-session probe retirement and disposal fences together with this PR's stable scoped completed-snapshot identity, captured reservation Set and strict current-lifetime receipt handling. Git's preliminary merge reports only two conflict blocks in tests/test_opencode_native_wake_e2e.py: retain both lost-response capture state and assistant_outputs; use the provider's assistant_marker except that default compaction emits its validated summary template. Preserve natural/automatic foreign-History marker assertions and all accepted exact receipt/idempotence tests. Inspect automatic plugin/test merges, add only an uncovered interaction regression if necessary, and stop on a required contract expansion.
 
