@@ -1,6 +1,6 @@
 # Pallium for Hermes
 
-This is a frozen, disposable-profile qualification package for Hermes v0.22.2. It installs a native Hermes plugin, the discoverable `pallium-memory` skill, and the plugin-owned Pallium MCP bridge. Setup never creates a global `mcp_servers` connection and does not modify model/provider, toolset, Tool Search, other plugin, credential, or data settings.
+This is a frozen, disposable-profile qualification package tested against Hermes v0.22.0 and v0.22.2 through gateway RPC. It installs a native Hermes plugin, the discoverable `pallium-memory` skill, and the plugin-owned Pallium MCP bridge. Setup never creates a global `mcp_servers` connection and does not modify model/provider, toolset, Tool Search, other plugin, credential, or data settings.
 
 ## Production qualification in progress
 
@@ -11,8 +11,8 @@ supported-version claim.
 
 | Gate | Required evidence | Current state |
 |---|---|---|
-| Released hosts | Actual Desktop and TUI journeys on v0.22.0 and v0.22.2 | Not qualified; existing proof uses gateway RPC only |
-| Runtime compatibility | Public plugin identity, injection, hook and middleware contracts; clear missing-capability errors | Discovery confirms both tags expose required APIs; behavioral qualification pending |
+| Released hosts | Actual Desktop and TUI journeys on v0.22.0 and v0.22.2 | UI journeys unqualified; gateway Relay/History proof passes on both tags |
+| Runtime compatibility | Public plugin identity, injection, hook and middleware contracts; clear missing-capability errors | Capability diagnostics and gateway journeys pass; UI qualification pending |
 | Normal configuration | Ordinary providers, default Tool Search, supported plugin coexistence | Frozen-profile restrictions remain; downstream middleware can bypass a provider call |
 | Full package | Skill, Relay, History and opt-in memory lifecycle; memory off leaves Relay/History functional | Relay/History bounded proof exists; shared memory target-scope contracts need work |
 | Recovery | Busy/concurrent sessions, reset/close, host/service/MCP restart, stale routes and ambiguous outcomes | Native coverage incomplete |
@@ -138,7 +138,11 @@ the shared opt-in supported-memory output; derived memory remains a later slice.
 
 ## Native qualification limits
 
-The native wake qualification remains limited to the pinned Hermes v0.22.2 source, explicit frozen local-provider profile, and loopback stubs. Run the focused host journey only with a clean pinned checkout and disposable Hermes environment:
+The native gateway wake qualification passes on the two pinned released sources,
+v0.22.0 and v0.22.2, with the explicit frozen local-provider profile and loopback
+stubs. This is gateway RPC evidence, not actual Desktop or TUI interaction. Run
+the focused host journey with either clean pinned checkout and a disposable
+Hermes environment:
 
 ```powershell
 $env:HERMES_E2E_SOURCE = 'C:\path\to\pinned\hermes-agent'
