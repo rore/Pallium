@@ -351,17 +351,21 @@ def test_released_native_idle_busy_and_reload(client, tmp_path, test_db_url, mon
     wrapper.write_text("""import production from './pallium-v2.mjs';
 import {appendFileSync} from 'node:fs';
 import {extractV2AssistantTurn,buildWorkTraceMetadata} from './pallium-common.mjs';
-const log=(kind,detail={})=>appendFileSync(process.env.PALLIUM_NATIVE_LIFECYCLE,JSON.stringify({kind,time:Date.now(),...detail})+'\\n');
+import {randomUUID} from 'node:crypto';
 export default {...production,setup:async ctx=>{
+ const instance=randomUUID(),directory=ctx.location.directory;
+ const log=(kind,detail={})=>appendFileSync(process.env.PALLIUM_NATIVE_LIFECYCLE,JSON.stringify({kind,time:Date.now(),instance,directory,...detail})+'\\n');
  log('setup');
  const session={...ctx.session,context:async args=>{
   const result=await ctx.session.context(args);
   const messages=Array.isArray(result)?result:result.data;
   const turn=extractV2AssistantTurn(messages);
-  log('capture.context',{messages,turn,workTrace:turn?buildWorkTraceMetadata(turn):null});
+  log('capture.context',{sessionID:args.sessionID,messages,turn,workTrace:turn?buildWorkTraceMetadata(turn):null});
   return result;
  },hook:(name,callback)=>ctx.session.hook(name,async event=>{
-  try{return await callback(event)}finally{log(name+'.done')}
+  const identity={sessionID:event?.sessionID,inputID:event?.messageID??event?.messages?.findLast(message=>message?.role==='user')?.id};
+  log(name+'.enter',identity);
+  try{return await callback(event)}finally{log(name+'.done',identity)}
  })};
  const cleanup=await production.setup({...ctx,session});
  return async()=>{log('cleanup.enter');await cleanup();log('cleanup.done')};
@@ -553,20 +557,38 @@ export default {...production,setup:async ctx=>{
         api("POST", prefix + "/prompt", {"id": "msg_retirement_pending", "text": "NATIVE_RETIREMENT", "delivery": "queue"})
         assert retirement_blocked.wait(15), "production context never entered the blocked response body"
         before_events = [json.loads(line) for line in lifecycle.read_text(encoding="utf-8").splitlines()]
-        before_setup = sum(e["kind"] == "setup" for e in before_events)
-        before_context_done = sum(e["kind"] == "context.done" for e in before_events)
+        held = [event for event in before_events if event["kind"] == "context.enter"
+                and event.get("sessionID") == session and event.get("inputID") == "msg_retirement_pending"
+                and Path(event["directory"]) == workspace]
+        assert len(held) == 1, f"missing or ambiguous held native callback: {held}"
+        held_instance = held[0]["instance"]
+
+        def exact_reload():
+            events = [json.loads(line) for line in lifecycle.read_text(encoding="utf-8").splitlines()]
+            done = [event for event in events if event["kind"] == "cleanup.done" and event["instance"] == held_instance]
+            return done and any(event["kind"] == "setup" and Path(event["directory"]) == workspace
+                                and event["instance"] != held_instance and event["time"] >= done[0]["time"]
+                                for event in events)
+
         with wrapper.open("a", encoding="utf-8") as stream:
             stream.write("\n// supported native source reload\n")
-        eventually(lambda: sum(json.loads(line)["kind"] == "setup" for line in lifecycle.read_text(encoding="utf-8").splitlines()) == before_setup + 1)
+        eventually(exact_reload)
         lifecycle_events = [json.loads(line) for line in lifecycle.read_text(encoding="utf-8").splitlines()]
-        cleanup = next(e for e in lifecycle_events if e["kind"] == "cleanup.done")
-        cleanup_enter = next(e for e in lifecycle_events if e["kind"] == "cleanup.enter")
-        assert 0 <= cleanup["time"] - cleanup_enter["time"] < 2000
+        cleanup = [event for event in lifecycle_events if event["kind"] == "cleanup.done" and event["instance"] == held_instance]
+        cleanup_enter = [event for event in lifecycle_events if event["kind"] == "cleanup.enter" and event["instance"] == held_instance]
+        assert len(cleanup) == len(cleanup_enter) == 1
+        assert 0 <= cleanup[0]["time"] - cleanup_enter[0]["time"] < 2000
         assert not retirement_release.is_set()
         assert not retirement_acks
+        with lifecycle.open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps({"kind": "body.release", "time": int(time.time() * 1000),
+                "instance": held_instance, "directory": str(workspace), "sessionID": session,
+                "inputID": "msg_retirement_pending"}) + "\n")
         retirement_release.set()
         assert retirement_resumed.wait(5)
-        eventually(lambda: sum(json.loads(line)["kind"] == "context.done" for line in lifecycle.read_text(encoding="utf-8").splitlines()) > before_context_done)
+        eventually(lambda: any(event["kind"] == "context.done" and event["instance"] == held_instance
+                               and event.get("sessionID") == session and event.get("inputID") == "msg_retirement_pending"
+                               for event in (json.loads(line) for line in lifecycle.read_text(encoding="utf-8").splitlines())))
         api("POST", "/api/experimental/session/" + session + "/wait")
         assert not retirement_acks, "retired callback initiated ACK after native cleanup"
         assert all("RETIRED_BODY_שלום" not in json.dumps(body, ensure_ascii=False) for body in requests)
