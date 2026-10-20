@@ -60,6 +60,8 @@ This directly answers the presented proposal to add and merge the separate dispo
 
 ## Implementation
 
+Pre-dispatch review corrections: runner paths moved from invalid job-level runner context into the first step's environment, checked before exporting to GITHUB_ENV. The safety contract rejects that context-placement regression. PyYAML is now an explicit dev/test dependency and explicit disposable bootstrap prerequisite for older candidates; the pyproject edit changes only one dependency and leaves all import-linter/governance definitions unchanged. This raises fresh policy classification to RED for build configuration, within the existing High risk/approved CI-test scope. Architecture checkpoint: additive test dependency only, no runtime/API/schema or boundary rule change; verify pure contract, script parsing, real import boundaries and required hosted full CI. Both fixes precede all native execution; dispatch ledger remains0. Independent review of these corrections is pending before merge.
+
 Created from current main bb239133a3ae86a37fe9f890beae87772b15f774 in a separate managed checkout and feat/hermes-native-qualification branch. Whole-change documentation exemption does not apply to the new workflow. Feature implementation remains on feat/hermes-production-slice4 / PR324. No native runs dispatched yet; approved run ledger starts at zero.
 
 ## Evidence

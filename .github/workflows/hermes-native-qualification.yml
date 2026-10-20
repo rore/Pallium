@@ -34,16 +34,17 @@ jobs:
             revision: d923a5eb487a17c0a68801bba9ef0f56c81040a8
     env:
       HERMES_NATIVE_CI_ISOLATION: github-hosted-ephemeral-windows
-      HERMES_E2E_SOURCE: ${{ runner.temp }}\hermes-source
-      HERMES_E2E_PYTHON: ${{ runner.temp }}\hermes-sdk2\Scripts\python.exe
-      PALLIUM_E2E_PYTHON: ${{ runner.temp }}\pallium-sdk1\Scripts\python.exe
-      HERMES_NATIVE_ARTIFACTS: ${{ runner.temp }}\hermes-native-artifacts
       HERMES_EXPECTED_RELEASE: ${{ matrix.release }}
       HERMES_EXPECTED_REVISION: ${{ matrix.revision }}
       PALLIUM_EXPECTED_REVISION: ${{ inputs.pallium_revision }}
     steps:
       - name: Require disposable hosted Windows and contained write roots
         shell: pwsh
+        env:
+          HERMES_E2E_SOURCE: ${{ runner.temp }}\hermes-source
+          HERMES_E2E_PYTHON: ${{ runner.temp }}\hermes-sdk2\Scripts\python.exe
+          PALLIUM_E2E_PYTHON: ${{ runner.temp }}\pallium-sdk1\Scripts\python.exe
+          HERMES_NATIVE_ARTIFACTS: ${{ runner.temp }}\hermes-native-artifacts
         run: |
           $ErrorActionPreference = 'Stop'
           if ($env:PALLIUM_EXPECTED_REVISION -cnotmatch '^[a-f0-9]{40}$') { throw 'Full immutable Pallium commit required' }
@@ -58,6 +59,10 @@ jobs:
               if ((Test-Path -LiteralPath $ancestor) -and ((Get-Item -LiteralPath $ancestor -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Reparse write root refused' }
               $ancestor = [IO.Path]::GetDirectoryName($ancestor)
             }
+          }
+          foreach ($name in @('HERMES_E2E_SOURCE', 'HERMES_E2E_PYTHON', 'PALLIUM_E2E_PYTHON', 'HERMES_NATIVE_ARTIFACTS')) {
+            $value = [Environment]::GetEnvironmentVariable($name)
+            "$name=$value" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           }
       - name: Checkout Pallium source
         uses: actions/checkout@v4
@@ -122,7 +127,7 @@ jobs:
           $python = '${{ steps.pallium-python.outputs.python-path }}'
           & $python -m venv (Join-Path $env:RUNNER_TEMP 'pallium-sdk1')
           if ($LASTEXITCODE) { throw 'Pallium environment creation failed' }
-          & $env:PALLIUM_E2E_PYTHON -m pip install --disable-pip-version-check -e '.[mcp,dev]'
+          & $env:PALLIUM_E2E_PYTHON -m pip install --disable-pip-version-check -e '.[mcp,dev]' 'PyYAML>=6,<7'
           if ($LASTEXITCODE) { throw 'Pallium dependency installation failed' }
 
       - name: Select Python 3.14.6 for Hermes MCP SDK 2
