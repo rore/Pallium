@@ -51,6 +51,8 @@ The runner's restricted CIM query failed. A separate elevated lifetime-fenced ve
 
 Manager's next disposition is bounded read-only execution-recipe/fixture review against saved successful PR325 focused7/11 evidence. Use saved artifacts/source only; no process sampling, app imports, reruns, repeated hashes, diagnostics or timeout extensions. Return a concrete defect with exact evidence/minimal correction, or none. Any correction requires independent review before an execution proposal; this remains unqualified. Canonical roadmap and broader cleanup remain manager-owned.
 
+The bounded comparison is complete: no concrete deterministic recipe/fixture defect was found and no corrective execution is proposed. /root/terminal_recipe_drift_review compared saved commands/env/cwd/private basetemp controls; parent reviewed unchanged conftest/config/app lifecycle and the intentional differences between the earlier native-focused cohorts and the full-router empty-inbox source path. Shared PYTEST environment/outer execution-mode capture gaps and the saved CIM-access difference are evidence limits, not demonstrated causes or fixes. Exact source/recipe references and limits are preserved in ../windows313-retained-recovery-20261020-evidence/terminal-ack-recipe-fixture-review.json and reported to the manager. State remains Blocked pending a new bounded disposition; no rerun, baseline investigation or source change follows this review.
+
 ## Renewed completion investigation — 2026-10-19
 
 Root adopts the bounded failure-only acquisition timing plan reviewed by
