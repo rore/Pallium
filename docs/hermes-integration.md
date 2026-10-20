@@ -7,8 +7,8 @@ everyday installation.
 Production support must cover both Windows **Desktop and TUI** across compatible
 Hermes releases. Runtime checks use public plugin capabilities rather than an
 exact Hermes version check. Current-source gateway RPC Relay/History proof passed
-on clean **v0.22.2** with a disposable profile and local provider. Earlier-source
-gateway proof also passed on **v0.22.0**. Neither establishes actual Desktop or TUI
+on clean **v0.22.0** and **v0.22.2** with disposable profiles and a local provider.
+These checks do not establish actual Desktop or TUI
 interaction, normal provider/default Tool Search behavior, memory parity or later
 release compatibility.
 
@@ -16,8 +16,8 @@ release compatibility.
 
 | Capability | Current boundary |
 |---|---|
-| Relay | 12 MCP tools for discovery, identity, work associations, messaging, status and trace; current gateway round trips passed on v0.22.2 |
-| Session History | Capture plus `pallium_search_history`, `pallium_search_history_by_work_ref` and `pallium_expand_source`; current search and expansion passed through v0.22.2 gateway RPC |
+| Relay | 12 MCP tools for discovery, identity, work associations, messaging, status and trace; current gateway round trips passed on v0.22.0/v0.22.2 |
+| Session History | Capture plus `pallium_search_history`, `pallium_search_history_by_work_ref` and `pallium_expand_source`; current search and expansion passed through v0.22.0/v0.22.2 gateway RPC |
 | Skill and MCP | Bundled skill and plugin-owned stdio bridge; trusted conversation identity and private scope are supplied by the integration |
 | Package lifecycle | Explicit-profile setup, status, repeat setup/update and removal with ownership checks; running-host readiness is a separate check |
 | Derived memory | Eleven existing memory query/write tools are available through an explicit opt-in catalog; disabled by default. This adds tools, not automatic memory injection, and current native behavior is not qualified |
@@ -30,6 +30,12 @@ does not expose receive/ACK tools. A saved send or wake attempt is not proof of
 receipt. Automatic recovery, busy/reset/close/restart behavior and ordinary-turn
 fallback are still unqualified; do not apply another integration's wake
 guarantees to Hermes.
+
+After an admitted delivery's exact host turn ends, the integration releases its
+local wake fence even if the agent did not reply. Missing or stale turn-end
+callbacks and uncertain claim/ACK state remain fenced. Serialization applies
+within one plugin process; it does not coordinate independent processes sharing
+a profile.
 
 History capture stores private, hook-observed plain-text user/final-assistant
 snapshots with stable host session, turn and message IDs. It accepts up to
@@ -51,6 +57,12 @@ the target source partition; omission preserves the bounded container partition.
 Historical `actor_ref` and `source_thread_ref` filters do not change integration
 identity. The package supplies a fixed private container configuration and
 host-issued current session.
+Explicit memories can be queried across sessions within that scope. Correction
+updates the payload and stored search entries atomically; vector embedding is
+best-effort, with reconciliation for missing vectors. Evidence-specific filters
+cannot match an explicit memory without evidence, and forgotten memories remain
+excluded. Caller tests cover these contracts; native UI memory qualification is
+still pending.
 See [Session History](session-history.md) and
 [Privacy and Visibility](privacy-and-visibility.md).
 
@@ -97,9 +109,9 @@ writers. No everyday profile or host updater should be replaced for qualificatio
   supported registration opt-out. Profile directories alone do not isolate
   native URL-handler registration. No full Pallium Desktop/TUI journey has
   passed; gateway success does not resolve that gate.
-- Explicit-memory recall and accepting another wake after an admitted delivery
-  without a reply remain release blockers. A successful write or tool call is
-  not proof of a complete memory or Relay lifecycle.
+- Caller tests cover explicit-memory recall/correction and successive wakes
+  after admitted no-reply turns. Actual UI lifecycle qualification remains a
+  release gate; a successful write or tool call alone is insufficient evidence.
 
 The [qualification matrix](../integrations/hermes/README.md#production-qualification-in-progress)
 tracks the remaining current-native, normal-provider, default Tool Search,

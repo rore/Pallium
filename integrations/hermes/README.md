@@ -1,6 +1,6 @@
 # Pallium for Hermes
 
-This experimental package installs a native Hermes plugin, the discoverable `pallium-memory` skill, and the plugin-owned Pallium MCP bridge. Current source passed gateway RPC Relay/History on Hermes v0.22.2; v0.22.0 gateway evidence applies to an earlier snapshot. Setup never creates a global `mcp_servers` connection and preserves provider, toolset, Tool Search, other plugin, credential, and data settings.
+This experimental package installs a native Hermes plugin, the discoverable `pallium-memory` skill, and the plugin-owned Pallium MCP bridge. Current source passed gateway RPC Relay/History on Hermes v0.22.0 and v0.22.2. Setup never creates a global `mcp_servers` connection and preserves provider, toolset, Tool Search, other plugin, credential, and data settings.
 
 For the public capability overview and support boundaries, see the
 [Hermes integration guide](../../docs/hermes-integration.md).
@@ -14,8 +14,8 @@ supported-version claim.
 
 | Gate | Required evidence | Current state |
 |---|---|---|
-| Released hosts | Actual Desktop and TUI journeys on current compatible releases | UI journeys unqualified; current gateway Relay/History proof on v0.22.2 and earlier-snapshot proof on v0.22.0 |
-| Runtime compatibility | Public plugin identity, injection, hook and middleware contracts; clear missing-capability errors | Current v0.22.2 gateway checks passed; current second-release and actual UI qualification pending |
+| Released hosts | Actual Desktop and TUI journeys on current compatible releases | UI journeys unqualified; current gateway Relay/History proof on v0.22.0 and v0.22.2 |
+| Runtime compatibility | Public plugin identity, injection, hook and middleware contracts; clear missing-capability errors | Current v0.22.0/v0.22.2 gateway checks passed; actual UI qualification pending |
 | Normal configuration | Ordinary providers, default Tool Search, supported plugin coexistence | Setup preserves these settings; current behavior remains unqualified |
 | Full package | Skill, Relay, History and opt-in memory lifecycle; memory off leaves Relay/History functional | Current source exposes memory opt-in; native memory and full lifecycle qualification pending |
 | Recovery | Busy/concurrent sessions, reset/close, host/service/MCP restart, stale routes and ambiguous outcomes | Native coverage incomplete |
@@ -114,6 +114,12 @@ Setup is repeatable. The installer stores ownership fingerprints beside the plug
 
 The profile skill is installed under `$HERMES_HOME/skills/pallium-memory/`, so Hermes includes it in normal skill discovery. The default MCP catalog includes Relay and three Session History tools. The explicit memory opt-in adds eleven existing memory query/write tools; this is an optional tool catalog and does not promise automatic memory injection. Relay ACK records host-context receipt before provider completion, not model/provider completion or action. Use the reply operation for an injected delivery and never receive or ACK it again.
 
+An admitted wake also completes locally when its exact host turn ends without a
+reply. Stale or incomplete callbacks cannot release a newer wake, and uncertain
+claim/ACK state stays fenced. This serialization is local to one plugin process.
+Caller tests cover successive wakes and explicit-memory recall, correction,
+supersession and forgetting; these are separate from native UI qualification.
+
 ## Session History
 
 The public `post_llm_call` hook captures the current plain-text user and final
@@ -152,9 +158,9 @@ omitting it retains the bounded container partition.
 
 ## Native qualification limits
 
-Current native gateway wake qualification passed on v0.22.2 with a disposable
-local-provider profile and loopback stubs. The earlier v0.22.0 result applies to
-an older source snapshot. Neither establishes actual Desktop or TUI interaction.
+Current native gateway wake qualification passed on v0.22.0 and v0.22.2 with
+disposable local-provider profiles and loopback stubs. These checks do not
+establish actual Desktop or TUI interaction.
 The TUI smoke exercised only the framework without Pallium. Ordinary provider
 formats, default Tool Search and plugin coexistence remain unqualified. A focused
 host journey requires an isolated Hermes environment:

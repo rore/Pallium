@@ -16,6 +16,11 @@ branch protection. Run releases sequentially with fail-fast cancellation,
 concurrency protection and a 60-minute limit per release. Use only synthetic
 profiles and loopback service/provider stubs; no paid inference.
 
+GitHub requires a manual workflow to exist on the default branch before it can
+be dispatched. Land an approved runner-only change separately, then dispatch the
+Hermes feature branch; do not merge an unqualified feature merely to register its
+test workflow. See [GitHub's manual workflow instructions](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow).
+
 | Release | Immutable source revision |
 |---|---|
 | v0.22.0 | `e06df9c2eae6901f4c88f464e0ae6e753c0428b8` |
