@@ -43,6 +43,14 @@ Changed only `storage/sqlite_relay.py` preflight logic, `tests/test_relay_mcp_li
 
 Pre-run test-harness review corrections: parameterized HTTP cases now use isolated fresh main/optional Relay databases and a real ACK callback spy; factory instrumentation wraps only the preflight Session; corrupt evidence is stored as BLOB bytes; reclaim uses the actual expired-lease `/relay/turn` path. Added structured busy headers, full ACK response fields, terminal cross-container success, and no-callback assertions. No tests were run.
 
+### Focused qualification — cap-incomplete, 2026-10-20
+
+The independently approved single focused cohort ran at frozen source1f349af21bb86ee6df4861e17891bd4db78c05b5. It reached the manager's absolute17:35:14Z cap, measured from17:15:14Z, with no completed test evidence: raw log0bytes, SHA256 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855; JUnit absent. The safety-reviewed external guard terminated only the verified retained pytest43400 process tree and verified root exit-1; collector recorded pytest4294967295 and1199.3346456s, unchanged head and clean checkout. Guard exit0 is control plumbing, not test success. Private first-node artifacts do not establish a completed case or any cause.
+
+The runner's restricted CIM query failed. A separate elevated lifetime-fenced verification found the root absent and no eligible direct children; neither proves cleanup callbacks ran or universal/reparented descendant closure. /root/opencode297_resume_plan_review independently classified this CAP-INCOMPLETE / failed execution with no qualification obtained and no additional established owned-resource action. Both native exec sessions6230 and95126 completed. Evidence remains outside the checkout in ../windows313-retained-recovery-20261020-evidence/terminal-ack-focused-{result,cap-result,owned-exit-verification,cap-review,execution-review,frozen-artifacts}.json, immutable recipe/runner and empty raw log. All prior failures remain preserved; no retry, instrumentation, full run, source push, merge, installed change or cleanup of this active unmerged worktree occurred.
+
+Manager's next disposition is bounded read-only execution-recipe/fixture review against saved successful PR325 focused7/11 evidence. Use saved artifacts/source only; no process sampling, app imports, reruns, repeated hashes, diagnostics or timeout extensions. Return a concrete defect with exact evidence/minimal correction, or none. Any correction requires independent review before an execution proposal; this remains unqualified. Canonical roadmap and broader cleanup remain manager-owned.
+
 ## Renewed completion investigation — 2026-10-19
 
 Root adopts the bounded failure-only acquisition timing plan reviewed by
@@ -2427,7 +2435,7 @@ Independent review accepts the authoritative assertions and unchanged lifecycle.
 
 **Complexity:** Large
 
-**Reason:** Current intended scope touches RED storage/sqlite_relay.py (persisted Relay delivery lifecycle, persistence-review, storage watch), so High/Large parent is retained with explicit architecture/persistence connected-callsite review. No boundary-crossing imports/schema/config/dependency/protected changes. Intentional negative-admission product behavior is disclosed; this is not a claim that application behavior stays identical. Historical reason follows. Provisional whole-task classification anticipates persistence, API and lifecycle surfaces with independently verifiable outcomes. Redline makes persistence/API/core contracts RED and runtime layers gray/watch; architecture/API/persistence checkpoints and separate human attention may apply to measured fix paths. No boundary violation or schema/API requirement change is assumed or approved. Reclassify against exact derived paths before editing.
+**Reason:** Current frozen focused qualification at1f349af2 is CAP-INCOMPLETE after the fixed20-minute cap, with no completed case/JUnit and no causal attribution; independent terminal classification GO. Next authorized step is bounded saved-recipe/fixture read-only comparison only, not new execution. Parent classification and prior evidence follow. Current intended scope touches RED storage/sqlite_relay.py (persisted Relay delivery lifecycle, persistence-review, storage watch), so High/Large parent is retained with explicit architecture/persistence connected-callsite review. No boundary-crossing imports/schema/config/dependency/protected changes. Intentional negative-admission product behavior is disclosed; this is not a claim that application behavior stays identical. Historical reason follows. Provisional whole-task classification anticipates persistence, API and lifecycle surfaces with independently verifiable outcomes. Redline makes persistence/API/core contracts RED and runtime layers gray/watch; architecture/API/persistence checkpoints and separate human attention may apply to measured fix paths. No boundary violation or schema/API requirement change is assumed or approved. Reclassify against exact derived paths before editing.
 
 **Discovery:** Measured confirmed costs and bounded corrections: exact eligible-payload hydration743→28ms, ordinary limited claim733→37ms, pending/leased queue full ORM184→15ms direct p50, duplicate observational Codex refresh2→1. Private measurements and all artifact/proof limits are recorded below; these are not broad performance guarantees. Thin24/50latency diagnostics and real hook observations distinguish client/ASGI/worker intervals. Ordinary candidate24/50hook run passed once; synchronized24burst passed and50burst failed47claims at unchanged750ms with route-ready781–807ms, so concurrency cause/next correction remains open. Installed startup~19s and backfill6.725s are uncontrolled observations; private footprint query max230ms did not reproduce that phase. Growing history/background amplification remains incomplete. Root performed DB audit; duplicate pal-dev1 offer closed. relaydev owns the existing async-startup responsiveness task; no duplicate implementation.
 
@@ -2452,7 +2460,7 @@ Agent technical review: /root/architecture_check, clean nonimplementer source/pl
 
 **Exceptions:** None
 
-**State:** Ready to implement
+**State:** Blocked
 <!-- agent-workflow:end -->
 
 ### Final adbc Windows preparation boundaries — pre-edit checkpoint 2026-10-16
