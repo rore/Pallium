@@ -542,13 +542,15 @@ class TuiConsole:
     def new_session(self):
         offset = len(self.raw_text)
         self.submit("/new", marker="/new")
-        self.wait("Enter confirm · Y/N quick · Esc cancel", after=offset, timeout=20)
-        selected_after = len(self.raw_text)
-        self.proc.write("\x1b[B")
-        self.wait("▸ Yes, start a new session", after=selected_after, timeout=20)
-        self.proc.write("\r")
         self.wait("new session started", after=offset, timeout=30)
         self.wait("ready │", after=offset, timeout=60)
+
+    def ready(self):
+        deadline = time.monotonic() + 60
+        while not any(token in self.text for token in ("Ask me anything", 'Try "')):
+            assert not self.stopped.is_set() and time.monotonic() < deadline and self.proc.isalive(), self.text[-3000:]
+            time.sleep(.1)
+        self.wait("ready │", timeout=90)
 
     def close(self):
         self.proc.cancel_io()
@@ -560,6 +562,8 @@ def driver_main(spec_path: Path):
     """The explicit disposable 3.14 interpreter alone imports ConPTY and starts the real UI."""
     spec = json.loads(spec_path.read_text(encoding="utf-8"))
     home, source, python = (Path(spec[key]).resolve() for key in ("home", "source", "python"))
+    from hermes_desktop_driver import DesktopConsole, require_runner_gate
+    require_runner_gate(dict(os.environ), home, source, spec_path.parent)
     assert Path(sys.executable).resolve() == python and sys.version_info[:2] == (3, 14)
     assert Path(sys._base_executable).resolve() == Path(spec["python_base"])
     assert hashlib.sha256(Path(sys._base_executable).read_bytes()).hexdigest() == spec["python_base_sha256"].lower()
@@ -616,13 +620,16 @@ def driver_main(spec_path: Path):
     tree = OwnedTree(os.getpid(), Path(sys._base_executable), ledger=spec_path.parent / "owned-processes-ledger.json")
     console = None
     try:
-        console = TuiConsole(python, source, home, dict(os.environ), spec_path.parent, stopped, tree)
-        # Both released versions expose this normal composer placeholder.
-        deadline = time.monotonic() + 60
-        while not any(token in console.text for token in ("Ask me anything", 'Try "')):
-            assert not stopped.is_set() and time.monotonic() < deadline and console.proc.isalive(), console.text[-3000:]
-            time.sleep(.1)
-        console.wait("ready │", timeout=90)
+        surface = spec.get("surface", "tui")
+        assert surface in {"tui", "desktop"}, "unknown native UI surface"
+        console_class = DesktopConsole if surface == "desktop" else TuiConsole
+        # Retain a partial Desktop constructor so failed startup logs can still be closed and saved.
+        if surface == "desktop":
+            console = console_class.__new__(console_class)
+            console.__init__(python, source, home, dict(os.environ), spec_path.parent, stopped, tree)
+        else:
+            console = console_class(python, source, home, dict(os.environ), spec_path.parent, stopped, tree)
+        console.ready()
         print(json.dumps({"ready": True}), flush=True)
         while not stopped.is_set():
             try:

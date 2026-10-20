@@ -8,8 +8,10 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import platform
 from pathlib import Path
 import queue
+import re
 import shutil
 import subprocess
 import sys
@@ -20,6 +22,8 @@ from urllib.parse import urlsplit
 
 import pytest
 import yaml
+
+from tests.fixtures.hermes_desktop_driver import RUNNER_MARKERS, require_runner_gate
 
 from tests.fixtures.hermes_tui_driver import (
     assert_isolated_env,
@@ -149,6 +153,22 @@ NO_REPLY = "Incoming no-reply wake é 漢字"
 REPLY = "Incoming explicit-reply wake 🌍"
 WAKE_ANSWERS = {NO_REPLY: "No reply requested ✓ wake complete.", REPLY: "Explicit reply sent ✓ wake complete."}
 REPLY_TEXT = "TUI reply é 🌍"
+MEMORY_PROMPTS = {
+    "remember": "native-ui-memory-remember: store Quartz lantern remains in vault.",
+    "query_original": "native-ui-memory-query-original: find Quartz lantern.",
+    "expand": "native-ui-memory-expand: show the Quartz lantern memory.",
+    "correct": "native-ui-memory-correct: change it to Opal compass stays in archive.",
+    "query_corrected": "native-ui-memory-query-corrected: find Opal compass.",
+    "expand_corrected": "native-ui-memory-expand-corrected: show the corrected memory.",
+    "supersede_one": "native-ui-memory-supersede-one: replace it with Amber map stays in catalog.",
+    "supersede_two": "native-ui-memory-supersede-two: replace it with Cobalt key stays in cabinet.",
+    "query_current": "native-ui-memory-query-current: find Cobalt key.",
+    "expand_current": "native-ui-memory-expand-current: show the replacement head.",
+    "query_superseded": "native-ui-memory-query-superseded: find Opal compass and Amber map.",
+    "forget": "native-ui-memory-forget: remove the Cobalt key memory.",
+    "query_forgotten": "native-ui-memory-query-forgotten: find Cobalt key after removal.",
+}
+MEMORY_SESSION_PROMPT = "native-ui-memory-session: verify the fresh caller session."
 
 
 def eventually(check, message: str, timeout: float = 90):
@@ -166,6 +186,7 @@ def turn_results(messages):
     start = max((i for i, row in enumerate(messages) if row.get("role") == "user"), default=0)
     calls = {}
     results = {}
+    resolved = set()
     for row in messages[start:]:
         for call in row.get("tool_calls", []):
             function = call["function"]
@@ -176,6 +197,8 @@ def turn_results(messages):
                 name = args["calls"][0]["name"]
             calls[call["id"]] = (name, args)
         if row.get("role") == "tool":
+            assert row["tool_call_id"] not in resolved, "duplicate tool result"
+            resolved.add(row["tool_call_id"])
             name, args = calls[row["tool_call_id"]]
             result = json.loads(row["content"])
             assert not isinstance(result, dict) or "error" not in result, (name, result)
@@ -185,6 +208,7 @@ def turn_results(messages):
                 results.setdefault(name, {}).update(result["tools"])
             else:
                 results[name] = result
+    assert set(calls) == resolved, "unresolved tool call; refusing an ambiguous retry"
     return results
 
 
@@ -332,6 +356,23 @@ def provider_metadata_response(path):
     return 404, {"error": "Unsupported metadata endpoint"}
 
 
+def profile_database_snapshot(profile):
+    return {str(path.relative_to(profile)): hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in profile.rglob("*") if path.is_file()
+            and re.search(r"\.(?:db|sqlite|sqlite3)(?:-(?:wal|shm|journal))?$", path.name)}
+
+
+def test_native_profile_snapshot_includes_database_sidecar_inventory(tmp_path):
+    for name in ("state.db", "state.db-wal", "state.db-journal", "other.sqlite3-shm", "note.txt"):
+        (tmp_path / name).write_bytes(name.encode())
+    before = profile_database_snapshot(tmp_path)
+    assert set(before) == {"state.db", "state.db-wal", "state.db-journal", "other.sqlite3-shm"}
+    (tmp_path / "state.db-wal").write_bytes(b"changed")
+    assert profile_database_snapshot(tmp_path) != before
+    (tmp_path / "state.db").unlink()
+    assert "state.db" not in profile_database_snapshot(tmp_path)
+
+
 @pytest.mark.parametrize("path", ["/api/v1/models", "/api/tags", "/v1/props", "/props", "/version", "/unknown"])
 def test_hermes_tui_provider_metadata_returns_normal_unsupported_response(path):
     assert provider_metadata_response(path) == (404, {"error": "Unsupported metadata endpoint"})
@@ -340,10 +381,13 @@ def test_hermes_tui_provider_metadata_returns_normal_unsupported_response(path):
 
 
 class ScriptedProvider:
-    def __init__(self):
+    def __init__(self, memory_enabled=False):
         self.requests = []
         self.errors = []
         self.completed = {}
+        self.memory_enabled = memory_enabled
+        self.memory_ids = {}
+        self.memory_issued = set()
 
     def respond(self, body):
         self.requests.append(body)
@@ -384,6 +428,88 @@ class ScriptedProvider:
             assert PROMPT in expanded and ANSWER in expanded, expanded
             self.completed[HISTORY_PROMPT] = results
             return HISTORY_ANSWER, None
+        if latest == "native-ui-memory-off: search exact pallium_remember and verify absence.":
+            assert {"tool_search", "tool_describe", "tool_call"} <= available, available
+            assert "pallium_remember" not in available, "default-off memory tool exposed directly"
+            if "tool_search" not in results:
+                return None, ("tool_search", {"queries": ["pallium_remember"], "limit": 5})
+            assert "pallium_remember" not in results["tool_search"], results
+            self.completed[latest] = results
+            return "Optional memory is absent.", None
+        if latest == MEMORY_SESSION_PROMPT:
+            if "pallium_relay_address" not in results:
+                return None, discover_call("pallium_relay_address", {}, results, available)
+            self.completed[latest] = results
+            return "Fresh session verified.", None
+        if latest in MEMORY_PROMPTS.values():
+            assert self.memory_enabled, "memory flow ran in the default-off profile"
+            stage = next(name for name, prompt in MEMORY_PROMPTS.items() if prompt == latest)
+            if latest in self.completed:
+                return f"Completed {stage}.", None
+            first = self.memory_ids.get("first")
+            second = self.memory_ids.get("second")
+            current = self.memory_ids.get("current", first)
+            operations = {
+                "remember": ("pallium_remember", {"text": "Quartz lantern remains in vault", "type": "decision"}),
+                "query_original": ("pallium_query", {"query": "quartz lantern"}),
+                "expand": ("pallium_expand", {"memory_object_id": first}),
+                "correct": ("pallium_correct", {"memory_object_id": first,
+                    "corrected_text": "Opal compass stays in archive", "reason": "updated"}),
+                "query_corrected": ("pallium_query", {"query": "opal compass"}),
+                "expand_corrected": ("pallium_expand", {"memory_object_id": first}),
+                "supersede_one": ("pallium_supersede", {"new_text": "Amber map stays in catalog",
+                    "supersedes_id": first}),
+                "supersede_two": ("pallium_supersede", {"new_text": "Cobalt key stays in cabinet",
+                    "supersedes_id": second}),
+                "query_current": ("pallium_query", {"query": "cobalt key"}),
+                "expand_current": ("pallium_expand", {"memory_object_id": current}),
+                "query_superseded": ("pallium_query", {"query": "opal compass amber map"}),
+                "forget": ("pallium_forget", {"memory_object_id": current, "reason": "removed"}),
+                "query_forgotten": ("pallium_query", {"query": "cobalt key"}),
+            }
+            name, args = operations[stage]
+            if name not in results:
+                assert stage not in self.memory_issued, "missing mutation result; refusing an ambiguous retry"
+                assert all(value is not None for value in args.values()), (stage, args)
+                call = discover_call(name, args, results, available)
+                if call[0] == "tool_call" and stage in {"remember", "correct", "supersede_one", "supersede_two", "forget"}:
+                    self.memory_issued.add(stage)
+                return None, call
+            value = results[name]
+            ids = [row["memory_object_id"] for row in value.get("results", [])]
+            if stage == "remember":
+                assert value["memory_object_id"], value
+                self.memory_ids["first"] = value["memory_object_id"]
+            elif stage in {"query_original", "query_corrected"}:
+                assert ids == [first], (stage, value)
+                if stage == "query_corrected":
+                    assert "Opal compass stays in archive" in json.dumps(value), value
+            elif stage in {"expand", "expand_corrected", "expand_current"}:
+                expected_id = current if stage == "expand_current" else first
+                assert value["memory_object_id"] == expected_id, value
+                expected_text = {"expand": "Quartz lantern remains in vault",
+                                 "expand_corrected": "Opal compass stays in archive",
+                                 "expand_current": "Cobalt key stays in cabinet"}[stage]
+                assert expected_text in json.dumps(value["payload"]), value
+                assert expected_text in value["match_text"], value
+            elif stage == "correct":
+                assert isinstance(value, dict) and value, value
+            elif stage == "query_forgotten":
+                assert ids == [], (stage, value)
+            elif stage == "supersede_one":
+                assert value["new_memory_object_id"] and value["new_memory_object_id"] != first, value
+                self.memory_ids["second"] = value["new_memory_object_id"]
+            elif stage == "supersede_two":
+                assert value["new_memory_object_id"] and value["new_memory_object_id"] not in {first, second}, value
+                self.memory_ids["current"] = value["new_memory_object_id"]
+            elif stage == "query_current":
+                assert ids == [current], value
+            elif stage == "query_superseded":
+                assert not {first, second} & set(ids), value
+            elif stage == "forget":
+                assert value.get("forgotten") is True, value
+            self.completed[latest] = results
+            return f"Completed {stage}.", None
         assert PROMPT in latest, f"unexpected main provider prompt: {latest}"
         if "skill_view" not in results:
             assert "skill_view" in available, "bundled skill reader was not exposed"
@@ -403,6 +529,60 @@ class ScriptedProvider:
             }, results, available)
         self.completed[PROMPT] = results
         return ANSWER, None
+
+
+def test_native_memory_script_uses_discovered_schemas_and_exact_returned_ids():
+    provider = ScriptedProvider(memory_enabled=True)
+    tools = [{"function": {"name": name}} for name in ("tool_search", "tool_describe", "tool_call")]
+
+    def run_stage(stage, expected_name, expected_result):
+        messages = [{"role": "user", "content": MEMORY_PROMPTS[stage]}]
+        body = {"messages": messages, "tools": tools}
+        for index in range(3):
+            text, call = provider.respond(body)
+            assert text is None and call[0] == ("tool_search", "tool_describe", "tool_call")[index]
+            if index == 2:
+                args = call[1]["calls"][0]
+                assert args["name"] == expected_name
+                with pytest.raises(AssertionError, match="ambiguous retry"):
+                    provider.respond({"messages": [messages[0]], "tools": tools})
+                if stage == "supersede_two":
+                    assert args["arguments"]["supersedes_id"] == "returned-second-id"
+                if stage == "forget":
+                    assert args["arguments"]["memory_object_id"] == "returned-current-id"
+            result = ({"tools": {expected_name: {"parameters": {"required": []}}}}
+                      if index < 2 else expected_result)
+            call_id = str(index)
+            messages.extend([
+                {"role": "assistant", "tool_calls": [{"id": call_id, "function": {
+                    "name": call[0], "arguments": json.dumps(call[1])}}]},
+                {"role": "tool", "tool_call_id": call_id, "content": json.dumps(result)},
+            ])
+        assert provider.respond(body) == (f"Completed {stage}.", None)
+        assert provider.respond(body) == (f"Completed {stage}.", None), "completed mutation must not repeat"
+        assert provider.respond({"messages": [messages[0]], "tools": tools}) == (f"Completed {stage}.", None)
+
+    run_stage("remember", "pallium_remember", {"memory_object_id": "returned-first-id"})
+    run_stage("supersede_one", "pallium_supersede", {"new_memory_object_id": "returned-second-id"})
+    run_stage("supersede_two", "pallium_supersede", {"new_memory_object_id": "returned-current-id"})
+    run_stage("forget", "pallium_forget", {"forgotten": True})
+    assert set(provider.completed) == {MEMORY_PROMPTS[stage] for stage in (
+        "remember", "supersede_one", "supersede_two", "forget")}
+
+
+def test_native_memory_off_uses_search_and_refuses_ambiguous_tool_result():
+    prompt = "native-ui-memory-off: search exact pallium_remember and verify absence."
+    body = {"messages": [{"role": "user", "content": prompt}], "tools": [
+        {"function": {"name": name}} for name in ("tool_search", "tool_describe", "tool_call")]}
+    provider = ScriptedProvider()
+    assert provider.respond(body) == (None, ("tool_search", {"queries": ["pallium_remember"], "limit": 5}))
+    body["messages"].append({"role": "assistant", "tool_calls": [{"id": "pending", "function": {
+        "name": "tool_search", "arguments": json.dumps({"queries": ["pallium_remember"], "limit": 5})}}]})
+    with pytest.raises(AssertionError, match="ambiguous retry"):
+        provider.respond(body)
+    body["messages"].append({"role": "tool", "tool_call_id": "pending",
+                             "content": json.dumps({"tools": {"pallium_relay_address": {}}})})
+    assert provider.respond(body) == ("Optional memory is absent.", None)
 
 
 class NativeDriver:
@@ -534,12 +714,12 @@ def test_hermes_tui_wait_uses_raw_cursor_across_fragmented_osc_redraws():
         console.wait("old visible", after=cursor, timeout=.01)
 
 
-@pytest.mark.parametrize("render_selection", [True, False])
-def test_hermes_tui_new_session_requires_observed_affirmative_selection(render_selection):
+@pytest.mark.parametrize("render_new", [True, False])
+def test_hermes_tui_new_session_requires_fresh_success(render_new):
     from types import SimpleNamespace
 
     console = TuiConsole.__new__(TuiConsole)
-    console.parts = ["▸ Yes, start a new session\nold ready │"]
+    console.parts = ["old new session started\nold ready │"]
     console.stopped = threading.Event()
     console.tree = SimpleNamespace(error=None)
     console.read_error = None
@@ -549,24 +729,19 @@ def test_hermes_tui_new_session_requires_observed_affirmative_selection(render_s
         writes.append(text)
         if text == "/new":
             console.parts.append("/new")
-        elif text == "\r" and writes == ["/new", "\r"]:
-            console.parts.append("Start a new session?\n▸ No, keep going\n  Yes, start a new session\n"
-                                 "Enter confirm · Y/N quick · Esc cancel")
-        elif text == "\x1b[B" and render_selection:
-            console.parts.append("\x1b[32m▸ Yes, start a new session\x1b[0m")
-        elif text == "\r":
+        elif text == "\r" and render_new:
             console.parts.append("new session started\nready │")
 
     console.proc = SimpleNamespace(write=write, isalive=lambda: True)
     wait = console.wait
     console.wait = lambda expected, **kwargs: wait(expected, after=kwargs.get("after", 0), timeout=.02)
-    if render_selection:
+    if render_new:
         console.new_session()
-        assert writes == ["/new", "\r", "\x1b[B", "\r"]
+        assert writes == ["/new", "\r"]
     else:
         with pytest.raises(TimeoutError):
             console.new_session()
-        assert writes == ["/new", "\r", "\x1b[B"], "unobserved selection was confirmed"
+        assert writes == ["/new", "\r"], "navigation was retried without observing success"
 
 
 def test_hermes_tui_provider_requires_complete_unicode_prompt():
@@ -691,13 +866,17 @@ print("fresh native model cache and disabled manifest loaded without network")
     assert not egress.exists() or not egress.read_text(encoding="utf-8").strip(), "cache-reader self-check attempted egress"
 
 
-def test_released_hermes_actual_tui_journey(client, tmp_path):
+@pytest.mark.parametrize("memory_enabled", [False, True], ids=["memory-off", "memory-on"])
+@pytest.mark.parametrize("surface", ["tui", "desktop"])
+def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, surface):
     required = ("HERMES_E2E_SOURCE", "HERMES_E2E_PYTHON", "HERMES_NODE", "HERMES_TUI_BUNDLE_SHA256",
                 "HERMES_E2E_PYTHON_SHA256", "HERMES_NODE_SHA256", "PALLIUM_TUI_REPO_REVISION",
                 "HERMES_E2E_BASE_PYTHON_SHA256")
     if missing := [key for key in required if not os.environ.get(key)]:
         pytest.skip("explicit native qualification prerequisites missing: " + ", ".join(missing))
     source, python, node = (Path(os.environ[key]).resolve() for key in required[:3])
+    # Do this before runtime preflight or any app/build execution. HOME redirection is insufficient.
+    require_runner_gate(dict(os.environ), tmp_path, source)
     root = Path(__file__).resolve().parents[1]
     revision = subprocess.check_output(["git", "-C", str(root), "rev-parse", "HEAD"], text=True).strip()
     assert revision == os.environ["PALLIUM_TUI_REPO_REVISION"], "Pallium source freeze changed"
@@ -706,7 +885,7 @@ def test_released_hermes_actual_tui_journey(client, tmp_path):
     runtime_versions = verify_runtimes(python, node, python_sha256=os.environ["HERMES_E2E_PYTHON_SHA256"],
                                        node_sha256=os.environ["HERMES_NODE_SHA256"],
                                        python_base_sha256=os.environ["HERMES_E2E_BASE_PYTHON_SHA256"])
-    artifacts = tmp_path / "native-tui"
+    artifacts = tmp_path / f"native-{surface}"
     artifacts.mkdir()
     home = artifacts / "fresh-profile"
     assert not home.exists(), "native qualification requires a fresh synthetic home"
@@ -720,7 +899,7 @@ def test_released_hermes_actual_tui_journey(client, tmp_path):
     preload = artifacts / "node-deny.cjs"
     preload.write_text(node_preload_source(), encoding="utf-8")
     egress = artifacts / "egress.jsonl"
-    provider = ScriptedProvider()
+    provider = ScriptedProvider(memory_enabled=memory_enabled)
     forwarded = []
     server_errors = []
 
@@ -787,6 +966,9 @@ def test_released_hermes_actual_tui_journey(client, tmp_path):
     endpoints = [("127.0.0.1", server.server_port) for server in (api_server, provider_server)]
     env = isolated_env(home, source=source, python=python, node=node, guard_dir=guard_dir,
                        preload=preload, egress_log=egress, endpoints=endpoints)
+    env.update({key: os.environ[key] for key in (*RUNNER_MARKERS, "RUNNER_TEMP")})
+    if surface == "desktop":
+        env["HERMES_DESKTOP_EXE_SHA256"] = os.environ.get("HERMES_DESKTOP_EXE_SHA256", "")
     env["PALLIUM_TUI_GIT"] = shutil.which("git")
     assert env["PALLIUM_TUI_GIT"], "explicit Git prerequisite missing"
     profile = Path(env["HERMES_HOME"])
@@ -798,27 +980,36 @@ def test_released_hermes_actual_tui_journey(client, tmp_path):
               "platform_toolsets": {"cli": ["hermes-cli"]}, "updates": {"check": False},
               "model_catalog": {"enabled": False},
               "auxiliary": {"background_review": {"enabled": False}},
+              "approvals": {"destructive_slash_confirm": False},
+              "plugins": {"entries": {"unrelated-note": {"settings": {"keep": "synthetic note"}}}},
               "wake_word": {"enabled": False}, "display": {"compact": True},
               "telemetry": {"shared_metrics": {"enabled": False, "send": False, "offer_version": 2}}}
     (profile / "config.yaml").write_text(yaml.safe_dump(config), encoding="utf-8")
+    unrelated = profile / "unrelated-note.txt"
+    unrelated.write_text("Preserve this note é 漢字 🌍", encoding="utf-8")
     seed_models_dev_cache(profile)
     driver = None
     outcome = {"release": release, "runtimes": runtime_versions, "pallium_revision": revision,
-               "surface": "public winpty.PTY ConPTY into released hermes --tui Ink",
+               "surface": surface,
+               "windows_version": platform.win32_ver(),
+               "runner_image": {key: os.environ.get(key) for key in ("ImageOS", "ImageVersion", "RUNNER_OS")},
+               "network_guards": "Python and terminal Node" if surface == "tui" else "Python only; Chromium not confined",
                "bundle_sha256": os.environ["HERMES_TUI_BUNDLE_SHA256"], "status": "failed",
                "mcp_python": str(Path(sys.executable).resolve()),
                "mcp_python_sha256": hashlib.sha256(Path(sys.executable).read_bytes()).hexdigest(),
                "mcp_python_base": str(Path(sys._base_executable).resolve()),
                "mcp_python_base_sha256": hashlib.sha256(Path(sys._base_executable).read_bytes()).hexdigest(),
-               "memory_ui_qualification": "not covered by this Relay/History journey"}
+               "memory_ui_qualification": "enabled" if memory_enabled else "default-off"}
     for server in (api_server, provider_server):
         threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
-        setup = subprocess.run([sys.executable, "-m", "app.run", "setup", "hermes", "--home", str(profile),
+        setup_args = [sys.executable, "-m", "app.run", "setup", "hermes", "--home", str(profile),
                                 "--hermes-python", str(python), "--service-url", base_url,
                                 "--container-ref", SCOPE["container_ref"], "--actor-ref", "native-ui-actor",
                                 "--visibility", "private", "--mcp-python", str(Path(sys.executable).resolve()),
-                                "--mcp-repo", str(root)], cwd=root, env=env, capture_output=True,
+                                "--mcp-repo", str(root), *(["--memory-enabled"] if memory_enabled else [])]
+        setup = subprocess.run(setup_args,
+                               cwd=root, env=env, capture_output=True,
                                text=True, encoding="utf-8", timeout=60)
         (artifacts / "setup.txt").write_text(setup.stdout + setup.stderr, encoding="utf-8")
         assert setup.returncode == 0, setup.stdout + setup.stderr
@@ -827,10 +1018,16 @@ def test_released_hermes_actual_tui_journey(client, tmp_path):
         assert installed["auxiliary"]["background_review"]["enabled"] is False
         assert (profile / "skills" / "pallium-memory" / "SKILL.md").is_file()
         assert installed["plugins"]["enabled"] == ["pallium-hermes-relay"]
+        assert installed["model"] == config["model"]
+        assert installed["platform_toolsets"] == config["platform_toolsets"]
+        assert installed["approvals"] == config["approvals"]
+        settings = installed["plugins"]["entries"]["pallium-hermes-relay"]["settings"]
+        assert settings.get("memory_enabled", False) is memory_enabled
         peer = client.post("/relay/turn", json={"runtime": "claude-code", "session_ref": PEER, **SCOPE})
         assert peer.status_code == 200, peer.text
         spec = artifacts / "driver-spec.json"
         spec.write_text(json.dumps({"home": str(home), "source": str(source), "python": str(python),
+                                    "surface": surface,
                                     "bundle_sha256": os.environ["HERMES_TUI_BUNDLE_SHA256"],
                                     "python_base": runtime_versions["python_base"],
                                     "python_base_sha256": runtime_versions["python_base_sha256"],
@@ -859,6 +1056,7 @@ def test_released_hermes_actual_tui_journey(client, tmp_path):
         # Windows venv adds a redirector process; audit the actual server interpreter too.
         bridge = next(row for row in bridges if Path(row["exe"]).resolve() == Path(sys._base_executable).resolve())
         args = bridge["argv"]
+        assert ("--memory-enabled" in args) is memory_enabled, args
         assert args[args.index("--base-url") + 1] == base_url
         assert args[args.index("--container-ref") + 1] == SCOPE["container_ref"]
         assert not {"PYTHONPATH", "NODE_OPTIONS", "PALLIUM_TUI_ALLOWED_ENDPOINTS"} & set(bridge["env"])
@@ -886,11 +1084,54 @@ def test_released_hermes_actual_tui_journey(client, tmp_path):
                 reply = next(row for row in replies["deliveries"] if row["payload"] == REPLY_TEXT)
                 assert reply["in_reply_to"] == message["message_id"] and reply["sender_session_ref"] == session_id
 
+        if memory_enabled:
+            stage = MEMORY_PROMPTS["remember"]
+            driver.command("submit", text=stage, marker="native-ui-memory-remember")
+            driver.command("wait", text="Completed remember.")
+            driver.command("new")
+            driver.command("submit", text=MEMORY_SESSION_PROMPT, marker="native-ui-memory-session")
+            driver.command("wait", text="Fresh session verified.")
+            memory_session_id = provider.completed[MEMORY_SESSION_PROMPT]["pallium_relay_address"]["session_ref"]
+            assert memory_session_id and memory_session_id != session_id
+            for name, stage in MEMORY_PROMPTS.items():
+                if name == "remember":
+                    continue
+                driver.command("submit", text=stage, marker=stage.split(":", 1)[0])
+                driver.command("wait", text=f"Completed {name}.")
+                if name in {"correct", "supersede_one", "supersede_two", "forget"}:
+                    response = client.get("/dashboard/api/memories", params={**SCOPE, "include_soft_deleted": True})
+                    assert response.status_code == 200, response.text
+                    rows = {row["id"]: row for row in response.json()["memories"]}
+                    outcome.setdefault("memory_public_reads", {})[name] = response.json()
+                    first_id = provider.memory_ids["first"]
+                    assert "Opal compass stays in archive" in json.dumps(rows[first_id]["payload"]), rows
+                    if name != "correct":
+                        assert rows[first_id]["lifecycle"] == "superseded", rows
+                    if name in {"supersede_two", "forget"}:
+                        assert rows[provider.memory_ids["second"]]["lifecycle"] == "superseded", rows
+                        assert "Cobalt key stays in cabinet" in json.dumps(rows[provider.memory_ids["current"]]["payload"]), rows
+                    if name == "forget":
+                        visible = client.get("/dashboard/api/memories", params=SCOPE)
+                        assert visible.status_code == 200, visible.text
+                        assert provider.memory_ids["current"] not in {row["id"] for row in visible.json()["memories"]}
+            assert set(provider.completed) >= set(MEMORY_PROMPTS.values())
+        else:
+            prompt = "native-ui-memory-off: search exact pallium_remember and verify absence."
+            driver.command("submit", text=prompt, marker="native-ui-memory-off")
+            driver.command("wait", text="Optional memory is absent.")
+            assert "pallium_remember" not in provider.completed[prompt]["tool_search"]
+
         captured = eventually(lambda: [item for row in forwarded if row["path"] == "/items"
                                         for item in row["body"] if item.get("content") == PROMPT],
                                "original UI turn was not captured")
         assert len(captured) == 1 and captured[0]["thread_ref"] == session_id
         user = captured[0]
+        if memory_enabled:
+            remember_request = next(row["body"] for row in forwarded if row["path"] == "/memory/remember")
+            assert remember_request["thread_ref"] == session_id
+            memory_query = next(row["body"] for row in forwarded if row["path"] == "/query"
+                                and row["body"].get("text") == "quartz lantern")
+            assert memory_query["active_session_ref"] == memory_session_id
         assert user["source_id"] == hashlib.sha256((SCOPE["container_ref"] + "\0" + session_id + "\0"
                                                     + user["metadata"]["hermes_message_uid"]).encode()).hexdigest()
         driver.command("new")
@@ -906,6 +1147,8 @@ def test_released_hermes_actual_tui_journey(client, tmp_path):
         query = next(row["body"] for row in forwarded if row["path"] == "/query"
                      and row["body"].get("text") == "native-ui-origin")
         assert query["active_session_ref"] != session_id and query["active_session_ref"]
+        if memory_enabled:
+            assert query["active_session_ref"] != memory_session_id, "History stayed in the preceding memory session"
         assert not server_errors, server_errors
         assert not egress.exists() or not egress.read_text(encoding="utf-8").strip(), "unexpected child egress attempt"
         secrets = {peer_delivery[key] for key in ("receipt", "claim_token")}
@@ -913,6 +1156,36 @@ def test_released_hermes_actual_tui_journey(client, tmp_path):
                        for delivery in row["response"].get("deliveries", []) for key in ("receipt", "claim_token")
                        if delivery.get(key))
         assert not any(secret in json.dumps(provider.requests) for secret in secrets), "private Relay receipt reached provider"
+        closed = driver
+        driver.close()
+        driver = None
+        outcome.update(owned_process_cleanup="passed", driver_returncode=closed.proc.returncode,
+                       driver_outcome="passed" if closed.proc.returncode == 0 else "failed")
+        assert closed.proc.returncode == 0, "native driver failed before profile lifecycle"
+        databases = profile_database_snapshot(profile)
+        assert databases, "actual Hermes UI persisted no database"
+        outcome["profile_database_hashes"] = databases
+        basic_args = [sys.executable, "-m", "app.run", "setup", "hermes", "--home", str(profile),
+                      "--hermes-python", str(python)]
+        for action, arguments in (("update", setup_args), ("status", [*basic_args, "--status"]),
+                                  ("remove", [*basic_args, "--uninstall"])):
+            result = subprocess.run(arguments, cwd=root, env=env, capture_output=True,
+                                    text=True, encoding="utf-8", timeout=60)
+            (artifacts / f"package-{action}.txt").write_text(result.stdout + result.stderr, encoding="utf-8")
+            assert result.returncode == 0, (action, result.stdout, result.stderr)
+            assert profile_database_snapshot(profile) == databases, f"{action} changed Hermes data/sidecars"
+            current_config = yaml.safe_load((profile / "config.yaml").read_text(encoding="utf-8"))
+            for key in ("model", "platform_toolsets", "approvals"):
+                assert current_config[key] == config[key], (action, key)
+            assert current_config["plugins"]["entries"]["unrelated-note"] == config["plugins"]["entries"]["unrelated-note"]
+            assert unrelated.read_text(encoding="utf-8") == "Preserve this note é 漢字 🌍"
+        assert "pallium-hermes-relay" not in current_config["plugins"].get("enabled", [])
+        assert "pallium-hermes-relay" not in current_config["plugins"].get("entries", {})
+        assert "pallium" not in current_config.get("mcp_servers", {})
+        assert not (profile / "plugins" / "pallium-hermes-relay").exists()
+        assert not (profile / "skills" / "pallium-memory").exists()
+        assert not server_errors, server_errors
+        assert not egress.exists() or not egress.read_text(encoding="utf-8").strip(), "package lifecycle attempted egress"
         outcome.update(journey_assertions="passed", original_session_id=session_id, history_session_id=query["active_session_ref"],
                        history_anchor_id=anchor_id)
     except BaseException as exc:

@@ -37,18 +37,21 @@ error and missing or ambiguous output; do not install MSIX packages or patch
 upstream source. Build prerequisites and the unpacked executable layout still
 need verification on the runner.
 
-Desktop startup can register native URL handlers. A temporary profile does not
-isolate that effect, so Desktop must launch only in a disposable OS runner.
+Dependency install scripts and Desktop startup can write outside redirected
+profile paths. A temporary profile does not isolate those effects: all further
+dependency builds and native Desktop/TUI qualification must use a disposable OS.
 Tests must fail closed outside that approved runner, preserve owned-process
 identity, and clean up only their own process trees. TUI tests additionally use
 child-level network guards and self-checks; these are not an OS sandbox.
 
-The existing `windows-latest` hosted image is Windows Server 2025 x64. Evidence
-from it must be labeled accordingly; it cannot establish Windows 11 x64 support.
-The released MSIX package requires Windows 11 22H2 or later. Qualification on that
-actual target, including normal launch and update behavior, remains a separate
-release gate. See the [GitHub runner images](https://github.com/actions/runner-images)
-and [upstream Desktop build contract](https://github.com/NousResearch/hermes-agent/blob/v0.22.2/apps/desktop/BUILDING.md).
+Record the actual runner image and Windows version in every native result.
+Hosted Windows Server evidence must not be described as Windows 11 or installed
+MSIX qualification. The Pallium release gate covers its profile
+install/update/remove lifecycle while preserving unrelated settings and data.
+Hermes's own installer, updater and OS support remain upstream contracts; this
+integration neither replaces them nor claims untested package/OS coverage. See
+the [GitHub runner images](https://github.com/actions/runner-images) and
+[upstream Desktop build contract](https://github.com/NousResearch/hermes-agent/blob/v0.22.2/apps/desktop/BUILDING.md).
 
 ## Required observations
 
@@ -60,9 +63,24 @@ memory-disabled independence. Preserve synthetic terminal/UI, provider, HTTP and
 JUnit evidence. A scripted provider proves native integration transport and
 dispatch; it does not qualify ordinary providers or competing middleware.
 
-Implement and review the caller drivers before dispatch. The TUI journey and
-Desktop CDP adapter are separate test components; the Desktop launcher and shared
-caller journey are still pending. Mocked adapter checks do not establish Desktop
-qualification. Adding the manual workflow and running it require explicit scoped approval. Approval for
+The shared journey now has independent TUI/Desktop and memory-off/memory-on
+cases. It drives the actual composer and default Tool Search, remembers in one
+session, then recalls and mutates in a verified different session. Returned IDs,
+expansion payloads, supersession and forgetting are checked through public reads.
+The synthetic profile uses the supported
+`approvals.destructive_slash_confirm: false` option: `/new` still uses composer
+input and requires a fresh success plus a different actual caller session ID,
+but this matrix does not qualify the upstream confirmation overlay.
+After the owned UI tree stops, the same profile undergoes repeat setup/update,
+status and removal. Database inventory and hashes include SQLite sidecars and
+are compared after each step, alongside unrelated settings, plugin metadata and
+a Unicode note. Removal must delete only Pallium-owned package entries/files.
+The Desktop adapter uses the owned unpacked executable and a numeric-loopback
+Chromium CDP endpoint; it shares the identity-checked watchdog and cleanup ledger
+with TUI. Mocked adapter checks do not establish Desktop qualification. The full
+native matrix remains unexecuted; the last TUI run failed at session navigation.
+Python network guards do not confine Electron/Chromium networking, and hosted
+runner environment markers are only accidental-launch guards, not an OS sandbox.
+Adding the manual workflow and running it require explicit scoped approval. Approval for
 that disposable runner would not authorize changing everyday applications,
 services, settings, data, installation or updater behavior.
