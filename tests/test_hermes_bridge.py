@@ -172,16 +172,15 @@ finally:
 '''
 
 
-def _run_bridge_probe(host_python: Path, config: str, repo: str) -> subprocess.CompletedProcess[str]:
-    env = os.environ.copy()
-    env["PYTHONPATH"] = os.pathsep.join(filter(None, (repo, env.get("PYTHONPATH"))))
+def _run_owned_process(command, *, cwd, env, timeout):
     process = subprocess.Popen(
-        [str(host_python), "-c", _BRIDGE_PROBE, config], cwd=repo, env=env,
+        command, cwd=cwd, env=env,
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
+        start_new_session=os.name != "nt",
     )
     try:
-        stdout, stderr = process.communicate(timeout=45)
+        stdout, stderr = process.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
         if os.name == "nt":
             subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
@@ -189,8 +188,38 @@ def _run_bridge_probe(host_python: Path, config: str, repo: str) -> subprocess.C
         else:
             os.killpg(process.pid, signal.SIGKILL)
         stdout, stderr = process.communicate(timeout=10)
-        raise AssertionError(f"Hermes bridge probe timed out; stdout={stdout!r}, stderr={stderr!r}")
-    return subprocess.CompletedProcess(process.args, process.returncode, stdout, stderr)
+        raise subprocess.TimeoutExpired(command, timeout, output=stdout, stderr=stderr) from None
+    return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+
+
+def _run_bridge_probe(host_python: Path, config: str, repo: str) -> subprocess.CompletedProcess[str]:
+    env = os.environ.copy()
+    env["PYTHONPATH"] = os.pathsep.join(filter(None, (repo, env.get("PYTHONPATH"))))
+    try:
+        return _run_owned_process(
+            [str(host_python), "-c", _BRIDGE_PROBE, config], cwd=repo, env=env, timeout=45,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise AssertionError(
+            f"Hermes bridge probe timed out; stdout={exc.output!r}, stderr={exc.stderr!r}"
+        ) from None
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX process-group cleanup check")
+@pytest.mark.slow
+def test_probe_timeout_terminates_its_owned_child_group(tmp_path: Path) -> None:
+    script = (
+        "import subprocess,sys,time; "
+        "child=subprocess.Popen([sys.executable,'-c','import time;time.sleep(30)']); "
+        "print(child.pid,flush=True); time.sleep(30)"
+    )
+    with pytest.raises(subprocess.TimeoutExpired) as timeout:
+        _run_owned_process([sys.executable, "-c", script], cwd=tmp_path,
+                           env=os.environ.copy(), timeout=5)
+    child_pid = int(timeout.value.output.strip().splitlines()[0])
+    assert child_pid > 0
+    # The child inherits both pipes: EOF proves it no longer holds either open.
+    assert timeout.value.timeout == 5
 
 
 @pytest.mark.parametrize("host_kind", ["sdk1", "sdk2"])
