@@ -1,0 +1,226 @@
+# Manual disposable-OS qualification; no local installation or paid inference.
+name: Hermes Windows native qualification
+
+on:
+  workflow_dispatch:
+    inputs:
+      pallium_revision:
+        description: Full immutable Pallium candidate commit to qualify
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hermes-windows-native-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  native:
+    name: Hermes ${{ matrix.release }} native TUI and Desktop
+    runs-on: windows-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: true
+      max-parallel: 1
+      matrix:
+        include:
+          - release: v0.22.0
+            revision: e06df9c2eae6901f4c88f464e0ae6e753c0428b8
+          - release: v0.22.2
+            revision: d923a5eb487a17c0a68801bba9ef0f56c81040a8
+    env:
+      HERMES_NATIVE_CI_ISOLATION: github-hosted-ephemeral-windows
+      HERMES_E2E_SOURCE: ${{ runner.temp }}\hermes-source
+      HERMES_E2E_PYTHON: ${{ runner.temp }}\hermes-sdk2\Scripts\python.exe
+      PALLIUM_E2E_PYTHON: ${{ runner.temp }}\pallium-sdk1\Scripts\python.exe
+      HERMES_NATIVE_ARTIFACTS: ${{ runner.temp }}\hermes-native-artifacts
+      HERMES_EXPECTED_RELEASE: ${{ matrix.release }}
+      HERMES_EXPECTED_REVISION: ${{ matrix.revision }}
+      PALLIUM_EXPECTED_REVISION: ${{ inputs.pallium_revision }}
+    steps:
+      - name: Require disposable hosted Windows and contained write roots
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:PALLIUM_EXPECTED_REVISION -cnotmatch '^[a-f0-9]{40}$') { throw 'Full immutable Pallium commit required' }
+          if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted' -or $env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') { throw 'Disposable hosted Windows x64 runner required' }
+          $runnerRoot = [IO.Path]::GetFullPath((Resolve-Path -LiteralPath $env:RUNNER_TEMP).Path).TrimEnd('\')
+          if ($runnerRoot -eq [IO.Path]::GetFullPath($env:USERPROFILE).TrimEnd('\')) { throw 'Runner temp cannot equal profile root' }
+          foreach ($target in @($env:HERMES_E2E_SOURCE, $env:HERMES_E2E_PYTHON, $env:PALLIUM_E2E_PYTHON, $env:HERMES_NATIVE_ARTIFACTS)) {
+            $resolved = [IO.Path]::GetFullPath($target)
+            if (-not $resolved.StartsWith($runnerRoot + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'Write target escaped independent runner temp' }
+            $ancestor = $resolved
+            while ($ancestor) {
+              if ((Test-Path -LiteralPath $ancestor) -and ((Get-Item -LiteralPath $ancestor -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Reparse write root refused' }
+              $ancestor = [IO.Path]::GetDirectoryName($ancestor)
+            }
+          }
+      - name: Checkout Pallium source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.pallium_revision }}
+          persist-credentials: false
+
+      - name: Verify exact Pallium candidate before executing its code
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $candidate = (git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -or $candidate -ne $env:PALLIUM_EXPECTED_REVISION) { throw 'Pallium candidate revision mismatch' }
+
+      - name: Select Python 3.13 for Pallium MCP SDK 1
+        id: pallium-python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Select Node.js 24.11.0
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24.11.0"
+
+      - name: Install task-local npm 11.9.0
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $npmRoot = Join-Path $env:RUNNER_TEMP 'npm-11.9.0'
+          npm install --prefix $npmRoot --no-save --ignore-scripts npm@11.9.0
+          if ($LASTEXITCODE) { throw 'Task-local npm bootstrap failed' }
+          $npmCli = Join-Path $npmRoot 'node_modules/npm/bin/npm-cli.js'
+          $npmVersion = (& node $npmCli --version).Trim()
+          if ($LASTEXITCODE) { throw 'Task-local npm version inspection failed' }
+          if ($npmVersion -ne '11.9.0') { throw "Expected task-local npm 11.9.0, got $npmVersion" }
+          "NPM_CLI=$npmCli" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          # Nested upstream npm scripts must resolve the same task-local npm.
+          (Join-Path $npmRoot 'node_modules/.bin') | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+
+      - name: Fetch and verify the clean public Hermes source pin
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          git clone --filter=blob:none --no-checkout https://github.com/NousResearch/hermes-agent.git $env:HERMES_E2E_SOURCE
+          if ($LASTEXITCODE) { throw 'Hermes clone failed' }
+          git -C $env:HERMES_E2E_SOURCE fetch --depth 1 origin $env:HERMES_EXPECTED_REVISION
+          if ($LASTEXITCODE) { throw 'Hermes pinned fetch failed' }
+          git -C $env:HERMES_E2E_SOURCE checkout --detach FETCH_HEAD
+          if ($LASTEXITCODE) { throw 'Hermes checkout failed' }
+          $actual = (git -C $env:HERMES_E2E_SOURCE rev-parse HEAD).Trim()
+          if ($LASTEXITCODE) { throw 'Hermes revision inspection failed' }
+          if ($actual -ne $env:HERMES_EXPECTED_REVISION) { throw "Pinned Hermes revision mismatch: $actual" }
+          $dirty = git -C $env:HERMES_E2E_SOURCE status --porcelain --untracked-files=all
+          if ($LASTEXITCODE) { throw 'Hermes source status inspection failed' }
+          if ($dirty) { throw 'Hermes source checkout is not clean' }
+
+      - name: Install isolated Pallium MCP SDK 1 environment
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $python = '${{ steps.pallium-python.outputs.python-path }}'
+          & $python -m venv (Join-Path $env:RUNNER_TEMP 'pallium-sdk1')
+          if ($LASTEXITCODE) { throw 'Pallium environment creation failed' }
+          & $env:PALLIUM_E2E_PYTHON -m pip install --disable-pip-version-check -e '.[mcp,dev]'
+          if ($LASTEXITCODE) { throw 'Pallium dependency installation failed' }
+
+      - name: Select Python 3.14.6 for Hermes MCP SDK 2
+        id: hermes-python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14.6"
+
+      - name: Prepare Hermes MCP SDK 2 using its lock-owned uv bootstrap
+        shell: pwsh
+        working-directory: ${{ env.HERMES_E2E_SOURCE }}
+        env:
+          UV_PROJECT_ENVIRONMENT: ${{ runner.temp }}\hermes-sdk2
+          UV_CACHE_DIR: ${{ runner.temp }}\uv-cache
+          UV_PYTHON_DOWNLOADS: never
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $python = '${{ steps.hermes-python.outputs.python-path }}'
+          # Both immutable source pins declare these same uv bytes in pm/lock.json.
+          $tool = (Get-Content pm/lock.json -Raw | ConvertFrom-Json).packages.uv
+          $artifact = $tool.artifacts.'win32-x64'
+          if ($tool.version -ne '0.12.3' -or $artifact.sha256 -ne 'b23350c79e8ad0192b8124af13a0f17e8d4e4549524785e1aef389ae5a06990e') { throw 'Unexpected uv bootstrap pin' }
+          if ($artifact.url -ne 'https://github.com/astral-sh/uv/releases/download/0.12.3/uv-x86_64-pc-windows-msvc.zip') { throw 'Unexpected uv bootstrap origin' }
+          $archive = Join-Path $env:RUNNER_TEMP 'uv.zip'
+          Invoke-WebRequest -Uri $artifact.url -OutFile $archive
+          if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne $artifact.sha256) { throw 'uv hash mismatch' }
+          $uvRoot = Join-Path $env:RUNNER_TEMP 'uv-bootstrap'
+          Expand-Archive -LiteralPath $archive -DestinationPath $uvRoot
+          $uv = @(Get-ChildItem -LiteralPath $uvRoot -Recurse -File -Filter uv.exe)
+          if ($uv.Count -ne 1) { throw 'Expected exactly one task-local uv executable' }
+          & $uv[0].FullName sync --locked --extra mcp --python $python
+          if ($LASTEXITCODE) { throw 'Locked Hermes dependency installation failed' }
+
+      - name: Install source workspace dependencies
+        shell: pwsh
+        working-directory: ${{ env.HERMES_E2E_SOURCE }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & node $env:NPM_CLI ci
+          if ($LASTEXITCODE) { throw 'Hermes workspace installation failed' }
+
+      - name: Build the TUI using the declared workspace script
+        shell: pwsh
+        working-directory: ${{ env.HERMES_E2E_SOURCE }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & node $env:NPM_CLI run build --workspace ui-tui
+          if ($LASTEXITCODE) { throw 'Hermes TUI build failed' }
+
+      - name: Build an unpacked Desktop using the declared pack script
+        shell: pwsh
+        working-directory: ${{ env.HERMES_E2E_SOURCE }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & node $env:NPM_CLI run pack --workspace apps/desktop
+          if ($LASTEXITCODE) { throw 'Hermes unpacked Desktop build failed' }
+
+      - name: Run native caller-surface E2E against local stubs
+        shell: pwsh
+        env:
+          HERMES_NATIVE_RELEASE: ${{ matrix.release }}
+          HERMES_NATIVE_REVISION: ${{ matrix.revision }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path $env:HERMES_NATIVE_ARTIFACTS | Out-Null
+          if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64' -or $env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted') { throw 'Disposable hosted Windows x64 runner required' }
+          $env:HERMES_DESKTOP_EXECUTABLE = Join-Path $env:HERMES_E2E_SOURCE 'apps/desktop/release/win-unpacked/Hermes.exe'
+          if (-not (Test-Path -LiteralPath $env:HERMES_DESKTOP_EXECUTABLE -PathType Leaf)) { throw 'Expected declared unpacked Hermes.exe' }
+          $env:HERMES_DESKTOP_EXE_SHA256 = (Get-FileHash -LiteralPath $env:HERMES_DESKTOP_EXECUTABLE -Algorithm SHA256).Hash.ToLowerInvariant()
+          $env:HERMES_NODE = (Get-Command node).Source
+          $env:PALLIUM_TUI_REPO_REVISION = (git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -or $env:PALLIUM_TUI_REPO_REVISION -ne $env:PALLIUM_EXPECTED_REVISION) { throw 'Pallium candidate changed during bootstrap' }
+          $env:HERMES_TUI_BUNDLE_SHA256 = (Get-FileHash -LiteralPath (Join-Path $env:HERMES_E2E_SOURCE 'ui-tui/dist/entry.js') -Algorithm SHA256).Hash.ToLowerInvariant()
+          $env:HERMES_E2E_PYTHON_SHA256 = (Get-FileHash -LiteralPath $env:HERMES_E2E_PYTHON -Algorithm SHA256).Hash.ToLowerInvariant()
+          $basePython = (& $env:HERMES_E2E_PYTHON -I -c 'import sys; print(sys._base_executable)').Trim()
+          if ($LASTEXITCODE) { throw 'Hermes interpreter inspection failed' }
+          $env:HERMES_E2E_BASE_PYTHON_SHA256 = (Get-FileHash -LiteralPath $basePython -Algorithm SHA256).Hash.ToLowerInvariant()
+          $env:HERMES_NODE_SHA256 = (Get-FileHash -LiteralPath $env:HERMES_NODE -Algorithm SHA256).Hash.ToLowerInvariant()
+          $sourceRevision = (git -C $env:HERMES_E2E_SOURCE rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -or $sourceRevision -ne $env:HERMES_EXPECTED_REVISION) { throw 'Hermes source changed before qualification' }
+          @{ pallium_revision=$env:PALLIUM_TUI_REPO_REVISION; hermes_revision=$sourceRevision; desktop_sha256=$env:HERMES_DESKTOP_EXE_SHA256; tui_sha256=$env:HERMES_TUI_BUNDLE_SHA256; python_sha256=$env:HERMES_E2E_PYTHON_SHA256; python_base_sha256=$env:HERMES_E2E_BASE_PYTHON_SHA256; node_sha256=$env:HERMES_NODE_SHA256; image_os=$env:ImageOS; image_version=$env:ImageVersion; windows=$PSVersionTable.OS } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $env:HERMES_NATIVE_ARTIFACTS 'provenance.json') -Encoding UTF8
+          $testBase = Join-Path $env:RUNNER_TEMP 'h4-tests'
+          $junitPath = Join-Path $env:HERMES_NATIVE_ARTIFACTS 'native.xml'
+          & $env:PALLIUM_E2E_PYTHON -m pytest -m slow -n 0 --basetemp $testBase --junitxml $junitPath tests/test_hermes_tui_native_e2e.py
+          if ($LASTEXITCODE) { throw 'Hermes native qualification failed' }
+          [xml]$result = Get-Content -LiteralPath (Join-Path $env:HERMES_NATIVE_ARTIFACTS 'native.xml') -Raw
+          foreach ($name in @('test_released_hermes_actual_ui_journey[tui-memory-off]', 'test_released_hermes_actual_ui_journey[tui-memory-on]', 'test_released_hermes_actual_ui_journey[desktop-memory-off]', 'test_released_hermes_actual_ui_journey[desktop-memory-on]')) {
+            $case = @($result.SelectNodes('//testcase') | Where-Object { $_.name -eq $name })
+            if ($case.Count -ne 1 -or $case[0].SelectSingleNode('skipped|failure|error')) { throw "Required native journey did not pass: $name" }
+          }
+
+      - name: Upload synthetic native evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hermes-${{ matrix.release }}-windows-native-evidence
+          path: |
+            ${{ runner.temp }}\hermes-native-artifacts\
+            ${{ runner.temp }}\h4-tests\
+          if-no-files-found: ignore
+          retention-days: 7
