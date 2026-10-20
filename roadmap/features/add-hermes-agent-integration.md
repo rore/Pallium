@@ -1,7 +1,7 @@
 ---
 id: add-hermes-agent-integration
 title: Add Hermes Agent integration
-status: in-progress
+status: active
 priority: high
 commitment: committed
 milestone: pallium-relay
@@ -9,6 +9,11 @@ lane: integration
 ---
 
 ## Summary
+
+Active draft PR #324 continues experimental Session History work. It is not
+production-ready support. Public setup, usage, support and limitation documentation
+must match the accepted implementation before completion; native UI/provider,
+optional-memory and recovery qualification remain open.
 
 Ship the full Pallium integration package for Hermes Agent, covering the bundled
 skill and guidance, MCP tools, Relay, Session History capture/search/expansion,
@@ -331,6 +336,9 @@ test/qualification claims are not inherited without inspecting their evidence.
 
 ## Done When
 
+- [ ] Public setup, usage, support and limitation documentation matches the
+  accepted implementation, including experimental status and the qualified
+  host/provider matrix; independent acceptance review verifies this alignment.
 - [ ] A supported installable Hermes package includes the Pallium skill and
   references, runtime guidance, MCP connection and trusted identity plumbing,
   plugin hooks, setup/status/removal documentation and compatibility reporting.

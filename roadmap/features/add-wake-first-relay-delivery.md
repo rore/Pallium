@@ -935,10 +935,10 @@ Remaining work:
   is merged and its consumer switch is installed. The V2 native inbox uses stable
   native IDs, coordinated by Pallium's existing endpoint state and one scheduling
   fence; there is no separate plugin pending-delivery ledger. PR #297's minimal
-  assistant-directory ownership guard remains a separate open follow-up in PR #297;
-  exact-head qualification and merge remain outstanding. Do not treat that guard or broader
-  restart/OS qualification as complete. Reviewed wake-anchor, lifecycle,
-  capture-idempotence and latency gaps are tracked in
+  assistant-directory ownership guard is qualified and merged as `178fea16`;
+  OC-3 capture idempotence merged in PR #306 as `2ac9e2b6`. Installed deployment and
+  broader restart/OS qualification remain separate. Remaining wake-anchor,
+  lifecycle and latency gaps are tracked in
   [Fix OpenCode plugin reliability](fix-opencode-plugin-reliability.md); the
   happy-path witness does not qualify overall reliability. Owner: `@pal-dev1`; Work Record:
   [OpenCode Relay wake](../../.agent-workflow/tasks/opencode-relay-wake.md).
@@ -946,8 +946,8 @@ Remaining work:
   with relaydev.
 
 OpenCode activation remains a dependency of Copilot expansion; its native Windows
-2.0.24 V2 wake has a happy-path witness, while the assistant-directory guard follow-up
-remains unmerged in PR #297. OC-2/OC-5 disposal fixes merged in PR #302;
+2.0.24 V2 wake has a happy-path witness. The assistant-directory guard merged in
+PR #297 and OC-3 capture idempotence merged in PR #306. OC-2/OC-5 disposal fixes merged in PR #302;
 remaining reliability gaps stay open in [Fix OpenCode plugin reliability](fix-opencode-plugin-reliability.md). These residual gates do
 not block activation capabilities, traces, work associations, or future
 Claude/Codex workflow examples. A new correctness incident takes priority if one is found.
@@ -1054,7 +1054,7 @@ qualified 2.0.22 release to the supported native CLI and desktop 2.0.24.
 | Runtime | Current verdict | Proven mechanism | Remaining qualification |
 |---|---|---|---|
 | Codex | **Windows and Linux exact-session wake proven for runtime-loaded tasks; Windows overtaken-wake suppression proven** | Pallium writes a generic trigger through `codex queue --thread` from a validated neutral Codex home. The cross-process watcher starts a real turn when the target is loaded; for an unloaded target, Pallium keeps the Relay delivery pending until a later supported hook turn. Native unloaded-queue persistence is not claimed. The installed UserPromptSubmit hook claims and injects only after admission, and blocks an exact internal wake without verified rendered delivery before memory or model work. A recognized wake whose payload or block output fails before emission exits 2 without ACK; any existing claim remains recoverable after its lease expires. This failure contract has simulated caller-surface and subprocess coverage, not separate installed-host qualification. An installed Ubuntu 24.04 / WSL2 witness with Codex 0.153.4 proved loaded exact-session automatic wake, hook delivery, and return to idle. | Windows and Linux loaded-task live send → wake are proven. Windows atomic reply, reply-only idle-sender wake, and a no-manual-turn remediation round trip are proven. Do not claim unattended unloaded-task resume without a supported runtime workspace API; qualify macOS and remaining interrupted/restart variants before calling the adapter cross-platform complete. |
-| OpenCode | **Native Windows CLI/desktop 2.0.24 happy-path wake witnessed** | OpenCode's native inbox admits exact sessions with stable native IDs; Pallium coordinates pending work through existing endpoint state and one scheduling fence, without a separate plugin pending-delivery ledger. The configured-model live witness verified unattended exact Unicode response and ACK; all 87 sessions and settings were retained. Shipped isolated native lifecycle E2E passed on 2.0.24; this does not qualify overall reliability. | [Fix OpenCode plugin reliability](fix-opencode-plugin-reliability.md) tracks reviewed wake-anchor, lifecycle, capture-idempotence and latency gaps. PR #297's minimal assistant-directory ownership guard remains separate and unmerged in PR #297. OC-2/OC-5 are merged in PR #302; remaining findings are open. Do not count the guard as merged or installed. |
+| OpenCode | **Native Windows CLI/desktop 2.0.24 happy-path wake witnessed** | OpenCode's native inbox admits exact sessions with stable native IDs; Pallium coordinates pending work through existing endpoint state and one scheduling fence, without a separate plugin pending-delivery ledger. The configured-model live witness verified unattended exact Unicode response and ACK; all 87 sessions and settings were retained. Shipped isolated native lifecycle E2E passed on 2.0.24; this does not qualify overall reliability. | [Fix OpenCode plugin reliability](fix-opencode-plugin-reliability.md) tracks remaining wake-anchor, lifecycle and latency gaps. OC-7's assistant-directory guard is qualified and merged in PR #297; OC-3 capture idempotence merged in PR #306. OC-2/OC-5 merged in PR #302. Installed deployment remains separate; OC-1/4/6/8 remain open. |
 | Claude Code | **Windows and Linux S1A+S1B qualified** | Installed Windows and Ubuntu 24.04 / Claude Code 2.1.250 witnesses proved native peer Relay → exact restart-surviving capability → Stop claim/injection/ACK → Claude reply without another human prompt. Linux used the installed UDS path. | Installed UDS qualification on macOS remains S4. |
 
 **Claude registration foundation:** Windows and Linux S1A+S1B are live-witness qualified: trusted-local exact-session persistence, write-ahead intents, fail-closed rehydration, and event-driven idle-pending reconciliation survived the installed witnesses. The Linux witness used Ubuntu 24.04, Claude Code 2.1.250, and the installed UDS path. No DPAPI, silent time expiry, or lifetime redesign was added. Installed UDS qualification on macOS remains S4.
@@ -1068,9 +1068,9 @@ state and one scheduling fence; there is no separate plugin pending-delivery led
 The earlier Windows 2.0.22 qualification is historical. The supported native CLI
 and desktop witness used official unmodified 2.0.24; the configured-model live witness
 verified an unattended Unicode response and ACK, and shipped isolated native
-lifecycle E2E passed on 2.0.24. The assistant-directory ownership guard remains a
-separate unmerged PR #297 pending exact-head qualification and merge.
-Reviewed wake-anchor, lifecycle, capture-idempotence and latency gaps remain open
+lifecycle E2E passed on 2.0.24. The assistant-directory ownership guard is qualified
+and merged in PR #297; OC-3 capture idempotence merged in PR #306. Installed
+deployment remains separate. Reviewed wake-anchor, lifecycle and latency gaps remain open
 in [Fix OpenCode plugin reliability](fix-opencode-plugin-reliability.md); this
 happy-path witness does not qualify overall reliability.
 
@@ -1122,7 +1122,7 @@ concrete wake-correlation diagnosis gap without changing delivery behavior. The
 remediation journey.
 The closed-recipient lifecycle slice subsequently shipped in PR #148 and
 first-run setup qualification completed on 2026-09-08. Retention cleanup is paused
-pending operational evidence. Relay reliability remains first: qualify the current hook-definition readiness and exact-recipient diagnostics. Other activation capabilities, traces, work associations, and Claude/Codex validation may proceed independently. Wake-first retains the residual qualification listed at the top of this file; macOS is demand-driven. OpenCode native Windows 2.0.24 wake has a happy-path witness. Its assistant-directory guard follow-up remains open pending exact-head qualification and merge; [reviewed reliability gaps](fix-opencode-plugin-reliability.md) also remain open before Copilot expansion.
+pending operational evidence. Relay reliability remains first: qualify the current hook-definition readiness and exact-recipient diagnostics. Other activation capabilities, traces, work associations, and Claude/Codex validation may proceed independently. Wake-first retains the residual qualification listed at the top of this file; macOS is demand-driven. OpenCode native Windows 2.0.24 wake has a happy-path witness. Its assistant-directory guard merged in PR #297 and capture idempotence merged in PR #306; installed deployment and [remaining reliability gaps](fix-opencode-plugin-reliability.md) remain open before Copilot expansion.
 
 1. **S2 contract gate — complete in PR #98.** Delivery lifecycle
    (`pending`, `claimed`, `delivered`, `expired`; `failed` only on separate
@@ -1211,10 +1211,11 @@ pending operational evidence. Relay reliability remains first: qualify the curre
     covers automatic idle/busy delivery, ACK-to-tool continuation across a Pallium
     restart, pre-claim retry, hard restart, and service startup recovery. The V2
     native inbox and one Pallium scheduling fence replace the older proposed
-    plugin pending-delivery ledger. PR #297 tracks the minimal assistant-directory
-    ownership guard; it remains a separate unmerged follow-up pending exact-head qualification and merge. Do not claim guard merge or installed deployment.
+    plugin pending-delivery ledger. PR #297's minimal assistant-directory
+    ownership guard is qualified and merged; OC-3 capture idempotence merged in
+    PR #306. Installed deployment remains separate.
     [Fix OpenCode plugin reliability](fix-opencode-plugin-reliability.md) tracks
-    the reviewed wake-anchor, lifecycle, capture-idempotence and latency gaps.
+    the remaining wake-anchor, lifecycle and latency gaps.
     Passing existing lifecycle tests or the live happy path does not close them.
 
 ### Wake dogfood defect ledger
@@ -1306,8 +1307,9 @@ Keep Channels deferred and macOS passive until installed UDS E2E passes.
 
 **OpenCode:** This was the original deferral. PR #292 superseded it; Windows V2
 automatic wake had an installed happy-path witness on native 2.0.24; 2.0.22 was
-the historical qualification. The separate PR #297 assistant-directory guard
-remains unmerged pending exact-head qualification and merge; the [reviewed reliability gaps](fix-opencode-plugin-reliability.md) remain open.
+the historical qualification. PR #297's assistant-directory guard and PR #306's
+capture-idempotence correction are qualified and merged; installed deployment and
+the [remaining reliability gaps](fix-opencode-plugin-reliability.md) remain open.
 
 ## In Scope
 

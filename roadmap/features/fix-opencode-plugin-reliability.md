@@ -271,9 +271,9 @@ records. Earlier native negative-control evidence produced five records with
 the guard removed.
 
 **Existing correction:** [PR297](https://github.com/rore/Pallium/pull/297) adds
-the ownership guard and has separate source/native review evidence. It remains
-unmerged and undeployed, subject to its CI dependency and the human's current
-environment-protection directive. Verify its live status before reuse.
+the ownership guard and merged as `178fea16e36946ffed68fb4bdd93da76056d5f73`
+after qualification and independent review. Installed deployment remains separate
+under the human's environment-protection directive.
 
 **Required outcome:** reconcile and reuse that smallest guard without overlapping
 ownership or claiming it fixes OC-3. Verify same-repository different folders,
@@ -336,14 +336,14 @@ bug or discard it without evidence.
   records 96 package passes with seven Windows skips, 6,332 Python passes with
   45 skips and two expected failures, and isolated native 2.0.24/2.0.22 checks.
   These results supersede the earlier 93-test/source-only checkpoint; installed
-  deployment is not established here. OC-1/4/6/8 remain open; OC-3 and OC-7 retain
-  their separate PR306 and PR297 qualification/merge dependencies.
+  deployment is not established here. OC-1/4/6/8 remain open; OC-3 and OC-7 are
+  qualified and merged in PR306 and PR297, with installed deployment separate.
 - Authorize repository fixes and isolated tests under the user's request; use
   Agent Workflow before any implementation edits. Classify the actual combined
   change and trigger architecture/API/persistence review for any wake-authority
   or persisted transition change. This feature document is not an approved
   concrete implementation plan or a substitute for required review.
-- Reconcile PR297 and relaydev's independent Codex CI/registration incident work.
+- Reuse merged PR297's ownership guard and reconcile relaydev's independent Codex CI/registration incident work.
   Do not create competing ownership fixes or restart the shared backend.
 - Prefer one accountable implementation owner with bounded helpers where useful.
   Distinct reviewers must assess their actual scopes, and the lead must reconcile
@@ -360,7 +360,7 @@ bug or discard it without evidence.
   The manager reviews the combined documentation before publication; temporary
   checkout and branch coordination stays in the private handoff.
 - The first bounded slice, OC-2 plus OC-5, is merged; do not reimplement it.
-  Reconcile the reviewed OC-3/OC-7 follow-ups in PR306/PR297 without duplicating
+  Reuse the merged OC-3/OC-7 slices and reviewed evidence in PR306/PR297 without duplicating
   their work. OC-1 safe anchor retirement needs its separate contract review;
   no guessed completion or ACK-only retirement. OC-4/OC-6 optional I/O and
   event-loop latency remain open, and OC-8 needs isolated native qualification.
