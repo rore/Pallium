@@ -169,6 +169,59 @@ MEMORY_PROMPTS = {
     "query_forgotten": "native-ui-memory-query-forgotten: find Cobalt key after removal.",
 }
 MEMORY_SESSION_PROMPT = "native-ui-memory-session: verify the fresh caller session."
+SCOPE_GUIDANCE = (
+    "Relay MCP tools bind this conversation automatically. "
+    "Use the bundled pallium-memory skill for Relay and Session History. "
+    "History captures hook-observed text snapshots, not proof of host persistence or delivery. "
+)
+
+
+def composer_text(text, memory_enabled):
+    prompt, separator, suffix = text.partition("\n\n[Pallium scope — ")
+    if not separator:
+        return text
+    raw_scope, closing, guidance = suffix.partition("]\n")
+    scope = json.loads(raw_scope)
+    thread = scope.pop("thread_ref", None)
+    assert isinstance(thread, str) and thread, scope
+    assert scope == {**SCOPE, "actor_ref": "native-ui-actor", "agent_ref": "hermes", "visibility": "private"}, scope
+    expected = ("Optional memory tools are enabled with fixed private write scope." if memory_enabled
+                else "Optional memory tools are disabled in this profile.")
+    assert closing and guidance == SCOPE_GUIDANCE + expected, guidance
+    return prompt
+
+
+def _peer_audit_rows(path):
+    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    assert all(
+        isinstance(row, dict) and set(row) == {"session_id", "turn_id"}
+        and all(isinstance(row[key], str) and row[key] for key in row)
+        for row in rows
+    ), rows
+    return rows
+
+
+def _peer_turn_ids(path, session_id):
+    return {row["turn_id"] for row in _peer_audit_rows(path) if row["session_id"] == session_id}
+
+
+def test_hermes_peer_audit_records_only_host_turn_ids(tmp_path):
+    audit = tmp_path / "audit.jsonl"
+    audit.write_text('{"session_id":"session-1","turn_id":"turn-1"}\n', encoding="utf-8")
+    assert _peer_audit_rows(audit) == [{"session_id": "session-1", "turn_id": "turn-1"}]
+    audit.write_text('{"session_id":"session-1","turn_id":"turn-1","prompt":"private"}\n', encoding="utf-8")
+    with pytest.raises(AssertionError):
+        _peer_audit_rows(audit)
+
+
+def test_hermes_peer_audit_turns_are_unique_and_session_scoped(tmp_path):
+    audit = tmp_path / "audit.jsonl"
+    audit.write_text("".join(json.dumps(row) + "\n" for row in (
+        {"session_id": "session-1", "turn_id": "turn-1"},
+        {"session_id": "session-1", "turn_id": "turn-1"},
+        {"session_id": "session-2", "turn_id": "turn-2"},
+    )), encoding="utf-8")
+    assert _peer_turn_ids(audit, "session-1") == {"turn-1"}
 
 
 def eventually(check, message: str, timeout: float = 90):
@@ -362,6 +415,40 @@ def profile_database_snapshot(profile):
             and re.search(r"\.(?:db|sqlite|sqlite3)(?:-(?:wal|shm|journal))?$", path.name)}
 
 
+def save_profile_diagnostics(profile, peer_audit, artifacts):
+    try:
+        if peer_audit.exists():
+            shutil.copyfile(peer_audit, artifacts / "peer-audit.jsonl")
+        config = yaml.safe_load((profile / "config.yaml").read_text(encoding="utf-8"))
+        safe = {key: config.get(key) for key in ("plugins", "platform_toolsets", "tools", "approvals")}
+        safe["model"] = {key: config.get("model", {}).get(key) for key in (
+            "provider", "default", "api_mode", "base_url", "context_length")}
+        (artifacts / "profile-config.json").write_text(json.dumps(safe, indent=2), encoding="utf-8")
+    except Exception as exc:
+        return repr(exc)
+    return None
+
+
+@pytest.mark.parametrize("contents", [None, "[malformed", "null"])
+def test_native_profile_diagnostic_failure_is_reported_without_raising(tmp_path, contents):
+    if contents is not None:
+        (tmp_path / "config.yaml").write_text(contents, encoding="utf-8")
+    assert save_profile_diagnostics(tmp_path, tmp_path / "absent-audit", tmp_path)
+    assert not (tmp_path / "profile-config.json").exists()
+
+
+def test_native_profile_diagnostics_preserve_audit_and_omit_provider_key(tmp_path):
+    audit = tmp_path / "audit.jsonl"
+    audit.write_text('{"session_id":"session-é","turn_id":"turn-1"}\n', encoding="utf-8")
+    (tmp_path / "config.yaml").write_text(yaml.safe_dump({"model": {
+        "provider": "custom", "api_key": "synthetic-not-for-artifacts"}}), encoding="utf-8")
+    assert save_profile_diagnostics(tmp_path, audit, tmp_path) is None
+    assert (tmp_path / "peer-audit.jsonl").read_bytes() == audit.read_bytes()
+    saved = (tmp_path / "profile-config.json").read_text(encoding="utf-8")
+    assert json.loads(saved)["model"]["provider"] == "custom"
+    assert "api_key" not in saved and "synthetic-not-for-artifacts" not in saved
+
+
 def test_native_profile_snapshot_includes_database_sidecar_inventory(tmp_path):
     for name in ("state.db", "state.db-wal", "state.db-journal", "other.sqlite3-shm", "note.txt"):
         (tmp_path / name).write_bytes(name.encode())
@@ -373,7 +460,7 @@ def test_native_profile_snapshot_includes_database_sidecar_inventory(tmp_path):
     assert "state.db" not in profile_database_snapshot(tmp_path)
 
 
-@pytest.mark.parametrize("path", ["/api/v1/models", "/api/tags", "/v1/props", "/props", "/version", "/unknown"])
+@pytest.mark.parametrize("path", ["/api/v1/models", "/api/tags", "/api/show", "/v1/props", "/props", "/version", "/unknown"])
 def test_hermes_tui_provider_metadata_returns_normal_unsupported_response(path):
     assert provider_metadata_response(path) == (404, {"error": "Unsupported metadata endpoint"})
     status, body = provider_metadata_response("/v1/models")
@@ -411,6 +498,8 @@ class ScriptedProvider:
                 return None, call
             self.completed[payload] = {"wake": wake, "results": results}
             return WAKE_ANSWERS[payload], None
+        if latest.startswith("native-ui-memory-"):
+            latest = composer_text(latest, self.memory_enabled)
         if HISTORY_PROMPT in latest:
             if "pallium_search_history" not in results:
                 return None, discover_call("pallium_search_history", {
@@ -531,12 +620,18 @@ class ScriptedProvider:
         return ANSWER, None
 
 
-def test_native_memory_script_uses_discovered_schemas_and_exact_returned_ids():
+@pytest.mark.parametrize("decorated", [False, True])
+def test_native_memory_script_uses_discovered_schemas_and_exact_returned_ids(decorated):
     provider = ScriptedProvider(memory_enabled=True)
     tools = [{"function": {"name": name}} for name in ("tool_search", "tool_describe", "tool_call")]
 
     def run_stage(stage, expected_name, expected_result):
-        messages = [{"role": "user", "content": MEMORY_PROMPTS[stage]}]
+        text = MEMORY_PROMPTS[stage]
+        if decorated:
+            text += "\n\n[Pallium scope — " + json.dumps({**SCOPE, "thread_ref": "synthetic-session",
+                "actor_ref": "native-ui-actor", "agent_ref": "hermes", "visibility": "private"}) + "]\n"
+            text += SCOPE_GUIDANCE + "Optional memory tools are enabled with fixed private write scope."
+        messages = [{"role": "user", "content": text}]
         body = {"messages": messages, "tools": tools}
         for index in range(3):
             text, call = provider.respond(body)
@@ -570,9 +665,13 @@ def test_native_memory_script_uses_discovered_schemas_and_exact_returned_ids():
         "remember", "supersede_one", "supersede_two", "forget")}
 
 
-def test_native_memory_off_uses_search_and_refuses_ambiguous_tool_result():
+@pytest.mark.parametrize("decorated", [False, True])
+def test_native_memory_off_uses_search_and_refuses_ambiguous_tool_result(decorated):
     prompt = "native-ui-memory-off: search exact pallium_remember and verify absence."
-    body = {"messages": [{"role": "user", "content": prompt}], "tools": [
+    suffix = ("\n\n[Pallium scope — " + json.dumps({**SCOPE, "thread_ref": "synthetic-session",
+              "actor_ref": "native-ui-actor", "agent_ref": "hermes", "visibility": "private"}) + "]\n"
+              + SCOPE_GUIDANCE + "Optional memory tools are disabled in this profile.") if decorated else ""
+    body = {"messages": [{"role": "user", "content": prompt + suffix}], "tools": [
         {"function": {"name": name}} for name in ("tool_search", "tool_describe", "tool_call")]}
     provider = ScriptedProvider()
     assert provider.respond(body) == (None, ("tool_search", {"queries": ["pallium_remember"], "limit": 5}))
@@ -583,6 +682,16 @@ def test_native_memory_off_uses_search_and_refuses_ambiguous_tool_result():
     body["messages"].append({"role": "tool", "tool_call_id": "pending",
                              "content": json.dumps({"tools": {"pallium_relay_address": {}}})})
     assert provider.respond(body) == ("Optional memory is absent.", None)
+    assert provider.requests[-1]["messages"][0]["content"] == prompt + suffix
+    fresh = {"messages": [{"role": "user", "content": MEMORY_SESSION_PROMPT + suffix}], "tools": body["tools"]}
+    assert ScriptedProvider().respond(fresh)[1] == ("tool_search", {"queries": ["pallium_relay_address"], "limit": 5})
+    for invalid in (prompt + " altered" + suffix, prompt + suffix + " unexpected trailing text"):
+        with pytest.raises(AssertionError):
+            ScriptedProvider().respond({**fresh, "messages": [{"role": "user", "content": invalid}]})
+    initial_text = PROMPT + suffix + "\n\n[System note: ordinary first-turn guidance.]"
+    initial = {"messages": [{"role": "user", "content": initial_text}], "tools": [
+        *body["tools"], {"function": {"name": "skill_view"}}]}
+    assert ScriptedProvider().respond(initial) == (None, ("skill_view", {"name": "pallium-memory"}))
 
 
 class NativeDriver:
@@ -902,6 +1011,8 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
     provider = ScriptedProvider(memory_enabled=memory_enabled)
     forwarded = []
     server_errors = []
+    api_server = None
+    api_server_thread = None
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_args):
@@ -921,7 +1032,7 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
                 assert self.headers.get("Host") == f"127.0.0.1:{self.server.server_port}"
                 assert self.path.startswith("/") and not urlsplit(self.path).netloc
                 raw = self.rfile.read(int(self.headers.get("Content-Length", "0")))
-                if self.server is api_server:
+                if self.server.endpoint_role == "api":
                     response = client.request(self.command, self.path, content=raw or None,
                                               headers={"Content-Type": "application/json"})
                     body = response.json()
@@ -929,7 +1040,7 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
                                       "body": json.loads(raw) if raw else None,
                                       "status": response.status_code, "response": body})
                     self.send(response.status_code, response.content)
-                elif self.command == "GET":
+                elif self.command == "GET" or self.path == "/api/show":
                     self.send(*provider_metadata_response(self.path))
                 else:
                     assert self.path == "/v1/chat/completions", self.path
@@ -960,8 +1071,12 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
 
         do_POST = do_GET = handle_request
 
-    api_server = ThreadingHTTPServer(("127.0.0.1", _port()), Handler)
+    api_port = _port()
+    api_server = ThreadingHTTPServer(("127.0.0.1", api_port), Handler)
+    api_server.endpoint_role = "api"
+    api_server.daemon_threads = False
     provider_server = ThreadingHTTPServer(("127.0.0.1", _port()), Handler)
+    provider_server.endpoint_role = "provider"
     base_url = f"http://127.0.0.1:{api_server.server_port}"
     endpoints = [("127.0.0.1", server.server_port) for server in (api_server, provider_server)]
     env = isolated_env(home, source=source, python=python, node=node, guard_dir=guard_dir,
@@ -981,10 +1096,20 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
               "model_catalog": {"enabled": False},
               "auxiliary": {"background_review": {"enabled": False}},
               "approvals": {"destructive_slash_confirm": False},
-              "plugins": {"entries": {"unrelated-note": {"settings": {"keep": "synthetic note"}}}},
+              "plugins": {"enabled": ["native-peer-audit"], "entries": {
+                  "native-peer-audit": {"settings": {"keep": "synthetic peer"}},
+                  "unrelated-note": {"settings": {"keep": "synthetic note"}}}},
               "wake_word": {"enabled": False}, "display": {"compact": True},
               "telemetry": {"shared_metrics": {"enabled": False, "send": False, "offer_version": 2}}}
     (profile / "config.yaml").write_text(yaml.safe_dump(config), encoding="utf-8")
+    peer_plugin = profile / "plugins" / "native-peer-audit"
+    peer_plugin.mkdir(parents=True)
+    peer_fixture = Path(__file__).parent / "fixtures"
+    peer_manifest = peer_plugin / "plugin.yaml"
+    peer_source = peer_plugin / "__init__.py"
+    shutil.copyfile(peer_fixture / "hermes_native_peer_plugin.yaml", peer_manifest)
+    shutil.copyfile(peer_fixture / "hermes_native_peer_plugin.py", peer_source)
+    peer_audit = peer_plugin / "audit.jsonl"
     unrelated = profile / "unrelated-note.txt"
     unrelated.write_text("Preserve this note é 漢字 🌍", encoding="utf-8")
     seed_models_dev_cache(profile)
@@ -1000,8 +1125,10 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
                "mcp_python_base": str(Path(sys._base_executable).resolve()),
                "mcp_python_base_sha256": hashlib.sha256(Path(sys._base_executable).read_bytes()).hexdigest(),
                "memory_ui_qualification": "enabled" if memory_enabled else "default-off"}
-    for server in (api_server, provider_server):
-        threading.Thread(target=server.serve_forever, daemon=True).start()
+    api_server_thread = threading.Thread(target=api_server.serve_forever, daemon=True)
+    provider_server_thread = threading.Thread(target=provider_server.serve_forever, daemon=True)
+    api_server_thread.start()
+    provider_server_thread.start()
     try:
         setup_args = [sys.executable, "-m", "app.run", "setup", "hermes", "--home", str(profile),
                                 "--hermes-python", str(python), "--service-url", base_url,
@@ -1017,7 +1144,10 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
         assert "tool_search" not in installed.get("tools", {}), "setup changed default Tool Search"
         assert installed["auxiliary"]["background_review"]["enabled"] is False
         assert (profile / "skills" / "pallium-memory" / "SKILL.md").is_file()
-        assert installed["plugins"]["enabled"] == ["pallium-hermes-relay"]
+        assert installed["plugins"]["enabled"] == ["native-peer-audit", "pallium-hermes-relay"]
+        assert installed["plugins"]["entries"]["native-peer-audit"] == (
+            config["plugins"]["entries"]["native-peer-audit"]
+        )
         assert installed["model"] == config["model"]
         assert installed["platform_toolsets"] == config["platform_toolsets"]
         assert installed["approvals"] == config["approvals"]
@@ -1047,6 +1177,15 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
         peer_delivery = next(row for row in peer_claim["deliveries"] if row["payload"] == PROMPT)
         assert peer_delivery["sender_session_ref"] == session_id
 
+        captured = eventually(lambda: [item for row in forwarded if row["path"] == "/items"
+                                        for item in row["body"] if item.get("content") == PROMPT],
+                              "original UI turn was not captured")
+        assert len(captured) == 1 and captured[0]["thread_ref"] == session_id
+        user = captured[0]
+        original_turn_id = user["metadata"]["hermes_turn_id"]
+        eventually(lambda: peer_audit.exists() and original_turn_id in _peer_turn_ids(peer_audit, session_id),
+                   "peer hook did not observe the captured native host turn", timeout=15)
+
         processes = driver.command("inspect")["processes"]
         (artifacts / "owned-processes.json").write_text(json.dumps(processes, indent=2), encoding="utf-8")
         bridges = [row for row in processes if "app.mcp.hermes" in row["argv"]]
@@ -1065,18 +1204,75 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
         (artifacts / "bridge-connections.json").write_text(json.dumps(classification, indent=2), encoding="utf-8")
         assert classification["accepted"], classification
 
+        recovery_evidence = {"original_turn_id": original_turn_id}
         for payload in (NO_REPLY, REPLY):
-            message = client.post("/relay/messages", json={"sender_runtime": "claude-code", "sender_session_ref": PEER,
-                                  "recipient": address["exact_selector"], "payload": payload, **SCOPE})
-            assert message.status_code == 200, message.text
-            message = message.json()
+            if payload == NO_REPLY:
+                eventually(lambda: next((row for row in forwarded
+                    if row["method"] == "GET" and row["path"].startswith("/relay/pending-candidate?")
+                    and f"session_ref={session_id}" in row["path"]), None),
+                    "Hermes did not poll its registered endpoint before outage", timeout=15)
+                offline_turns = _peer_turn_ids(peer_audit, session_id)
+                outcome["endpoint_outage_recovery"] = recovery_evidence
+                try:
+                    api_server.shutdown()
+                    api_server.server_close()
+                    api_server_thread.join(timeout=5)
+                    assert not api_server_thread.is_alive(), "API endpoint thread did not drain before outage"
+                    message = client.post("/relay/messages", json={"sender_runtime": "claude-code",
+                                          "sender_session_ref": PEER, "recipient": address["exact_selector"],
+                                          "payload": payload, **SCOPE})
+                    assert message.status_code == 200, message.text
+                    message = message.json()
+                    delivery_id = message["deliveries"][0]["delivery_id"]
+                    state = client.get("/relay/messages/" + message["message_id"], params=SCOPE).json()
+                    delivery = state["deliveries"][0]
+                    recovery_evidence.update(delivery_id=delivery_id, offline_state=delivery,
+                                             offline_turn_ids=sorted(offline_turns))
+                    assert delivery["delivery_id"] == delivery_id
+                    assert delivery["state"] == "pending" and delivery["attempts"] == 0, delivery
+                    time.sleep(1.5)  # Covers the bridge's 0.25s poll and 1s HTTP timeout.
+                    offline_state = client.get("/relay/messages/" + message["message_id"], params=SCOPE).json()
+                    offline_delivery = offline_state["deliveries"][0]
+                    assert offline_delivery["delivery_id"] == delivery_id
+                    assert offline_delivery["state"] == "pending" and offline_delivery["attempts"] == 0, offline_delivery
+                    recovery_evidence["offline_after_interval"] = offline_delivery
+                    assert payload not in provider.completed
+                    assert _peer_turn_ids(peer_audit, session_id) == offline_turns
+                finally:
+                    api_server = ThreadingHTTPServer(("127.0.0.1", api_port), Handler)
+                    api_server.endpoint_role = "api"
+                    api_server.daemon_threads = False
+                    api_server_thread = threading.Thread(target=api_server.serve_forever, daemon=True)
+                    api_server_thread.start()
+                    recovery_evidence["endpoint_restored"] = True
+                outcome["endpoint_outage_recovery"] = recovery_evidence
+            else:
+                message = client.post("/relay/messages", json={"sender_runtime": "claude-code",
+                                      "sender_session_ref": PEER, "recipient": address["exact_selector"],
+                                      "payload": payload, **SCOPE})
+                assert message.status_code == 200, message.text
+                message = message.json()
             driver.command("wait", text=WAKE_ANSWERS[payload])
             state = eventually(lambda: (row if (row := client.get("/relay/messages/" + message["message_id"],
                                  params=SCOPE).json())["deliveries"][0]["state"] == "delivered" else None),
                                "incoming UI wake did not ACK through the public message read")
             wake = provider.completed[payload]["wake"]
+            if payload == NO_REPLY:
+                recovery_evidence["restored_state"] = state["deliveries"][0]
             assert wake["delivery_id"] == state["deliveries"][0]["delivery_id"]
             assert wake["host_session_id"] == session_id
+            if payload == NO_REPLY:
+                def resumed_turn_ids():
+                    turns = _peer_turn_ids(peer_audit, session_id) - set(recovery_evidence["offline_turn_ids"])
+                    return turns if wake["host_turn_id"] in turns else None
+
+                resumed_turns = eventually(resumed_turn_ids,
+                    "recovered wake did not complete one audited host turn", timeout=15)
+                assert wake["host_turn_id"] in resumed_turns and len(resumed_turns) == 1, resumed_turns
+                assert state["deliveries"][0]["delivery_id"] == recovery_evidence["delivery_id"]
+                assert state["deliveries"][0]["state"] == "delivered"
+                assert state["deliveries"][0]["recipient_session_ref"] == session_id
+                recovery_evidence["resumed_turn_ids"] = sorted(resumed_turns)
             replies = client.post("/relay/turn", json={"runtime": "claude-code", "session_ref": PEER, **SCOPE}).json()
             if payload == NO_REPLY:
                 assert replies["deliveries"] == [], replies
@@ -1121,11 +1317,6 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
             driver.command("wait", text="Optional memory is absent.")
             assert "pallium_remember" not in provider.completed[prompt]["tool_search"]
 
-        captured = eventually(lambda: [item for row in forwarded if row["path"] == "/items"
-                                        for item in row["body"] if item.get("content") == PROMPT],
-                               "original UI turn was not captured")
-        assert len(captured) == 1 and captured[0]["thread_ref"] == session_id
-        user = captured[0]
         if memory_enabled:
             remember_request = next(row["body"] for row in forwarded if row["path"] == "/memory/remember")
             assert remember_request["thread_ref"] == session_id
@@ -1165,6 +1356,9 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
         databases = profile_database_snapshot(profile)
         assert databases, "actual Hermes UI persisted no database"
         outcome["profile_database_hashes"] = databases
+        peer_files = (peer_manifest, peer_source, peer_audit)
+        peer_hashes = {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in peer_files}
+        outcome["peer_plugin_hashes"] = peer_hashes
         basic_args = [sys.executable, "-m", "app.run", "setup", "hermes", "--home", str(profile),
                       "--hermes-python", str(python)]
         for action, arguments in (("update", setup_args), ("status", [*basic_args, "--status"]),
@@ -1177,6 +1371,13 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
             current_config = yaml.safe_load((profile / "config.yaml").read_text(encoding="utf-8"))
             for key in ("model", "platform_toolsets", "approvals"):
                 assert current_config[key] == config[key], (action, key)
+            assert current_config["plugins"]["enabled"] == (
+                ["native-peer-audit"] if action == "remove" else ["native-peer-audit", "pallium-hermes-relay"]
+            )
+            assert current_config["plugins"]["entries"]["native-peer-audit"] == (
+                config["plugins"]["entries"]["native-peer-audit"]
+            )
+            assert {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in peer_files} == peer_hashes
             assert current_config["plugins"]["entries"]["unrelated-note"] == config["plugins"]["entries"]["unrelated-note"]
             assert unrelated.read_text(encoding="utf-8") == "Preserve this note é 漢字 🌍"
         assert "pallium-hermes-relay" not in current_config["plugins"].get("enabled", [])
@@ -1202,9 +1403,13 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
             outcome["cleanup_error"] = repr(exc)
             raise
         finally:
-            for server in (api_server, provider_server):
+            outcome["artifact_capture_error"] = save_profile_diagnostics(profile, peer_audit, artifacts)
+            for server, thread in ((api_server, api_server_thread),
+                                   (provider_server, provider_server_thread)):
                 server.shutdown()
                 server.server_close()
+                thread.join(timeout=5)
+                assert not thread.is_alive(), "native test endpoint thread did not stop"
             (artifacts / "provider.json").write_text(json.dumps(provider.requests, ensure_ascii=False, indent=2), encoding="utf-8")
             outcome["server_errors"] = server_errors
             (artifacts / "http.json").write_text(json.dumps(forwarded, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -1215,8 +1420,10 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
                 outcome["source_postcondition"] = "passed"
             finally:
                 if (outcome.get("journey_assertions") == "passed" and outcome.get("owned_process_cleanup") == "passed"
-                        and outcome.get("source_postcondition") == "passed" and outcome.get("driver_returncode") == 0):
+                        and outcome.get("source_postcondition") == "passed" and outcome.get("driver_returncode") == 0
+                        and not outcome.get("artifact_capture_error")):
                     outcome["status"] = "passed"
                 (artifacts / "result.json").write_text(json.dumps(outcome, ensure_ascii=False, indent=2), encoding="utf-8")
                 if outcome.get("journey_assertions") == "passed":
                     assert outcome.get("driver_returncode") == 0, "journey completed but native driver failed"
+                    assert not outcome.get("artifact_capture_error"), outcome["artifact_capture_error"]

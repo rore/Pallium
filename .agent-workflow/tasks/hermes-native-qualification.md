@@ -60,6 +60,8 @@ This directly answers the presented proposal to add and merge the separate dispo
 
 ## Implementation
 
+Latest native ledger checkpoint: run 1 (39474582150, attempt1) is terminal failure. The v0.22.0 hosted build/runtime/isolation gates passed, followed by30 helper passes and4 native UI failures; v0.22.2 was cancelled by fail-fast. Retained logs/artifacts establish initial actual UI/skill/default-discovery/Relay send and successive wakes, followed by fixture scope matching, normal metadata probe and delayed Desktop Send-control failures. Owned cleanup and parent source postconditions passed. Feature PR #324 now contains independently reviewed test-only corrections and enabled-peer/endpoint-outage assertions; they require the one remaining manual native run after push/required CI. Run2 remains unused. Failed evidence is not acceptance; no local build/native launch/recovery occurred.
+
 Current checkpoint, 2026-10-20: independent reviewer /root/hermes_cd_plan_review accepted bootstrap corrections at `8df0389582f587c6677a24f3bf8ac4ba7eb256d4`. All required gates passed and PR #328 merged as `8cd9302cfd843e6a37c71b05295ac0fc564c9e53` at 18:24:50 UTC. CI run 39471805218 attempt 1 retained an unchanged Relay missing-reply-parent contract failure (expected404, actual retryable503; setup_deadline/session_connection1272ms). One diagnostic failed-lane retry passed; this is evidence of an intermittent symptom, not a reliability fix. Python3.12, Python3.13, Windows smoke, aggregate CI, governance and resolved inline findings were verified before merge. The final fresh classification was RED for the additive dev/test dependency; architecture/import definitions and production dependencies were unchanged. This supersedes the earlier pending-review/GRAY notes below.
 
 Manual native execution ledger: run 1 of maximum2 is https://github.com/rore/Pallium/actions/runs/39474582150, created 2026-10-20 18:25:22 UTC, event workflow_dispatch, workflow/main revision `8cd9302cfd843e6a37c71b05295ac0fc564c9e53`, candidate input `973f21902168bb81ef2fdc7fe629cecad836ff27`. First hosted release job passed the isolation and candidate-identity gates and is bootstrapping. Run2 is unused; no native rerun attempt has occurred. Native acceptance remains pending. Total authorized ceiling stays four runner-hours. A pre-dispatch workflow-view CLI syntax error occurred before submission; actual manual run inventory confirmed zero before the one successful submission. No local dependency install/build/native launch or environment recovery occurred.
@@ -69,6 +71,14 @@ Pre-dispatch review corrections: runner paths moved from invalid job-level runne
 Created from current main bb239133a3ae86a37fe9f890beae87772b15f774 in a separate managed checkout and feat/hermes-native-qualification branch. Whole-change documentation exemption does not apply to the new workflow. Feature implementation remains on feat/hermes-production-slice4 / PR324. No native runs dispatched yet; approved run ledger starts at zero.
 
 ## Evidence
+
+## Result review
+
+Agent technical review: /root/hermes_cd_plan_review, independent read-only non-implementer review of the runner and bootstrap corrections.
+
+Reviewed revision: 8df0389582f587c6677a24f3bf8ac4ba7eb256d4
+
+Verification adequacy: the pure safety contract, parsed PowerShell, real import boundaries, manual-only isolation/identity/timeout/no-skip/evidence contracts and required hosted gates support merging the runner. The unchanged Relay setup-deadline failure and successful bounded retry are retained separately. This review does not accept native integration behavior. The earlier review of 13a6030e below is retained as chronological evidence.
 
 Agent technical review: /root/hermes_cd_plan_review, independent read-only staged result review, GO conditional on required CI. Reviewed revision:13a6030e. Verification adequacy: manual-only trigger, exact candidate revalidation, separate locked runtime stacks, native argv, source/binary hashes, mandatory non-skipped cases, provenance/retention and the recorded human scope were accepted. The reviewer explicitly notes that YAML bounds each run, while this task's ledger must enforce the total two-dispatch cap. Native qualification is not accepted by this review. Runner PR https://github.com/rore/Pallium/pull/328 is created and attached; zero native runs dispatched.
 

@@ -178,6 +178,31 @@ const env = {GITHUB_ACTIONS:'true', RUNNER_ENVIRONMENT:'github-hosted', RUNNER_O
     ]
 
 
+def test_submit_waits_for_payload_control_mount_and_visibility(tmp_path):
+    result = run_node(r"""
+const d = require(process.argv[1]);
+const env = {GITHUB_ACTIONS:'true', RUNNER_ENVIRONMENT:'github-hosted', RUNNER_OS:'Windows',
+  RUNNER_ARCH:'X64', HERMES_NATIVE_CI_ISOLATION:'github-hosted-ephemeral-windows'};
+let waits=0, filled='', clicks=0;
+const button={count:async()=>waits<1?0:1, isVisible:async()=>waits>=2,
+  isEnabled:async()=>true, click:async()=>{clicks++;}};
+const form={count:async()=>1, locator:()=>button};
+const composer={getAttribute:async name=>name==='contenteditable'?'true':null,
+  fill:async text=>{filled=text;}, locator:()=>form};
+const page={url:()=> 'file:///synthetic/index.html',
+  locator:()=>({count:async()=>1, first:()=>composer}), waitForTimeout:async()=>{waits++;}};
+const browser={contexts:()=>[{pages:()=>[page]}],close:async()=>{}};
+(async()=>{
+  const driver=await d.connectDriver({endpoint:'ws://127.0.0.1:43123/devtools/browser/x',sourceRoot:'.',env,
+    timeout:1000,load:()=>({connectOverCDP:async()=>browser})});
+  const submitted=await driver.submit('synthetic follow-up');
+  await driver.close();
+  console.log(JSON.stringify({submitted,filled,waits,clicks}));
+})().catch(e=>{console.error(e);process.exit(1)});
+""", tmp_path)
+    assert result == {"submitted": {"submitted": True}, "filled": "synthetic follow-up", "waits": 2, "clicks": 1}
+
+
 def test_composer_and_submit_ambiguity_fail_closed(tmp_path):
     result = run_node(r"""
 const d = require(process.argv[1]);

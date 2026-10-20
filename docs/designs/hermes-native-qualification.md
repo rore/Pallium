@@ -3,7 +3,12 @@
 Status: the user approved the disposable runner in PR #328 and at most two manual
 runs, capped at four runner-hours. The runner is merged; the first run is
 [39474582150](https://github.com/rore/Pallium/actions/runs/39474582150), testing
-candidate `973f21902168bb81ef2fdc7fe629cecad836ff27`. Results remain pending.
+candidate `973f21902168bb81ef2fdc7fe629cecad836ff27`. It failed four native cases
+after 30 helper checks passed; the second release was cancelled by fail-fast.
+Evidence showed initial real UI/skill/Relay/wake progress, followed by fixture
+scope matching, metadata-response and Desktop-control readiness failures.
+Those partial observations do not qualify the full integration. One approved
+native run remains; reviewed harness corrections precede its dispatch.
 Hermes remains experimental. This approval excludes local recovery and everyday
 installation or rollout.
 
@@ -85,7 +90,12 @@ a Unicode note. Removal must delete only Pallium-owned package entries/files.
 The Desktop adapter uses the owned unpacked executable and a numeric-loopback
 Chromium CDP endpoint; it shares the identity-checked watchdog and cleanup ledger
 with TUI. Mocked adapter checks do not establish Desktop qualification. The full
-native matrix is running; the last completed TUI run failed at session navigation.
+native matrix remains unaccepted. The shared fixture now recognizes only the
+authored scope suffix on exact memory stages and waits for the actual Desktop
+submit control to mount; unexpected stage text and ambiguous controls still fail.
+It also checks an enabled, harmless peer hook and a bounded forwarding-endpoint
+outage before the first no-reply wake. These additions require native proof;
+endpoint downtime does not establish full service-process or MCP restart recovery.
 Python network guards do not confine Electron/Chromium networking, and hosted
 runner environment markers are only accidental-launch guards, not an OS sandbox.
 The recorded approval covers this disposable runner and its bounded manual runs.

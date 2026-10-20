@@ -51,14 +51,18 @@ async function desktopPage(browser, timeout) {
   }
 }
 
-async function submitButton(composer) {
+async function submitButton(composer, page, timeout) {
   const forms = composer.locator('xpath=ancestor::form[1]')
   if (await forms.count() !== 1) throw new Error('Desktop composer must have one containing form')
   const buttons = forms.locator('button[type="submit"]')
-  if (await buttons.count() !== 1 || !(await buttons.isVisible())) {
-    throw new Error('Desktop composer form must have one visible submit button')
+  const deadline = Date.now() + timeout
+  while (true) {
+    const count = await buttons.count()
+    if (count > 1) throw new Error('Desktop composer form must have one visible submit button')
+    if (count === 1 && await buttons.isVisible()) return buttons
+    if (Date.now() >= deadline) throw new Error('Desktop composer form must have one visible submit button')
+    await page.waitForTimeout(50)
   }
-  return buttons
 }
 
 async function connectDriver({ endpoint, sourceRoot, env = process.env, load = loadChromium, timeout = 30000 }) {
@@ -106,7 +110,7 @@ async function connectDriver({ endpoint, sourceRoot, env = process.env, load = l
         if (typeof text !== 'string' || !text) throw new Error('submit text must be non-empty')
         const composer = await waitForComposerReady()
         await composer.fill(text)
-        const button = await submitButton(composer)
+        const button = await submitButton(composer, page, timeout)
         await waitForEnabled(button)
         await button.click()
         return { submitted: true }

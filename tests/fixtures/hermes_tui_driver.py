@@ -655,13 +655,10 @@ def driver_main(spec_path: Path):
     finally:
         stopped.set()
         try:
-            try:
-                tree.close(include_root=False)
-            finally:
-                if console is not None:
-                    console.close()
+            tree.close(include_root=False)
         finally:
-            verify_source(source, spec["bundle_sha256"])
+            if console is not None:
+                console.close()
 
 
 def cleanup_ledger(path: Path):
