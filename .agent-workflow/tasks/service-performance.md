@@ -2409,7 +2409,7 @@ Agent technical review: /root/architecture_check, clean nonimplementer source/pl
 
 **Exceptions:** None
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ### Final adbc Windows preparation boundaries — pre-edit checkpoint 2026-10-16
@@ -3671,3 +3671,9 @@ NEW manual FULL WINDOWS3.13 PASSED: serial79passed2skipped100.12s; remaining7462
 Independent actual raw/source review /root/opencode297_resume_plan_review gives classification GO and combined qualification HOLD. For unchanged callers/prod/config/deps and the changed retained-module observer relationship, no concrete introduced coupling is established; physical causes stay unproven. Preserve all cases, no retry, accommodation, source publication or merge. Bot review completed with one non-inline gate-timeout preference; independent source review declined it as a required correction because normal stop sets stop_event before waiting0.5s for worker; observer exactly clients[1]. A stalled teardown remains a visible failure, and shortening the gate could open another retry window. No source change followed.
 
 Sole watcher wrapper46688/gh28744 completed with exit1; gh wait returned and bounded direct-child inventory under completed gh found0. Raw collectors exited0; no universal/reparented descendant claim or process kill. Current final record is a LOCAL ONLY successor preserving all test/application/config/dependency bytes; PR325 stays at published7a588dc4. Do not push this record merely to retrigger CI. State remains Blocked for manager disposition of the actual failures. Installed environment and primary checkout were not changed by this work.
+
+## Manager-authorized bounded release recovery — 2026-10-20
+
+Manager adopted the read-only source/contract release recommendation under the user's explicit direction to finish and unblock. Exactly one failed-jobs retry is authorized for existing PR run39436200688 attempt1 to2 at unchanged published7a588dc4f3af2138f4e57fa8612fb2bf06e93782, preserving all failures and reusing passed jobs. Only if the substantive job and aggregate succeed may existing manual39436234494 receive exactly one failed-jobs retry attempt1 to2 for Linux3.13, Windows3.12 and dependent result, preserving successful Windows3.13 and other jobs. Verify exact head and attempts before each mutation; exclusive durable intent/receipt prevents duplicate retries. Save new job identities, reused successful-job timestamps and terminal raw once. No workflow dispatch, source push, selection change, worker override, diagnostics or installed changes. Any failure, cancellation, timeout, drift or unexpected skip cancels the remainder; no third attempt or accommodation.
+
+If both aggregates and all required lanes are green with complete selection, independent combined review and fresh head/base/review/protection checks may precede merge without another approval request. The local full remains FAILED and every historical/current red remains retained; hosted qualification supplies release evidence without retroactive local success or an installed reliability claim. This Work Record remains a local-only successor; do not push it merely to trigger CI. Root retains canonical roadmap and separate rollout ownership. State is Ready to implement solely for this bounded CI recovery and conditional reviewed release.
