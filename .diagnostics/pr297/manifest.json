@@ -1,0 +1,8 @@
+{
+  "sha256": {
+    "acquisition_observer.py": "9aaca6cdb3e62a6d9f620c86ce4935f66e12482a8438fb076c52bdddeb486788",
+    "run.py": "8461736295d6d1ce51cedf9844fa11e10118e5c7478c21fa6755d7415a7cbddd",
+    "guard/sitecustomize.py": "2c8068ca14dad1d88e0e1276c57838cbbbfab12fbdc216d3257f98d7a231235c",
+    ".github/workflows/ci.yml": "2bd2f16af79a420867bcefd2c69de94cc81e69db8597a044c27056d5506d92fb"
+  }
+}
