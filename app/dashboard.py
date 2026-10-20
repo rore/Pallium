@@ -23,7 +23,7 @@ from core.filters import source_item_matches_filters
 from core.relay_activation import current_platform, relay_activation_snapshot
 from app.codex_wake import retained_activation_snapshot
 from core.relay import (
-    RelayConflictError, RelayNotFoundError, RelayService, RelayUnavailableError,
+    RELAY_RUNTIMES, RelayConflictError, RelayNotFoundError, RelayService, RelayUnavailableError,
     _opaque, validate_runtime,
 )
 from core.models import QueryFilters, SourceItem
@@ -115,10 +115,10 @@ def _dashboard_relay_operational_item(row, traces, observed_at: datetime) -> dic
     return {
         "delivery_id": row["delivery_id"], "message_id": row["message_id"], "message_available": row["message_available"],
         "created_at": _dashboard_time(row["created_at"]), "sender_endpoint_id": row["sender_endpoint_id"],
-        "recipient_endpoint_id": row["recipient_endpoint_id"], "recipient_runtime": row["recipient_runtime"] if row["recipient_runtime"] in {"codex", "claude-code", "opencode"} else "unknown",
+        "recipient_endpoint_id": row["recipient_endpoint_id"], "recipient_runtime": row["recipient_runtime"] if row["recipient_runtime"] in RELAY_RUNTIMES else "unknown",
         "container_ref": row["container_ref"], "stored_state": state,
         "effective_state": ("unknown" if expiry_kind == "unknown" else ("expired" if expiry_kind == "finite_expired" else state)) if state in {"pending", "claimed"} else state,
-        "expiry_kind": expiry_kind, "durable": durable, "expires_at": None if durable else _dashboard_time(expires),
+        "expiry_kind": expiry_kind, "durable": None if expires is None else durable, "expires_at": None if durable else _dashboard_time(expires),
         "claimed_at": _dashboard_time(row["claimed_at"]), "lease_expires_at": _dashboard_time(lease),
         "lease_state": lease_state, "delivered_at": _dashboard_time(row["delivered_at"]),
         "recipient": {"stored_state": recipient_state, "last_seen_at": _dashboard_time(seen), "recency": recency,
@@ -1256,13 +1256,18 @@ def mount_dashboard(
         before_created_at: datetime | None = Query(None),
         before_id: str | None = Query(None, min_length=1, max_length=128),
         trace_through_sequence: int | None = Query(None, ge=0, le=2**63 - 1),
-        runtime: Literal["codex", "claude-code", "opencode"] | None = Query(None),
+        runtime: str | None = Query(None, min_length=1, max_length=32),
         container_ref: str | None = Query(None, min_length=1, max_length=255),
     ) -> JSONResponse:
         if (before_created_at is None) != (before_id is None):
             raise HTTPException(status_code=422, detail="before_created_at and before_id must be supplied together")
         if before_id is not None and (until is None or trace_through_sequence is None):
             raise HTTPException(status_code=422, detail="continuation requires until and trace_through_sequence")
+        if runtime is not None:
+            try:
+                runtime = validate_runtime(runtime)
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
         storage = app.state.pallium_service._storage
         if not isinstance(storage, SQLiteStorageProvider):
             return JSONResponse(content={"error": "requires SQLite backend"}, status_code=501)

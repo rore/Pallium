@@ -45,6 +45,8 @@
 
 2026-10-20: Implemented only app/dashboard.py, tests/test_relay_operational_preview_e2e.py, docs/dashboard.md, and this record. Preview uses one scalar delivery page plus indexed trace sequence projection (at most three SELECT statements) in a real read snapshot, with no ORM entity loads. Missing message rows remain visible with unknown effective eligibility and preserve linked-child count. Added HTTP E2E coverage for the approved edge cases and public Relay create/claim/ACK/reply/close journey. No tests have run yet; independent actual-diff and focused-coverage review is next.
 
+2026-10-20: Independent pre-test diff/privacy/coverage review of e3d1d7fc found one current-source mismatch: Hermes is now supported, unlike the older installed runtime set. Reused existing RELAY_RUNTIMES/validate_runtime for validation and output, with four-runtime E2E coverage. Also made unknown durability explicitly null for missing messages. Reviewer found scalar privacy/read-only/snapshot/page boundaries and focused coverage sound, and approved running focused coverage after this correction. No tests have run yet; root test-slot confirmation pending.
+
 ## Evidence
 
 Prior read-only live evidence: C:/Dev/rore/Pallium/build/relay-retention-20261020-evidence/artifact-manifest.json. No product tests run and no implementation exists yet.

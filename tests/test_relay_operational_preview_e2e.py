@@ -285,6 +285,7 @@ def test_dangling_graph_and_mismatched_trace_stay_unknown(preview):
     _trace(storage, "missing", message_id="unrelated")
     items = {row["delivery_id"]: row for row in client.get(URL).json()["items"]}
     assert items["missing"]["message_available"] is False
+    assert items["missing"]["durable"] is None
     assert items["missing"]["expiry_kind"] == items["missing"]["effective_state"] == "unknown"
     assert items["missing"]["reply"]["linked_reply_count"] == 1
     assert items["missing"]["trace"]["availability"] == "unknown"
@@ -304,6 +305,15 @@ def test_global_access_exact_filters_and_unsupported_backend(preview):
     assert client.get(URL, params={"runtime": "opencode"}).json()["items"] == []
     client.app.state.pallium_service._storage = object()
     assert client.get(URL).status_code == 501
+
+
+@pytest.mark.parametrize("runtime", ["codex", "claude-code", "opencode", "hermes"])
+def test_every_supported_runtime_is_filterable_and_preserved(preview, runtime):
+    client, storage = preview
+    _seed(storage, {"id": "runtime", "runtime": runtime})
+    response = client.get(URL, params={"runtime": runtime})
+    assert response.status_code == 200, response.text
+    assert response.json()["items"][0]["recipient_runtime"] == runtime
 
 
 def test_caller_saved_baseline_lifecycle_new_failure_and_terminal_resolution(preview):
