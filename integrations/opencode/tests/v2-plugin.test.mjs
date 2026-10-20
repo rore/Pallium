@@ -151,7 +151,7 @@ test("assistant completion and compaction ingest only sessions owned by this dir
   const events = new Promise((resolve) => { releaseEvent = resolve; });
   let contextReads = 0;
   const ingested = [];
-  const messages = [{ type: "assistant", id: "msg_assistant", content: [{ type: "text", text: "owned answer" }] }];
+  const messages = [{ type: "assistant", id: "msg_assistant", time: { completed: 1 }, content: [{ type: "text", text: "owned answer" }] }];
   globalThis.fetch = async (url, init) => {
     const path = new URL(url).pathname;
     if (path === "/items") ingested.push(JSON.parse(init.body)[0]);
@@ -705,7 +705,7 @@ test("fresh owned assistant completion captures once while foreign and failed lo
   const id = "ses_first_completion";
   const captured = barrier();
   const reads = [];
-  const history = [{ type: "assistant", id: "msg_first_answer", content: [{ type: "text", text: "first owned answer" }] }];
+  const history = [{ type: "assistant", id: "msg_first_answer", time: { completed: 1 }, content: [{ type: "text", text: "first owned answer" }] }];
   const f = await callerFixture({ history, get: async ({ sessionID: requested }) => {
     if (requested === "ses_failed_completion") throw new Error("native lookup failed");
     return { location: { directory: requested === "ses_foreign_completion" ? "/tmp/foreign" : location } };
@@ -754,7 +754,7 @@ for (const deleted of [false, true]) {
   test(`fresh assistant ownership lookup ${deleted ? "rejects deletion and recreation" : "accepts benign concurrent creation"}`, async () => {
     const id = deleted ? "ses_initial_replaced" : "ses_initial_created";
     const gate = barrier();
-    const history = [{ type: "assistant", id: "msg_initial_answer", content: [{ type: "text", text: "current answer" }] }];
+    const history = [{ type: "assistant", id: "msg_initial_answer", time: { completed: 1 }, content: [{ type: "text", text: "current answer" }] }];
     let lookups = 0, reads = 0;
     const f = await callerFixture({ history, get: async ({ sessionID: requested }) => {
       if (requested === id && ++lookups === 1) await gate.wait();
@@ -783,7 +783,7 @@ for (const existing of [false, true]) {
   test(`unrelated session retirement preserves ${existing ? "existing" : "fresh"} assistant capture`, async () => {
     const id = `ses_assistant_${existing ? "existing" : "fresh"}`;
     const gate = barrier();
-    const history = [{ type: "assistant", id: "msg_unrelated_retirement", content: [{ type: "text", text: "captured answer" }] }];
+    const history = [{ type: "assistant", id: "msg_unrelated_retirement", time: { completed: 1 }, content: [{ type: "text", text: "captured answer" }] }];
     let block = false, reads = 0;
     const f = await callerFixture({ history, get: async ({ sessionID: requested }) => {
       if (block && requested === id) await gate.wait();
@@ -808,7 +808,7 @@ test("concurrent assistant probes keep successor retirement tokens through stale
   const id = "ses_concurrent_assistant";
   const oldGate = barrier(), successorGate = barrier();
   let gets = 0, reads = 0;
-  const history = [{ type: "assistant", id: "msg_concurrent_assistant", content: [{ type: "text", text: "answer" }] }];
+  const history = [{ type: "assistant", id: "msg_concurrent_assistant", time: { completed: 1 }, content: [{ type: "text", text: "answer" }] }];
   const f = await callerFixture({ history, get: async ({ sessionID: requested }) => {
     if (requested !== id) return { location: { directory: location } };
     const call = ++gets;
@@ -860,6 +860,7 @@ for (const sameSession of [true, false]) test(`${sameSession ? "same-session" : 
       get: async ({ sessionID: requested }) => {
         assert.equal(requested, id, "only the fresh completion performs this lookup");
         return { location: { get directory() {
+        if (ownedLocationReads) return location; // Later capture checks are separate from the initial probe.
         ownedLocationReads++;
         assert.equal(ownedLocationReads, 1, "queue this deletion only once");
         assert.equal(typeof nextEvent, "function", "the public subscriber already awaits its next event");
@@ -872,7 +873,7 @@ for (const sameSession of [true, false]) test(`${sameSession ? "same-session" : 
       },
       context: async () => {
         reads++;
-        return { data: [{ type: "assistant", id: "msg_overtaken_answer", content: [{ type: "text", text: "retired answer" }] }] };
+        return { data: [{ type: "assistant", id: "msg_overtaken_answer", time: { completed: 1 }, content: [{ type: "text", text: "retired answer" }] }] };
       },
     },
     event: { subscribe: ({ signal }) => ({
