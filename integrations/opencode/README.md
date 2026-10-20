@@ -13,9 +13,9 @@ supports optional derived-memory processing.
 - reply to the sender and inspect delivery status.
 
 The stable V1 plugin is passive: messages remain stored until the recipient's
-next normal turn. An opt-in V2 adapter adds native queued wake delivery for
-OpenCode 2.0.22; it is a separate plugin entry and does not replace an existing
-global V1 loader automatically.
+next normal turn. An opt-in V2 adapter adds native queued wake delivery; its
+qualification limits are listed below. It is a separate plugin entry and does
+not replace an existing global V1 loader automatically.
 
 > List Pallium Relay recipients, then send `codex:@review`: "The API response
 > still needs the legacy field."
@@ -108,8 +108,10 @@ in one OpenCode configuration.
 }
 ```
 
-Native Windows V2 lifecycle coverage is qualified on released OpenCode 2.0.22
-and 2.0.24; this does not imply compatibility with every V2 release. The isolated Windows E2E uses
+Current combined ownership and capture qualification covers isolated Windows
+OpenCode 2.0.24. Earlier 2.0.22 lifecycle/capture results remain historical;
+2.0.22 was not rerun on this combined source. This does not imply compatibility
+with every V2 release. The isolated Windows E2E uses
 `PALLIUM_OPENCODE_V2_BINARY` and a local mock provider. It verifies idle and busy
 wakes, tool continuation across a Pallium restart after ACK, pre-claim retry,
 OpenCode hard restart, service startup recovery, history capture and deletion.
@@ -246,9 +248,9 @@ operation when Pallium is unavailable.
 
 ## Known gaps
 
-- V1 remains passive. V2 automatic wake is qualified against isolated Windows
-  OpenCode 2.0.22 and 2.0.24; other releases/platforms and the global installation remain
-  unqualified. Native admission and ACK do not guarantee interrupted task completion.
+- V1 remains passive. Current combined V2 qualification is limited to isolated
+  Windows OpenCode 2.0.24; other releases/platforms and the global installation
+  remain unqualified. Native admission and ACK do not guarantee interrupted task completion.
 - Usage-audit population is server-owned after durable assistant ingestion.
 - Compaction records the latest assistant turn but does not run a pre-compaction
   query.
