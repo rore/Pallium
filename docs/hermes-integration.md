@@ -12,13 +12,13 @@ These checks do not establish actual Desktop or TUI
 interaction, normal provider/default Tool Search behavior, memory parity or later
 release compatibility.
 
-One complete native Desktop memory-off journey passed on v0.22.0 in a disposable
-Windows Server 2025 VM with an unpacked app and synthetic provider. It covered
+The complete native Desktop memory-off journey passed twice on v0.22.0 in disposable
+Windows Server 2025 VMs with an unpacked app and synthetic provider. It covered
 default Tool Search, Relay/wake, later-session History, a harmless peer hook,
 endpoint outage, controlled host/MCP relaunch and profile update/status/removal.
 The TUI off/on and Desktop memory-on cases failed; v0.22.2 was cancelled by
 fail-fast. This partial matrix does not establish production readiness. See the
-[retained run](https://github.com/rore/Pallium/actions/runs/39483789032).
+[latest retained run](https://github.com/rore/Pallium/actions/runs/39490754190).
 
 ## Available in the experimental package
 

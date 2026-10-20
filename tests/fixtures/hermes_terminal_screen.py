@@ -17,6 +17,27 @@ class TerminalScreen:
         self._initialized = False
 
         class ObservedScreen(pyte.Screen):
+            @property
+            def display(inner):
+                """Render cells like pyte, tolerating an orphan wide-cell stub."""
+                def render(line):
+                    is_wide_char = False
+                    for x in range(inner.columns):
+                        if is_wide_char:
+                            is_wide_char = False
+                            continue
+                        char = line[x].data
+                        if not char:
+                            # A preceding width-2 glyph normally consumes this cell.
+                            # If that glyph was overwritten, retain the empty cell's column.
+                            yield " "
+                            continue
+                        assert sum(map(pyte.screens.wcwidth, char[1:])) == 0
+                        is_wide_char = pyte.screens.wcwidth(char[0]) == 2
+                        yield char
+
+                return ["".join(render(inner.buffer[y])) for y in range(inner.lines)]
+
             def draw(inner, data):
                 super().draw(data)
                 observer._changed(inner)

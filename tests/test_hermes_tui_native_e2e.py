@@ -593,8 +593,10 @@ class ScriptedProvider:
                 expected_text = {"expand": "Quartz lantern remains in vault",
                                  "expand_corrected": "Opal compass stays in archive",
                                  "expand_current": "Cobalt key stays in cabinet"}[stage]
-                assert expected_text in json.dumps(value["payload"]), value
-                assert expected_text in value["match_text"], value
+                assert isinstance(value["payload"], dict), value
+                assert value["payload"].get("statement") == expected_text, value
+                match_text = value["match_text"]
+                assert match_text is None or (isinstance(match_text, str) and expected_text in match_text), value
             elif stage == "correct":
                 assert isinstance(value, dict) and value, value
             elif stage == "query_forgotten":

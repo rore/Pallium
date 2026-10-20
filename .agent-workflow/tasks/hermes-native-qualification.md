@@ -1,5 +1,7 @@
 # Disposable Hermes Windows qualification runner
 
+Latest terminal ledger: additional human-approved run39490754190 attempt1 tested b29299499cab10871cafd54e35ffdcdc6402940e and failed v0.22.0 with3 failed/58 passed; v0.22.2 cancelled fail-fast. Desktop memory-off complete journey passed again. Both TUI observers crashed on pyte empty wide-continuation rendering; Desktop memory-on reached expansion then rejected documented nullable match_text. All four cleanup/source postconditions passed. All THREE approved attempts are consumed within the original four-runner-hour ceiling; no fourth dispatch/job rerun is authorized. Fixture repairs and ordinary isolated CI do not replace missing native evidence or extend native execution authority. This supersedes older pending/two-attempt notes below; integration remains experimental.
+
 <!-- agent-workflow:start -->
 **Outcome:**
 Qualify the Hermes integration through a manual disposable Windows runner without modifying the user's working environment.

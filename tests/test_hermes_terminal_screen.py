@@ -69,6 +69,17 @@ def test_unicode_text_uses_logical_cells_including_wide_and_modifier_chars():
     assert screen.contains("Grüße 日本語 😂👍🏽", after=mark)
 
 
+def test_overwritten_wide_glyph_keeps_orphan_cell_column():
+    screen = TerminalScreen(80, 5)
+    screen.feed("界Z")
+    mark = screen.mark(2)
+    screen.feed("\x1b[1Gx")
+
+    assert screen.rendered.startswith("x Z")
+    assert "xZ" not in screen.rendered
+    assert screen.contains("x Z", after=mark)
+
+
 def test_frame_and_mark_limits_fail_closed_for_expired_cursors():
     screen = TerminalScreen(80, 5, frame_limit=2, mark_limit=2)
     expired_frame = screen.mark(1)

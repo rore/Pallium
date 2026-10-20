@@ -1,22 +1,31 @@
 # Hermes native qualification
 
-Status: the user approved the disposable runner in PR #328 and at most two manual
-runs, capped at four runner-hours. The runner is merged; the first run is
+Status: the user approved the disposable runner in PR #328 and subsequently one
+additional attempt, for three total attempts within four runner-hours. All three
+attempts are consumed; no fourth dispatch or job rerun is authorized. The runner is merged; the first run is
 [39474582150](https://github.com/rore/Pallium/actions/runs/39474582150), testing
 candidate `973f21902168bb81ef2fdc7fe629cecad836ff27`. It failed four native cases
 after 30 helper checks passed; the second release was cancelled by fail-fast.
 Evidence showed initial real UI/skill/Relay/wake progress, followed by fixture
 scope matching, metadata-response and Desktop-control readiness failures.
-Those partial observations do not qualify the full integration. The final approved
-run [39483789032](https://github.com/rore/Pallium/actions/runs/39483789032) is testing
+Those partial observations do not qualify the full integration. The second
+run [39483789032](https://github.com/rore/Pallium/actions/runs/39483789032) tested
 reviewed candidate `91ffe1ad3158786f922c57ba5ed11e024cad9390` after full CI passed.
-Both authorized runs are allocated; no additional dispatch or rerun is authorized.
 It failed three native cases after 42 checks passed, including the complete
 v0.22.0 Desktop memory-off journey. TUI off/on failed rendered-text observation;
 Desktop memory-on rejected a legitimate mixed memory/History query response.
 Fail-fast cancelled v0.22.2. Owned cleanup and source postconditions passed in
-all four cases. Both attempts are exhausted; further native execution needs a
-new explicit budget approval. Harness repair and pure replay are not a native pass.
+all four cases.
+
+The additional approved run
+[39490754190](https://github.com/rore/Pallium/actions/runs/39490754190) tested
+`b29299499cab10871cafd54e35ffdcdc6402940e` after required CI passed. It failed
+three native cases after 58 checks passed. Desktop memory-off completed again;
+both TUI cases crashed the screen observer on an empty wide-character continuation
+cell, and Desktop memory-on rejected a valid nullable expansion field. Fail-fast
+cancelled v0.22.2. All four owned-cleanup and source postconditions passed.
+Further native execution needs a new explicit budget approval.
+Harness repair and pure replay are not a native pass.
 Hermes remains experimental. This approval excludes local recovery and everyday
 installation or rollout.
 
