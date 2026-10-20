@@ -327,7 +327,7 @@ else: raise AssertionError("UDP was not blocked")
     assert {row.get("kind") for row in rows} >= {"socket", "fetch", "WebSocket"}, rows
 
 
-ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07]*(?:\x07|\x1b\\)")
+ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][\s\S]*?(?:\x07|\x1b\\)")
 
 
 class OwnedTree:
@@ -475,14 +475,19 @@ class TuiConsole:
                 return
 
     @property
+    def raw_text(self):
+        return "".join(self.parts)
+
+    @property
     def text(self):
-        return ANSI.sub("", "".join(self.parts))
+        return ANSI.sub("", self.raw_text)
 
     def wait(self, expected: str, *, after: int = 0, timeout: float = 90):
+        """Keep cursors in raw output; completing an escape sequence can shrink normalized text."""
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             assert not self.stopped.is_set(), "driver shutdown requested"
-            if expected in self.text[after:]:
+            if expected in ANSI.sub("", self.raw_text[after:]):
                 return
             assert self.proc.isalive(), f"TUI exited early: {self.read_error}; {self.text[-2000:]}"
             assert self.tree.error is None, self.tree.error
@@ -492,7 +497,7 @@ class TuiConsole:
     def submit(self, prompt: str, *, marker: str):
         prompt.encode("utf-8", errors="strict")
         assert marker and marker.isascii() and marker in prompt, "expected a unique visible ASCII input marker"
-        offset = len(self.text)
+        offset = len(self.raw_text)
         self.proc.write(prompt)
         # Ink redraws and grapheme wrapping can split the echoed Unicode input; the provider checks it in full.
         self.wait(marker, after=offset, timeout=20)
@@ -583,7 +588,7 @@ def driver_main(spec_path: Path):
             elif op == "wait":
                 console.wait(command["text"], timeout=command.get("timeout", 90))
             elif op == "new":
-                offset = len(console.text)
+                offset = len(console.raw_text)
                 console.submit("/new", marker="/new")
                 console.wait("Start a new session?", after=offset, timeout=20)
                 # Both released ConfirmPrompt implementations expose the normal affirmative 'y' shortcut.

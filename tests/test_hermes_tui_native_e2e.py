@@ -497,6 +497,29 @@ def test_hermes_tui_submit_accepts_fragmented_echo_and_rejects_surrogates():
     assert writes == [PROMPT, "\r"], "surrogate-corrupted input reached the PTY"
 
 
+def test_hermes_tui_wait_uses_raw_cursor_across_fragmented_osc_redraws():
+    from types import SimpleNamespace
+
+    console = TuiConsole.__new__(TuiConsole)
+    console.parts = ["\x1b]0;old title\x1b\\old visible\x1b]0;unfinished title"]
+    console.stopped = threading.Event()
+    console.tree = SimpleNamespace(error=None)
+    console.proc = SimpleNamespace(isalive=lambda: True)
+    console.read_error = None
+    cursor = len(console.raw_text)
+    old_text_length = len(console.text)
+    console.parts.extend(["\x1b", "\\\r\x1b[2KGrüße 日本語 😂👍🏽 native-ui-", "\x1b[3C", "origin",
+                          "\x1b]0;second title\x1b", "\\new session started\x1b]0;third title", "\x07ready │"])
+    assert "native-ui-origin" in console.text
+    assert "title" not in console.text
+    assert len(console.text.split("Grüße", 1)[0]) < old_text_length
+    console.wait("native-ui-origin", after=cursor, timeout=.01)
+    console.wait("new session started", after=cursor, timeout=.01)
+    console.wait("ready │", after=cursor, timeout=.01)
+    with pytest.raises(TimeoutError):
+        console.wait("old visible", after=cursor, timeout=.01)
+
+
 def test_hermes_tui_provider_requires_complete_unicode_prompt():
     provider = ScriptedProvider()
     body = {"tools": [{"function": {"name": "skill_view"}}],
