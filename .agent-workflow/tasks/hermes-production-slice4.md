@@ -91,7 +91,7 @@ These approve isolated implementation and qualification within this scope. They 
 **Exceptions:**
 —
 
-**State:** Blocked or returned to planning
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -153,6 +153,8 @@ Two-release native gateway qualification passed on the unchanged application sna
 Hosted full CI https://github.com/rore/Pallium/actions/runs/39418814206 passed at exact head f2c76a7459beba543cfd0c545e33e5caa7c65b55: Python3.12 and3.13 each7513 passed,93 skipped,2 xfailed (373.81s/470.45s); Windows smoke626 passed,7 skipped (173.66s); aggregate success. Workflow/Redline run39418814122 passed. This supersedes the incomplete local full run for unchanged application/test code. The slow POSIX cleanup self-check is not selected by this full non-slow lane and remains unexecuted. Final follow-up changes are documentation/Work Record only; existing application/native evidence is reused. Copies of ignored reports are retained outside the worktree under the qualification root's pallium-evidence directory. Full feature remains incomplete; live rollout is not approved.
 
 ## Result review
+
+Full local non-slow run completed at frozen application b73eb2d0:7675 passed,37 skipped,2 xfailed,4 failed in1939.76s. All four failures were Windows path-length errors caused by this run's unnecessarily long task basetemp: two health shutdown fixtures writing long atomic intent filenames and two 65-level parent-walk fixtures. No Hermes or shared-memory assertion failed. Required --lf --lfnf=none -q -n0 rerun with a short isolated basetemp passed4 in2.23s without any product, fixture, registry or Windows setting change. Reports build/hermes-cd-full.xml and build/hermes-cd-last-failed.xml; do not describe the original run as green. Hosted whole-change CI remains required. This resolves the named local validation blocker; E may proceed after committing this metadata-only source freeze and checking its exact prerequisites. E code and public documentation were pushed as b70b529f; no actual UI qualification is inferred from that push or the10 safety checks.
 
 E bounded result review: independent /root/hermes_cd_plan_review accepted the two-file actual Ink harness after forced-cleanup recovery, ignored-project-dotenv refusal and Windows Proactor guards were corrected. Parent's final safety batch passed10, with the actual native node explicitly deselected, in12.33s:build/hermes-tui-guard-final-batch.xml. Pure checks include allowed/refused async destinations with a native-connect sentinel, stdlib factory-only IPC, raw public PTY arguments/constructor cleanup, and hung/exited/erroring driver recovery using exact retained identities. No Hermes UI or ConPTY launched. The actual test drives production setup, skill/default Tool Search, no-reply then reply wakes, /new and ID-correlated later-session History. Memory UI on/off remains explicitly unimplemented. Native execution stays gated on full-suite failure diagnosis and a clean source freeze. The guards are test controls, not OS isolation. Public-doc audit passed11 files/90 local links/3 commands with default15 and optional26 tools. Desktop remains prohibited on the normal account; the manual-runner proposal is still unapproved and no CI configuration changed.
 
