@@ -326,6 +326,19 @@ time.sleep(60)
         proc.stderr.close()
 
 
+def provider_metadata_response(path):
+    if path == "/v1/models":
+        return 200, {"object": "list", "data": [{"id": "pallium-local", "object": "model"}]}
+    return 404, {"error": "Unsupported metadata endpoint"}
+
+
+@pytest.mark.parametrize("path", ["/api/v1/models", "/api/tags", "/v1/props", "/props", "/version", "/unknown"])
+def test_hermes_tui_provider_metadata_returns_normal_unsupported_response(path):
+    assert provider_metadata_response(path) == (404, {"error": "Unsupported metadata endpoint"})
+    status, body = provider_metadata_response("/v1/models")
+    assert status == 200 and body["data"] == [{"id": "pallium-local", "object": "model"}]
+
+
 class ScriptedProvider:
     def __init__(self):
         self.requests = []
@@ -521,6 +534,41 @@ def test_hermes_tui_wait_uses_raw_cursor_across_fragmented_osc_redraws():
         console.wait("old visible", after=cursor, timeout=.01)
 
 
+@pytest.mark.parametrize("render_selection", [True, False])
+def test_hermes_tui_new_session_requires_observed_affirmative_selection(render_selection):
+    from types import SimpleNamespace
+
+    console = TuiConsole.__new__(TuiConsole)
+    console.parts = ["▸ Yes, start a new session\nold ready │"]
+    console.stopped = threading.Event()
+    console.tree = SimpleNamespace(error=None)
+    console.read_error = None
+    writes = []
+
+    def write(text):
+        writes.append(text)
+        if text == "/new":
+            console.parts.append("/new")
+        elif text == "\r" and writes == ["/new", "\r"]:
+            console.parts.append("Start a new session?\n▸ No, keep going\n  Yes, start a new session\n"
+                                 "Enter confirm · Y/N quick · Esc cancel")
+        elif text == "\x1b[B" and render_selection:
+            console.parts.append("\x1b[32m▸ Yes, start a new session\x1b[0m")
+        elif text == "\r":
+            console.parts.append("new session started\nready │")
+
+    console.proc = SimpleNamespace(write=write, isalive=lambda: True)
+    wait = console.wait
+    console.wait = lambda expected, **kwargs: wait(expected, after=kwargs.get("after", 0), timeout=.02)
+    if render_selection:
+        console.new_session()
+        assert writes == ["/new", "\r", "\x1b[B", "\r"]
+    else:
+        with pytest.raises(TimeoutError):
+            console.new_session()
+        assert writes == ["/new", "\r", "\x1b[B"], "unobserved selection was confirmed"
+
+
 def test_hermes_tui_provider_requires_complete_unicode_prompt():
     provider = ScriptedProvider()
     body = {"tools": [{"function": {"name": "skill_view"}}],
@@ -703,8 +751,7 @@ def test_released_hermes_actual_tui_journey(client, tmp_path):
                                       "status": response.status_code, "response": body})
                     self.send(response.status_code, response.content)
                 elif self.command == "GET":
-                    assert self.path == "/v1/models", self.path
-                    self.send(200, {"object": "list", "data": [{"id": "pallium-local", "object": "model"}]})
+                    self.send(*provider_metadata_response(self.path))
                 else:
                     assert self.path == "/v1/chat/completions", self.path
                     body = json.loads(raw)

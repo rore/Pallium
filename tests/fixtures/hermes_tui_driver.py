@@ -539,6 +539,17 @@ class TuiConsole:
         self.wait(marker, after=offset, timeout=20)
         self.proc.write("\r")
 
+    def new_session(self):
+        offset = len(self.raw_text)
+        self.submit("/new", marker="/new")
+        self.wait("Enter confirm · Y/N quick · Esc cancel", after=offset, timeout=20)
+        selected_after = len(self.raw_text)
+        self.proc.write("\x1b[B")
+        self.wait("▸ Yes, start a new session", after=selected_after, timeout=20)
+        self.proc.write("\r")
+        self.wait("new session started", after=offset, timeout=30)
+        self.wait("ready │", after=offset, timeout=60)
+
     def close(self):
         self.proc.cancel_io()
         self.reader.join(2)
@@ -624,13 +635,7 @@ def driver_main(spec_path: Path):
             elif op == "wait":
                 console.wait(command["text"], timeout=command.get("timeout", 90))
             elif op == "new":
-                offset = len(console.raw_text)
-                console.submit("/new", marker="/new")
-                console.wait("Start a new session?", after=offset, timeout=20)
-                # Both released ConfirmPrompt implementations expose the normal affirmative 'y' shortcut.
-                console.proc.write("y")
-                console.wait("new session started", after=offset, timeout=30)
-                console.wait("ready │", after=offset, timeout=60)
+                console.new_session()
             elif op == "inspect":
                 print(json.dumps({"processes": console.tree.snapshot()}), flush=True)
                 continue

@@ -60,8 +60,9 @@ memory-disabled independence. Preserve synthetic terminal/UI, provider, HTTP and
 JUnit evidence. A scripted provider proves native integration transport and
 dispatch; it does not qualify ordinary providers or competing middleware.
 
-Implement and review the caller drivers before dispatch. The current TUI driver
-work and any future Desktop driver are separate from this proposal. Adding the
-manual workflow and running it require an explicit scoped approval. Approval for
+Implement and review the caller drivers before dispatch. The TUI journey and
+Desktop CDP adapter are separate test components; the Desktop launcher and shared
+caller journey are still pending. Mocked adapter checks do not establish Desktop
+qualification. Adding the manual workflow and running it require explicit scoped approval. Approval for
 that disposable runner would not authorize changing everyday applications,
 services, settings, data, installation or updater behavior.
