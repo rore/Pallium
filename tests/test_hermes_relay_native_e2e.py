@@ -1,4 +1,4 @@
-"""Released Hermes + production plugin + real Relay HTTP, local provider only."""
+"""Released Hermes gateway RPC + production plugin + real Relay HTTP, local provider only."""
 from __future__ import annotations
 
 import json
@@ -20,7 +20,10 @@ import yaml
 
 pytestmark = pytest.mark.slow
 
-HERMES_RELEASE = "d923a5eb487a17c0a68801bba9ef0f56c81040a8"
+HERMES_RELEASES = {
+    "v0.22.0": "e06df9c2eae6901f4c88f464e0ae6e753c0428b8",
+    "v0.22.2": "d923a5eb487a17c0a68801bba9ef0f56c81040a8",
+}
 SCOPE = {"container_ref": "git:example.test/team/hermes-e2e"}
 PEER_PAYLOADS = {"alpha": "PEER_PAYLOAD_ALPHA_é", "beta": "PEER_PAYLOAD_BETA_漢字"}
 HERMES_REPLIES = {"alpha": "HERMES_REPLY_ALPHA_é", "beta": "HERMES_REPLY_BETA_🌍"}
@@ -91,7 +94,7 @@ def test_released_hermes_idle_relay_roundtrip(client, tmp_path):
     assert interpreter.is_file(), f"HERMES_E2E_PYTHON does not exist: {interpreter}"
     revision = subprocess.run(["git", "-C", str(hermes), "rev-parse", "HEAD"],
                               check=True, capture_output=True, text=True).stdout.strip()
-    assert revision == HERMES_RELEASE, f"expected Hermes {HERMES_RELEASE}, got {revision}"
+    assert revision in HERMES_RELEASES.values(), f"unqualified Hermes release source: {revision}"
     source_changes = subprocess.run(
         ["git", "-C", str(hermes), "status", "--porcelain", "--untracked-files=all"],
         check=True, capture_output=True, text=True,

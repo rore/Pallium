@@ -2,6 +2,42 @@
 
 This is a frozen, disposable-profile qualification package for Hermes v0.22.2. It installs a native Hermes plugin, the discoverable `pallium-memory` skill, and the plugin-owned Pallium MCP bridge. Setup never creates a global `mcp_servers` connection and does not modify model/provider, toolset, Tool Search, other plugin, credential, or data settings.
 
+## Production qualification in progress
+
+The release target covers both Windows **Desktop and TUI**, with public API
+capability checks rather than an exact Hermes version lock. The current package
+remains experimental until the following gates pass; these are targets, not a
+supported-version claim.
+
+| Gate | Required evidence | Current state |
+|---|---|---|
+| Released hosts | Actual Desktop and TUI journeys on v0.22.0 and v0.22.2 | Not qualified; existing proof uses gateway RPC only |
+| Runtime compatibility | Public plugin identity, injection, hook and middleware contracts; clear missing-capability errors | Discovery confirms both tags expose required APIs; behavioral qualification pending |
+| Normal configuration | Ordinary providers, default Tool Search, supported plugin coexistence | Frozen-profile restrictions remain; downstream middleware can bypass a provider call |
+| Full package | Skill, Relay, History and opt-in memory lifecycle; memory off leaves Relay/History functional | Relay/History bounded proof exists; shared memory target-scope contracts need work |
+| Recovery | Busy/concurrent sessions, reset/close, host/service/MCP restart, stale routes and ambiguous outcomes | Native coverage incomplete |
+| Lifecycle | Disposable install/update/remove/rollback, repeated use and owned-process cleanup | Existing ownership/conflict coverage; actual UI/update qualification pending |
+
+The [v0.22.2 release notes](https://github.com/NousResearch/hermes-agent/releases/tag/v0.22.2)
+identify v0.22.1 as an accidental build with a session-deletion issue; exclude it
+from the initial matrix. A successful check on one release does not establish
+compatibility with every future release. Record exact tested builds, then admit
+other builds through the same public capability and behavioral checks without
+forcing host downgrades or replacing the native updater.
+
+Desktop qualification uses upstream's unpacked test build, not an everyday MSIX
+installation. Windows Desktop requires Windows 11 22H2 or later. Isolate both
+`HERMES_HOME` and `HERMES_DESKTOP_USER_DATA_DIR`, redirect process home/profile
+discovery, scrub credentials, and provide the explicit source backend root and
+`HERMES_DESKTOP_PYTHON`. Verify those paths before launch so unresolved backend
+discovery cannot fall through to a first-run installer. An unpacked test proves
+neither MSIX installation nor native update behavior. See upstream's
+[Desktop build contract](https://github.com/NousResearch/hermes-agent/blob/v0.22.2/apps/desktop/BUILDING.md).
+
+Work and evidence are tracked in
+`.agent-workflow/tasks/hermes-production-slice4.md`. Everyday installation remains
+a separate rollout decision.
+
 ## Prepare an isolated profile
 
 The setup command requires an existing explicit profile with the qualification settings already present. It refuses to repair or silently change them. The selected profile must have no other enabled plugin, select only the existing `hermes-cli` toolset, use a loopback custom provider with no fallback, and set Tool Search to the string value `"off"`:

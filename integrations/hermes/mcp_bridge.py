@@ -30,6 +30,79 @@ TIMEOUT_SECONDS = 15
 MAX_RESPONSE_CHARS = 24_000
 
 
+def _wire_model(value):
+    """Read the public MCP wire names shared by supported SDK model versions."""
+    dump = getattr(value, "model_dump", None)
+    if not callable(dump):
+        raise ValueError("MCP returned an unsupported response model")
+    try:
+        result = dump(mode="json", by_alias=True)
+    except Exception as exc:
+        raise ValueError("MCP returned an unsupported response model") from exc
+    if not isinstance(result, dict):
+        raise ValueError("MCP returned an unsupported response model")
+    return result
+
+
+def _tool_catalog(result):
+    wire = _wire_model(result)
+    if "resultType" in wire and wire["resultType"] != "complete":
+        raise ValueError("Incomplete dedicated Hermes MCP catalog")
+    tools, cursor = wire.get("tools"), wire.get("nextCursor")
+    if "next_cursor" in wire or not isinstance(tools, list) or cursor is not None:
+        raise ValueError("Incomplete dedicated Hermes MCP catalog")
+    catalog = []
+    for tool in tools:
+        if not isinstance(tool, dict):
+            raise ValueError("Malformed dedicated Hermes MCP catalog")
+        name, description, schema = tool.get("name"), tool.get("description"), tool.get("inputSchema")
+        if (not isinstance(name, str) or name not in TOOLS
+                or description is not None and not isinstance(description, str)
+                or not isinstance(schema, dict) or schema.get("type") != "object"):
+            raise ValueError("Malformed dedicated Hermes MCP catalog")
+        properties, required = schema.get("properties", {}), schema.get("required", [])
+        if (not isinstance(properties, dict) or not isinstance(required, list)
+                or any(not isinstance(key, str) or key not in properties for key in required)):
+            raise ValueError("Malformed dedicated Hermes MCP catalog")
+        schema = json.loads(json.dumps(schema))
+        hidden = {"container_ref"} | HIDDEN.get(name, set())
+        for key in hidden:
+            schema.get("properties", {}).pop(key, None)
+        if "required" in schema:
+            schema["required"] = [key for key in schema["required"] if key not in hidden]
+        schema["additionalProperties"] = False
+        description = description or ""
+        description += (
+            " Hermes supplies trusted conversation identity and fixed private scope; only the listed arguments are accepted."
+            if name in HISTORY_TOOLS else
+            " Hermes supplies self identity, scope and private receipts; only the listed arguments are accepted."
+            " Incoming delivery is handled by hooks; receive/ACK tools are not exposed."
+        )
+        catalog.append({"name": name, "description": description, "parameters": schema})
+    if len(catalog) != len(TOOLS) or {tool["name"] for tool in catalog} != TOOLS:
+        raise ValueError("Incomplete dedicated Hermes MCP catalog")
+    return catalog
+
+
+def _tool_response_text(result):
+    wire = _wire_model(result)
+    if "resultType" in wire and wire["resultType"] != "complete":
+        return json.dumps({"error": "Pallium MCP returned an incomplete response"})
+    is_error = wire.get("isError")
+    blocks = wire.get("content")
+    if type(is_error) is not bool or not isinstance(blocks, list):
+        return json.dumps({"error": "Pallium MCP returned an unsupported response"})
+    if is_error:
+        return json.dumps({"error": "Pallium MCP refused the request"})
+    if any(not isinstance(block, dict) or block.get("type") != "text"
+           or not isinstance(block.get("text"), str) for block in blocks):
+        return json.dumps({"error": "Pallium MCP returned an unsupported response"})
+    text = "\n".join(block["text"] for block in blocks)
+    if len(text) > MAX_RESPONSE_CHARS:
+        return json.dumps({"error": "Pallium MCP response exceeded the supported budget"})
+    return text
+
+
 class RelayMcpBridge:
     """One owned stdio connection; each call carries an explicit immutable scope."""
 
@@ -76,26 +149,7 @@ class RelayMcpBridge:
                 async with asyncio.timeout(TIMEOUT_SECONDS):
                     await session.initialize()
                     result = await session.list_tools()
-                catalog = []
-                for tool in result.tools:
-                    if tool.name not in TOOLS:
-                        raise ValueError("Unexpected tool in the dedicated Hermes MCP catalog")
-                    schema = json.loads(json.dumps(tool.input_schema))
-                    hidden = {"container_ref"} | HIDDEN.get(tool.name, set())
-                    for key in hidden:
-                        schema.get("properties", {}).pop(key, None)
-                    if "required" in schema:
-                        schema["required"] = [key for key in schema["required"] if key not in hidden]
-                    schema["additionalProperties"] = False
-                    description = (tool.description or "") + (
-                        " Hermes supplies trusted conversation identity and fixed private scope; only the listed arguments are accepted."
-                        if tool.name in HISTORY_TOOLS else
-                        " Hermes supplies self identity, scope and private receipts; only the listed arguments are accepted."
-                        " Incoming delivery is handled by hooks; receive/ACK tools are not exposed.")
-                    catalog.append({"name": tool.name, "description": description,
-                                    "parameters": schema})
-                if {tool["name"] for tool in catalog} != TOOLS or result.next_cursor:
-                    raise ValueError("Incomplete dedicated Hermes MCP catalog")
+                catalog = _tool_catalog(result)
                 self.catalog, self._session = catalog, session
                 self._ready.set()
                 await self._stop.wait()
@@ -103,21 +157,15 @@ class RelayMcpBridge:
     async def _call(self, name, arguments, metadata):
         # Both dictionaries are copied before crossing the loop; no ambient current session.
         result = await self._session.call_tool(name, arguments=arguments, meta=metadata)
-        blocks = getattr(result, "content", None)
-        if not isinstance(blocks, list) or any(getattr(block, "type", None) != "text" for block in blocks):
-            return json.dumps({"error": "Pallium MCP returned an unsupported response"})
-        text = "\n".join(block.text for block in blocks)
-        if len(text) > MAX_RESPONSE_CHARS:
-            return json.dumps({"error": "Pallium MCP response exceeded the supported budget"})
-        if result.is_error:
-            # Server validation details may include private injected receipts.
-            return json.dumps({"error": "Pallium MCP refused the request"})
-        return text
+        return _tool_response_text(result)
 
     def call(self, name, arguments, identity, reply=None):
         if (name not in TOOLS or self._finished.is_set() or not self._ready.is_set()
                 or self._session is None):
             return json.dumps({"error": "Pallium MCP is unavailable"})
+        if (not isinstance(identity, tuple) or len(identity) != 2
+                or any(not isinstance(value, str) or not value.strip() for value in identity)):
+            return json.dumps({"error": "Pallium MCP requires this host's trusted session and turn"})
         session, turn = identity
         values = json.loads(json.dumps(arguments))
         if name in HISTORY_TOOLS:

@@ -151,7 +151,38 @@ def _require_frozen_local_stub_config(plugin_id, service_url, container_ref):
             tool_search["enabled"], *bridge)
 
 
+def _host_capabilities(ctx):
+    """Check the public contract without starting work or inspecting host internals."""
+    for name in ("get_config", "register_hook", "register_middleware", "register_tool",
+                 "inject_message", "on_unload"):
+        try:
+            available = callable(getattr(ctx, name, None))
+        except Exception:
+            available = False
+        if not available:
+            raise ValueError(f"Unsupported Hermes plugin capability: {name}")
+    try:
+        profile = ctx.profile_name
+    except Exception:
+        profile = None
+    if not isinstance(profile, str) or not profile.strip():
+        raise ValueError("Unsupported Hermes plugin capability: profile_name")
+    try:
+        state = ctx.state
+    except Exception:
+        raise ValueError("Unsupported Hermes plugin capability: state") from None
+    for name in ("get", "set"):
+        try:
+            available = callable(getattr(state, name, None))
+        except Exception:
+            available = False
+        if not available:
+            raise ValueError(f"Unsupported Hermes plugin capability: state.{name}")
+    return profile, state
+
+
 def register(ctx):
+    profile, state = _host_capabilities(ctx)
     base, container = ctx.get_config("service_url", ""), ctx.get_config("container_ref", "")
     topology_signature = _require_frozen_local_stub_config("pallium-hermes-relay", base, container)
     parsed = urlsplit(base if isinstance(base, str) else "")
@@ -159,7 +190,6 @@ def register(ctx):
             or parsed.username or parsed.password or parsed.query or parsed.fragment
             or not _text(container, 512)):
         raise ValueError("Configure an explicit loopback service_url and exact container_ref")
-    profile, state = str(ctx.profile_name), ctx.state
     lock, stop = threading.RLock(), threading.Event()
     reply_identity = contextvars.ContextVar("pallium_hermes_reply_identity", default=None)
     sessions, claims, admitted = {}, {}, {}
@@ -176,9 +206,9 @@ def register(ctx):
     tool_names = {tool["name"] for tool in bridge.catalog} if bridge else {TOOL_NAME}
 
     def profile_ok():
-        if str(ctx.profile_name) != profile:
-            return False
         try:
+            if ctx.profile_name != profile:
+                return False
             current = _require_frozen_local_stub_config("pallium-hermes-relay", base, container)
             return current == topology_signature
         except Exception:

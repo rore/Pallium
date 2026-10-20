@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 import sys
 import time
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import pytest
 from fastapi import FastAPI
@@ -272,6 +272,72 @@ def _await(check):
             return value
         time.sleep(.02)
     pytest.fail("plugin did not reach the expected observable state")
+
+
+@pytest.mark.parametrize("capability", [
+    "get_config", "register_hook", "register_middleware", "register_tool",
+    "inject_message", "on_unload", "state.get", "state.set",
+])
+@pytest.mark.parametrize("missing", [True, False])
+def test_plugin_refuses_missing_public_capability_before_side_effects(plugin_context, capability, missing):
+    module, _, _ = plugin_context
+
+    def unexpected(*_args, **_kwargs):
+        pytest.fail("unsupported host started configuration, registration or runtime work")
+
+    ctx = SimpleNamespace(
+        profile_name="profile_שלום", state=SimpleNamespace(get=unexpected, set=unexpected),
+        **{name: unexpected for name in (
+            "get_config", "register_hook", "register_middleware", "register_tool",
+            "inject_message", "on_unload")},
+    )
+    target, name = (ctx.state, capability[6:]) if capability.startswith("state.") else (ctx, capability)
+    if missing:
+        delattr(target, name)
+    else:
+        setattr(target, name, 42)
+    with pytest.raises(ValueError, match="Unsupported Hermes plugin capability: " + capability):
+        module.register(ctx)
+
+
+@pytest.mark.parametrize("capability,value", [
+    ("profile_name", None), ("profile_name", ""), ("profile_name", "   "),
+    ("profile_name", 123), ("state", None),
+])
+def test_plugin_refuses_invalid_public_state_before_config(plugin_context, capability, value):
+    module, _, _ = plugin_context
+
+    def unexpected(*_args, **_kwargs):
+        pytest.fail("unsupported host started configuration or runtime work")
+
+    ctx = SimpleNamespace(
+        profile_name="disposable-profile", state=SimpleNamespace(get=unexpected, set=unexpected),
+        **{name: unexpected for name in (
+            "get_config", "register_hook", "register_middleware", "register_tool",
+            "inject_message", "on_unload")},
+    )
+    setattr(ctx, capability, value)
+    with pytest.raises(ValueError, match="Unsupported Hermes plugin capability: " + capability):
+        module.register(ctx)
+
+
+@pytest.mark.parametrize("capability", ["get_config", "profile_name", "state"])
+def test_plugin_sanitizes_inaccessible_public_capability(plugin_context, capability):
+    module, _, _ = plugin_context
+
+    class Context:
+        def __getattr__(self, name):
+            if name == capability:
+                raise RuntimeError("private context details")
+            if name == "profile_name":
+                return "disposable-profile"
+            if name == "state":
+                return SimpleNamespace(get=lambda *_: None, set=lambda *_: None)
+            return lambda *_args, **_kwargs: pytest.fail("unsupported host started work")
+
+    with pytest.raises(ValueError) as error:
+        module.register(Context())
+    assert str(error.value) == "Unsupported Hermes plugin capability: " + capability
 
 
 def _plugin_wake(client, create, payload="Hello שלום 🌍"):
