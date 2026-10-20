@@ -14,7 +14,6 @@ from app.cli import setup_hermes
 
 PLUGIN = setup_hermes.PLUGIN_ID
 SETTINGS = {
-    "experimental_frozen_local_stub": True,
     "service_url": "http://127.0.0.1:29999",
     "container_ref": "git:example.test/team/hermes-e2e",
     "mcp_python": str(Path(sys.executable).resolve()),
@@ -26,13 +25,14 @@ SETTINGS = {
 
 def _config() -> dict:
     return {
-        "plugins": {"enabled": [], "entries": {"unrelated-plugin": {"settings": {"keep": "me"}}}},
-        "platform_toolsets": {"cli": ["hermes-cli"]},
-        "tools": {"tool_search": {"enabled": "off"}, "other": {"keep": True}},
-        "model": {"default": "probe-model", "provider": "custom",
-                  "base_url": "http://127.0.0.1:57089/v1", "api_mode": "chat_completions",
+        "plugins": {"enabled": ["user-plugin"], "entries": {"user-plugin": {"settings": {"keep": "me"}}}},
+        "platform_toolsets": {"cli": ["hermes-cli", "custom-tools"]},
+        "tools": {"tool_search": {"enabled": "auto"}, "other": {"keep": True}},
+        "model": {"default": "ordinary-model", "provider": "anthropic",
+                  "base_url": "https://api.example.test/v1", "api_mode": "anthropic_messages",
                   "api_key": "leave-this-alone"},
-        "fallback_providers": [],
+        "fallback_providers": ["backup-provider"],
+        "fallback_model": "backup-model",
         "unrelated": {"nested": {"value": "preserved"}},
     }
 
@@ -54,11 +54,7 @@ def _install_fake_hermes(monkeypatch, home: Path):
         entries = plugins.get("entries", {})
         entry = entries.get(PLUGIN)
         if action in {"validate", "install"}:
-            assert enabled in ([], [PLUGIN])
-            assert config["platform_toolsets"]["cli"] == ["hermes-cli"]
-            assert config["tools"]["tool_search"]["enabled"] == "off"
-            assert config["model"]["provider"] == "custom"
-            assert config["fallback_providers"] == []
+            assert enabled.count(PLUGIN) <= 1
         if action in {"validate", "status"}:
             return {"ok": True, "config_sha256": digest(), "enabled_present": "enabled" in plugins,
                     "enabled": copy.deepcopy(enabled), "entry": copy.deepcopy(entry), "mcp_version": "2.0.0"}
@@ -67,13 +63,17 @@ def _install_fake_hermes(monkeypatch, home: Path):
         if entry is not None:
             assert entry["settings"] == old
         if action == "install":
-            plugins["enabled"] = [PLUGIN]
+            if request.get("enable_plugin") and PLUGIN not in enabled:
+                plugins["enabled"] = [*enabled, PLUGIN]
             entries[PLUGIN] = {"allow_gateway_injection": True, "settings": copy.deepcopy(request["settings"])}
             config_path.write_bytes(b"# preserve formatting and secrets\n# public writer updated owned keys\n")
         else:
             remaining = [item for item in enabled if item != PLUGIN]
-            if enabled == [PLUGIN]:
-                baseline = request.get("enabled_before", {})
+            baseline = request.get("enabled_before", {})
+            expected = list(baseline.get("value", [])) if baseline.get("present") else []
+            if PLUGIN not in expected:
+                expected.append(PLUGIN)
+            if enabled == expected:
                 if baseline.get("present"):
                     plugins["enabled"] = copy.deepcopy(baseline.get("value", []))
                 else:
@@ -127,9 +127,11 @@ def test_setup_status_repeat_and_remove_preserve_unrelated_profile(tmp_path, mon
     assert (plugin / "mcp_bridge.py").is_file()
     assert (skill / "SKILL.md").read_text(encoding="utf-8").endswith("שלום 🌍\n")
     assert (skill / "references" / "guide.md").is_file()
-    assert state["config"]["plugins"]["enabled"] == [PLUGIN]
-    assert state["config"]["plugins"]["entries"]["unrelated-plugin"] == {"settings": {"keep": "me"}}
+    assert state["config"]["plugins"]["enabled"] == ["user-plugin", PLUGIN]
+    assert state["config"]["plugins"]["entries"]["user-plugin"] == {"settings": {"keep": "me"}}
     assert state["config"]["model"]["api_key"] == "leave-this-alone"
+    assert state["config"]["tools"]["tool_search"]["enabled"] == "auto"
+    assert state["config"]["fallback_providers"] == ["backup-provider"]
     assert state["config"]["unrelated"]["nested"]["value"] == "preserved"
     before = {p: p.stat().st_mtime_ns for p in (plugin / "__init__.py", skill / "SKILL.md")}
 
@@ -138,31 +140,61 @@ def test_setup_status_repeat_and_remove_preserve_unrelated_profile(tmp_path, mon
     assert setup_hermes.main(["--home", str(home), "--hermes-python", sys.executable, "--status"]) == 0
 
     # A user-added enabled plugin and unrelated config edit survive package removal.
-    state["config"]["plugins"]["enabled"].append("user-plugin")
+    state["config"]["plugins"]["enabled"].append("new-plugin")
     state["config"]["unrelated"]["after_install"] = "preserve"
     assert setup_hermes.main(["--home", str(home), "--hermes-python", sys.executable, "--uninstall"]) == 0
     assert not plugin.exists() and not skill.exists()
-    assert state["config"]["plugins"]["enabled"] == ["user-plugin"]
+    assert state["config"]["plugins"]["enabled"] == ["user-plugin", "new-plugin"]
     assert "pallium-hermes-relay" not in state["config"]["plugins"]["entries"]
-    assert state["config"]["plugins"]["entries"]["unrelated-plugin"] == {"settings": {"keep": "me"}}
+    assert state["config"]["plugins"]["entries"]["user-plugin"] == {"settings": {"keep": "me"}}
     assert state["config"]["unrelated"]["after_install"] == "preserve"
     assert state["config"]["model"]["api_key"] == "leave-this-alone"
     assert unrelated_file.read_text(encoding="utf-8") == '{"keep": true}'
     assert config_path.read_bytes().startswith(b"# preserve formatting")
 
 
-def test_frozen_profile_refusal_happens_before_artifact_mutation(tmp_path, monkeypatch):
+def test_setup_accepts_existing_plugins_provider_and_default_tool_search(tmp_path, monkeypatch):
     home = tmp_path / "hermes-home"
-    _state, _config_path = _install_fake_hermes(monkeypatch, home)
+    state, _config_path = _install_fake_hermes(monkeypatch, home)
     _, repo = _source(tmp_path, monkeypatch)
     plugin_dir, skill_dir = setup_hermes._profile_paths(home)
+    assert setup_hermes.main(_install_args(home, repo)) == 0
+    assert plugin_dir.exists() and skill_dir.exists()
+    assert state["config"]["plugins"]["enabled"] == ["user-plugin", PLUGIN]
+    assert state["config"]["tools"]["tool_search"]["enabled"] == "auto"
+    assert state["config"]["model"]["provider"] == "anthropic"
 
-    def refuse(*_args, **_kwargs):
-        raise ValueError("Hermes profile refused the operation (frozen_local_profile_required)")
 
-    monkeypatch.setattr(setup_hermes, "_run_hermes", refuse)
-    assert setup_hermes.main(_install_args(home, repo)) == 2
-    assert not plugin_dir.exists() and not skill_dir.exists()
+def test_memory_opt_in_update_and_disable_preserve_profile(tmp_path, monkeypatch):
+    home = tmp_path / "hermes-home"
+    state, _ = _install_fake_hermes(monkeypatch, home)
+    _, repo = _source(tmp_path, monkeypatch)
+    original = copy.deepcopy(state["config"])
+    args = _install_args(home, repo)
+    assert setup_hermes.main(args) == 0
+    settings = state["config"]["plugins"]["entries"][PLUGIN]["settings"]
+    assert not settings.get("memory_enabled", False)
+    assert setup_hermes.main([*args, "--memory-enabled"]) == 0
+    assert state["config"]["plugins"]["entries"][PLUGIN]["settings"]["memory_enabled"] is True
+    assert setup_hermes.main([*args, "--memory-enabled"]) == 0
+    assert setup_hermes.main([*args, "--no-memory-enabled"]) == 0
+    assert not state["config"]["plugins"]["entries"][PLUGIN]["settings"].get("memory_enabled", False)
+    for key in ("model", "tools", "platform_toolsets", "fallback_providers", "unrelated"):
+        assert state["config"][key] == original[key]
+    assert setup_hermes.main(["--home", str(home), "--hermes-python", sys.executable, "--uninstall"]) == 0
+    assert state["config"]["plugins"] == original["plugins"]
+
+
+def test_setup_removal_restores_absent_enabled_key(tmp_path, monkeypatch):
+    home = tmp_path / "hermes-home"
+    state, _config_path = _install_fake_hermes(monkeypatch, home)
+    state["config"]["plugins"].pop("enabled")
+    _, repo = _source(tmp_path, monkeypatch)
+
+    assert setup_hermes.main(_install_args(home, repo)) == 0
+    assert state["config"]["plugins"]["enabled"] == [PLUGIN]
+    assert setup_hermes.uninstall(home, Path(sys.executable)) == 0
+    assert "enabled" not in state["config"]["plugins"]
 
 
 def test_unowned_collision_and_changed_owned_files_are_preserved(tmp_path, monkeypatch):

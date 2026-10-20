@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from core.relay import RELAY_DEFAULT_EXPIRY_SECONDS, RELAY_MESSAGE_MAX_CHARS
 from core.visibility import Visibility
+from core.models import MemoryTargetScope
 
 
 ArtifactKind = Literal["message", "assistant_output", "tool_use_summary", "todo_snapshot", "notification", "note"]
@@ -574,6 +575,7 @@ class RetryFailedProcessingResponse(BaseModel):
 
 
 class FlagMemoryRequest(BaseModel):
+    target_scope: MemoryTargetScope | None = None
     reason: str = Field(min_length=1)
     source_ref: str = Field(min_length=1)
     immediate: bool = False
@@ -587,6 +589,7 @@ class FlagMemoryResponse(BaseModel):
 
 
 class MemoryFeedbackRequest(BaseModel):
+    target_scope: MemoryTargetScope | None = None
     rating: Literal["relevant", "not_relevant"]
     reason: str | None = None
     query_context: str | None = None
@@ -710,6 +713,7 @@ class CorrectMemoryRequest(BaseModel):
     instead — that keeps the old memory in the audit chain and creates a
     new one.
     """
+    target_scope: MemoryTargetScope | None = None
     corrected_text: str = Field(min_length=1, max_length=_MAX_MEMORY_TEXT_CHARS)
     reason: str = Field(
         min_length=1,
@@ -730,6 +734,7 @@ class SupersedeMemoryRequest(BaseModel):
     and gets a pointer to the new one via superseded_by_id. Retrieval
     hides superseded rows by default; retrospective queries opt in.
     """
+    target_scope: MemoryTargetScope | None = None
     new_text: str = Field(min_length=1, max_length=_MAX_MEMORY_TEXT_CHARS)
     supersedes_id: str = Field(min_length=1)
     reason: str | None = Field(default=None, max_length=_MAX_REASON_CHARS)
@@ -774,6 +779,7 @@ class ForgetMemoryRequest(BaseModel):
     Idempotent: forgetting an already-forgotten memory returns
     forgotten=False without modifying anything.
     """
+    target_scope: MemoryTargetScope | None = None
     reason: str = Field(min_length=1, max_length=_MAX_REASON_CHARS)
 
 
@@ -795,6 +801,7 @@ class ForgetSourceRequest(BaseModel):
     Idempotent per item: re-forgetting an already-forgotten turn does not
     modify it.
     """
+    target_scope: MemoryTargetScope | None = None
     source_item_id: str | None = None
     container_ref: str | None = None
     thread_ref: str | None = None
@@ -817,6 +824,7 @@ class RecordOutcomeRequest(BaseModel):
     for audit; NOT used to update retrieval ranking until W4 integration
     testing verifies the contract end-to-end.
     """
+    target_scope: MemoryTargetScope | None = None
     procedure_id: str = Field(min_length=1)
     outcome: Literal["success", "failure", "inconclusive"]
     evidence: list[str] | None = Field(default=None, max_length=5)

@@ -856,9 +856,9 @@ def test_released_hermes_idle_relay_roundtrip(client, tmp_path):
                 f"the {tag} Hermes reply did not use the MCP reply route")
             ack_event = eventually(lambda claimed_delivery=claimed_delivery: next((event for event in event_order
                 if event == ("ack", claimed_delivery["delivery_id"])), None),
-                f"the {tag} Hermes delivery was not acknowledged after provider execution")
-            assert event_order.index(("provider-response", claimed_delivery["delivery_id"])) < event_order.index(
-                ("ack", claimed_delivery["delivery_id"])), "Hermes ACK preceded provider completion"
+                f"the {tag} Hermes delivery was not acknowledged at host-context admission")
+            assert event_order.index(("ack", claimed_delivery["delivery_id"])) < event_order.index(
+                ("provider-response", claimed_delivery["delivery_id"])), "Hermes admission waited for provider completion"
             assert event_order.index(("provider-response", claimed_delivery["delivery_id"])) < event_order.index(
                 ("reply", claimed_delivery["delivery_id"])), "Hermes replied before the provider saw the peer delivery"
             assert event_order.index(("ack", claimed_delivery["delivery_id"])) < event_order.index(

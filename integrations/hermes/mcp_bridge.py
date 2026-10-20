@@ -17,6 +17,12 @@ HISTORY_TOOLS = frozenset({
     "pallium_search_history_by_work_ref",
     "pallium_expand_source",
 })
+MEMORY_TOOLS = frozenset({
+    "pallium_query", "pallium_expand", "pallium_ingest", "pallium_remember",
+    "pallium_correct", "pallium_supersede", "pallium_forget",
+    "pallium_forget_source", "pallium_record_outcome", "pallium_flag_memory",
+    "pallium_rate_memory", "pallium_expand_source",
+})
 TOOLS = RELAY_TOOLS | HISTORY_TOOLS
 HIDDEN = {
     "pallium_relay_send": {"sender_runtime", "sender_session_ref"},
@@ -26,6 +32,14 @@ HIDDEN = {
 for _name in HISTORY_TOOLS:
     HIDDEN[_name] = {"container_ref", "thread_ref", "visibility", "agent_ref", "request_source_item_id"}
 HIDDEN["pallium_expand_source"].add("include_supported_memories")
+for _name in MEMORY_TOOLS - {"pallium_expand_source", "pallium_forget_source"}:
+    HIDDEN[_name] = HIDDEN.get(_name, set()) | {
+        "container_ref", "actor_ref", "thread_ref", "agent_ref", "visibility",
+    }
+HIDDEN["pallium_flag_memory"].add("source_ref")
+HIDDEN["pallium_forget_source"] = HIDDEN.get("pallium_forget_source", set()) | {
+    "container_ref", "actor_ref", "agent_ref", "visibility",
+}
 TIMEOUT_SECONDS = 15
 MAX_RESPONSE_CHARS = 24_000
 
@@ -44,7 +58,8 @@ def _wire_model(value):
     return result
 
 
-def _tool_catalog(result):
+def _tool_catalog(result, *, memory_enabled=False):
+    allowed_tools = TOOLS | (MEMORY_TOOLS if memory_enabled else frozenset())
     wire = _wire_model(result)
     if "resultType" in wire and wire["resultType"] != "complete":
         raise ValueError("Incomplete dedicated Hermes MCP catalog")
@@ -56,7 +71,7 @@ def _tool_catalog(result):
         if not isinstance(tool, dict):
             raise ValueError("Malformed dedicated Hermes MCP catalog")
         name, description, schema = tool.get("name"), tool.get("description"), tool.get("inputSchema")
-        if (not isinstance(name, str) or name not in TOOLS
+        if (not isinstance(name, str) or name not in allowed_tools
                 or description is not None and not isinstance(description, str)
                 or not isinstance(schema, dict) or schema.get("type") != "object"):
             raise ValueError("Malformed dedicated Hermes MCP catalog")
@@ -66,6 +81,8 @@ def _tool_catalog(result):
             raise ValueError("Malformed dedicated Hermes MCP catalog")
         schema = json.loads(json.dumps(schema))
         hidden = {"container_ref"} | HIDDEN.get(name, set())
+        if name == "pallium_expand_source" and memory_enabled:
+            hidden.discard("include_supported_memories")
         for key in hidden:
             schema.get("properties", {}).pop(key, None)
         if "required" in schema:
@@ -79,7 +96,7 @@ def _tool_catalog(result):
             " Incoming delivery is handled by hooks; receive/ACK tools are not exposed."
         )
         catalog.append({"name": name, "description": description, "parameters": schema})
-    if len(catalog) != len(TOOLS) or {tool["name"] for tool in catalog} != TOOLS:
+    if len(catalog) != len(allowed_tools) or {tool["name"] for tool in catalog} != allowed_tools:
         raise ValueError("Incomplete dedicated Hermes MCP catalog")
     return catalog
 
@@ -106,11 +123,15 @@ def _tool_response_text(result):
 class RelayMcpBridge:
     """One owned stdio connection; each call carries an explicit immutable scope."""
 
-    def __init__(self, *, python, repo, base_url, container_ref, actor_ref, visibility):
+    def __init__(self, *, python, repo, base_url, container_ref, actor_ref, visibility,
+                 memory_enabled=False):
+        if type(memory_enabled) is not bool:
+            raise ValueError("memory_enabled must be a boolean")
         self.python, self.repo = str(python), str(repo)
         if not Path(self.python).is_file() or not (Path(self.repo) / "app/mcp/hermes.py").is_file():
             raise ValueError("Configure the Pallium MCP interpreter and checkout explicitly")
-        self.config = (base_url, container_ref, actor_ref, visibility)
+        self.config = (base_url, container_ref, actor_ref, visibility, memory_enabled)
+        self.allowed_tools = TOOLS | (MEMORY_TOOLS if memory_enabled else frozenset())
         self.catalog = []
         self._ready, self._finished = threading.Event(), threading.Event()
         self._loop = self._stop = self._session = None
@@ -138,18 +159,19 @@ class RelayMcpBridge:
         allowed = {"SYSTEMROOT", "WINDIR", "COMSPEC", "PATH", "PATHEXT", "TEMP", "TMP",
                    "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA"}
         env = {key: value for key, value in os.environ.items() if key.upper() in allowed}
-        base, container, actor, visibility = self.config
+        base, container, actor, visibility, memory_enabled = self.config
         params = StdioServerParameters(
             command=self.python, cwd=self.repo, env=env,
             args=["-m", "app.mcp.hermes", "--base-url", base, "--container-ref", container,
-                  "--actor-ref", actor, "--visibility", visibility],
+                  "--actor-ref", actor, "--visibility", visibility,
+                  *(["--memory-enabled"] if memory_enabled else [])],
         )
         async with stdio_client(params) as (reader, writer):
             async with ClientSession(reader, writer) as session:
                 async with asyncio.timeout(TIMEOUT_SECONDS):
                     await session.initialize()
                     result = await session.list_tools()
-                catalog = _tool_catalog(result)
+                catalog = _tool_catalog(result, memory_enabled=self.config[4])
                 self.catalog, self._session = catalog, session
                 self._ready.set()
                 await self._stop.wait()
@@ -160,7 +182,7 @@ class RelayMcpBridge:
         return _tool_response_text(result)
 
     def call(self, name, arguments, identity, reply=None):
-        if (name not in TOOLS or self._finished.is_set() or not self._ready.is_set()
+        if (name not in self.allowed_tools or self._finished.is_set() or not self._ready.is_set()
                 or self._session is None):
             return json.dumps({"error": "Pallium MCP is unavailable"})
         if (not isinstance(identity, tuple) or len(identity) != 2

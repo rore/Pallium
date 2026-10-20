@@ -33,7 +33,7 @@ from core.turn_inference import resolve_runtime_context
 from core.type_registry import TypeRegistry
 from core.vector_embed import VectorEmbedder
 from core.vector_index_holder import VectorIndexHolder
-from core.models import HISTORICAL_GUIDANCE_MEMORY_TYPES, FlagResult, HistoricalGuidanceUpdate, InjectableBlock, MemoryFlag, MemoryObject, QueryFilters, QueryRuntimeContext, Relation, SourceItem, new_id, utc_now
+from core.models import HISTORICAL_GUIDANCE_MEMORY_TYPES, FlagResult, HistoricalGuidanceUpdate, IndexEntry, InjectableBlock, MemoryFlag, MemoryObject, MemoryTargetScope, QueryFilters, QueryRuntimeContext, Relation, SourceItem, new_id, utc_now
 from core.observability import IntegrationDebugLogger, QueryStats
 from core.visibility import is_visible
 from providers.embedding.base import EmbeddingProvider
@@ -1621,13 +1621,27 @@ class PalliumService:
     FLAG_SUPPRESSION_THRESHOLD = 2
     FLAG_WINDOW_DAYS = 30
 
+    @staticmethod
+    def _check_target_scope(target: MemoryObject | SourceItem, target_scope: MemoryTargetScope | None) -> None:
+        if target_scope is not None and (
+            canonicalize_container_ref(target.container_ref), target.actor_ref, target.visibility
+        ) != (target_scope.container_ref, target_scope.actor_ref, target_scope.visibility):
+            raise KeyError(target.id)
+
+    def _memory_target(self, memory_object_id: str, target_scope: MemoryTargetScope | None) -> MemoryObject:
+        memory = self._storage.get_memory_object(memory_object_id)
+        self._check_target_scope(memory, target_scope)
+        return memory
+
     def flag_memory_object(
         self,
         memory_object_id: str,
         reason: str,
         source_ref: str,
         immediate: bool = False,
+        target_scope: MemoryTargetScope | None = None,
     ) -> FlagResult:
+        memory = self._memory_target(memory_object_id, target_scope)
         flag = MemoryFlag(
             memory_object_id=memory_object_id,
             reason=reason,
@@ -1635,7 +1649,6 @@ class PalliumService:
         )
         self._storage.store_memory_flag(flag)
 
-        memory = self._storage.get_memory_object(memory_object_id)
         suppressed = memory.lifecycle == "suppressed"
 
         if not suppressed and memory.lifecycle == "active":
@@ -1672,12 +1685,15 @@ class PalliumService:
         rater_ref: str | None,
         thread_ref: str | None = None,
         container_ref: str | None = None,
+        target_scope: MemoryTargetScope | None = None,
     ) -> str:
         """Record a relevance feedback judgment for an injected memory.
 
-        Returns the feedback record id. Always succeeds — 200 even for deleted memories.
+        Unscoped feedback succeeds even when the target no longer exists.
         """
         container_ref = canonicalize_container_ref(container_ref)
+        if target_scope is not None:
+            self._memory_target(memory_object_id, target_scope)
         return self._storage.record_memory_feedback(
             memory_object_id=memory_object_id,
             rating=rating,
@@ -1720,27 +1736,19 @@ class PalliumService:
             return "memory_object.investigation_context"
         return "memory_object.summary"
 
-    def _index_explicit_write(
+    def _explicit_write_index_entries(
         self,
         memory_object_id: str,
         memory_type: str,
         text: str,
-    ) -> None:
-        """Emit lexical + (best-effort) vector index entries for an
-        explicit-write memory so it is retrievable immediately.
-
-        The extraction pipeline goes through _persist_process_result which
-        writes index entries alongside the memory; explicit writes take a
-        different code path (single storage.create_memory_object call), so
-        we index here explicitly. Without this the memory exists but is
-        invisible to /query — see scenario 5 wiring.
-        """
+    ) -> list[IndexEntry]:
+        """Build lexical and available vector entries before explicit persistence."""
         # Local import — avoid circular / heavy import at module load.
         from core.indexing import VECTOR_INDEX_TYPE, build_index_entry
         from semantic.common import normalize_for_index  # type: ignore
 
         text_view = normalize_for_index(text)
-        self._storage.create_index_entry(
+        entries = [
             build_index_entry(
                 target_kind="memory_object",
                 target_id=memory_object_id,
@@ -1748,7 +1756,7 @@ class PalliumService:
                 text_view=text_view,
                 text_view_name=self._w3_memory_text_view_name(memory_type),
             )
-        )
+        ]
         # Vector index is best-effort. If no embedding provider is
         # configured, skip silently — the memory remains retrievable via
         # lexical search which is enough for scenario 5's assertion.
@@ -1757,7 +1765,7 @@ class PalliumService:
                 VECTOR_EMBEDDING_PROVIDER_NAME,
                 VECTOR_EMBEDDING_PROVIDER_VERSION,
             )
-            self._storage.create_index_entry(
+            entries.append(
                 build_index_entry(
                     target_kind="memory_object",
                     target_id=memory_object_id,
@@ -1770,6 +1778,16 @@ class PalliumService:
             )
         except Exception:  # noqa: BLE001 -- vector index is best-effort
             logger.debug("W3 explicit write: skipping vector index entry", exc_info=True)
+        return entries
+
+    def _index_explicit_write(self, memory_object_id: str, memory_type: str, text: str) -> None:
+        for entry in self._explicit_write_index_entries(memory_object_id, memory_type, text):
+            try:
+                self._storage.create_index_entry(entry)
+            except Exception:  # noqa: BLE001 -- preserve best-effort vector persistence
+                if entry.index_type == "lexical":
+                    raise
+                logger.debug("W3 explicit write: skipping vector index entry", exc_info=True)
 
     def remember_memory(
         self,
@@ -1842,6 +1860,7 @@ class PalliumService:
         *,
         corrected_text: str,
         reason: str,
+        target_scope: MemoryTargetScope | None = None,
     ) -> bool:
         """pallium_correct: in-place fix. Returns True on success.
 
@@ -1849,7 +1868,7 @@ class PalliumService:
         is not currently active — corrections must target the head of the
         supersession chain, not a stale entry.
         """
-        existing = self._storage.get_memory_object(memory_object_id)
+        existing = self._memory_target(memory_object_id, target_scope)
         new_payload = dict(existing.payload)
         new_payload["statement"] = corrected_text
         new_payload["source"] = "agent_explicit_correction"
@@ -1874,6 +1893,7 @@ class PalliumService:
         agent_ref: str | None = None,
         origin_session_id: str | None = None,
         origin_agent_id: str | None = None,
+        target_scope: MemoryTargetScope | None = None,
     ) -> tuple[str, str]:
         """pallium_supersede: explicit chain — new memory replaces old.
 
@@ -1882,7 +1902,7 @@ class PalliumService:
         SupersessionConflictError if the old memory is not currently
         active (surfaces as 409 to the MCP caller).
         """
-        old = self._storage.get_memory_object(supersedes_id)
+        old = self._memory_target(supersedes_id, target_scope)
         container_ref, actor_ref, thread_ref, agent_ref, visibility = (
             self._validate_explicit_provenance(
                 container_ref=container_ref,
@@ -1913,30 +1933,24 @@ class PalliumService:
             actor_ref=actor_ref,
             visibility=visibility,
         )
-        self._storage.create_memory_object(new_memory)
-        self._storage.mark_memory_origin(
-            new_memory.id,
-            origin="agent_explicit",
+        self._storage.create_explicit_supersession(
+            supersedes_id,
+            new_memory,
+            index_entries=self._explicit_write_index_entries(new_memory.id, resolved_type, new_text),
             origin_session_id=thread_ref,
             origin_agent_id=agent_ref,
-        )
-        # Same as remember_memory: index the new memory so it's
-        # retrievable immediately. The old memory's index entries remain
-        # in place; retrieval filters superseded rows out via lifecycle.
-        self._index_explicit_write(new_memory.id, resolved_type, new_text)
-        self._storage.link_supersession(
-            supersedes_id,
-            new_memory.id,
             correction_reason=reason,
         )
         return (supersedes_id, new_memory.id)
 
-    def forget_memory(self, memory_object_id: str, *, reason: str) -> bool:
+    def forget_memory(self, memory_object_id: str, *, reason: str, target_scope: MemoryTargetScope | None = None) -> bool:
         """pallium_forget: soft-delete with tombstone.
 
         Idempotent: returns True on first call, False if the memory was
         already soft-deleted.
         """
+        if target_scope is not None:
+            self._memory_target(memory_object_id, target_scope)
         return self._storage.soft_delete_memory(memory_object_id, reason=reason)
 
     def forget_source(
@@ -1947,6 +1961,7 @@ class PalliumService:
         thread_ref: str | None = None,
         reason: str,
         actor_ref: str | None = None,
+        target_scope: MemoryTargetScope | None = None,
     ) -> dict:
         """User-requested forgetting of raw source turns (soft + auditable).
 
@@ -1970,6 +1985,8 @@ class PalliumService:
             )
         container_ref = canonicalize_container_ref(container_ref)
         if source_item_id is not None:
+            if target_scope is not None:
+                self._check_target_scope(self._storage.get_source_item(source_item_id), target_scope)
             forgotten = self._storage.forget_source_item(
                 source_item_id, reason=reason, actor_ref=actor_ref,
             )
@@ -1979,11 +1996,14 @@ class PalliumService:
                 "count": 1 if forgotten else 0,
             }
         if container_ref is not None:
+            if target_scope is not None and container_ref != target_scope.container_ref:
+                raise ValueError("container_ref must match target_scope.container_ref")
             count = self._storage.forget_source_scope(
                 container_ref=container_ref,
                 thread_ref=thread_ref,
                 reason=reason,
                 actor_ref=actor_ref,
+                target_scope=target_scope,
             )
             return {
                 "container_ref": container_ref,
@@ -2006,6 +2026,7 @@ class PalliumService:
         agent_ref: str | None = None,
         origin_session_id: str | None = None,
         origin_agent_id: str | None = None,
+        target_scope: MemoryTargetScope | None = None,
     ) -> bool:
         """pallium_record_outcome: attach an outcome to an operational-fact
         procedure. Feeds W4 success/failure counters.
@@ -2030,7 +2051,7 @@ class PalliumService:
         )
         # Confirm the procedure exists so we don't accept dangling references.
         try:
-            self._storage.get_memory_object(procedure_id)
+            self._memory_target(procedure_id, target_scope)
         except KeyError as exc:
             raise KeyError(f"procedure_id {procedure_id!r} not found") from exc
 
@@ -2420,8 +2441,12 @@ class PalliumService:
 
     def get_memory_expand(
         self, memory_object_id: str, *, container_ref: str | None = None, query_actor_ref: str | None = None,
+        query_visibility: str | None = None,
     ) -> tuple[dict | None, list[SourceItem], str | None]:
         """Return structured payload, source items, and a Phase-5b match-text view.
+
+        Supplied requester actor/visibility gates the anchor and every evidence
+        item through canonical visibility; actor is not an exact metadata filter.
 
         The ``match_text`` (3rd tuple element) is the per-type text the
         usage-audit worker compares against the assistant's
@@ -2440,7 +2465,16 @@ class PalliumService:
         memory_object = self._storage.get_memory_object(memory_object_id)
         container_ref = canonicalize_container_ref(container_ref)
         effective_container = container_ref or memory_object.container_ref
-        if container_ref and memory_object.visibility != "global" and memory_object.container_ref != container_ref:
+        if query_visibility is not None and query_visibility not in ("public", "container", "private", "global"):
+            raise ValueError("invalid query_visibility")
+        requester_supplied = query_actor_ref is not None or query_visibility is not None
+        effective_actor_ref = query_actor_ref if requester_supplied else memory_object.actor_ref
+        if requester_supplied and not is_visible(
+            memory_object.visibility, memory_object.container_ref, effective_container,
+            memory_object.actor_ref, query_visibility=query_visibility, query_actor_ref=effective_actor_ref,
+        ):
+            raise KeyError(memory_object_id)
+        if not requester_supplied and container_ref and memory_object.visibility != "global" and memory_object.container_ref != container_ref:
             raise KeyError(memory_object_id)
         refs = self._storage.get_evidence_for_memory_object(memory_object_id)
         items: list[SourceItem] = []
@@ -2455,8 +2489,7 @@ class PalliumService:
             # per-item is_visible drop below).
             if item.forgotten:
                 continue
-            effective_actor_ref = query_actor_ref or memory_object.actor_ref
-            if is_visible(item.visibility, item.container_ref, effective_container, item.actor_ref, query_actor_ref=effective_actor_ref):
+            if is_visible(item.visibility, item.container_ref, effective_container, item.actor_ref, query_visibility=query_visibility, query_actor_ref=effective_actor_ref):
                 # Note artifacts bypass redaction — same carveout as
                 # the write barrier at ``ingest_item`` (a user-explicit
                 # verbatim recall surface).

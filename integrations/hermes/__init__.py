@@ -45,9 +45,14 @@ def _host_id(value):
 
 
 def _current_user_text(request):
-    if not isinstance(request, dict) or not isinstance(request.get("messages"), list):
+    if not isinstance(request, dict):
         return None
-    for message in reversed(request["messages"]):
+    messages = request.get("messages", request.get("input"))
+    if isinstance(messages, str):
+        return messages if "messages" not in request else None
+    if not isinstance(messages, list):
+        return None
+    for message in reversed(messages):
         if isinstance(message, dict) and message.get("role") == "user":
             content = message.get("content")
             if isinstance(content, str):
@@ -56,8 +61,10 @@ def _current_user_text(request):
                 return "\n".join(
                     part if isinstance(part, str) else part["text"]
                     for part in content if isinstance(part, str) or (
-                        isinstance(part, dict) and isinstance(part.get("text"), str))
+                        isinstance(part, dict) and part.get("type") in (None, "text", "input_text")
+                        and isinstance(part.get("text"), str))
                 )
+            return None
     return None
 
 
@@ -108,47 +115,32 @@ def _render(delivery, nonce, session_id, turn_id, container):
     return text
 
 
-def _require_frozen_local_stub_config(plugin_id, service_url, container_ref):
-    # This release exposes no public middleware registry/count API. The integration
-    # therefore qualifies only the explicitly frozen local-stub profile; the native
-    # qualification harness also checks the host's loaded-plugin inventory.
+def _require_pallium_config(plugin_id, service_url, container_ref):
+    """Validate Pallium's own immutable profile settings; provider settings belong to Hermes."""
+    # Co-enabled Hermes plugins are trusted host code, not an isolation boundary.
     from hermes_cli.config import load_config_readonly
 
     config = load_config_readonly() or {}
     plugins = config.get("plugins")
-    platform_toolsets = config.get("platform_toolsets")
-    tools = config.get("tools")
-    tool_search = tools.get("tool_search") if isinstance(tools, dict) else None
     entry = plugins.get("entries", {}).get(plugin_id) if isinstance(plugins, dict) else None
     settings = entry.get("settings") if isinstance(entry, dict) else None
-    model = config.get("model")
-    if (not isinstance(plugins, dict) or plugins.get("enabled") != [plugin_id]
-            or not isinstance(platform_toolsets, dict)
-            or platform_toolsets.get("cli") != ["hermes-cli"]
-            or not isinstance(tool_search, dict) or tool_search.get("enabled") != "off"
+    enabled = plugins.get("enabled") if isinstance(plugins, dict) else None
+    if (not isinstance(plugins, dict) or not isinstance(enabled, list)
+            or enabled.count(plugin_id) != 1
             or not isinstance(entry, dict) or entry.get("allow_gateway_injection") is not True
-            or not isinstance(settings, dict) or settings.get("experimental_frozen_local_stub") is not True
-            or settings.get("service_url") != service_url or settings.get("container_ref") != container_ref
-            or not isinstance(model, dict) or model.get("provider") != "custom"
-            or not _text(model.get("default"), 200)
-            or model.get("api_mode") != "chat_completions"
-            or not isinstance(model.get("base_url"), str)
-            or config.get("fallback_providers") != []
-            or config.get("fallback_model") not in (None, {})):
-        raise ValueError("Hermes Relay requires the explicit frozen local-stub profile")
-    provider_url = urlsplit(model["base_url"])
-    if (provider_url.scheme != "http" or provider_url.hostname not in {"127.0.0.1", "localhost", "::1"}
-            or provider_url.username or provider_url.password or provider_url.query or provider_url.fragment):
-        raise ValueError("Hermes Relay qualification requires a loopback custom provider URL")
+            or not isinstance(settings, dict)
+            or settings.get("service_url") != service_url or settings.get("container_ref") != container_ref):
+        raise ValueError("Hermes Pallium plugin configuration is missing or changed")
     bridge = tuple(settings.get(key) for key in ("mcp_python", "mcp_repo", "actor_ref", "visibility"))
+    memory_enabled = settings.get("memory_enabled", False)
+    if type(memory_enabled) is not bool or memory_enabled and bridge[0] is None:
+        raise ValueError("Hermes optional memory requires a boolean setting and configured MCP bridge")
     if any(value is not None for value in bridge) and (
             not all(isinstance(value, str) and value.strip() == value and value for value in bridge)
             or not Path(bridge[0]).is_absolute() or not Path(bridge[1]).is_absolute()
             or not _host_id(bridge[2]) or bridge[3] != "private"):
         raise ValueError("Hermes MCP requires explicit interpreter, checkout, actor and private scope")
-    return (model["default"], model["provider"], model["base_url"], model["api_mode"],
-            tuple(config.get("fallback_providers", [])), config.get("fallback_model"),
-            tool_search["enabled"], *bridge)
+    return (service_url, container_ref, *bridge, memory_enabled)
 
 
 def _host_capabilities(ctx):
@@ -184,7 +176,7 @@ def _host_capabilities(ctx):
 def register(ctx):
     profile, state = _host_capabilities(ctx)
     base, container = ctx.get_config("service_url", ""), ctx.get_config("container_ref", "")
-    topology_signature = _require_frozen_local_stub_config("pallium-hermes-relay", base, container)
+    topology_signature = _require_pallium_config("pallium-hermes-relay", base, container)
     parsed = urlsplit(base if isinstance(base, str) else "")
     if (parsed.scheme != "http" or parsed.hostname not in {"127.0.0.1", "localhost", "::1"}
             or parsed.username or parsed.password or parsed.query or parsed.fragment
@@ -192,15 +184,16 @@ def register(ctx):
         raise ValueError("Configure an explicit loopback service_url and exact container_ref")
     lock, stop = threading.RLock(), threading.Event()
     reply_identity = contextvars.ContextVar("pallium_hermes_reply_identity", default=None)
-    sessions, claims, admitted = {}, {}, {}
+    sessions, claims, admitted, observed_requests = {}, {}, {}, {}
     poller = None
     bridge = None
-    if topology_signature[7] is not None:
+    if topology_signature[2] is not None:
         from .mcp_bridge import RelayMcpBridge
 
         bridge = RelayMcpBridge(
-            python=topology_signature[7], repo=topology_signature[8], base_url=base,
-            container_ref=container, actor_ref=topology_signature[9], visibility=topology_signature[10],
+            python=topology_signature[2], repo=topology_signature[3], base_url=base,
+            container_ref=container, actor_ref=topology_signature[4], visibility=topology_signature[5],
+            memory_enabled=topology_signature[6],
         )
         ctx.on_unload(bridge.close)
     tool_names = {tool["name"] for tool in bridge.catalog} if bridge else {TOOL_NAME}
@@ -209,7 +202,7 @@ def register(ctx):
         try:
             if ctx.profile_name != profile:
                 return False
-            current = _require_frozen_local_stub_config("pallium-hermes-relay", base, container)
+            current = _require_pallium_config("pallium-hermes-relay", base, container)
             return current == topology_signature
         except Exception:
             return False
@@ -317,14 +310,15 @@ def register(ctx):
                     if bridge:
                         orientation = {
                             "container_ref": container, "thread_ref": session_id,
-                            "actor_ref": topology_signature[9], "agent_ref": RUNTIME,
-                            "visibility": topology_signature[10],
+                            "actor_ref": topology_signature[4], "agent_ref": RUNTIME,
+                            "visibility": topology_signature[5],
                         }
                         return {"context": "[Pallium scope — " + json.dumps(orientation, ensure_ascii=False)
                                 + "]\nRelay MCP tools bind this conversation automatically. "
                                 "Use the bundled pallium-memory skill for Relay and Session History. "
                                 "History captures hook-observed text snapshots, not proof of host persistence or delivery. "
-                                "Derived-memory tools are not qualified in this slice."}
+                                + ("Optional memory tools are enabled with fixed private write scope."
+                                   if topology_signature[6] else "Optional memory tools are disabled in this profile.")}
             except Exception:
                 LOG.debug("Hermes Relay session registration deferred", exc_info=True)
             return None
@@ -371,52 +365,77 @@ def register(ctx):
                                   "delivery": delivery, "rendered": rendered}
         return {"context": rendered}
 
-    def llm_execution(request, next_call, session_id="", turn_id="", model="",
-                      provider="", base_url="", api_mode="", **_context):
+    def llm_execution(request, next_call, session_id="", turn_id="", api_request_id="", **_context):
         with lock:
             claim = claims.get(session_id) if isinstance(session_id, str) else None
-            done = admitted.get(session_id) if isinstance(session_id, str) else None
             contexts = [item["rendered"] for item in claims.values()]
         owns_context = _has_claimed_context(request, contexts)
         if not profile_ok():
             return None if owns_context else next_call(request)
         if claim is None:
             return None if owns_context else next_call(request)
-        expected_model, expected_provider, expected_base_url, expected_api_mode = topology_signature[:4]
         if (not _text(session_id, 255) or not _text(turn_id, 255)
-                or claim["turn_id"] != turn_id
-                or model != expected_model or provider != expected_provider
-                or base_url != expected_base_url or api_mode != expected_api_mode
-                or not isinstance(request, dict) or request.get("model") != expected_model):
+                or claim["turn_id"] != turn_id or not isinstance(request, dict)):
             return None if owns_context else next_call(request)
         user_text = _current_user_text(request)
         marker = _marker(claim["wake"]["delivery_id"], claim["wake"]["nonce"])
         if user_text is None or marker not in user_text or claim["rendered"] not in user_text:
             return None if owns_context else next_call(request)
-        if done and done.get("turn_id") == turn_id:
-            return next_call(request)
-        result = next_call(request)
-        if not profile_ok():
-            return result
+        admit_context(request, session_id, turn_id, api_request_id)
+        return next_call(request)
+
+    def admit_context(request, session_id, turn_id, api_request_id):
+        if (not profile_ok() or not _host_id(session_id) or not _host_id(turn_id)
+                or not _host_id(api_request_id)):
+            return
+        with lock:
+            claim = claims.get(session_id)
+            current = admitted.get(session_id)
+        if (claim is None or claim["turn_id"] != turn_id
+                or (current and current.get("turn_id") == turn_id)):
+            return
+        wake, delivery = claim["wake"], claim["delivery"]
+        record = scope(session_id)
+        if (wake.get("state") != "claimed" or wake.get("turn_id") != turn_id or not record
+                or record.get("endpoint_id") != wake.get("endpoint_id")
+                or delivery.get("delivery_id") != wake.get("delivery_id")
+                or delivery.get("recipient_endpoint_id") != wake.get("endpoint_id")
+                or not _text(delivery.get("receipt"), 512)):
+            return
+        user_text = _current_user_text(request)
+        marker = _marker(delivery["delivery_id"], wake["nonce"])
+        if user_text is None or marker not in user_text or claim["rendered"] not in user_text:
+            return
+        observation = (turn_id, api_request_id, delivery["delivery_id"])
+        with lock:
+            if observed_requests.get(session_id) == observation:
+                return
+            observed_requests[session_id] = observation
         try:
             ack = _json_request(base, "POST", "/relay/deliveries/ack", body={
-                "delivery_id": claim["delivery"]["delivery_id"],
-                "claim_token": claim["delivery"].get("claim_token"), "container_ref": container,
+                "delivery_id": delivery["delivery_id"],
+                "claim_token": delivery.get("claim_token"), "container_ref": container,
             })
         except Exception:
-            LOG.warning("Provider succeeded but Relay ACK failed; delivery remains unadmitted", exc_info=True)
-            return result
-        if isinstance(ack, dict) and (
-                ack.get("state") == "delivered" or ack.get("already_delivered") is True):
-            claim["wake"]["state"] = "admitted"
-            state.set(key("wake", session_id), claim["wake"])
             with lock:
-                admitted[session_id] = {
-                    "delivery_id": claim["delivery"]["delivery_id"],
-                    "receipt": claim["delivery"].get("receipt"), "turn_id": turn_id,
-                    "wake": claim["wake"],
-                }
-        return result
+                if observed_requests.get(session_id) == observation:
+                    observed_requests.pop(session_id, None)
+            LOG.warning("Hermes Relay ACK failed; delivery remains unadmitted", exc_info=True)
+            return
+        if (not profile_ok() or not isinstance(ack, dict)
+                or ack.get("delivery_id") != delivery["delivery_id"]
+                or not (ack.get("state") == "delivered" or ack.get("already_delivered") is True)):
+            with lock:
+                if observed_requests.get(session_id) == observation:
+                    observed_requests.pop(session_id, None)
+            return
+        wake["state"] = "admitted"
+        state.set(key("wake", session_id), wake)
+        with lock:
+            admitted[session_id] = {
+                "delivery_id": delivery["delivery_id"], "receipt": delivery["receipt"],
+                "turn_id": turn_id, "wake": wake,
+            }
     def reply(args, session_id="", turn_id="", **_context):
         if not profile_ok():
             return "Relay reply refused: frozen Hermes profile changed."
@@ -582,7 +601,7 @@ def register(ctx):
                 "source_type": RUNTIME, "source_id": source_id, "content_type": "text/plain",
                 "content": row["content"], "role": row["role"], "artifact_kind": "message",
                 "container_ref": container, "thread_ref": session_id, "agent_ref": RUNTIME,
-                "actor_ref": topology_signature[9], "visibility": "private",
+                "actor_ref": topology_signature[4], "visibility": "private",
                 "metadata": {**metadata, "hermes_message_uid": uid,
                              "capture_origin": "relay_wake" if synthetic else "user_turn"},
             })
@@ -598,6 +617,7 @@ def register(ctx):
             with lock:
                 claims.pop(session_id, None)
                 admitted.pop(session_id, None)
+                observed_requests.pop(session_id, None)
 
     def unload():
         stop.set()

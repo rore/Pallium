@@ -18,8 +18,8 @@ from core.relay import RelayService
 
 SCOPE = {"container_ref": "git:example.test/team/relay"}
 HOST_EXECUTION = {
-    "provider": "custom", "model": "pallium-local", "api_mode": "chat_completions",
-    "base_url": "http://127.0.0.1:29998/v1",
+    "provider": "anthropic", "model": "ordinary-model", "api_mode": "anthropic_messages",
+    "base_url": "https://api.example.test/v1",
 }
 
 
@@ -178,15 +178,15 @@ def test_hermes_callbacks_do_not_use_codex_executor(client):
 def plugin_context(client, monkeypatch):
     """Exercise public plugin callbacks against the real Relay caller surface."""
     config = {
-        "model": {"provider": "custom", "default": "pallium-local",
-                  "base_url": "http://127.0.0.1:29998/v1", "api_mode": "chat_completions"},
-        "fallback_providers": [],
-        "platform_toolsets": {"cli": ["hermes-cli"]},
-        "tools": {"tool_search": {"enabled": "off"}},
-        "plugins": {"enabled": ["pallium-hermes-relay"], "entries": {
+        "model": {"provider": "anthropic", "default": "ordinary-model",
+                  "base_url": "https://api.example.test/v1", "api_mode": "anthropic_messages"},
+        "fallback_providers": ["backup-provider"],
+        "platform_toolsets": {"cli": ["hermes-cli", "custom-tools"]},
+        "tools": {"tool_search": {"enabled": "auto"}},
+        "plugins": {"enabled": ["user-plugin", "pallium-hermes-relay"], "entries": {
+            "user-plugin": {"settings": {"keep": "value"}},
             "pallium-hermes-relay": {"allow_gateway_injection": True, "settings": {
                 "service_url": "http://127.0.0.1:29999", **SCOPE,
-                "experimental_frozen_local_stub": True,
             }},
         }},
     }
@@ -400,12 +400,19 @@ def test_packaged_mcp_preserves_authorization_and_clears_binding(client, mcp_plu
     assert not calls
 
 
+def _observe_request(ctx, request, *, session="ses_שלום", turn="wake", api_request_id="api-wake-1"):
+    return ctx.middleware["llm_execution"](
+        request, lambda _actual: "host context observed", api_request_id=api_request_id,
+        session_id=session, turn_id=turn,
+    )
+
+
 @pytest.mark.parametrize("failure", [
-    "stripped", "wrong_session", "wrong_turn", "provider_error", "historical",
-    "profile_changed", "config_changed", "wrong_provider",
+    "stripped", "partial", "wrong_session", "wrong_turn", "historical",
+    "profile_changed", "owned_config_changed", "missing_request_id",
 ])
-def test_plugin_never_acks_unproven_admission(client, plugin_context, failure):
-    module, create, config = plugin_context
+def test_plugin_never_acks_unobserved_context(client, plugin_context, failure):
+    _, create, config = plugin_context
     ctx, marker, message = _plugin_wake(client, create)
     hook = ctx.hooks["pre_llm_call"]
     assert hook(session_id="ses_other", turn_id="wake", user_message=marker) is None
@@ -418,35 +425,40 @@ def test_plugin_never_acks_unproven_admission(client, plugin_context, failure):
     assert delivery["state"] == "claimed"
     assert delivery["claim_token"] not in context
     assert delivery["receipt"] not in context
-    text = marker + "\n\n" + context
-    request = {"model": "pallium-local", "messages": [{"role": "user", "content": text}]}
+    request = {"messages": [{"role": "user", "content": marker + "\n\n" + context}]}
     if failure == "stripped":
         request["messages"][0]["content"] = marker
+    if failure == "partial":
+        request["messages"][0]["content"] = marker + "\n" + context[:-1]
     if failure == "historical":
         request["messages"].append({"role": "user", "content": "a later input"})
     if failure == "profile_changed":
         ctx.profile_name = "other-profile"
-    if failure == "config_changed":
-        config["plugins"]["enabled"].append("other-plugin")
-
-    def downstream(actual):
-        assert actual is request
-        if failure == "provider_error":
-            raise OSError("local provider failed")
-        return "provider result"
-
-    kwargs = {"session_id": "ses_other" if failure == "wrong_session" else "ses_שלום",
-              "turn_id": "other" if failure == "wrong_turn" else "wake", **HOST_EXECUTION}
-    if failure == "wrong_provider":
-        kwargs["base_url"] = "http://127.0.0.1:29997/v1"
-    if failure == "provider_error":
-        with pytest.raises(OSError):
-            ctx.middleware["llm_execution"](request, downstream, **kwargs)
-    else:
-        ctx.middleware["llm_execution"](request, downstream, **kwargs)
+    if failure == "owned_config_changed":
+        config["plugins"]["entries"]["pallium-hermes-relay"]["settings"]["service_url"] = "http://127.0.0.1:29998"
+    _observe_request(
+        ctx, request,
+        session="ses_other" if failure == "wrong_session" else "ses_שלום",
+        turn="other" if failure == "wrong_turn" else "wake",
+        api_request_id="" if failure == "missing_request_id" else "api-wake-1",
+    )
     after = status(client, message)["deliveries"][0]
     assert after["state"] == "claimed"
     assert after["delivered_at"] is None
+
+
+def test_execution_without_request_identity_does_not_ack(client, plugin_context):
+    _, create, _ = plugin_context
+    ctx, marker, message = _plugin_wake(client, create)
+    context = ctx.hooks["pre_llm_call"](
+        session_id="ses_שלום", turn_id="wake", user_message=marker,
+    )["context"]
+    request = {"messages": [{"role": "user", "content": marker + "\n\n" + context}]}
+    assert ctx.middleware["llm_execution"](
+        request, lambda _actual: "synthetic result", session_id="ses_שלום",
+        turn_id="wake", **HOST_EXECUTION,
+    ) == "synthetic result"
+    assert status(client, message)["deliveries"][0]["state"] == "claimed"
 
 
 def test_plugin_retains_uncertain_fence_on_reload(client, plugin_context):
@@ -467,12 +479,16 @@ def test_plugin_admission_then_host_bound_reply(client, plugin_context):
     context = ctx.hooks["pre_llm_call"](
         session_id="ses_שלום", turn_id="wake", user_message=marker,
     )["context"]
-    request = {"model": "pallium-local", "messages": [{"role": "user", "content": marker + "\n\n" + context}]}
+    request = {"messages": [{"role": "user", "content": marker + "\n\n" + context}]}
     calls = []
+
+    _observe_request(ctx, request)
+    assert status(client, message)["deliveries"][0]["state"] == "delivered"
+    _observe_request(ctx, request)
 
     def provider(actual):
         assert actual is request
-        assert status(client, message)["deliveries"][0]["state"] == ("delivered" if calls else "claimed")
+        assert status(client, message)["deliveries"][0]["state"] == "delivered"
         calls.append(actual)
         return "provider accepted"
 
@@ -499,24 +515,111 @@ def test_plugin_admission_then_host_bound_reply(client, plugin_context):
     assert received[0]["sender_session_ref"] == "ses_שלום"
 
 
-@pytest.mark.parametrize("invalid", ["opt_in", "permission", "plugins", "remote", "fallback", "tool_search"])
-def test_plugin_refuses_unqualified_configuration(plugin_context, invalid):
+def test_provider_failure_after_host_context_observation_keeps_admission(client, plugin_context):
+    _, create, _ = plugin_context
+    ctx, marker, message = _plugin_wake(client, create)
+    context = ctx.hooks["pre_llm_call"](
+        session_id="ses_שלום", turn_id="wake", user_message=marker,
+    )["context"]
+    request = {"messages": [{"role": "user", "content": marker + "\n\n" + context}]}
+    def provider(_actual):
+        raise OSError("provider failed after admission")
+
+    with pytest.raises(OSError, match="provider failed after admission"):
+        ctx.middleware["llm_execution"](
+            request, provider, session_id="ses_שלום", turn_id="wake", api_request_id="api-wake-1",
+        )
+    assert status(client, message)["deliveries"][0]["state"] == "delivered"
+
+
+def test_ack_failure_can_retry_and_duplicate_observation_is_idempotent(client, plugin_context, monkeypatch):
+    module, create, _ = plugin_context
+    ctx, marker, message = _plugin_wake(client, create)
+    context = ctx.hooks["pre_llm_call"](
+        session_id="ses_שלום", turn_id="wake", user_message=marker,
+    )["context"]
+    request = {"messages": [{"role": "user", "content": marker + "\n\n" + context}]}
+    original = module._json_request
+    ack_calls = []
+    fail = True
+
+    def fail_ack(base, method, path, **kwargs):
+        nonlocal fail
+        if path == "/relay/deliveries/ack":
+            ack_calls.append(path)
+            if fail:
+                raise OSError("ack unavailable")
+        return original(base, method, path, **kwargs)
+
+    monkeypatch.setattr(module, "_json_request", fail_ack)
+    _observe_request(ctx, request)
+    assert status(client, message)["deliveries"][0]["state"] == "claimed"
+    fail = False
+    _observe_request(ctx, request, api_request_id="api-retry-2")
+    _observe_request(ctx, request, api_request_id="api-retry-2")
+    assert ack_calls == ["/relay/deliveries/ack", "/relay/deliveries/ack"]
+    assert status(client, message)["deliveries"][0]["state"] == "delivered"
+    with pytest.raises(OSError, match="provider failed"):
+        ctx.middleware["llm_execution"](
+            request, lambda _actual: (_ for _ in ()).throw(OSError("provider failed")),
+            session_id="ses_שלום", turn_id="wake", **HOST_EXECUTION,
+        )
+    assert status(client, message)["deliveries"][0]["state"] == "delivered"
+
+
+def test_plugin_accepts_coexisting_plugins_and_provider_configuration(plugin_context):
     _, create, config = plugin_context
-    entry = config["plugins"]["entries"]["pallium-hermes-relay"]
-    if invalid == "opt_in":
-        entry["settings"].pop("experimental_frozen_local_stub")
-    elif invalid == "permission":
-        entry["allow_gateway_injection"] = False
-    elif invalid == "plugins":
-        config["plugins"]["enabled"].append("other-plugin")
-    elif invalid == "remote":
-        config["model"]["base_url"] = "https://example.test/v1"
-    elif invalid == "tool_search":
-        config["tools"]["tool_search"]["enabled"] = "auto"
-    else:
-        config["fallback_providers"] = ["remote"]
-    with pytest.raises(ValueError):
-        create()
+    config["plugins"]["enabled"].append("another-user-plugin")
+    config["model"] = {"provider": "openai", "default": "different-model",
+                        "base_url": "https://api.example.test/v1", "api_mode": "responses"}
+    config["fallback_providers"] = ["provider-two"]
+    config["tools"]["tool_search"]["enabled"] = "auto"
+    config["platform_toolsets"]["cli"].append("other-tools")
+    assert create()
+
+
+def test_plugin_still_refuses_changed_owned_scope(plugin_context):
+    _, create, config = plugin_context
+    ctx = create()
+    config["plugins"]["entries"]["pallium-hermes-relay"]["settings"]["service_url"] = "http://127.0.0.1:29998"
+    assert ctx.hooks["pre_llm_call"](session_id="scope-change", turn_id="seed", user_message="hello") is None
+    assert ctx.state.values == {}
+
+
+@pytest.mark.parametrize("request_kind", ["messages", "input", "input_text", "input_string"])
+def test_raw_execution_admits_public_request_formats(client, plugin_context, request_kind):
+    _, create, _ = plugin_context
+    ctx, marker, message = _plugin_wake(client, create)
+    context = ctx.hooks["pre_llm_call"](session_id="ses_שלום", turn_id="wake", user_message=marker)["context"]
+    text = marker + "\n\n" + context
+    content = [{"type": "input_text", "text": text}] if request_kind == "input_text" else text
+    key = "messages" if request_kind == "messages" else "input"
+    request = {key: text if request_kind == "input_string" else [{"role": "user", "content": content}]}
+    downstream = []
+    assert ctx.middleware["llm_execution"](
+        request, lambda actual: downstream.append(actual) or "response", session_id="ses_שלום",
+        turn_id="wake", api_request_id="request-current",
+    ) == "response"
+    assert downstream == [request]
+    assert status(client, message)["deliveries"][0]["state"] == "delivered"
+    assert "pre_api_request" not in ctx.hooks
+
+
+@pytest.mark.parametrize("effective", ["absent", "rewritten", "malformed_latest", "nontext_latest"])
+def test_raw_execution_never_admits_historical_or_rewritten_context(client, plugin_context, effective):
+    _, create, _ = plugin_context
+    ctx, marker, message = _plugin_wake(client, create)
+    context = ctx.hooks["pre_llm_call"](session_id="ses_שלום", turn_id="wake", user_message=marker)["context"]
+    previous = {"role": "user", "content": marker + "\n\n" + context}
+    request = {} if effective == "absent" else {"input": [previous]}
+    if effective == "rewritten":
+        request = {"input": [{"role": "user", "content": "rewritten request"}]}
+    elif effective == "malformed_latest":
+        request["input"].append({"role": "user", "content": {"text": "unsupported"}})
+    elif effective == "nontext_latest":
+        request["input"].append({"role": "user", "content": [{"type": "image", "text": previous["content"]}]})
+    _observe_request(ctx, request)
+    assert status(client, message)["deliveries"][0]["state"] == "claimed"
 
 
 @pytest.mark.parametrize("size,admitted", [(1, True), (1600, True), (1601, False), (16000, False)])
@@ -529,9 +632,10 @@ def test_plugin_payload_boundaries_never_ack_a_preview(client, plugin_context, s
     )
     if admitted:
         assert payload in result["context"]
-        request = {"model": "pallium-local", "messages": [{
+        request = {"messages": [{
             "role": "user", "content": marker + "\n\n" + result["context"],
         }]}
+        _observe_request(ctx, request)
         ctx.middleware["llm_execution"](
             request, lambda actual: "provider accepted", session_id="ses_שלום",
             turn_id="wake", **HOST_EXECUTION,
@@ -552,9 +656,10 @@ def test_plugin_reply_boundaries(client, plugin_context, payload, accepted):
     context = ctx.hooks["pre_llm_call"](
         session_id="ses_שלום", turn_id="wake", user_message=marker,
     )["context"]
-    request = {"model": "pallium-local", "messages": [{
+    request = {"messages": [{
         "role": "user", "content": marker + "\n\n" + context,
     }]}
+    _observe_request(ctx, request)
     ctx.middleware["llm_execution"](
         request, lambda actual: "provider accepted", session_id="ses_שלום",
         turn_id="wake", **HOST_EXECUTION,
@@ -602,9 +707,10 @@ def test_reply_context_preserves_host_authorization_and_resets(client, plugin_co
     context = ctx.hooks["pre_llm_call"](
         session_id="ses_שלום", turn_id="wake", user_message=marker,
     )["context"]
-    request = {"model": "pallium-local", "messages": [{
+    request = {"messages": [{
         "role": "user", "content": marker + "\n\n" + context,
     }]}
+    _observe_request(ctx, request)
     ctx.middleware["llm_execution"](
         request, lambda actual: "provider accepted", session_id="ses_שלום",
         turn_id="wake", **HOST_EXECUTION,
@@ -655,6 +761,10 @@ def mcp_plugin_context(plugin_context, monkeypatch):
                 }},
                 {"name": "pallium_relay_address", "description": "Self", "parameters": {"properties": {}}},
             ]
+            if _config.get("memory_enabled", False):
+                self.catalog.append({"name": "pallium_remember", "description": "Remember", "parameters": {
+                    "properties": {"text": {}, "type": {}},
+                }})
 
         def call(self, name, arguments, identity, reply=None):
             calls.append((name, dict(arguments), tuple(identity), dict(reply) if reply else None))
@@ -673,6 +783,30 @@ def _mcp_tool(ctx, name, args, session="session_שלום", turn="turn-1"):
         tool_name=name, args=args, session_id=session, turn_id=turn,
         next_call=lambda actual: ctx.tools[name](actual, session_id=session),
     )
+
+
+def test_memory_opt_in_reaches_bridge_and_change_refuses_calls(mcp_plugin_context):
+    create, config, calls = mcp_plugin_context
+    settings = config["plugins"]["entries"]["pallium-hermes-relay"]["settings"]
+    assert "pallium_remember" not in create().tools
+    settings["memory_enabled"] = True
+    ctx = create()
+    assert "pallium_remember" in ctx.tools
+    ctx.hooks["pre_llm_call"](session_id="session_שלום", turn_id="seed", user_message="hello")
+    result = _mcp_tool(ctx, "pallium_remember", {"text": "note ✓", "type": "note"})
+    assert "message_id" in json.loads(result)
+    count = len(calls)
+    settings["memory_enabled"] = False
+    assert "error" in json.loads(_mcp_tool(ctx, "pallium_remember", {"text": "refused", "type": "note"}))
+    assert len(calls) == count
+
+
+@pytest.mark.parametrize("invalid", ["true", 1, None, {}])
+def test_memory_setting_requires_boolean(mcp_plugin_context, invalid):
+    create, config, _ = mcp_plugin_context
+    config["plugins"]["entries"]["pallium-hermes-relay"]["settings"]["memory_enabled"] = invalid
+    with pytest.raises(ValueError, match="boolean"):
+        create()
 
 
 def test_packaged_mcp_binds_each_conversation_and_never_model_identity(client, mcp_plugin_context):
@@ -719,7 +853,8 @@ def test_packaged_mcp_reply_receipt_stays_in_host_memory(client, mcp_plugin_cont
     create, _, calls = mcp_plugin_context
     ctx, marker, message = _plugin_wake(client, create)
     rendered = ctx.hooks["pre_llm_call"](session_id="ses_שלום", turn_id="wake", user_message=marker)["context"]
-    request = {"model": "pallium-local", "messages": [{"role": "user", "content": marker + "\n" + rendered}]}
+    request = {"messages": [{"role": "user", "content": marker + "\n" + rendered}]}
+    _observe_request(ctx, request)
     ctx.middleware["llm_execution"](request, lambda actual: "provider", session_id="ses_שלום",
                                     turn_id="wake", **HOST_EXECUTION)
     delivery = status(client, message)["deliveries"][0]

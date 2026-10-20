@@ -1,6 +1,6 @@
 # Pallium for Hermes
 
-This is a frozen, disposable-profile qualification package tested against Hermes v0.22.0 and v0.22.2 through gateway RPC. It installs a native Hermes plugin, the discoverable `pallium-memory` skill, and the plugin-owned Pallium MCP bridge. Setup never creates a global `mcp_servers` connection and does not modify model/provider, toolset, Tool Search, other plugin, credential, or data settings.
+This experimental package installs a native Hermes plugin, the discoverable `pallium-memory` skill, and the plugin-owned Pallium MCP bridge. Current source passed gateway RPC Relay/History on Hermes v0.22.2; v0.22.0 gateway evidence applies to an earlier snapshot. Setup never creates a global `mcp_servers` connection and preserves provider, toolset, Tool Search, other plugin, credential, and data settings.
 
 For the public capability overview and support boundaries, see the
 [Hermes integration guide](../../docs/hermes-integration.md).
@@ -14,10 +14,10 @@ supported-version claim.
 
 | Gate | Required evidence | Current state |
 |---|---|---|
-| Released hosts | Actual Desktop and TUI journeys on v0.22.0 and v0.22.2 | UI journeys unqualified; gateway Relay/History proof passes on both tags |
-| Runtime compatibility | Public plugin identity, injection, hook and middleware contracts; clear missing-capability errors | Capability diagnostics and gateway journeys pass; UI qualification pending |
-| Normal configuration | Ordinary providers, default Tool Search, supported plugin coexistence | Frozen-profile restrictions remain; downstream middleware can bypass a provider call |
-| Full package | Skill, Relay, History and opt-in memory lifecycle; memory off leaves Relay/History functional | Relay/History bounded proof exists; shared memory target-scope contracts need work |
+| Released hosts | Actual Desktop and TUI journeys on current compatible releases | UI journeys unqualified; current gateway Relay/History proof on v0.22.2 and earlier-snapshot proof on v0.22.0 |
+| Runtime compatibility | Public plugin identity, injection, hook and middleware contracts; clear missing-capability errors | Current v0.22.2 gateway checks passed; current second-release and actual UI qualification pending |
+| Normal configuration | Ordinary providers, default Tool Search, supported plugin coexistence | Setup preserves these settings; current behavior remains unqualified |
+| Full package | Skill, Relay, History and opt-in memory lifecycle; memory off leaves Relay/History functional | Current source exposes memory opt-in; native memory and full lifecycle qualification pending |
 | Recovery | Busy/concurrent sessions, reset/close, host/service/MCP restart, stale routes and ambiguous outcomes | Native coverage incomplete |
 | Lifecycle | Disposable install/update/remove/rollback, repeated use and owned-process cleanup | Existing ownership/conflict coverage; actual UI/update qualification pending |
 | Public documentation | Public entry points, setup/capability guides and bundled skill match final verified behavior; commands and links checked | Initial alignment audit updated the guides; final production review still required |
@@ -44,7 +44,7 @@ a separate rollout decision.
 
 ## Prepare an isolated profile
 
-The setup command requires an existing explicit profile with the qualification settings already present. It refuses to repair or silently change them. The selected profile must have no other enabled plugin, select only the existing `hermes-cli` toolset, use a loopback custom provider with no fallback, and set Tool Search to the string value `"off"`:
+The setup command requires an existing explicit profile. It preserves provider, toolset, Tool Search and other plugin settings; it does not require a frozen local-provider profile. Those ordinary configurations still need qualification on the current source. For isolated testing, use a disposable profile and loopback service. The following profile is an example of one possible test setup, not a package requirement:
 
 ```yaml
 plugins:
@@ -63,7 +63,7 @@ model:
 fallback_providers: []
 ```
 
-Use only a disposable `HERMES_HOME`, a loopback Pallium service, and a local provider stub. The installer calls the public Hermes config writer in the selected `--hermes-python` interpreter and refuses incompatible or unreadable profile config before touching package files.
+For qualification, use an isolated disposable profile and loopback service. The installer calls the public Hermes config writer in the selected `--hermes-python` interpreter and refuses incompatible or unreadable profile config before touching package files.
 
 Run setup and removal only while the target Hermes host and other profile config
 writers are stopped. The digest check detects edits before writing; the native
@@ -85,8 +85,14 @@ python -m app.run setup hermes `
   --actor-ref hermes-e2e `
   --visibility private `
   --mcp-python C:\path\to\pallium-venv\Scripts\python.exe `
-  --mcp-repo C:\path\to\Pallium
+  --mcp-repo C:\path\to\Pallium `
+  --memory-enabled
 ```
+
+Memory is disabled by default. Use `--memory-enabled` to opt in or
+`--no-memory-enabled` to disable it. Repeating setup without `--memory-enabled`
+resets a prior opt-in to disabled, so include the flag on repeat installs that
+should keep memory tools enabled.
 
 `--mcp-python` defaults to the current Pallium interpreter and `--mcp-repo` to this checkout. Setup validates Pallium MCP SDK v1 and Hermes MCP SDK v2 before mutation. The `service-url`, container, actor and visibility values are explicit package scope; this release accepts private visibility only.
 
@@ -106,7 +112,7 @@ python -m app.run setup hermes --home C:\path\to\disposable-hermes-home `
 
 Setup is repeatable. The installer stores ownership fingerprints beside the plugin and skill. It refuses unowned collisions or edited owned artifacts rather than replacing them. Removal restores the original `plugins.enabled` state, deletes only this plugin's exact config entry, and preserves unrelated nested configuration and other enabled plugins. A conflict leaves the profile untouched. Status checks file/config fingerprints only; it does not qualify a running host or live MCP connection.
 
-The profile skill is installed under `$HERMES_HOME/skills/pallium-memory/`, so Hermes includes it in normal skill discovery. The MCP catalog includes Relay and the three Session History tools below. Derived-memory tools remain unavailable. Relay hook deliveries own their claim and ACK; use the reply operation for an injected delivery and never receive or ACK it again.
+The profile skill is installed under `$HERMES_HOME/skills/pallium-memory/`, so Hermes includes it in normal skill discovery. The default MCP catalog includes Relay and three Session History tools. The explicit memory opt-in adds eleven existing memory query/write tools; this is an optional tool catalog and does not promise automatic memory injection. Relay ACK records host-context receipt before provider completion, not model/provider completion or action. Use the reply operation for an injected delivery and never receive or ACK it again.
 
 ## Session History
 
@@ -134,19 +140,24 @@ association reads omit them, so exact-work search can miss otherwise searchable
 turns. Use `pallium_expand_source` with a returned `source_item_id` and that search
 page's `lookup_event_id` as `parent_lookup_id`. Keep returned offsets and revisions
 for subsequent pages. The bridge binds the current container, session and private
-visibility; `actor_ref` and `source_thread_ref` remain optional historical filters.
+visibility; standard memory query retains the configured actor filter, while
+memory expansion uses canonical same-container and matching global visibility
+rules. `actor_ref` and `source_thread_ref` remain optional History filters.
 Completion-only capture supplies no current `request_source_item_id`; do not invent
-one. Source forgetting remains available through existing Pallium controls; this
-package does not expose a new forget or ingestion tool. Source expansion excludes
-the shared opt-in supported-memory output; derived memory remains a later slice.
+one. With memory opt-in, `pallium_expand_source` can include supported memories.
+Scoped mutations use trusted configured scope and host session provenance; the
+current request source ID is unavailable. `pallium_forget_source` accepts an
+optional target thread selector: supplying it targets that historical partition;
+omitting it retains the bounded container partition.
 
 ## Native qualification limits
 
-The native gateway wake qualification passes on the two pinned released sources,
-v0.22.0 and v0.22.2, with the explicit frozen local-provider profile and loopback
-stubs. This is gateway RPC evidence, not actual Desktop or TUI interaction. Run
-the focused host journey with either clean pinned checkout and a disposable
-Hermes environment:
+Current native gateway wake qualification passed on v0.22.2 with a disposable
+local-provider profile and loopback stubs. The earlier v0.22.0 result applies to
+an older source snapshot. Neither establishes actual Desktop or TUI interaction.
+The TUI smoke exercised only the framework without Pallium. Ordinary provider
+formats, default Tool Search and plugin coexistence remain unqualified. A focused
+host journey requires an isolated Hermes environment:
 
 ```powershell
 $env:HERMES_E2E_SOURCE = 'C:\path\to\pinned\hermes-agent'

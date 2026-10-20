@@ -6,26 +6,30 @@ everyday installation.
 
 Production support must cover both Windows **Desktop and TUI** across compatible
 Hermes releases. Runtime checks use public plugin capabilities rather than an
-exact Hermes version check. The current proof uses gateway RPC on clean
-**v0.22.0 and v0.22.2** sources with disposable profiles and a local provider.
-It does not establish actual Desktop or TUI interaction, ordinary-provider
-support, or compatibility with every later release.
+exact Hermes version check. Current-source gateway RPC Relay/History proof passed
+on clean **v0.22.2** with a disposable profile and local provider. Earlier-source
+gateway proof also passed on **v0.22.0**. Neither establishes actual Desktop or TUI
+interaction, normal provider/default Tool Search behavior, memory parity or later
+release compatibility.
 
 ## Available in the experimental package
 
 | Capability | Current boundary |
 |---|---|
-| Relay | 12 MCP tools for discovery, identity, work associations, messaging, status and trace; gateway round trips passed on both tested releases |
-| Session History | Capture plus `pallium_search_history`, `pallium_search_history_by_work_ref` and `pallium_expand_source`; later-session search and expansion passed through gateway RPC |
+| Relay | 12 MCP tools for discovery, identity, work associations, messaging, status and trace; current gateway round trips passed on v0.22.2 |
+| Session History | Capture plus `pallium_search_history`, `pallium_search_history_by_work_ref` and `pallium_expand_source`; current search and expansion passed through v0.22.2 gateway RPC |
 | Skill and MCP | Bundled skill and plugin-owned stdio bridge; trusted conversation identity and private scope are supplied by the integration |
 | Package lifecycle | Explicit-profile setup, status, repeat setup/update and removal with ownership checks; running-host readiness is a separate check |
-| Derived memory | Memory query/write tools and automatic memory injection are not exposed or qualified |
+| Derived memory | Eleven existing memory query/write tools are available through an explicit opt-in catalog; disabled by default. This adds tools, not automatic memory injection, and current native behavior is not qualified |
 
-Incoming Relay deliveries are handled by hooks, which own claim and ACK. The
-package does not expose receive/ACK tools. A saved send or wake attempt is not
-proof of receipt. Automatic recovery, busy/reset/close/restart behavior and
-ordinary-turn fallback are still unqualified; do not apply another integration's
-wake guarantees to Hermes.
+Incoming Relay deliveries are admitted by the host integration and acknowledged
+after the full delivery context is present in the assembled request for that
+host session/turn. The ACK records host-context receipt before provider
+completion; it does not prove model/provider completion or action. The package
+does not expose receive/ACK tools. A saved send or wake attempt is not proof of
+receipt. Automatic recovery, busy/reset/close/restart behavior and ordinary-turn
+fallback are still unqualified; do not apply another integration's wake
+guarantees to Hermes.
 
 History capture stores private, hook-observed plain-text user/final-assistant
 snapshots with stable host session, turn and message IDs. It accepts up to
@@ -37,10 +41,16 @@ are copied only from verified current-session associations, so exact-work search
 may miss a capture when that lookup fails.
 
 History search and expansion reuse Pallium's visibility, redaction, forgetting,
-paging and lookup-lineage rules. History diagnostics, source-forget and memory
-tools described elsewhere are not in this Hermes catalog. The package supplies
-a fixed private container/actor configuration and host-issued current session;
-historical `actor_ref` and `source_thread_ref` filters do not change that identity.
+paging and lookup-lineage rules. The default catalog has three History tools;
+History diagnostics remain unavailable. With memory enabled, source-forget and
+the optional memory tools are added. Standard memory query retains its
+configured actor filter; expansion follows canonical same-container and matching
+global visibility rules. Scoped mutation provenance comes from trusted profile
+and host session context. Source-forget's optional thread selector identifies
+the target source partition; omission preserves the bounded container partition.
+Historical `actor_ref` and `source_thread_ref` filters do not change integration
+identity. The package supplies a fixed private container configuration and
+host-issued current session.
 See [Session History](session-history.md) and
 [Privacy and Visibility](privacy-and-visibility.md).
 
@@ -52,10 +62,16 @@ The setup target is `pallium setup hermes`; it requires an existing explicit
 profile, the Hermes interpreter and fixed Pallium scope. It is not interchangeable
 with the quickstart's default-profile setup commands.
 
-Current setup requires the frozen custom loopback provider, no fallback, only
-Pallium enabled, the `hermes-cli` toolset and Tool Search set to the string
-`"off"`. It validates Hermes MCP SDK2 and a separate Pallium MCP SDK1 interpreter.
-It does not repair these settings or create a global `mcp_servers` entry.
+Setup preserves the profile's provider, toolsets, Tool Search and other plugins;
+those are not intrinsic package requirements. It validates Hermes MCP SDK2 and
+a separate Pallium MCP SDK1 interpreter. It does not create a global
+`mcp_servers` entry. Ordinary providers, default Tool Search and plugin
+coexistence have not yet been qualified on the current source.
+
+Memory tools are disabled by default. Pass `--memory-enabled` to opt in; pass
+`--no-memory-enabled` to disable them. Repeating setup without the opt-in flag
+sets the catalog back to disabled, so repeat the flag when preserving an opt-in.
+The optional catalog does not promise automatic memory injection.
 
 With the target host and other profile writers stopped, use the same
 [install/status/removal procedure](../integrations/hermes/README.md#install-inspect-and-remove).
@@ -77,11 +93,17 @@ writers. No everyday profile or host updater should be replaced for qualificatio
   broad History search within the same trusted scope; retrieval is not proof of
   current live state.
 - Desktop qualification needs Windows 11 22H2 or later and separate backend,
-  Electron and process-home data paths. Existing isolated UI automation has not
-  completed a Desktop/TUI journey; gateway success does not resolve that gate.
+  Electron and process-home data paths inside a disposable OS/account, or a
+  supported registration opt-out. Profile directories alone do not isolate
+  native URL-handler registration. No full Pallium Desktop/TUI journey has
+  passed; gateway success does not resolve that gate.
+- Explicit-memory recall and accepting another wake after an admitted delivery
+  without a reply remain release blockers. A successful write or tool call is
+  not proof of a complete memory or Relay lifecycle.
 
 The [qualification matrix](../integrations/hermes/README.md#production-qualification-in-progress)
-tracks the remaining normal-provider, default Tool Search, plugin coexistence,
-memory, recovery and lifecycle gates. Public docs, commands and support claims
-must be reviewed against the final verified behavior before a production release.
+tracks the remaining current-native, normal-provider, default Tool Search,
+plugin coexistence, memory, recovery and lifecycle gates. Public docs, commands
+and support claims must be reviewed against the final verified behavior before a
+production release.
 Current work remains on the [Hermes roadmap item](../roadmap/features/add-hermes-agent-integration.md).

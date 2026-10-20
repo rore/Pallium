@@ -40,7 +40,7 @@ main capabilities, then use the integration and reference guides as needed.
 | Document | What it covers |
 |---|---|
 | [Derived Memory](derived-memory.md) | The optional derived-memory subsystem, retrieval, lifecycle, and limitations |
-| [Hermes integration](hermes-integration.md) | Experimental package, tested gateway versions, setup and remaining Desktop/TUI production gates |
+| [Hermes integration](hermes-integration.md) | Experimental package, earlier-snapshot gateway evidence, setup and remaining current-source/Desktop/TUI production gates |
 | [Agent Integration](agent-integration.md) | Building a custom integration; mostly advanced derived-memory behavior |
 | [Slack derived-memory example](integration-example.md) | A custom Slack integration using the derived-memory API |
 | [Derived-memory benchmarks](benchmarks.md) | Evaluation of the optional derived-memory subsystem |

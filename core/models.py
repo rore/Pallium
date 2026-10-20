@@ -5,11 +5,28 @@ from datetime import datetime, timezone
 from typing import Any, Literal
 from uuid import uuid4
 
-from core.visibility import QueryVisibilityTrace
+from core.container_ref import validate_explicit_container_ref
+from core.visibility import QueryVisibilityTrace, Visibility
 
 HISTORICAL_GUIDANCE_MEMORY_TYPES = frozenset(
     {"decision", "investigation_outcome", "constraint_memory", "operational_fact", "note"}
 )
+
+
+@dataclass(frozen=True)
+class MemoryTargetScope:
+    """Optional exact target guard, separate from creation provenance."""
+
+    container_ref: str
+    actor_ref: str
+    visibility: Visibility
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "container_ref", validate_explicit_container_ref(self.container_ref))
+        if not isinstance(self.actor_ref, str) or not self.actor_ref.strip() or self.actor_ref != self.actor_ref.strip():
+            raise ValueError("actor_ref must be non-blank without surrounding whitespace")
+        if self.visibility not in ("public", "container", "private", "global"):
+            raise ValueError("invalid target visibility")
 
 
 def utc_now() -> datetime:

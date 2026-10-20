@@ -56,10 +56,11 @@ in its current form, but setup and behavior still have rough edges.
 
 ## Current status
 
-The [Hermes integration](docs/hermes-integration.md) is experimental. Its package
-has gateway Relay and Session History proof on two released Hermes versions;
-actual Desktop/TUI, normal-provider, memory and recovery qualification remain
-open. It is not included in the supported delivery guarantees below.
+The [Hermes integration](docs/hermes-integration.md) is experimental. Earlier
+source snapshots have gateway Relay and Session History proof on two released
+Hermes versions; that evidence does not qualify current source. Actual
+Desktop/TUI, ordinary configuration, optional memory and recovery qualification
+remain open. It is not included in the supported delivery guarantees below.
 
 Relay works across the current integrations. Every supported path has durable
 next-turn delivery; some qualified paths can also start a new turn. See the

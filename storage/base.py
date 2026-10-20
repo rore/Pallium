@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any
 
 from core.contracts import MemoryRetentionPolicy, ProcessResult
-from core.models import EvidenceReference, IndexEntry, MemoryObject, QueryFilters, Relation, SourceItem
+from core.models import EvidenceReference, IndexEntry, MemoryObject, MemoryTargetScope, QueryFilters, Relation, SourceItem
 from core.turn_inference import ThreadStats
 from core.visibility import VisibilityExclusion
 
@@ -462,6 +462,22 @@ class StorageProvider(ABC):
 
     @abstractmethod
     def create_memory_object(self, memory_object: MemoryObject) -> None:
+        raise NotImplementedError
+
+    def create_explicit_supersession(
+        self, old_memory_object_id: str, replacement: MemoryObject, *,
+        index_entries: list[IndexEntry], origin_session_id: str,
+        origin_agent_id: str, correction_reason: str | None = None,
+    ) -> None:
+        """Atomically check the head, persist replacement/provenance/indexes and link it."""
+        raise NotImplementedError
+
+    def forget_source_scope(
+        self, *, container_ref: str, thread_ref: str | None = None,
+        reason: str, actor_ref: str | None = None,
+        forgotten_at: datetime | None = None, target_scope: MemoryTargetScope | None = None,
+    ) -> int:
+        """Forget the bounded source scope; actor_ref is audit identity only."""
         raise NotImplementedError
 
     @abstractmethod

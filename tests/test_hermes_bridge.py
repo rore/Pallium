@@ -17,6 +17,7 @@ import pytest
 from integrations.hermes.mcp_bridge import (
     HISTORY_TOOLS,
     MAX_RESPONSE_CHARS,
+    MEMORY_TOOLS,
     TOOLS,
     _tool_catalog,
     _tool_response_text,
@@ -32,7 +33,8 @@ class _Wire:
         return self.data
 
 
-def _catalog_wire(**overrides):
+def _catalog_wire(*, memory_enabled=False, **overrides):
+    expected = TOOLS | (MEMORY_TOOLS if memory_enabled else frozenset())
     tools = [{
         "name": name,
         "description": "description",
@@ -42,10 +44,12 @@ def _catalog_wire(**overrides):
                 "container_ref": {"type": "string"},
                 "thread_ref": {"type": "string"},
                 "query": {"type": "string"},
+                "source_ref": {"type": "string"},
+                "include_supported_memories": {"type": "boolean"},
             },
             "required": ["container_ref", "query"],
         },
-    } for name in sorted(TOOLS)]
+    } for name in sorted(expected)]
     result = {"tools": tools, "nextCursor": None}
     result.update(overrides)
     return result
@@ -59,6 +63,21 @@ def test_catalog_reads_wire_aliases_and_hides_trusted_fields() -> None:
     assert "thread_ref" not in history["parameters"]["properties"]
     assert history["parameters"]["required"] == ["query"]
     assert history["parameters"]["additionalProperties"] is False
+
+
+def test_memory_catalog_is_opt_in_and_keeps_source_forget_target_visible() -> None:
+    with pytest.raises(ValueError):
+        _tool_catalog(_Wire(_catalog_wire(memory_enabled=True)))
+    catalog = _tool_catalog(_Wire(_catalog_wire(memory_enabled=True)), memory_enabled=True)
+    assert {tool["name"] for tool in catalog} == TOOLS | MEMORY_TOOLS
+    remember = next(tool for tool in catalog if tool["name"] == "pallium_remember")
+    assert not {"container_ref", "actor_ref", "thread_ref"} & remember["parameters"]["properties"].keys()
+    forget_source = next(tool for tool in catalog if tool["name"] == "pallium_forget_source")
+    assert "thread_ref" in forget_source["parameters"]["properties"]
+    flag = next(tool for tool in catalog if tool["name"] == "pallium_flag_memory")
+    assert "source_ref" not in flag["parameters"]["properties"]
+    expand_source = next(tool for tool in catalog if tool["name"] == "pallium_expand_source")
+    assert "include_supported_memories" in expand_source["parameters"]["properties"]
 
 
 @pytest.mark.parametrize("wire", [
@@ -157,6 +176,7 @@ bridge = RelayMcpBridge(
     python=config["pallium_python"], repo=config["repo"],
     base_url=config["base_url"], container_ref=config["container_ref"],
     actor_ref="bridge-test-actor", visibility="private",
+    memory_enabled=config.get("memory_enabled", False),
 )
 try:
     names = sorted(tool["name"] for tool in bridge.catalog)
@@ -165,7 +185,8 @@ try:
     async def refused_missing_metadata():
         return await bridge._call("pallium_relay_address", {}, {})
     refused = asyncio.run_coroutine_threadsafe(refused_missing_metadata(), bridge._loop).result(timeout=10)
-    print(json.dumps({"mcp_version": version("mcp"), "names": names, "address": address,
+    print(json.dumps({"mcp_version": version("mcp"), "names": names,
+                      "catalog": bridge.catalog, "address": address,
                       "missing": missing, "refused": refused}))
 finally:
     bridge.close()
@@ -223,7 +244,8 @@ def test_probe_timeout_terminates_its_owned_child_group(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("host_kind", ["sdk1", "sdk2"])
-def test_bridge_stdio_call_on_supported_sdk(host_kind) -> None:
+@pytest.mark.parametrize("memory_enabled", [False, True])
+def test_bridge_stdio_call_on_supported_sdk(host_kind, memory_enabled) -> None:
     configured_host = os.environ.get("HERMES_BRIDGE_HOST_PYTHON") if host_kind == "sdk2" else None
     if host_kind == "sdk2" and not configured_host:
         pytest.skip("Set HERMES_BRIDGE_HOST_PYTHON to a disposable Hermes SDK2 interpreter")
@@ -244,6 +266,7 @@ def test_bridge_stdio_call_on_supported_sdk(host_kind) -> None:
         "base_url": f"http://127.0.0.1:{server.server_port}",
         "container_ref": "git:test/hermes-bridge",
         "session": session,
+        "memory_enabled": memory_enabled,
     })
     try:
         completed = _run_bridge_probe(host_python, config, repo)
@@ -255,7 +278,7 @@ def test_bridge_stdio_call_on_supported_sdk(host_kind) -> None:
     assert completed.returncode == 0, completed.stderr
     result = json.loads(completed.stdout.strip().splitlines()[-1])
     assert result["mcp_version"].startswith("1." if host_kind == "sdk1" else "2.")
-    assert set(result["names"]) == TOOLS
+    assert set(result["names"]) == TOOLS | (MEMORY_TOOLS if memory_enabled else frozenset())
     assert result["address"]["session_ref"] == session
     assert result["address"]["runtime"] == "hermes"
     assert "trusted session and turn" in result["missing"]["error"]
