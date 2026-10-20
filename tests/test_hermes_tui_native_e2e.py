@@ -23,6 +23,7 @@ import yaml
 
 from tests.fixtures.hermes_tui_driver import (
     assert_isolated_env,
+    classify_bridge_connections,
     isolated_env,
     node_preload_source,
     python_guard_source,
@@ -549,6 +550,57 @@ def test_hermes_tui_failed_driver_does_not_mask_successful_cleanup(tmp_path, mon
     }
 
 
+def _bridge_socket(local_port, remote_port, **changes):
+    return {"local_ip": "127.0.0.1", "local_port": local_port, "ip": "127.0.0.1", "port": remote_port,
+            "family": "AF_INET", "type": "SOCK_STREAM", "status": "ESTABLISHED", **changes}
+
+
+def test_hermes_tui_bridge_connections_accept_exact_service_and_same_pid_pairs():
+    service = ("127.0.0.1", 19836)
+    rows = [_bridge_socket(41000, service[1]), _bridge_socket(41001, 41002), _bridge_socket(41002, 41001)]
+    result = classify_bridge_connections({"pid": 123, "connections": rows}, service)
+    assert result["pid"] == 123 and result["accepted"]
+    assert [row["reason"] for row in result["connections"]] == [
+        "explicit_service_endpoint", "reciprocal_same_pid_tcp_ipc", "reciprocal_same_pid_tcp_ipc"]
+    assert [row["peer_index"] for row in result["connections"]] == [None, 2, 1]
+    assert classify_bridge_connections({"pid": 123, "connections": [
+        _bridge_socket(1, 65535), _bridge_socket(65535, 1)]}, service)["accepted"]
+
+
+def test_hermes_tui_bridge_connections_reject_malformed_or_unsupported_rows():
+    service = ("127.0.0.1", 19836)
+    first, second = _bridge_socket(41001, 41002), _bridge_socket(41002, 41001)
+    invalid_rows = [None, [], {}, "invalid", _bridge_socket(41001, 41001)]
+    invalid_rows.extend({key: value for key, value in first.items() if key != missing} for missing in first)
+    changes = [{"family": "AF_INET6"}, {"type": "SOCK_DGRAM"}, {"status": "LISTEN"},
+               {"status": "SYN_SENT"}, {"status": "TIME_WAIT"}, {"local_ip": "0.0.0.0"},
+               {"ip": "0.0.0.0"}, {"local_ip": "::1"}, {"ip": "::1"}, {"ip": "192.0.2.1"},
+               {"local_ip": "192.0.2.1"}, {"local_port": 0}, {"port": 0}, {"local_port": 65536},
+               {"port": 65536}, {"local_port": -1}, {"port": -1}, {"local_port": True},
+               {"port": True}, {"local_port": "41001"}, {"port": "41002"},
+               {"ip": "127.0.0.2"}, {"local_ip": "127.0.0.2"}]
+    invalid_rows.extend({**first, **change} for change in changes)
+    for row in invalid_rows:
+        result = classify_bridge_connections({"pid": 123, "connections": [row, second]}, service)
+        assert not result["accepted"], (row, result)
+        assert not any(entry["accepted"] for entry in result["connections"]), (row, result)
+    # A service destination does not excuse UDP, foreign local binds or non-established sockets.
+    for change in changes[:11]:
+        result = classify_bridge_connections({"pid": 123, "connections": [_bridge_socket(41000, 19836, **change)]}, service)
+        assert not result["accepted"], (change, result)
+
+
+def test_hermes_tui_bridge_connections_do_not_pool_pid_half_pairs():
+    service = ("127.0.0.1", 19836)
+    for bridge in ({"pid": 123, "connections": [_bridge_socket(41001, 41002)]},
+                   {"pid": 456, "connections": [_bridge_socket(41002, 41001)]}):
+        result = classify_bridge_connections(bridge, service)
+        assert result["pid"] == bridge["pid"] and not result["accepted"]
+    for bridge in (None, {}, {"pid": True, "connections": []}, {"pid": 0, "connections": []},
+                   {"pid": 123}, {"pid": 123, "connections": None}, {"pid": 123, "connections": []}):
+        assert not classify_bridge_connections(bridge, service)["accepted"], bridge
+
+
 def test_hermes_tui_offline_model_catalog_cache(tmp_path):
     source = os.environ.get("HERMES_E2E_SOURCE")
     interpreter = os.environ.get("HERMES_E2E_PYTHON")
@@ -564,7 +616,8 @@ def test_hermes_tui_offline_model_catalog_cache(tmp_path):
     cache = seed_models_dev_cache(profile)
     with pytest.raises(FileExistsError):
         seed_models_dev_cache(profile)
-    (profile / "config.yaml").write_text(yaml.safe_dump({"model_catalog": {"enabled": False}}), encoding="utf-8")
+    (profile / "config.yaml").write_text(yaml.safe_dump({"model_catalog": {"enabled": False},
+        "auxiliary": {"background_review": {"enabled": False}}}), encoding="utf-8")
     guard_dir = tmp_path / "guard"
     guard_dir.mkdir()
     (guard_dir / "sitecustomize.py").write_text(python_guard_source(), encoding="utf-8")
@@ -576,9 +629,11 @@ def test_hermes_tui_offline_model_catalog_cache(tmp_path):
 assert sys.version_info[:2] == (3, 14)
 from agent.models_dev import fetch_models_dev
 from hermes_cli.model_catalog import get_catalog
+from agent.background_review import load_background_review_settings
 expected=json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
 assert fetch_models_dev() == expected
 assert get_catalog() == {}
+assert load_background_review_settings()[0] is False
 print("fresh native model cache and disabled manifest loaded without network")
 '''
     result = subprocess.run([str(python), "-c", code, str(cache)], env=env, cwd=home / "scratch",
@@ -695,6 +750,7 @@ def test_released_hermes_actual_tui_journey(client, tmp_path):
               "agent": {"api_max_retries": 1}, "fallback_providers": [],
               "platform_toolsets": {"cli": ["hermes-cli"]}, "updates": {"check": False},
               "model_catalog": {"enabled": False},
+              "auxiliary": {"background_review": {"enabled": False}},
               "wake_word": {"enabled": False}, "display": {"compact": True},
               "telemetry": {"shared_metrics": {"enabled": False, "send": False, "offer_version": 2}}}
     (profile / "config.yaml").write_text(yaml.safe_dump(config), encoding="utf-8")
@@ -721,6 +777,7 @@ def test_released_hermes_actual_tui_journey(client, tmp_path):
         assert setup.returncode == 0, setup.stdout + setup.stderr
         installed = yaml.safe_load((profile / "config.yaml").read_text(encoding="utf-8"))
         assert "tool_search" not in installed.get("tools", {}), "setup changed default Tool Search"
+        assert installed["auxiliary"]["background_review"]["enabled"] is False
         assert (profile / "skills" / "pallium-memory" / "SKILL.md").is_file()
         assert installed["plugins"]["enabled"] == ["pallium-hermes-relay"]
         peer = client.post("/relay/turn", json={"runtime": "claude-code", "session_ref": PEER, **SCOPE})
@@ -747,6 +804,7 @@ def test_released_hermes_actual_tui_journey(client, tmp_path):
         assert peer_delivery["sender_session_ref"] == session_id
 
         processes = driver.command("inspect")["processes"]
+        (artifacts / "owned-processes.json").write_text(json.dumps(processes, indent=2), encoding="utf-8")
         bridges = [row for row in processes if "app.mcp.hermes" in row["argv"]]
         assert 1 <= len(bridges) <= 2, processes
         assert all(Path(row["exe"]).resolve() in {Path(sys.executable).resolve(), Path(sys._base_executable).resolve()}
@@ -758,8 +816,9 @@ def test_released_hermes_actual_tui_journey(client, tmp_path):
         assert args[args.index("--container-ref") + 1] == SCOPE["container_ref"]
         assert not {"PYTHONPATH", "NODE_OPTIONS", "PALLIUM_TUI_ALLOWED_ENDPOINTS"} & set(bridge["env"])
         assert Path(bridge["env"]["USERPROFILE"]).resolve() == home
-        assert all((c["ip"], c["port"]) == endpoints[0] for c in bridge["connections"])
-        (artifacts / "owned-processes.json").write_text(json.dumps(processes, indent=2), encoding="utf-8")
+        classification = classify_bridge_connections(bridge, endpoints[0])
+        (artifacts / "bridge-connections.json").write_text(json.dumps(classification, indent=2), encoding="utf-8")
+        assert classification["accepted"], classification
 
         for payload in (NO_REPLY, REPLY):
             message = client.post("/relay/messages", json={"sender_runtime": "claude-code", "sender_session_ref": PEER,
@@ -827,6 +886,7 @@ def test_released_hermes_actual_tui_journey(client, tmp_path):
                 server.shutdown()
                 server.server_close()
             (artifacts / "provider.json").write_text(json.dumps(provider.requests, ensure_ascii=False, indent=2), encoding="utf-8")
+            outcome["server_errors"] = server_errors
             (artifacts / "http.json").write_text(json.dumps(forwarded, ensure_ascii=False, indent=2), encoding="utf-8")
             try:
                 verify_source(source, os.environ["HERMES_TUI_BUNDLE_SHA256"])

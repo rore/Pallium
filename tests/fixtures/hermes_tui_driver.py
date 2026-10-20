@@ -28,6 +28,39 @@ def seed_models_dev_cache(profile: Path) -> Path:
     return path
 
 
+def classify_bridge_connections(bridge: dict, service_endpoint: tuple[str, int]) -> dict:
+    """Classify one identity-verified process snapshot; never pool connections across PIDs."""
+    if not isinstance(bridge, dict):
+        return {"pid": None, "accepted": False, "reason": "invalid_bridge_snapshot", "connections": []}
+    pid, connections = bridge.get("pid"), bridge.get("connections")
+    if type(pid) is not int or pid <= 0 or not isinstance(connections, list) or not connections:
+        return {"pid": pid, "accepted": False, "reason": "invalid_bridge_snapshot", "connections": []}
+
+    def local_tcp(row):
+        return (isinstance(row, dict) and row.get("family") == "AF_INET"
+                and row.get("type") == "SOCK_STREAM" and row.get("status") == "ESTABLISHED"
+                and row.get("local_ip") == row.get("ip") == "127.0.0.1"
+                and all(type(row.get(key)) is int and 1 <= row[key] <= 65535 for key in ("local_port", "port")))
+
+    classified = []
+    for index, row in enumerate(connections):
+        reason, peer = "rejected_socket", None
+        if local_tcp(row):
+            if (row["ip"], row["port"]) == service_endpoint:
+                reason = "explicit_service_endpoint"
+            elif row["local_port"] != row["port"]:
+                peer = next((other_index for other_index, other in enumerate(connections)
+                             if other_index != index and local_tcp(other)
+                             and (row["local_ip"], row["local_port"], row["ip"], row["port"])
+                             == (other["ip"], other["port"], other["local_ip"], other["local_port"])), None)
+                if peer is not None:
+                    reason = "reciprocal_same_pid_tcp_ipc"
+        classified.append({"connection": row, "accepted": reason != "rejected_socket", "reason": reason,
+                           "peer_index": peer})
+    return {"pid": pid, "expected_service_endpoint": service_endpoint,
+            "accepted": all(row["accepted"] for row in classified), "connections": classified}
+
+
 def python_guard_source() -> str:
     return '''import json, os, socket, threading
 
@@ -398,7 +431,10 @@ class OwnedTree:
                 if proc.create_time() == birth and str(Path(proc.exe()).resolve()) == executable:
                     rows.append({"pid": pid, "birthtime": birth, "exe": executable,
                                  "argv": proc.cmdline(), "env": proc.environ(),
-                                 "connections": [{"ip": c.raddr.ip, "port": c.raddr.port}
+                                 "connections": [{"ip": c.raddr.ip, "port": c.raddr.port,
+                                                  "local_ip": c.laddr.ip, "local_port": c.laddr.port,
+                                                  "family": c.family.name, "type": c.type.name,
+                                                  "status": c.status}
                                                  for c in proc.net_connections() if c.raddr]})
             except self.psutil.NoSuchProcess:
                 pass
