@@ -3612,3 +3612,8 @@ Plan boundary: completed FIRST replacement attempt and real cleanup, followed by
 ### Service-gone plan review GO — 2026-10-20
 
 Independent nonimplementer /root/opencode297_resume_plan_review accepted the first-attempt cleanup plan with two constraints: super()._finish catches disposal exceptions, so the exact replacement must have disposal count1, no unresolved state and _restart_allowed before completion is signaled; a stop-gate timeout records False and returns normally, because an exception inside _finish could trigger repeated cleanup. Post-protocol gate-release assertion remains mandatory. Root adopted this exact boundary under the existing human task. Source edit has not begun; all prior failed evidence remains failed.
+
+
+### Service-gone implementation frozen for actual review — 2026-10-20
+
+Implemented only tests/test_codex_worker_reconnect.py: service-gone ObservedWorker delegates _finish and checks exact second client/disposal1/not unresolved/_restart_allowed before setting completion. It records bounded stop_event wait outcome without throwing, and the exercise waits completion before existing protocol-finally teardown. Post-teardown release must equal[True]; all original2clients/3calls/metadata/disposal assertions remain unchanged. Other denial rows retain their previous wait and behavior. No production, readiness, budget, dependency or installed change. apply_patch succeeded for this edit. No tests executed yet; actual diff and runner review remain required before the single seven-row private cohort.
