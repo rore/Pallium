@@ -1041,13 +1041,24 @@ def test_recovery_terminal_reads_never_release_or_reschedule_inflight(
     assert status(fresh["message_id"])["state"] == "pending"
 
 
-def test_online_close_removes_only_exact_durable_capability_and_intent(tmp_path: Path) -> None:
+def test_online_close_removes_only_exact_durable_capability_and_intent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from itertools import count
+    import core.claude_wake as wake
     from tests.test_claude_wake_registration import _client
 
     registry = ClaudeWakeRegistry(state_dir=tmp_path)
     other = {**PAYLOAD, "session_ref": "other"}
-    assert _register(registry, tmp_path, PAYLOAD, "open")
-    assert _register(registry, tmp_path, other, "other-open")
+    native_time = wake.time
+    private_time = SimpleNamespace(**vars(native_time))
+    private_time.monotonic = count(step=.001).__next__
+    # Setup needs durable identities; lock setup expiry has dedicated coverage.
+    with monkeypatch.context() as setup:
+        setup.setattr(wake, "time", private_time)
+        assert _register(registry, tmp_path, PAYLOAD, "open")
+        assert _register(registry, tmp_path, other, "other-open")
+    assert wake.time is native_time
     closed = {
         "runtime": "claude-code", "session_ref": PAYLOAD["session_ref"],
         "container_ref": PAYLOAD["container_ref"],
