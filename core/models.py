@@ -155,6 +155,7 @@ class MemoryObject:
     # Callers who want to include tombstones in a query pass
     # ``include_soft_deleted=True`` to the storage list methods.
     is_soft_deleted: bool = False
+    origin: str | None = None
 
 
 @dataclass(frozen=True)

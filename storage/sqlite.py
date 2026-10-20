@@ -654,6 +654,7 @@ class SQLiteStorageProvider(
             visibility=memory_object.visibility,
             container_ref=memory_object.container_ref,
             actor_ref=memory_object.actor_ref,
+            origin=memory_object.origin,
             freshness_at=self._normalize_datetime(memory_object.freshness_at) or memory_object.created_at,
             subject=extract_memory_subject(memory_object),
             created_at=memory_object.created_at,
@@ -963,6 +964,7 @@ class SQLiteStorageProvider(
         *,
         new_payload: dict,
         correction_reason: str,
+        index_entries: list[IndexEntry] | None = None,
     ) -> None:
         """In-place correction of a memory (pallium_correct).
 
@@ -979,17 +981,38 @@ class SQLiteStorageProvider(
         Raises KeyError if the memory_object does not exist.
         """
         def _do(session):
-            record = session.get(MemoryObjectRecord, memory_object_id)
-            if record is None:
-                raise KeyError(memory_object_id)
-            if record.lifecycle != "active" or record.superseded_by_id is not None:
+            # Acquire the SQLite writer before checking the active-head
+            # predicate. A service-level read may have raced with a
+            # supersession, so guard the mutation in SQL as well.
+            changed = session.execute(update(MemoryObjectRecord).where(
+                MemoryObjectRecord.id == memory_object_id,
+                MemoryObjectRecord.lifecycle == "active",
+                MemoryObjectRecord.superseded_by_id.is_(None),
+            ).values(
+                payload_json=self._dumps(new_payload) or "{}",
+                correction_reason=correction_reason,
+            )).rowcount
+            if not changed:
+                record = session.get(MemoryObjectRecord, memory_object_id)
+                if record is None:
+                    raise KeyError(memory_object_id)
                 raise SupersessionConflictError(
                     f"cannot correct non-active memory {memory_object_id!r} "
                     f"(lifecycle={record.lifecycle!r}, "
                     f"superseded_by_id={record.superseded_by_id!r})"
                 )
-            record.payload_json = self._dumps(new_payload) or "{}"
-            record.correction_reason = correction_reason
+            if index_entries is not None:
+                self._delete_index_entries_for_target_in_session(session, "memory_object", memory_object_id)
+                for entry in index_entries:
+                    if entry.index_type == "lexical":
+                        self._add_index_entry(session, entry)
+                    else:
+                        session.flush()
+                        try:
+                            with session.begin_nested():
+                                self._add_index_entry(session, entry)
+                        except Exception:  # Vector index remains best-effort.
+                            logger.debug("Memory correction: skipping vector index entry", exc_info=True)
         self._with_retry(_do)
 
     # ── /W3 explicit memory-write methods ────────────────────────────

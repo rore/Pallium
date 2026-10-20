@@ -58,7 +58,7 @@ def matches_filters(
     """
     if target_kind == "memory_object":
         memory_object = get_memory_object(target_id)
-        if memory_object.lifecycle != "active":
+        if memory_object.lifecycle != "active" or memory_object.is_soft_deleted:
             return False
         # Actor-scoped filtering: if query specifies an actor AND the memory
         # has an actor, they must match. Shared memories (actor_ref=null)
@@ -89,6 +89,21 @@ def matches_filters(
         # reaching shared memories through standard retrieval.
         if memory_object.actor_ref is None and memory_filters.actor_ref is not None:
             memory_filters = replace(memory_filters, actor_ref=None)
+        if not evidence and memory_object.origin == "agent_explicit":
+            if (
+                memory_filters.source_type is not None
+                or memory_filters.role is not None
+                or memory_filters.artifact_kind is not None
+                or memory_filters.work_refs
+            ):
+                return False
+            if (
+                memory_filters.container_ref is not None
+                and memory_object.visibility not in ("public", "global")
+                and memory_object.container_ref != memory_filters.container_ref
+            ):
+                return False
+            return True
         return any(evidence_matches_filters(item, memory_filters) for item in evidence)
     return True
 

@@ -484,6 +484,16 @@ class StorageProvider(ABC):
     def get_memory_object(self, memory_object_id: str) -> MemoryObject:
         raise NotImplementedError
 
+    def correct_memory_payload(
+        self,
+        memory_object_id: str,
+        *,
+        new_payload: dict,
+        correction_reason: str,
+        index_entries: list[IndexEntry] | None = None,
+    ) -> None:
+        raise NotImplementedError
+
     @abstractmethod
     def list_supersession_successor_ids(self, memory_object_id: str) -> tuple[str, ...]:
         """Return immediate replacement IDs for a memory object."""

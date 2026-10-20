@@ -1840,6 +1840,7 @@ class PalliumService:
             container_ref=container_ref,
             actor_ref=actor_ref,
             visibility=visibility,
+            origin="agent_explicit",
         )
         self._storage.create_memory_object(memory)
         self._storage.mark_memory_origin(
@@ -1872,11 +1873,36 @@ class PalliumService:
         new_payload = dict(existing.payload)
         new_payload["statement"] = corrected_text
         new_payload["source"] = "agent_explicit_correction"
+        old_vector_ids = [
+            entry.id
+            for entry in self._storage.list_index_entries_for_target("memory_object", memory_object_id)
+            if entry.index_type == "vector"
+        ]
+        index_entries = self._explicit_write_index_entries(
+            memory_object_id, existing.type, corrected_text
+        )
         self._storage.correct_memory_payload(
             memory_object_id,
             new_payload=new_payload,
             correction_reason=reason,
+            index_entries=index_entries,
         )
+        vector_index = self._vector_index
+        vector_index_changed = False
+        if vector_index is not None:
+            for entry_id in old_vector_ids:
+                try:
+                    vector_index.remove(entry_id)
+                    vector_index_changed = True
+                except KeyError:
+                    pass
+                except Exception:  # Correction is already committed.
+                    self._logger.warning("Could not remove stale vector entry %s", entry_id, exc_info=True)
+        for entry in index_entries:
+            if entry.index_type == "vector":
+                vector_index_changed |= self._vector_embedder.embed_and_persist_vector_entry(entry)
+        if vector_index_changed:
+            self._vector_embedder.save_vector_index()
         return True
 
     def supersede_memory(
@@ -1932,6 +1958,7 @@ class PalliumService:
             container_ref=container_ref,
             actor_ref=actor_ref,
             visibility=visibility,
+            origin="agent_explicit",
         )
         self._storage.create_explicit_supersession(
             supersedes_id,

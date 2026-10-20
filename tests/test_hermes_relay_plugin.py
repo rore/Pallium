@@ -5,6 +5,7 @@ import importlib.util
 import json
 from pathlib import Path
 import sys
+import threading
 import time
 from types import ModuleType, SimpleNamespace
 
@@ -405,6 +406,281 @@ def _observe_request(ctx, request, *, session="ses_שלום", turn="wake", api_r
         request, lambda _actual: "host context observed", api_request_id=api_request_id,
         session_id=session, turn_id=turn,
     )
+
+
+def _admit_plugin_wake(ctx, marker, turn, session="ses_שלום"):
+    context = ctx.hooks["pre_llm_call"](
+        session_id=session, turn_id=turn, user_message=marker,
+    )["context"]
+    request = {"messages": [{"role": "user", "content": marker + "\n\n" + context}]}
+    _observe_request(ctx, request, session=session, turn=turn, api_request_id="api-" + turn)
+    return request
+
+
+def _persisted_wake(ctx, session="ses_שלום"):
+    return next(value for key, value in ctx.state.values.items()
+                if key.startswith("wake:") and value.get("session_ref") == session)
+
+
+def test_turn_end_retires_admitted_no_reply_wakes_for_successive_deliveries(client, plugin_context):
+    _, create, _ = plugin_context
+    ctx, marker, message = _plugin_wake(client, create)
+    endpoint = message["deliveries"][0]["recipient_endpoint_id"]
+    for index in range(3):
+        turn_id = f"wake-{index}"
+        if index:
+            marker = ctx.injections[index][0]
+        _admit_plugin_wake(ctx, marker, turn_id)
+        if index:
+            ctx.hooks["on_session_end"](session_id="ses_שלום", turn_id=f"wake-{index - 1}")
+            assert _persisted_wake(ctx)["state"] == "admitted"
+        assert status(client, message)["deliveries"][0]["state"] == "delivered"
+        ctx.hooks["on_session_end"](session_id="ses_שלום", turn_id=turn_id)
+        assert _persisted_wake(ctx)["state"] == "complete"
+        assert status(client, message)["deliveries"][0]["state"] == "delivered"
+        if index < 2:
+            message = send(client, endpoint, payload=f"next {index}")
+            _await(lambda: len(ctx.injections) == index + 2)
+
+
+@pytest.mark.parametrize("session,turn", [("ses_שלום", ""), ("other", "wake"), ("ses_שלום", "old")])
+def test_inexact_turn_end_keeps_the_admitted_wake(client, plugin_context, session, turn):
+    _, create, _ = plugin_context
+    ctx, marker, message = _plugin_wake(client, create)
+    _admit_plugin_wake(ctx, marker, "wake")
+    ctx.hooks["on_session_end"](session_id=session, turn_id=turn)
+    assert _persisted_wake(ctx)["state"] == "admitted"
+    assert status(client, message)["deliveries"][0]["state"] == "delivered"
+    ctx.hooks["on_session_end"](session_id="ses_שלום", turn_id="wake")
+    ctx.hooks["on_session_end"](session_id="ses_שלום", turn_id="wake")
+    assert _persisted_wake(ctx)["state"] == "complete"
+
+
+def test_turn_end_is_scoped_to_one_of_two_hermes_sessions(client, plugin_context):
+    _, create, _ = plugin_context
+    ctx, marker_a, message_a = _plugin_wake(client, create)
+    ctx.hooks["pre_llm_call"](session_id="ses_two", turn_id="seed", user_message="seed")
+    sessions = client.get("/relay/sessions", params={"runtime": "hermes", **SCOPE}).json()
+    endpoint_b = next(row["endpoint_id"] for row in sessions if row["session_ref"] == "ses_two")
+    message_b = send(client, endpoint_b, payload="second session")
+    _await(lambda: len(ctx.injections) == 2)
+    marker_b = ctx.injections[1][0]
+    _admit_plugin_wake(ctx, marker_a, "turn-a")
+    _admit_plugin_wake(ctx, marker_b, "turn-b", session="ses_two")
+    ctx.hooks["on_session_end"](session_id="ses_שלום", turn_id="turn-a")
+    assert _persisted_wake(ctx)["state"] == "complete"
+    assert _persisted_wake(ctx, "ses_two")["state"] == "admitted"
+    assert status(client, message_a)["deliveries"][0]["state"] == "delivered"
+    assert status(client, message_b)["deliveries"][0]["state"] == "delivered"
+    ctx.hooks["on_session_end"](session_id="ses_two", turn_id="turn-b")
+    assert _persisted_wake(ctx, "ses_two")["state"] == "complete"
+
+
+def test_late_direct_reply_cannot_replace_a_new_admitted_wake(client, plugin_context, monkeypatch):
+    module, create, _ = plugin_context
+    ctx, marker, first = _plugin_wake(client, create)
+    _admit_plugin_wake(ctx, marker, "turn-a")
+    entered, release = threading.Event(), threading.Event()
+    original = module._json_request
+
+    def delayed_reply(base, method, path, **kwargs):
+        result = original(base, method, path, **kwargs)
+        if path == "/relay/replies":
+            entered.set()
+            assert release.wait(3)
+        return result
+
+    monkeypatch.setattr(module, "_json_request", delayed_reply)
+    args = {"delivery_id": first["deliveries"][0]["delivery_id"], "payload": "late reply"}
+    outcome = []
+    worker = threading.Thread(target=lambda: outcome.append(
+        _plugin_reply(ctx, args, session_id="ses_שלום", turn_id="turn-a")))
+    worker.start()
+    assert entered.wait(3)
+    ctx.hooks["on_session_end"](session_id="ses_שלום", turn_id="turn-a")
+    endpoint = first["deliveries"][0]["recipient_endpoint_id"]
+    second = send(client, endpoint, payload="second delivery")
+    _await(lambda: len(ctx.injections) == 2)
+    second_marker = ctx.injections[1][0]
+    _admit_plugin_wake(ctx, second_marker, "turn-b")
+    assert _persisted_wake(ctx)["state"] == "admitted"
+    release.set()
+    worker.join(3)
+    assert not worker.is_alive()
+    assert "turn changed" in outcome[0]
+    assert _persisted_wake(ctx)["delivery_id"] == second["deliveries"][0]["delivery_id"]
+    assert _persisted_wake(ctx)["state"] == "admitted"
+    assert status(client, second)["deliveries"][0]["state"] == "delivered"
+
+
+def test_late_mcp_reply_cannot_replace_a_new_admitted_wake(client, plugin_context, mcp_plugin_context, monkeypatch):
+    module = plugin_context[0]
+    create, _, _ = mcp_plugin_context
+    bridge_type = sys.modules[module.__name__ + ".mcp_bridge"].RelayMcpBridge
+    original = bridge_type.call
+    entered, release = threading.Event(), threading.Event()
+
+    def delayed_reply(self, name, arguments, identity, reply=None):
+        result = original(self, name, arguments, identity, reply)
+        if name == "pallium_relay_reply":
+            entered.set()
+            assert release.wait(3)
+        return result
+
+    monkeypatch.setattr(bridge_type, "call", delayed_reply)
+    ctx, marker, first = _plugin_wake(client, create)
+    _admit_plugin_wake(ctx, marker, "turn-a")
+    args = {"delivery_id": first["deliveries"][0]["delivery_id"], "message": "late MCP reply"}
+    outcome = []
+    worker = threading.Thread(target=lambda: outcome.append(
+        _mcp_tool(ctx, "pallium_relay_reply", args, session="ses_שלום", turn="turn-a")))
+    worker.start()
+    assert entered.wait(3)
+    ctx.hooks["on_session_end"](session_id="ses_שלום", turn_id="turn-a")
+    endpoint = first["deliveries"][0]["recipient_endpoint_id"]
+    second = send(client, endpoint, payload="second MCP delivery")
+    _await(lambda: len(ctx.injections) == 2)
+    _admit_plugin_wake(ctx, ctx.injections[1][0], "turn-b")
+    release.set()
+    worker.join(3)
+    assert not worker.is_alive()
+    assert json.loads(outcome[0])["message_id"] == "relay-msg-test"
+    assert _persisted_wake(ctx)["delivery_id"] == second["deliveries"][0]["delivery_id"]
+    assert _persisted_wake(ctx)["state"] == "admitted"
+
+
+def test_late_ack_after_turn_end_keeps_the_uncertain_persisted_fence(client, plugin_context, monkeypatch):
+    module, create, _ = plugin_context
+    ctx, marker, message = _plugin_wake(client, create)
+    context = ctx.hooks["pre_llm_call"](
+        session_id="ses_שלום", turn_id="turn-a", user_message=marker,
+    )["context"]
+    request = {"messages": [{"role": "user", "content": marker + "\n\n" + context}]}
+    entered, release = threading.Event(), threading.Event()
+    original = module._json_request
+
+    def delayed_ack(base, method, path, **kwargs):
+        result = original(base, method, path, **kwargs)
+        if path == "/relay/deliveries/ack":
+            entered.set()
+            assert release.wait(3)
+        return result
+
+    monkeypatch.setattr(module, "_json_request", delayed_ack)
+    worker = threading.Thread(target=lambda: _observe_request(
+        ctx, request, turn="turn-a", api_request_id="api-turn-a"))
+    worker.start()
+    assert entered.wait(3)
+    ctx.hooks["on_session_end"](session_id="ses_שלום", turn_id="turn-a")
+    assert _persisted_wake(ctx)["state"] == "claimed"
+    release.set()
+    worker.join(3)
+    assert not worker.is_alive()
+    assert status(client, message)["deliveries"][0]["state"] == "delivered"
+    assert _persisted_wake(ctx)["state"] == "claimed"
+    assert ctx.hooks["pre_llm_call"](
+        session_id="ses_שלום", turn_id="turn-b", user_message=marker,
+    ) is None
+
+
+def test_stale_end_cannot_unfence_a_late_claim_for_the_current_turn(client, plugin_context, monkeypatch):
+    module, create, _ = plugin_context
+    ctx, marker, message = _plugin_wake(client, create)
+    entered, release = threading.Event(), threading.Event()
+    original = module._json_request
+
+    def delayed_claim(base, method, path, **kwargs):
+        result = original(base, method, path, **kwargs)
+        if path == "/relay/turn" and method == "POST" and kwargs.get("body", {}).get("register_session") is False:
+            entered.set()
+            assert release.wait(3)
+        return result
+
+    monkeypatch.setattr(module, "_json_request", delayed_claim)
+    outcome = []
+    worker = threading.Thread(target=lambda: outcome.append(ctx.hooks["pre_llm_call"](
+        session_id="ses_שלום", turn_id="turn-b", user_message=marker)))
+    worker.start()
+    assert entered.wait(3)
+    assert _persisted_wake(ctx)["state"] == "claim_attempted"
+    ctx.hooks["on_session_end"](session_id="ses_שלום", turn_id="turn-b")
+    ctx.hooks["on_session_end"](session_id="ses_שלום", turn_id="turn-a")
+    assert _persisted_wake(ctx)["state"] == "claim_attempted"
+    assert _persisted_wake(ctx)["turn_id"] == "turn-b"
+    release.set()
+    worker.join(3)
+    assert not worker.is_alive()
+    assert outcome == [None]
+    delivery = status(client, message)["deliveries"][0]
+    assert delivery["state"] == "claimed"
+    assert delivery["delivered_at"] is None
+
+
+@pytest.mark.parametrize("surface", ["direct", "mcp"])
+def test_turn_end_persist_failure_does_not_clear_admitted_state(client, plugin_context, monkeypatch, request, surface):
+    module, create, _ = plugin_context
+    bridge_calls = []
+    if surface == "mcp":
+        create, _, bridge_calls = request.getfixturevalue("mcp_plugin_context")
+    ctx, marker, message = _plugin_wake(client, create)
+    _admit_plugin_wake(ctx, marker, "wake")
+    original = ctx.state.set
+    original_http = module._json_request
+    reply_requests = []
+
+    def observe_reply(base, method, path, **kwargs):
+        if path == "/relay/replies":
+            reply_requests.append(kwargs)
+        return original_http(base, method, path, **kwargs)
+
+    monkeypatch.setattr(module, "_json_request", observe_reply)
+
+    def fail_completion(key, value):
+        if key.startswith("wake:") and value.get("state") == "complete":
+            raise OSError("state unavailable")
+        original(key, value)
+
+    monkeypatch.setattr(ctx.state, "set", fail_completion)
+    with pytest.raises(OSError, match="state unavailable"):
+        ctx.hooks["on_session_end"](session_id="ses_שלום", turn_id="wake")
+    assert _persisted_wake(ctx)["state"] == "admitted"
+    assert status(client, message)["deliveries"][0]["state"] == "delivered"
+    delivery_id = message["deliveries"][0]["delivery_id"]
+    if surface == "mcp":
+        result = _mcp_tool(ctx, "pallium_relay_reply", {"delivery_id": delivery_id, "message": "ended reply"},
+                           session="ses_שלום", turn="wake")
+        assert "error" in json.loads(result)
+    else:
+        result = _plugin_reply(ctx, {"delivery_id": delivery_id, "payload": "ended reply"},
+                               session_id="ses_שלום", turn_id="wake")
+        assert "refused" in result
+    assert not reply_requests and not bridge_calls
+    monkeypatch.setattr(ctx.state, "set", original)
+    ctx.hooks["on_session_end"](session_id="ses_שלום", turn_id="wake")
+    assert _persisted_wake(ctx)["state"] == "complete"
+
+
+def test_late_refused_injection_cannot_rewrite_a_replaced_wake(client, plugin_context):
+    _, create, _ = plugin_context
+    ctx = create()
+    ctx.hooks["pre_llm_call"](session_id="ses_שלום", turn_id="seed", user_message="seed")
+    endpoint = next(value["endpoint_id"] for key, value in ctx.state.values.items()
+                    if key.startswith("session:") and value["session_ref"] == "ses_שלום")
+    replaced = threading.Event()
+
+    def refuse_after_replacement(_text, **_kwargs):
+        key, wake = next((key, value) for key, value in ctx.state.values.items()
+                         if key.startswith("wake:") and value.get("session_ref") == "ses_שלום")
+        replacement = dict(wake, delivery_id="replacement-delivery", nonce="replacement-nonce")
+        ctx.state.set(key, replacement)
+        replaced.set()
+        return False
+
+    ctx.inject_message = refuse_after_replacement
+    send(client, endpoint)
+    assert replaced.wait(3)
+    assert _persisted_wake(ctx)["delivery_id"] == "replacement-delivery"
+    assert _persisted_wake(ctx)["state"] == "injection_attempted"
 
 
 @pytest.mark.parametrize("failure", [

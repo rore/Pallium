@@ -184,7 +184,7 @@ def register(ctx):
         raise ValueError("Configure an explicit loopback service_url and exact container_ref")
     lock, stop = threading.RLock(), threading.Event()
     reply_identity = contextvars.ContextVar("pallium_hermes_reply_identity", default=None)
-    sessions, claims, admitted, observed_requests = {}, {}, {}, {}
+    sessions, claims, admitted, observed_requests, ended_turns = {}, {}, {}, {}, {}
     poller = None
     bridge = None
     if topology_signature[2] is not None:
@@ -228,6 +228,23 @@ def register(ctx):
             return value
         return None
 
+    def same_wake(left, right):
+        fields = ("profile", "container_ref", "session_ref", "endpoint_id", "delivery_id", "nonce", "turn_id")
+        return isinstance(left, dict) and isinstance(right, dict) and all(
+            left.get(field) == right.get(field) for field in fields
+        )
+
+    def clear_wake(session_id, wake):
+        claim = claims.get(session_id)
+        if claim and same_wake(claim.get("wake"), wake):
+            claims.pop(session_id, None)
+        current = admitted.get(session_id)
+        if current and same_wake(current.get("wake"), wake):
+            admitted.pop(session_id, None)
+        observation = observed_requests.get(session_id)
+        if observation and observation[0] == wake.get("turn_id") and observation[2] == wake.get("delivery_id"):
+            observed_requests.pop(session_id, None)
+
     def active(session, session_id, endpoint):
         return (isinstance(session, dict) and session.get("runtime") == RUNTIME
                 and session.get("session_ref") == session_id and session.get("container_ref") == container
@@ -250,8 +267,8 @@ def register(ctx):
             return None
         record = {"profile": profile, "container_ref": container,
                   "session_ref": session_id, "endpoint_id": session["endpoint_id"]}
-        state.set(key("session", session_id), record)
         with lock:
+            state.set(key("session", session_id), record)
             sessions[session_id] = record
         return record
 
@@ -265,19 +282,28 @@ def register(ctx):
                 or candidate.get("recipient_endpoint_id") != record["endpoint_id"]
                 or not _text(candidate.get("delivery_id"), 64)):
             return
-        old = wake_scope(session_id)
-        if old and (old.get("delivery_id") == candidate["delivery_id"] or old.get("state") != "complete"):
-            return
         nonce = secrets.token_urlsafe(18)
         wake = {"profile": profile, "container_ref": container, "session_ref": session_id,
                 "endpoint_id": record["endpoint_id"], "delivery_id": candidate["delivery_id"],
                 "nonce": nonce, "state": "injection_attempted"}
-        state.set(key("wake", session_id), wake)  # persist metadata fence before enqueue
+        with lock:
+            current_record = scope(session_id)
+            old = wake_scope(session_id)
+            if (not profile_ok() or not current_record or current_record != record
+                    or (old and (old.get("delivery_id") == candidate["delivery_id"]
+                                 or old.get("state") != "complete"))):
+                return
+            state.set(key("wake", session_id), wake)  # persist metadata fence before enqueue
+            if old:
+                clear_wake(session_id, old)
         if profile_ok() and not ctx.inject_message(
                 _marker(wake["delivery_id"], nonce), role="user", session_key=session_id):
-            wake["state"] = "injection_refused"
-            state.set(key("wake", session_id), wake)
-            LOG.warning("Hermes refused Relay wake marker for session %s", session_id)
+            with lock:
+                current = wake_scope(session_id)
+                if (profile_ok() and current and same_wake(current, wake)
+                        and current.get("state") == "injection_attempted"):
+                    state.set(key("wake", session_id), dict(current, state="injection_refused"))
+                    LOG.warning("Hermes refused Relay wake marker for session %s", session_id)
 
     def poll():
         while not stop.wait(POLL_SECONDS):
@@ -302,7 +328,8 @@ def register(ctx):
         if not profile_ok() or not _host_id(session_id) or not _host_id(turn_id):
             return None
         text = user_message if isinstance(user_message, str) else ""
-        wake = wake_scope(session_id)
+        with lock:
+            wake = wake_scope(session_id)
         if wake is None or text != _marker(wake["delivery_id"], wake["nonce"]):
             try:
                 if register_session(session_id):
@@ -324,14 +351,20 @@ def register(ctx):
             return None
         with lock:
             existing = claims.get(session_id)
-        if existing and existing["turn_id"] == turn_id and existing["wake"] == wake:
+            record = scope(session_id)
+        if existing and existing["turn_id"] == turn_id and same_wake(existing["wake"], wake):
             return {"context": existing["rendered"]}
-        record = scope(session_id)
         if (wake.get("state") != "injection_attempted" or not record
                 or wake.get("endpoint_id") != record.get("endpoint_id")):
             return None
-        wake["state"], wake["turn_id"] = "claim_attempted", turn_id
-        state.set(key("wake", session_id), wake)
+        with lock:
+            current = wake_scope(session_id)
+            if (not profile_ok() or not current or not same_wake(current, wake)
+                    or current.get("state") != "injection_attempted"
+                    or ended_turns.get(session_id) == turn_id):
+                return None
+            wake = dict(current, state="claim_attempted", turn_id=turn_id)
+            state.set(key("wake", session_id), wake)
         candidate = _json_request(base, "GET", "/relay/pending-candidate", query={
             "runtime": RUNTIME, "session_ref": session_id, "container_ref": container,
         })
@@ -358,9 +391,14 @@ def register(ctx):
         except (TypeError, ValueError):
             LOG.warning("Hermes refused incomplete Relay delivery %s", wake["delivery_id"])
             return None
-        wake["state"] = "claimed"
-        state.set(key("wake", session_id), wake)
         with lock:
+            current = wake_scope(session_id)
+            if (not profile_ok() or not current or not same_wake(current, wake)
+                    or current.get("state") != "claim_attempted"
+                    or ended_turns.get(session_id) == turn_id):
+                return None
+            wake = dict(current, state="claimed")
+            state.set(key("wake", session_id), wake)
             claims[session_id] = {"wake": wake, "turn_id": turn_id,
                                   "delivery": delivery, "rendered": rendered}
         return {"context": rendered}
@@ -408,7 +446,14 @@ def register(ctx):
             return
         observation = (turn_id, api_request_id, delivery["delivery_id"])
         with lock:
-            if observed_requests.get(session_id) == observation:
+            current_wake = wake_scope(session_id)
+            current_claim = claims.get(session_id)
+            current_admission = admitted.get(session_id)
+            if (not profile_ok() or not current_wake or not same_wake(current_wake, wake)
+                    or current_wake.get("state") != "claimed"
+                    or not current_claim or not same_wake(current_claim.get("wake"), wake)
+                    or ended_turns.get(session_id) == turn_id
+                    or current_admission or observed_requests.get(session_id)):
                 return
             observed_requests[session_id] = observation
         try:
@@ -429,13 +474,31 @@ def register(ctx):
                 if observed_requests.get(session_id) == observation:
                     observed_requests.pop(session_id, None)
             return
-        wake["state"] = "admitted"
-        state.set(key("wake", session_id), wake)
         with lock:
+            current_wake = wake_scope(session_id)
+            current_claim = claims.get(session_id)
+            current_admission = admitted.get(session_id)
+            if (not profile_ok() or not current_wake or not same_wake(current_wake, wake)
+                    or current_wake.get("state") != "claimed"
+                    or not current_claim or not same_wake(current_claim.get("wake"), wake)
+                    or current_admission
+                    or ended_turns.get(session_id) == turn_id):
+                if observed_requests.get(session_id) == observation:
+                    observed_requests.pop(session_id, None)
+                return
+            admitted_wake = dict(current_wake, state="admitted")
+            try:
+                state.set(key("wake", session_id), admitted_wake)
+            except Exception:
+                if observed_requests.get(session_id) == observation:
+                    observed_requests.pop(session_id, None)
+                raise
+            claims[session_id]["wake"] = admitted_wake
             admitted[session_id] = {
                 "delivery_id": delivery["delivery_id"], "receipt": delivery["receipt"],
-                "turn_id": turn_id, "wake": wake,
+                "turn_id": turn_id, "wake": admitted_wake,
             }
+            observed_requests.pop(session_id, None)
     def reply(args, session_id="", turn_id="", **_context):
         if not profile_ok():
             return "Relay reply refused: frozen Hermes profile changed."
@@ -460,8 +523,11 @@ def register(ctx):
             return "Relay reply refused: invalid delivery id or oversized payload."
         with lock:
             current = admitted.get(session_id)
+            current = dict(current) if current else None
+            turn_ended = ended_turns.get(session_id) == turn_id
         if (not current or current["turn_id"] != turn_id or current["delivery_id"] != delivery_id
-                or not _text(current.get("receipt"), 512)):
+                or not _text(current.get("receipt"), 512)
+                or turn_ended):
             return "Relay reply refused: no delivery admitted for this host session and turn."
         if not profile_ok():
             return "Relay reply refused: frozen Hermes profile changed."
@@ -473,11 +539,16 @@ def register(ctx):
             return "Relay reply submitted while the Hermes profile changed; verify Relay status."
         if not isinstance(result, dict) or not result.get("message_id"):
             return "Relay reply was not accepted."
-        current["wake"]["state"] = "complete"
-        state.set(key("wake", session_id), current["wake"])
         with lock:
-            admitted.pop(session_id, None)
-            claims.pop(session_id, None)
+            persisted = wake_scope(session_id)
+            latest = admitted.get(session_id)
+            if (not profile_ok() or not persisted or not same_wake(persisted, current["wake"])
+                    or persisted.get("state") != "admitted"
+                    or not latest or not same_wake(latest.get("wake"), current["wake"])
+                    or ended_turns.get(session_id) == turn_id):
+                return "Relay reply submitted; the host turn changed before completion was recorded."
+            state.set(key("wake", session_id), dict(persisted, state="complete"))
+            clear_wake(session_id, persisted)
         return "Relay reply sent."
 
     def tool_execution(tool_name="", args=None, next_call=None, session_id="", turn_id="", **_context):
@@ -521,8 +592,11 @@ def register(ctx):
                 delivery_id, message = args.get("delivery_id"), args.get("message")
                 with lock:
                     current = admitted.get(session_id)
+                    current = dict(current) if current else None
+                    turn_ended = ended_turns.get(session_id) == identity[1]
                 if (not current or current["turn_id"] != identity[1]
                         or current["delivery_id"] != delivery_id
+                        or turn_ended
                         or not _text(current.get("receipt"), 64)
                         or not isinstance(message, str) or not message.strip()
                         or len(message) > MAX_REPLY_CHARS):
@@ -537,11 +611,15 @@ def register(ctx):
                 except (TypeError, ValueError):
                     accepted = None
                 if isinstance(accepted, dict) and accepted.get("message_id"):
-                    current["wake"]["state"] = "complete"
-                    state.set(key("wake", session_id), current["wake"])
                     with lock:
-                        admitted.pop(session_id, None)
-                        claims.pop(session_id, None)
+                        persisted = wake_scope(session_id)
+                        latest = admitted.get(session_id)
+                        if (profile_ok() and persisted and same_wake(persisted, current["wake"])
+                                and persisted.get("state") == "admitted"
+                                and latest and same_wake(latest.get("wake"), current["wake"])
+                                and ended_turns.get(session_id) != identity[1]):
+                            state.set(key("wake", session_id), dict(persisted, state="complete"))
+                            clear_wake(session_id, persisted)
             return result
         return call
 
@@ -610,14 +688,24 @@ def register(ctx):
         except Exception:
             LOG.warning("Hermes History capture unavailable; this snapshot was not confirmed")
 
-    def clear_session(session_id="", **_context):
-        if isinstance(session_id, str):
-            # Hermes calls on_session_end after each completed turn, not when the
-            # durable conversation is closed. Keep it pollable while idle.
-            with lock:
-                claims.pop(session_id, None)
-                admitted.pop(session_id, None)
-                observed_requests.pop(session_id, None)
+    def clear_session(session_id="", turn_id="", **_context):
+        if not _host_id(session_id) or not _host_id(turn_id):
+            return
+        with lock:
+            wake = wake_scope(session_id)
+            claim = claims.get(session_id)
+            if not profile_ok() or not wake or wake.get("turn_id") != turn_id:
+                return
+            ended_turns[session_id] = turn_id
+            if wake.get("state") == "admitted":
+                state.set(key("wake", session_id), dict(wake, state="complete"))
+                clear_wake(session_id, wake)
+            else:
+                if claim and claim.get("turn_id") == turn_id and wake and same_wake(claim.get("wake"), wake):
+                    claims.pop(session_id, None)
+                observation = observed_requests.get(session_id)
+                if observation and observation[0] == turn_id:
+                    observed_requests.pop(session_id, None)
 
     def unload():
         stop.set()
