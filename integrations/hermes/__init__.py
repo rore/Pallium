@@ -1,4 +1,4 @@
-"""Experimental Hermes TUI/gateway Relay adapter using public plugin hooks."""
+"""Experimental Hermes Relay and History adapter using public plugin hooks."""
 from __future__ import annotations
 
 import hashlib
@@ -16,6 +16,7 @@ LOG = logging.getLogger("pallium.hermes")
 RUNTIME, TOOL_NAME = "hermes", "pallium_relay_reply"
 MAX_CONTEXT_CHARS, MAX_PAYLOAD_CHARS, MAX_REPLY_CHARS = 2400, 1600, 2400
 POLL_SECONDS, HTTP_TIMEOUT_SECONDS = 0.25, 1.0
+MAX_HISTORY_CHARS = 20_000
 
 
 class _NoRedirect(HTTPRedirectHandler):
@@ -291,7 +292,9 @@ def register(ctx):
                         }
                         return {"context": "[Pallium scope — " + json.dumps(orientation, ensure_ascii=False)
                                 + "]\nRelay MCP tools bind this conversation automatically. "
-                                "Use the bundled pallium-memory skill. History and memory tools are not qualified in this slice."}
+                                "Use the bundled pallium-memory skill for Relay and Session History. "
+                                "History captures hook-observed text snapshots, not proof of host persistence or delivery. "
+                                "Derived-memory tools are not qualified in this slice."}
             except Exception:
                 LOG.debug("Hermes Relay session registration deferred", exc_info=True)
             return None
@@ -493,6 +496,71 @@ def register(ctx):
             return result
         return call
 
+    def post_llm_call(session_id="", turn_id="", user_message="", assistant_response="",
+                      conversation_history=None, **_context):
+        if (not bridge or not profile_ok() or not _host_id(session_id) or not _host_id(turn_id)
+                or not isinstance(conversation_history, list)):
+            return
+        # Only this callback's current pair; never backfill prior or injected context.
+        user_index = next((i for i in range(len(conversation_history) - 1, -1, -1)
+                           if isinstance(conversation_history[i], dict)
+                           and conversation_history[i].get("role") == "user"), None)
+        if user_index is None or not conversation_history:
+            return
+        user, assistant = conversation_history[user_index], conversation_history[-1]
+        if not isinstance(assistant, dict) or assistant.get("role") != "assistant":
+            return
+        if user.get("content") != user_message or assistant.get("content") != assistant_response:
+            return
+        for row in (user, assistant):
+            if (not _host_id(row.get("message_uid"))
+                    or not _text(row.get("content"), MAX_HISTORY_CHARS)
+                    or not row["content"].strip() or row.get("tool_calls")
+                    or row.get("display_kind") not in (None, "")
+                    or row.get("_merged_turn_prefix") or row.get("_absorbed_message_uids")
+                    or any(row.get(flag) for flag in (
+                        "_interrupt_recovery", "_empty_response_recovery",
+                        "_verification_continuation", "_dropped_toolcall_nudge"))):
+                LOG.debug("Hermes History skipped an unsupported current text pair")
+                return
+        if user["message_uid"] == assistant["message_uid"]:
+            return
+        metadata = {"capture_stage": "post_llm_call", "hermes_turn_id": turn_id}
+        try:
+            refs = _json_request(base, "GET", "/relay/sessions/work-refs", query={
+                "runtime": RUNTIME, "session_ref": session_id, "container_ref": container,
+            })
+            record = scope(session_id)
+            if (record and isinstance(refs, dict)
+                    and active(refs.get("session"), session_id, record["endpoint_id"])
+                    and isinstance(refs.get("work_refs"), list)):
+                keys = [ref["work_ref"] for ref in refs["work_refs"][:20]
+                        if isinstance(ref, dict) and _text(ref.get("work_ref"), 128)]
+                if keys:
+                    metadata["pallium_work_refs"] = keys
+        except Exception:
+            LOG.debug("Hermes History work references unavailable")
+        wake = wake_scope(session_id)
+        synthetic = user_message.startswith("[[PALLIUM_RELAY_WAKE:")
+        if synthetic and (not wake or user_message != _marker(wake["delivery_id"], wake["nonce"])):
+            return
+        rows = []
+        for row in ((assistant,) if synthetic else (user, assistant)):
+            uid = row["message_uid"]
+            source_id = hashlib.sha256((container + "\0" + session_id + "\0" + uid).encode()).hexdigest()
+            rows.append({
+                "source_type": RUNTIME, "source_id": source_id, "content_type": "text/plain",
+                "content": row["content"], "role": row["role"], "artifact_kind": "message",
+                "container_ref": container, "thread_ref": session_id, "agent_ref": RUNTIME,
+                "actor_ref": topology_signature[9], "visibility": "private",
+                "metadata": {**metadata, "hermes_message_uid": uid,
+                             "capture_origin": "relay_wake" if synthetic else "user_turn"},
+            })
+        try:
+            _json_request(base, "POST", "/items", body=rows)
+        except Exception:
+            LOG.warning("Hermes History capture unavailable; this snapshot was not confirmed")
+
     def clear_session(session_id="", **_context):
         if isinstance(session_id, str):
             # Hermes calls on_session_end after each completed turn, not when the
@@ -509,6 +577,7 @@ def register(ctx):
             thread.join(timeout=HTTP_TIMEOUT_SECONDS + 0.5)
 
     ctx.register_hook("pre_llm_call", pre_llm_call)
+    ctx.register_hook("post_llm_call", post_llm_call)
     ctx.register_middleware("llm_execution", llm_execution)
     ctx.register_middleware("tool_execution", tool_execution)
     if bridge:

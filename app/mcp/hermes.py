@@ -33,6 +33,12 @@ HERMES_RELAY_TOOLS = frozenset({
     "pallium_relay_status",
     "pallium_relay_trace",
 })
+HERMES_HISTORY_TOOLS = frozenset({
+    "pallium_search_history",
+    "pallium_search_history_by_work_ref",
+    "pallium_expand_source",
+})
+HERMES_TOOLS = HERMES_RELAY_TOOLS | HERMES_HISTORY_TOOLS
 _META_KEY = "pallium_hermes"
 _MAX_ID_CHARS = 255
 _MAX_RECEIPT_CHARS = 64
@@ -95,15 +101,22 @@ def _validate_arguments(
     context: PalliumContext,
     identity: HermesMcpIdentity,
 ) -> None:
-    for key, expected in (
+    fixed_fields = [
         ("container_ref", context.container_ref),
         ("agent_ref", "hermes"),
         ("thread_ref", identity.session_id),
-        ("actor_ref", context.actor_ref),
         ("visibility", context.visibility),
-    ):
+    ]
+    if tool_name not in HERMES_HISTORY_TOOLS:
+        fixed_fields.append(("actor_ref", context.actor_ref))
+    for key, expected in fixed_fields:
         if key in arguments and arguments[key] is not None and arguments[key] != expected:
             raise ValueError(f"conflicting Hermes {key}")
+
+    if tool_name in HERMES_HISTORY_TOOLS and arguments.get("request_source_item_id") is not None:
+        raise ValueError("request_source_item_id is unavailable for Hermes History")
+    if tool_name == "pallium_expand_source" and arguments.get("include_supported_memories"):
+        raise ValueError("derived-memory expansion is not qualified for Hermes")
 
     identity_pairs = (
         ("sender_runtime", "sender_session_ref"),
@@ -141,7 +154,7 @@ def make_tool_adapter(context: PalliumContext) -> Callable[..., Any]:
         from mcp.server.fastmcp import ToolError
 
     def adapt(tool_name: str, handler: Callable[..., Any], get_context: Callable[[], Any]):
-        if tool_name not in HERMES_RELAY_TOOLS:
+        if tool_name not in HERMES_TOOLS:
             return None
 
         @wraps(handler)
@@ -169,7 +182,7 @@ def make_tool_adapter(context: PalliumContext) -> Callable[..., Any]:
 def create_hermes_server(
     *, base_url: str, container_ref: str, actor_ref: str, visibility: str = "private",
 ):
-    """Create a stdio server with only Relay tools and fixed profile scope."""
+    """Create a stdio server with Relay/History tools and fixed profile scope."""
     if not isinstance(base_url, str) or not base_url.strip() or base_url != base_url.strip():
         raise ValueError("--base-url is required")
     parsed = urlsplit(base_url)

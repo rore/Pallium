@@ -8,15 +8,24 @@ import os
 from pathlib import Path
 import threading
 
-TOOLS = frozenset("pallium_relay_" + name for name in (
+RELAY_TOOLS = frozenset("pallium_relay_" + name for name in (
     "address", "recipients", "discover_recipients", "name", "work_refs",
     "attach_work_ref", "detach_work_ref", "participants", "send", "reply", "status", "trace",
 ))
+HISTORY_TOOLS = frozenset({
+    "pallium_search_history",
+    "pallium_search_history_by_work_ref",
+    "pallium_expand_source",
+})
+TOOLS = RELAY_TOOLS | HISTORY_TOOLS
 HIDDEN = {
     "pallium_relay_send": {"sender_runtime", "sender_session_ref"},
     "pallium_relay_name": {"current_runtime", "current_session_ref"},
     "pallium_relay_reply": {"receipt"},
 }
+for _name in HISTORY_TOOLS:
+    HIDDEN[_name] = {"container_ref", "thread_ref", "visibility", "agent_ref", "request_source_item_id"}
+HIDDEN["pallium_expand_source"].add("include_supported_memories")
 TIMEOUT_SECONDS = 15
 MAX_RESPONSE_CHARS = 24_000
 
@@ -79,6 +88,8 @@ class RelayMcpBridge:
                         schema["required"] = [key for key in schema["required"] if key not in hidden]
                     schema["additionalProperties"] = False
                     description = (tool.description or "") + (
+                        " Hermes supplies trusted conversation identity and fixed private scope; only the listed arguments are accepted."
+                        if tool.name in HISTORY_TOOLS else
                         " Hermes supplies self identity, scope and private receipts; only the listed arguments are accepted."
                         " Incoming delivery is handled by hooks; receive/ACK tools are not exposed.")
                     catalog.append({"name": tool.name, "description": description,
@@ -109,7 +120,19 @@ class RelayMcpBridge:
             return json.dumps({"error": "Pallium MCP is unavailable"})
         session, turn = identity
         values = json.loads(json.dumps(arguments))
-        values["container_ref"] = self.config[1]
+        if name in HISTORY_TOOLS:
+            fixed = {
+                "container_ref": self.config[1],
+                "thread_ref": session,
+                "visibility": self.config[3],
+            }
+            if values.get("request_source_item_id") is not None:
+                return json.dumps({"error": "Pallium History refused a model-supplied current request identity"})
+            if any(key in values and values[key] not in (None, expected) for key, expected in fixed.items()):
+                return json.dumps({"error": "Pallium History refused conflicting conversation scope"})
+            values.update(fixed)
+        else:
+            values["container_ref"] = self.config[1]
         if name == "pallium_relay_send":
             values.update(sender_runtime="hermes", sender_session_ref=session)
         elif name == "pallium_relay_name":

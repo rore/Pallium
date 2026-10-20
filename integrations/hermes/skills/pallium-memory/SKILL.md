@@ -1,11 +1,11 @@
 ---
 name: pallium-memory
-description: Discover Pallium Relay peers, send scoped messages, and handle replies in Hermes.
+description: Coordinate Hermes sessions with Pallium Relay and search governed Session History.
 ---
 
-# Pallium Relay in Hermes
+# Pallium in Hermes
 
-Use Pallium Relay only through the installed `pallium_relay_*` tools. This Hermes package exposes recipient discovery, address/name lookup, work associations, messaging, status and trace. It does not expose Session History or derived-memory tools yet; do not claim those capabilities or substitute raw HTTP calls.
+Use the installed tools for Relay and Session History. This package exposes recipient discovery, address/name lookup, work associations, messaging, status, trace, History search and source expansion. Derived-memory tools remain unavailable; do not substitute raw HTTP calls.
 
 ## Identity and scope
 
@@ -29,4 +29,23 @@ For work-item continuity, load [work associations](references/work-associations.
 
 ## Capability limits
 
-This package does not expose `pallium_search_history`, `pallium_search_history_by_work_ref`, `pallium_expand_source`, memory query/write tools, or the field-feedback submission workflow. Those procedures in other Pallium integrations are unavailable here. Relay work associations do not imply History coverage, task ownership, memory access, or completion.
+Use `pallium_search_history` for broad topic search. Use
+`pallium_search_history_by_work_ref` only with an exact known work reference; never
+guess one. Exact work can miss captures whose association lookup failed, so broaden
+when needed. Omit `actor_ref` and `source_thread_ref` unless an exact historical
+filter is intended; neither selects your current identity.
+
+Expand a promising hit with `pallium_expand_source`, copying its `source_item_id`
+and the search page's `lookup_event_id` as `parent_lookup_id`. Continue pages with
+returned offsets and unchanged revisions. Follow the [History replay procedure](references/history-replay.md)
+for delivered-page tracking, bounded retries and revision revalidation.
+The bridge supplies current scope. There is no injected current
+`request_source_item_id` in this completion-hook slice; omit it rather than guess.
+
+History sources are private, hook-observed current text snapshots, not proof of
+Hermes transcript commit, delivery, approval or current live state. Verify live
+facts separately. Capture skips unsupported or oversized rows and interrupted
+turns without a completion hook; it excludes synthetic wake user markers and
+labels observed wake assistant responses. Work associations do not prove complete
+History coverage, ownership or completion. This package exposes no memory
+query/write tools, source-forget tool or field-feedback submission workflow.
