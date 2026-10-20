@@ -27,6 +27,18 @@ Native multi-step/tool-plus-text and reload -> released isolated binary with loc
 **State:** Blocked or returned to planning
 <!-- agent-workflow:end -->
 
+## Resume after PR297 merge (2026-10-20)
+
+Owner remains @pal-dev1. Manager forwarded the human directive "stop asking me, just get this done" and authorized ordinary current-main reconciliation, publication, coherent qualification and conditional merge after required gates and fresh independent review. No installed environment change is authorized. The original managed checkout directory was missing while its existing branch survived at `05a11db0f566c93138e1d129e109db85e08fb340`; rehydrated that same original path/branch with native Git. The app attachment could not re-register the Git-created checkout; repository work continues without changing app/runtime configuration.
+
+Current actual main is PR297 merge `178fea16e36946ffed68fb4bdd93da76056d5f73`. This supersedes historical statements that PR297 is open; immutable original requirements and past evidence remain retained. Existing OC-3 implementation and accepted capture contract are unchanged. No independent owner is editing this branch. Canonical reliability roadmap remains manager-owned in C:/Dev/rore/Pallium; no shared roadmap edits here. Scoped Pallium work-ref lookup is unavailable without an injected container_ref, so no scope is guessed or attachment claimed.
+
+Risk stays Elevated / Moderate: gray OpenCode plugin/docs, blue existing caller/native tests and Work Record; no new imports across application layers, API/schema/backend, protected contracts, governance or installed environment edits. Resume plan review is pending before the source merge.
+
+Resume plan: invoke Agent Workflow and resolve existing `agent-workflow:opencode-capture-idempotence` before source edits; normally merge actual main without rebase/force push. Preserve PR297's initial directory ownership check, per-session probe retirement and disposal fences together with this PR's stable scoped completed-snapshot identity, captured reservation Set and strict current-lifetime receipt handling. Git's preliminary merge reports only two conflict blocks in tests/test_opencode_native_wake_e2e.py: retain both lost-response capture state and assistant_outputs; use the provider's assistant_marker except that default compaction emits its validated summary template. Preserve natural/automatic foreign-History marker assertions and all accepted exact receipt/idempotence tests. Inspect automatic plugin/test merges, add only an uncovered interaction regression if necessary, and stop on a required contract expansion.
+
+Resume verification: run the affected OpenCode package suite; caller-surface HTTP and isolated released-native tests from the merged native file, reusing copied official binaries and existing private runtime where verified. Recompute the whole-change selector and run the required full local non-slow lane once on the coherent frozen source, plus import/workflow/Redline checks. Preserve any failure and investigate rather than rerun blindly; no redundant old-base full. Independent source/result and adequacy review precede publication. Normal publication CI and fresh exact-head/main/review-thread checks precede the already-authorized merge. Reuse earlier evidence only for content that still matches; historical failures and unsupported-version/installed limits stay explicit.
+
 ## Implementation
 
 - Created isolated managed branch `feat/opencode-capture-idempotence` at e9eb3956, invoked Agent Workflow and classified full intent before source edits. No application/test change.
