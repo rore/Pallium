@@ -52,15 +52,29 @@
 
 2026-10-20: Reviewer narrowly confirmed the fixes at 9e024dd3 and approved focused testing. One externally 180-second-capped invocation of the new file plus tests/test_dashboard.py exited 1 in 31.7 seconds with 123 setup errors: pytest could not create its numbered temporary directory in sandbox AppData after ten attempts. No application assertions were reached; no rerun or broad suite was started. Evidence preserved below. Returned the test-infrastructure blocker and a proposed fresh worktree-local --basetemp/TEMP/TMP run to root for disposition. Completion wording now explicitly describes caller-side complete saved-scan comparison; equivalent clarification is ledgered without rewriting baseline.
 
+2026-10-20: Root explicitly authorized exactly one setup recovery on unchanged 9e024dd3 product/test sources: same two files/-q/-n0 and 180-second cap, new unique precreated worktree-local --basetemp and child-only TEMP/TMP, resolved containment verified, separate log/JUnit/metadata. Dispatched the bounded recovery; no broad suite or source change. If assertions fail, classify and stop before fixes/reruns; if passing, independent actual-result review precedes qualification planning.
+
+2026-10-20: Authorized recovery returned UNKNOWN/incomplete. Worker used Start-Process -PassThru plus Wait-Process -Timeout 180 rather than the explicitly requested Python Popen timeout runner. functions.exec returned after about 30.7 seconds without observable PID/session/cell/exit metadata; requested monitor completion and owned-tree timeout enforcement were not established. Preserved stdout contains only 63 E progress markers, stderr is empty, no JUnit exists, and result metadata has null exit/timedout/elapsed/start. No assertion failure can be classified. No repeat run, source fix, or broad qualification was performed. Independent evidence review confirmed insufficiency. Reported this concrete delegation/execution-contract failure and smallest correction (use an already-qualified bounded runner) to root; the application is not validated.
+
 ## Evidence
 
 Prior read-only live evidence: C:/Dev/rore/Pallium/build/relay-retention-20261020-evidence/artifact-manifest.json. Captured before implementation; this evidence is not application validation.
 
 Focused attempt at source revision 9e024dd383fc8de10a8497903a26b8d33f5d4e03: python -m pytest tests/test_relay_operational_preview_e2e.py tests/test_dashboard.py -q -n 0 --junitxml=build/relay-preview-focused.xml. Start 2026-10-20T17:46:28.2470793Z; end 17:46:59.9617201Z; exit 1; no timeout. All 123 errors are setup failures before application assertions. Paths: build/relay-preview-focused.log, .stderr.log, .json, .xml. Root notified; no retry or broad suite.
 
+Authorized setup recovery evidence: build/focused-recovery-fe00ea2a05a7493c99de0e0e73e1d556/metadata.json, stdout.log, stderr.log; junit.xml was requested but absent. Fresh contained pytest-base/child-temp paths were created before launch and child-only TEMP/TMP/PYTHONPATH were set. Metadata identifies current HEAD 11cabce64410841709dcdde9d4397bf23069df92; only Work Record commits distinguish it from the last application/test source revision 9e024dd3. Actual command/runtime/env details are preserved in metadata; no completion or cap result can be inferred. Earlier setup-failure artifacts remain unchanged.
+
+## Result review
+
+Agent technical review: /root/relay_retention_inventory/preview_plan_review, clean-context non-implementer. Pre-test source/coverage review inspected e3d1d7fc against bb239133; one runtime omission was corrected and explicitly approved at 9e024dd383fc8de10a8497903a26b8d33f5d4e03. Follow-up result-record review inspected only the recovery evidence folder, with no tests/live/source diagnostics.
+
+Reviewed revision: 9e024dd383fc8de10a8497903a26b8d33f5d4e03 for source/fix confirmation; 11cabce64410841709dcdde9d4397bf23069df92 as identified by the incomplete recovery metadata.
+
+Verification adequacy: insufficient. Reviewer found null exit/timedout/elapsed/start metadata, stdout containing only 63 E markers, empty stderr, and no JUnit. These records establish neither application assertion outcomes nor the 180-second cap. No pass, diagnosable application failure, or completed qualification is claimed. Scope/risk remain unchanged. Gate unsatisfied; root must disposition recovery execution before any further run.
+
 ## Recovery
 
-Branch feat/relay-retention-preview; base bb239133a3ae86a37fe9f890beae87772b15f774; application source last changed at 9e024dd383fc8de10a8497903a26b8d33f5d4e03. Next: root dispositions one isolated-temporary-directory recovery of the failed focused run. No automatic rerun/full suite; no application assertions have run. Preserve primary dirty files, installed checkout, PR325 work, and evidence artifacts. This worktree remains owned by relay_retention_inventory for the bounded preview task.
+Branch feat/relay-retention-preview; base bb239133a3ae86a37fe9f890beae87772b15f774; application source last changed at 9e024dd383fc8de10a8497903a26b8d33f5d4e03. Current: authorized setup recovery was incomplete and independently assessed as insufficient. Root notified of exact runner-contract failure; no further run authorized, no source fix indicated by available evidence, no application result. Any later qualification first needs an observable focused result from a qualified runner; only after acceptance select validation with scripts/test-plan.py --base origin/main and plan the required full non-slow suite/workflow/CI checks. Preserve primary dirty files, installed checkout, PR325 work, and evidence artifacts. This worktree remains owned by relay_retention_inventory for the bounded preview task.
 
 ## Proposed contract
 
