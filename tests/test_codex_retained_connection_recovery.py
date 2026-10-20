@@ -479,18 +479,21 @@ def test_reopen_denies_changed_registration_authority(
     elif change == "schema":
         monkeypatch.setattr(bridge, "_DesktopIO", reconnect)
 
+    expected_values = {
+        "recipient_endpoint_id": delivery["recipient_endpoint_id"],
+        "delivery_id": delivery["delivery_id"],
+        "session_ref": TARGET,
+        "container_ref": SCOPE["container_ref"],
+    }
     recover(http_wake)
+    assert len(attempts) == 1
+    attempt, = attempts
+    assert attempt.get("values") == expected_values
     if force_refusal:
-        assert len(attempts) == 1 and attempts[0].get("forced") is True
+        assert attempt.get("forced") is True
+    selected_attempt = attempt
     if _single_typed_transition_refusal(attempts):
-        attempt, = attempts
         assert attempt.get("acquisition_stage") == "retry_exhausted"
-        assert attempt.get("values") == {
-            "recipient_endpoint_id": delivery["recipient_endpoint_id"],
-            "delivery_id": delivery["delivery_id"],
-            "session_ref": TARGET,
-            "container_ref": SCOPE["container_ref"],
-        }
         assert not reopen_entries
         assert service.retained_registration is original_registration
         assert service.retained_registration == original_fields
@@ -505,8 +508,11 @@ def test_reopen_denies_changed_registration_authority(
         assert pending["delivery_id"] == delivery["delivery_id"]
         assert pending["state"] == "pending" and pending["attempts"] == 0
         recover(http_wake)
-        assert reopen_entries, "second ordinary sweep did not enter the original reopen"
-
+        assert len(attempts) == 2
+        selected_attempt = attempts[1]
+        assert selected_attempt.get("values") == expected_values
+    assert "error_type" not in selected_attempt
+    assert selected_attempt.get("result") is not None
     assert reopen_entries, "recovery did not enter the original reopen"
     assert service.retained_registration is None
     assert not any(desktop.owners for desktop in natives)
