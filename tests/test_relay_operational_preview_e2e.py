@@ -33,7 +33,6 @@ def preview(tmp_path, monkeypatch):
         def now(cls, tz=None):
             return NOW if tz is not None else NOW.replace(tzinfo=None)
 
-    monkeypatch.setattr("app.dashboard.datetime", Clock)
     from storage import sqlite_relay
     original_now = sqlite_relay._now
     monkeypatch.setattr(sqlite_relay, "_now", lambda value=None: original_now(value) if value is not None else NOW)
@@ -44,6 +43,7 @@ def preview(tmp_path, monkeypatch):
     app.state.pallium_service = service
     app.include_router(create_router(service, relay_service=relay))
     mount_dashboard(app, relay_service=relay, codex_wake_registry=CodexWakeRegistry())
+    monkeypatch.setattr("app.dashboard.datetime", Clock)
     try:
         with TestClient(app) as client:
             yield client, storage
