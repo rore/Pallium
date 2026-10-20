@@ -7,8 +7,11 @@ candidate `973f21902168bb81ef2fdc7fe629cecad836ff27`. It failed four native case
 after 30 helper checks passed; the second release was cancelled by fail-fast.
 Evidence showed initial real UI/skill/Relay/wake progress, followed by fixture
 scope matching, metadata-response and Desktop-control readiness failures.
-Those partial observations do not qualify the full integration. One approved
-native run remains; reviewed harness corrections precede its dispatch.
+Those partial observations do not qualify the full integration. The final approved
+run [39483789032](https://github.com/rore/Pallium/actions/runs/39483789032) is testing
+reviewed candidate `91ffe1ad3158786f922c57ba5ed11e024cad9390` after full CI passed.
+Both authorized runs are allocated; no additional dispatch or rerun is authorized.
+Its native result remains pending.
 Hermes remains experimental. This approval excludes local recovery and everyday
 installation or rollout.
 

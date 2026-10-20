@@ -161,9 +161,12 @@ omitting it retains the bounded container partition.
 Current native gateway wake qualification passed on v0.22.0 and v0.22.2 with
 disposable local-provider profiles and loopback stubs. These checks do not
 establish actual Desktop or TUI interaction.
-The TUI smoke exercised only the framework without Pallium. Ordinary provider
-formats, default Tool Search and plugin coexistence remain unqualified. A focused
-host journey requires an isolated Hermes environment:
+Hosted native run [39474582150](https://github.com/rore/Pallium/actions/runs/39474582150)
+failed all four required Desktop/TUI journeys after reaching actual UI, skill,
+default Tool Search, Relay and wake stages. No complete native journey has passed.
+Ordinary-provider behavior, complete default Tool Search journeys and plugin
+coexistence remain unqualified. A focused gateway journey requires an isolated
+Hermes environment:
 
 ```powershell
 $env:HERMES_E2E_SOURCE = 'C:\path\to\pinned\hermes-agent'

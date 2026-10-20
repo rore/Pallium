@@ -56,9 +56,9 @@ in its current form, but setup and behavior still have rough edges.
 
 ## Current status
 
-The [Hermes integration](docs/hermes-integration.md) is experimental. Earlier
-source snapshots have gateway Relay and Session History proof on two released
-Hermes versions; that evidence does not qualify current source. Actual
+The [Hermes integration](docs/hermes-integration.md) is experimental. Current
+source has gateway Relay and Session History proof on Hermes v0.22.0 and v0.22.2;
+that evidence does not qualify a complete native journey. Actual
 Desktop/TUI, ordinary configuration, optional memory and recovery qualification
 remain open. It is not included in the supported delivery guarantees below.
 
