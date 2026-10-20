@@ -27,11 +27,17 @@ Created an isolated managed checkout from origin/main at 1b1444c699ac3c2d42bc872
 
 Implemented the six-file prose change after plan review. Removed the same-flow detach limitation and duplicated Minimap detach instructions. No roadmap state change: the existing shipped association feature remains shipped; this clarifies its agent guidance rather than reopening its runtime scope.
 
-The verification selector classifies packaged integration Markdown as full-suite work. The lead explicitly requested no duplicate native full suite; that required validation remains pending the lead's evidence/CI decision. Do not call validation complete or merge on this record alone.
+The verification selector classifies packaged integration Markdown as full-suite work. The delivery pickup attempted the required local full suite once through test execution; it stalled and reached the coordinator's 20-minute cap. Full validation remains incomplete. Do not call validation complete or merge on this record alone.
 
 Trigger 4 dropped: the contradictory participation prose is owned and corrected in Pallium, not Agent Workflow upstream.
 
 ## Evidence
+
+Delivery pickup: the reviewed source commit is e10bb59ebb20edfb3cb3faea2dc7ce4099d7e9ee. A separate Git checkout at C:/Dev/rore/Pallium/build/participation-lifecycle-delivery preserves the original checkout. Publication retains remote branch feat/participation-lifecycle and this Work Record identity; the local delivery branch is feat/participation-lifecycle-delivery. The six source files remain unchanged. Their recorded reference hash is LF-normalized; checkout CRLF bytes differ without changing Git content.
+
+The whole-change selector again selects full validation. Two launches failed before collection because the sandbox default temporary directory was unavailable, then because the isolated build parent did not exist. After creating that parent, C:/Dev/rore/Pallium/.venv/Scripts/python.exe -m pytest tests/ -x -q --basetemp=build/pytest-full started at 2026-10-20T17:17:34+03:00 in the delivery checkout against e10bb59e plus this Work Record prose. It emitted progress below 1% and then stalled. The coordinator imposed a 20-minute cap at 17:37:34; verified owned root PID 38812 and its ten descendants were stopped at 17:37:43 after identity checks. Readback found no owned test processes remaining. No test failure or passing summary was produced. Result: TIMEOUT_INCOMPLETE; no automatic rerun.
+
+Local evidence remains in build/full-suite-state.json, build/full-suite-output.txt, build/full-suite-owned-tree.json, and build/full-suite-terminal.json. Fresh changed-path Redline remains GRAY with no boundary violations, reusing the unchanged import-linter evidence; the existing Work Record check returned clean. Installed behavior and real-use agent adoption remain unverified; no live associations or installed files were changed. Publication was not executed: automatic permission review timed out twice before the Git commit/push command started. The coordinator owns final publication and must disclose the incomplete full-suite gate.
 
 Against 1b1444c699ac3c2d42bc8724f28af7369c54e424 plus this six-file prose diff: byte parity across all three runtime packages and git diff --check pass. Three existing HTTP E2E nodes pass (3 passed in 3.27s): attach_overlap_overflow_detach_and_exact_participants; structural_refresh_is_replace_only_and_failure_does_not_block_turn; alias_transfer_does_not_transfer_associations_and_reopen_retains_them.
 
