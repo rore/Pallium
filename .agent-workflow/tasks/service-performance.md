@@ -2409,7 +2409,7 @@ Agent technical review: /root/architecture_check, clean nonimplementer source/pl
 
 **Exceptions:** None
 
-**State:** Ready to implement
+**State:** Blocked
 <!-- agent-workflow:end -->
 
 ### Final adbc Windows preparation boundaries — pre-edit checkpoint 2026-10-16
@@ -3591,3 +3591,12 @@ Independent actual-diff review required exact single-attempt accounting and succ
 ## Windows3.13 focused evidence (2026-10-20)
 
 Independent actual-diff review initially rejected fallthrough for extra/refused attempts and non-failing runner integrity flags before any test execution. Corrected both in frozen145f205d02b8401c43848a217f2a5d1534bfedc1; independent /root/opencode297_resume_plan_review then approved exact source and runner. First/only focused batch passed all11 cases in9.57s (runner17.016s), exit0: all ten original rows plus deterministic epoch-timeout first-reserve refusal. JUnit reconciliation confirms every case passed with no skips/errors. Raw SHA256736c0171084ee83c5d4313f33df4e3113949f1b3a945cad62ca18348ba6ad7ba; source/head/clean fences held. Evidence build/windows313-retained-recovery-20261020-evidence/focused-{result,junit-reconciliation}.json and focused.log. No production/native-budget/global-clock/installed change. Affected remaining files and required coherent full remain pending; State stays Ready to implement, no hosted failure repaired/physical-cause claim.
+
+
+## Failed coherent local full / qualification hold (2026-10-20)
+
+First and only coherent full on901ba720585e6f25b034ccc28b486ad49fa50d38 failed:1failed3132passed2skipped1xfailed in332.61s; pytest/final exit2, clean/source fences held. Raw SHA25655675b8d9cf44164162b5e1852655a1b77936d5773da0cd51d4fca5d428d1eb9. Node tests/test_cross_container_relay_e2e.py::test_concurrent_first_claim_of_global_alias_has_one_owner_and_one_route failed on the first sender enrollment, HTTP503 relay_busy retryabletrue, duration526ms, acquisition_stagepre_attempt_deadline and unknown phase details. Contender enrollment, concurrent alias claims and owner/routing assertions were not reached. Failed test, conftest and connected backend/configuration equal base1b; this caller does not import the changed retained observer. Independent reviewer confirmed phase/hash/equality and release HOLD; no introduced defect, rollback state, physical or shared cause is established.
+
+Focused11 and affected257 passes remain bounded valid evidence; the interrupted full is not a passing selection. Other observer callers in tests/test_codex_wake_retry_edges.py are unmarked and selected by existing full suites; saved JUnit reconciliation records only actual completed rows. Completed pytestPID45148 has zero sampled direct children; this bounded check does not prove anything about reparented/unrelated processes. No additional test, local full rerun, unrelated alias fixture/source edit, diagnostic, publication or CI action occurred.
+
+Root subsequently conditionally adopted proceeding through final reviewed record-only publication and ONE existing nondiagnostic hosted full on the exact candidate, plus normal automaticPRCI/governance, if actual phase/source/coupling/artifact review clears. Hosted passing full selections must cover the unchanged alias node and remaining shared-observer callers before merge. No local full-pass or physical-cause repair claim; no checker bypass. Current StateBlocked reflects remaining qualification gate; no local retry is authorized. Final artifact/disposition review remains pending. Installed/primary environment unchanged.
