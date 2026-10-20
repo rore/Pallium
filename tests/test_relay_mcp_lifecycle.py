@@ -1124,16 +1124,20 @@ def test_writer_revalidates_after_preflight_snapshot(
 
     monkeypatch.setattr(relay_storage, "_begin_relay_immediate", interleave_then_begin)
     active[0] = True
-    response = _mcp_ack(client, delivery["delivery_id"], delivery["receipt"])
-    assert events == ["read-close", "interleaved", "writer"]
-    if interleaving == "competing-ack":
-        assert response.status_code == 200
-        assert response.json()["already_delivered"] is True
-        expected = "delivered"
-    else:
-        assert response.status_code == 409
-        expected = "claimed" if interleaving == "reclaim" else "expired"
-    active[0] = False
+    try:
+        response = _mcp_ack(client, delivery["delivery_id"], delivery["receipt"])
+        assert events == ["read-close", "interleaved", "writer"]
+        if interleaving == "competing-ack":
+            assert response.status_code == 200
+            assert response.json()["already_delivered"] is True
+            expected = "delivered"
+        else:
+            assert response.status_code == 409
+            expected = "claimed" if interleaving == "reclaim" else "expired"
+    finally:
+        active[0] = False
+        monkeypatch.setattr(relay_storage, "_begin_relay_immediate", begin)
+        monkeypatch.setattr(relay_storage, "_relay_session_factory", factory)
     status = client.get(f"/relay/messages/{message['message_id']}", params=SCOPE)
     assert status.status_code == 200
     row = status.json()["deliveries"][0]
