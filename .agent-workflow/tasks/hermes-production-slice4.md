@@ -4,6 +4,8 @@ Branch: `feat/hermes-production-slice4`; initial main: `2ac9e2b66b9cd72ff7af9e7a
 Owner worktree: `C:\Users\I347041\.codex\worktrees\hermes-production-slice4\Pallium`.
 Canonical item: `roadmap/features/add-hermes-agent-integration.md`.
 
+Current checkpoint, 2026-10-20: user approval unblocked the disposable runner. PR #328 merged as `8cd9302cfd843e6a37c71b05295ac0fc564c9e53` after all required gates passed. Imported only that runner change from main; application code is unchanged. Native manual run 1 of 2 is https://github.com/rore/Pallium/actions/runs/39474582150, created 18:25:22 UTC, executing frozen candidate `973f21902168bb81ef2fdc7fe629cecad836ff27`. Run 2 remains unused. This receipt supersedes earlier approval-blocked/zero-dispatch notes, not their failed evidence. The run is not yet accepted. Whole-feature provider/coexistence/recovery and final documentation gates remain open. Local recovery and everyday rollout remain unapproved.
+
 <!-- agent-workflow:start -->
 **Outcome:**
 Deliver a production-ready Pallium integration for both Hermes Desktop and TUI, reusing the existing Pallium capabilities and remaining compatible across supported Hermes releases rather than one exact version.

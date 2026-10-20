@@ -1,7 +1,11 @@
-# Hermes native qualification proposal
+# Hermes native qualification
 
-Status: proposed. Hermes remains experimental; this document does not authorize a
-workflow change, a test dispatch, installation or local rollout.
+Status: the user approved the disposable runner in PR #328 and at most two manual
+runs, capped at four runner-hours. The runner is merged; the first run is
+[39474582150](https://github.com/rore/Pallium/actions/runs/39474582150), testing
+candidate `973f21902168bb81ef2fdc7fe629cecad836ff27`. Results remain pending.
+Hermes remains experimental. This approval excludes local recovery and everyday
+installation or rollout.
 
 The remaining integration proof needs real Desktop and Ink TUI journeys. Gateway
 RPC tests and test-helper checks establish narrower contracts. The current
@@ -10,7 +14,7 @@ remains authoritative about unqualified behavior.
 
 ## Disposable Windows runner
 
-Propose one manual-only GitHub Actions workflow, with `contents: read`, no
+Use one manual-only GitHub Actions workflow, with `contents: read`, no
 credentials, no publishing, no scheduled runs and no changes to existing CI or
 branch protection. Run releases sequentially with fail-fast cancellation,
 concurrency protection and a 60-minute limit per release. Use only synthetic
@@ -29,7 +33,7 @@ unqualified feature merely to register its test workflow. See
 | v0.22.0 | `e06df9c2eae6901f4c88f464e0ae6e753c0428b8` |
 | v0.22.2 | `d923a5eb487a17c0a68801bba9ef0f56c81040a8` |
 
-Each job would prepare separate Pallium Python 3.13/MCP SDK1 and Hermes Python
+Each job prepares separate Pallium Python 3.13/MCP SDK1 and Hermes Python
 3.14.6/MCP SDK2 environments. Preserve Hermes's Python lock and source workspace
 scripts. Both pinned sources declare uv 0.12.3 in `pm/lock.json`; verify its
 Windows x64 archive hash before executing it from runner temp. Use supported Node
@@ -81,9 +85,9 @@ a Unicode note. Removal must delete only Pallium-owned package entries/files.
 The Desktop adapter uses the owned unpacked executable and a numeric-loopback
 Chromium CDP endpoint; it shares the identity-checked watchdog and cleanup ledger
 with TUI. Mocked adapter checks do not establish Desktop qualification. The full
-native matrix remains unexecuted; the last TUI run failed at session navigation.
+native matrix is running; the last completed TUI run failed at session navigation.
 Python network guards do not confine Electron/Chromium networking, and hosted
 runner environment markers are only accidental-launch guards, not an OS sandbox.
-Adding the manual workflow and running it require explicit scoped approval. Approval for
-that disposable runner would not authorize changing everyday applications,
-services, settings, data, installation or updater behavior.
+The recorded approval covers this disposable runner and its bounded manual runs.
+It does not authorize changing everyday applications, services, settings, data,
+installation or updater behavior.
