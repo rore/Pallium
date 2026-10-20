@@ -1,6 +1,6 @@
 # OpenCode assistant capture idempotence
 
-Owner: @pal-dev1. Canonical item: `roadmap/features/fix-opencode-plugin-reliability.md`, OC-3, in the manager-owned roadmap checkout. Manager owns publication, CI/review/merge and combined rollout. Base: actual PR302 merge `e9eb3956ce4990f9dc15d0a24520f40d67246883`. PR297 ownership guard remains a separate open dependency; do not duplicate it or claim its result here.
+Owner: @pal-dev1. Canonical item: `roadmap/features/fix-opencode-plugin-reliability.md`, OC-3, in the manager-owned C:/Dev/rore/Pallium roadmap checkout. Manager retains the shared roadmap and broader reliability/rollout; current PR306 publication, CI/review and conditional merge are delegated to this existing owner under standing human authorization. No installed rollout is authorized. Original base was PR302 merge `e9eb3956ce4990f9dc15d0a24520f40d67246883`; current normal merge includes actual main/PR297 `178fea16e36946ffed68fb4bdd93da76056d5f73`.
 
 <!-- agent-workflow:start -->
 **Outcome:** Overlapping OpenCode V2 assistant callbacks and retries capture each intended native assistant snapshot once, while failed writes remain retryable and unrelated identities remain distinct.
@@ -24,7 +24,7 @@ Native multi-step/tool-plus-text and reload -> released isolated binary with loc
 **Plan review:** Agent technical review: /root/capture_contract_discovery, approved exact recorded plan at `3f367ef2a8a86fe78dd4e146bfb23d8d089c63d5` within existing best-effort latest-user capture semantics; see Technical plan review below. Elevated/Moderate appropriate. No historical backfill or guarantee every completed native turn is retained. Native prerequisite evidence alone does not approve implementation results.
 **Approvals:** Separate human plan approval not required at Elevated risk; user authorized the remediation. No live deployment authorization in this record.
 **Exceptions:** —
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Resume after PR297 merge (2026-10-20)
@@ -122,3 +122,16 @@ Agent technical review: /root/capture_contract_discovery, independent non-implem
 Reviewed revision: `3f367ef2a8a86fe78dd4e146bfb23d8d089c63d5`.
 Disposition: approved within existing best-effort latest-user capture; Elevated/Moderate. Earlier completed turns overtaken before context read are not backfilled by the existing adapter; completion eligibility introduces no new loss in the qualified delayed-event fixture because existing extraction already returned null. Do not claim all completed turns are retained.
 Verification adequacy: scoped identity/payload resolution once; success only under current ownership/lifetime; finally releases captured Set, not successor Set; distinct persisted receipt IDs plus exact scoped History text/work trace, not successful request count. Successful default compaction, multi-step/tool-plus-text and 2.0.22 completion markers remain required validation. Stop on completed-content mutation, unsupported markers or newly requested tool-only rendering/API semantics.
+
+## Current combined result review (2026-10-20)
+
+Source-qualified revision: `6c892fe41e2aebc5b700971aede39f5592dcab4f`, tree `422124f57e3b21ade66dc9362a15a0fd3caf5c2e`, normally merged from actual main/PR297 `178fea16e36946ffed68fb4bdd93da76056d5f73`. The publication continuation changes this Work Record only; application, tests, integrations, dependencies and governance remain identical. This current disposition supersedes the historical open-PR297/local-full hold statements above without deleting any earlier evidence or claiming their causes fixed.
+
+- Required coherent full local ran once: **7,531 passed, 35 skipped, 2 xfailed**, exit0, 522.27s. Exact command `python -B -X utf8 -m pytest tests/ -x -q --basetemp <private>/f`, repository default four workers/non-slow/importlib. Private CPython3.13.14 runtime; MCP1.29.1 imported successfully; app import resolved to this current checkout. Full raw SHA256 `8973c32c34d91eca5cdd7a6c581bbb165fe265c450bac7a6dc016e764a4be6e1`. Manifest records dependency versions, source tree and uv.lock hash.
+- Feature evidence: package139 passed/7 existing Windows skips; eight unchanged ownership HTTP cases passed before the preserved first native failure; separate production-hook/real-HTTP capture1 passed18.04s; corrected native2.0.24 journey1 passed44.63s. Exact package/test-definition equivalence preserves component evidence across native-fixture/record-only changes. Helper-return race failed at the intended successor-capture assertion without the production check, then passed with it.
+- Native qualification binds the held callback's instance, directory, session and native input to cleanup and successor setup. The callback canceled during cleanup; cleanup finished before explicit body.release. No late-callback execution is claimed. Native assertions verify no stale ACK/injection, public pending readback, lease recovery, one persisted source/receipt across retries, scoped History and both foreign-marker exclusions. Lifecycle/capture evidence exists; `retirement-http.json` is not emitted and is not cited as evidence.
+- Agent technical source/result review: `/root/opencode297_resume_plan_review` approved frozen source and actual combined feature/full results after inspecting raw hashes, selection, imports, source/lock mapping and native lifecycle. No local blocker found. Separate clean-context verification-adequacy review: `/root/pr306_final_coverage_review` approved coverage of completion eligibility/bounds/Unicode, concurrency/failure/reload, identity separation, lifecycle/rebind microtask gap and native exact-instance recovery; no finding.
+- Source/package/HTTP/native artifacts and prior failed fixture attempts remain in `build/pr306-current-main-20261020/`; manifests name retained private artifact paths. The completed owned pytest PID and copied native executable had no matching remaining processes at the post-qualification check. Source working tree remained clean.
+- Current native qualification is isolated official Windows OpenCode2.0.24 only; earlier2.0.22 evidence is historical. Skipped cases, arbitrary versions/platforms and installed behavior remain unqualified. Best-effort latest-user capture, no historical backfill and already-issued-write limits remain unchanged. No installed application/configuration/data/service change occurred.
+
+Fresh whole-change governance, publication-head normal CI, current inline reviews and final main compatibility remain required before the standing-authorized merge. No manual duplicate full matrix or installed deployment is implied. The manager owns canonical roadmap reconciliation; broader OC1/OC4/OC6/OC8 work remains open.
