@@ -8,6 +8,8 @@ On pickup or resume, call `pallium_relay_work_refs` and reconcile the current se
 
 Keep each explicit association throughout its assignment, including ordinary waits. When that assignment ends, is cancelled, or transfers away, call `pallium_relay_detach_work_ref(scope_ref, local_ref)` for its exact current-session explicit origin, even if the feature remains unfinished. Preserve unrelated references and other sessions' links; unknown assignment state is not permission to detach. The API removes only the current session's explicit origin and may report `structural_remains`.
 
+For exact link correction, compare a successful list with the assignment's authoritative exact pair. Detach only a proven erroneous current-session explicit origin not required by another current accepted assignment with `pallium_relay_detach_work_ref(scope_ref, local_ref)`; unknown or structural origins are not correction targets. After successful detachment, attach or reuse the authoritative pair. Preserve active assignments, unrelated references, other sessions' links, and structural origins. If detachment fails, report the limitation and do not claim correction; claim correction only after successful mutation results and readback confirming the authoritative pair is present and the erroneous explicit origin is absent.
+
 Branch and Agent Workflow references are hook-owned structural origins: do not attach explicit duplicates or attempt to detach structural origins manually. Producers refresh them from the current branch and matching Work Record; ending an assignment alone does not clear them while that structural context remains. This procedure does not resolve custom/resumed Work Record discovery gaps.
 
 Invoke each named Pallium MCP operation only when callable; only its successful result is authoritative. This applies to list, attach, detach, participants, and History operations named here. A successful list proves observed state; only a successful mutation proves attachment or detachment. If a required tool is unavailable or fails, or capacity prevents attach, continue ordinary work and report the limitation when relevant. Do not claim success, invent references, use shell/HTTP substitutes, or detach merely because an optional provider is absent.
@@ -20,7 +22,7 @@ In the dashboard, open Relay, select a session, then use Associated work referen
 
 Casual browsing, passive inspection, and clerical edits do not qualify for Minimap participation.
 
-For explicitly assigned Minimap implementation, investigation, testing, or substantive review where exact association or History continuity would help, run the authoritative command and follow the generic workflow above:
+For every accepted explicitly assigned Minimap implementation, investigation, testing, or substantive review, run the authoritative command and follow the generic workflow above:
 
 
 `node <skill>/runtime/cli.js roadmap item-ref <item-id> --repo <absolute-repo-path> --json`

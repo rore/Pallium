@@ -233,6 +233,8 @@ def test_work_association_guidance_is_lazy_aligned_and_safe() -> None:
     generic, minimap = detail.split("## Explicit Minimap workflow", 1)
     assert "## Generic exact-work workflow" in generic
     assert "explicitly assigned Minimap implementation, investigation, testing, or substantive review" in minimap
+    assert "For every accepted explicitly assigned Minimap" in minimap
+    assert "where exact association or History continuity would help" not in minimap
     assert "Casual browsing, passive inspection, and clerical edits do not qualify" in minimap
     assert "node <skill>/runtime/cli.js roadmap item-ref <item-id> --repo <absolute-repo-path> --json" in detail
     assert "returned exact `scope_ref` and `local_ref`" in detail
@@ -281,6 +283,16 @@ def test_work_association_guidance_is_lazy_aligned_and_safe() -> None:
     assert "API removes only the current session's explicit origin" in detail
     assert "may report `structural_remains`" in detail
     assert "or detach merely because an optional provider is absent" in generic
+    for correction_rule in (
+        "For exact link correction, compare a successful list with the assignment's authoritative exact pair",
+        "Detach only a proven erroneous current-session explicit origin not required by another current accepted assignment",
+        "unknown or structural origins are not correction targets",
+        "After successful detachment, attach or reuse the authoritative pair",
+        "Preserve active assignments, unrelated references, other sessions' links, and structural origins",
+        "If detachment fails, report the limitation and do not claim correction",
+        "claim correction only after successful mutation results and readback confirming the authoritative pair is present and the erroneous explicit origin is absent",
+    ):
+        assert correction_rule in generic
     assert "task ownership, activity, acceptance, completion, receipt, or History/memory access" in detail
 def test_field_feedback_guidance_is_lazy_aligned_and_safe() -> None:
     skill_paths = [
