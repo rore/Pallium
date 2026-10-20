@@ -40,6 +40,55 @@ A canonical session can be opened directly with `/dashboard#relay?session=<perce
 
 The graph and list use the same bounded, redacted projection, fixed `until` boundary, and deterministic `(created_at, id)` ordering. Legacy null endpoint IDs remain unresolved. Delivery admission never implies recipient action, and claim tokens or receipts are never exposed.
 
+### Metadata-only operational preview
+
+`GET /dashboard/api/relay/operational-preview` provides operational evidence without
+selecting message bodies, claim tokens, receipts, titles, native references, or
+free-text trace reasons. It has the same service-global dashboard access boundary;
+filters are not authentication. It does not cancel, claim, acknowledge, move, or
+delete deliveries and does not clear old durable pending messages.
+
+The default page contains at most 50 deliveries; `limit` accepts 1–200. Each row
+includes opaque message/delivery/endpoint IDs, creation and expiry, stored and
+effective delivery state, lease classification, recipient state/check-in recency,
+persisted Codex reservation outcome, reply-link facts, and bounded trace metadata.
+Missing entities or evidence remain unknown. A dormant or unreachable recipient
+does not establish abandonment; recorded check-in and reservation state do not
+prove current runtime liveness. A prepared/associated trace without completion
+does not prove an attempt is still running. The latest event and latest completed
+outcome are separate, and pruned/truncated flags never prove complete evidence.
+
+For another page, carry `until`, `trace_through_sequence`,
+`next_before_created_at` as `before_created_at`, and `next_before_id` as `before_id`.
+Pages use descending `(message.created_at, delivery.id)` ordering. Keep the exact
+optional `runtime` (recipient runtime) and `container_ref` (message admission
+container) filters unchanged. The cursor does not bind the filters. Unknown exact
+filters return an empty page; malformed bounds or cursor combinations return 422.
+
+Each response uses one SQLite read snapshot. `until` bounds creation time and the
+trace high-water bounds visible trace events; mutable delivery/recipient/reservation
+state and effective expiry/leases are observed at that page's `observed_at`.
+This is not a frozen snapshot across requests. Backdated inserts, deletions,
+pruning, or database restoration can change membership or make continuity unknown.
+The 200-row limit bounds the response and materialization, not SQLite scan/sort
+work. Existing summary/status endpoints remain the aggregate health view.
+
+Save complete scans on the caller side with their filters, IDs, states, and trace
+boundary. Compare unchanged old pending identities as historical backlog, newly
+observed IDs as new deliveries, and later completed failure evidence as a separate
+evidence change. A deferred outcome alone does not establish a current incident.
+An observed transition to delivered/expired/suppressed is a terminal-state change;
+delivery does not promise a reply or task completion. A later accepted outcome or
+delivered state prevents an older failure from being treated as a current new
+failure. Missing identities, changed filters, partial scans, or pruned evidence
+are unknown, never automatic resolution. Reset the baseline when filters change.
+The endpoint does not store baselines, classify incidents, or schedule monitoring.
+
+This preview supports retention planning without selecting deletion candidates.
+Cleanup windows, post-retention send/reply idempotence, late replies, cancellation,
+reply-graph and wake-fence protection, backup/rollback, and live rollout approval
+remain separate decisions. Future cleanup should use the existing cleaner.
+
 ### Codex scheduling health
 
 `/status` and `/dashboard/api/relay/summary` expose the same additive `relay_wake` projection. The existing Relay Health panel refreshes it through summary only; browser status polling uses `include_relay_wake=false` to avoid a second wake snapshot. Other status callers receive it by default. Reads do not schedule, claim, ACK, retry or change authority.

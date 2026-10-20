@@ -28,11 +28,11 @@
 
 **Plan review:** Agent technical review: clean-context non-implementer /root/relay_retention_inventory/preview_plan_review reviewed a743b9c8541e5832921917b64e97177c98011e7d plus Work Record privacy/snapshot clarifications against bb239133 source. One P1 finding: prepared/associated trace without completion does not establish a live attempt. Corrected to uncompleted-trace/attempt-status-unknown and added explicit E2E coverage. Narrow follow-up reread explicitly approved the corrected plan and exact Verification plan field. Root GO remains pending.
 
-**Approvals:** No separate High-risk approval required at Elevated risk. Root explicitly requires GO after reviewed concrete plan; not received.
+**Approvals:** No separate High-risk approval required at Elevated risk. Root GO received 2026-10-20: "implement exact approved metadata-only operational-preview contract, no destructive/cancellation/scheduler/schema/installed scope." Baseline context is caller-side saved scans, not an endpoint-supplied baseline engine.
 
 **Exceptions:** —
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -40,6 +40,10 @@
 2026-10-20: Invoked Agent Workflow, agent-redline, and Ponytail skills. Created isolated worktree C:/Dev/rore/Pallium/build/relay-retention-preview on feat/relay-retention-preview from bb239133a3ae86a37fe9f890beae87772b15f774. Initial Work Record precedes any code edit. Blocked only for plan completion/review and explicit root GO.
 
 2026-10-20: Current-source discovery and independent plan/privacy review completed. Addressed the one P1 trace-liveness wording/coverage finding; reviewer explicitly approved corrected exact plan on narrow reread. Remaining gate is root GO only. Product code/tests remain untouched.
+
+2026-10-20: Root GO received for the exact approved slice. Implement, obtain independent actual-diff/focused-coverage review, then run one coherent focused check after root test-slot coordination. Full-suite validation waits for focused-result acceptance. Caller-side saved scan comparison remains the baseline mechanism.
+
+2026-10-20: Implemented only app/dashboard.py, tests/test_relay_operational_preview_e2e.py, docs/dashboard.md, and this record. Preview uses one scalar delivery page plus indexed trace sequence projection (at most three SELECT statements) in a real read snapshot, with no ORM entity loads. Missing message rows remain visible with unknown effective eligibility and preserve linked-child count. Added HTTP E2E coverage for the approved edge cases and public Relay create/claim/ACK/reply/close journey. No tests have run yet; independent actual-diff and focused-coverage review is next.
 
 ## Evidence
 
