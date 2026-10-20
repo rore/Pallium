@@ -59,6 +59,7 @@ Agent technical review: /root/history_plan_review, 2026-10-19. Inspected c30d947
 **Approvals:**
 Approved by user 2026-10-19: "ok, let's start slice 3 for session history. keep it isolated from the relay reliability work, use cheaper models where it makes sense, and push the work so we don't lose it."
 This approves the previously discussed History slice and isolated qualification. Live changes remain excluded.
+Approved by user 2026-10-20: "so approved", in direct response to PR #322 being ready for human review with green CI. This authorizes the reviewed repository merge; no live rollout is included.
 
 **Exceptions:**
 —
@@ -82,7 +83,7 @@ First native attempt failed in the extended stub: auxiliary title requests also 
 
 Agent technical review: /root/history_plan_review, 2026-10-19, independent non-implementer. Accepted the full production/caller-surface/native/guidance diff at 269b32ff conditionally on final validation. The only finding was unqualified shared supported-memory expansion; reviewer accepted the five-file narrow correction committed as 016cce03, with no further finding. The guard hides the option and refuses true before HTTP without changing the shared handler.
 Reviewed revision: 016cce03 (269b32ff plus the explicitly inspected correction).
-Verification adequacy: caller-surface hook/HTTP and real stdio tests cover the significant provenance, private scope, redaction, forgetting/replay, work-ref, paging and identity risks; actual released-host later-session search/expand plus retained Relay/lifecycle journey proves the native boundary. Focused correction rerun passed 17 tests in 9.29s. Final package native rerun passed as recorded below. Required full non-slow CI is tracked by the live checks on PR #322, which are authoritative for the latest pushed revision; at this evidence checkpoint those checks are running. Technical acceptance requires their successful completion. Separate human result review remains open; no merge/live rollout is authorized by this record.
+Verification adequacy: caller-surface hook/HTTP and real stdio tests cover the significant provenance, private scope, redaction, forgetting/replay, work-ref, paging and identity risks; actual released-host later-session search/expand plus retained Relay/lifecycle journey proves the native boundary. Focused correction rerun passed 17 tests in 9.29s. Final package native rerun passed as recorded below. Required full non-slow CI is tracked by the live checks on PR #322, which are authoritative for the latest pushed revision; at this evidence checkpoint those checks are running. Technical acceptance requires their successful completion. Human result review and repository merge were approved by the user on 2026-10-20 ("so approved"). The exact reviewed head was merged as recorded below. Live rollout remains excluded.
 
 
 
@@ -108,3 +109,9 @@ Final native qualification: 1 passed in 101.11s against application/package 016c
 Final package SHA-256: plugin c5ba9faec8e57c454cb572e916d49c8a54f26b8c480e247a7138ce4d928cf41a; bridge f6c361447677f3af6a45a32f9ed2203208f6ee3c935a29f1245e228f28fb1d0b; manifest 59d9333fd9963ed7931d023eee82bbec304ff5616601eefde857ed22e4560420; skill f921a2b1a0ddae5d60e78904c39d14d53b04406a5def9816c25047df85fea5db. Installed ownership marker and source agree. No application changes follow this tested/reviewed revision; remaining publication edits are evidence/roadmap metadata only.
 
 Independent review's focused and native conditions are discharged by 17 passed in 9.29s and the final native pass. Full compatible-environment regression and separate human result review remain PR gates. Final CI result is recorded in the owning PR's checks/description rather than triggering a second full suite merely to copy its result into a commit. Task worktree is retained for the open PR; no live rollout or shared checkout synchronization performed.
+
+## Delivery
+
+User result approval: 2026-10-20, "so approved". Verified live before merge: head 3cab415a, base fcea3d1b unchanged, required checks green, zero review threads or actionable findings; independent accepted review/evidence reused for unchanged application 016cce03. Approval was recorded on the owning PR before the guarded merge.
+PR #322 is MERGED at a28eb90dc1f962f4dbdf8afe67af52912016a2e9, provider mergedAt 2026-10-20T09:58:31Z. Feature remains in-progress for optional memory, ordinary provider/Tool Search and recovery qualification. No everyday installation, primary/installed checkout fast-forward, configuration/data migration or service restart was performed.
+This post-merge evidence-only closure is pushed to feat/hermes-history-slice3; the merged PR/checks are the authoritative delivery record. No application change or repeat application test is needed. Task-created worktree can be archived after preserving needed ignored evidence; all source work is pushed and disposable hosts were removed by qualification cleanup.
