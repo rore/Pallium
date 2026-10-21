@@ -10,13 +10,78 @@ lane: integration
 
 ## Summary
 
-Active draft PR #324 extends the experimental Desktop/TUI integration toward
+PR #324 is ready for review of the experimental Desktop/TUI integration toward
 production readiness, including scoped opt-in memory and normal-profile lifecycle
 qualification. Current owner Work Record: `.agent-workflow/tasks/hermes-production-slice4.md`.
-It remains draft and experimental, not
-production-ready support. Public setup, usage, support and limitation documentation
-must match the accepted implementation before completion; native UI/provider,
-optional-memory and recovery qualification remain open.
+The feature remains active and experimental. The two P1 blockers identified at
+`353e8f83` are resolved in runtime `b96a05e1`; clean independent result review
+accepted the fixes and corrected qualification below. Owner public-doc/Work Record
+review is underway separately; human result/release review and PR #324 merge
+remain pending. Earlier withdrawn approvals and failed evidence remain historical.
+
+### Resolved blockers and corrected qualification (2026-10-21)
+
+- [x] **Ordinary-turn liveness:** the stale trusted ordinary-turn `last_seen`
+  defect is corrected using exact endpoint/generation authority and independently
+  accepted caller-surface regressions, including the 24-hour boundary.
+- [x] **Inbound payload and persistent fencing:** full service-bound transport
+  replaces the 1,600-character rendering rejection for valid 1,601–16,000-character
+  input. Accepted lifecycle coverage preserves ambiguous-attempt and duplicate-
+  activation fences while allowing later deliveries, reload and expiry handling.
+
+Clean reviewer `hermes_blockers_clean_result` accepted 197 caller cases and two
+continuation cases on runtime `b96a05e1`. Four actual Linux TUI journeys on both
+pins passed in 115.475/112.384 seconds. Test-only Windows transport successor
+`d5896a24ec3b72c1f23f5323e43ab8d2a06e60ca` passed native
+[39650756737](https://github.com/rore/Pallium/actions/runs/39650756737), attempt 1:
+both jobs succeeded, each with 83 passes and zero failures, errors or skips in
+420.693/394.092 seconds. All eight Desktop/TUI × memory-off/on cells passed full
+16,000-character Unicode payload/default 10,000-character spill, one-claim/ACK,
+later wakes and post-reply context, lifecycle/privacy checks and all 16 cleanup
+receipts. No further execution is needed to establish these accepted results.
+
+Shared Linux 3.13 CI [39650707590](https://github.com/rore/Pallium/actions/runs/39650707590)
+remains **failed** at registration 503/`setup_deadline` (1,949 ms;
+`session_factory` 1,947 ms); the physical cause remains unknown and possible
+availability impact is not excluded.
+Linux 3.12 passed 7,921 cases with 93 skips and two expected failures; Windows
+and governance passed. Native run 14's prelaunch failure and prior reset failures
+remain retained, unexplained and uncured by this later success.
+
+The user explicitly authorized fixing both blockers, adding missing E2E
+regressions, fresh independent review and isolated execution before pushing the
+fixes. The existing High-risk `.agent-workflow/tasks/hermes-production-slice4.md`
+and PR #324 retain ownership. Next gate: complete the owner's final public-doc/Work
+Record review and separate human result/release review before merge. No merge or
+live rollout is approved by these qualification receipts alone.
+
+### Retained Windows short-journey matrix (2026-10-21)
+
+Native [39626758387](https://github.com/rore/Pallium/actions/runs/39626758387),
+attempt 1, completed successfully on exact
+`b3601c79a8269e8a734450c67e9e40c3e330b9fb`. Hermes v0.22.0 and v0.22.2 each
+passed 81 checks with zero failures, errors or skips in 286.507 and 207.914 seconds.
+Independent result review accepted all eight required TUI/Desktop × memory-off/on
+cells across the two releases, including lifecycle, owned cleanup, privacy and
+late audits. A retained second-job rollup still reported in-progress/null despite
+the overall success and complete passing artifacts; that metadata was preserved,
+not rewritten or treated as a reason to repeat execution.
+
+Candidate CI [39626448225](https://github.com/rore/Pallium/actions/runs/39626448225)
+and governance [39626448147](https://github.com/rore/Pallium/actions/runs/39626448147)
+passed. Each Linux Python lane passed 7,793 tests with 93 skips and two expected
+failures, in 373.26 and 499.06 seconds. Reuse the previously accepted four Linux
+TUI cells, Gateway and SDK2 evidence as historical baselines, kept distinct from
+the corrected candidate above. Native runs 11/12 remain failed and their original
+causes unexplained; later passing evidence does not prove those failures cured.
+
+Next: finish owner guide alignment and the remaining result/release review gates
+above before merge. Evidence is Windows Server 2025
+with an unpacked app and synthetic provider; it does not establish Windows 11,
+MSIX/updater behavior, graceful native Quit, automatic standalone MCP reconnect
+or ordinary-provider/model quality. No installed rollout or generic Relay
+reliability repair is claimed. Earlier candidate and attempt-budget checkpoints
+below are historical; use the owner's current Work Records for execution authority.
 
 Ship the full Pallium integration package for Hermes Agent, covering the bundled
 skill and guidance, MCP tools, Relay, Session History capture/search/expansion,
@@ -176,7 +241,7 @@ There is no new forget tool, supported-memory expansion or durable capture retry
 Broader normal-provider, Tool Search, optional-memory and recovery qualification
 remain open. Historical slice-3 Work Record: `.agent-workflow/tasks/hermes-history-slice3.md`.
 
-**Current slice-4 checkpoint, 2026-10-20:** draft [PR #324](https://github.com/rore/Pallium/pull/324)
+**Historical slice-4 checkpoint, 2026-10-20:** draft [PR #324](https://github.com/rore/Pallium/pull/324)
 records tested candidate `b29299499cab10871cafd54e35ffdcdc6402940e`. Required CI
 [39488763099](https://github.com/rore/Pallium/actions/runs/39488763099) and governance
 [39488763028](https://github.com/rore/Pallium/actions/runs/39488763028) passed:
@@ -207,7 +272,7 @@ neither ordinary CI nor these partial results establish native acceptance.
 At that checkpoint all three approved native attempts were consumed; no fourth
 dispatch, job rerun or PR #324 merge was authorized by those receipts.
 
-**Authorization supersession, 2026-10-21:** the root verified the user's subsequent
+**Historical authorization supersession, 2026-10-21:** the root verified the user's subsequent
 authorization following the exact request for up to two additional disposable VM
 attempts within the original four runner hours. Owner authority commit
 `80bb856c8485511a16b2fe46d3efc881f7e5dac2` records a cap of five total attempts:
@@ -221,7 +286,7 @@ This explicitly supersedes the referenced native qualification Work Record's
 historical two-run cap only: it grants no PR #324 merge,
 installed-environment change, paid-provider run or local native execution authority.
 
-**Owner-reported fourth dispatch:** run
+**Historical owner-reported fourth dispatch:** run
 [39557493207](https://github.com/rore/Pallium/actions/runs/39557493207) uses the older
 all-CI-green `f348f00f` candidate for the original eight core journeys only, not
 the new busy-session/current `b50` composition qualification. Four attempts are
@@ -232,8 +297,9 @@ records the owner's report, not an independent attestation of its dispatch gates
 The owner subsequently reported this run failed with 59 passes and two memory-
 fixture failures; the second release was cancelled. No native acceptance is claimed.
 
-Complete TUI, opt-in memory, both-release, ordinary-provider and broader
-coexistence/recovery qualification remain open. Controlled owned-tree relaunch
+At that checkpoint complete TUI, opt-in memory and both-release qualification
+remained open; the accepted matrix above supersedes that pending state.
+Ordinary-provider and broader coexistence/recovery limits remain. Controlled owned-tree relaunch
 does not establish graceful native Quit, standalone automatic MCP reconnect or a
 full service-process restart. Keep the feature active and experimental; preserve
 the current candidate and failed-run evidence under the slice-4 owner's Work Record.

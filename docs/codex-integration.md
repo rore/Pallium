@@ -162,8 +162,14 @@ This command:
 2. Registers Pallium's MCP server in `~/.codex/config.toml`
 3. Registers 3 hook scripts (SessionStart, UserPromptSubmit, Stop) in `~/.codex/hooks.json`
 4. Appends Pallium agent instructions to `~/.codex/AGENTS.md`
-5. Creates the hook state directory for dedup tracking
-6. Verifies the Pallium service is reachable
+5. Deploys the managed `pallium-memory` skill to `~/.codex/skills/pallium-memory`
+6. Creates the hook state directory for dedup tracking
+7. Verifies the Pallium service is reachable
+
+If skill replacement and restoring the old skill both fail, setup reports both
+errors and the retained previous-tree path. Keep that recovery directory until
+the old skill has been recovered. Successful replacement or restoration removes
+the staging files.
 
 Setup preserves unrelated hooks and repairs recognized registrations whose old
 executable or script is gone. If recognized hooks still point at another live
