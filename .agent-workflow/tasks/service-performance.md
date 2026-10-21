@@ -1,5 +1,9 @@
 # Service-wide performance investigation and correction
 
+## Fresh main composition assumption reopened before merge - 2026-10-21
+
+Immediate final remote preflight stopped before any merge intent or merge command: main advanced0c622124 to0e78151824bdb4297d802a5e4023de8672ed8f2d through PR324,62files including API/storage/core and pyproject/uv.lock. Published4cb73 remains unchanged. Clean virtual0bf7b48ebcccc4eb7454b2f87f0f97f1bcf06ad6 exists. Independent reviewer confirms source compatibility but not qualification of this materially changed composition; model/codec/development dependency and suite changes are substantive despite unchanged ACK/recovery paths. Existing focused/source/platform evidence remains bound to its recorded content/profile. Minimum proposed next scope: normal main integration with record preservation, fresh composition/static review, automatic Linux plus exactly one unchanged manual full on the new frozen composition, no local suite/diagnostic repetition. Prior single-run release is consumed; manager must adopt this exact scope before execution. No new test/runtime patch/installed change justified. State Blocked; no merge command ran. Manager notified via relay-msg-ae57d2f82a50414bad80236cd46c9368.
+
 ## Adopted revised ACK platform adequacy and result GO - 2026-10-21
 
 Manager direct continuation adopts bounded revised per-platform assessment, replacing only the extra particular-manual-aggregate-green gate; never a mandatory repository/protection/check obligation. Independent /root/opencode297_resume_plan_review explicitly accepts revised verification PLAN and combined ADEQUACY GO at published4cb73fb4b0363eb8ab988beebf104f8a78d8a1b9, reviewed planSHA18c692d4dae3840f1a1a9ed71b8d43eb0a0c452663642e63fd1eef1375db2540. Complete passing automaticLinux312/313 and manualWindows312/313serial+remaining each contain all6normalonce; PRautomaticaggregate/smoke/governancePASS. No partialcaseunion, localgapfill, retry or causalclaim. Agent reviewed actualtestingconventions/verify.md/source/risk/currentprotection and found no rule making the supplemental manualaggregate mandatory. Its original FAILED and collectorqualified=false remain untouched, together with both failedmanualLinux reports and oldprivatefull. All three ordinary admission failures remain named unresolved broader risks; parent objective is unfinished.
@@ -2574,7 +2578,7 @@ Agent technical review: /root/architecture_check, clean nonimplementer source/pl
 
 **Exceptions:** None
 
-**State:** Ready for review
+**State:** Blocked
 
 <!-- agent-workflow:end -->
 
