@@ -33,13 +33,13 @@ Canonical source: `roadmap/features/add-wake-first-relay-delivery.md`, sender re
 
 **Verification plan:** Registered schema asserts optional nullable 1–128-character string. Caller-surface fault test drives FastMCP call_tool → client → HTTP → SQLite, loses the committed response, retries, observes one message/delivery via status and turn, ACKs, and observes no second delivery. Sender/payload/recipient/expiry conflicts assert HTTP 409 and unchanged original status/inboxes. Boundary cases include empty/129 rejection and 1/128 Unicode acceptance. Omitted/null ID calls produce separate identities; existing expiry matrix proves omitted/null/finite expiry behavior. Run exact new nodes first, then affected MCP files only after parent allocates sole application-test slot. Before eventual review/PR run scripts/test-plan.py --base origin/main and its reported checks, workflow check, and full non-slow suite once when authorized; no publication or full CI in this slice.
 
-**Plan review:** Pending independent clean-context technical review of this record and relevant sources.
+**Plan review:** Agent technical review: /root/sender_api_plan_review, 2026-10-21, GO with no blocking findings after reading this record at 55d8fc61 plus server registration, client relay_send/_post_or_error, HTTP schema/routes, core Relay.send, SQLite relay_send/_expiry_matches, MCP expiry/lifecycle fixtures and client forwarding tests. Reviewer requires send help to allow identical same-supplied-ID retry after uncertain response instead of contradictory blanket resend prohibition; accepted.
 
-**Approvals:** Pending parent-provided exact user approval evidence covering this bounded API change; existing authorization is reused without re-asking.
+**Approvals:** Approved by user 2026-10-21: "So this is all regarding reliability. So if there are things to research more or fix here, then they should be part of what we're doing." Root supplied request_source_item_id c3ecdd91-903f-4c6c-a011-f23a7791571a and confirmed this followed its reviewed recommendation to expose existing stable-ID MCP support. Subsequent user scope confirmation: "This all should go as tasks we need to fix for reliability" (1d8902c1-e762-4086-b569-42c305faf58e). These quotes authorize the reliability fix at scope level; root adopts the additive optional message_id plan without storage or contract weakening. No claim of literal field-specific user wording is made.
 
 **Exceptions:** —
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Checkpoint: api-review
@@ -51,11 +51,15 @@ What changes: expose existing optional caller message_id through MCP send. Compa
 - 2026-10-21: Verified GitHub main and fetched origin/main both resolve to a2726453323a363b0656ddf3d87a2d4b0d86937e. Created native worktree C:/Dev/rore/Pallium/build/relay-mcp-retry-identity on fix/relay-mcp-retry-identity. Primary dirty files and installed clone untouched.
 - Source discovery complete; applicability is normal workflow because app/mcp/server.py is a protected red API path. No exemption claimed.
 - Pallium work association list failed because no exact container_ref was injected. No identity was guessed and no association is claimed.
+- Plan review accepted; additive optional message_id and forwarding implemented without client/storage changes. Tool help and docs now describe safe same-identity retry after uncertain response.
+- Added 16 parameter cases in the existing FastMCP/ASGI test file: registered schema, four expiry variants with post-commit response loss and pending/delivered retries, five identity conflicts, and six Unicode/boundary/omitted/null cases. Fault injection wraps actual ASGI transport; client HTTP/error logic remains intact.
 
 ## Evidence
 
-No application tests run. Parent owns test-slot allocation. Planning review/approval are the next actions.
+No application tests run. Parent owns test-slot allocation. Technical plan review is GO and existing human authorization is recorded; implementation may proceed. Focused execution waits for parent slot release.
+
+- AST parsing of app/mcp/server.py and tests/test_relay_mcp_tools.py passed using the existing development Python; git diff --check passed. Neither check imports the application or consumes the application-test slot.
 
 ## Recovery
 
-Base revision a2726453323a363b0656ddf3d87a2d4b0d86937e; branch fix/relay-mcp-retry-identity; only this Work Record is added. Retain worktree for implementation and review. Roadmap contribution remains pending owner reconciliation; broader reliability tasks remain open.
+Base revision a2726453323a363b0656ddf3d87a2d4b0d86937e; branch fix/relay-mcp-retry-identity. Production forwarding, documentation and caller-surface tests are implemented but unexecuted. Next: parent allocates application-test slot after PR325's first 21-case cohort, then run the four new test nodes serially and record their actual result. Retain worktree for verification and review. Roadmap contribution remains pending owner reconciliation; broader reliability tasks remain open.

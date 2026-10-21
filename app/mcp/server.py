@@ -2118,8 +2118,9 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None,
         sender_session_ref: str,
         expires_in_seconds: int | None = Field(default_factory=lambda: _RELAY_EXPIRY_OMITTED, ge=60, le=604800),
         container_ref: str | None = None,
+        message_id: str | None = Field(default=None, min_length=1, max_length=128),
     ) -> str:
-        """Send new text of at most 16,000 Unicode code points to one canonical endpoint ID (relay-session-...) or service-global name (@review). For a role recipient, use its current @name; before reusing an exact endpoint, rediscover and verify its session/container. Returned delivery identity is the admission snapshot. A successful send means the message was saved, not that the recipient started. `busy_queue` is a capability, not observed recipient busyness; a pending delivery is unconfirmed. If you need a response now, open the recipient task; let any current work finish, and start an ordinary turn if needed. Do not resend. Bare runtimes are rejected and broadcast is not supported. Copy sender_runtime from injected agent_ref and sender_session_ref from injected thread_ref. Use pallium_relay_reply for one reply to a received delivery. New omitted expiry is 24 hours; explicit expires_in_seconds=null requests durable delivery. Finite expiry is 60–604800 seconds. Omitted expiry on an existing-ID retry preserves its recorded expiry."""
+        """Send new text of at most 16,000 Unicode code points to one canonical endpoint ID (relay-session-...) or service-global name (@review). For a role recipient, use its current @name; before reusing an exact endpoint, rediscover and verify its session/container. Returned delivery identity is the admission snapshot. A successful send means the message was saved, not that the recipient started. `busy_queue` is a capability, not observed recipient busyness; a pending delivery is unconfirmed. If you need a response now, open the recipient task; let any current work finish, and start an ordinary turn if needed. Supply a unique message_id (1–128 characters) before sending to safely retry identical arguments with that same ID after an uncertain response. Omitted or null message_id creates a new identity on each call; do not resend with a new identity just because delivery is pending. Bare runtimes are rejected and broadcast is not supported. Copy sender_runtime from injected agent_ref and sender_session_ref from injected thread_ref. Use pallium_relay_reply for one reply to a received delivery. New omitted expiry is 24 hours; explicit expires_in_seconds=null requests durable delivery. Finite expiry is 60–604800 seconds. Omitted expiry on an existing-ID retry preserves its recorded expiry."""
         ctx, scope_error = resolve_relay_context(container_ref=container_ref)
         if scope_error:
             return scope_error
@@ -2131,6 +2132,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None,
             sender_runtime=sender_runtime,
             sender_session_ref=sender_session_ref,
             expires_in_seconds=expires_in_seconds,
+            message_id=message_id,
         )
         return _relay_text(result)
 

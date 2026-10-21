@@ -206,6 +206,14 @@ forget is a separate explicitly authorized, soft and auditable retrieval
 suppression, not hard deletion or automatic inactivity cleanup. Its scoped form
 affects existing turns, not future ingests; hard deletion follows retention policy.
 
+For retry safety, supply a unique `message_id` (1–128 characters) to
+`pallium_relay_send` before the first call. If its response is lost, reuse that
+same ID and identical arguments; Pallium returns the existing message instead
+of creating another. A different sender, payload, recipient or explicitly
+different expiry conflicts. Omitting `message_id` or passing null generates a
+new identity on each call, so it cannot deduplicate separate tool calls. A
+pending delivery alone is not a reason to send again.
+
 ## Replies
 
 A received message includes a `delivery_id`. `pallium_relay_reply` uses that ID

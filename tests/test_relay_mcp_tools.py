@@ -27,6 +27,151 @@ from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
 
 
 @pytest.mark.asyncio
+async def test_registered_send_message_id_schema():
+    tool = next(item for item in await create_server().list_tools() if item.name == "pallium_relay_send")
+    assert "message_id" not in tool.inputSchema.get("required", [])
+    field = tool.inputSchema["properties"]["message_id"]
+    assert {part.get("type") for part in field["anyOf"]} == {"string", "null"}
+    string = next(part for part in field["anyOf"] if part.get("type") == "string")
+    assert string["minLength"] == 1 and string["maxLength"] == 128
+    assert "same ID after an uncertain response" in tool.description
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("expiry", ["omitted", None, 60, 604800])
+async def test_registered_send_same_id_recovers_lost_committed_response(
+    monkeypatch, relay_app, asgi_post, asgi_get, expiry,
+):
+    sender = "retry-sender"
+    await asgi_post("/relay/turn", {"runtime": "codex", "session_ref": sender, **_SCOPE})
+    target = await asgi_post("/relay/turn", {"runtime": _RUNTIME, "session_ref": _SESSION, **_SCOPE})
+    lost = False
+    requests = []
+
+    class LoseCommittedResponse(httpx.ASGITransport):
+        async def handle_async_request(self, request):
+            nonlocal lost
+            response = await super().handle_async_request(request)
+            if request.method == "POST" and request.url.path == "/relay/messages":
+                requests.append(json.loads(request.content))
+                if not lost:
+                    assert response.is_success
+                    await response.aread()
+                    await response.aclose()
+                    lost = True
+                    raise httpx.ReadError("committed response lost", request=request)
+            return response
+
+    async_client = httpx.AsyncClient
+
+    def client(**kwargs):
+        kwargs.setdefault("transport", LoseCommittedResponse(app=relay_app))
+        return async_client(**kwargs)
+
+    monkeypatch.setattr(httpx, "AsyncClient", client)
+    server = create_server()
+    arguments = {
+        "message": "תשובה → 你好 🌍", "recipient": target["endpoint_id"],
+        "sender_runtime": "codex", "sender_session_ref": sender, "message_id": "retry-שלום",
+    }
+    if expiry != "omitted":
+        arguments["expires_in_seconds"] = expiry
+    error = tool_error_payload(await assert_tool_error(server, "pallium_relay_send", arguments))
+    assert error["error_kind"] == "transport_unavailable"
+    assert error["action"] == "check delivery status before retrying"
+    assert lost and len(requests) == 1
+    before = await asgi_get("/relay/messages/retry-שלום", _SCOPE)
+    assert before["payload"] == arguments["message"]
+    assert len(before["deliveries"]) == 1
+    content, _ = await server.call_tool("pallium_relay_send", arguments)
+    assert json.loads(content[0].text)["message_id"] == arguments["message_id"]
+    assert requests[0] == requests[1]
+    # Omission on an existing identity preserves its explicit finite/durable expiry.
+    await server.call_tool("pallium_relay_send", {key: value for key, value in arguments.items() if key != "expires_in_seconds"})
+    assert await asgi_get("/relay/messages/retry-שלום", _SCOPE) == before
+    received, _ = await server.call_tool("pallium_relay_receive", {})
+    deliveries = json.loads(received[0].text)["deliveries"]
+    assert [delivery["message_id"] for delivery in deliveries] == [arguments["message_id"]]
+    delivery = deliveries[0]
+    assert delivery["delivery_id"] == before["deliveries"][0]["delivery_id"]
+    await server.call_tool("pallium_relay_ack", {"delivery_id": delivery["delivery_id"], "receipt": delivery["receipt"]})
+    await server.call_tool("pallium_relay_send", arguments)
+    after = await asgi_get("/relay/messages/retry-שלום", _SCOPE)
+    assert len(after["deliveries"]) == 1
+    assert after["deliveries"][0]["state"] == "delivered"
+    received, _ = await server.call_tool("pallium_relay_receive", {})
+    assert json.loads(received[0].text)["deliveries"] == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("changed", [
+    {"sender_session_ref": "other-sender"}, {"sender_runtime": "claude-code"},
+    {"message": "changed"}, {"recipient": "other"}, {"expires_in_seconds": 60},
+])
+async def test_registered_send_same_id_conflicts_do_not_mutate(
+    monkeypatch, asgi_post, asgi_get, changed,
+):
+    bind_asgi_work_refs(monkeypatch, asgi_post, asgi_get)
+    for runtime, session in [("codex", "retry-sender"), ("codex", "other-sender"),
+                             ("claude-code", "retry-sender"), (_RUNTIME, _SESSION), (_RUNTIME, "other-target")]:
+        await asgi_post("/relay/turn", {"runtime": runtime, "session_ref": session, **_SCOPE})
+    targets = await asgi_get("/relay/recipients", _SCOPE)
+    other = next(item["endpoint_id"] for item in targets["recipients"] if item["session_ref"] == "other-target")
+    arguments = {
+        "message": "שלום 🌍", "recipient": f"{_RUNTIME}:{_SESSION}",
+        "sender_runtime": "codex", "sender_session_ref": "retry-sender",
+        "message_id": "retry-conflict", "expires_in_seconds": None,
+    }
+    server = create_server()
+    await server.call_tool("pallium_relay_send", arguments)
+    before = await asgi_get("/relay/messages/retry-conflict", _SCOPE)
+    if "recipient" in changed:
+        changed = {"recipient": other}
+    error = tool_error_payload(await assert_tool_error(server, "pallium_relay_send", {**arguments, **changed}))
+    assert error["status_code"] == 409
+    assert await asgi_get("/relay/messages/retry-conflict", _SCOPE) == before
+    received = await asgi_post("/relay/turn", {"runtime": _RUNTIME, "session_ref": _SESSION, **_SCOPE})
+    assert [item["message_id"] for item in received["deliveries"]] == ["retry-conflict"]
+    other_inbox = await asgi_post("/relay/turn", {"runtime": _RUNTIME, "session_ref": "other-target", **_SCOPE})
+    assert other_inbox["deliveries"] == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("identity", ["", "י" * 129, "י", "🌍" * 128, "omitted", None])
+async def test_registered_send_identity_boundaries_and_generated_ids(
+    monkeypatch, asgi_post, asgi_get, identity,
+):
+    bind_asgi_work_refs(monkeypatch, asgi_post, asgi_get)
+    await asgi_post("/relay/turn", {"runtime": "codex", "session_ref": "boundary-sender", **_SCOPE})
+    target = await asgi_post("/relay/turn", {"runtime": _RUNTIME, "session_ref": _SESSION, **_SCOPE})
+    arguments = {
+        "message": "שלום 🌍", "recipient": target["endpoint_id"],
+        "sender_runtime": "codex", "sender_session_ref": "boundary-sender",
+    }
+    if identity != "omitted":
+        arguments["message_id"] = identity
+    server = create_server()
+    if identity == "" or (identity is not None and len(identity) > 128):
+        await assert_tool_error(server, "pallium_relay_send", arguments)
+        received = await asgi_post("/relay/turn", {"runtime": _RUNTIME, "session_ref": _SESSION, **_SCOPE})
+        assert received["deliveries"] == []
+        return
+    identifiers = []
+    for _ in range(2):
+        content, _ = await server.call_tool("pallium_relay_send", arguments)
+        message_id = json.loads(content[0].text)["message_id"]
+        identifiers.append(message_id)
+        assert (await asgi_get(f"/relay/messages/{message_id}", _SCOPE))["payload"] == arguments["message"]
+    generated = identity in ("omitted", None)
+    assert (identifiers[0] != identifiers[1]) is generated
+    if not generated:
+        assert identifiers == [identity, identity]
+    received = await asgi_post("/relay/turn", {"runtime": _RUNTIME, "session_ref": _SESSION, **_SCOPE})
+    assert {item["message_id"] for item in received["deliveries"]} == set(identifiers)
+    assert len(received["deliveries"]) == (2 if generated else 1)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("tool", ["pallium_relay_send", "pallium_relay_reply"])
 async def test_registered_expiry_schema_is_optional_nullable_bounded_integer(tool):
     registered = next(item for item in await create_server().list_tools() if item.name == tool)
