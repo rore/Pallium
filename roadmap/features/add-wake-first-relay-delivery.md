@@ -8,6 +8,133 @@ milestone: pallium-relay
 lane: capability
 ---
 
+## Current qualification checkpoint (2026-10-21)
+
+All reliability follow-ups below remain owned and unfinished. Focused passes do
+not complete an interrupted required full run; a later record-only commit is not
+a newly tested candidate. Preserve the separate failures and their unknown causes.
+
+| Contribution | Accepted evidence and current limit | Next concrete gate |
+|---|---|---|
+| PR #325, `@pal-dev1` | Published `e06cb`; local full 7,665 passes include 78 controls and two health cases and have GO. Hosted Linux 3.13 failed snapshot-claim setup with `setup_deadline` and a 2,073 ms PRAGMA observation; the manual run was cancelled. Not qualified. | Owner disposition of retained exact-head hosted evidence and remaining platform gates; no automatic retry, new diagnostic or historical-cause claim. Keep this PR separate from the slices below. |
+| MCP sender retry identity | Isolated `build/relay-mcp-retry-identity`: 353 focused/affected passes; required full failed at registry setup. Implementation is not release-qualified. | Independent failed-evidence review and a bounded owning-test/qualification decision; preserve the same-ID acceptance contract and hold publication. Owner record: `.agent-workflow/tasks/relay-mcp-retry-identity.md` in that checkout. |
+| Claude ACK crash recovery | Isolated `build/claude-ack-crash-recovery`: implementation exists, but the focused attempt timed out after 300 seconds with no JUnit. Earlier setup-only failures remain recorded; source review is complete and inconclusive. No validated product outcome or cause. | Settle the next bounded qualification disposition using the completed review, without repeating classification or claiming coverage. Owner record: `.agent-workflow/tasks/claude-ack-crash-recovery.md` in that checkout. |
+| ACK producer isolation | `build/relay-ack-producer-isolation-20261021`: six focused cases accepted. Required full at `2c753025` stopped after 1,933 passes on first-install `WinError 5`, before all six affected cases. | Preserve the independent classification in `build/relay-ack-producer-full-20261021`; decide the remaining qualification gate without treating focused passes as full coverage or claiming the filesystem cause. |
+| Both-installer rollback preservation | A separate source-proven Codex/Claude rollback-loss defect has an isolated fix in `build/installer-rollback-preservation-20261021`; focused 30 passed. Earlier full `db592af59fde3561dc2dd7b6b7a1adf007065281` stopped at 6,132 passes/one registry-setup error with 28 new cases absent. The later serial run at `a30c4baf3a2acf6a4c5c0c5f27b6b4dabd3621ba` also failed: 1,303 passes and one `WinError 5` before the shim subprocess; cause remains unknown. | Owner is preparing revised fresh-hosted qualification in `build/installer-rollback-hosted-20261021`: draft publication is an evidence surface, not readiness. Require the existing same-content full platform/affected-case gates and independent combined review; no local repeats, runtime repair or installed-safety claim. Both failed local results remain retained. |
+
+The ACK producer and installer branches retain their own `.agent-workflow/tasks/service-performance.md`
+continuations and separate evidence; neither absorbs or qualifies PR #325. The
+installer source defect does not establish the cause of the earlier first-install
+permission failure. Registry errors across different runs do not establish one
+physical cause. No new diagnostic, rerun or installed change follows from this
+checkpoint. The broader OpenCode, backlog, Codex progress and cross-runtime
+acceptance tasks below remain open. Hermes PR #324 remains independently owned
+and experimental; this reconciliation does not duplicate its active qualification
+or change its roadmap item.
+
+- [ ] **Receiptless hook reply conflict — single observed incident; investigation open.**
+  Saved artifact:
+  `build/installer-rollback-preservation-evidence-20261021/relay-receiptless-hook-reply409-20261021.json`.
+  A hook-delivered reply returned `409 receipt required when replying from claimed
+  state` despite the receiptless hook reply contract. This is not a reproduced race
+  or established cause. Next: reconcile the saved exact hook/claim/ACK/reply evidence
+  and identify the missing authority observation before proposing a bounded caller-
+  surface regression. Acceptance: the reply contract and stale/conflicted-copy
+  handling have an evidence-supported disposition, preserving payload custody and
+  exact receipt authority. Do not receive, ACK, resend or retry the original copy
+  to reproduce it, and do not infer repair from another successful reply.
+
+## Reliability follow-up investigation scope (2026-10-21)
+
+The user explicitly included all seven areas below in the reliability work so
+none is lost. These are open tasks with concrete next decisions and acceptance
+criteria, not completed fixes or approval of proposed behavior changes. The two
+source findings use reviewed `d3528c2e`; subsequent main changes are documentation
+only. Preserve existing owners, safety policies, release evidence and unexplained
+historical causes. Linked features retain ownership of their existing work.
+
+- [ ] **Sender retry identity — implemented in isolation; full qualification incomplete.**
+  `pallium_relay_send` omits caller `message_id`; `app/mcp/client.py`'s `relay_send`
+  accepts it and storage matches same-ID sender, payload, recipient and expiry.
+  Next: complete the failed-evidence review and qualification decision in the
+  checkpoint above; do not reimplement the isolated slice. Acceptance: after a
+  committed send loses its response, a same-ID retry produces exactly one durable
+  message through normal read paths; conflicting sender/payload/recipient/expiry
+  is rejected without mutation. Dependencies: API review, caller-surface fault
+  coverage and unchanged omitted-ID behavior. Asynchronous send-response redesign
+  is separate and not adopted.
+
+- [ ] **Claude ACK-commit/crash recovery — isolated implementation unvalidated.**
+  Recovery skips `wake_inflight` even for a durably ACKed delivery; registration
+  preserves it, while ACK cleanup is separate post-commit/background work.
+  Next: settle qualification disposition from the completed inconclusive review
+  and the existing proposed
+  crash-window regression using exact durable ACK authority and the owning native lifecycle. Acceptance: the
+  chosen contract distinguishes recoverable completed custody from an uncertain
+  native attempt without duplicate activation or loss of newer work. Dependencies:
+  investigate `test_recovery_terminal_reads_never_release_or_reschedule_inflight`,
+  which deliberately fences delivered state and a new message; obtain exact
+  before/after behavior approval where required. No blanket terminal/age clearing,
+  uncertain-native rescheduling or claimed historical-cause attribution.
+
+- [ ] **Codex uncertain wake outcome — accepted safety fences; progress decision open.**
+  Next: use existing exact-delivery/native-attempt evidence to define supported
+  progress or an explicit actionable blocked outcome for uncertain wakes.
+  Acceptance: callers can observe verified delivery evidence with response status
+  kept separate, or a truthful blocker with the next supported action, while pending payloads and duplicate-
+  activation fences remain intact. Dependencies: native capability/owner lifecycle,
+  exact-recipient evidence and contract review; uncertainty is not permission for
+  blind retry, cold resume or treating native acceptance as completed work.
+
+- [ ] **Acquisition latency and qualification failures — physical cause unproven.**
+  Next: classify retained failure receipts, timing/lock evidence and qualification
+  limits, identify the next unanswered question, and propose the smallest bounded
+  investigation or fix from that evidence only. Acceptance: each unexplained
+  failure has an explicit evidence-supported disposition or named blocker; a later
+  green run is not causal proof. Dependencies: existing evidence owners and review;
+  no repeated diagnostics/tests, deadline relaxation or unsupported common-cause
+  claim. PR #325 qualification remains separately owned by `@pal-dev1`.
+
+- [ ] **OpenCode reliability — existing OC-1/OC-4/OC-6 tasks remain open.**
+  Owner: [Fix OpenCode plugin reliability](fix-opencode-plugin-reliability.md).
+  Next: continue OC-1 wake-anchor liveness, OC-4 optional requests stacking latency
+  on ordinary turns, and OC-6 synchronous Git discovery blocking the event loop
+  under that item's existing owner and review gates. Acceptance: its caller/native
+  regressions prove safe anchor retirement and subsequent delivery, bounded
+  fail-open ordinary-turn latency, and responsive discovery without blocking the
+  host event loop. Dependencies: the existing OC contracts and native qualification;
+  these links preserve the original tasks rather than create duplicates.
+
+- [ ] **Backlog visibility and safe clearing — preview shipped; policy/recovery open.**
+  Owner: [Relay lifecycle hardening](add-relay-retention-and-lifecycle-hardening.md).
+  PR #329 supplies metadata-only preview, not deletion or recovery. Next: use saved
+  preview baselines to distinguish historical backlog from new failures, classify
+  actionable unresolved deliveries, and define missing Claude reservation visibility
+  and a reviewed safe-clearing policy. Acceptance: unknown evidence stays explicit;
+  each unresolved delivery has a supported action or blocker; any proposed clearing
+  requires exact authority and preserves pending/claimed custody. Dependencies:
+  retention/cancellation contracts, privacy review, exact authorized clearing scope
+  and recoverable evidence. Age alone establishes neither abandonment nor permission to clear.
+
+- [ ] **Installed inventory and cross-runtime E2E — acceptance planning open.**
+  Next: specify a read-only installed-version/capability inventory and a bounded
+  acceptance matrix for each supported runtime/version. Acceptance must observe
+  model-visible context, unresolved deliveries, duplicate activation and eventual
+  response across idle, busy, unloaded, restart, lost-ACK-response and version-
+  mismatch cases, with truthful unsupported/blocked outcomes. Dependencies: the
+  preceding runtime contracts, retained evidence and separate approval for actual
+  installed execution; repository passes alone do not qualify installed behavior.
+
+The owning item remains `add-wake-first-relay-delivery`; implementation must first
+enter Agent Workflow with the actual bounded scope and required review. Existing
+Relay surface history is in `.agent-workflow/tasks/codex-agent-relay-r1.md`; the
+Claude lifecycle baseline is in
+`.agent-workflow/tasks/codex-claude-wake-production-readiness.md`. These historical
+records are not reopened or treated as approval for new behavior by this note.
+PR #325 remains separate exact-head qualification owned by `@pal-dev1`; do not
+fold these changes into it. This scope update authorizes no new diagnostics,
+repeated tests, product edits or installed-environment changes.
+
 ## Current release checkpoint (2026-10-20)
 
 PR306 subsequently merged as `2ac9e2b66b9cd72ff7af9e7aeda9ecf061360b1f` from qualified `37fc691380f86db307b2de8932b09948a736db12` into PR297's actual merged main. Full local qualification passed 7,531 tests; package, real-HTTP and isolated native OpenCode 2.0.24 checks passed. The single reviewed Linux 3.12 retry passed 7,474 tests, with 92 skips and two expected failures; all other passing PR jobs were reused. Independent review verified actual logs and final merge conditions. PR314, PR297 and PR306 are now merged. Evidence: `C:/Users/I347041/.codex/worktrees/opencode-capture-idempotence/Pallium/build/pr306-current-main-20261020/verified-merge.json`. The baseline main Windows 3.13 retained-recovery failure remains unresolved and was not a full-Windows PR requirement. Installed deployment and broader reliability remain open; the item stays active.
@@ -1428,6 +1555,12 @@ versions, preview flags, and open-issue status rather than copying version-speci
 adapter behavior from this roadmap item.
 
 ### Historical accepted Claude S1B restart-durability plan (Windows-qualified)
+
+**Current-contract caveat:** The clearing/retry statements below are historical
+plan evidence, not current recovery authority. The open Claude ACK-commit/crash
+task in [the reliability follow-up checklist](#reliability-follow-up-investigation-scope-2026-10-21)
+must resolve their conflict with the intentionally preserved no-reschedule fence
+before any behavior change; do not clear or retry inflight work from this plan.
 
 The critical outage window is Claude reaching Stop while Pallium is down: loopback registration fails and a restart would otherwise preserve stale busy. Canonical capability remains `~/.pallium/claude-wake/capabilities.json` (Windows `%USERPROFILE%\.pallium\claude-wake\capabilities.json`) with exact scope/socket/token/generation plus `busy`, `idle`, or `wake_inflight(delivery_id, utc_attempt_time)`. The existing registry lock serializes normal register, state changes, and same-session intent take/apply/removal. Add only `~/.pallium/claude-wake/intents/<sha256(session_ref)>.json`: before HTTP registration, the hook atomically writes the exact state with a random `intent_id` and sends that id in the request. Under lock, the request id must equal the currently stored intent before any canonical mutation; mismatch rejects/no-ops. Success writes canonical then consumes only that exact intent. Ambiguous responses retain/retry the same intent, never create/rewrite a later one; crashes and delayed old requests are deterministically idempotent.
 
