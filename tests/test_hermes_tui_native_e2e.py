@@ -361,7 +361,7 @@ observed_exe=str(pathlib.Path(sys.argv[3]).resolve())
 class FakeProcess:
     pid=9200
     kills=0
-    def create_time(self): return 2.0
+    def create_time(self): return 1.0
     def exe(self): return observed_exe
     def children(self, recursive=True): return []
     def kill(self): self.kills+=1
@@ -391,8 +391,85 @@ else: raise AssertionError("identity mismatch was not rejected")
     assert diagnostic["args"] == [
         ["refusing cleanup after process identity changed", 9200,
          [1.0, str(Path(expected_exe).resolve())],
-         [2.0, str(Path(observed_exe).resolve())]],
+         [1.0, str(Path(observed_exe).resolve())]],
     ]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="owned process identity cleanup guard is Windows-specific")
+@pytest.mark.parametrize("observed_birth,executable_kind,inspection_error", [
+    (2.0, "same", False),
+    (2.0, "different", False),
+    (1.0, "same", False),
+    (0.5, "same", False),
+    (2.0, "same", True),
+])
+def test_hermes_tui_cleanup_pid_reuse_is_not_owned(observed_birth, executable_kind, inspection_error, tmp_path):
+    helper = Path(__file__).parent / "fixtures" / "hermes_tui_driver.py"
+    code = '''import importlib.util, json, pathlib, sys, threading, types
+spec=importlib.util.spec_from_file_location("owned_driver", sys.argv[1])
+module=importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+expected_exe=str(pathlib.Path(sys.argv[2]).resolve())
+observed_exe=expected_exe if sys.argv[3]=="same" else str(pathlib.Path(sys.argv[4]).resolve())
+class FakeProcess:
+    pid=9200
+    kills=0
+    def create_time(self):
+        if sys.argv[5]=="true": raise RuntimeError("synthetic identity inspection failure")
+        return float(sys.argv[6])
+    def exe(self): return observed_exe
+    def children(self, recursive=True): return []
+    def kill(self): self.kills+=1
+proc=FakeProcess(); waited=[]
+class FakePsutil:
+    NoSuchProcess=type("NoSuchProcess",(Exception,),{})
+    @staticmethod
+    def Process(pid):
+        assert pid==9200
+        return proc
+    @staticmethod
+    def wait_procs(handles,timeout):
+        waited.extend(item.pid for item in handles)
+        return handles, []
+tree=module.OwnedTree.__new__(module.OwnedTree)
+tree.psutil=FakePsutil; tree.root=types.SimpleNamespace(pid=100)
+tree.identities={9200:(1.0,expected_exe)}; tree.ledger=None; tree.lock=threading.Lock()
+tree.stopped=threading.Event(); tree.thread=types.SimpleNamespace(join=lambda timeout:None); tree.error=None
+try:
+    tree.close()
+    error=None
+except BaseException as exc:
+    error=type(exc).__name__
+print(json.dumps({"error":error,"kills":proc.kills,"waited":waited}))
+'''
+    expected_exe = str(tmp_path / "expected.exe")
+    other_exe = str(tmp_path / "other.exe")
+    result = subprocess.run([
+        sys.executable, "-I", "-c", code, str(helper), expected_exe, executable_kind, other_exe,
+        str(inspection_error).lower(), str(observed_birth),
+    ], cwd=tmp_path, capture_output=True, text=True, timeout=15,
+       env={key: os.environ[key] for key in ("SYSTEMROOT", "WINDIR") if key in os.environ})
+    assert result.returncode == 0, result.stdout + result.stderr
+    outcome = json.loads(result.stdout)
+    if inspection_error:
+        assert outcome == {"error": "RuntimeError", "kills": 0, "waited": []}
+        assert result.stderr == ""
+    elif observed_birth > 1.0:
+        assert outcome == {"error": None, "kills": 0, "waited": []}
+        diagnostic = json.loads(result.stderr)
+        assert diagnostic == {
+            "pid": 9200,
+            "saved": [1.0, str(Path(expected_exe).resolve())],
+            "observed": [observed_birth, str(Path(expected_exe if executable_kind == "same" else other_exe).resolve())],
+            "reason": "saved_identity_exited_pid_reused",
+        }
+        assert len(result.stderr.splitlines()) == 1
+    elif observed_birth == 1.0:
+        assert outcome == {"error": None, "kills": 1, "waited": [9200]}
+        assert result.stderr == ""
+    else:
+        assert outcome["error"] == "AssertionError"
+        assert outcome["kills"] == 0 and outcome["waited"] == []
+        assert result.stderr == ""
 
 
 @pytest.mark.parametrize("exit_before_cleanup,kill_failure", [

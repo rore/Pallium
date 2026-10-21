@@ -1,5 +1,22 @@
 # Hermes native qualification
 
+Run [39603091244](https://github.com/rore/Pallium/actions/runs/39603091244), candidate
+`f0da4ee1b2534da1b7ab9f3e94f41740dea8cbd3`, progressed through Desktop memory-on
+History submission using plain Enter and the later egress/secret assertions. It
+failed at driver shutdown before the profile lifecycle checks: Windows had reused
+an exited owned console process's PID for a newer system process, and the cleanup
+fence correctly refused to kill that replacement. The aggregate was 61 passed,
+one failed in 362.34 seconds; the other three v0.22.0 UI cases passed and v0.22.2
+was cancelled. The full Desktop case remains unqualified.
+
+The reviewed fixture correction recognizes only a strictly newer creation time
+as proof that the saved owned identity has exited. It records both identities
+and leaves the replacement untouched and outside its wait list. Every kill still
+requires the exact saved creation time and executable; unresolved mismatches and
+inspection errors remain fatal. This changes Windows test-process accounting,
+not application cleanup or the user's installations. Fresh full-journey proof is
+still required, including the profile lifecycle that this run did not reach.
+
 Run [39598460905](https://github.com/rore/Pallium/actions/runs/39598460905), candidate
 `534b546936ce9d9a2fb0d5a1e8415302c9c6b652`, again failed v0.22.0 Desktop memory-on
 at History submission after New session (61 passed, one failed in 392.12 seconds).

@@ -588,6 +588,11 @@ class OwnedTree:
                 proc = self.psutil.Process(pid)
                 expected = (birth, executable)
                 observed = (proc.create_time(), str(Path(proc.exe()).resolve()))
+                if observed != expected and observed[0] > expected[0]:
+                    print(json.dumps({"pid": pid, "saved": expected, "observed": observed,
+                                      "reason": "saved_identity_exited_pid_reused"}),
+                          file=sys.stderr, flush=True)
+                    continue
                 assert observed == expected, (
                     "refusing cleanup after process identity changed", pid, expected, observed)
                 handles.append(proc)

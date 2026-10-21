@@ -207,6 +207,13 @@ Run [39598460905](https://github.com/rore/Pallium/actions/runs/39598460905) on
 submit failure (61 passed, one failed); v0.22.2 was cancelled. The next reviewed
 caller uses ordinary Enter on one payload-verified editor, with no action retry.
 The failed button route remains unqualified; this is not an application fix.
+Run [39603091244](https://github.com/rore/Pallium/actions/runs/39603091244) on
+`f0da4ee1b2534da1b7ab9f3e94f41740dea8cbd3` reached Desktop memory-on History
+through ordinary Enter, then failed its process-identity cleanup fence when
+Windows reused an exited console process's PID. The replacement was not killed.
+The profile lifecycle was not reached; that case and the cancelled second pin
+remain unqualified. A reviewed fixture correction retains exact identity before
+every kill while treating a demonstrably newer process as unowned.
 Required-CI shared-test availability failures affected Python 3.12 and 3.13 on
 different candidate heads; the Hermes changes did not repair them.
 These results do not qualify Windows 11, everyday MSIX/updater behavior, native
