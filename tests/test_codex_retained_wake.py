@@ -1522,11 +1522,48 @@ def test_http_send_rejects_malformed_or_out_of_budget_busy(http_wake, monkeypatc
     assert len(requests) == 1
     assert desktop.owners == [] and registry.reservations() == ()
 
-def test_failed_spend_has_zero_owner_calls(http_wake, monkeypatch):
-    _, _, registry, _, desktop, send, _ = http_wake
+def test_failed_spend_has_zero_owner_calls(http_wake, monkeypatch, force_refusal=False):
+    http, _, registry, _, desktop, send, workers = http_wake
+    attempts = _observe_transition_attempts(
+        http_wake, monkeypatch, "release", force_refusal=force_refusal,
+    )
     monkeypatch.setattr(registry, "begin_native_attempt", lambda *a: None)
-    send()
+    delivery = send()
+    assert all(not worker.is_alive() for worker in workers)
+    assert len(attempts) == 1
+    assert not force_refusal or attempts[0].get("forced") is True
+    expected = attempts[0]["reservations"]
+    assert len(expected) == 1
+    assert expected[0].delivery_id == delivery["delivery_id"]
+    assert expected[0].recipient_endpoint_id == delivery["recipient_endpoint_id"]
+    assert expected[0].session_ref == TARGET and expected[0].container_ref == SCOPE["container_ref"]
+    assert expected[0].generation > 0 and expected[0].outcome == "prepared"
+    assert expected[0].correlated_claim_attempts is None and expected[0].retry_not_before is None
+    assert desktop.owners == []
+    if _single_typed_transition_refusal(attempts):
+        assert registry.reservations() == expected
+        response = http.get("/relay/messages/retained-journey", params=SCOPE)
+        assert response.status_code == 200, response.text
+        pending = response.json()["deliveries"][0]
+        assert pending["delivery_id"] == delivery["delivery_id"]
+        assert pending["state"] == "pending" and pending["attempts"] == 0
+        recover(http_wake)
+        assert len(attempts) == 2 and "error_type" not in attempts[1]
+        assert attempts[1]["reservations"] == expected
+        assert attempts[1].get("result") == expected
+    else:
+        assert "error_type" not in attempts[0] and attempts[0].get("result") == expected
+    assert all(not worker.is_alive() for worker in workers)
     assert desktop.owners == [] and registry.reservations() == ()
+    response = http.get("/relay/messages/retained-journey", params=SCOPE)
+    assert response.status_code == 200, response.text
+    pending = response.json()["deliveries"][0]
+    assert pending["delivery_id"] == delivery["delivery_id"]
+    assert pending["state"] == "pending" and pending["attempts"] == 0
+
+
+def test_failed_spend_release_refusal_recovers_without_owner(http_wake, monkeypatch):
+    test_failed_spend_has_zero_owner_calls(http_wake, monkeypatch, force_refusal=True)
 
 def test_owner_response_allows_hook_claim_ack_before_return(http_wake):
     http, _, registry, _, desktop, send, _ = http_wake
