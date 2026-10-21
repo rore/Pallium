@@ -11,6 +11,7 @@ from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import and_, case, func, or_, select, tuple_
+from sqlalchemy.orm import aliased
 
 from storage.metrics import MetricsStore
 from storage.sqlite import SQLiteStorageProvider, _extract_display_text
@@ -22,7 +23,7 @@ from core.filters import source_item_matches_filters
 from core.relay_activation import current_platform, relay_activation_snapshot
 from app.codex_wake import retained_activation_snapshot
 from core.relay import (
-    RelayConflictError, RelayNotFoundError, RelayService, RelayUnavailableError,
+    RELAY_RUNTIMES, RelayConflictError, RelayNotFoundError, RelayService, RelayUnavailableError,
     _opaque, validate_runtime,
 )
 from core.models import QueryFilters, SourceItem
@@ -33,7 +34,7 @@ from redaction import redact_sensitive
 from storage.sqlite_schema import (
     HistoricalLookupReuseEventRecord, HistoricalLookupReuseLabelRecord,
     MemoryFeedbackRecord, MemoryFlagRecord, MemoryObjectRecord,
-    RelayDeliveryRecord, RelayDeliveryTraceRecord, RelayMessageRecord, RelaySessionRecord,
+    RelayCodexWakeReservationRecord, RelayDeliveryRecord, RelayDeliveryTraceRecord, RelayMessageRecord, RelaySessionRecord,
     SourceItemRecord,
 )
 
@@ -75,6 +76,64 @@ def _dashboard_utc(value: datetime | None) -> datetime | None:
 def _dashboard_time(value: datetime | None) -> str | None:
     value = _dashboard_utc(value)
     return value.isoformat() if value else None
+
+
+def _dashboard_relay_operational_item(row, traces, observed_at: datetime) -> dict:
+    state = row["stored_state"] if row["stored_state"] in {"pending", "claimed", "delivered", "expired", "suppressed"} else "unknown"
+    expires = _dashboard_utc(row["expires_at"])
+    durable = expires is not None and expires.year == 9999
+    expiry_kind = "unknown" if expires is None else ("durable" if durable else ("finite_expired" if expires <= observed_at else "finite_live"))
+    lease = _dashboard_utc(row["lease_expires_at"])
+    lease_state = "unknown" if state == "unknown" or (state == "claimed" and lease is None) else (
+        "not_claimed" if state != "claimed" else ("active" if lease > observed_at else "expired")
+    )
+    seen = _dashboard_utc(row["recipient_last_seen_at"])
+    recipient_state = row["recipient_state"] if row["recipient_state"] in {"active", "unreachable", "closed"} else "unknown"
+    recency = "unknown" if seen is None or seen > observed_at else ("recent" if seen >= observed_at - timedelta(hours=24) else "dormant")
+    trace_unknown = row["trace_version"] not in (None, 1) or row["trace_pruned"] not in (0, 1) or row["trace_truncated"] not in (0, 1)
+
+    def trace_view(sequence):
+        nonlocal trace_unknown
+        fact = traces.get(sequence)
+        if fact is None:
+            return None
+        if (fact["message_id"] != row["message_id"] or fact["delivery_id"] != row["delivery_id"]
+                or fact["stage"] not in {"prepared", "associated", "completed"}
+                or (fact["stage"] == "completed" and fact["outcome"] not in {"accepted", "deferred", "uncertain", "failed"})):
+            trace_unknown = True
+            return None
+        return {"sequence": fact["recorded_sequence"], "recorded_at": _dashboard_time(fact["recorded_at"]),
+                "stage": fact["stage"], "outcome": fact["outcome"] if fact["stage"] == "completed" else None}
+
+    latest = trace_view(row["latest_sequence"])
+    completed = trace_view(row["completed_sequence"])
+    availability = "unknown" if trace_unknown else (
+        "partial" if row["trace_pruned"] or row["trace_truncated"] else (
+            "available" if latest else ("not_recorded" if row["trace_version"] is None else "missing")
+        )
+    )
+    return {
+        "delivery_id": row["delivery_id"], "message_id": row["message_id"], "message_available": row["message_available"],
+        "created_at": _dashboard_time(row["created_at"]), "sender_endpoint_id": row["sender_endpoint_id"],
+        "recipient_endpoint_id": row["recipient_endpoint_id"], "recipient_runtime": row["recipient_runtime"] if row["recipient_runtime"] in RELAY_RUNTIMES else "unknown",
+        "container_ref": row["container_ref"], "stored_state": state,
+        "effective_state": ("unknown" if expiry_kind == "unknown" else ("expired" if expiry_kind == "finite_expired" else state)) if state in {"pending", "claimed"} else state,
+        "expiry_kind": expiry_kind, "durable": None if expires is None else durable, "expires_at": None if durable else _dashboard_time(expires),
+        "claimed_at": _dashboard_time(row["claimed_at"]), "lease_expires_at": _dashboard_time(lease),
+        "lease_state": lease_state, "delivered_at": _dashboard_time(row["delivered_at"]),
+        "recipient": {"stored_state": recipient_state, "last_seen_at": _dashboard_time(seen), "recency": recency,
+                      "liveness": "not_verified"},
+        "reservation": {
+            "outcome": row["reservation_outcome"] if row["reservation_outcome"] in {"prepared", "reserved", "accepted", "uncertain"} else ("absent" if row["reservation_outcome"] is None else "unknown"),
+            "evidence": "persisted_codex_only" if row["recipient_runtime"] == "codex" else "not_recorded_for_runtime",
+        },
+        "reply": {"in_reply_to": row["in_reply_to"], "parent_exists": row["parent_exists"] if row["in_reply_to"] else None,
+                  "linked_reply_count": row["linked_reply_count"]},
+        "trace": {"version": row["trace_version"] if row["trace_version"] in (None, 1) else None,
+                  "pruned": row["trace_pruned"] == 1, "truncated": row["trace_truncated"] == 1,
+                  "availability": availability, "latest": latest, "latest_completed": completed,
+                  "attempt_status": "unknown"},
+    }
 
 
 def _dashboard_relay_session(
@@ -1189,6 +1248,113 @@ def mount_dashboard(
         except RelayUnavailableError as exc:
             raise HTTPException(status_code=501, detail=str(exc)) from exc
         return JSONResponse(content=result)
+
+    @app.get("/dashboard/api/relay/operational-preview")
+    def dashboard_relay_operational_preview(
+        limit: int = Query(50, ge=1, le=200),
+        until: datetime | None = Query(None),
+        before_created_at: datetime | None = Query(None),
+        before_id: str | None = Query(None, min_length=1, max_length=128),
+        trace_through_sequence: int | None = Query(None, ge=0, le=2**63 - 1),
+        runtime: str | None = Query(None, min_length=1, max_length=32),
+        container_ref: str | None = Query(None, min_length=1, max_length=255),
+    ) -> JSONResponse:
+        if (before_created_at is None) != (before_id is None):
+            raise HTTPException(status_code=422, detail="before_created_at and before_id must be supplied together")
+        if before_id is not None and (until is None or trace_through_sequence is None):
+            raise HTTPException(status_code=422, detail="continuation requires until and trace_through_sequence")
+        if runtime is not None:
+            try:
+                runtime = validate_runtime(runtime)
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+        storage = app.state.pallium_service._storage
+        if not isinstance(storage, SQLiteStorageProvider):
+            return JSONResponse(content={"error": "requires SQLite backend"}, status_code=501)
+        factory = getattr(storage, "_relay_session_factory", storage._session_factory)
+        with factory() as session:
+            # SQLite's legacy driver does not start a read snapshot for Session's implicit BEGIN.
+            session.connection().exec_driver_sql("BEGIN")
+            observed_at = datetime.now(timezone.utc)
+            cutoff = _dashboard_utc(until) or observed_at
+            before_at = _dashboard_utc(before_created_at)
+            if cutoff > observed_at or (before_at is not None and before_at > cutoff):
+                raise HTTPException(status_code=422, detail="cursor and until must not be in the future or outside until")
+            highwater = session.scalar(select(func.max(RelayDeliveryTraceRecord.recorded_sequence))) or 0
+            through = highwater if trace_through_sequence is None else trace_through_sequence
+            if through > highwater:
+                raise HTTPException(status_code=422, detail="trace_through_sequence exceeds available high-water; continuity is unknown")
+            parent = aliased(RelayMessageRecord)
+            created_order = func.coalesce(RelayMessageRecord.created_at, datetime.min.replace(tzinfo=timezone.utc))
+
+            query = select(
+                RelayDeliveryRecord.id.label("delivery_id"), RelayDeliveryRecord.message_id,
+                RelayMessageRecord.id.is_not(None).label("message_available"), RelayMessageRecord.created_at,
+                created_order.label("cursor_created_at"), RelayMessageRecord.sender_endpoint_id,
+                RelayDeliveryRecord.recipient_endpoint_id, RelayDeliveryRecord.recipient_runtime,
+                RelayMessageRecord.container_ref, RelayDeliveryRecord.state.label("stored_state"),
+                RelayMessageRecord.expires_at, RelayDeliveryRecord.claimed_at, RelayDeliveryRecord.lease_expires_at,
+                RelayDeliveryRecord.delivered_at, RelaySessionRecord.state.label("recipient_state"),
+                RelaySessionRecord.last_seen_at.label("recipient_last_seen_at"),
+                RelayCodexWakeReservationRecord.outcome.label("reservation_outcome"), RelayMessageRecord.in_reply_to,
+                select(parent.id).where(parent.id == RelayMessageRecord.in_reply_to).correlate(RelayMessageRecord).exists().label("parent_exists"),
+                RelayDeliveryRecord.trace_version, RelayDeliveryRecord.trace_pruned, RelayDeliveryRecord.trace_truncated,
+            ).select_from(RelayDeliveryRecord).outerjoin(
+                RelayMessageRecord, RelayMessageRecord.id == RelayDeliveryRecord.message_id,
+            ).outerjoin(
+                RelaySessionRecord, RelaySessionRecord.id == RelayDeliveryRecord.recipient_endpoint_id,
+            ).outerjoin(
+                RelayCodexWakeReservationRecord, RelayCodexWakeReservationRecord.delivery_id == RelayDeliveryRecord.id,
+            ).where(created_order <= cutoff)
+            if runtime is not None:
+                query = query.where(RelayDeliveryRecord.recipient_runtime == runtime)
+            if container_ref is not None:
+                query = query.where(RelayMessageRecord.container_ref == container_ref)
+            if before_at is not None:
+                query = query.where(or_(created_order < before_at, and_(created_order == before_at, RelayDeliveryRecord.id < before_id)))
+            page = session.execute(query.order_by(created_order.desc(), RelayDeliveryRecord.id.desc()).limit(limit + 1)).mappings().all()
+            has_more, rows = len(page) > limit, [dict(row) for row in page[:limit]]
+            reply_counts, trace_sequences = {}, {}
+            if rows:
+                reply_counts = dict(session.execute(select(
+                    RelayMessageRecord.in_reply_to, func.count().label("linked_reply_count"),
+                ).where(RelayMessageRecord.in_reply_to.in_(sorted({row["message_id"] for row in rows})))
+                  .group_by(RelayMessageRecord.in_reply_to)).all())
+                sequence_rows = session.execute(select(
+                    RelayDeliveryTraceRecord.delivery_id,
+                    func.max(RelayDeliveryTraceRecord.recorded_sequence).label("latest_sequence"),
+                    func.max(case((RelayDeliveryTraceRecord.stage == "completed",
+                                   RelayDeliveryTraceRecord.recorded_sequence))).label("completed_sequence"),
+                ).where(
+                    RelayDeliveryTraceRecord.delivery_id.in_([row["delivery_id"] for row in rows]),
+                    RelayDeliveryTraceRecord.recorded_sequence <= through,
+                ).group_by(RelayDeliveryTraceRecord.delivery_id)).mappings()
+                trace_sequences = {row["delivery_id"]: row for row in sequence_rows}
+            for row in rows:
+                sequence = trace_sequences.get(row["delivery_id"], {})
+                row.update(linked_reply_count=reply_counts.get(row["message_id"], 0),
+                           latest_sequence=sequence.get("latest_sequence"),
+                           completed_sequence=sequence.get("completed_sequence"))
+            sequences = {row[key] for row in rows for key in ("latest_sequence", "completed_sequence") if row[key] is not None}
+            traces = {}
+            if sequences:
+                trace_rows = session.execute(select(
+                    RelayDeliveryTraceRecord.recorded_sequence, RelayDeliveryTraceRecord.delivery_id,
+                    RelayDeliveryTraceRecord.message_id, RelayDeliveryTraceRecord.recorded_at,
+                    RelayDeliveryTraceRecord.stage, RelayDeliveryTraceRecord.outcome,
+                ).where(RelayDeliveryTraceRecord.recorded_sequence.in_(sequences))).mappings()
+                traces = {row["recorded_sequence"]: row for row in trace_rows}
+            items = [_dashboard_relay_operational_item(row, traces, observed_at) for row in rows]
+        return JSONResponse(content={
+            "items": items, "limit": limit, "has_more": has_more,
+            "next_before_created_at": _dashboard_time(rows[-1]["cursor_created_at"]) if has_more else None,
+            "next_before_id": rows[-1]["delivery_id"] if has_more else None,
+            "until": _dashboard_time(cutoff), "observed_at": _dashboard_time(observed_at),
+            "trace_through_sequence": through, "consistency": "creation_cutoff_trace_highwater_live_state",
+            "evidence_notes": ["Mutable state is observed per page; this is not a frozen cross-page snapshot.",
+                               "Missing or pruned evidence is unknown, not resolution or proof of recipient activity.",
+                               "Keep filters unchanged throughout a scan; 200 rows bounds output, not SQLite scan work."],
+        }, headers={"Cache-Control": "no-store"})
 
     @app.get("/dashboard/api/relay/messages")
     def dashboard_relay_messages(
