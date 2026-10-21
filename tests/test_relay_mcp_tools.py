@@ -113,10 +113,11 @@ async def test_registered_send_same_id_conflicts_do_not_mutate(
 ):
     bind_asgi_work_refs(monkeypatch, asgi_post, asgi_get)
     for runtime, session in [("codex", "retry-sender"), ("codex", "other-sender"),
-                             ("claude-code", "retry-sender"), (_RUNTIME, _SESSION), (_RUNTIME, "other-target")]:
+                             ("claude-code", "retry-sender"), (_RUNTIME, _SESSION)]:
         await asgi_post("/relay/turn", {"runtime": runtime, "session_ref": session, **_SCOPE})
-    targets = await asgi_get("/relay/recipients", _SCOPE)
-    other = next(item["endpoint_id"] for item in targets["recipients"] if item["session_ref"] == "other-target")
+    other = (await asgi_post("/relay/turn", {
+        "runtime": _RUNTIME, "session_ref": "other-target", **_SCOPE,
+    }))["session"]["endpoint_id"]
     arguments = {
         "message": "שלום 🌍", "recipient": f"{_RUNTIME}:{_SESSION}",
         "sender_runtime": "codex", "sender_session_ref": "retry-sender",
