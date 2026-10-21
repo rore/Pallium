@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import importlib.util
 import json
+from datetime import datetime, timedelta, timezone
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import sys
 import threading
@@ -209,6 +211,7 @@ def plugin_context(client, monkeypatch):
             raise RuntimeError(f"Relay HTTP {response.status_code}")
         return response.json()
 
+    module._real_json_request = module._json_request
     monkeypatch.setattr(module, "_json_request", http)
 
     class State:
@@ -401,11 +404,22 @@ def test_packaged_mcp_preserves_authorization_and_clears_binding(client, mcp_plu
     assert not calls
 
 
+def _request_stage(ctx, request, *, session="ses_שלום", turn="wake", api_request_id="api-wake-1"):
+    middleware = ctx.middleware.get("llm_request")
+    result = middleware(request=request, session_id=session, turn_id=turn, api_request_id=api_request_id) if middleware else None
+    return result["request"] if result else request
+
+
+def _execute_request(ctx, request, next_call, *, session_id="ses_שלום", turn_id="wake",
+                     api_request_id="api-wake-1", **context):
+    request = _request_stage(ctx, request, session=session_id, turn=turn_id, api_request_id=api_request_id)
+    return ctx.middleware["llm_execution"](request, next_call, session_id=session_id,
+        turn_id=turn_id, api_request_id=api_request_id, **context)
+
+
 def _observe_request(ctx, request, *, session="ses_שלום", turn="wake", api_request_id="api-wake-1"):
-    return ctx.middleware["llm_execution"](
-        request, lambda _actual: "host context observed", api_request_id=api_request_id,
-        session_id=session, turn_id=turn,
-    )
+    return _execute_request(ctx, request, lambda _actual: "host context observed", api_request_id=api_request_id,
+                            session_id=session, turn_id=turn)
 
 
 def _admit_plugin_wake(ctx, marker, turn, session="ses_שלום"):
@@ -763,13 +777,14 @@ def test_plugin_admission_then_host_bound_reply(client, plugin_context):
     _observe_request(ctx, request)
 
     def provider(actual):
-        assert actual is request
+        assert actual is not request
+        assert message["payload"] in actual["messages"][0]["content"]
         assert status(client, message)["deliveries"][0]["state"] == "delivered"
         calls.append(actual)
         return "provider accepted"
 
     for _ in range(2):
-        assert ctx.middleware["llm_execution"](
+        assert _execute_request(ctx,
             request, provider, session_id="ses_שלום", turn_id="wake", **HOST_EXECUTION,
         ) == "provider accepted"
     assert len(calls) == 2
@@ -802,13 +817,14 @@ def test_provider_failure_after_host_context_observation_keeps_admission(client,
         raise OSError("provider failed after admission")
 
     with pytest.raises(OSError, match="provider failed after admission"):
-        ctx.middleware["llm_execution"](
+        _execute_request(ctx,
             request, provider, session_id="ses_שלום", turn_id="wake", api_request_id="api-wake-1",
         )
     assert status(client, message)["deliveries"][0]["state"] == "delivered"
 
 
-def test_ack_failure_can_retry_and_duplicate_observation_is_idempotent(client, plugin_context, monkeypatch):
+@pytest.mark.parametrize("failure", ["before-ack", "lost-ack-response", "admission-persistence"])
+def test_ack_failure_can_retry_and_duplicate_observation_is_idempotent(client, plugin_context, monkeypatch, failure):
     module, create, _ = plugin_context
     ctx, marker, message = _plugin_wake(client, create)
     context = ctx.hooks["pre_llm_call"](
@@ -816,6 +832,7 @@ def test_ack_failure_can_retry_and_duplicate_observation_is_idempotent(client, p
     )["context"]
     request = {"messages": [{"role": "user", "content": marker + "\n\n" + context}]}
     original = module._json_request
+    set_state = ctx.state.set
     ack_calls = []
     fail = True
 
@@ -823,20 +840,36 @@ def test_ack_failure_can_retry_and_duplicate_observation_is_idempotent(client, p
         nonlocal fail
         if path == "/relay/deliveries/ack":
             ack_calls.append(path)
-            if fail:
+            if fail and failure == "before-ack":
                 raise OSError("ack unavailable")
-        return original(base, method, path, **kwargs)
+        result = original(base, method, path, **kwargs)
+        if path == "/relay/deliveries/ack" and fail and failure == "lost-ack-response":
+            raise OSError("ack response lost")
+        return result
+
+    def fail_admission(key, value):
+        if fail and failure == "admission-persistence" and key.startswith("wake:") and value.get("state") == "admitted":
+            raise OSError("admission persistence failed")
+        set_state(key, value)
 
     monkeypatch.setattr(module, "_json_request", fail_ack)
-    _observe_request(ctx, request)
-    assert status(client, message)["deliveries"][0]["state"] == "claimed"
+    monkeypatch.setattr(ctx.state, "set", fail_admission)
+    if failure == "admission-persistence":
+        with pytest.raises(OSError, match="admission persistence failed"):
+            _observe_request(ctx, request)
+    else:
+        _observe_request(ctx, request)
+    assert status(client, message)["deliveries"][0]["state"] == ("claimed" if failure == "before-ack" else "delivered")
+    assert "refused" in _plugin_reply(ctx, {
+        "delivery_id": message["deliveries"][0]["delivery_id"], "payload": "not admitted",
+    }, session_id="ses_שלום", turn_id="wake")
     fail = False
     _observe_request(ctx, request, api_request_id="api-retry-2")
     _observe_request(ctx, request, api_request_id="api-retry-2")
     assert ack_calls == ["/relay/deliveries/ack", "/relay/deliveries/ack"]
     assert status(client, message)["deliveries"][0]["state"] == "delivered"
     with pytest.raises(OSError, match="provider failed"):
-        ctx.middleware["llm_execution"](
+        _execute_request(ctx,
             request, lambda _actual: (_ for _ in ()).throw(OSError("provider failed")),
             session_id="ses_שלום", turn_id="wake", **HOST_EXECUTION,
         )
@@ -862,21 +895,33 @@ def test_plugin_still_refuses_changed_owned_scope(plugin_context):
     assert ctx.state.values == {}
 
 
-@pytest.mark.parametrize("request_kind", ["messages", "input", "input_text", "input_string"])
+@pytest.mark.parametrize("request_kind", ["messages", "text_parts", "string_parts", "input", "input_text", "input_string"])
 def test_raw_execution_admits_public_request_formats(client, plugin_context, request_kind):
-    _, create, _ = plugin_context
+    module, create, _ = plugin_context
     ctx, marker, message = _plugin_wake(client, create)
     context = ctx.hooks["pre_llm_call"](session_id="ses_שלום", turn_id="wake", user_message=marker)["context"]
     text = marker + "\n\n" + context
-    content = [{"type": "input_text", "text": text}] if request_kind == "input_text" else text
-    key = "messages" if request_kind == "messages" else "input"
+    content = text
+    if request_kind in {"input_text", "text_parts"}:
+        content = [{"type": "input_text" if request_kind == "input_text" else "text", "text": text},
+                   {"type": "image", "url": "data:unchanged"}]
+    elif request_kind == "string_parts":
+        content = [text, {"type": "image", "url": "data:unchanged"}]
+    key = "messages" if request_kind in {"messages", "text_parts", "string_parts"} else "input"
     request = {key: text if request_kind == "input_string" else [{"role": "user", "content": content}]}
+    request["metadata"] = {"keep": ["unrelated", 2]}
+    original = json.loads(json.dumps(request))
     downstream = []
-    assert ctx.middleware["llm_execution"](
+    assert _execute_request(ctx,
         request, lambda actual: downstream.append(actual) or "response", session_id="ses_שלום",
         turn_id="wake", api_request_id="request-current",
     ) == "response"
-    assert downstream == [request]
+    assert len(downstream) == 1 and downstream[0] is not request
+    assert message["payload"] in module._current_user_text(downstream[0])
+    assert request == original
+    assert downstream[0]["metadata"] is request["metadata"]
+    if isinstance(content, list):
+        assert downstream[0][key][0]["content"][-1] is content[-1]
     assert status(client, message)["deliveries"][0]["state"] == "delivered"
     assert "pre_api_request" not in ctx.hooks
 
@@ -898,29 +943,26 @@ def test_raw_execution_never_admits_historical_or_rewritten_context(client, plug
     assert status(client, message)["deliveries"][0]["state"] == "claimed"
 
 
-@pytest.mark.parametrize("size,admitted", [(1, True), (1600, True), (1601, False), (16000, False)])
-def test_plugin_payload_boundaries_never_ack_a_preview(client, plugin_context, size, admitted):
+@pytest.mark.parametrize("size", [1, 1600, 1601, 2400, 16000])
+def test_plugin_payload_boundaries_never_ack_a_preview(client, plugin_context, size):
     _, create, _ = plugin_context
     payload = "é" * size
     ctx, marker, message = _plugin_wake(client, create, payload)
     result = ctx.hooks["pre_llm_call"](
         session_id="ses_שלום", turn_id="wake", user_message=marker,
     )
-    if admitted:
-        assert payload in result["context"]
-        request = {"messages": [{
-            "role": "user", "content": marker + "\n\n" + result["context"],
-        }]}
-        _observe_request(ctx, request)
-        ctx.middleware["llm_execution"](
-            request, lambda actual: "provider accepted", session_id="ses_שלום",
-            turn_id="wake", **HOST_EXECUTION,
-        )
-    else:
-        assert result is None
+    assert len(result["context"]) < 10000
+    request = {"messages": [{
+        "role": "user", "content": marker + "\n\n" + result["context"],
+    }]}
+    _observe_request(ctx, request)
+    _execute_request(ctx,
+        request, lambda actual: "provider accepted", session_id="ses_שלום",
+        turn_id="wake", **HOST_EXECUTION,
+    )
     delivery = status(client, message)["deliveries"][0]
-    assert delivery["state"] == ("delivered" if admitted else "claimed")
-    assert (delivery["delivered_at"] is not None) == admitted
+    assert delivery["state"] == "delivered"
+    assert delivery["delivered_at"] is not None
 
 
 @pytest.mark.parametrize("payload,accepted", [
@@ -936,7 +978,7 @@ def test_plugin_reply_boundaries(client, plugin_context, payload, accepted):
         "role": "user", "content": marker + "\n\n" + context,
     }]}
     _observe_request(ctx, request)
-    ctx.middleware["llm_execution"](
+    _execute_request(ctx,
         request, lambda actual: "provider accepted", session_id="ses_שלום",
         turn_id="wake", **HOST_EXECUTION,
     )
@@ -987,7 +1029,7 @@ def test_reply_context_preserves_host_authorization_and_resets(client, plugin_co
         "role": "user", "content": marker + "\n\n" + context,
     }]}
     _observe_request(ctx, request)
-    ctx.middleware["llm_execution"](
+    _execute_request(ctx,
         request, lambda actual: "provider accepted", session_id="ses_שלום",
         turn_id="wake", **HOST_EXECUTION,
     )
@@ -1131,7 +1173,7 @@ def test_packaged_mcp_reply_receipt_stays_in_host_memory(client, mcp_plugin_cont
     rendered = ctx.hooks["pre_llm_call"](session_id="ses_שלום", turn_id="wake", user_message=marker)["context"]
     request = {"messages": [{"role": "user", "content": marker + "\n" + rendered}]}
     _observe_request(ctx, request)
-    ctx.middleware["llm_execution"](request, lambda actual: "provider", session_id="ses_שלום",
+    _execute_request(ctx, request, lambda actual: "provider", session_id="ses_שלום",
                                     turn_id="wake", **HOST_EXECUTION)
     delivery = status(client, message)["deliveries"][0]
     args = {"delivery_id": delivery["delivery_id"], "message": "reply שלום"}
@@ -1147,3 +1189,793 @@ def test_packaged_mcp_reply_receipt_stays_in_host_memory(client, mcp_plugin_cont
     assert receipt not in rendered and receipt not in result and receipt not in json.dumps(args)
     assert "error" in json.loads(_mcp_tool(ctx, "pallium_relay_reply", args, session="ses_שלום", turn="wake"))
     assert len(calls) == 1
+
+
+def test_cached_session_refreshes_after_a_day_without_claiming_mail(
+    client, plugin_context, mcp_plugin_context, monkeypatch,
+):
+    import storage.sqlite_relay as sqlite_relay
+
+    module, _, _ = plugin_context
+    create, _, calls = mcp_plugin_context
+    current = datetime.now(timezone.utc)
+    clock = [current - timedelta(hours=25)]
+    original_now = sqlite_relay._now
+    monkeypatch.setattr(sqlite_relay, "_now", lambda value=None: clock[0] if value is None else original_now(value))
+    ctx = create()
+    hook = ctx.hooks["pre_llm_call"]
+    hook(session_id="ses_שלום", turn_id="seed", user_message="hello")
+    before = client.get("/relay/sessions", params={**SCOPE, "include_inactive": True}).json()[0]
+    clock[0] = current
+    message = send(client, before["endpoint_id"])
+    assert client.get("/relay/sessions", params={**SCOPE, "runtime": "hermes"}).json() == []
+    requests = []
+    http = module._json_request
+
+    def record(base, method, path, **kwargs):
+        if method == "POST" and path == "/relay/turn":
+            requests.append(kwargs["body"])
+        return http(base, method, path, **kwargs)
+
+    monkeypatch.setattr(module, "_json_request", record)
+    assert hook(session_id="ses_שלום", turn_id="ordinary", user_message="still here")
+    refreshed = client.get("/relay/sessions", params={**SCOPE, "runtime": "hermes"}).json()[0]
+    assert refreshed["endpoint_id"] == before["endpoint_id"]
+    assert refreshed["scope_generation"] == before["scope_generation"]
+    assert refreshed["last_seen_at"] > before["last_seen_at"]
+    assert requests == [{
+        "runtime": "hermes", "session_ref": "ses_שלום", **SCOPE,
+        "max_chars": 1, "max_response_chars": 1, "max_messages": 1,
+        "previous_container_ref": SCOPE["container_ref"],
+        "previous_endpoint_id": before["endpoint_id"],
+        "previous_scope_generation": before["scope_generation"],
+    }]
+    delivery = status(client, message)["deliveries"][0]
+    assert delivery["state"] == "pending" and delivery["attempts"] == 0
+    assert delivery["claim_token"] is None and delivery["receipt"] is None
+    assert "message_id" in json.loads(_mcp_tool(ctx, "pallium_relay_address", {}, session="ses_שלום"))
+    assert len(calls) == 1
+    assert calls[0][2] == ("ses_שלום", "turn-1")
+    _await(lambda: ctx.injections)
+    _admit_plugin_wake(ctx, ctx.injections[0][0], "wake")
+    assert status(client, message)["deliveries"][0]["state"] == "delivered"
+
+
+@pytest.mark.parametrize("changed", [
+    {"state": "closed"}, {"destination_health": "unreachable"},
+    {"endpoint_id": "relay-session-" + "f" * 32}, {"runtime": "codex"},
+    {"session_ref": "other"}, {"container_ref": "other"},
+    {"scope_generation": True}, {"scope_generation": -1}, {"scope_generation": 1.5},
+    None, "missing", "duplicate", "missing_generation",
+])
+def test_cached_refresh_refuses_changed_or_malformed_session(client, plugin_context, monkeypatch, changed):
+    module, create, _ = plugin_context
+    ctx = create()
+    ctx.hooks["pre_llm_call"](session_id="ses_שלום", turn_id="seed", user_message="hello")
+    http = module._json_request
+    posts, reads = [], []
+
+    def changed_session(base, method, path, **kwargs):
+        if method == "POST":
+            posts.append(path)
+        result = http(base, method, path, **kwargs)
+        if path == "/relay/sessions":
+            reads.append(kwargs["query"])
+            if changed is None:
+                return None
+            if changed == "missing":
+                return []
+            if changed == "duplicate":
+                return result * 2
+            if changed == "missing_generation":
+                result[0].pop("scope_generation")
+                return result
+            return [{**result[0], **changed}]
+        return result
+
+    monkeypatch.setattr(module, "_json_request", changed_session)
+    assert ctx.hooks["pre_llm_call"](session_id="ses_שלום", turn_id="later", user_message="hello") is None
+    assert reads == [{"runtime": "hermes", "session_ref": "ses_שלום", **SCOPE, "include_inactive": "true"}]
+    assert posts == []
+
+
+@pytest.mark.parametrize("race", ["closed", "missing", "moved", "replaced", "generation", "unreachable"])
+@pytest.mark.parametrize("source", ["ordinary", "wake"])
+def test_cached_refresh_uses_atomic_endpoint_and_generation_fence(client, plugin_context, monkeypatch, race, source):
+    from storage.sqlite_schema import RelayEndpointGenerationRecord, RelaySessionRecord
+
+    module, create, _ = plugin_context
+    ctx = create()
+    hook = ctx.hooks["pre_llm_call"]
+    hook(session_id="ses_שלום", turn_id="seed", user_message="hello")
+    before = client.get("/relay/sessions", params={**SCOPE, "runtime": "hermes"}).json()[0]
+    if source == "wake":
+        message = send(client, before["endpoint_id"])
+        _await(lambda: ctx.injections)
+    storage = client.app.state.pallium_service._storage
+    http = module._json_request
+    attempted = []
+
+    def race_after_lookup(base, method, path, **kwargs):
+        if method == "POST" and path == "/relay/turn" and kwargs["body"].get("register_session") is not False:
+            attempted.append(kwargs["body"])
+            with storage._relay_session_factory.begin() as db:
+                row = db.get(RelaySessionRecord, before["endpoint_id"])
+                if race == "missing":
+                    db.delete(row)
+                elif race == "moved":
+                    row.container_ref = "git:example.test/team/elsewhere"
+                elif race == "replaced":
+                    row.id = "relay-session-" + "f" * 32
+                elif race == "generation":
+                    db.add(RelayEndpointGenerationRecord(endpoint_id=row.id, generation=1))
+                else:
+                    row.state = race
+        return http(base, method, path, **kwargs)
+
+    monkeypatch.setattr(module, "_json_request", race_after_lookup)
+    result = hook(session_id="ses_שלום", turn_id="later", user_message=(
+        ctx.injections[0][0] if source == "wake" else "fresh ordinary activity"))
+    assert len(attempted) == 1
+    assert attempted[0]["previous_endpoint_id"] == before["endpoint_id"]
+    assert attempted[0]["previous_scope_generation"] == before["scope_generation"]
+    rows = client.get("/relay/sessions", params={**SCOPE, "runtime": "hermes", "include_inactive": True}).json()
+    if race in {"missing", "moved"}:
+        assert rows == []
+    elif race == "unreachable":
+        assert rows[0]["endpoint_id"] == before["endpoint_id"]
+        assert rows[0]["destination_health"] == "active"
+        assert rows[0]["last_seen_at"] > before["last_seen_at"]
+    else:
+        assert rows[0]["last_seen_at"] == before["last_seen_at"]
+        assert rows[0]["state"] == ("closed" if race == "closed" else "recent")
+        if race == "replaced":
+            assert rows[0]["endpoint_id"] != before["endpoint_id"]
+        if race == "generation":
+            assert rows[0]["scope_generation"] == 1
+    if source == "wake":
+        delivery = status(client, message)["deliveries"][0]
+        assert delivery["state"] == ("claimed" if race == "unreachable" else "pending")
+        assert delivery["attempts"] == (1 if race == "unreachable" else 0)
+        assert _persisted_wake(ctx)["state"] == ("claimed" if race == "unreachable" else "injection_attempted")
+        assert (result is not None) == (race == "unreachable")
+
+
+@pytest.mark.parametrize("payload", ['"\\\n\r\t' * 3200, "🌍" * 16000], ids=["escaped", "astral"])
+def test_full_payload_with_maximum_metadata_then_reload_and_next_delivery(
+    client, plugin_context, monkeypatch, payload,
+):
+    module, create, config = plugin_context
+    container = "git:" + ('"\\' * 254)
+    session = "s" + ('"\\' * 127)
+    turn_id = "t" + ('"\\' * 127)
+    monkeypatch.setitem(SCOPE, "container_ref", container)
+    config["plugins"]["entries"]["pallium-hermes-relay"]["settings"]["container_ref"] = container
+    ctx = create()
+    ctx.hooks["pre_llm_call"](session_id=session, turn_id="seed", user_message="hello")
+    endpoint = client.get("/relay/sessions", params=SCOPE).json()[0]["endpoint_id"]
+    sender = "p" + ('"\\' * 127)
+    assert client.post("/relay/turn", json={"runtime": "codex", "session_ref": sender, **SCOPE}).status_code == 200
+    response = client.post("/relay/messages", json={
+        "sender_runtime": "codex", "sender_session_ref": sender,
+        "recipient": endpoint, "payload": payload, **SCOPE,
+    })
+    assert response.status_code == 200, response.text
+    message = response.json()
+    _await(lambda: ctx.injections)
+    marker = ctx.injections[0][0]
+    placeholder = ctx.hooks["pre_llm_call"](session_id=session, turn_id=turn_id, user_message=marker)["context"]
+    assert len(placeholder) < 10000 and payload not in placeholder
+    request = {"messages": [{"role": "user", "content": marker + "\n" + placeholder}]}
+    expanded = _request_stage(ctx, request, session=session, turn=turn_id)
+    context = expanded["messages"][0]["content"].split(marker + "\n", 1)[1]
+    fields = json.loads(context.split("\n", 1)[1].rsplit("\n", 1)[0])
+    assert fields["payload"] == payload and fields["payload_total_chars"] == 16000
+    assert fields["host_session_id"] == session and fields["host_turn_id"] == turn_id
+    assert fields["recipient_container_ref"] == container and fields["sender_session_ref"] == sender
+    assert len(context) <= module.MAX_CONTEXT_CHARS
+    assert status(client, message)["deliveries"][0]["state"] == "claimed"
+    _observe_request(ctx, expanded, session=session, turn=turn_id)
+    assert status(client, message)["deliveries"][0]["state"] == "delivered"
+    ctx.hooks["on_session_end"](session_id=session, turn_id=turn_id)
+    for cleanup in ctx.cleanups:
+        cleanup()
+    import storage.sqlite_relay as sqlite_relay
+
+    original_now = sqlite_relay._now
+    later = datetime.now(timezone.utc) + timedelta(seconds=61)
+    monkeypatch.setattr(sqlite_relay, "_now", lambda value=None: later if value is None else original_now(value))
+    reloaded = create(ctx.state)
+    reloaded.hooks["pre_llm_call"](session_id=session, turn_id="resumed", user_message="hello again")
+    next_message = send(client, endpoint, "next short delivery")
+    _await(lambda: reloaded.injections)
+    _admit_plugin_wake(reloaded, reloaded.injections[0][0], "next", session=session)
+    assert status(client, next_message)["deliveries"][0]["state"] == "delivered"
+    assert _plugin_reply(reloaded, {
+        "delivery_id": next_message["deliveries"][0]["delivery_id"], "payload": "received ✓",
+    }, session_id=session, turn_id="next") == "Relay reply sent."
+
+
+@pytest.mark.parametrize("payload", ["", " \t\n", "unsafe\x01", "x" * 16001],
+                         ids=["empty", "blank", "control", "over-max"])
+def test_rejected_send_leaves_plugin_session_ready_for_valid_delivery(client, plugin_context, payload):
+    _, create, _ = plugin_context
+    ctx = create()
+    ctx.hooks["pre_llm_call"](session_id="ses_שלום", turn_id="seed", user_message="hello")
+    endpoint = client.get("/relay/sessions", params=SCOPE).json()[0]["endpoint_id"]
+    assert client.post("/relay/turn", json={
+        "runtime": "claude-code", "session_ref": "sender", **SCOPE,
+    }).status_code == 200
+    refused = client.post("/relay/messages", json={
+        "sender_runtime": "claude-code", "sender_session_ref": "sender",
+        "recipient": endpoint, "payload": payload, **SCOPE,
+    })
+    assert refused.status_code == 422, refused.text
+    assert pending(client).json() is None
+    message = send(client, endpoint, "valid after rejection")
+    _await(lambda: ctx.injections)
+    _admit_plugin_wake(ctx, ctx.injections[0][0], "valid")
+    assert status(client, message)["deliveries"][0]["state"] == "delivered"
+
+
+@pytest.mark.parametrize("corrupt", ["truncated", "offset", "total", "oversized", "missing", "malformed"])
+def test_invalid_full_claim_stays_fenced_after_lease_expiry_and_reload(client, plugin_context, monkeypatch, corrupt):
+    import storage.sqlite_relay as sqlite_relay
+
+    module, create, _ = plugin_context
+    ctx, marker, message = _plugin_wake(client, create)
+    http = module._json_request
+
+    def corrupt_claim(base, method, path, **kwargs):
+        result = http(base, method, path, **kwargs)
+        if method == "POST" and path == "/relay/turn" and kwargs["body"].get("register_session") is False:
+            delivery = result["deliveries"][0]
+            if corrupt == "truncated":
+                delivery["content_truncated"] = True
+            elif corrupt == "offset":
+                delivery["payload_offset"] = 1
+            elif corrupt == "total":
+                delivery["payload_total_chars"] += 1
+            elif corrupt == "oversized":
+                delivery.update(payload="x" * 16001, payload_total_chars=16001)
+            elif corrupt == "missing":
+                result["deliveries"] = []
+            else:
+                delivery["payload"] = None
+        return result
+
+    monkeypatch.setattr(module, "_json_request", corrupt_claim)
+    assert ctx.hooks["pre_llm_call"](session_id="ses_שלום", turn_id="wake", user_message=marker) is None
+    assert _persisted_wake(ctx)["state"] == "claim_attempted"
+    assert status(client, message)["deliveries"][0]["attempts"] == 1
+    for cleanup in ctx.cleanups:
+        cleanup()
+    original_now = sqlite_relay._now
+    later = datetime.now(timezone.utc) + timedelta(seconds=61)
+    monkeypatch.setattr(sqlite_relay, "_now", lambda value=None: later if value is None else original_now(value))
+    reloaded = create(ctx.state)
+    reloaded.hooks["pre_llm_call"](session_id="ses_שלום", turn_id="resumed", user_message="hello again")
+    assert pending(client).json()["state"] == "pending"
+    reloaded.hooks["pre_llm_call"](session_id="ses_שלום", turn_id="wake-again", user_message=marker)
+    assert reloaded.injections == []
+    delivery = status(client, message)["deliveries"][0]
+    assert delivery["state"] == "claimed" and delivery["attempts"] == 1
+    assert delivery["delivered_at"] is None
+
+
+@pytest.mark.parametrize("encoding", ["utf8", "escaped", "oversized"])
+def test_real_http_response_bound_handles_full_unicode_and_rejects_overflow(plugin_context, encoding):
+    module, _, _ = plugin_context
+    expected = {"payload": "🌍" * 16000}
+    wire = (json.dumps(expected, ensure_ascii=encoding == "escaped").encode("utf-8")
+            if encoding != "oversized" else b" " * (256 * 1024 + 1))
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(wire)))
+            self.end_headers()
+            self.wfile.write(wire)
+
+        def log_message(self, *_args):
+            pass
+
+    with ThreadingHTTPServer(("127.0.0.1", 0), Handler) as server:
+        thread = threading.Thread(target=server.serve_forever)
+        thread.start()
+        try:
+            base = f"http://127.0.0.1:{server.server_port}"
+            if encoding == "oversized":
+                with pytest.raises(ValueError, match="response exceeded"):
+                    module._real_json_request(base, "GET", "/full")
+            else:
+                assert module._real_json_request(base, "GET", "/full") == expected
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            assert not thread.is_alive()
+
+
+def test_idle_session_wake_refreshes_before_claim_without_an_ordinary_turn(
+    client, plugin_context, mcp_plugin_context, monkeypatch,
+):
+    import storage.sqlite_relay as sqlite_relay
+
+    module, _, _ = plugin_context
+    create, _, calls = mcp_plugin_context
+    current = datetime.now(timezone.utc)
+    clock = [current - timedelta(hours=25)]
+    original_now = sqlite_relay._now
+    monkeypatch.setattr(sqlite_relay, "_now", lambda value=None: clock[0] if value is None else original_now(value))
+    ctx = create()
+    hook = ctx.hooks["pre_llm_call"]
+    hook(session_id="ses_שלום", turn_id="seed", user_message="hello")
+    before = client.get("/relay/sessions", params={**SCOPE, "runtime": "hermes"}).json()[0]
+    clock[0] = current
+    message = send(client, before["endpoint_id"], "incoming after a day")
+    _await(lambda: ctx.injections)
+    assert client.get("/relay/sessions", params={**SCOPE, "runtime": "hermes"}).json() == []
+    http = module._json_request
+    registrations = []
+
+    def observe_refresh(base, method, path, **kwargs):
+        result = http(base, method, path, **kwargs)
+        if method == "POST" and path == "/relay/turn" and kwargs["body"].get("register_session") is not False:
+            registrations.append(kwargs["body"])
+            assert result["deliveries"] == []
+            assert _persisted_wake(ctx)["state"] == "injection_attempted"
+            delivery = status(client, message)["deliveries"][0]
+            assert delivery["state"] == "pending" and delivery["attempts"] == 0
+            assert delivery["receipt"] is None and delivery["claim_token"] is None
+        return result
+
+    monkeypatch.setattr(module, "_json_request", observe_refresh)
+    _admit_plugin_wake(ctx, ctx.injections[0][0], "idle-wake")
+    assert len(registrations) == 1
+    assert registrations[0] == {
+        "runtime": "hermes", "session_ref": "ses_שלום", **SCOPE,
+        "max_chars": 1, "max_response_chars": 1, "max_messages": 1,
+        "previous_container_ref": SCOPE["container_ref"],
+        "previous_endpoint_id": before["endpoint_id"],
+        "previous_scope_generation": before["scope_generation"],
+    }
+    refreshed = client.get("/relay/sessions", params={**SCOPE, "runtime": "hermes"}).json()[0]
+    assert refreshed["endpoint_id"] == before["endpoint_id"]
+    assert refreshed["scope_generation"] == before["scope_generation"]
+    assert refreshed["last_seen_at"] > before["last_seen_at"]
+    assert status(client, message)["deliveries"][0]["state"] == "delivered"
+    assert "message_id" in json.loads(_mcp_tool(ctx, "pallium_relay_address", {}, session="ses_שלום", turn="idle-wake"))
+    assert calls[0][2] == ("ses_שלום", "idle-wake")
+    ctx.hooks["on_session_end"](session_id="ses_שלום", turn_id="idle-wake")
+    monkeypatch.setattr(module, "_json_request", http)
+    next_message = send(client, before["endpoint_id"], "next wake")
+    _await(lambda: len(ctx.injections) == 2)
+    _admit_plugin_wake(ctx, ctx.injections[1][0], "next")
+    assert status(client, next_message)["deliveries"][0]["state"] == "delivered"
+
+
+@pytest.mark.parametrize("change", ["missing", "replaced"])
+@pytest.mark.parametrize("phase", ["before-helper", "after-lookup", "after-refresh"])
+def test_wake_refresh_never_falls_back_to_registration_or_overwrites_changed_host_scope(
+    client, plugin_context, monkeypatch, change, phase,
+):
+    module, create, _ = plugin_context
+    ctx, marker, message = _plugin_wake(client, create)
+    http, get, set_state = module._json_request, ctx.state.get, ctx.state.set
+    posts = []
+    changed = False
+
+    def change_scope():
+        nonlocal changed
+        if changed:
+            return
+        changed = True
+        key = next(key for key in ctx.state.values if key.startswith("session:"))
+        if change == "missing":
+            ctx.state.values.pop(key)
+        else:
+            ctx.state.values[key]["endpoint_id"] = "relay-session-" + "f" * 32
+
+    def get_state(key, default=None):
+        result = get(key, default)
+        if phase == "before-helper" and key.startswith("session:") and threading.current_thread() is threading.main_thread():
+            change_scope()
+        return result
+
+    def write_state(key, value):
+        set_state(key, value)
+        if phase == "after-refresh" and key.startswith("session:"):
+            change_scope()
+
+    def request(base, method, path, **kwargs):
+        if method == "POST":
+            posts.append(kwargs["body"])
+        result = http(base, method, path, **kwargs)
+        if phase == "after-lookup" and path == "/relay/sessions":
+            change_scope()
+        return result
+
+    monkeypatch.setattr(ctx.state, "get", get_state)
+    monkeypatch.setattr(ctx.state, "set", write_state)
+    monkeypatch.setattr(module, "_json_request", request)
+    assert ctx.hooks["pre_llm_call"](session_id="ses_שלום", turn_id="wake", user_message=marker) is None
+    assert changed
+    assert len(posts) == (1 if phase == "after-refresh" else 0)
+    assert all(post.get("previous_endpoint_id") for post in posts)
+    assert _persisted_wake(ctx)["state"] == "injection_attempted"
+    delivery = status(client, message)["deliveries"][0]
+    assert delivery["state"] == "pending" and delivery["attempts"] == 0
+
+
+@pytest.mark.parametrize("failure", ["lookup", "lost-refresh-response"])
+def test_failed_wake_refresh_keeps_unclaimed_mail_retryable(client, plugin_context, monkeypatch, failure):
+    module, create, _ = plugin_context
+    ctx, marker, message = _plugin_wake(client, create)
+    http = module._json_request
+
+    def fail_refresh(base, method, path, **kwargs):
+        if failure == "lookup" and path == "/relay/sessions":
+            raise OSError("session lookup unavailable")
+        result = http(base, method, path, **kwargs)
+        if failure == "lost-refresh-response" and method == "POST" and path == "/relay/turn":
+            raise OSError("registration response lost")
+        return result
+
+    monkeypatch.setattr(module, "_json_request", fail_refresh)
+    assert ctx.hooks["pre_llm_call"](session_id="ses_שלום", turn_id="wake", user_message=marker) is None
+    assert _persisted_wake(ctx)["state"] == "injection_attempted"
+    delivery = status(client, message)["deliveries"][0]
+    assert delivery["state"] == "pending" and delivery["attempts"] == 0
+    monkeypatch.setattr(module, "_json_request", http)
+    _admit_plugin_wake(ctx, marker, "wake")
+    assert status(client, message)["deliveries"][0]["attempts"] == 1
+    assert status(client, message)["deliveries"][0]["state"] == "delivered"
+
+
+def test_concurrent_matching_wake_callbacks_refresh_but_claim_once(client, plugin_context, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+
+    module, create, _ = plugin_context
+    ctx, marker, message = _plugin_wake(client, create)
+    http = module._json_request
+    barrier = threading.Barrier(2)
+    registrations, claims = [], []
+
+    def simultaneous_refresh(base, method, path, **kwargs):
+        if method == "POST" and path == "/relay/turn":
+            if kwargs["body"].get("register_session") is False:
+                claims.append(kwargs["body"])
+            else:
+                registrations.append(kwargs["body"])
+                barrier.wait(timeout=3)
+        return http(base, method, path, **kwargs)
+
+    monkeypatch.setattr(module, "_json_request", simultaneous_refresh)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(ctx.hooks["pre_llm_call"], session_id="ses_שלום", turn_id="wake", user_message=marker)
+                   for _ in range(2)]
+        outcomes = [future.result(timeout=5) for future in futures]
+    assert len(registrations) == 2 and len(claims) == 1
+    assert sum(outcome is not None for outcome in outcomes) == 1
+    assert status(client, message)["deliveries"][0]["attempts"] == 1
+    context = next(outcome["context"] for outcome in outcomes if outcome is not None)
+    _observe_request(ctx, {"messages": [{"role": "user", "content": marker + "\n" + context}]})
+    assert status(client, message)["deliveries"][0]["state"] == "delivered"
+
+
+@pytest.mark.parametrize("change", ["profile", "wake", "state"])
+def test_wake_rechecks_host_fences_after_successful_refresh(client, plugin_context, monkeypatch, change):
+    module, create, _ = plugin_context
+    ctx, marker, message = _plugin_wake(client, create)
+    http = module._json_request
+    posts = []
+
+    def change_after_refresh(base, method, path, **kwargs):
+        result = http(base, method, path, **kwargs)
+        if method == "POST" and path == "/relay/turn":
+            posts.append(kwargs["body"])
+            if change == "profile":
+                ctx.profile_name = "changed-profile"
+            else:
+                key = next(key for key in ctx.state.values if key.startswith("wake:"))
+                ctx.state.values[key]["nonce" if change == "wake" else "state"] = (
+                    "changed-nonce" if change == "wake" else "injection_refused")
+        return result
+
+    monkeypatch.setattr(module, "_json_request", change_after_refresh)
+    assert ctx.hooks["pre_llm_call"](session_id="ses_שלום", turn_id="wake", user_message=marker) is None
+    assert len(posts) == 1 and posts[0].get("previous_endpoint_id")
+    assert posts[0].get("register_session") is not False
+    delivery = status(client, message)["deliveries"][0]
+    assert delivery["state"] == "pending" and delivery["attempts"] == 0
+
+
+@pytest.mark.parametrize("check", ["bounded-hook", "complete-admission"])
+def test_full_payload_survives_default_host_hook_spill(client, plugin_context, check):
+    _, create, _ = plugin_context
+    payload = "🌍" * 16000
+    ctx, marker, message = _plugin_wake(client, create, payload)
+    context = ctx.hooks["pre_llm_call"](session_id="ses_שלום", turn_id="wake", user_message=marker)["context"]
+    if check == "bounded-hook":
+        assert len(context) <= 10000
+        assert payload not in context
+    else:
+        request = {"messages": [{"role": "user", "content": marker + "\n" + context[:10000]}]}
+        observed = []
+        _execute_request(ctx, request, lambda actual: observed.append(actual))
+        assert status(client, message)["deliveries"][0]["state"] == "delivered"
+        assert payload in observed[0]["messages"][0]["content"]
+
+
+@pytest.mark.parametrize("change", [
+    "missing", "rewritten", "duplicate", "split", "historical", "tool", "system",
+    "nontext", "duplicate-history", "wrong-marker",
+])
+def test_request_stage_never_reconstructs_missing_or_ambiguous_context(client, plugin_context, change):
+    _, create, _ = plugin_context
+    ctx, marker, message = _plugin_wake(client, create)
+    token = ctx.hooks["pre_llm_call"](session_id="ses_שלום", turn_id="wake", user_message=marker)["context"]
+    text = marker + "\n" + token
+    request = {"messages": [{"role": "user", "content": text}]}
+    if change in {"missing", "rewritten", "duplicate", "wrong-marker"}:
+        request["messages"][0]["content"] = {
+            "missing": marker, "rewritten": marker + "\n" + token[:-1],
+            "duplicate": text + token, "wrong-marker": marker[:-1] + "\n" + token,
+        }[change]
+    elif change == "split":
+        middle = len(token) // 2
+        request["messages"][0]["content"] = [marker, token[:middle], token[middle:]]
+    elif change == "historical":
+        request["messages"].append({"role": "user", "content": "later input"})
+    elif change in {"tool", "system"}:
+        request["messages"] = [{"role": change, "content": token}, {"role": "user", "content": marker}]
+    elif change == "nontext":
+        request["messages"][0]["content"] = [{"type": "image", "text": text}]
+    else:
+        request["messages"].insert(0, {"role": "user", "content": token})
+    original = json.loads(json.dumps(request))
+    assert _request_stage(ctx, request) is request
+    assert request == original
+    _observe_request(ctx, request)
+    assert status(client, message)["deliveries"][0]["state"] == "claimed"
+
+
+@pytest.mark.parametrize("change", ["session", "turn", "api-request", "profile", "scope", "container", "state", "ended"])
+def test_request_stage_requires_live_exact_host_identity(client, plugin_context, change):
+    _, create, _ = plugin_context
+    ctx, marker, message = _plugin_wake(client, create)
+    token = ctx.hooks["pre_llm_call"](session_id="ses_שלום", turn_id="wake", user_message=marker)["context"]
+    request = {"input": marker + "\n" + token}
+    identity = {"session": "ses_שלום", "turn": "wake", "api_request_id": "request-1"}
+    if change in {"session", "turn", "api-request"}:
+        identity[{"api-request": "api_request_id"}.get(change, change)] = "" if change == "api-request" else "foreign"
+    elif change == "profile":
+        ctx.profile_name = "foreign-profile"
+    elif change in {"scope", "container", "state"}:
+        key = next(key for key in ctx.state.values if key.startswith("wake:" if change == "state" else "session:"))
+        field = {"scope": "endpoint_id", "container": "container_ref", "state": "state"}[change]
+        ctx.state.values[key][field] = {
+            "scope": "relay-session-" + "f" * 32, "container": "foreign", "state": "claim_attempted",
+        }[change]
+    else:
+        ctx.hooks["on_session_end"](session_id="ses_שלום", turn_id="wake")
+    assert _request_stage(ctx, request, **identity) is request
+    assert status(client, message)["deliveries"][0]["state"] == "claimed"
+
+
+def test_request_stage_idempotence_precedes_tokens_inside_payload(client, plugin_context, monkeypatch):
+    import storage.sqlite_relay as sqlite_relay
+
+    module, create, _ = plugin_context
+    ctx = create()
+    ctx.hooks["pre_llm_call"](session_id="ses_שלום", turn_id="seed", user_message="hello")
+    endpoint = client.get("/relay/sessions", params=SCOPE).json()[0]["endpoint_id"]
+    assert client.post("/relay/turn", json={"runtime": "claude-code", "session_ref": "sender", **SCOPE}).status_code == 200
+    delivery_id, nonce = "relay-delivery-" + "a" * 32, "known-test-nonce"
+    token = module._placeholder(delivery_id, nonce)
+    payload = "Literal placeholder in untrusted data: " + token
+    monkeypatch.setattr(sqlite_relay, "uuid", SimpleNamespace(uuid4=lambda: SimpleNamespace(hex="a" * 32)))
+    monkeypatch.setattr(module.secrets, "token_urlsafe", lambda _size: nonce)
+    response = client.post("/relay/messages", json={
+        "sender_runtime": "claude-code", "sender_session_ref": "sender", "recipient": endpoint,
+        "payload": payload, **SCOPE,
+    })
+    assert response.status_code == 200, response.text
+    message = response.json()
+    _await(lambda: ctx.injections)
+    marker = ctx.injections[0][0]
+    assert ctx.hooks["pre_llm_call"](session_id="ses_שלום", turn_id="wake", user_message=marker)["context"] == token
+    request = {"input": marker + "\n" + token}
+    expanded = _request_stage(ctx, request)
+    assert payload in module._current_user_text(expanded)
+    assert _request_stage(ctx, expanded) is expanded
+    _observe_request(ctx, expanded)
+    retry = _request_stage(ctx, request, api_request_id="retry-request")
+    assert retry == expanded and retry is not expanded
+    assert _request_stage(ctx, retry, api_request_id="retry-request") is retry
+    assert status(client, message)["deliveries"][0]["attempts"] == 1
+
+
+@pytest.mark.parametrize("stage", ["later-llm-request", "pre-api"])
+def test_later_host_stages_can_remove_expanded_context_without_ack(client, plugin_context, stage):
+    _, create, _ = plugin_context
+    ctx, marker, message = _plugin_wake(client, create)
+    token = ctx.hooks["pre_llm_call"](session_id="ses_שלום", turn_id="wake", user_message=marker)["context"]
+    original = {"messages": [{"role": "user", "content": marker + "\n" + token}]}
+    expanded = _request_stage(ctx, original)
+    assert expanded is not original
+    changed = {**expanded, "messages": [{"role": "user", "content": marker}]}
+    calls = []
+    ctx.middleware["llm_execution"](changed, lambda actual: calls.append((stage, actual)),
+        session_id="ses_שלום", turn_id="wake", api_request_id="request-1")
+    assert calls == [(stage, changed)]
+    assert status(client, message)["deliveries"][0]["state"] == "claimed"
+
+
+@pytest.mark.parametrize("surface", ["direct", "mcp"])
+def test_reply_keeps_context_for_fresh_provider_continuation_without_authority(
+    client, plugin_context, monkeypatch, request, surface,
+):
+    module, create, _ = plugin_context
+    calls = None
+    if surface == "mcp":
+        create, _, calls = request.getfixturevalue("mcp_plugin_context")
+    ctx, marker, message = _plugin_wake(client, create)
+    token = ctx.hooks["pre_llm_call"](session_id="ses_שלום", turn_id="wake", user_message=marker)["context"]
+    original = {"messages": [{"role": "user", "content": marker + "\n" + token}]}
+    http = module._json_request
+    mutations = []
+
+    def record_mutations(base, method, path, **kwargs):
+        if method == "POST":
+            mutations.append(path)
+        return http(base, method, path, **kwargs)
+
+    monkeypatch.setattr(module, "_json_request", record_mutations)
+    _observe_request(ctx, original)
+    delivery_id = message["deliveries"][0]["delivery_id"]
+    args = {"delivery_id": delivery_id, "message" if surface == "mcp" else "payload": "reply ✓"}
+    result = (_mcp_tool(ctx, "pallium_relay_reply", args, session="ses_שלום", turn="wake")
+              if surface == "mcp" else _plugin_reply(ctx, args, session_id="ses_שלום", turn_id="wake"))
+    assert ("message_id" in json.loads(result)) if surface == "mcp" else result == "Relay reply sent."
+    before = list(mutations)
+    continuation = {"messages": [*original["messages"], {
+        "role": "assistant", "content": None, "tool_calls": [{
+            "id": "reply-call", "type": "function", "function": {
+                "name": "pallium_relay_reply", "arguments": json.dumps(args),
+            },
+        }],
+    }, {"role": "tool", "tool_call_id": "reply-call", "content": result}]}
+    snapshot = json.loads(json.dumps(continuation))
+    expanded = _request_stage(ctx, continuation, api_request_id="post-reply")
+    assert message["payload"] in module._current_user_text(expanded)
+    assert continuation == snapshot
+    assert expanded["messages"][1] is continuation["messages"][1]
+    assert expanded["messages"][2] is continuation["messages"][2]
+    observed = []
+    ctx.middleware["llm_execution"](expanded, lambda actual: observed.append(actual),
+        session_id="ses_שלום", turn_id="wake", api_request_id="post-reply")
+    assert observed == [expanded] and mutations == before
+    refused = (_mcp_tool(ctx, "pallium_relay_reply", args, session="ses_שלום", turn="wake")
+               if surface == "mcp" else _plugin_reply(ctx, args, session_id="ses_שלום", turn_id="wake"))
+    assert "error" in json.loads(refused) if surface == "mcp" else "refused" in refused
+    if calls is not None:
+        assert len(calls) == 1
+    next_message = send(client, message["deliveries"][0]["recipient_endpoint_id"], "next pending wake")
+    _await(lambda: len(ctx.injections) == 2)
+    assert _request_stage(ctx, continuation, api_request_id="old-continuation") == expanded
+    ctx.hooks["on_session_end"](session_id="ses_שלום", turn_id="wake")
+    assert _request_stage(ctx, continuation, api_request_id="ended") is continuation
+    assert ctx.middleware["llm_execution"](expanded, lambda _actual: pytest.fail("ended turn reached provider"),
+        session_id="ses_שלום", turn_id="wake", api_request_id="ended") is None
+    assert _persisted_wake(ctx)["delivery_id"] == next_message["deliveries"][0]["delivery_id"]
+    assert _persisted_wake(ctx)["state"] == "injection_attempted"
+    _admit_plugin_wake(ctx, ctx.injections[1][0], "next")
+    assert status(client, next_message)["deliveries"][0]["state"] == "delivered"
+
+
+@pytest.mark.parametrize("change", ["session", "turn", "api-request", "profile", "scope", "container", "end", "unload", "reload"])
+def test_postreply_context_view_obeys_scope_and_lifetime(client, plugin_context, change):
+    _, create, _ = plugin_context
+    ctx, marker, message = _plugin_wake(client, create)
+    token = ctx.hooks["pre_llm_call"](session_id="ses_שלום", turn_id="wake", user_message=marker)["context"]
+    request = {"input": marker + "\n" + token}
+    expanded = _request_stage(ctx, request)
+    _observe_request(ctx, expanded)
+    assert _plugin_reply(ctx, {"delivery_id": message["deliveries"][0]["delivery_id"], "payload": "reply"},
+                         session_id="ses_שלום", turn_id="wake") == "Relay reply sent."
+    identity = {"session": "ses_שלום", "turn": "wake", "api_request_id": "continued"}
+    target = ctx
+    if change in {"session", "turn", "api-request"}:
+        identity[{"api-request": "api_request_id"}.get(change, change)] = "" if change == "api-request" else "foreign"
+    elif change == "profile":
+        ctx.profile_name = "foreign-profile"
+    elif change in {"scope", "container"}:
+        key = next(key for key in ctx.state.values if key.startswith("session:"))
+        ctx.state.values[key]["endpoint_id" if change == "scope" else "container_ref"] = (
+            "relay-session-" + "f" * 32 if change == "scope" else "foreign")
+    elif change == "end":
+        ctx.hooks["on_session_end"](session_id="ses_שלום", turn_id="wake")
+    else:
+        for cleanup in ctx.cleanups:
+            cleanup()
+        if change == "reload":
+            target = create(ctx.state)
+    assert _request_stage(target, request, **identity) is request
+    assert ctx.middleware["llm_execution"](expanded, lambda _actual: pytest.fail("stale context reached provider"),
+        session_id=identity["session"], turn_id=identity["turn"], api_request_id=identity["api_request_id"]) is None
+    if change == "reload":
+        assert "refused" in _plugin_reply(target, {
+            "delivery_id": message["deliveries"][0]["delivery_id"], "payload": "stale reply",
+        }, session_id="ses_שלום", turn_id="wake")
+
+
+def test_request_stage_does_not_mutate_state_or_call_service(client, plugin_context, monkeypatch):
+    module, create, _ = plugin_context
+    ctx, marker, message = _plugin_wake(client, create)
+    token = ctx.hooks["pre_llm_call"](session_id="ses_שלום", turn_id="wake", user_message=marker)["context"]
+    request = {"input": marker + "\n" + token}
+    state = json.loads(json.dumps(ctx.state.values))
+    http = module._json_request
+
+    def no_request_stage_http(*args, **kwargs):
+        if threading.current_thread() is threading.main_thread():
+            pytest.fail("request stage called service")
+        return http(*args, **kwargs)
+
+    monkeypatch.setattr(module, "_json_request", no_request_stage_http)
+    monkeypatch.setattr(ctx.state, "set", lambda *_args, **_kwargs: pytest.fail("request stage mutated state"))
+    expanded = _request_stage(ctx, request)
+    assert expanded is not request and message["payload"] in module._current_user_text(expanded)
+    assert ctx.state.values == state
+
+
+@pytest.mark.parametrize("change", ["profile", "wake", "scope", "ended"])
+def test_request_stage_rechecks_fences_before_returning_expansion(client, plugin_context, monkeypatch, change):
+    module, create, _ = plugin_context
+    ctx, marker, message = _plugin_wake(client, create)
+    token = ctx.hooks["pre_llm_call"](session_id="ses_שלום", turn_id="wake", user_message=marker)["context"]
+    request = {"input": marker + "\n" + token}
+    replace = module._replace_current_text
+
+    def change_after_copy(*args):
+        result = replace(*args)
+        assert result is not None
+        if change == "profile":
+            ctx.profile_name = "foreign-profile"
+        elif change == "ended":
+            ctx.hooks["on_session_end"](session_id="ses_שלום", turn_id="wake")
+        else:
+            key = next(key for key in ctx.state.values if key.startswith("wake:" if change == "wake" else "session:"))
+            ctx.state.values[key]["nonce" if change == "wake" else "endpoint_id"] = "changed"
+        return result
+
+    monkeypatch.setattr(module, "_replace_current_text", change_after_copy)
+    assert _request_stage(ctx, request) is request
+    assert status(client, message)["deliveries"][0]["state"] == "claimed"
+
+
+@pytest.mark.parametrize("admit", [False, True], ids=["claimed", "admitted"])
+def test_unload_disables_old_callbacks_and_reload_preserves_uncertain_authority_fence(client, plugin_context, admit):
+    _, create, _ = plugin_context
+    ctx, marker, message = _plugin_wake(client, create)
+    token = ctx.hooks["pre_llm_call"](session_id="ses_שלום", turn_id="wake", user_message=marker)["context"]
+    request = {"input": marker + "\n" + token}
+    expanded = _request_stage(ctx, request)
+    if admit:
+        _observe_request(ctx, expanded)
+    for cleanup in ctx.cleanups:
+        cleanup()
+    assert _request_stage(ctx, request) is request
+    assert ctx.hooks["pre_llm_call"](session_id="ses_שלום", turn_id="wake", user_message=marker) is None
+    assert ctx.middleware["llm_execution"](expanded, lambda _actual: pytest.fail("unloaded callback reached provider"),
+        session_id="ses_שלום", turn_id="wake", api_request_id="old-request") is None
+    reloaded = create(ctx.state)
+    reloaded.hooks["pre_llm_call"](session_id="ses_שלום", turn_id="resumed", user_message="hello again")
+    assert reloaded.hooks["pre_llm_call"](session_id="ses_שלום", turn_id="wake", user_message=marker) is None
+    assert _request_stage(reloaded, request) is request
+    assert "refused" in _plugin_reply(reloaded, {
+        "delivery_id": message["deliveries"][0]["delivery_id"], "payload": "stale authority",
+    }, session_id="ses_שלום", turn_id="wake")
+    delivery = status(client, message)["deliveries"][0]
+    assert delivery["attempts"] == 1 and delivery["state"] == ("delivered" if admit else "claimed")

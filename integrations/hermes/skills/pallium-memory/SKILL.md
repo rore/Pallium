@@ -14,6 +14,7 @@ Use the installed tools for Relay and Session History. An explicit setup opt-in 
 - Relay sends only to an exact canonical `relay-session-...` selector or a current `@name`. There is no broadcast or bare-runtime target. Ask before taking over another session.
 - A successful send means saved, not received. Do not resend after a saved or uncertain result; inspect status or trace when needed.
 - Relay deliveries are ACKed after the full delivery context is present in the assembled request for the host session/turn. ACK confirms host-context receipt before provider completion; it does not prove model/provider completion or action. Do not call receive or ACK for an injected delivery. Use `pallium_relay_reply` to send the reply using the host-held admission receipt.
+- Incoming deliveries support complete payloads up to 16,000 Unicode code points. Host-bound replies are limited to 2,400. A partial payload is never admitted or ACKed; uncertain admission remains fenced across reload rather than authorizing an automatic retry.
 
 ## Find a recipient and send
 

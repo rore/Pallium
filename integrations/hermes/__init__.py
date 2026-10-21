@@ -14,7 +14,8 @@ from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_ope
 
 LOG = logging.getLogger("pallium.hermes")
 RUNTIME, TOOL_NAME = "hermes", "pallium_relay_reply"
-MAX_CONTEXT_CHARS, MAX_PAYLOAD_CHARS, MAX_REPLY_CHARS = 2400, 1600, 2400
+MAX_CONTEXT_CHARS, MAX_PAYLOAD_CHARS, MAX_REPLY_CHARS = 48_000, 16_000, 2400
+MAX_RESPONSE_BYTES = 256 * 1024
 POLL_SECONDS, HTTP_TIMEOUT_SECONDS = 0.25, 1.0
 MAX_HISTORY_CHARS = 20_000
 
@@ -30,9 +31,9 @@ def _json_request(base, method, path, *, body=None, query=None):
     req = Request(url, data=data, method=method,
                   headers={"Accept": "application/json", "Content-Type": "application/json"})
     with build_opener(ProxyHandler({}), _NoRedirect()).open(req, timeout=HTTP_TIMEOUT_SECONDS) as response:
-        raw = response.read(64 * 1024 + 1)
-    if len(raw) > 64 * 1024:
-        raise ValueError("Pallium response exceeded the 64 KiB limit")
+        raw = response.read(MAX_RESPONSE_BYTES + 1)
+    if len(raw) > MAX_RESPONSE_BYTES:
+        raise ValueError("Pallium response exceeded the 256 KiB limit")
     return json.loads(raw) if raw else None
 
 
@@ -70,6 +71,58 @@ def _current_user_text(request):
 
 def _marker(delivery_id, nonce):
     return f"[[PALLIUM_RELAY_WAKE:v1:{delivery_id}:{nonce}]]"
+
+
+def _placeholder(delivery_id, nonce):
+    return f"[[PALLIUM_RELAY_CONTEXT:v1:{delivery_id}:{nonce}]]"
+
+
+def _replace_current_text(request, token, rendered):
+    key = "messages" if "messages" in request else "input"
+    messages = request.get(key)
+    fields = []
+    if key == "input" and isinstance(messages, str):
+        fields.append(((key,), messages))
+    elif isinstance(messages, list):
+        for index in range(len(messages) - 1, -1, -1):
+            message = messages[index]
+            if not isinstance(message, dict) or message.get("role") != "user":
+                continue
+            content = message.get("content")
+            path = (key, index, "content")
+            if isinstance(content, str):
+                fields.append((path, content))
+            elif isinstance(content, list):
+                for part_index, part in enumerate(content):
+                    if isinstance(part, str):
+                        fields.append(((*path, part_index), part))
+                    elif (isinstance(part, dict) and part.get("type") in (None, "text", "input_text")
+                          and isinstance(part.get("text"), str)):
+                        fields.append(((*path, part_index, "text"), part["text"]))
+            break
+
+    def count(value):
+        if isinstance(value, str):
+            return value.count(token)
+        if isinstance(value, dict):
+            return sum(count(item) for item in value.values())
+        if isinstance(value, (list, tuple)):
+            return sum(count(item) for item in value)
+        return 0
+
+    matches = [(path, text) for path, text in fields if token in text]
+    if len(matches) != 1 or count(request) != 1:
+        return None
+    path, text = matches[0]
+
+    def replace(value, remaining):
+        if not remaining:
+            return text.replace(token, rendered, 1)
+        updated = dict(value) if isinstance(value, dict) else list(value)
+        updated[remaining[0]] = replace(value[remaining[0]], remaining[1:])
+        return updated
+
+    return replace(request, path)
 
 
 def _has_claimed_context(request, contexts):
@@ -111,7 +164,7 @@ def _render(delivery, nonce, session_id, turn_id, container):
             + json.dumps(fields, ensure_ascii=False, separators=(",", ":"))
             + "\n[/Untrusted Pallium Relay delivery]")
     if len(text) > MAX_CONTEXT_CHARS:
-        raise ValueError("Attributed Relay context exceeds 2400 characters")
+        raise ValueError("Attributed Relay context exceeds 48000 characters")
     return text
 
 
@@ -185,6 +238,7 @@ def register(ctx):
     lock, stop = threading.RLock(), threading.Event()
     reply_identity = contextvars.ContextVar("pallium_hermes_reply_identity", default=None)
     sessions, claims, admitted, observed_requests, ended_turns = {}, {}, {}, {}, {}
+    turn_contexts = {}
     poller = None
     bridge = None
     if topology_signature[2] is not None:
@@ -199,6 +253,8 @@ def register(ctx):
     tool_names = {tool["name"] for tool in bridge.catalog} if bridge else {TOOL_NAME}
 
     def profile_ok():
+        if stop.is_set():
+            return False
         try:
             if ctx.profile_name != profile:
                 return False
@@ -251,15 +307,36 @@ def register(ctx):
                 and session.get("endpoint_id") == endpoint and session.get("state") == "recent"
                 and session.get("destination_health") == "active")
 
-    def register_session(session_id):
+    def register_session(session_id, expected=None):
         saved = scope(session_id)
+        if expected is not None and saved != expected:
+            return None
+        transition = {}
         if saved:
-            with lock:
-                sessions[session_id] = saved
-            return saved
+            rows = _json_request(base, "GET", "/relay/sessions", query={
+                "runtime": RUNTIME, "session_ref": session_id, "container_ref": container,
+                "include_inactive": "true",
+            })
+            if not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0], dict):
+                return None
+            session = rows[0]
+            generation = session.get("scope_generation")
+            if (session.get("runtime") != RUNTIME or session.get("session_ref") != session_id
+                    or session.get("container_ref") != container
+                    or session.get("endpoint_id") != saved["endpoint_id"]
+                    or session.get("state") not in {"recent", "dormant"}
+                    or session.get("destination_health") != "active"
+                    or type(generation) is not int or generation < 0):
+                return None
+            transition = {"previous_container_ref": container,
+                          "previous_endpoint_id": saved["endpoint_id"],
+                          "previous_scope_generation": generation}
+        if not profile_ok() or expected is not None and scope(session_id) != expected:
+            return None
         result = _json_request(base, "POST", "/relay/turn", body={
             "runtime": RUNTIME, "session_ref": session_id, "container_ref": container,
             "max_chars": 1, "max_response_chars": 1, "max_messages": 1,
+            **transition,
         })
         session = result.get("session") if isinstance(result, dict) else None
         if not isinstance(session, dict) or not _text(session.get("endpoint_id"), 128) or not active(
@@ -268,6 +345,8 @@ def register(ctx):
         record = {"profile": profile, "container_ref": container,
                   "session_ref": session_id, "endpoint_id": session["endpoint_id"]}
         with lock:
+            if expected is not None and (record != expected or scope(session_id) != expected):
+                return None
             state.set(key("session", session_id), record)
             sessions[session_id] = record
         return record
@@ -353,14 +432,22 @@ def register(ctx):
             existing = claims.get(session_id)
             record = scope(session_id)
         if existing and existing["turn_id"] == turn_id and same_wake(existing["wake"], wake):
-            return {"context": existing["rendered"]}
+            return {"context": _placeholder(wake["delivery_id"], wake["nonce"])}
         if (wake.get("state") != "injection_attempted" or not record
                 or wake.get("endpoint_id") != record.get("endpoint_id")):
             return None
+        try:
+            if not register_session(session_id, expected=record):
+                return None
+        except Exception:
+            LOG.debug("Hermes Relay wake session refresh deferred", exc_info=True)
+            return None
         with lock:
             current = wake_scope(session_id)
+            current_record = scope(session_id)
             if (not profile_ok() or not current or not same_wake(current, wake)
                     or current.get("state") != "injection_attempted"
+                    or current_record != record
                     or ended_turns.get(session_id) == turn_id):
                 return None
             wake = dict(current, state="claim_attempted", turn_id=turn_id)
@@ -374,8 +461,8 @@ def register(ctx):
             return None
         result = _json_request(base, "POST", "/relay/turn", body={
             "runtime": RUNTIME, "session_ref": session_id, "container_ref": container,
-            "register_session": False, "max_chars": MAX_CONTEXT_CHARS,
-            "max_response_chars": 24_000, "max_messages": 1,
+            "register_session": False, "max_chars": 20_000,
+            "max_response_chars": 48_000, "max_messages": 1,
         })
         session = result.get("session") if isinstance(result, dict) else None
         deliveries = result.get("deliveries") if isinstance(result, dict) else None
@@ -401,15 +488,78 @@ def register(ctx):
             state.set(key("wake", session_id), wake)
             claims[session_id] = {"wake": wake, "turn_id": turn_id,
                                   "delivery": delivery, "rendered": rendered}
-        return {"context": rendered}
+        return {"context": _placeholder(wake["delivery_id"], wake["nonce"])}
+
+    def current_claim(session_id, turn_id, claim):
+        current = wake_scope(session_id)
+        record = scope(session_id)
+        return (claim is not None and claims.get(session_id) is claim and profile_ok()
+                and claim["turn_id"] == turn_id and current is not None and record is not None
+                and current.get("state") in {"claimed", "admitted"}
+                and same_wake(current, claim["wake"])
+                and record.get("endpoint_id") == current.get("endpoint_id")
+                and ended_turns.get(session_id) != turn_id)
+
+    def current_view(session_id, turn_id, view):
+        record = scope(session_id)
+        return (view is not None and turn_contexts.get((session_id, turn_id)) is view
+                and profile_ok() and record is not None
+                and record.get("endpoint_id") == view["endpoint_id"]
+                and ended_turns.get(session_id) != turn_id)
+
+    def llm_request(request, session_id="", turn_id="", api_request_id="", **_context):
+        if (not isinstance(request, dict) or not _host_id(session_id)
+                or not _host_id(turn_id) or not _host_id(api_request_id)):
+            return None
+        with lock:
+            view = turn_contexts.get((session_id, turn_id))
+            claim = claims.get(session_id)
+            if view is not None:
+                if not current_view(session_id, turn_id, view):
+                    return None
+                delivery_id, nonce = view["wake"]
+                rendered, token = view["rendered"], view["placeholder"]
+            else:
+                if not current_claim(session_id, turn_id, claim):
+                    return None
+                wake = claim["wake"]
+                delivery_id, nonce = wake["delivery_id"], wake["nonce"]
+                rendered, token = claim["rendered"], _placeholder(delivery_id, nonce)
+        user_text = _current_user_text(request)
+        if user_text is None or rendered in user_text:
+            return None
+        if _marker(delivery_id, nonce) not in user_text:
+            return None
+        updated = _replace_current_text(request, token, rendered)
+        if updated is None:
+            return None
+        with lock:
+            if not (current_view(session_id, turn_id, view) if view is not None
+                    else current_claim(session_id, turn_id, claim)):
+                return None
+        return {"request": updated}
 
     def llm_execution(request, next_call, session_id="", turn_id="", api_request_id="", **_context):
+        if stop.is_set():
+            return None
         with lock:
             claim = claims.get(session_id) if isinstance(session_id, str) else None
-            contexts = [item["rendered"] for item in claims.values()]
+            view = turn_contexts.get((session_id, turn_id)) if _host_id(session_id) and _host_id(turn_id) else None
+            contexts = [item["rendered"] for item in (*claims.values(), *turn_contexts.values())]
+            if isinstance(session_id, str) and ended_turns.get(session_id) == turn_id:
+                return None
         owns_context = _has_claimed_context(request, contexts)
         if not profile_ok():
             return None if owns_context else next_call(request)
+        if view is not None:
+            user_text = _current_user_text(request)
+            with lock:
+                valid = (current_view(session_id, turn_id, view) and _host_id(api_request_id)
+                         and user_text is not None and view["rendered"] in user_text
+                         and _marker(*view["wake"]) in user_text)
+            if not valid:
+                return None if owns_context else next_call(request)
+            return next_call(request)
         if claim is None:
             return None if owns_context else next_call(request)
         if (not _text(session_id, 255) or not _text(turn_id, 255)
@@ -497,6 +647,12 @@ def register(ctx):
             admitted[session_id] = {
                 "delivery_id": delivery["delivery_id"], "receipt": delivery["receipt"],
                 "turn_id": turn_id, "wake": admitted_wake,
+            }
+            turn_contexts[(session_id, turn_id)] = {
+                "rendered": claim["rendered"],
+                "placeholder": _placeholder(delivery["delivery_id"], admitted_wake["nonce"]),
+                "wake": (delivery["delivery_id"], admitted_wake["nonce"]),
+                "endpoint_id": admitted_wake["endpoint_id"],
             }
             observed_requests.pop(session_id, None)
     def reply(args, session_id="", turn_id="", **_context):
@@ -692,6 +848,8 @@ def register(ctx):
         if not _host_id(session_id) or not _host_id(turn_id):
             return
         with lock:
+            if turn_contexts.pop((session_id, turn_id), None) is not None:
+                ended_turns[session_id] = turn_id
             wake = wake_scope(session_id)
             claim = claims.get(session_id)
             if not profile_ok() or not wake or wake.get("turn_id") != turn_id:
@@ -710,12 +868,14 @@ def register(ctx):
     def unload():
         stop.set()
         with lock:
+            turn_contexts.clear()
             thread = poller
         if thread and thread is not threading.current_thread():
             thread.join(timeout=HTTP_TIMEOUT_SECONDS + 0.5)
 
     ctx.register_hook("pre_llm_call", pre_llm_call)
     ctx.register_hook("post_llm_call", post_llm_call)
+    ctx.register_middleware("llm_request", llm_request)
     ctx.register_middleware("llm_execution", llm_execution)
     ctx.register_middleware("tool_execution", tool_execution)
     if bridge:

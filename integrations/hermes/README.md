@@ -7,11 +7,24 @@ For the public capability overview and support boundaries, see the
 
 ## Production qualification in progress
 
+Fresh full-package review found two release blockers: cached registration can
+expire during ordinary use, and a valid inbound message above 1,600 characters
+can leave delivery fenced. Isolated fixes and new lifetime/maximum-payload E2E
+are being qualified. The accepted matrix below describes the earlier short
+journeys, not acceptance of the changed plugin.
+
 The scoped Windows native matrix is accepted for both Desktop and **TUI**, with
 memory off and on for Hermes v0.22.0 and v0.22.2. The package remains experimental
 pending human release acceptance. The evidence covers the tested builds; later
 releases need their own qualification. Runtime admission uses public API capabilities rather than an
 exact Hermes version lock.
+
+Relay context uses the public `llm_request` middleware after Hermes's hook-output
+spill stage. Earlier request middleware sees a bounded placeholder; middleware
+that must inspect the payload needs to run after expansion. Removed or rewritten
+placeholders are not reconstructed, later filters remain authoritative, and the
+raw execution gate still requires complete context before ACK. Setup preserves
+the host's global spill settings.
 
 | Gate | Required evidence | Current state |
 |---|---|---|

@@ -5,6 +5,13 @@ acceptance. It bundles a native plugin, the `pallium-memory` skill and a
 profile-scoped MCP bridge. Everyday installation remains a separate rollout
 decision.
 
+The latest full-package review found two release blockers: ordinary host turns
+did not renew Relay liveness after 24 hours, and valid messages above 1,600
+characters could leave delivery fenced. Isolated corrections and their lifetime,
+maximum-payload and subsequent-delivery regressions are being qualified. The
+earlier native matrix below covers its original short journeys; it does not
+qualify the changed plugin or these newly identified boundaries.
+
 The scoped native matrix passed on both Windows **Desktop and TUI**, with memory
 off and on, for pinned Hermes **v0.22.0** and **v0.22.2** sources. It ran in an
 isolated Windows Server 2025 VM with an unpacked app and synthetic providers.
@@ -45,7 +52,30 @@ after the full delivery context is present in the assembled request for that
 host session/turn. The ACK records host-context receipt before provider
 completion; it does not prove model/provider completion or action. The package
 does not expose receive/ACK tools. A saved send or wake attempt is not proof of
-receipt. Busy-turn delivery, endpoint outage and controlled host/MCP relaunch
+receipt.
+
+Incoming payloads can contain up to 16,000 Unicode code points; host-bound
+replies are limited to 2,400. Complete payload and attribution must fit the
+bounded request before admission. Trusted ordinary turns and exact matching
+wake callbacks renew the same Relay endpoint with an atomic endpoint/generation
+check. Background polling and MCP reads do not renew presence, and closed or
+replaced endpoints are refused. Existing uncertain claim/admission fences are
+preserved across reload; the integration does not infer that an earlier action
+was safe to retry.
+
+Full context is inserted through Hermes's supported request middleware after its
+hook-output size check. Request middleware registered before Pallium sees a
+bounded placeholder; content inspection that needs the payload must run after
+Pallium's expansion. Removing or rewriting the placeholder prevents expansion.
+Later request filters remain authoritative, and missing complete context is
+never acknowledged. No global hook-output limit is changed.
+
+Already-admitted text remains in plugin memory for the same host turn's later
+model calls, including its final response after an explicit reply. This retains
+context without retaining reply or ACK permission. The view is discarded on the
+exact turn-end callback or plugin unload and is not a persistent retry cache.
+
+Busy-turn delivery, endpoint outage and controlled host/MCP relaunch
 passed across the scoped native matrix. A separate caller E2E proves queued
 delivery persistence across an owned Pallium process restart. Automatic
 standalone MCP reconnection, ordinary-turn fallback and other untested reset or

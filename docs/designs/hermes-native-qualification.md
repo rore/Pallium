@@ -2,6 +2,23 @@
 
 ## Current scoped result
 
+Fresh full-package review at `353e8f83` found two plugin release blockers:
+ordinary-turn registration expiry and valid long-payload fencing. Their isolated
+fixes and new caller E2E are under qualification. The accepted matrix below is
+historical short-journey evidence; it does not qualify the changed application.
+The renewed shared Windows/Linux journey uses a complete 16,000-code-point wake
+followed by a short reply wake, retaining all admission, privacy and cleanup
+checks. Separate deterministic caller E2E covers the 24-hour liveness boundary.
+
+The enlarged journey also checks the actual pinned `hook_output_spill` helper
+inside the gated disposable runtime: its default 10,000-character limit spills
+the long synthetic text into an owned file but preserves the short placeholder.
+Actual UI execution then proves public request-middleware expansion and the raw
+complete-context admission gate with unchanged host spill settings. Earlier
+request middleware sees only the placeholder; later filters can inspect or veto
+full context. The helper proof uses per-call test output paths, not global or
+profile configuration changes.
+
 Independent review accepted all eight actual Windows UI cells in native run
 [39626758387](https://github.com/rore/Pallium/actions/runs/39626758387), candidate
 `b3601c79a8269e8a734450c67e9e40c3e330b9fb`. Each release job passed 81 checks
