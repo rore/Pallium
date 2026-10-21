@@ -178,10 +178,13 @@ persistence proof, not native automatic MCP reconnection.
 
 Native evidence uses Windows Server 2025 with an unpacked app and synthetic
 provider: run2 image `win25-vs2026`/`20261018.275.1`; run3 image
-`win25-vs2026`/`20261007.264.1`. Required CI remains red on Python 3.12 Relay
-acquisition failures in unchanged tests. Both failed attempts are retained in
-[CI 39493899447](https://github.com/rore/Pallium/actions/runs/39493899447); neither
-the isolated pass nor the failed retry establishes a reliability fix. The complete
+`win25-vs2026`/`20261007.264.1`. Earlier required CI on `31f1b240` failed on Python
+3.12 Relay acquisition in unchanged tests. Both failed attempts are retained in
+[CI 39493899447](https://github.com/rore/Pallium/actions/runs/39493899447).
+[CI 39550292689](https://github.com/rore/Pallium/actions/runs/39550292689) passed
+all required lanes on the documentation-only successor `f348f00f`, including the
+parser, memory-script and service-process persistence checks. That green result
+is non-reproduction of the earlier failures, not a causal reliability fix. The complete
 native matrix remains unqualified, and the package stays experimental. A focused
 gateway journey requires an isolated environment:
 
