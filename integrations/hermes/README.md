@@ -14,12 +14,12 @@ supported-version claim.
 
 | Gate | Required evidence | Current state |
 |---|---|---|
-| Released hosts | Actual Desktop and TUI journeys on current compatible releases | Linux TUI memory-off/on passed on both pins; older Windows Desktop/TUI memory-off passed on v0.22.0; the complete current Windows matrix remains open |
+| Released hosts | Actual Desktop and TUI journeys on current compatible releases | Linux TUI memory-off/on passed on both pins; Windows Desktop and TUI memory-off/on passed on v0.22.0; the v0.22.2 Windows matrix remains incomplete and under review |
 | Runtime compatibility | Public plugin identity, injection, hook and middleware contracts; clear missing-capability errors | Current v0.22.0/v0.22.2 gateway checks passed; full native release coverage pending |
 | Normal configuration | Ordinary providers, default Tool Search, supported plugin coexistence | Built-in openai-api configuration, default Tool Search and a harmless peer hook passed in isolated Linux TUI checks on both releases; current Windows matrix and other providers remain unqualified |
-| Full package | Skill, Relay, History and opt-in memory lifecycle; memory off leaves Relay/History functional | Complete Linux TUI default-off and opt-in memory lifecycles passed on both pins; older Windows memory-off passed on v0.22.0; current Windows matrix remains open |
+| Full package | Skill, Relay, History and opt-in memory lifecycle; memory off leaves Relay/History functional | Complete Linux TUI default-off and opt-in memory lifecycles passed on both pins; Windows Desktop and TUI default-off and opt-in lifecycles passed on v0.22.0; v0.22.2 Windows remains incomplete and under review |
 | Recovery | Busy/concurrent sessions, reset/close, host/service/MCP restart, stale routes and ambiguous outcomes | Endpoint outage and controlled host/MCP relaunch passed in Desktop memory-off; a separate caller E2E proves queued delivery persistence across an owned Pallium process restart. Native service/MCP reconnection and the remaining matrix are unqualified |
-| Lifecycle | Disposable install/update/remove/rollback, repeated use and owned-process cleanup | Native repeat setup, status and removal preserved profile data in the passing Desktop and TUI memory-off cases; caller ownership/conflict coverage remains separate |
+| Lifecycle | Disposable install/update/remove/rollback, repeated use and owned-process cleanup | Native repeat setup, status and removal preserved profile data in v0.22.0 Desktop and TUI cases; caller ownership/conflict coverage remains separate |
 | Public documentation | Public entry points, setup/capability guides and bundled skill match final verified behavior; commands and links checked | Initial alignment audit updated the guides; final production review still required |
 
 The [v0.22.2 release notes](https://github.com/NousResearch/hermes-agent/releases/tag/v0.22.2)
@@ -44,7 +44,7 @@ a separate rollout decision.
 
 ## Prepare an isolated profile
 
-The setup command requires an existing explicit profile. It preserves provider, toolset, Tool Search and other plugin settings; it does not require a frozen local-provider profile. Those ordinary configurations still need qualification on the current source. For isolated testing, use a disposable profile and loopback service. The following profile is an example of one possible test setup, not a package requirement:
+The setup command requires an existing explicit profile. It preserves provider, toolset, Tool Search and other plugin settings; it does not require a frozen local-provider profile. The built-in `openai-api` configuration has a synthetic-response Linux TUI qualification; other provider configurations remain unqualified. For isolated testing, use a disposable profile and loopback service. The following profile is an example of one possible test setup, not a package requirement:
 
 ```yaml
 plugins:
@@ -159,9 +159,10 @@ omitting it retains the bounded container partition.
 ## Native qualification limits
 
 Current native gateway wake qualification passed on v0.22.0 and v0.22.2 with
-disposable local-provider profiles and loopback stubs. These checks do not
-establish actual Desktop or TUI interaction.
-Hosted native runs [39483789032](https://github.com/rore/Pallium/actions/runs/39483789032)
+disposable local-provider profiles and loopback stubs. Those gateway checks do
+not establish native UI interaction; accepted Windows UI evidence is summarized
+below.
+Earlier hosted native runs [39483789032](https://github.com/rore/Pallium/actions/runs/39483789032)
 and [39490754190](https://github.com/rore/Pallium/actions/runs/39490754190)
 passed the complete Desktop memory-off journey on v0.22.0, including default Tool
 Search, Relay/wake, later-session History, a harmless peer hook, endpoint outage,
@@ -176,13 +177,29 @@ E2E passed on Python 3.12 and 3.13, preserving exact queued endpoint/message/del
 IDs through public claim, ACK, reply and final-state reads. That is queue
 persistence proof, not native automatic MCP reconnection.
 
-The latest retained run [39557493207](https://github.com/rore/Pallium/actions/runs/39557493207)
+The earlier retained run [39557493207](https://github.com/rore/Pallium/actions/runs/39557493207)
 tested exact candidate `f348f00f9b4ef0b6fbf63d0e87df245102318498`. Both Desktop and
 TUI memory-off journeys passed on v0.22.0. Both memory-on cases reached their
 memory lifecycle, then failed a fixture assertion using a History attribution
 field for an ordinary memory query. All four cleanup/source postconditions passed;
 v0.22.2 was cancelled by fail-fast. The corrected query assertion and later
 busy-turn/source-composition changes remain unqualified by that run.
+
+Native run [39586401041](https://github.com/rore/Pallium/actions/runs/39586401041)
+used candidate `7df9975dd6e6176e5c0a8b5b046e173179f62e97`. Independent review
+accepted its four actual v0.22.0 Desktop/TUI memory-off/on cells; the aggregate
+run failed a pure-helper cleanup mock, so it is not an all-green run.
+Follow-up run [39588545910](https://github.com/rore/Pallium/actions/runs/39588545910)
+used candidate `b13a3dd29eefc243ef0b10920fdd6b2d33aefbde`. Its v0.22.0 job passed
+61 checks in 360.95 seconds. The v0.22.2 job passed 60 checks and failed one in
+417.18 seconds: the actual TUI memory-off cell reported a fatal HTTP API response
+write error, `ConnectionAbortedError(10053)`. The artifact remains under review;
+the failed cell and v0.22.2 matrix are unqualified, and its cause is not classified.
+Required-CI shared-test availability failures affected Python 3.12 and 3.13 on
+different candidate heads; the Hermes changes did not repair them.
+These results do not qualify Windows 11, everyday MSIX/updater behavior, native
+app-quit behavior, automatic standalone MCP reconnection, paid-provider quality
+or every provider/memory combination.
 
 Native evidence uses Windows Server 2025 with an unpacked app and synthetic
 provider: run2 image `win25-vs2026`/`20261018.275.1`; run3 image
@@ -193,7 +210,7 @@ provider: run2 image `win25-vs2026`/`20261018.275.1`; run3 image
 all required lanes on the documentation-only successor `f348f00f`, including the
 parser, memory-script and service-process persistence checks. That green result
 is non-reproduction of the earlier failures, not a causal reliability fix. The complete
-native matrix remains unqualified, and the package stays experimental. A focused
+v0.22.2 Windows matrix remains pending, and the package stays experimental. A focused
 gateway journey requires an isolated environment:
 
 ```powershell

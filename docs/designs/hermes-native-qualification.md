@@ -1,11 +1,21 @@
 # Hermes native qualification
 
-Status: the user approved the disposable runner in PR #328, subsequently one
-additional attempt, and then up to two further disposable-VM attempts in response
-to the renewed request on 2026-10-21. Five total attempts including reruns are
-authorized within the unchanged four-runner-hour ceiling. Four are consumed;
-at most one remains, subject to fresh candidate checks and remaining time.
-The isolated environment and evidence may be retained through completion.
+Windows qualification remains incomplete. Run [39588545910](https://github.com/rore/Pallium/actions/runs/39588545910)
+tested candidate `b13a3dd29eefc243ef0b10920fdd6b2d33aefbde`: v0.22.0 passed all
+61 checks in 360.95 seconds; v0.22.2 passed 60 and failed one in 417.18 seconds.
+Its TUI memory-off case recorded a fatal API response-write
+`ConnectionAbortedError(10053)`. The failed operation is unidentified, and the
+case remains unqualified pending investigation.
+
+Independent review accepted all four v0.22.0 Desktop/TUI memory-off/on cells in
+earlier run [39586401041](https://github.com/rore/Pallium/actions/runs/39586401041)
+on `7df9975dd6e6176e5c0a8b5b046e173179f62e97`. That aggregate failed a pure-helper
+cleanup mock. The task's cumulative run cap has since been removed; per-job
+timeouts and isolation remain. Shared-test availability failures on Python 3.12
+and 3.13 remain recorded and were not repaired by the Hermes changes.
+
+## Earlier qualification receipts
+
 The runner is merged; the first run is
 [39474582150](https://github.com/rore/Pallium/actions/runs/39474582150), testing
 candidate `973f21902168bb81ef2fdc7fe629cecad836ff27`. It failed four native cases
@@ -28,10 +38,8 @@ three native cases after 58 checks passed. Desktop memory-off completed again;
 both TUI cases crashed the screen observer on an empty wide-character continuation
 cell, and Desktop memory-on rejected a valid nullable expansion field. Fail-fast
 cancelled v0.22.2. All four owned-cleanup and source postconditions passed.
-Before further execution, reconcile actual attempts and conservative elapsed job
-time against the unchanged total ceiling; each next run's full worst-case time
-must fit. The additional approval does not waive candidate checks or review.
-Harness repair and pure replay are not a native pass.
+This is historical approval and attempt accounting; subsequent user direction
+removed the cumulative cap. Harness repair and pure replay are not a native pass.
 The fourth run
 [39557493207](https://github.com/rore/Pallium/actions/runs/39557493207) tested
 `f348f00f9b4ef0b6fbf63d0e87df245102318498`: 59 passed and two failed on v0.22.0.
@@ -39,12 +47,13 @@ Both memory-off UI journeys completed. Both memory-on cases reached the memory
 lifecycle but failed an assertion using the History attribution field for an
 ordinary memory query. All four cleanup/source checks passed; v0.22.2 was
 cancelled. The corrected assertion is not yet natively qualified.
-Conservative elapsed accounting including cancelled jobs totals 5,026 seconds,
-leaving 9,374 of 14,400 seconds. The next run's 7,200-second maximum fits.
-The user now directs isolated local WSL validation first and remote Windows
-qualification last. Existing Windows runner checks remain unchanged.
-Hermes remains experimental. This approval excludes local recovery and everyday
-installation or rollout.
+At the time of the fourth run, conservative elapsed accounting including
+cancelled jobs totaled 5,026 seconds, leaving 9,374 seconds under the then-current
+14,400-second cap. Later user direction removed that cap. The user’s preference
+for local WSL validation before remote Windows qualification was fulfilled for
+this candidate and remains the order for future material changes.
+Hermes remains experimental pending the current Windows matrix. The approval
+excludes local recovery and everyday installation or rollout.
 
 The remaining integration proof needs real Desktop and Ink TUI journeys. Gateway
 RPC tests and test-helper checks establish narrower contracts. The current

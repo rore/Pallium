@@ -1,8 +1,9 @@
 # Hermes integration
 
-Pallium's Hermes package is **experimental**. It bundles a native plugin, the
-`pallium-memory` skill and a profile-scoped MCP bridge. It is not ready for an
-everyday installation.
+Pallium's Hermes package remains **experimental** while the current Windows
+matrix completes. It bundles a native plugin, the `pallium-memory` skill and a
+profile-scoped MCP bridge. Everyday installation remains a separate rollout
+decision.
 
 Production support must cover both Windows **Desktop and TUI** across compatible
 Hermes releases. Runtime checks use public plugin capabilities rather than an
@@ -12,15 +13,15 @@ These checks do not establish actual Desktop or TUI
 interaction, normal provider/default Tool Search behavior, memory parity or later
 release compatibility.
 
-The complete native Desktop and TUI memory-off journeys passed on v0.22.0 in a disposable
-Windows Server 2025 VM with an unpacked app and synthetic provider. They covered
-default Tool Search, Relay/wake, later-session History, a harmless peer hook,
-endpoint outage, controlled host/MCP relaunch and profile update/status/removal.
-Both memory-on cases reached the memory lifecycle, then failed a fixture assertion
-using History attribution for an ordinary memory query. v0.22.2 was cancelled by
-fail-fast. That run tested candidate `f348f00f`; later busy-turn and source-composition
-changes still require native proof. This partial matrix does not establish production
-readiness. See the [latest retained run](https://github.com/rore/Pallium/actions/runs/39557493207).
+On v0.22.0, complete native Desktop and TUI memory-off and memory-on journeys
+passed in an isolated Windows Server 2025 VM with an unpacked app and synthetic
+provider. The memory-off cases covered default Tool Search, Relay/wake,
+later-session History, a harmless peer hook, endpoint outage, controlled
+host/MCP relaunch and profile update/status/removal; memory-on completed the
+optional-memory lifecycle. These checks do not qualify Windows 11, MSIX or native
+updater behavior, paid-provider quality, or automatic standalone MCP reconnection.
+The v0.22.2 Windows matrix remains incomplete and under review. Earlier failed-run
+details are retained in the package qualification record as history.
 
 Additional isolated Linux TUI qualification passed on both releases at candidate
 `13029e38`: the full default-off journey used Hermes's built-in `openai-api`
@@ -38,7 +39,7 @@ integration behavior, not model quality or the remaining Windows matrix.
 | Session History | Capture plus `pallium_search_history`, `pallium_search_history_by_work_ref` and `pallium_expand_source`; current search and expansion passed through v0.22.0/v0.22.2 gateway RPC |
 | Skill and MCP | Bundled skill and plugin-owned stdio bridge; trusted conversation identity and private scope are supplied by the integration |
 | Package lifecycle | Explicit-profile setup, status, repeat setup/update and removal with ownership checks; running-host readiness is a separate check |
-| Derived memory | Eleven existing memory query/write tools are available through an explicit opt-in catalog; disabled by default. This adds tools, not automatic memory injection, and current native behavior is not qualified |
+| Derived memory | Eleven existing memory query/write tools are available through an explicit opt-in catalog; disabled by default. This adds tools, not automatic memory injection. The opt-in lifecycle passed on v0.22.0 Windows Desktop/TUI and both tested Linux TUI releases; v0.22.2 Windows remains unqualified |
 
 Incoming Relay deliveries are admitted by the host integration and acknowledged
 after the full delivery context is present in the assembled request for that
@@ -81,8 +82,9 @@ Explicit memories can be queried across sessions within that scope. Correction
 updates the payload and stored search entries atomically; vector embedding is
 best-effort, with reconciliation for missing vectors. Evidence-specific filters
 cannot match an explicit memory without evidence, and forgotten memories remain
-excluded. Caller tests cover these contracts; native UI memory qualification is
-still pending.
+excluded. Caller tests cover these contracts; native opt-in UI lifecycle passed
+on v0.22.0 Desktop/TUI and both Linux TUI releases. The v0.22.2 Windows matrix
+remains incomplete and under review.
 See [Session History](session-history.md) and
 [Privacy and Visibility](privacy-and-visibility.md).
 
@@ -128,15 +130,17 @@ writers. No everyday profile or host updater should be replaced for qualificatio
 - Desktop qualification needs Windows 11 22H2 or later and separate backend,
   Electron and process-home data paths inside a disposable OS/account, or a
   supported registration opt-out. Profile directories alone do not isolate
-  native URL-handler registration. Hosted v0.22.0 Desktop and TUI memory-off
-  journeys passed; the complete release matrix and opt-in memory coverage remain open.
+  native URL-handler registration. Hosted v0.22.0 Desktop and TUI memory-off/on
+  journeys passed on Windows Server 2025 with an unpacked app; v0.22.2 and Windows
+  11/MSIX qualification remain open.
 - Caller tests cover explicit-memory recall/correction and successive wakes
-  after admitted no-reply turns. Actual UI lifecycle qualification remains a
-  release gate; a successful write or tool call alone is insufficient evidence.
+  after admitted no-reply turns. Native opt-in UI lifecycle passed on v0.22.0
+  Desktop/TUI and both Linux TUI releases; the v0.22.2 Windows matrix remains a
+  release gate. A successful write or tool call alone is insufficient evidence.
 
 The [qualification matrix](../integrations/hermes/README.md#production-qualification-in-progress)
-tracks the remaining current-native, normal-provider, default Tool Search,
-plugin coexistence, memory, recovery and lifecycle gates. Public docs, commands
+tracks the incomplete v0.22.2 Windows run and remaining provider, reconnect and
+platform gates. Public docs, commands
 and support claims must be reviewed against the final verified behavior before a
 production release.
 Current work remains on the [Hermes roadmap item](../roadmap/features/add-hermes-agent-integration.md).

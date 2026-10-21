@@ -17,6 +17,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
 
@@ -1177,7 +1178,9 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
             pass
 
         def send(self, status, body, content_type="application/json"):
+            self.request_diagnostic["phase"] = "response_encode"
             raw = body if isinstance(body, bytes) else json.dumps(body, ensure_ascii=False).encode()
+            self.request_diagnostic.update(phase="response_write", response_status=status)
             self.send_response(status)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(raw)))
@@ -1185,18 +1188,27 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
             self.wfile.write(raw)
 
         def handle_request(self):
+            self.request_diagnostic = {
+                "request_id": uuid.uuid4().hex, "endpoint_role": self.server.endpoint_role,
+                "method": self.command, "path": self.path, "client_address": list(self.client_address),
+                "phase": "validation", "response_status": None,
+            }
             try:
                 assert self.client_address[0] == "127.0.0.1"
                 assert self.headers.get("Host") == f"127.0.0.1:{self.server.server_port}"
                 assert self.path.startswith("/") and not urlsplit(self.path).netloc
+                self.request_diagnostic["phase"] = "read"
                 raw = self.rfile.read(int(self.headers.get("Content-Length", "0")))
                 if self.server.endpoint_role == "api":
+                    self.request_diagnostic["phase"] = "forward"
                     response = client.request(self.command, self.path, content=raw or None,
                                               headers={"Content-Type": "application/json"})
+                    self.request_diagnostic["response_status"] = response.status_code
                     body = response.json()
                     forwarded.append({"method": self.command, "path": self.path,
                                       "body": json.loads(raw) if raw else None,
-                                      "status": response.status_code, "response": body})
+                                      "status": response.status_code, "response": body,
+                                      "request": self.request_diagnostic.copy()})
                     self.send(response.status_code, response.content)
                 elif self.command == "GET" or self.path == "/api/show":
                     self.send(*provider_metadata_response(self.path))
@@ -1230,7 +1242,8 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
                             {"index": 0, "message": message, "finish_reason": finish}],
                             "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}})
             except BaseException as exc:
-                server_errors.append(repr(exc))
+                server_errors.append({**self.request_diagnostic, "exception_type": type(exc).__name__,
+                                      "error": repr(exc)})
                 self.send(500, {"error": str(exc)})
 
         do_POST = do_GET = handle_request

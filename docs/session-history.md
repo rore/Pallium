@@ -124,9 +124,10 @@ always exposes the three search/expansion tools below and captures private
 hook-observed text snapshots. An explicit setup opt-in adds source forgetting
 and the optional derived-memory tool catalog; neither promises automatic memory
 injection. History diagnostics remain unavailable. Completion capture has no
-current `request_source_item_id`. Earlier gateway proof is for an old source
-snapshot; current Desktop/TUI capture and recovery qualification remain open.
-See its guide for capture limits and provenance.
+current `request_source_item_id`. Native Desktop/TUI capture passed on v0.22.0;
+Linux TUI also passed on both tested releases. The Windows v0.22.2 matrix and
+automatic standalone MCP reconnection remain unqualified. See its guide for
+capture limits and provenance.
 
 - broad topic search across accessible earlier sessions with `pallium_search_history`
 - exact-reference search with `pallium_search_history_by_work_ref`

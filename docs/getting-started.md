@@ -84,10 +84,12 @@ OpenCode uses a local plugin path. Follow the
 [OpenCode integration guide](../integrations/opencode/README.md).
 
 Hermes has a separate [experimental integration guide](hermes-integration.md).
-Setup targets an explicit existing Hermes profile and preserves its provider
-configuration. Use a disposable profile and loopback provider for qualification.
-Everyday Desktop/TUI use and ordinary-provider behavior remain unqualified;
-follow that guide rather than the default-profile commands above.
+Desktop and TUI memory-off/on journeys passed on v0.22.0 in an isolated Windows
+Server 2025 unpacked build; the v0.22.2 Windows matrix remains pending. Setup
+targets an explicit existing Hermes profile and preserves its provider
+configuration. Use a disposable profile and loopback provider for qualification;
+other provider configurations remain unqualified. Follow the Hermes guide rather
+than the default-profile setup commands above.
 
 Open two sessions in the same Git repository after setup. Pallium derives their
 shared container from the repository identity while keeping each session
