@@ -17,6 +17,7 @@ from tests.fixtures.hermes_linux_guard import (
 )
 from tests.fixtures.hermes_tui_driver import LinuxPTY
 from tests.fixtures.hermes_tui_driver import classify_bridge_connections
+from tests.fixtures import hermes_tui_driver
 
 
 def test_linux_guard_parses_proc_stat_with_parenthesized_command():
@@ -144,3 +145,166 @@ def test_bridge_empty_snapshot_requires_positive_linux_collection_evidence():
     assert not rejected["accepted"] and rejected["connections"][0]["reason"] == "rejected_socket"
     assert not classify_bridge_connections({"pid": 123, "connections": [row]}, service,
                                            require_successful_snapshot=True)["accepted"]
+
+
+def test_linux_cleanup_accepts_same_identity_zombie_even_when_wait_reports_alive(tmp_path, monkeypatch):
+    import json
+    import sys
+    from types import SimpleNamespace
+
+    class Process:
+        pid = 123
+        def create_time(self): return 1.0
+        def status(self): return "zombie"
+        def exe(self): raise AssertionError("zombies may not expose exe")
+        def kill(self): raise AssertionError("zombies must not be killed")
+
+    process = Process()
+    psutil = SimpleNamespace(Process=lambda _pid: process, STATUS_ZOMBIE="zombie",
+                             NoSuchProcess=type("NoSuchProcess", (Exception,), {}),
+                             wait_procs=lambda handles, timeout: ([], [process]))
+    monkeypatch.setitem(sys.modules, "psutil", psutil)
+    monkeypatch.setattr(hermes_tui_driver, "os", SimpleNamespace(name="posix"))
+    monkeypatch.setattr(hermes_tui_driver, "sys", SimpleNamespace(version_info=(3, 14)))
+    ledger = tmp_path / "owned.json"
+    ledger.write_text(json.dumps([{"pid": 123, "birthtime": 1.0, "exe": sys.executable}]))
+    assert hermes_tui_driver.cleanup_ledger(ledger) == {"recovered": [], "alive": []}
+
+
+def test_linux_owned_tree_skips_same_identity_zombie(monkeypatch):
+    import threading
+    import sys
+    from types import SimpleNamespace
+
+    class Process:
+        pid = 123
+        def create_time(self): return 1.0
+        def status(self): return "zombie"
+        def exe(self): raise AssertionError("zombies may not expose exe")
+        def kill(self): raise AssertionError("zombies must not be killed")
+
+    process = Process()
+    psutil = SimpleNamespace(Process=lambda _pid: process, STATUS_ZOMBIE="zombie",
+                             wait_procs=lambda handles, timeout: ([], []))
+    tree = object.__new__(hermes_tui_driver.OwnedTree)
+    tree.psutil, tree.root = psutil, SimpleNamespace(pid=1)
+    tree.identities = {123: (1.0, str(Path(sys.executable).resolve()))}
+    tree.lock, tree.error = threading.Lock(), None
+    tree.stopped = SimpleNamespace(set=lambda: None)
+    tree.thread = SimpleNamespace(join=lambda _timeout: None)
+    tree.refresh = lambda: None
+    monkeypatch.setattr(hermes_tui_driver, "os", SimpleNamespace(name="posix"))
+    tree.close()
+
+
+def test_linux_cleanup_rejects_live_wait_survivor(tmp_path, monkeypatch):
+    import json
+    import sys
+    from types import SimpleNamespace
+
+    class Process:
+        pid = 123
+        killed = False
+        def create_time(self): return 1.0
+        def status(self): return "running"
+        def exe(self): return sys.executable
+        def kill(self): self.killed = True
+
+    process = Process()
+    psutil = SimpleNamespace(Process=lambda _pid: process, STATUS_ZOMBIE="zombie",
+                             NoSuchProcess=type("NoSuchProcess", (Exception,), {}),
+                             wait_procs=lambda handles, timeout: ([], [process]))
+    monkeypatch.setitem(sys.modules, "psutil", psutil)
+    monkeypatch.setattr(hermes_tui_driver, "os", SimpleNamespace(name="posix"))
+    monkeypatch.setattr(hermes_tui_driver, "sys", SimpleNamespace(version_info=(3, 14)))
+    ledger = tmp_path / "owned.json"
+    ledger.write_text(json.dumps([{"pid": 123, "birthtime": 1.0, "exe": sys.executable}]))
+    with pytest.raises(AssertionError, match="survived recovery"):
+        hermes_tui_driver.cleanup_ledger(ledger)
+    assert process.killed
+
+
+def test_linux_cleanup_fails_closed_on_recycled_pid(tmp_path, monkeypatch):
+    import json
+    import sys
+    from types import SimpleNamespace
+
+    class Process:
+        def create_time(self): return 2.0
+
+    psutil = SimpleNamespace(Process=lambda _pid: Process(), STATUS_ZOMBIE="zombie",
+                             NoSuchProcess=type("NoSuchProcess", (Exception,), {}))
+    monkeypatch.setitem(sys.modules, "psutil", psutil)
+    monkeypatch.setattr(hermes_tui_driver, "os", SimpleNamespace(name="posix"))
+    monkeypatch.setattr(hermes_tui_driver, "sys", SimpleNamespace(version_info=(3, 14)))
+    ledger = tmp_path / "owned.json"
+    ledger.write_text(json.dumps([{"pid": 123, "birthtime": 1.0, "exe": sys.executable}]))
+    with pytest.raises(AssertionError, match="birth identity changed"):
+        hermes_tui_driver.cleanup_ledger(ledger)
+
+
+def test_linux_cleanup_fails_closed_on_executable_mismatch(tmp_path, monkeypatch):
+    import json
+    import sys
+    from types import SimpleNamespace
+
+    class Process:
+        def create_time(self): return 1.0
+        def status(self): return "running"
+        def exe(self): return str(Path(sys.executable).with_name("other-python.exe"))
+
+    psutil = SimpleNamespace(Process=lambda _pid: Process(), STATUS_ZOMBIE="zombie",
+                             NoSuchProcess=type("NoSuchProcess", (Exception,), {}))
+    monkeypatch.setitem(sys.modules, "psutil", psutil)
+    monkeypatch.setattr(hermes_tui_driver, "os", SimpleNamespace(name="posix"))
+    monkeypatch.setattr(hermes_tui_driver, "sys", SimpleNamespace(version_info=(3, 14)))
+    ledger = tmp_path / "owned.json"
+    ledger.write_text(json.dumps([{"pid": 123, "birthtime": 1.0, "exe": sys.executable}]))
+    with pytest.raises(AssertionError, match="executable identity changed"):
+        hermes_tui_driver.cleanup_ledger(ledger)
+
+
+def test_linux_cleanup_fails_closed_when_status_cannot_be_inspected(tmp_path, monkeypatch):
+    import json
+    import sys
+    from types import SimpleNamespace
+
+    class AccessDenied(Exception): pass
+    class Process:
+        def create_time(self): return 1.0
+        def status(self): raise AccessDenied("status denied")
+
+    psutil = SimpleNamespace(Process=lambda _pid: Process(), STATUS_ZOMBIE="zombie",
+                             NoSuchProcess=type("NoSuchProcess", (Exception,), {}))
+    monkeypatch.setitem(sys.modules, "psutil", psutil)
+    monkeypatch.setattr(hermes_tui_driver, "os", SimpleNamespace(name="posix"))
+    monkeypatch.setattr(hermes_tui_driver, "sys", SimpleNamespace(version_info=(3, 14)))
+    ledger = tmp_path / "owned.json"
+    ledger.write_text(json.dumps([{"pid": 123, "birthtime": 1.0, "exe": sys.executable}]))
+    with pytest.raises(AccessDenied):
+        hermes_tui_driver.cleanup_ledger(ledger)
+
+
+def test_windows_cleanup_keeps_existing_identity_and_kill_path(tmp_path, monkeypatch):
+    import json
+    import sys
+    from types import SimpleNamespace
+
+    class Process:
+        pid = 123
+        killed = False
+        def create_time(self): return 1.0
+        def exe(self): return sys.executable
+        def kill(self): self.killed = True
+
+    process = Process()
+    psutil = SimpleNamespace(Process=lambda _pid: process,
+                             NoSuchProcess=type("NoSuchProcess", (Exception,), {}),
+                             wait_procs=lambda handles, timeout: (handles, []))
+    monkeypatch.setitem(sys.modules, "psutil", psutil)
+    monkeypatch.setattr(hermes_tui_driver, "os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr(hermes_tui_driver, "sys", SimpleNamespace(version_info=(3, 14)))
+    ledger = tmp_path / "owned.json"
+    ledger.write_text(json.dumps([{"pid": 123, "birthtime": 1.0, "exe": sys.executable}]))
+    assert hermes_tui_driver.cleanup_ledger(ledger) == {"recovered": [123], "alive": []}
+    assert process.killed

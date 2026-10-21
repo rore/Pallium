@@ -175,7 +175,7 @@ def isolated_env(home: Path, *, source: Path, python: Path, node: Path,
             "HOME": str(home), "TMPDIR": str(home / "Temp"),
             "XDG_CONFIG_HOME": str(home / ".config"), "XDG_DATA_HOME": str(home / ".local/share"),
             "XDG_CACHE_HOME": str(home / ".cache"), "XDG_STATE_HOME": str(home / ".local/state"),
-            "HERMES_HOME": str(home / ".hermes"), "HERMES_PYTHON": str(python),
+            "HERMES_HOME": str(home / "hermes-profile"), "HERMES_PYTHON": str(python),
             "HERMES_TUI_DIR": str(source / "ui-tui"), "HERMES_NODE": str(node), "HERMES_TUI": "1",
             "HERMES_MANAGED_DIR": str(home / "managed-empty"), "HERMES_CWD": str(home / "scratch"),
             "TERM": "xterm-256color", "NO_COLOR": "1", "PYTHONUNBUFFERED": "1",
@@ -234,7 +234,7 @@ def assert_isolated_env(env: dict[str, str], home: Path) -> None:
         expected = {
             "HOME": home, "TMPDIR": home / "Temp", "XDG_CONFIG_HOME": home / ".config",
             "XDG_DATA_HOME": home / ".local" / "share", "XDG_CACHE_HOME": home / ".cache",
-            "XDG_STATE_HOME": home / ".local" / "state", "HERMES_HOME": home / ".hermes",
+            "XDG_STATE_HOME": home / ".local" / "state", "HERMES_HOME": home / "hermes-profile",
             "HERMES_MANAGED_DIR": home / "managed-empty",
         }
         assert env["LANG"] == env["LC_ALL"] == "C.UTF-8"
@@ -242,6 +242,11 @@ def assert_isolated_env(env: dict[str, str], home: Path) -> None:
         for key, path in expected.items():
             actual = Path(env[key]).resolve()
             assert actual.is_relative_to(home.resolve()) and actual == path.resolve(), (key, actual, path)
+        default_hermes_home = (home / ".hermes").resolve()
+        hermes_home = Path(env["HERMES_HOME"]).resolve()
+        assert not hermes_home.is_relative_to(default_hermes_home), "synthetic Hermes home collides with platform default"
+        assert (hermes_home / "state.db").resolve().is_relative_to(home.resolve())
+        assert "HERMES_STATE_DB_GUARD_BYPASS" not in env, "do not disable Hermes's live-DB safety guard"
         assert not any(any(word in key.upper() for word in (
             "API_KEY", "TOKEN", "SECRET", "ACCESS_KEY", "SIDECAR", "ATTACH")) for key in env), (
                 "credential or host-attachment variable passed to Hermes")
@@ -415,6 +420,21 @@ else: raise AssertionError("UDP was not blocked")
 ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][\s\S]*?(?:\x07|\x1b\\)")
 
 
+def _linux_owned_state(psutil, pid, birth, executable):
+    """Return live, zombie, or gone only after confirming the saved identity."""
+    try:
+        proc = psutil.Process(pid)
+        assert proc.create_time() == birth, ("refusing cleanup after process birth identity changed", pid)
+        status = proc.status()
+        if status == psutil.STATUS_ZOMBIE:
+            return "zombie", proc
+        assert str(Path(proc.exe()).resolve()) == executable, (
+            "refusing cleanup after process executable identity changed", pid)
+        return "live", proc
+    except psutil.NoSuchProcess:
+        return "gone", None
+
+
 class OwnedTree:
     """Retain process identity while the root lives, including children orphaned on exit."""
 
@@ -503,6 +523,24 @@ class OwnedTree:
         with self.lock:
             known = list(self.identities.items())
         handles = []
+        if os.name != "nt":
+            for pid, (birth, executable) in known:
+                if not include_root and pid == self.root.pid:
+                    continue
+                state, proc = _linux_owned_state(self.psutil, pid, birth, executable)
+                if state == "live":
+                    handles.append(proc)
+                    try:
+                        proc.kill()
+                    except self.psutil.NoSuchProcess:
+                        pass
+            _, alive = self.psutil.wait_procs(handles, timeout=8)
+            for proc in alive:
+                birth, executable = self.identities[proc.pid]
+                state, _ = _linux_owned_state(self.psutil, proc.pid, birth, executable)
+                assert state in ("zombie", "gone"), f"owned process survived cleanup: {proc.pid}"
+            assert self.error is None, self.error
+            return
         for pid, (birth, executable) in known:
             if not include_root and pid == self.root.pid:
                 continue
@@ -830,7 +868,17 @@ def driver_main(spec_path: Path):
             tree.close(include_root=False)
         finally:
             if console is not None:
-                console.close()
+                pending_error = sys.exc_info()[0] is not None
+                try:
+                    owned_popen = getattr(getattr(console, "proc", None), "process", None)
+                    if os.name != "nt" and owned_popen is not None:
+                        try:
+                            owned_popen.wait(timeout=8)
+                        except subprocess.TimeoutExpired:
+                            if not pending_error:
+                                raise
+                finally:
+                    console.close()
 
 
 def cleanup_ledger(path: Path):
@@ -838,8 +886,30 @@ def cleanup_ledger(path: Path):
     import psutil
 
     assert sys.version_info[:2] == (3, 14), "ownership recovery requires the explicit Hermes interpreter"
+    rows = json.loads(path.read_text(encoding="utf-8"))
+    if os.name != "nt":
+        handles = []
+        identities = {}
+        for row in rows:
+            pid, birth = row["pid"], row["birthtime"]
+            executable = str(Path(row["exe"]).resolve())
+            state, proc = _linux_owned_state(psutil, pid, birth, executable)
+            identities[pid] = (birth, executable)
+            if state == "live":
+                handles.append(proc)
+        for proc in handles:
+            try:
+                proc.kill()
+            except psutil.NoSuchProcess:
+                pass
+        _, alive = psutil.wait_procs(handles, timeout=8)
+        for proc in alive:
+            birth, executable = identities[proc.pid]
+            state, _ = _linux_owned_state(psutil, proc.pid, birth, executable)
+            assert state in ("zombie", "gone"), f"retained owned process survived recovery: {proc.pid}"
+        return {"recovered": [proc.pid for proc in handles], "alive": []}
     handles = []
-    for row in json.loads(path.read_text(encoding="utf-8")):
+    for row in rows:
         try:
             proc = psutil.Process(row["pid"])
             if (proc.create_time() == row["birthtime"]

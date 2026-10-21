@@ -16,10 +16,10 @@ supported-version claim.
 |---|---|---|
 | Released hosts | Actual Desktop and TUI journeys on current compatible releases | Desktop and TUI memory-off passed on v0.22.0; memory-on and v0.22.2 native journeys remain unqualified; gateway Relay/History passed on v0.22.0/v0.22.2 |
 | Runtime compatibility | Public plugin identity, injection, hook and middleware contracts; clear missing-capability errors | Current v0.22.0/v0.22.2 gateway checks passed; full native release coverage pending |
-| Normal configuration | Ordinary providers, default Tool Search, supported plugin coexistence | Default Tool Search and a harmless peer hook passed in the v0.22.0 Desktop memory-off case; ordinary-provider behavior remains unqualified |
+| Normal configuration | Ordinary providers, default Tool Search, supported plugin coexistence | Default Tool Search and a harmless peer hook passed in the v0.22.0 Desktop and TUI memory-off cases; ordinary-provider behavior remains unqualified |
 | Full package | Skill, Relay, History and opt-in memory lifecycle; memory off leaves Relay/History functional | Native Desktop and TUI memory-off passed on v0.22.0; native opt-in memory lifecycle remains unqualified |
 | Recovery | Busy/concurrent sessions, reset/close, host/service/MCP restart, stale routes and ambiguous outcomes | Endpoint outage and controlled host/MCP relaunch passed in Desktop memory-off; a separate caller E2E proves queued delivery persistence across an owned Pallium process restart. Native service/MCP reconnection and the remaining matrix are unqualified |
-| Lifecycle | Disposable install/update/remove/rollback, repeated use and owned-process cleanup | Native repeat setup, status and removal preserved profile data in the passing Desktop case; caller ownership/conflict coverage remains separate |
+| Lifecycle | Disposable install/update/remove/rollback, repeated use and owned-process cleanup | Native repeat setup, status and removal preserved profile data in the passing Desktop and TUI memory-off cases; caller ownership/conflict coverage remains separate |
 | Public documentation | Public entry points, setup/capability guides and bundled skill match final verified behavior; commands and links checked | Initial alignment audit updated the guides; final production review still required |
 
 The [v0.22.2 release notes](https://github.com/NousResearch/hermes-agent/releases/tag/v0.22.2)
@@ -175,6 +175,14 @@ suite; they have not passed a complete native matrix. The separate service-proce
 E2E passed on Python 3.12 and 3.13, preserving exact queued endpoint/message/delivery
 IDs through public claim, ACK, reply and final-state reads. That is queue
 persistence proof, not native automatic MCP reconnection.
+
+The latest retained run [39557493207](https://github.com/rore/Pallium/actions/runs/39557493207)
+tested exact candidate `f348f00f9b4ef0b6fbf63d0e87df245102318498`. Both Desktop and
+TUI memory-off journeys passed on v0.22.0. Both memory-on cases reached their
+memory lifecycle, then failed a fixture assertion using a History attribution
+field for an ordinary memory query. All four cleanup/source postconditions passed;
+v0.22.2 was cancelled by fail-fast. The corrected query assertion and later
+busy-turn/source-composition changes remain unqualified by that run.
 
 Native evidence uses Windows Server 2025 with an unpacked app and synthetic
 provider: run2 image `win25-vs2026`/`20261018.275.1`; run3 image

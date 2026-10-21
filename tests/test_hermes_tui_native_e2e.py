@@ -1234,6 +1234,15 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
     env["PALLIUM_TUI_GIT"] = shutil.which("git")
     assert env["PALLIUM_TUI_GIT"], "explicit Git prerequisite missing"
     profile = Path(env["HERMES_HOME"])
+    if sys.platform == "linux":
+        resolved_profile = profile.resolve()
+        default_profile = (home / ".hermes").resolve()
+        assert resolved_profile == (home / "hermes-profile").resolve()
+        assert resolved_profile.parent == home.resolve()
+        assert not resolved_profile.is_relative_to(default_profile), "Hermes DB collides with platform-default state root"
+        assert (resolved_profile / "state.db").resolve().is_relative_to(tmp_path.resolve())
+        assert "HERMES_STATE_DB_GUARD_BYPASS" not in env
+        require_contained_paths(profile)
     profile.mkdir()
     config = {"model": {"provider": "custom", "default": "pallium-local", "api_key": "synthetic-only",
                          "api_mode": "chat_completions", "context_length": 128000,

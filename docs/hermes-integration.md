@@ -12,13 +12,15 @@ These checks do not establish actual Desktop or TUI
 interaction, normal provider/default Tool Search behavior, memory parity or later
 release compatibility.
 
-The complete native Desktop memory-off journey passed twice on v0.22.0 in disposable
-Windows Server 2025 VMs with an unpacked app and synthetic provider. It covered
+The complete native Desktop and TUI memory-off journeys passed on v0.22.0 in a disposable
+Windows Server 2025 VM with an unpacked app and synthetic provider. They covered
 default Tool Search, Relay/wake, later-session History, a harmless peer hook,
 endpoint outage, controlled host/MCP relaunch and profile update/status/removal.
-The TUI off/on and Desktop memory-on cases failed; v0.22.2 was cancelled by
-fail-fast. This partial matrix does not establish production readiness. See the
-[latest retained run](https://github.com/rore/Pallium/actions/runs/39490754190).
+Both memory-on cases reached the memory lifecycle, then failed a fixture assertion
+using History attribution for an ordinary memory query. v0.22.2 was cancelled by
+fail-fast. That run tested candidate `f348f00f`; later busy-turn and source-composition
+changes still require native proof. This partial matrix does not establish production
+readiness. See the [latest retained run](https://github.com/rore/Pallium/actions/runs/39557493207).
 
 ## Available in the experimental package
 
@@ -117,8 +119,8 @@ writers. No everyday profile or host updater should be replaced for qualificatio
 - Desktop qualification needs Windows 11 22H2 or later and separate backend,
   Electron and process-home data paths inside a disposable OS/account, or a
   supported registration opt-out. Profile directories alone do not isolate
-  native URL-handler registration. One hosted Desktop memory-off journey passed;
-  complete Desktop/TUI and opt-in memory coverage remain open.
+  native URL-handler registration. Hosted v0.22.0 Desktop and TUI memory-off
+  journeys passed; the complete release matrix and opt-in memory coverage remain open.
 - Caller tests cover explicit-memory recall/correction and successive wakes
   after admitted no-reply turns. Actual UI lifecycle qualification remains a
   release gate; a successful write or tool call alone is insufficient evidence.
