@@ -107,24 +107,53 @@ def _install_skill() -> None:
     source_dir = _codex_skill_src().parent
     dest_dir = _codex_skill_dir()
     dest_dir.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(
-        prefix=".pallium-memory-", dir=dest_dir.parent
-    ) as temp_dir:
-        staged = Path(temp_dir) / "skill"
-        previous = Path(temp_dir) / "previous"
+    temp_dir = Path(tempfile.mkdtemp(prefix=".pallium-memory-", dir=dest_dir.parent))
+    staged = temp_dir / "skill"
+    previous = temp_dir / "previous"
+    remove_staging = True
+    primary_error = None
+    try:
         shutil.copytree(source_dir, staged)
         if not (staged / "SKILL.md").is_file():
             raise FileNotFoundError("staged Pallium skill has no SKILL.md")
         if _same_skill_tree(staged, dest_dir):
             return
-        if dest_dir.exists():
+        had_previous = dest_dir.exists()
+        if had_previous:
+            # A failed move or restoration must leave recovery files intact.
+            remove_staging = False
             dest_dir.rename(previous)
         try:
             staged.rename(dest_dir)
-        except BaseException:
-            if previous.exists():
-                previous.rename(dest_dir)
+        except BaseException as activation_error:
+            if had_previous:
+                try:
+                    previous.rename(dest_dir)
+                except BaseException as restoration_error:
+                    activation_error.add_note(
+                        f"Restoration failed: {restoration_error!r}. "
+                        f"Previous installation retained at {previous}."
+                    )
+                    raise activation_error from restoration_error
+                remove_staging = True
             raise
+        remove_staging = True
+    except BaseException as error:
+        primary_error = error
+        if not remove_staging:
+            error.add_note(f"Installer recovery directory retained at {temp_dir}.")
+        raise
+    finally:
+        if remove_staging:
+            try:
+                shutil.rmtree(temp_dir)
+            except BaseException as cleanup_error:
+                if primary_error is None:
+                    cleanup_error.add_note(f"Installer staging directory retained at {temp_dir}.")
+                    raise
+                primary_error.add_note(
+                    f"Could not remove staging directory {temp_dir}: {cleanup_error!r}."
+                )
 
 def _remove_skill() -> None:
     """Remove the deployed pallium-memory skill directory (if present)."""
