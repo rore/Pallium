@@ -10,7 +10,7 @@ lane: integration
 
 ## Summary
 
-PR #324 is ready for review of the experimental Desktop/TUI integration toward
+PR #324 delivered the reviewed experimental Desktop/TUI integration toward
 production readiness, including scoped opt-in memory and normal-profile lifecycle
 qualification. Current owner Work Record: `.agent-workflow/tasks/hermes-production-slice4.md`.
 The feature remains active and experimental. The two P1 blockers identified at
@@ -18,11 +18,46 @@ The feature remains active and experimental. The two P1 blockers identified at
 accepted the fixes and corrected qualification below. Clean technical review of
 the owner's final five prose paths is complete: audit of 11 docs, 93 links and
 three commands passed, with zero blocking workflow findings and two advisories.
-Separate human result/release review and PR #324 merge
-remain pending. Earlier withdrawn approvals and failed evidence remain historical.
-Final reviewed prose head `5f21bfcb46e3800927d16544d423b78f182b967f` changes only
+The user approved corrected result/release head
+`eec908914020edbcad6d1234351eaea97f468637`, then normally merged as
+`0e78151824bdb4297d802a5e4023de8672ed8f2d` on 2026-10-21 at 20:28:02 UTC.
+The [public result receipt](https://github.com/rore/Pallium/pull/324#issuecomment-6325817266)
+records the exact approval and retained risks. The experimental integration,
+both P1 corrections and logger fixes are delivered; no installed rollout is approved.
+Earlier withdrawn approvals and failed evidence remain historical.
+Historical reviewed prose head `5f21bfcb46e3800927d16544d423b78f182b967f` changed only
 five prose paths from qualified `d5896a24ec3b72c1f23f5323e43ab8d2a06e60ca`;
-application, tests, dependencies and workflows are identical.
+application, tests, dependencies and workflows were identical at that checkpoint.
+
+### Corrected service fault paths (2026-10-21)
+
+Corrected source `a48b0fef48d91868ffefd903742ef025e66ceeed` repairs exactly two
+existing `self._logger` bindings that caused pre-merge `NameError` after persistence.
+Public HTTP fault E2E showed seven failures plus one passing lexical control before
+the fix and eight passes after; four affected memory files passed 178 cases.
+Clean independent review accepted this correction and the final prose successor
+`eec908914020edbcad6d1234351eaea97f468637`. Native 15 at `d589` and Linux host proof
+at `b96` remain reusable for unchanged host behavior, not proof of injected service
+exceptions; the separate HTTP fault regressions provide that evidence.
+
+Earlier CI [39667217842](https://github.com/rore/Pallium/actions/runs/39667217842) remains
+**failed** on two distinct Codex cases: Linux 3.13's second send returned 503
+(`late_begin` 1,600 ms/setup 1,599 ms) before wake-fence oracles; Linux 3.12's fake
+one-second register-entry signal was not observed and no cancellation was sent,
+so no cancellation/identity outcome was proved. Windows smoke
+passed 626 cases with seven skips; governance
+[39667217848](https://github.com/rore/Pallium/actions/runs/39667217848) passed.
+Causes and possible shared availability impact remain unknown; no full-suite pass,
+causal independence or shared-availability repair is inferred from the focused fault proof.
+
+Approved-head CI [39668992574](https://github.com/rore/Pallium/actions/runs/39668992574)
+also remains **failed**: Linux 3.12's cross-container Codex target turn returned
+503/`setup_deadline` at 1,766 ms (`session_factory` 1,763 ms), before claim/ACK
+and later actor/lifecycle assertions, after 3,705 passes/22 skips/one xfail.
+Linux 3.13 passed 7,929 cases/93 skips/two xfails; Windows smoke passed 626/seven
+skips and governance [39668992584](https://github.com/rore/Pallium/actions/runs/39668992584)
+passed. This distinct failure, its cause and possible availability impact remain
+unresolved; merge does not turn either failed Linux result into a pass.
 
 ### Resolved blockers and corrected qualification (2026-10-21)
 
@@ -58,9 +93,10 @@ later success; do not conflate those causes.
 The user explicitly authorized fixing both blockers, adding missing E2E
 regressions, fresh independent review and isolated execution before pushing the
 fixes. The existing High-risk `.agent-workflow/tasks/hermes-production-slice4.md`
-and PR #324 retain ownership. Next gate: separate human result/release review
-before merge; the final prose technical review is complete. No merge or
-live rollout is approved by these qualification receipts alone.
+and PR #324 retain the implementation and evidence history. Technical and exact
+corrected-result human review are complete and the approved contribution is merged.
+Remaining platform/provider qualification and any everyday rollout stay separate;
+the broader active feature limitations and failed evidence remain explicit.
 
 ### Retained Windows short-journey matrix (2026-10-21)
 
@@ -82,7 +118,8 @@ TUI cells, Gateway and SDK2 evidence as historical baselines, kept distinct from
 the corrected candidate above. Native runs 11/12 remain failed and their original
 causes unexplained; later passing evidence does not prove those failures cured.
 
-Next: complete the separate human result/release review above before merge.
+The approved experimental contribution is merged; retain the separate rollout and
+broader qualification boundaries above.
 Evidence is Windows Server 2025
 with an unpacked app and synthetic provider; it does not establish Windows 11,
 MSIX/updater behavior, graceful native Quit, automatic standalone MCP reconnect
