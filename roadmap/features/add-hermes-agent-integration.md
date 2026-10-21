@@ -15,8 +15,10 @@ production readiness, including scoped opt-in memory and normal-profile lifecycl
 qualification. Current owner Work Record: `.agent-workflow/tasks/hermes-production-slice4.md`.
 The feature remains active and experimental. The two P1 blockers identified at
 `353e8f83` are resolved in runtime `b96a05e1`; clean independent result review
-accepted the fixes and corrected qualification below. Owner public-doc/Work Record
-review is underway separately; human result/release review and PR #324 merge
+accepted the fixes and corrected qualification below. Clean technical review of
+the owner's final five prose paths is complete: audit of 11 docs, 93 links and
+three commands passed, with zero blocking workflow findings and two advisories.
+Separate human result/release review and PR #324 merge
 remain pending. Earlier withdrawn approvals and failed evidence remain historical.
 
 ### Resolved blockers and corrected qualification (2026-10-21)
@@ -45,14 +47,16 @@ remains **failed** at registration 503/`setup_deadline` (1,949 ms;
 `session_factory` 1,947 ms); the physical cause remains unknown and possible
 availability impact is not excluded.
 Linux 3.12 passed 7,921 cases with 93 skips and two expected failures; Windows
-and governance passed. Native run 14's prelaunch failure and prior reset failures
-remain retained, unexplained and uncured by this later success.
+and governance passed. Native run 14 remains failed, but its Windows stdin Unicode
+pipe cause was diagnosed and corrected with test-only ASCII JSON transport and a
+red/green regression. Older reset failures remain unexplained and uncured by the
+later success; do not conflate those causes.
 
 The user explicitly authorized fixing both blockers, adding missing E2E
 regressions, fresh independent review and isolated execution before pushing the
 fixes. The existing High-risk `.agent-workflow/tasks/hermes-production-slice4.md`
-and PR #324 retain ownership. Next gate: complete the owner's final public-doc/Work
-Record review and separate human result/release review before merge. No merge or
+and PR #324 retain ownership. Next gate: separate human result/release review
+before merge; the final prose technical review is complete. No merge or
 live rollout is approved by these qualification receipts alone.
 
 ### Retained Windows short-journey matrix (2026-10-21)
@@ -75,8 +79,8 @@ TUI cells, Gateway and SDK2 evidence as historical baselines, kept distinct from
 the corrected candidate above. Native runs 11/12 remain failed and their original
 causes unexplained; later passing evidence does not prove those failures cured.
 
-Next: finish owner guide alignment and the remaining result/release review gates
-above before merge. Evidence is Windows Server 2025
+Next: complete the separate human result/release review above before merge.
+Evidence is Windows Server 2025
 with an unpacked app and synthetic provider; it does not establish Windows 11,
 MSIX/updater behavior, graceful native Quit, automatic standalone MCP reconnect
 or ordinary-provider/model quality. No installed rollout or generic Relay
