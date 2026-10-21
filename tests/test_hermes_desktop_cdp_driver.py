@@ -109,6 +109,8 @@ def test_commands_drive_only_public_visible_desktop_controls(tmp_path):
 const d = require(process.argv[1]);
 const calls = [];
 let filledText = '';
+let currentUrl = 'file:///synthetic/index.html#/sessions';
+const navSelector = 'button[data-slot="sidebar-menu-button"]:has([data-tour="sidebar-nav-new-session"]):visible';
 function loc(kind) {
   return {
     count: async () => 1,
@@ -126,14 +128,20 @@ function loc(kind) {
         press: async (key, options) => calls.push(['press', id, key, options.timeout]),
         dispose: async () => calls.push(['dispose', id])};
     },
-    click: async () => calls.push(['click', kind]),
+    click: async options => {
+      calls.push(['click', kind, options]);
+      if (kind === 'nav-new-session') currentUrl = 'file:///synthetic/index.html#/';
+    },
     waitFor: async options => calls.push(['waitFor', kind, options])
   };
 }
 const page = {
-  url: () => 'file:///synthetic/index.html',
-  locator: selector => { calls.push(['pageLocator', selector]); return loc('composer'); },
-  getByRole: (role, options) => { calls.push(['role', role, options]); return loc('button:New session'); },
+  url: () => currentUrl,
+  locator: selector => { calls.push(['pageLocator', selector]); return loc(selector === navSelector ? 'nav-new-session' : 'composer'); },
+  waitForURL: async (predicate, options) => {
+    calls.push(['waitForURL', options]);
+    if (!predicate(new URL(currentUrl))) throw Error('route not reached');
+  },
   getByText: (text, options) => { calls.push(['text', text, options]); return {first: () => loc('answer')}; },
   waitForTimeout: async () => {}
 };
@@ -164,15 +172,15 @@ const env = {GITHUB_ACTIONS:'true', RUNNER_ENVIRONMENT:'github-hosted', RUNNER_O
     assert [entry for entry in calls if entry[0] == "pageLocator"] == [
         ['pageLocator', '[data-slot="composer-rich-input"]:visible'],
         ['pageLocator', '[data-slot="composer-rich-input"]:visible'],
+        ['pageLocator', 'button[data-slot="sidebar-menu-button"]:has([data-tour="sidebar-nav-new-session"]):visible'],
         ['pageLocator', '[data-slot="composer-rich-input"]:visible'],
     ]
     assert [entry[2] for entry in calls if entry[0] == "locator"] == [
         "xpath=ancestor::form[1]",
         'button[type="submit"]',
     ]
-    assert [entry for entry in calls if entry[0] == "role"] == [
-        ["role", "button", {"name": "New session", "exact": True}]
-    ]
+    assert [entry for entry in calls if entry[0] == "click"] == [["click", "nav-new-session", {"timeout": 30000}]]
+    assert [entry for entry in calls if entry[0] == "waitForURL"] == [["waitForURL", {"timeout": 30000}]]
     assert [entry for entry in calls if entry[0] == "text"] == [
         ["text", "Réponse ✓ 日本語", {"exact": False}]
     ]
@@ -188,6 +196,90 @@ const env = {GITHUB_ACTIONS:'true', RUNNER_ENVIRONMENT:'github-hosted', RUNNER_O
         {"id": 4, "ok": True, "result": {"newSession": True}},
         {"id": 5, "ok": True, "result": {"closed": True}},
     ]
+
+
+def test_new_session_uses_nav_control_and_waits_for_fresh_route(tmp_path):
+    result = run_node(r"""
+const d = require(process.argv[1]);
+const env = {GITHUB_ACTIONS:'true', RUNNER_ENVIRONMENT:'github-hosted', RUNNER_OS:'Windows',
+  RUNNER_ARCH:'X64', HERMES_NATIVE_CI_ISOLATION:'github-hosted-ephemeral-windows'};
+const navSelector='button[data-slot="sidebar-menu-button"]:has([data-tour="sidebar-nav-new-session"]):visible';
+async function run(config) {
+  const events=[];
+  let url='file:///synthetic/index.html'+config.initialHash;
+  let headerClicks=0, fills=0, presses=0;
+  let routeChecks=0;
+  const nav={count:async()=>config.count,isVisible:async()=>config.visible,isEnabled:async()=>config.enabled,
+    click:async options=>{events.push(['nav-click',options]);}};
+  const headerPlus={click:async()=>{headerClicks++;}};
+  const composer={count:async()=>{events.push('composer-count');return 1;},first(){return this;},
+    getAttribute:async name=>name==='contenteditable'?'true':null,
+    innerText:async()=>{events.push('composer-text');return '';},
+    fill:async()=>{fills++;},press:async()=>{presses++;}};
+  const page={url:()=>url,locator:selector=>{
+      events.push(['locator',selector]);
+      return selector===navSelector?nav:composer;
+    },
+    getByRole:()=>headerPlus,
+    waitForURL:async(predicate,options)=>{
+      events.push(['route-wait',options]);
+      while(routeChecks<config.maxChecks){
+        if(predicate(new URL(url))){events.push('route-ready');return;}
+        routeChecks++;
+        events.push('route-poll');
+        if(config.transitionAfter===routeChecks) url='file:///synthetic/index.html#/';
+      }
+      if(predicate(new URL(url))){events.push('route-ready');return;}
+      throw Error('route wait timed out');
+    },waitForTimeout:async()=>{}};
+  const browser={contexts:()=>[{pages:()=>[page]}],close:async()=>{}};
+  const driver=await d.connectDriver({endpoint:'ws://127.0.0.1:43123/devtools/browser/x',sourceRoot:'.',env,
+    timeout:30000,load:()=>({connectOverCDP:async()=>browser})});
+  let result,error;
+  try { result=await driver.newSession(); } catch(e) { error=e.message; }
+  await driver.close();
+  return {result:result??null,error:error??null,events,headerClicks,fills,presses,routeChecks,navSelector};
+}
+(async()=>{
+  const delayed=await run({initialHash:'#/sessions',count:1,visible:true,enabled:true,transitionAfter:2,maxChecks:4});
+  const alreadyFresh=await run({initialHash:'#/',count:1,visible:true,enabled:true,maxChecks:1});
+  const ambiguous=await run({initialHash:'#/sessions',count:2,visible:true,enabled:true,maxChecks:1});
+  const inaccessible=await run({initialHash:'#/sessions',count:1,visible:false,enabled:true,maxChecks:1});
+  const disabled=await run({initialHash:'#/sessions',count:1,visible:true,enabled:false,maxChecks:1});
+  const timeout=await run({initialHash:'#/sessions',count:1,visible:true,enabled:true,maxChecks:2});
+  console.log(JSON.stringify({delayed,alreadyFresh,ambiguous,inaccessible,disabled,timeout}));
+})().catch(e=>{console.error(e);process.exit(1)});
+""", tmp_path)
+    delayed = result["delayed"]
+    assert delayed["result"] == {"newSession": True} and delayed["error"] is None
+    assert delayed["navSelector"] == 'button[data-slot="sidebar-menu-button"]:has([data-tour="sidebar-nav-new-session"]):visible'
+    assert "sidebar-nav-new-session" in delayed["navSelector"] and "header" not in delayed["navSelector"]
+    assert delayed["headerClicks"] == 0
+    assert delayed["fills"] == delayed["presses"] == 0
+    assert delayed["events"].count(["nav-click", {"timeout": 30000}]) == 1
+    assert delayed["events"].count("route-ready") == 1 and delayed["routeChecks"] == 2
+    assert delayed["events"].index("route-ready") < delayed["events"].index("composer-count")
+    assert delayed["events"].index("route-ready") < delayed["events"].index("composer-text")
+
+    already_fresh = result["alreadyFresh"]
+    assert already_fresh["result"] == {"newSession": True} and already_fresh["error"] is None
+    assert already_fresh["events"].count(["nav-click", {"timeout": 30000}]) == 1
+    assert already_fresh["events"].count("route-ready") == 1
+    assert already_fresh["events"].index("route-ready") < already_fresh["events"].index("composer-count")
+
+    for name in ("ambiguous", "inaccessible", "disabled"):
+        failed = result[name]
+        expected = "New session navigation button is disabled" if name == "disabled" else \
+            "expected one visible New session navigation button"
+        assert failed["error"] == expected and failed["result"] is None
+        assert not [event for event in failed["events"] if isinstance(event, list) and event[0] == "nav-click"]
+        assert "route-ready" not in failed["events"] and "composer-count" not in failed["events"]
+
+    timed_out = result["timeout"]
+    assert timed_out["error"] == "route wait timed out" and timed_out["result"] is None
+    assert timed_out["events"].count(["nav-click", {"timeout": 30000}]) == 1
+    assert timed_out["events"].count("composer-count") == 0
+    assert timed_out["events"].count("composer-text") == 0
 
 
 def test_submit_waits_for_payload_control_mount_and_visibility(tmp_path):

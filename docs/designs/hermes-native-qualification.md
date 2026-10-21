@@ -1,5 +1,26 @@
 # Hermes native qualification
 
+Run [39605845935](https://github.com/rore/Pallium/actions/runs/39605845935), candidate
+`c73f383e3d06af0b3fab878b96ca6163dfa81fb4`, passed all 67 v0.22.0 checks with
+zero skips in 391.703 seconds. Independent review accepted its four full UI
+journeys, including distinct History sessions, two normal process generations
+and profile lifecycle checks. v0.22.2 passed 66 checks and failed Desktop
+memory-on while waiting for the History answer after New session and Enter
+returned. The captured provider and HTTP evidence contains no History prompt,
+query or answer; this does not establish all internal effects or justify a
+submission retry. Later privacy and profile lifecycle checks were not reached.
+Parent source and cleanup checks passed in all four cases. Six structured
+process records show newer PID replacements left untouched. Seven passing UI
+cells do not qualify the eight-cell matrix.
+
+The next reviewed driver selects the sidebar navigation row explicitly instead
+of the similarly named asynchronous header-plus action. It clicks once, waits
+for the observable fresh-chat hash route `#/`, then checks composer readiness
+and empty text. An initially fresh route is a state barrier rather than proof
+of a transition; actual later-session identity checks remain required. This is
+a test-caller correction, with no forced navigation, action retry, increased
+timeout or application change. Native qualification remains incomplete.
+
 Run [39603091244](https://github.com/rore/Pallium/actions/runs/39603091244), candidate
 `f0da4ee1b2534da1b7ab9f3e94f41740dea8cbd3`, progressed through Desktop memory-on
 History submission using plain Enter and the later egress/secret assertions. It

@@ -216,6 +216,15 @@ remain unqualified. A reviewed fixture correction retains exact identity before
 every kill while treating a demonstrably newer process as unowned.
 Required-CI shared-test availability failures affected Python 3.12 and 3.13 on
 different candidate heads; the Hermes changes did not repair them.
+Run [39605845935](https://github.com/rore/Pallium/actions/runs/39605845935) on
+`c73f383e3d06af0b3fab878b96ca6163dfa81fb4` passed all 67 v0.22.0 checks with
+zero skips; independent review accepted all four complete UI journeys and
+profile lifecycle checks. v0.22.2 passed 66 checks but Desktop memory-on timed
+out waiting for History after New session and Enter. Its later privacy/profile
+lifecycle checks were not reached, so the eight-cell matrix remains incomplete.
+The next reviewed driver uses the explicit sidebar navigation row and observes
+the fresh-chat route before checking the composer; it does not retry submission
+or change application behavior.
 These results do not qualify Windows 11, everyday MSIX/updater behavior, native
 app-quit behavior, automatic standalone MCP reconnection, paid-provider quality
 or every provider/memory combination.
