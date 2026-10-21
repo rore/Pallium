@@ -1,7 +1,7 @@
 ---
 id: add-relay-retention-and-lifecycle-hardening
 title: Harden Relay session and message lifecycle
-status: paused
+status: active
 priority: high
 commitment: committed
 milestone: pallium-relay
@@ -44,11 +44,24 @@ The first slice shipped in PR #148 (`48f568a4`): send/reply to a known closed
 recipient return stable `409 recipient session is closed` before persistence,
 with caller-surface regression coverage. Do not implement that slice again.
 
-Status reconciled 2026-09-09: this umbrella is paused, not complete. Retention
-cleanup and concrete windows remain deferred until measured database growth or a
-specific dashboard diagnosis need justifies them. Record that evidence and choose
-a bounded cleanup slice before resuming. Age alone still cannot invalidate a
-resumable session or durable pending delivery. This deferred work does not block
+Status resumed 2026-10-20 for one bounded read-only operational-preview slice.
+A metadata-only inventory found eight old durable pending deliveries; age does
+not establish abandonment. Existing summary/status totals cannot distinguish
+unchanged historical backlog from new delivery or failure evidence. Add bounded
+privacy-safe metadata pages through the existing dashboard read surface, with
+explicit observation and trace boundaries and caller-side saved baseline scans.
+The metadata-only preview shipped in [PR #329](https://github.com/rore/Pallium/pull/329)
+(`d3528c2e89e3c3cef3d878cd0441b49f650186f1`) on 2026-10-21. Both Linux
+Python lanes passed all 66 preview E2E cases and the selected full suite; Windows
+smoke and governance passed. Earlier local setup failures and timeouts remain
+preserved as historical evidence. This qualifies the repository feature, not an
+installed rollout or a full Windows test run.
+
+This slice does not clear the eight messages or complete lifecycle retention.
+Cleanup windows, post-retention send/reply idempotence, late replies, exact-message
+cancellation, and any destructive or live rollout remain unresolved and deferred.
+Preserve durable pending and active claims, use the existing cleaner for future
+accepted cleanup, and add no scheduler. This deferred work does not block
 activation capabilities, delivery traces, work associations, or future workflow
 examples; trace retention remains part of the trace feature.
 

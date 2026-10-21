@@ -107,7 +107,16 @@ jobs:
         run: python -c "import mcp; import app.mcp.server"
 
       - name: Run tests
-        run: python -m pytest tests/ ${{ github.event_name != 'workflow_dispatch' && '-x' || '' }} -q --durations=20
+        run: python -m pytest tests/ ${{ github.event_name != 'workflow_dispatch' && '-x' || '' }} -q --durations=20 --junitxml=test-results/linux-${{ matrix.python-version }}-test-all.xml
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-linux-${{ matrix.python-version }}-test-${{ github.run_attempt }}
+          path: test-results/linux-${{ matrix.python-version }}-test-all.xml
+          if-no-files-found: error
+          retention-days: 7
 
   # Fast Windows regression for full-lane PRs and pushes. Runs only the
   # Windows-sensitive hotspots (process mgmt, subprocess hooks, file I/O,
@@ -219,12 +228,12 @@ jobs:
       - name: Run process-sensitive tests serially
         id: serial
         continue-on-error: ${{ github.event_name == 'workflow_dispatch' }}
-        run: python -m pytest tests/test_restart_service.py tests/test_structural_work_refs_e2e.py tests/test_stable_actor_identity_e2e.py tests/test_service_launcher_lifecycle.py tests/test_service.py::test_windows_stop_verifier_executes_new_and_legacy_launcher_parsers tests/test_codex_retained_wake.py::test_session_start_lock_budget_claims_emits_and_acks_once tests/test_codex_retained_native_reconnect.py ${{ github.event_name != 'workflow_dispatch' && '-x' || '' }} -m "slow or not slow" -q -n 0 --durations=20
+        run: python -m pytest tests/test_restart_service.py tests/test_structural_work_refs_e2e.py tests/test_stable_actor_identity_e2e.py tests/test_service_launcher_lifecycle.py tests/test_service.py::test_windows_stop_verifier_executes_new_and_legacy_launcher_parsers tests/test_codex_retained_wake.py::test_session_start_lock_budget_claims_emits_and_acks_once tests/test_codex_retained_native_reconnect.py ${{ github.event_name != 'workflow_dispatch' && '-x' || '' }} -m "slow or not slow" -q -n 0 --durations=20 --junitxml=test-results/windows-${{ matrix.python-version }}-windows-full-serial.xml
 
       - name: Run remaining tests
         id: remaining
         continue-on-error: ${{ github.event_name == 'workflow_dispatch' }}
-        run: python -m pytest tests/ ${{ github.event_name != 'workflow_dispatch' && '-x' || '' }} -q --ignore=tests/test_restart_service.py --ignore=tests/test_structural_work_refs_e2e.py --ignore=tests/test_stable_actor_identity_e2e.py --ignore=tests/test_service_launcher_lifecycle.py --ignore=tests/test_codex_retained_native_reconnect.py --deselect=tests/test_service.py::test_windows_stop_verifier_executes_new_and_legacy_launcher_parsers --deselect=tests/test_codex_retained_wake.py::test_session_start_lock_budget_claims_emits_and_acks_once --durations=20
+        run: python -m pytest tests/ ${{ github.event_name != 'workflow_dispatch' && '-x' || '' }} -q --ignore=tests/test_restart_service.py --ignore=tests/test_structural_work_refs_e2e.py --ignore=tests/test_stable_actor_identity_e2e.py --ignore=tests/test_service_launcher_lifecycle.py --ignore=tests/test_codex_retained_native_reconnect.py --deselect=tests/test_service.py::test_windows_stop_verifier_executes_new_and_legacy_launcher_parsers --deselect=tests/test_codex_retained_wake.py::test_session_start_lock_budget_claims_emits_and_acks_once --durations=20 --junitxml=test-results/windows-${{ matrix.python-version }}-windows-full-remaining.xml
 
       - name: Preserve manual selection failures
         if: always() && github.event_name == 'workflow_dispatch'
@@ -236,6 +245,17 @@ jobs:
           if ($env:SERIAL -ne 'success' -or $env:REMAINING -ne 'success') {
             throw "Manual selections failed or did not complete: serial=$env:SERIAL remaining=$env:REMAINING"
           }
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-windows-${{ matrix.python-version }}-windows-full-${{ github.run_attempt }}
+          path: |
+            test-results/windows-${{ matrix.python-version }}-windows-full-serial.xml
+            test-results/windows-${{ matrix.python-version }}-windows-full-remaining.xml
+          if-no-files-found: error
+          retention-days: 7
 
   nightly-slow-smoke:
     if: github.event_name == 'schedule'
