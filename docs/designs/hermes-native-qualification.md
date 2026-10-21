@@ -84,11 +84,36 @@ upstream source. Build prerequisites and the unpacked executable layout passed
 on v0.22.0; v0.22.2 native build/execution remains unverified by this workflow.
 
 Dependency install scripts and Desktop startup can write outside redirected
-profile paths. A temporary profile does not isolate those effects: all further
-dependency builds and native Desktop/TUI qualification must use a disposable OS.
+profile paths. A temporary profile does not isolate those effects: Windows
+dependency builds and native Desktop/TUI qualification use a disposable VM.
 Tests must fail closed outside that approved runner, preserve owned-process
 identity, and clean up only their own process trees. TUI tests additionally use
 child-level network guards and self-checks; these are not an OS sandbox.
+
+## Local Linux qualification
+
+Develop and validate Linux behavior in a separate task-owned WSL2 distribution,
+leaving existing distributions, defaults and global WSL settings unchanged.
+WSL settings alone are not a Windows security boundary. The reviewed lane uses
+private mount/PID/user namespaces, detaches shared host mounts, installs an empty
+private binary-format registry, and drops all capabilities with `no_new_privs`.
+Dependency bootstrap has separate network access. Application tests use a fresh
+network namespace with loopback only and synthetic profiles, providers and data.
+Bound process count, CPU use and command duration; preserve owned cleanup evidence.
+
+A root-protected per-run manifest binds the live namespaces, UID maps, launcher
+identity and mount state. The Linux TUI gate verifies those values before setup
+or launch and never supplies GitHub runner markers. The shared journey uses a
+POSIX terminal adapter; Windows Desktop and ConPTY gates remain unchanged.
+Preinstall the hash-pinned screen observer during bootstrap and verify its
+receipt offline. Copied venv interpreters preserve the intended SDK environment
+when native setup resolves interpreter paths.
+
+On candidate `2943fc75`, local subsystem checks passed 234 with three skips;
+released Gateway E2E passed on both pinned hosts, and the two SDK2 bridge cases
+previously skipped for missing prerequisites subsequently passed. These are
+Linux subsystem/Gateway results, not native TUI or Windows Desktop acceptance.
+Complete useful local validation before spending the remaining remote attempt.
 
 Record the actual runner image and Windows version in every native result.
 Hosted Windows Server evidence must not be described as Windows 11 or installed

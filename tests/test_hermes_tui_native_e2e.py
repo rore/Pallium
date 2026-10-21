@@ -817,18 +817,25 @@ class NativeDriver:
         self.log = (spec.parent / "driver-errors.txt").open("w", encoding="utf-8")
         self.python, self.helper, self.artifacts, self.env = python, helper, spec.parent, env
         self.proc = None
+        self.identity = None
         try:
+            options = {} if os.name == "nt" else {"start_new_session": True}
+            if os.name == "nt":
+                options["creationflags"] = subprocess.CREATE_NO_WINDOW
             self.proc = subprocess.Popen([str(python), str(helper), str(spec)], cwd=Path(env["HERMES_CWD"]),
                                          env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                         stderr=self.log, text=True, encoding="utf-8",
-                                         creationflags=subprocess.CREATE_NO_WINDOW)
+                                         stderr=self.log, text=True, encoding="utf-8", **options)
+            if os.name != "nt":
+                from tests.test_hermes_relay_native_e2e import _linux_process_identity
+
+                self.identity = _linux_process_identity(self.proc)
             self.replies = queue.Queue()
             self.reader = threading.Thread(target=self._pump, daemon=True)
             self.reader.start()
         except BaseException:
             try:
                 if self.proc is not None:
-                    stop_owned_driver(self.proc, python, helper, spec.parent, env)
+                    stop_owned_driver(self.proc, python, helper, spec.parent, env, identity=self.identity)
             finally:
                 self.log.close()
             raise
@@ -854,7 +861,8 @@ class NativeDriver:
 
     def close(self):
         try:
-            report = stop_owned_driver(self.proc, self.python, self.helper, self.artifacts, self.env)
+            report = stop_owned_driver(self.proc, self.python, self.helper, self.artifacts, self.env,
+                                       identity=self.identity)
             report["driver_returncode"] = self.proc.returncode
             (self.artifacts / "cleanup.json").write_text(json.dumps(report), encoding="utf-8")
             assert not report["forced"] and not report["recovered"] and not report["alive"], (
@@ -1104,6 +1112,11 @@ print("fresh native model cache and disabled manifest loaded without network")
 @pytest.mark.parametrize("memory_enabled", [False, True], ids=["memory-off", "memory-on"])
 @pytest.mark.parametrize("surface", ["tui", "desktop"])
 def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, surface):
+    if sys.platform == "linux":
+        assert surface == "tui", "Linux qualification supports only the actual TUI surface"
+        from tests.fixtures.hermes_linux_guard import require_linux_qualification
+
+        require_linux_qualification(dict(os.environ))
     required = ("HERMES_E2E_SOURCE", "HERMES_E2E_PYTHON", "HERMES_NODE", "HERMES_TUI_BUNDLE_SHA256",
                 "HERMES_E2E_PYTHON_SHA256", "HERMES_NODE_SHA256", "PALLIUM_TUI_REPO_REVISION",
                 "HERMES_E2E_BASE_PYTHON_SHA256")
@@ -1111,7 +1124,12 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
         pytest.skip("explicit native qualification prerequisites missing: " + ", ".join(missing))
     source, python, node = (Path(os.environ[key]).resolve() for key in required[:3])
     # Do this before runtime preflight or any app/build execution. HOME redirection is insufficient.
-    require_runner_gate(dict(os.environ), tmp_path, source)
+    if sys.platform != "linux":
+        require_runner_gate(dict(os.environ), tmp_path, source)
+    else:
+        from tests.fixtures.hermes_linux_guard import require_contained_paths
+
+        require_contained_paths(tmp_path, source, python, node)
     root = Path(__file__).resolve().parents[1]
     revision = subprocess.check_output(["git", "-C", str(root), "rev-parse", "HEAD"], text=True).strip()
     assert revision == os.environ["PALLIUM_TUI_REPO_REVISION"], "Pallium source freeze changed"
@@ -1122,6 +1140,8 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
                                        python_base_sha256=os.environ["HERMES_E2E_BASE_PYTHON_SHA256"])
     artifacts = tmp_path / f"native-{surface}"
     artifacts.mkdir()
+    if sys.platform == "linux":
+        require_contained_paths(artifacts)
     home = artifacts / "fresh-profile"
     assert not home.exists(), "native qualification requires a fresh synthetic home"
     for relative in ("scratch", "managed-empty", "Temp", "AppData/Roaming", "AppData/Local", ".config", ".cache",
@@ -1207,7 +1227,8 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
     endpoints = [("127.0.0.1", server.server_port) for server in (api_server, provider_server)]
     env = isolated_env(home, source=source, python=python, node=node, guard_dir=guard_dir,
                        preload=preload, egress_log=egress, endpoints=endpoints)
-    env.update({key: os.environ[key] for key in (*RUNNER_MARKERS, "RUNNER_TEMP")})
+    if os.name == "nt":
+        env.update({key: os.environ[key] for key in (*RUNNER_MARKERS, "RUNNER_TEMP")})
     if surface == "desktop":
         env["HERMES_DESKTOP_EXE_SHA256"] = os.environ.get("HERMES_DESKTOP_EXE_SHA256", "")
     env["PALLIUM_TUI_GIT"] = shutil.which("git")
@@ -1352,7 +1373,10 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
             for bridge_row in next_bridges:
                 assert Path(bridge_row["exe"]).resolve() in {
                     Path(sys.executable).resolve(), Path(sys._base_executable).resolve()}, bridge_row
-                assert bridge_row["env"]["USERPROFILE"] == str(home)
+                if os.name == "nt":
+                    assert bridge_row["env"]["USERPROFILE"] == str(home)
+                else:
+                    assert Path(bridge_row["env"]["HOME"]).resolve() == home
                 bridge_args = bridge_row["argv"]
                 assert bridge_args[bridge_args.index("--base-url") + 1] == base_url
                 assert bridge_args[bridge_args.index("--container-ref") + 1] == SCOPE["container_ref"]
@@ -1390,14 +1414,23 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
         assert all(Path(row["exe"]).resolve() in {Path(sys.executable).resolve(), Path(sys._base_executable).resolve()}
                    for row in bridges), bridges
         # Windows venv adds a redirector process; audit the actual server interpreter too.
-        bridge = next(row for row in bridges if Path(row["exe"]).resolve() == Path(sys._base_executable).resolve())
+        bridge_python = sys._base_executable if os.name == "nt" else sys.executable
+        bridge = next(row for row in bridges if Path(row["exe"]).resolve() == Path(bridge_python).resolve())
         args = bridge["argv"]
         assert ("--memory-enabled" in args) is memory_enabled, args
         assert args[args.index("--base-url") + 1] == base_url
         assert args[args.index("--container-ref") + 1] == SCOPE["container_ref"]
         assert not {"PYTHONPATH", "NODE_OPTIONS", "PALLIUM_TUI_ALLOWED_ENDPOINTS"} & set(bridge["env"])
-        assert Path(bridge["env"]["USERPROFILE"]).resolve() == home
-        classification = classify_bridge_connections(bridge, endpoints[0])
+        profile_key = "USERPROFILE" if os.name == "nt" else "HOME"
+        assert Path(bridge["env"][profile_key]).resolve() == home
+        if sys.platform == "linux":
+            assert any(200 <= row["status"] < 300 for row in forwarded), (
+                "Linux empty-socket acceptance requires a successful public HTTP call")
+        classification = classify_bridge_connections(
+            bridge, endpoints[0],
+            collected_successfully=(sys.platform == "linux" and bridge.get("connections_collected") is True),
+            require_successful_snapshot=(sys.platform == "linux"),
+        )
         (artifacts / "bridge-connections.json").write_text(json.dumps(classification, indent=2), encoding="utf-8")
         assert classification["accepted"], classification
 

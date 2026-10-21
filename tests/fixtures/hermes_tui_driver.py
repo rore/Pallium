@@ -28,13 +28,22 @@ def seed_models_dev_cache(profile: Path) -> Path:
     return path
 
 
-def classify_bridge_connections(bridge: dict, service_endpoint: tuple[str, int]) -> dict:
+def classify_bridge_connections(bridge: dict, service_endpoint: tuple[str, int], *,
+                                collected_successfully: bool = False,
+                                require_successful_snapshot: bool = False) -> dict:
     """Classify one identity-verified process snapshot; never pool connections across PIDs."""
     if not isinstance(bridge, dict):
         return {"pid": None, "accepted": False, "reason": "invalid_bridge_snapshot", "connections": []}
     pid, connections = bridge.get("pid"), bridge.get("connections")
-    if type(pid) is not int or pid <= 0 or not isinstance(connections, list) or not connections:
+    if type(pid) is not int or pid <= 0 or not isinstance(connections, list):
         return {"pid": pid, "accepted": False, "reason": "invalid_bridge_snapshot", "connections": []}
+    if require_successful_snapshot and not collected_successfully:
+        return {"pid": pid, "accepted": False, "reason": "invalid_bridge_snapshot", "connections": []}
+    if not connections:
+        accepted = collected_successfully
+        return {"pid": pid, "expected_service_endpoint": service_endpoint, "accepted": accepted,
+                "reason": "no_observed_remote_sockets" if accepted else "invalid_bridge_snapshot",
+                "connections": []}
 
     def local_tcp(row):
         return (isinstance(row, dict) and row.get("family") == "AF_INET"
@@ -156,6 +165,30 @@ for (const name of ["node:dns", "node:dns/promises"]) {
 def isolated_env(home: Path, *, source: Path, python: Path, node: Path,
                  guard_dir: Path, preload: Path, egress_log: Path,
                  endpoints: list[tuple[str, int]]) -> dict[str, str]:
+    if os.name != "nt":
+        from tests.fixtures.hermes_linux_guard import require_contained_paths, require_linux_qualification
+
+        require_linux_qualification()
+        require_contained_paths(home, source, python, node, guard_dir, preload, egress_log)
+        env = {
+            "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8", "PATH": "/usr/local/bin:/usr/bin:/bin",
+            "HOME": str(home), "TMPDIR": str(home / "Temp"),
+            "XDG_CONFIG_HOME": str(home / ".config"), "XDG_DATA_HOME": str(home / ".local/share"),
+            "XDG_CACHE_HOME": str(home / ".cache"), "XDG_STATE_HOME": str(home / ".local/state"),
+            "HERMES_HOME": str(home / ".hermes"), "HERMES_PYTHON": str(python),
+            "HERMES_TUI_DIR": str(source / "ui-tui"), "HERMES_NODE": str(node), "HERMES_TUI": "1",
+            "HERMES_MANAGED_DIR": str(home / "managed-empty"), "HERMES_CWD": str(home / "scratch"),
+            "TERM": "xterm-256color", "NO_COLOR": "1", "PYTHONUNBUFFERED": "1",
+            "PYTHONPATH": os.pathsep.join((str(source), str(guard_dir))),
+            "NODE_OPTIONS": f'--require="{preload.as_posix()}"',
+            "PALLIUM_TUI_ALLOWED_ENDPOINTS": json.dumps(endpoints),
+            "PALLIUM_TUI_EGRESS_LOG": str(egress_log),
+            "PALLIUM_TUI_IPC_LOG": str(egress_log.with_name("local-ipc.jsonl")),
+            "PALLIUM_LINUX_QUALIFICATION_ROOT": os.environ["PALLIUM_LINUX_QUALIFICATION_ROOT"],
+            "PALLIUM_LINUX_QUALIFICATION_MANIFEST": os.environ["PALLIUM_LINUX_QUALIFICATION_MANIFEST"],
+        }
+        assert_isolated_env(env, home)
+        return env
     systemroot = os.environ["SYSTEMROOT"]
     env = {
         "SYSTEMROOT": systemroot,
@@ -197,6 +230,22 @@ def isolated_env(home: Path, *, source: Path, python: Path, node: Path,
 
 
 def assert_isolated_env(env: dict[str, str], home: Path) -> None:
+    if os.name != "nt":
+        expected = {
+            "HOME": home, "TMPDIR": home / "Temp", "XDG_CONFIG_HOME": home / ".config",
+            "XDG_DATA_HOME": home / ".local" / "share", "XDG_CACHE_HOME": home / ".cache",
+            "XDG_STATE_HOME": home / ".local" / "state", "HERMES_HOME": home / ".hermes",
+            "HERMES_MANAGED_DIR": home / "managed-empty",
+        }
+        assert env["LANG"] == env["LC_ALL"] == "C.UTF-8"
+        assert env["PATH"] == "/usr/local/bin:/usr/bin:/bin"
+        for key, path in expected.items():
+            actual = Path(env[key]).resolve()
+            assert actual.is_relative_to(home.resolve()) and actual == path.resolve(), (key, actual, path)
+        assert not any(any(word in key.upper() for word in (
+            "API_KEY", "TOKEN", "SECRET", "ACCESS_KEY", "SIDECAR", "ATTACH")) for key in env), (
+                "credential or host-attachment variable passed to Hermes")
+        return
     expected = {
         "HOME": home, "USERPROFILE": home,
         "APPDATA": home / "AppData" / "Roaming", "LOCALAPPDATA": home / "AppData" / "Local",
@@ -276,18 +325,21 @@ def self_check_guards(root: Path, node: Path, python: Path | None = None) -> Non
         listener.bind(("127.0.0.1", 0))
         port = listener.getsockname()[1]
         allowed = [("127.0.0.1", port)]
-    env = {
+    env = ({
         "SYSTEMROOT": os.environ["SYSTEMROOT"],
         "PATH": os.pathsep.join((str(Path(os.environ["SYSTEMROOT"]) / "System32"), str(node.parent))),
         "HOME": str(home), "USERPROFILE": str(home),
         "APPDATA": str(home / "AppData/Roaming"), "LOCALAPPDATA": str(home / "AppData/Local"),
         "TEMP": str(home / "Temp"), "TMP": str(home / "Temp"),
-        "PYTHONPATH": str(guard_dir),
+    } if os.name == "nt" else {
+        "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8", "PATH": "/usr/local/bin:/usr/bin:/bin",
+        "HOME": str(home), "TMPDIR": str(home / "Temp"),
+    })
+    env.update({"PYTHONPATH": str(guard_dir),
         "PALLIUM_TUI_ALLOWED_ENDPOINTS": json.dumps(allowed),
         "PALLIUM_TUI_EGRESS_LOG": str(audit),
         "PALLIUM_TUI_IPC_LOG": str(root / "local-ipc.jsonl"),
-        "NODE_OPTIONS": f'--require="{preload.as_posix()}"',
-    }
+        "NODE_OPTIONS": f'--require="{preload.as_posix()}"'})
     allowed_check = subprocess.run(
         [interpreter, "-c", "import sitecustomize; assert sitecustomize._allowed(('127.0.0.1', int(__import__('json').loads(__import__('os').environ['PALLIUM_TUI_ALLOWED_ENDPOINTS'])[0][1]))); assert not sitecustomize._allowed(('127.0.0.1', 9)); assert not sitecustomize._allowed(('192.0.2.1', 9))"],
         env=env, capture_output=True, text=True, timeout=10,
@@ -429,13 +481,15 @@ class OwnedTree:
             try:
                 proc = self.psutil.Process(pid)
                 if proc.create_time() == birth and str(Path(proc.exe()).resolve()) == executable:
+                    connections = proc.net_connections()
                     rows.append({"pid": pid, "birthtime": birth, "exe": executable,
                                  "argv": proc.cmdline(), "env": proc.environ(),
+                                 "connections_collected": True,
                                  "connections": [{"ip": c.raddr.ip, "port": c.raddr.port,
                                                   "local_ip": c.laddr.ip, "local_port": c.laddr.port,
                                                   "family": c.family.name, "type": c.type.name,
                                                   "status": c.status}
-                                                 for c in proc.net_connections() if c.raddr]})
+                                                 for c in connections if c.raddr]})
             except self.psutil.NoSuchProcess:
                 pass
         assert self.error is None, self.error
@@ -468,12 +522,9 @@ class OwnedTree:
 class TuiConsole:
     def __init__(self, python: Path, source: Path, home: Path, env: dict[str, str], artifacts: Path,
                  stopped: threading.Event, tree: OwnedTree):
-        from winpty import PTY, Backend, WinptyError
-
         self.parts = []
         self._init_screen_observer()
         self.read_error = None
-        self.pty_error = WinptyError
         self.artifacts = artifacts
         self.stopped = stopped
         preflight = (
@@ -487,10 +538,17 @@ class TuiConsole:
         )
         # The public low-level API avoids PtyProcess's extra unauthenticated TCP reader wrapper.
         self.tree = tree
-        self.proc = PTY(200, 55, backend=Backend.ConPTY, timeout=30_000)
-        assert self.proc.spawn(str(python), cmdline=" " + subprocess.list2cmdline(["-c", preflight]),
-                               cwd=str(home / "scratch"),
-                               env="\0".join(f"{key}={value}" for key, value in env.items()) + "\0")
+        if os.name == "nt":
+            from winpty import PTY, Backend, WinptyError
+
+            self.pty_error = WinptyError
+            self.proc = PTY(200, 55, backend=Backend.ConPTY, timeout=30_000)
+            assert self.proc.spawn(str(python), cmdline=" " + subprocess.list2cmdline(["-c", preflight]),
+                                   cwd=str(home / "scratch"),
+                                   env="\0".join(f"{key}={value}" for key, value in env.items()) + "\0")
+        else:
+            self.pty_error = OSError
+            self.proc = LinuxPTY(python, ["-c", preflight], cwd=home / "scratch", env=env)
         tree.refresh()
         child = next(row for row in tree.snapshot() if row["pid"] == self.proc.pid)
         assert Path(child["exe"]).resolve() == python.resolve(), "unexpected ConPTY executable"
@@ -592,12 +650,89 @@ class TuiConsole:
         (self.artifacts / "terminal-screen.txt").write_text(rendered, encoding="utf-8", errors="backslashreplace")
 
 
+class LinuxPTY:
+    """Own a standard-library PTY and attach it to a fresh child session."""
+
+    def __init__(self, python: Path, arguments: list[str], *, cwd: Path, env: dict[str, str]):
+        import fcntl
+        import pty
+        import struct
+        import termios
+
+        master, slave = pty.openpty()
+        attach = ("import fcntl,os,sys,termios; "
+                  "fcntl.ioctl(0,termios.TIOCSCTTY,0); "
+                  "os.execvpe(sys.argv[1],sys.argv[1:],os.environ)")
+        try:
+            fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 55, 200, 0, 0))
+            os.set_blocking(master, False)
+            self.process = subprocess.Popen(
+                [sys.executable, "-I", "-c", attach, str(python), *arguments],
+                cwd=cwd, env=env, stdin=slave, stdout=slave, stderr=slave,
+                start_new_session=True,
+            )
+        except BaseException:
+            os.close(master)
+            raise
+        finally:
+            os.close(slave)
+        self.master = master
+        self.pid = self.process.pid
+        self.decoder = __import__("codecs").getincrementaldecoder("utf-8")("replace")
+
+    def read(self, *, blocking=False):
+        import errno
+
+        try:
+            data = os.read(self.master, 65536)
+        except BlockingIOError:
+            return ""
+        except OSError as exc:
+            if exc.errno == errno.EIO:
+                return ""
+            raise
+        return self.decoder.decode(data) if data else ""
+
+    def write(self, text: str):
+        import select
+        import time
+
+        data = memoryview(text.encode("utf-8", errors="strict"))
+        deadline = time.monotonic() + 5
+        while data:
+            try:
+                written = os.write(self.master, data)
+                assert written > 0, "PTY accepted no input bytes"
+                data = data[written:]
+            except BlockingIOError:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("timed out writing input to Hermes TUI PTY")
+                select.select([], [self.master], [], min(.5, remaining))
+                if self.process.poll() is not None:
+                    raise BrokenPipeError("Hermes TUI exited while receiving input")
+
+    def isalive(self):
+        return self.process.poll() is None
+
+    def cancel_io(self):
+        if self.master is not None:
+            os.close(self.master)
+            self.master = None
+
+
 def driver_main(spec_path: Path):
-    """The explicit disposable 3.14 interpreter alone imports ConPTY and starts the real UI."""
+    """The explicit disposable 3.14 interpreter alone starts the real UI."""
     spec = json.loads(spec_path.read_text(encoding="utf-8"))
     home, source, python = (Path(spec[key]).resolve() for key in ("home", "source", "python"))
     from hermes_desktop_driver import DesktopConsole, require_runner_gate
-    require_runner_gate(dict(os.environ), home, source, spec_path.parent)
+    if os.name == "nt":
+        require_runner_gate(dict(os.environ), home, source, spec_path.parent)
+    else:
+        from hermes_linux_guard import require_contained_paths, require_linux_qualification
+
+        require_linux_qualification(dict(os.environ))
+        require_contained_paths(home, source, python, spec_path)
     assert Path(sys.executable).resolve() == python and sys.version_info[:2] == (3, 14)
     assert Path(sys._base_executable).resolve() == Path(spec["python_base"])
     assert hashlib.sha256(Path(sys._base_executable).read_bytes()).hexdigest() == spec["python_base_sha256"].lower()
@@ -651,7 +786,8 @@ def driver_main(spec_path: Path):
     threading.Thread(target=read_commands, daemon=True).start()
     threading.Thread(target=watchdog, daemon=True).start()
     # Own the entire driver subtree before any ConPTY constructor or spawn can fail.
-    tree = OwnedTree(os.getpid(), Path(sys._base_executable), ledger=spec_path.parent / "owned-processes-ledger.json")
+    owned_python = Path(sys._base_executable if os.name == "nt" else sys.executable)
+    tree = OwnedTree(os.getpid(), owned_python, ledger=spec_path.parent / "owned-processes-ledger.json")
     console = None
     try:
         surface = spec.get("surface", "tui")
@@ -721,9 +857,33 @@ def cleanup_ledger(path: Path):
     return {"recovered": [proc.pid for proc in handles], "alive": []}
 
 
-def stop_owned_driver(proc, python: Path, helper: Path, artifacts: Path, env, *, grace=15):
-    """Use the owned Popen handle, then exact process identity and System32 tree termination on timeout."""
+def stop_owned_driver(proc, python: Path, helper: Path, artifacts: Path, env, *, grace=15, identity=None):
+    """Use the owned Popen handle and platform-specific identity-safe recovery."""
     forced = False
+    if os.name != "nt":
+        from tests.test_hermes_relay_native_e2e import _stop_owned_host
+
+        try:
+            if proc is not None:
+                if proc.stdin is not None and not proc.stdin.closed:
+                    proc.stdin.close()
+                try:
+                    proc.wait(timeout=grace)
+                except subprocess.TimeoutExpired:
+                    forced = True
+                _stop_owned_host(proc, identity)
+        finally:
+            ledger = artifacts / "owned-processes-ledger.json"
+            if ledger.exists():
+                recovery = subprocess.run([str(python), "-I", str(helper), "--cleanup-owned", str(ledger)],
+                    env=env, capture_output=True, text=True, timeout=15, check=True)
+                recovered = json.loads(recovery.stdout)
+            else:
+                assert not (artifacts / "driver-identity.json").exists(), (
+                    "driver started without a durable ownership ledger")
+                recovered = {"recovered": [], "alive": []}
+        return {"forced": forced, **recovered}
+
     try:
         if proc.poll() is None:
             proc.stdin.close()

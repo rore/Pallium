@@ -12,6 +12,7 @@ from tests.fixtures.hermes_desktop_driver import RUNNER_MARKERS
 
 
 def fixture_runtime(tmp_path, monkeypatch):
+    monkeypatch.setattr(runtime, "os", SimpleNamespace(name="nt"))
     prefix = tmp_path / "sdk2"
     python = prefix / "Scripts" / "python.exe"
     python.parent.mkdir(parents=True)

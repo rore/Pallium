@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 import subprocess
+import stat
 import sys
 
 from tests.fixtures.hermes_desktop_driver import contained_path, require_runner_gate
@@ -27,6 +29,39 @@ print(json.dumps(info))
 
 
 def prepare_terminal_runtime(python, source, home, artifacts, env):
+    if os.name != "nt":
+        from tests.fixtures.hermes_linux_guard import ROOT, require_contained_paths, require_linux_qualification
+
+        require_linux_qualification(env)
+        python = Path(python)
+        require_contained_paths(python, source, home, artifacts)
+        reply = subprocess.run([str(python), "-I", "-c", PROBE], env=env,
+                               capture_output=True, text=True, timeout=20, check=True)
+        runtime = json.loads(reply.stdout)
+        prefix = Path(runtime["prefix"])
+        assert prefix != Path(runtime["base_prefix"]), "observer target must be a venv"
+        assert python.resolve().is_relative_to(prefix.resolve()), "interpreter outside target venv"
+        assert prefix.name in {"hermes-0220-copy", "hermes-0222-copy"}, prefix
+        for name, module in runtime["modules"].items():
+            if module is not None:
+                assert Path(module["path"]).resolve().is_relative_to(prefix.resolve()), (name, module)
+                assert module["version"] and module["files"], (name, module)
+        assert runtime["modules"]["wcwidth"] is not None, "locked Hermes wcwidth is required"
+        assert runtime["modules"]["pyte"] is not None, "preinstalled observer is missing"
+        assert runtime["modules"]["pyte"]["version"] == "0.8.2", "preinstalled observer is unqualified"
+        runtime["python_sha256"] = hashlib.sha256(python.read_bytes()).hexdigest()
+        observers = ROOT / "observers"
+        observer_info = observers.lstat()
+        assert stat.S_ISDIR(observer_info.st_mode) and observer_info.st_uid == 0
+        assert stat.S_IMODE(observer_info.st_mode) == 0o755
+        receipt_path = observers / f"{prefix.name}.json"
+        receipt_info = receipt_path.lstat()
+        assert stat.S_ISREG(receipt_info.st_mode) and receipt_info.st_uid == 0
+        assert stat.S_IMODE(receipt_info.st_mode) == 0o444
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        assert receipt == {"state": "ready", "requirement": REQUIREMENT, "runtime": runtime}, receipt
+        return receipt
+
     require_runner_gate(env, home, artifacts, source)
     python = Path(python)
     runner_temp = Path(env["RUNNER_TEMP"])

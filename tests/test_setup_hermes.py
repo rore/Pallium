@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import copy
+import errno
 import hashlib
 import json
+import os
 from pathlib import Path
 import shutil
 import sys
@@ -318,13 +320,16 @@ def test_malformed_marker_and_profile_symlink_fail_closed(tmp_path, monkeypatch)
     assert setup_hermes.status(home, Path(sys.executable)) == 2
     assert (plugin_dir / setup_hermes.MARKER).read_text(encoding="utf-8") == "not-json"
     shutil.rmtree(plugin_dir)
+    plugin_dir.parent.rmdir()
 
     target = tmp_path / "outside"
     target.mkdir()
     try:
         (home / "plugins").symlink_to(target, target_is_directory=True)
-    except OSError:
-        pytest.skip("directory symlinks are unavailable on this Windows account")
+    except OSError as exc:
+        if os.name == "nt" and (exc.errno in {errno.EACCES, errno.EPERM} or getattr(exc, "winerror", None) == 1314):
+            pytest.skip("directory symlinks are unavailable on this Windows account")
+        raise
     with pytest.raises(ValueError, match="symlink"):
         setup_hermes._profile_paths(home)
 
