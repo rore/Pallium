@@ -195,6 +195,13 @@ used candidate `b13a3dd29eefc243ef0b10920fdd6b2d33aefbde`. Its v0.22.0 job passe
 417.18 seconds: the actual TUI memory-off cell reported a fatal HTTP API response
 write error, `ConnectionAbortedError(10053)`. The artifact remains under review;
 the failed cell and v0.22.2 matrix are unqualified, and its cause is not classified.
+Diagnostic run [39593293647](https://github.com/rore/Pallium/actions/runs/39593293647)
+on `d5b7e3d9644801472674e1310aa484a7da75a62e` passed three v0.22.0 UI cases but
+failed Desktop memory-on during History submission after New session, with a
+submit-control timeout and a secondary process-identity cleanup refusal. The
+second-release job remained unexecuted, including its targeted continuation.
+The [qualification record](../../docs/designs/hermes-native-qualification.md)
+retains those failures; no runtime correction or complete matrix is claimed.
 Required-CI shared-test availability failures affected Python 3.12 and 3.13 on
 different candidate heads; the Hermes changes did not repair them.
 These results do not qualify Windows 11, everyday MSIX/updater behavior, native

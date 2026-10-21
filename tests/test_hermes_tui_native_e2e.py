@@ -350,6 +350,51 @@ print("owned timeout cleanup passed")
     assert "owned timeout cleanup passed" in result.stdout
 
 
+@pytest.mark.skipif(os.name != "nt", reason="owned process identity cleanup guard is Windows-specific")
+def test_hermes_tui_cleanup_identity_mismatch_reports_both_and_never_kills(tmp_path):
+    helper = Path(__file__).parent / "fixtures" / "hermes_tui_driver.py"
+    code = '''import importlib.util, pathlib, sys, threading, types
+spec=importlib.util.spec_from_file_location("owned_driver", sys.argv[1])
+module=importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+expected_exe=str(pathlib.Path(sys.argv[2]).resolve())
+observed_exe=str(pathlib.Path(sys.argv[3]).resolve())
+class FakeProcess:
+    pid=9200
+    kills=0
+    def create_time(self): return 2.0
+    def exe(self): return observed_exe
+    def children(self, recursive=True): return []
+    def kill(self): self.kills+=1
+proc=FakeProcess()
+class FakePsutil:
+    NoSuchProcess=type("NoSuchProcess",(Exception,),{})
+    @staticmethod
+    def Process(pid):
+        assert pid==9200
+        return proc
+tree=module.OwnedTree.__new__(module.OwnedTree)
+tree.psutil=FakePsutil; tree.root=types.SimpleNamespace(pid=100)
+tree.identities={9200:(1.0,expected_exe)}; tree.ledger=None; tree.lock=threading.Lock()
+tree.stopped=threading.Event(); tree.thread=types.SimpleNamespace(join=lambda timeout:None); tree.error=None
+try: tree.close()
+except AssertionError as error: print(__import__("json").dumps({"args":error.args,"kills":proc.kills}))
+else: raise AssertionError("identity mismatch was not rejected")
+'''
+    expected_exe = str(tmp_path / "expected.exe")
+    observed_exe = str(tmp_path / "observed.exe")
+    result = subprocess.run([sys.executable, "-I", "-c", code, str(helper), expected_exe, observed_exe],
+                            cwd=tmp_path, capture_output=True, text=True, timeout=15,
+                            env={key: os.environ[key] for key in ("SYSTEMROOT", "WINDIR") if key in os.environ})
+    assert result.returncode == 0, result.stdout + result.stderr
+    diagnostic = json.loads(result.stdout)
+    assert diagnostic["kills"] == 0
+    assert diagnostic["args"] == [
+        ["refusing cleanup after process identity changed", 9200,
+         [1.0, str(Path(expected_exe).resolve())],
+         [2.0, str(Path(observed_exe).resolve())]],
+    ]
+
+
 @pytest.mark.parametrize("exit_before_cleanup,kill_failure", [
     (False, None), (True, None), (False, "timeout"), (False, "error"),
 ])

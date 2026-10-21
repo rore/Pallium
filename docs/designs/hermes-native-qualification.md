@@ -1,6 +1,19 @@
 # Hermes native qualification
 
-Windows qualification remains incomplete. Run [39588545910](https://github.com/rore/Pallium/actions/runs/39588545910)
+Windows qualification remains incomplete. Diagnostic run
+[39593293647](https://github.com/rore/Pallium/actions/runs/39593293647), candidate
+`d5b7e3d9644801472674e1310aa484a7da75a62e`, passed three v0.22.0 UI cases but
+failed Desktop memory-on while submitting History after New session. The submit
+operation timed out waiting for its control; child cleanup also refused a changed
+process identity. Parent source and cleanup checks passed, but the driver failed
+and that case remains unqualified. The failed UI state and observed process
+identity were not captured. No HTTP server error occurred; this does not explain
+or cure the earlier response-write abort. Attempt 2 tried to continue only the
+cancelled v0.22.2 job, but fail-fast cancelled it without executing any steps.
+No additional second-release evidence resulted. The next fixture changes add
+bounded failure diagnostics while preserving the original errors and guards.
+
+Earlier run [39588545910](https://github.com/rore/Pallium/actions/runs/39588545910)
 tested candidate `b13a3dd29eefc243ef0b10920fdd6b2d33aefbde`: v0.22.0 passed all
 61 checks in 360.95 seconds; v0.22.2 passed 60 and failed one in 417.18 seconds.
 Its TUI memory-off case recorded a fatal API response-write

@@ -65,6 +65,67 @@ async function submitButton(composer, page, timeout) {
   }
 }
 
+async function submitPageSnapshot(page) {
+  let timer
+  try {
+    const value = await Promise.race([
+      page.evaluate(() => {
+        const composers = [...document.querySelectorAll('[data-slot="composer-rich-input"]')]
+        const visible = element => {
+          const style = getComputedStyle(element)
+          const rect = element.getBoundingClientRect()
+          return style.display !== 'none' && style.visibility !== 'hidden' &&
+            rect.width > 0 && rect.height > 0
+        }
+        const visibleComposers = composers.filter(visible)
+        const sampledComposers = (visibleComposers.length ? visibleComposers : composers).slice(0, 2)
+        return {
+          composerCount: composers.length,
+          visibleComposerCount: visibleComposers.length,
+          composers: sampledComposers.map(composer => {
+            let formCount = 0
+            for (let node = composer.parentElement; node; node = node.parentElement) {
+              if (node.tagName === 'FORM') formCount++
+            }
+            const form = composer.closest('form')
+            const buttons = form ? [...form.querySelectorAll('button[type="submit"]')] : []
+            return {
+              visible: visible(composer),
+              contenteditable: composer.getAttribute('contenteditable'),
+              ariaDisabled: composer.getAttribute('aria-disabled'),
+              textLength: (composer.innerText || '').length,
+              formCount,
+              submitButtonCount: buttons.length,
+              buttons: buttons.slice(0, 4).map(button => {
+                const rect = button.getBoundingClientRect()
+                return {
+                  type: button.getAttribute('type'),
+                  disabled: button.disabled,
+                  ariaDisabled: button.getAttribute('aria-disabled'),
+                  visible: visible(button),
+                  rect: {x: rect.x, y: rect.y, width: rect.width, height: rect.height}
+                }
+              })
+            }
+          })
+        }
+      }),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => {
+          const error = new Error('submit metadata snapshot timed out')
+          error.code = 'snapshot-timeout'
+          reject(error)
+        }, 1200)
+      })
+    ])
+    return {status: 'captured', ...value}
+  } catch (error) {
+    return {status: error?.code === 'snapshot-timeout' ? 'timeout' : 'failed'}
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 async function connectDriver({ endpoint, sourceRoot, env = process.env, load = loadChromium, timeout = 30000 }) {
   requireRunnerGate(env)
   const url = validateEndpoint(endpoint)
@@ -108,12 +169,24 @@ async function connectDriver({ endpoint, sourceRoot, env = process.env, load = l
       },
       async submit(text) {
         if (typeof text !== 'string' || !text) throw new Error('submit text must be non-empty')
-        const composer = await waitForComposerReady()
-        await composer.fill(text)
-        const button = await submitButton(composer, page, timeout)
-        await waitForEnabled(button)
-        await button.click()
-        return { submitted: true }
+        let stage = 'readiness'
+        try {
+          const composer = await waitForComposerReady()
+          stage = 'fill'
+          await composer.fill(text)
+          stage = 'button-selection'
+          const button = await submitButton(composer, page, timeout)
+          stage = 'enabled'
+          await waitForEnabled(button)
+          stage = 'click'
+          await button.click()
+          return { submitted: true }
+        } catch (error) {
+          if (error && typeof error === 'object') {
+            error.submitDiagnostics = {stage, snapshot: await submitPageSnapshot(page)}
+          }
+          throw error
+        }
       },
       async wait(text) {
         if (typeof text !== 'string' || !text) throw new Error('wait text must be non-empty')
@@ -166,8 +239,9 @@ async function serveProtocol({ endpoint, sourceRoot, env = process.env, stdin = 
         stdout.write(`${JSON.stringify({ id: request.id ?? null, ok: true, result })}\n`)
         if (request.op === 'close') break
       } catch (error) {
-        stdout.write(`${JSON.stringify({ id: request?.id ?? null, ok: false,
-          error: String(error?.message || error) })}\n`)
+        const reply = {id: request?.id ?? null, ok: false, error: String(error?.message || error)}
+        if (error?.submitDiagnostics) reply.diagnostics = error.submitDiagnostics
+        stdout.write(`${JSON.stringify(reply)}\n`)
       }
     }
   } finally {

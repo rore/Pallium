@@ -183,24 +183,97 @@ def test_submit_waits_for_payload_control_mount_and_visibility(tmp_path):
 const d = require(process.argv[1]);
 const env = {GITHUB_ACTIONS:'true', RUNNER_ENVIRONMENT:'github-hosted', RUNNER_OS:'Windows',
   RUNNER_ARCH:'X64', HERMES_NATIVE_CI_ISOLATION:'github-hosted-ephemeral-windows'};
-let waits=0, filled='', clicks=0;
+let waits=0, filled='', clicks=0, snapshotCalls=0;
 const button={count:async()=>waits<1?0:1, isVisible:async()=>waits>=2,
   isEnabled:async()=>true, click:async()=>{clicks++;}};
 const form={count:async()=>1, locator:()=>button};
 const composer={getAttribute:async name=>name==='contenteditable'?'true':null,
   fill:async text=>{filled=text;}, locator:()=>form};
 const page={url:()=> 'file:///synthetic/index.html',
-  locator:()=>({count:async()=>1, first:()=>composer}), waitForTimeout:async()=>{waits++;}};
+  locator:()=>({count:async()=>1, first:()=>composer}), waitForTimeout:async()=>{waits++;},
+  evaluate:async()=>{snapshotCalls++; return {};}};
 const browser={contexts:()=>[{pages:()=>[page]}],close:async()=>{}};
 (async()=>{
   const driver=await d.connectDriver({endpoint:'ws://127.0.0.1:43123/devtools/browser/x',sourceRoot:'.',env,
     timeout:1000,load:()=>({connectOverCDP:async()=>browser})});
   const submitted=await driver.submit('synthetic follow-up');
   await driver.close();
-  console.log(JSON.stringify({submitted,filled,waits,clicks}));
+  console.log(JSON.stringify({submitted,filled,waits,clicks,snapshotCalls}));
 })().catch(e=>{console.error(e);process.exit(1)});
 """, tmp_path)
-    assert result == {"submitted": {"submitted": True}, "filled": "synthetic follow-up", "waits": 2, "clicks": 1}
+    assert result == {"submitted": {"submitted": True}, "filled": "synthetic follow-up", "waits": 2,
+                      "clicks": 1, "snapshotCalls": 0}
+
+
+def test_failed_submit_reports_bounded_metadata_without_retry(tmp_path):
+    result = run_node(r"""
+const d = require(process.argv[1]);
+const {PassThrough} = require('node:stream');
+const env = {GITHUB_ACTIONS:'true', RUNNER_ENVIRONMENT:'github-hosted', RUNNER_OS:'Windows',
+  RUNNER_ARCH:'X64', HERMES_NATIVE_CI_ISOLATION:'github-hosted-ephemeral-windows'};
+let mode=0, clicks=0, snapshotCalls=0;
+const buttons=Array.from({length:6},()=>({type:'submit',disabled:false,
+  getAttribute:name=>name==='type'?'submit':null,
+  getBoundingClientRect:()=>({x:1,y:2,width:3,height:4})}));
+const form={tagName:'FORM',parentElement:null,querySelectorAll:selector=>{
+  if(selector!=='button[type="submit"]') throw Error('unexpected selector'); return buttons;
+}};
+const makeComposer=(snapshotVisible=true)=>({parentElement:form,innerText:'private composer contents',snapshotVisible,
+  getAttribute:name=>name==='contenteditable'?'true':null,closest:()=>form,
+  getBoundingClientRect:()=>snapshotVisible?{x:1,y:2,width:3,height:4}:{x:0,y:0,width:0,height:0},
+  fill:async()=>{},locator:()=>({count:async()=>1,locator:()=>({count:async()=>1,
+    isVisible:async()=>true,isEnabled:async()=>true,click:async()=>{clicks++;throw Error('synthetic click failure');}})})});
+const snapshotComposers=[makeComposer(false),makeComposer(false),makeComposer(false),makeComposer(true)];
+global.getComputedStyle=element=>({display:element.snapshotVisible===false?'none':'block',visibility:'visible'});
+global.document={querySelectorAll:selector=>{
+  if(selector!=='[data-slot="composer-rich-input"]') throw Error('non-CSS snapshot selector');
+  return snapshotComposers;
+}};
+const page={url:()=> 'file:///synthetic/index.html',locator:()=>({count:async()=>1,first:makeComposer}),
+  waitForTimeout:async()=>{},evaluate:async fn=>{
+    snapshotCalls++;
+    if(mode++===1) throw Error('synthetic snapshot failure');
+    if(mode===3) return new Promise(()=>{});
+    return fn();
+  }};
+const browser={contexts:()=>[{pages:()=>[page]}],close:async()=>{}};
+(async()=>{
+  const input=new PassThrough(), output=new PassThrough(), chunks=[];
+  output.on('data',chunk=>chunks.push(chunk.toString('utf8')));
+  const running=d.serveProtocol({endpoint:'ws://127.0.0.1:43123/devtools/browser/x',sourceRoot:'.',env,
+    stdin:input,stdout:output,load:()=>({connectOverCDP:async()=>browser})});
+  for(let id=1;id<=3;id++) input.write(JSON.stringify({id,op:'submit',text:'private prompt'})+'\n');
+  input.end(); await running;
+  console.log(JSON.stringify({clicks,snapshotCalls,responses:chunks.join('').trim().split('\n').map(JSON.parse)}));
+})().catch(e=>{console.error(e);process.exit(1)});
+""", tmp_path)
+    assert result["clicks"] == 3
+    assert result["snapshotCalls"] == 3
+    captured, failed, timed_out = result["responses"]
+    for index, response in enumerate((captured, failed, timed_out), 1):
+        assert response["id"] == index and response["ok"] is False
+        assert response["error"] == "synthetic click failure"
+        assert response["diagnostics"]["stage"] == "click"
+    snapshot = captured["diagnostics"]["snapshot"]
+    assert snapshot["status"] == "captured" and snapshot["composerCount"] == 4
+    assert snapshot["visibleComposerCount"] == 1
+    assert len(snapshot["composers"]) == 1 and snapshot["composers"][0]["visible"] is True
+    assert snapshot["composers"][0] == {
+        "visible": True, "contenteditable": "true", "ariaDisabled": None,
+        "textLength": len("private composer contents"),
+        "formCount": 1, "submitButtonCount": 6,
+        "buttons": [{"type": "submit", "disabled": False, "ariaDisabled": None, "visible": True,
+                     "rect": {"x": 1, "y": 2, "width": 3, "height": 4}}] * 4,
+    }
+    assert "private composer contents" not in json.dumps(snapshot)
+    assert len(json.dumps(snapshot)) < 1600
+    assert set(snapshot) == {"status", "composerCount", "visibleComposerCount", "composers"}
+    assert set(snapshot["composers"][0]) == {
+        "visible", "contenteditable", "ariaDisabled", "textLength", "formCount", "submitButtonCount", "buttons",
+    }
+    assert failed["diagnostics"]["snapshot"]["status"] == "failed"
+    assert set(failed["diagnostics"]["snapshot"]) == {"status"}
+    assert timed_out["diagnostics"]["snapshot"]["status"] == "timeout"
 
 
 def test_composer_and_submit_ambiguity_fail_closed(tmp_path):

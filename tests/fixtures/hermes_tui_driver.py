@@ -586,8 +586,10 @@ class OwnedTree:
                 continue
             try:
                 proc = self.psutil.Process(pid)
-                assert proc.create_time() == birth and str(Path(proc.exe()).resolve()) == executable, (
-                    "refusing cleanup after process identity changed", pid)
+                expected = (birth, executable)
+                observed = (proc.create_time(), str(Path(proc.exe()).resolve()))
+                assert observed == expected, (
+                    "refusing cleanup after process identity changed", pid, expected, observed)
                 handles.append(proc)
                 proc.kill()
             except self.psutil.NoSuchProcess:
