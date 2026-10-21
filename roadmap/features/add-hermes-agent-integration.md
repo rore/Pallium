@@ -10,10 +10,11 @@ lane: integration
 
 ## Summary
 
-PR #324 delivered the reviewed experimental Desktop/TUI integration toward
+PR #324 delivered the reviewed Desktop/TUI integration toward
 production readiness, including scoped opt-in memory and normal-profile lifecycle
 qualification. Current owner Work Record: `.agent-workflow/tasks/hermes-production-slice4.md`.
-The feature remains active and experimental. The two P1 blockers identified at
+The feature remains active for the unfinished platform, installation and recovery
+scope below. The two P1 blockers identified at
 `353e8f83` are resolved in runtime `b96a05e1`; clean independent result review
 accepted the fixes and corrected qualification below. Clean technical review of
 the owner's final five prose paths is complete: audit of 11 docs, 93 links and
@@ -22,9 +23,13 @@ The user approved corrected result/release head
 `eec908914020edbcad6d1234351eaea97f468637`, then normally merged as
 `0e78151824bdb4297d802a5e4023de8672ed8f2d` on 2026-10-21 at 20:28:02 UTC.
 The [public result receipt](https://github.com/rore/Pallium/pull/324#issuecomment-6325817266)
-records the exact approval and retained risks. The experimental integration,
+records the exact approval and retained risks. The integration,
 both P1 corrections and logger fixes are delivered; no installed rollout is approved.
 Earlier withdrawn approvals and failed evidence remain historical.
+[PR #343](https://github.com/rore/Pallium/pull/343) tracks the owner's public-
+documentation cleanup, including removal of the stale experimental label.
+That wording correction does not broaden the qualified platform/provider matrix
+or authorize installed rollout.
 Historical reviewed prose head `5f21bfcb46e3800927d16544d423b78f182b967f` changed only
 five prose paths from qualified `d5896a24ec3b72c1f23f5323e43ab8d2a06e60ca`;
 application, tests, dependencies and workflows were identical at that checkpoint.
@@ -118,7 +123,7 @@ TUI cells, Gateway and SDK2 evidence as historical baselines, kept distinct from
 the corrected candidate above. Native runs 11/12 remain failed and their original
 causes unexplained; later passing evidence does not prove those failures cured.
 
-The approved experimental contribution is merged; retain the separate rollout and
+The approved integration contribution is merged; retain the separate rollout and
 broader qualification boundaries above.
 Evidence is Windows Server 2025
 with an unpacked app and synthetic provider; it does not establish Windows 11,
@@ -345,7 +350,7 @@ At that checkpoint complete TUI, opt-in memory and both-release qualification
 remained open; the accepted matrix above supersedes that pending state.
 Ordinary-provider and broader coexistence/recovery limits remain. Controlled owned-tree relaunch
 does not establish graceful native Quit, standalone automatic MCP reconnect or a
-full service-process restart. Keep the feature active and experimental; preserve
+full service-process restart. Keep the feature active for this unfinished scope; preserve
 the current candidate and failed-run evidence under the slice-4 owner's Work Record.
 
 ### Complete integration scope
@@ -513,7 +518,7 @@ test/qualification claims are not inherited without inspecting their evidence.
 ## Done When
 
 - [ ] Public setup, usage, support and limitation documentation matches the
-  accepted implementation, including experimental status and the qualified
+  accepted implementation, including actual support limits and the qualified
   host/provider matrix; independent acceptance review verifies this alignment.
 - [ ] A supported installable Hermes package includes the Pallium skill and
   references, runtime guidance, MCP connection and trusted identity plumbing,
