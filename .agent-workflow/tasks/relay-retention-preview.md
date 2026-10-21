@@ -35,7 +35,7 @@
 
 **Exceptions:** —
 
-**State:** Blocked
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -147,3 +147,23 @@ What is changing: reuse only the already-reviewed standard JUnit output/upload d
 2026-10-21 independent planreview: /root/relay_retention_inventory/preview_plan_review accepts pagefirstgroupedquerydesign and targetedSQLcapture coverage after operativecontract clarification. Contract now requires postlimit aggregates onlyreturnedIDs, fiveSELECTbound and actualSQL INscope evidence. Sharedmessages/missingmessages/tracecutoff/nullzero semantics unchanged; scans remain explicitly unbounded withoutindexes. Proceed within existingmetadatareadscope, no index/schema/newdependency/installed/live changes.
 
 2026-10-21 pagefirst actualdiff review: /root/relay_retention_inventory/preview_plan_review GO for connected source/privacy/semantics and E2E coverage. Replygroups posttrim onlydeduplicatedreturnedmessageIDs, tracegroups onlyreturneddeliveryIDs throughhighwater, parentEXISTS indexed, explicitBEGIN retained. Original63caseidentities retained plus3 boundary/queryscope cases =66 mandatory. Currentmain0df35de8 PR330 onlyunrelatedHermesroadmap was normally integrated; no app/CI/dependency overlap. AST/YAML/diffchecks pass; selectorfull; importreport reusedunchangedimportgraph; redline/workflow only unsatisfiedshadowarchitecture advisory as rootdisposition, no boundaryviolations. Rootadopts correction and authorizes oneexactchangedcandidate automaticCI/gov, no localapp/manualdispatch/retry. Pendingfrozencollector/configreview thennormalFF existingPR329; actualreceipt review and substantiveCodeRabbitresolution required beforefreshmergechecks. No rejectedbodyupdate or diagnostic/livechanges. Evidence build/page-aggregate-qualification.
+
+2026-10-21 verified merged result: PR #329 merged normally as
+`d3528c2e89e3c3cef3d878cd0441b49f650186f1` at 05:44:35Z. Merge tree
+`508c91f64320f27c48dbb59ad73f96d77de6ece9` equals the independently qualified
+`5ea0f60e` tree. CI `39549797245` and governance `39549797216` succeeded on
+attempt 1. Each Linux lane recorded 7,635 cases: 7,541 passed, zero failures or
+errors, 92 skipped and two expected failures. All 66 mandatory cases passed
+normally once each: the original 63 plus three query-boundary cases. Independent
+actual-result review passed; both review threads were substantively addressed
+and resolved. Page aggregates were corrected; the allocation fence was declined
+as optional under the explicit 422 unknown contract. The direct human instruction
+"Continue driving these prs till done" authorized normal merge; earlier
+rejections remain preserved, with no bypass or rejected body update.
+
+The bounded metadata-preview contribution is complete in the repository. No
+installed/live rollout, backlog deletion or cancellation occurred. Broader
+retention remains active: cleanup windows, replay/idempotence, late replies, exact
+cancellation and destructive rollout remain deferred. Final documents and merge
+evidence were archived before retiring the unused isolated implementation checkout;
+the completion reconciliation preserves the dirty canonical primary checkout.
