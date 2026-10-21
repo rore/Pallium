@@ -210,6 +210,12 @@ def _peer_turn_ids(path, session_id):
     return {row["turn_id"] for row in _peer_audit_rows(path) if row["session_id"] == session_id}
 
 
+def pending_candidate_matches(response, delivery_id, endpoint_id):
+    return (isinstance(response, dict) and response.get("state") == "pending"
+            and response.get("delivery_id") == delivery_id
+            and response.get("recipient_endpoint_id") == endpoint_id)
+
+
 def test_hermes_peer_audit_records_only_host_turn_ids(tmp_path):
     audit = tmp_path / "audit.jsonl"
     audit.write_text('{"session_id":"session-1","turn_id":"turn-1"}\n', encoding="utf-8")
@@ -1544,9 +1550,7 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
             return [row for row in forwarded if row["method"] == "GET"
                     and row["path"].startswith("/relay/pending-candidate?")
                     and f"session_ref={session_id}" in row["path"]
-                    and row["response"].get("state") == "pending"
-                    and row["response"].get("delivery_id") == busy_delivery_id
-                    and row["response"].get("recipient_endpoint_id") == address["endpoint_id"]]
+                    and pending_candidate_matches(row["response"], busy_delivery_id, address["endpoint_id"])]
 
         eventually(lambda: len(busy_candidate_reads()) >= 2,
                    "busy native session did not re-poll the exact pending delivery", timeout=6)

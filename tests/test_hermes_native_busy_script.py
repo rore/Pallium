@@ -13,7 +13,19 @@ from tests.test_hermes_tui_native_e2e import (
     BUSY_WAKE,
     PROMPT,
     ScriptedProvider,
+    pending_candidate_matches,
 )
+
+
+@pytest.mark.parametrize("response,expected", [
+    (None, False), ({}, False),
+    ({"state": "delivered", "delivery_id": "exact", "recipient_endpoint_id": "endpoint"}, False),
+    ({"state": "pending", "delivery_id": "other", "recipient_endpoint_id": "endpoint"}, False),
+    ({"state": "pending", "delivery_id": "exact", "recipient_endpoint_id": "other"}, False),
+    ({"state": "pending", "delivery_id": "exact", "recipient_endpoint_id": "endpoint"}, True),
+])
+def test_busy_candidate_matches_only_exact_positive_response(response, expected):
+    assert pending_candidate_matches(response, "exact", "endpoint") is expected
 
 
 def _body(prompt: str) -> dict:
