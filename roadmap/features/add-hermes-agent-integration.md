@@ -1,7 +1,7 @@
 ---
 id: add-hermes-agent-integration
 title: Add Hermes Agent integration
-status: in-progress
+status: active
 priority: high
 commitment: committed
 milestone: pallium-relay
@@ -9,6 +9,14 @@ lane: integration
 ---
 
 ## Summary
+
+Active draft PR #324 extends the experimental Desktop/TUI integration toward
+production readiness, including scoped opt-in memory and normal-profile lifecycle
+qualification. Current owner Work Record: `.agent-workflow/tasks/hermes-production-slice4.md`.
+It remains draft and experimental, not
+production-ready support. Public setup, usage, support and limitation documentation
+must match the accepted implementation before completion; native UI/provider,
+optional-memory and recovery qualification remain open.
 
 Ship the full Pallium integration package for Hermes Agent, covering the bundled
 skill and guidance, MCP tools, Relay, Session History capture/search/expansion,
@@ -148,8 +156,9 @@ without conflict at `ad30f944`. The native package journey passed again in
 104.00s, and affected MCP/plugin/setup/app-run/Relay files passed 273 tests with
 one platform-permission skip. Independent review accepts the four-file code
 composition. Final hosted checks passed and PR #321 merged as `f0ba4647`. The
-full feature remains in progress; slice 3 Session History qualification is active,
-and live rollout requires separate environment approval.
+full feature remains active; current production-readiness work is owned by
+`.agent-workflow/tasks/hermes-production-slice4.md`. Live rollout requires separate
+environment approval.
 
 **Slice-3 evidence, 2026-10-19:** [PR #322](https://github.com/rore/Pallium/pull/322)
 adds private hook-observed user/final-assistant snapshots, stable host message IDs,
@@ -165,7 +174,43 @@ unsupported/oversized/ambiguous rows and synthetic wake user markers. Forgetting
 redaction, private scope, paging and lookup lineage reuse existing contracts.
 There is no new forget tool, supported-memory expansion or durable capture retry.
 Broader normal-provider, Tool Search, optional-memory and recovery qualification
-remain open. Work Record: `.agent-workflow/tasks/hermes-history-slice3.md`.
+remain open. Historical slice-3 Work Record: `.agent-workflow/tasks/hermes-history-slice3.md`.
+
+**Current slice-4 checkpoint, 2026-10-20:** draft [PR #324](https://github.com/rore/Pallium/pull/324)
+records tested candidate `b29299499cab10871cafd54e35ffdcdc6402940e`. Required CI
+[39488763099](https://github.com/rore/Pallium/actions/runs/39488763099) and governance
+[39488763028](https://github.com/rore/Pallium/actions/runs/39488763028) passed:
+each Linux Python lane passed 7,656 tests with 94 skips and two expected failures;
+Windows passed nine serial checks plus 626 tests with seven skips. These are
+non-slow/helper checks, not native qualification.
+
+Native run [39483789032](https://github.com/rore/Pallium/actions/runs/39483789032)
+at frozen `91ffe1ad3158786f922c57ba5ed11e024cad9390` failed with 42 passes and three
+native failures. The complete Desktop v0.22.0 memory-off journey passed; TUI
+off/on visible-screen observation and Desktop memory-on result classification
+failed, and v0.22.2 was cancelled. All four owned cleanup/source postconditions
+passed. This used Windows Server 2025, an unpacked app and synthetic provider;
+it is not Windows 11/MSIX/updater or everyday-rollout qualification. Reviewed
+observer/fixture corrections have green ordinary CI, but mocks and provider replay
+do not replace a native pass.
+
+The owner subsequently reported a separately human-authorized third disposable
+native attempt, [39490754190](https://github.com/rore/Pallium/actions/runs/39490754190),
+on tested candidate `b29299499cab10871cafd54e35ffdcdc6402940e`. Its v0.22.0 lane
+failed with 58 passes and three failures; v0.22.2 was cancelled. The complete
+Desktop memory-off journey passed again. TUI failed in the `pyte.display` observer
+on an orphan wide-character continuation; Desktop memory-on failed on the
+fixture's nullable `match_text` assumption. Owner-reported CI
+[39490957206](https://github.com/rore/Pallium/actions/runs/39490957206) is green;
+neither ordinary CI nor these partial results establish native acceptance.
+
+All three approved native attempts are consumed. No fourth dispatch, job rerun
+or PR #324 merge is authorized by these receipts; a further disposable native
+attempt requires separate approval. Complete TUI, opt-in memory, both-release, ordinary-provider and broader
+coexistence/recovery qualification remain open. Controlled owned-tree relaunch
+does not establish graceful native Quit, standalone automatic MCP reconnect or a
+full service-process restart. Keep the feature active and experimental; preserve
+the current candidate and failed-run evidence under the slice-4 owner's Work Record.
 
 ### Complete integration scope
 
@@ -331,6 +376,9 @@ test/qualification claims are not inherited without inspecting their evidence.
 
 ## Done When
 
+- [ ] Public setup, usage, support and limitation documentation matches the
+  accepted implementation, including experimental status and the qualified
+  host/provider matrix; independent acceptance review verifies this alignment.
 - [ ] A supported installable Hermes package includes the Pallium skill and
   references, runtime guidance, MCP connection and trusted identity plumbing,
   plugin hooks, setup/status/removal documentation and compatibility reporting.

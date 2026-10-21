@@ -53,6 +53,13 @@ mutations, structural refresh, and immutable hook snapshots. PR #158 shipped the
 cross-runtime agent guidance. Manager acceptance included an isolated two-session
 MCP/dashboard journey; implementation and guidance are merged, not pending review.
 
+PR #326 merged as `8895bd07` adds cross-runtime participation lifecycle guidance:
+reconcile accepted assignments on pickup/resume, retain exact explicit associations
+while assigned, and detach only the current session's ended or proven erroneous
+explicit origin. Successful callable operations and readback govern correction
+claims. This is guidance for the shipped API, not a new capability or proof of
+Session History coverage, ownership, activity or access.
+
 History retains its five-reference limit and structurally selected scalar
 current-work ref. Explicit references use qualified scope/local identifiers;
 attaching work never rewrites old history or changes access. Physical endpoint

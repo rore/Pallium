@@ -5,11 +5,13 @@
 # Parallel · Session History
 - investigate-history-navigation-and-on-demand-compression
 
+# Parallel · Runtime Expansion
+- add-hermes-agent-integration
+
 # Later · Relay Documentation and Examples
 - validate-relay-dependency-workflows
 
 # Later · Runtime Expansion
-- add-hermes-agent-integration
 - add-copilot-relay-integration
 
 # P1 · Reuse Measurement
