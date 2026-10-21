@@ -222,9 +222,17 @@ zero skips; independent review accepted all four complete UI journeys and
 profile lifecycle checks. v0.22.2 passed 66 checks but Desktop memory-on timed
 out waiting for History after New session and Enter. Its later privacy/profile
 lifecycle checks were not reached, so the eight-cell matrix remains incomplete.
-The next reviewed driver uses the explicit sidebar navigation row and observes
-the fresh-chat route before checking the composer; it does not retry submission
-or change application behavior.
+The following candidate used the explicit sidebar navigation row and observed
+the fresh-chat route before checking the composer.
+Run [39612888749](https://github.com/rore/Pallium/actions/runs/39612888749) on
+`480c0613075869503f21ada404a263a23ce47811` failed three v0.22.0 checks with
+64 passed and zero skips. Both Desktop cases failed because that optional row
+was unavailable at second-generation New session. TUI memory-on hit a client
+reset writing a read-only pending-candidate response, before late safety/profile
+checks; its cause remains unknown and fatal. v0.22.2 was cancelled. Parent
+source/cleanup success does not qualify these cases. The next reviewed driver
+uses one supported default Ctrl+N from the composer and the existing route and
+composer barriers, without action retries or application changes.
 These results do not qualify Windows 11, everyday MSIX/updater behavior, native
 app-quit behavior, automatic standalone MCP reconnection, paid-provider quality
 or every provider/memory combination.

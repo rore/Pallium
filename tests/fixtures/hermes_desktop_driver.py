@@ -84,7 +84,7 @@ def validate_user_data_reuse(home: Path, source: Path, python: Path, previous_sp
 
 
 class DesktopConsole:
-    """Drive only the owned renderer's ordinary composer and New session button."""
+    """Drive only the owned renderer's ordinary composer and New session command."""
 
     def __init__(self, python, source, home, env, artifacts, stopped, tree, *, reuse_user_data=False,
                  previous_spec=None):

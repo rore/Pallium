@@ -210,18 +210,10 @@ async function connectDriver({ endpoint, sourceRoot, env = process.env, load = l
         return { visible: true }
       },
       async newSession() {
-        const button = page.locator(
-          'button[data-slot="sidebar-menu-button"]:has([data-tour="sidebar-nav-new-session"]):visible'
-        )
-        if (await button.count() !== 1 || !(await button.isVisible())) {
-          throw new Error('expected one visible New session navigation button')
-        }
-        if (!(await button.isEnabled())) {
-          throw new Error('New session navigation button is disabled')
-        }
-        await button.click({timeout})
+        const current = await waitForComposerReady()
+        await current.press('Control+n', {timeout})
         // Route-state barrier, not proof of a transition: when already fresh,
-        // still click and check the composer below before allowing a submit.
+        // still send Ctrl+N and check the composer below before allowing a submit.
         await page.waitForURL(url => url.hash === '#/', {timeout})
         const composer = await waitForComposerReady()
         const deadline = Date.now() + timeout

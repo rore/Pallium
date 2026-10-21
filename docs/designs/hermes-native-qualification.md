@@ -1,5 +1,26 @@
 # Hermes native qualification
 
+Run [39612888749](https://github.com/rore/Pallium/actions/runs/39612888749), candidate
+`480c0613075869503f21ada404a263a23ce47811`, failed three v0.22.0 checks with
+64 passed and zero skips in 329.79 seconds. Both Desktop cases failed at the
+second process generation's initial New session: the driver required an
+optional sidebar row that did not yield one visible match. The captured error
+does not distinguish match count from visibility. TUI memory-off completed;
+TUI memory-on reached History and distinct-session checks, then failed on a
+read-only pending-candidate GET whose HTTP 200 response write hit a client reset.
+The cancellation trigger is unknown. Later privacy and profile lifecycle
+assertions were not reached. Parent source and owned-process cleanup passed in
+all four cases; v0.22.2 was cancelled. The failed cases remain unqualified.
+
+The next reviewed driver uses the default Windows Ctrl+N fresh-session command
+from the ready composer, once with the existing timeout, then observes `#/`
+and checks the composer. Both pins support this public command independently
+of sidebar visibility. Its handler resets fresh-draft UI state without an idle
+guard; it does not prove server work completed. Initially fresh remains a
+route-state barrier, with actual distinct-session assertions still required.
+No shortcut override, private state, fallback, retry, timeout increase or
+application change is introduced. The read-reset assertion stays fatal.
+
 Run [39605845935](https://github.com/rore/Pallium/actions/runs/39605845935), candidate
 `c73f383e3d06af0b3fab878b96ca6163dfa81fb4`, passed all 67 v0.22.0 checks with
 zero skips in 391.703 seconds. Independent review accepted its four full UI
@@ -13,13 +34,14 @@ Parent source and cleanup checks passed in all four cases. Six structured
 process records show newer PID replacements left untouched. Seven passing UI
 cells do not qualify the eight-cell matrix.
 
-The next reviewed driver selects the sidebar navigation row explicitly instead
+The driver in that next candidate selected the sidebar navigation row instead
 of the similarly named asynchronous header-plus action. It clicks once, waits
 for the observable fresh-chat hash route `#/`, then checks composer readiness
 and empty text. An initially fresh route is a state barrier rather than proof
 of a transition; actual later-session identity checks remain required. This is
 a test-caller correction, with no forced navigation, action retry, increased
-timeout or application change. Native qualification remains incomplete.
+timeout or application change. Its visibility precondition failed in run
+39612888749 above; native qualification remains incomplete.
 
 Run [39603091244](https://github.com/rore/Pallium/actions/runs/39603091244), candidate
 `f0da4ee1b2534da1b7ab9f3e94f41740dea8cbd3`, progressed through Desktop memory-on

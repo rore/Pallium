@@ -110,7 +110,6 @@ const d = require(process.argv[1]);
 const calls = [];
 let filledText = '';
 let currentUrl = 'file:///synthetic/index.html#/sessions';
-const navSelector = 'button[data-slot="sidebar-menu-button"]:has([data-tour="sidebar-nav-new-session"]):visible';
 function loc(kind) {
   return {
     count: async () => 1,
@@ -121,6 +120,10 @@ function loc(kind) {
     isVisible: async () => true,
     innerText: async () => '',
     fill: async text => { filledText = text; calls.push(['fill', text]); },
+    press: async (key, options) => {
+      calls.push(['locator-press', kind, key, options.timeout]);
+      if (kind === 'composer' && key === 'Control+n') currentUrl = 'file:///synthetic/index.html#/';
+    },
     elementHandle: async () => {
       const id = calls.filter(entry => entry[0] === 'elementHandle').length + 1;
       calls.push(['elementHandle', id]);
@@ -130,14 +133,13 @@ function loc(kind) {
     },
     click: async options => {
       calls.push(['click', kind, options]);
-      if (kind === 'nav-new-session') currentUrl = 'file:///synthetic/index.html#/';
     },
     waitFor: async options => calls.push(['waitFor', kind, options])
   };
 }
 const page = {
   url: () => currentUrl,
-  locator: selector => { calls.push(['pageLocator', selector]); return loc(selector === navSelector ? 'nav-new-session' : 'composer'); },
+  locator: selector => { calls.push(['pageLocator', selector]); return loc('composer'); },
   waitForURL: async (predicate, options) => {
     calls.push(['waitForURL', options]);
     if (!predicate(new URL(currentUrl))) throw Error('route not reached');
@@ -172,14 +174,15 @@ const env = {GITHUB_ACTIONS:'true', RUNNER_ENVIRONMENT:'github-hosted', RUNNER_O
     assert [entry for entry in calls if entry[0] == "pageLocator"] == [
         ['pageLocator', '[data-slot="composer-rich-input"]:visible'],
         ['pageLocator', '[data-slot="composer-rich-input"]:visible'],
-        ['pageLocator', 'button[data-slot="sidebar-menu-button"]:has([data-tour="sidebar-nav-new-session"]):visible'],
+        ['pageLocator', '[data-slot="composer-rich-input"]:visible'],
         ['pageLocator', '[data-slot="composer-rich-input"]:visible'],
     ]
     assert [entry[2] for entry in calls if entry[0] == "locator"] == [
         "xpath=ancestor::form[1]",
         'button[type="submit"]',
     ]
-    assert [entry for entry in calls if entry[0] == "click"] == [["click", "nav-new-session", {"timeout": 30000}]]
+    assert [entry for entry in calls if entry[0] == "locator-press"] == [["locator-press", "composer", "Control+n", 30000]]
+    assert not [entry for entry in calls if entry[0] == "click"]
     assert [entry for entry in calls if entry[0] == "waitForURL"] == [["waitForURL", {"timeout": 30000}]]
     assert [entry for entry in calls if entry[0] == "text"] == [
         ["text", "Réponse ✓ 日本語", {"exact": False}]
@@ -198,31 +201,28 @@ const env = {GITHUB_ACTIONS:'true', RUNNER_ENVIRONMENT:'github-hosted', RUNNER_O
     ]
 
 
-def test_new_session_uses_nav_control_and_waits_for_fresh_route(tmp_path):
+def test_new_session_uses_ctrl_n_and_waits_for_fresh_route(tmp_path):
     result = run_node(r"""
 const d = require(process.argv[1]);
 const env = {GITHUB_ACTIONS:'true', RUNNER_ENVIRONMENT:'github-hosted', RUNNER_OS:'Windows',
   RUNNER_ARCH:'X64', HERMES_NATIVE_CI_ISOLATION:'github-hosted-ephemeral-windows'};
-const navSelector='button[data-slot="sidebar-menu-button"]:has([data-tour="sidebar-nav-new-session"]):visible';
 async function run(config) {
   const events=[];
   let url='file:///synthetic/index.html'+config.initialHash;
-  let headerClicks=0, fills=0, presses=0;
+  let fills=0, keypresses=0, enters=0, composerReads=0, textReads=0;
   let routeChecks=0;
-  const nav={count:async()=>config.count,isVisible:async()=>config.visible,isEnabled:async()=>config.enabled,
-    click:async options=>{events.push(['nav-click',options]);}};
-  const headerPlus={click:async()=>{headerClicks++;}};
-  const composer={count:async()=>{events.push('composer-count');return 1;},first(){return this;},
+  const composer={count:async()=>{composerReads++;events.push('composer-count');return 1;},first(){return this;},
     getAttribute:async name=>name==='contenteditable'?'true':null,
-    innerText:async()=>{events.push('composer-text');return '';},
-    fill:async()=>{fills++;},press:async()=>{presses++;}};
+    innerText:async()=>{textReads++;events.push('composer-text');return '';},
+    fill:async()=>{fills++;},
+    press:async(key,options)=>{events.push(['composer-press',key,options]);if(key==='Control+n'){keypresses++;if(config.keyFailure)throw Error('Ctrl+N failed');}else if(key==='Enter')enters++;}};
   const page={url:()=>url,locator:selector=>{
       events.push(['locator',selector]);
-      return selector===navSelector?nav:composer;
+      return composer;
     },
-    getByRole:()=>headerPlus,
     waitForURL:async(predicate,options)=>{
       events.push(['route-wait',options]);
+      if(config.routeFailure)throw Error('route wait timed out');
       while(routeChecks<config.maxChecks){
         if(predicate(new URL(url))){events.push('route-ready');return;}
         routeChecks++;
@@ -238,48 +238,43 @@ async function run(config) {
   let result,error;
   try { result=await driver.newSession(); } catch(e) { error=e.message; }
   await driver.close();
-  return {result:result??null,error:error??null,events,headerClicks,fills,presses,routeChecks,navSelector};
+  return {result:result??null,error:error??null,events,fills,keypresses,enters,composerReads,textReads,routeChecks};
 }
 (async()=>{
-  const delayed=await run({initialHash:'#/sessions',count:1,visible:true,enabled:true,transitionAfter:2,maxChecks:4});
-  const alreadyFresh=await run({initialHash:'#/',count:1,visible:true,enabled:true,maxChecks:1});
-  const ambiguous=await run({initialHash:'#/sessions',count:2,visible:true,enabled:true,maxChecks:1});
-  const inaccessible=await run({initialHash:'#/sessions',count:1,visible:false,enabled:true,maxChecks:1});
-  const disabled=await run({initialHash:'#/sessions',count:1,visible:true,enabled:false,maxChecks:1});
-  const timeout=await run({initialHash:'#/sessions',count:1,visible:true,enabled:true,maxChecks:2});
-  console.log(JSON.stringify({delayed,alreadyFresh,ambiguous,inaccessible,disabled,timeout}));
+  const delayed=await run({initialHash:'#/sessions',transitionAfter:2,maxChecks:4});
+  const alreadyFresh=await run({initialHash:'#/',maxChecks:1});
+  const keyFailure=await run({initialHash:'#/sessions',keyFailure:true,maxChecks:1});
+  const routeFailure=await run({initialHash:'#/sessions',routeFailure:true,maxChecks:1});
+  console.log(JSON.stringify({delayed,alreadyFresh,keyFailure,routeFailure}));
 })().catch(e=>{console.error(e);process.exit(1)});
 """, tmp_path)
     delayed = result["delayed"]
     assert delayed["result"] == {"newSession": True} and delayed["error"] is None
-    assert delayed["navSelector"] == 'button[data-slot="sidebar-menu-button"]:has([data-tour="sidebar-nav-new-session"]):visible'
-    assert "sidebar-nav-new-session" in delayed["navSelector"] and "header" not in delayed["navSelector"]
-    assert delayed["headerClicks"] == 0
-    assert delayed["fills"] == delayed["presses"] == 0
-    assert delayed["events"].count(["nav-click", {"timeout": 30000}]) == 1
+    assert delayed["fills"] == delayed["enters"] == 0 and delayed["keypresses"] == 1
+    assert delayed["events"].count(["composer-press", "Control+n", {"timeout": 30000}]) == 1
     assert delayed["events"].count("route-ready") == 1 and delayed["routeChecks"] == 2
-    assert delayed["events"].index("route-ready") < delayed["events"].index("composer-count")
-    assert delayed["events"].index("route-ready") < delayed["events"].index("composer-text")
+    assert delayed["events"].index("composer-count") < delayed["events"].index(
+        ["composer-press", "Control+n", {"timeout": 30000}]
+    ) < delayed["events"].index("route-ready") < max(
+        index for index, event in enumerate(delayed["events"]) if event == "composer-count"
+    ) < delayed["events"].index("composer-text")
+    assert delayed["composerReads"] == 2 and delayed["textReads"] == 1
 
     already_fresh = result["alreadyFresh"]
     assert already_fresh["result"] == {"newSession": True} and already_fresh["error"] is None
-    assert already_fresh["events"].count(["nav-click", {"timeout": 30000}]) == 1
+    assert already_fresh["events"].count(["composer-press", "Control+n", {"timeout": 30000}]) == 1
     assert already_fresh["events"].count("route-ready") == 1
-    assert already_fresh["events"].index("route-ready") < already_fresh["events"].index("composer-count")
+    assert already_fresh["composerReads"] == 2 and already_fresh["textReads"] == 1
 
-    for name in ("ambiguous", "inaccessible", "disabled"):
-        failed = result[name]
-        expected = "New session navigation button is disabled" if name == "disabled" else \
-            "expected one visible New session navigation button"
-        assert failed["error"] == expected and failed["result"] is None
-        assert not [event for event in failed["events"] if isinstance(event, list) and event[0] == "nav-click"]
-        assert "route-ready" not in failed["events"] and "composer-count" not in failed["events"]
+    key_failure = result["keyFailure"]
+    assert key_failure["error"] == "Ctrl+N failed" and key_failure["result"] is None
+    assert key_failure["keypresses"] == 1 and key_failure["routeChecks"] == key_failure["textReads"] == key_failure["enters"] == key_failure["fills"] == 0
+    assert not [event for event in key_failure["events"] if isinstance(event, list) and event[0] == "route-wait"]
 
-    timed_out = result["timeout"]
-    assert timed_out["error"] == "route wait timed out" and timed_out["result"] is None
-    assert timed_out["events"].count(["nav-click", {"timeout": 30000}]) == 1
-    assert timed_out["events"].count("composer-count") == 0
-    assert timed_out["events"].count("composer-text") == 0
+    route_failure = result["routeFailure"]
+    assert route_failure["error"] == "route wait timed out" and route_failure["result"] is None
+    assert route_failure["keypresses"] == 1 and route_failure["routeChecks"] == 0
+    assert route_failure["textReads"] == route_failure["enters"] == route_failure["fills"] == 0
 
 
 def test_submit_waits_for_payload_control_mount_and_visibility(tmp_path):
