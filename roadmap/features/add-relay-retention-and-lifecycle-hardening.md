@@ -50,8 +50,12 @@ not establish abandonment. Existing summary/status totals cannot distinguish
 unchanged historical backlog from new delivery or failure evidence. Add bounded
 privacy-safe metadata pages through the existing dashboard read surface, with
 explicit observation and trace boundaries and caller-side saved baseline scans.
-The implementation is under qualification; local attempts produced setup failures
-or incomplete timeouts, so this is not shipped or validated behavior yet.
+The metadata-only preview shipped in [PR #329](https://github.com/rore/Pallium/pull/329)
+(`d3528c2e89e3c3cef3d878cd0441b49f650186f1`) on 2026-10-21. Both Linux
+Python lanes passed all 66 preview E2E cases and the selected full suite; Windows
+smoke and governance passed. Earlier local setup failures and timeouts remain
+preserved as historical evidence. This qualifies the repository feature, not an
+installed rollout or a full Windows test run.
 
 This slice does not clear the eight messages or complete lifecycle retention.
 Cleanup windows, post-retention send/reply idempotence, late replies, exact-message
