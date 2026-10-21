@@ -21,7 +21,8 @@ from app.mcp.context import (
     PalliumContext,
     current_hermes_request,
 )
-from app.mcp.hermes import HERMES_TOOLS, _read_identity, create_hermes_server, make_tool_adapter
+from app.mcp.client import PalliumMcpClient
+from app.mcp.hermes import HERMES_MEMORY_TOOLS, HERMES_TOOLS, _read_identity, create_hermes_server, make_tool_adapter
 from app.mcp.server import create_server
 
 
@@ -300,6 +301,326 @@ def test_default_server_registration_is_unchanged() -> None:
     names = {tool.name for tool in asyncio.run(create_server().list_tools())}
     assert "pallium_query" in names
     assert "pallium_relay_receive" in names
+
+
+def test_hermes_memory_catalog_is_explicitly_opt_in() -> None:
+    kwargs = {
+        "base_url": "http://127.0.0.1:19836",
+        "container_ref": "git:test/hermes",
+        "actor_ref": "hermes-test-actor",
+    }
+    off = {tool.name for tool in asyncio.run(create_hermes_server(**kwargs).list_tools())}
+    on = {tool.name for tool in asyncio.run(create_hermes_server(**kwargs, memory_enabled=True).list_tools())}
+    assert off == set(HERMES_TOOLS)
+    assert on == set(HERMES_TOOLS | HERMES_MEMORY_TOOLS)
+    assert "pallium_query_debug" not in on and "pallium_status" not in on
+
+
+def test_hermes_source_forget_accepts_an_explicit_historical_target_thread() -> None:
+    context = PalliumContext(
+        base_url="http://127.0.0.1:19836", container_ref="git:test/hermes",
+        actor_ref="hermes-test-actor", agent_ref="hermes", visibility="private",
+    )
+    seen = {}
+
+    def handler(**kwargs):
+        seen.update(kwargs)
+        return "ok"
+
+    adapter = make_tool_adapter(context, memory_enabled=True)
+    guarded = adapter("pallium_forget_source", handler, lambda: type(
+        "RequestContext", (), {"request_context": type("Meta", (), {"meta": _identity("active-session")})()}
+    )())
+    assert guarded is not None
+    assert asyncio.run(guarded(reason="requested", thread_ref="prior-session")) == "ok"
+    assert seen["thread_ref"] == "prior-session"
+
+
+def test_mutation_target_scope_requires_an_active_hermes_request() -> None:
+    context = PalliumContext(
+        base_url="http://127.0.0.1:19836", container_ref="git:test/hermes",
+        actor_ref="hermes-test-actor", visibility="private",
+    )
+    assert PalliumMcpClient(context)._hermes_target_scope() is None
+
+
+async def _exercise_memory_stdio(base_url: str, *, source_item_id: str, visible_memories: list[str], foreign_memory: str) -> None:
+    repo = str(Path(__file__).resolve().parents[1])
+    env = os.environ.copy()
+    env["PYTHONPATH"] = os.pathsep.join(filter(None, (repo, env.get("PYTHONPATH"))))
+    params = StdioServerParameters(
+        command=os.sys.executable,
+        args=["-m", "app.mcp.hermes", "--base-url", base_url,
+              "--container-ref", "git:test/hermes", "--actor-ref", "hermes-test-actor",
+              "--visibility", "private", "--memory-enabled"],
+        env=env,
+    )
+    async with stdio_client(params) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            names = {tool.name for tool in (await session.list_tools()).tools}
+            assert names == HERMES_TOOLS | HERMES_MEMORY_TOOLS
+
+            before = len(_RelayHandler.calls)
+            refused = await session.call_tool(
+                "pallium_remember",
+                {"text": "must not persist", "type": "note", "actor_ref": "forged-actor"},
+                meta=_identity("memory-session", "turn-refused"),
+            )
+            assert refused.isError
+            assert len(_RelayHandler.calls) == before
+            forged_flag = await session.call_tool(
+                "pallium_flag_memory",
+                {"memory_object_id": "unknown", "reason": "test", "source_ref": "forged-actor"},
+                meta=_identity("memory-session", "turn-forged-flag"),
+            )
+            assert forged_flag.isError
+            assert len(_RelayHandler.calls) == before
+
+            remembered = await session.call_tool(
+                "pallium_remember", {"text": "bounded Hermes memory marker", "type": "note"},
+                meta=_identity("memory-session", "turn-remember"),
+            )
+            assert not remembered.isError, [item.text for item in remembered.content if hasattr(item, "text")]
+            memory = json.loads(remembered.content[0].text)
+            memory_id = memory["memory_object_id"]
+
+            queried = await session.call_tool(
+                "pallium_query", {"query": "bounded Hermes memory marker"},
+                meta=_identity("memory-session", "turn-query"),
+            )
+            assert not queried.isError
+            expanded = await session.call_tool(
+                "pallium_expand", {"memory_object_id": memory_id},
+                meta=_identity("memory-session", "turn-expand"),
+            )
+            assert not expanded.isError
+            assert "error" not in json.loads(expanded.content[0].text)
+            for visible_memory in visible_memories:
+                expanded_visible = await session.call_tool(
+                    "pallium_expand", {"memory_object_id": visible_memory},
+                    meta=_identity("memory-session", "turn-expand-visible"),
+                )
+                assert not expanded_visible.isError
+                assert "error" not in json.loads(expanded_visible.content[0].text)
+            refused_foreign = await session.call_tool(
+                "pallium_expand", {"memory_object_id": foreign_memory},
+                meta=_identity("memory-session", "turn-expand-foreign"),
+            )
+            assert "error" in json.loads(refused_foreign.content[0].text)
+            source_expanded = await session.call_tool(
+                "pallium_expand_source", {
+                    "source_item_id": source_item_id, "include_supported_memories": True,
+                }, meta=_identity("memory-session", "turn-expand-supported"),
+            )
+            assert not source_expanded.isError
+            corrected = await session.call_tool(
+                "pallium_correct", {"memory_object_id": memory_id,
+                                     "corrected_text": "corrected bounded marker", "reason": "test"},
+                meta=_identity("memory-session", "turn-correct"),
+            )
+            assert not corrected.isError
+            forgotten = await session.call_tool(
+                "pallium_forget", {"memory_object_id": memory_id, "reason": "test"},
+                meta=_identity("memory-session", "turn-forget"),
+            )
+            assert not forgotten.isError
+            historical_forget = await session.call_tool(
+                "pallium_forget_source", {"reason": "test", "thread_ref": "prior-session"},
+                meta=_identity("memory-session", "turn-forget-source"),
+            )
+            assert not historical_forget.isError
+            omitted_target_forget = await session.call_tool(
+                "pallium_forget_source", {"reason": "test"},
+                meta=_identity("memory-session", "turn-forget-source-omitted"),
+            )
+            assert not omitted_target_forget.isError
+
+
+def test_hermes_opt_in_memory_stdio_reuses_scoped_memory_handlers(client) -> None:
+    _RelayHandler.client = client
+    _RelayHandler.calls = []
+    source = client.post("/items", json=[{
+        "source_type": "hermes", "source_id": "hermes-old-source",
+        "content_type": "text/plain", "content": "private old session source",
+        "role": "assistant", "agent_ref": "hermes", "container_ref": "git:test/hermes",
+        "thread_ref": "prior-session", "actor_ref": "hermes-test-actor",
+        "visibility": "private", "artifact_kind": "message",
+    }])
+    assert source.status_code == 200, source.text
+    source_item_id = source.json()[0]["source_item_id"]
+    memory_ids = []
+    for container, actor, visibility in (
+        ("git:test/hermes", "other-actor", "private"),
+        ("git:test/other", "hermes-test-actor", "global"),
+        ("git:test/other", "other-actor", "global"),
+    ):
+        stored = client.post("/memory/remember", json={
+            "text": "visibility fixture ✓", "type": "note", "container_ref": container,
+            "actor_ref": actor, "visibility": visibility, "thread_ref": "prior-session", "agent_ref": "test-agent",
+        })
+        assert stored.status_code == 200, stored.text
+        memory_ids.append(stored.json()["memory_object_id"])
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _RelayHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        asyncio.run(_exercise_memory_stdio(
+            f"http://127.0.0.1:{server.server_port}", source_item_id=source_item_id,
+            visible_memories=memory_ids[:2], foreign_memory=memory_ids[2],
+        ))
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    remember = next(payload for path, payload in _RelayHandler.calls if path == "/memory/remember")
+    assert {key: remember[key] for key in ("container_ref", "actor_ref", "thread_ref", "agent_ref", "visibility")} == {
+        "container_ref": "git:test/hermes", "actor_ref": "hermes-test-actor",
+        "thread_ref": "memory-session", "agent_ref": "hermes", "visibility": "private",
+    }
+    assert all("request_source_item_id" not in payload for path, payload in _RelayHandler.calls if path in {"/memory/remember", "/items"})
+    scoped_mutations = [payload for path, payload in _RelayHandler.calls
+                        if path.endswith("/correct") or path.endswith("/forget") or path == "/source/forget"]
+    assert scoped_mutations
+    assert all(payload["target_scope"] == {
+        "container_ref": "git:test/hermes", "actor_ref": "hermes-test-actor", "visibility": "private",
+    } for payload in scoped_mutations)
+    source_forgets = [payload for path, payload in _RelayHandler.calls if path == "/source/forget"]
+    assert source_forgets[0]["thread_ref"] == "prior-session"
+    assert "thread_ref" not in source_forgets[1]
+    query_params = next(query for path, query in _RelayHandler.calls if path == "/query")
+    assert query_params["actor_ref"] == "hermes-test-actor"
+    expand_params = next(query for path, query in _RelayHandler.calls if path.startswith("/memory/") and path.endswith("/expand"))
+    assert expand_params["query_visibility"] == ["private"]
+    assert expand_params["query_actor_ref"] == ["hermes-test-actor"]
+    source_expand_params = next(query for path, query in _RelayHandler.calls if path.startswith(f"/source/{source_item_id}/context"))
+    assert source_expand_params["include_supported_memories"] == ["true"]
+    assert source_expand_params["query_visibility"] == ["private"]
+
+
+async def _exercise_hermes_memory_lifecycle(
+    base_url: str, foreign_memory_id: str, scratch_path: Path,
+) -> None:
+    repo = str(Path(__file__).resolve().parents[1])
+    scratch = scratch_path.resolve()
+    isolated_dirs = {
+        "HOME": scratch / "home",
+        "USERPROFILE": scratch / "user-profile",
+        "APPDATA": scratch / "app-data",
+        "LOCALAPPDATA": scratch / "local-app-data",
+        "XDG_CONFIG_HOME": scratch / "xdg-config",
+        "XDG_CACHE_HOME": scratch / "xdg-cache",
+        "XDG_DATA_HOME": scratch / "xdg-data",
+        "TMP": scratch / "tmp",
+        "TEMP": scratch / "temp",
+        "TMPDIR": scratch / "tmpdir",
+    }
+    for path in isolated_dirs.values():
+        path.mkdir(parents=True, exist_ok=True)
+    env = {
+        key: os.environ[key]
+        for key in ("SYSTEMROOT", "WINDIR", "PATH")
+        if os.environ.get(key)
+    }
+    env.update({key: str(path) for key, path in isolated_dirs.items()})
+    env["PYTHONPATH"] = repo
+    params = StdioServerParameters(
+        command=os.sys.executable,
+        args=[
+            "-m", "app.mcp.hermes", "--base-url", base_url,
+            "--container-ref", "git:test/hermes", "--actor-ref", "hermes-test-actor",
+            "--visibility", "private", "--memory-enabled",
+        ],
+        env=env,
+    )
+
+    async with stdio_client(params) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+
+            async def call(name: str, arguments: dict, session_id: str) -> dict:
+                result = await session.call_tool(
+                    name, arguments, meta=_identity(session_id, f"turn-{name}-{session_id}"),
+                )
+                if result.isError:
+                    pytest.fail(f"{name} failed: {[item.text for item in result.content if hasattr(item, 'text')]}")
+                return json.loads(result.content[0].text)
+
+            remembered = await call("pallium_remember", {
+                "text": "Quartz lantern remains in vault", "type": "decision",
+            }, "write-session")
+            first_id = remembered["memory_object_id"]
+
+            async def recalled(query: str) -> list[dict]:
+                return (await call("pallium_query", {"query": query}, "later-session"))["results"]
+
+            assert [hit["memory_object_id"] for hit in await recalled("quartz lantern")] == [first_id]
+            await call("pallium_correct", {
+                "memory_object_id": first_id,
+                "corrected_text": "Opal compass stays in archive", "reason": "updated",
+            }, "later-session")
+            assert [hit["memory_object_id"] for hit in await recalled("opal compass")] == [first_id]
+            assert await recalled("quartz lantern") == []
+
+            second_id = (await call("pallium_supersede", {
+                "new_text": "Amber map stays in catalog", "supersedes_id": first_id,
+            }, "later-session"))["new_memory_object_id"]
+            third_id = (await call("pallium_supersede", {
+                "new_text": "Cobalt key stays in cabinet", "supersedes_id": second_id,
+            }, "third-session"))["new_memory_object_id"]
+            assert [hit["memory_object_id"] for hit in await recalled("cobalt key")] == [third_id]
+            assert await recalled("amber map") == []
+            forgotten = await call("pallium_forget", {
+                "memory_object_id": third_id, "reason": "removed",
+            }, "later-session")
+            assert forgotten["forgotten"] is True
+            assert await recalled("cobalt key") == []
+
+            foreign = await call("pallium_expand", {
+                "memory_object_id": foreign_memory_id,
+            }, "later-session")
+            assert "error" in foreign
+            conflicting_scope = await session.call_tool(
+                "pallium_query", {"query": "cobalt key", "container_ref": "git:test/other"},
+                meta=_identity("later-session", "turn-conflicting-scope"),
+            )
+            assert conflicting_scope.isError
+
+
+def test_dedicated_hermes_mcp_memory_lifecycle_uses_fixed_scope(client, tmp_path: Path) -> None:
+    _RelayHandler.client = client
+    _RelayHandler.calls = []
+    foreign = client.post("/memory/remember", json={
+        "text": "Foreign container must remain hidden", "type": "decision",
+        "container_ref": "git:test/other", "actor_ref": "hermes-test-actor",
+        "thread_ref": "foreign-session", "agent_ref": "hermes", "visibility": "private",
+    })
+    assert foreign.status_code == 200, foreign.text
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _RelayHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        asyncio.run(_exercise_hermes_memory_lifecycle(
+            f"http://127.0.0.1:{server.server_port}",
+            foreign.json()["memory_object_id"], tmp_path / "hermes-mcp-scratch",
+        ))
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    remember = next(payload for path, payload in _RelayHandler.calls if path == "/memory/remember")
+    assert {key: remember[key] for key in (
+        "container_ref", "actor_ref", "thread_ref", "agent_ref", "visibility",
+    )} == {
+        "container_ref": "git:test/hermes", "actor_ref": "hermes-test-actor",
+        "thread_ref": "write-session", "agent_ref": "hermes", "visibility": "private",
+    }
+    query_calls = [payload for path, payload in _RelayHandler.calls if path == "/query"]
+    assert query_calls and all(payload["container_ref"] == "git:test/hermes" for payload in query_calls)
+    assert all(payload["actor_ref"] == "hermes-test-actor" for payload in query_calls)
 
 
 @pytest.mark.parametrize("base_url", [

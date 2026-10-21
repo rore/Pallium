@@ -178,6 +178,49 @@ class TestCorrectEndpoint:
         )
         assert resp.status_code == 409
 
+    def test_correction_racing_supersession_does_not_mutate_replaced_memory(
+        self, client, storage,
+    ):
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Event
+        from sqlalchemy import event
+
+        old = _seed_memory(storage, memory_id="race-correct-old")
+        entered = Event()
+        continue_correction = Event()
+        def pause_before_correction_write(conn, cursor, statement, parameters, context, executemany):
+            normalized = statement.lower()
+            if "update memory_objects" in normalized and "payload_json" in normalized:
+                entered.set()
+                assert continue_correction.wait(5)
+
+        event.listen(storage._engine, "before_cursor_execute", pause_before_correction_write)
+        try:
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                correction_future = pool.submit(
+                    client.post,
+                    f"/memory/{old.id}/correct",
+                    json={"corrected_text": "stale correction", "reason": "race"},
+                )
+                assert entered.wait(5), "correction did not reach its database write"
+                superseded = client.post(
+                    "/memory/supersede",
+                    json={**_PROVENANCE, "new_text": "current replacement", "supersedes_id": old.id},
+                )
+                continue_correction.set()
+                correction = correction_future.result(timeout=5)
+        finally:
+            continue_correction.set()
+            event.remove(storage._engine, "before_cursor_execute", pause_before_correction_write)
+
+        assert superseded.status_code == 200, superseded.text
+        assert correction.status_code == 409, correction.text
+        stored_old = storage.get_memory_object(old.id)
+        assert stored_old.payload["statement"] == f"seed {old.id}"
+        assert stored_old.lifecycle == "superseded"
+        replacement = storage.get_memory_object(superseded.json()["new_memory_object_id"])
+        assert replacement.payload["statement"] == "current replacement"
+
 
 class TestSupersedeEndpoint:
     def test_happy_path(self, client, storage):

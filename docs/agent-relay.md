@@ -5,6 +5,14 @@ another. Pallium stores the message before attempting delivery, so a busy or
 unavailable recipient can receive it later.
 
 Pallium currently ships Relay integrations for Claude Code, Codex, and OpenCode.
+The [experimental Hermes package](hermes-integration.md) passed native Desktop
+and TUI memory-off/on journeys on v0.22.0 and v0.22.2 in an isolated Windows
+Server 2025 unpacked build; Linux TUI passed on both tested releases. Other
+provider configurations and automatic standalone MCP reconnect/fallback remain
+unqualified, and Hermes is not part of the supported wake/fallback paths listed
+below. Its ACK records host-context
+receipt before provider completion, not model/provider completion or action.
+
 Sessions must connect to the same local Pallium service. Cross-container routing is service-global; Session History and derived-memory scoping are unchanged. Routing uses explicit session identity; it does not use search,
 embeddings, ranking, or an LLM.
 
@@ -232,7 +240,7 @@ does not prove that the model acted on it.
 ## Delivery and wake behavior
 
 Pallium persists first, then attempts the safest delivery supported by the
-recipient runtime. If wake is unsupported, disabled, unsafe, or unavailable,
+recipient runtime on the qualified paths listed below. If wake is unsupported, disabled, unsafe, or unavailable,
 the same message remains pending for the recipient's next natural turn.
 
 | Runtime | Current behavior |

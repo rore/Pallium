@@ -11,14 +11,14 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, TypeVar
 
-from sqlalchemy import and_, create_engine, event, func, or_, select, text
+from sqlalchemy import and_, create_engine, event, func, or_, select, text, update
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session, aliased, sessionmaker
 from sqlalchemy.exc import IntegrityError
 
 from core.errors import HistoryDiagnosticConflictError, HistoryDiagnosticCorruptError, SupersessionConflictError, is_transient_error
 from core.contracts import ProcessResult
-from core.models import EvidenceReference, IndexEntry, MemoryFeedback, MemoryFlag, MemoryObject, Relation, SourceItem, utc_now
+from core.models import EvidenceReference, IndexEntry, MemoryFeedback, MemoryFlag, MemoryObject, MemoryTargetScope, Relation, SourceItem, utc_now
 from core.turn_inference import ThreadStats
 from core.work_ref import _normalize_work_ref
 from storage.base import SourceItemVectorProjection, StorageProvider
@@ -639,7 +639,11 @@ class SQLiteStorageProvider(
             return ThreadStats(item_count=row[0], latest_created_at=row[1])
 
     def create_memory_object(self, memory_object: MemoryObject) -> None:
-        record = MemoryObjectRecord(
+        record = self._memory_object_record(memory_object)
+        self._with_retry(lambda session: session.add(record))
+
+    def _memory_object_record(self, memory_object: MemoryObject) -> MemoryObjectRecord:
+        return MemoryObjectRecord(
             id=memory_object.id,
             type=memory_object.type,
             schema_id=memory_object.schema_id,
@@ -650,11 +654,48 @@ class SQLiteStorageProvider(
             visibility=memory_object.visibility,
             container_ref=memory_object.container_ref,
             actor_ref=memory_object.actor_ref,
+            origin=memory_object.origin,
             freshness_at=self._normalize_datetime(memory_object.freshness_at) or memory_object.created_at,
             subject=extract_memory_subject(memory_object),
             created_at=memory_object.created_at,
         )
-        self._with_retry(lambda session: session.add(record))
+
+    def create_explicit_supersession(
+        self, old_memory_object_id: str, replacement: MemoryObject, *,
+        index_entries: list[IndexEntry], origin_session_id: str,
+        origin_agent_id: str, correction_reason: str | None = None,
+    ) -> None:
+        def _do(session):
+            values = {"lifecycle": "superseded", "superseded_by_id": replacement.id}
+            if correction_reason is not None:
+                values["correction_reason"] = correction_reason
+            # Acquire the writer before reading: concurrent/stale losers insert nothing.
+            changed = session.execute(update(MemoryObjectRecord).where(
+                MemoryObjectRecord.id == old_memory_object_id,
+                MemoryObjectRecord.lifecycle == "active",
+                MemoryObjectRecord.superseded_by_id.is_(None),
+            ).values(**values)).rowcount
+            if not changed:
+                if session.get(MemoryObjectRecord, old_memory_object_id) is None:
+                    raise KeyError(old_memory_object_id)
+                raise SupersessionConflictError(f"memory {old_memory_object_id!r} is not active")
+            record = self._memory_object_record(replacement)
+            record.origin = "agent_explicit"
+            record.origin_session_id = origin_session_id
+            record.origin_agent_id = origin_agent_id
+            session.add(record)
+            for entry in index_entries:
+                if entry.index_type == "lexical":
+                    self._add_index_entry(session, entry)
+                else:
+                    session.flush()
+                    try:
+                        # Preserve optional vector indexing without abandoning the atomic write.
+                        with session.begin_nested():
+                            self._add_index_entry(session, entry)
+                    except Exception:  # noqa: BLE001 -- vector index remains best-effort
+                        logger.debug("Explicit supersession: skipping vector index entry", exc_info=True)
+        self._with_retry(_do)
 
     def insert_shadow_extraction(
         self,
@@ -885,6 +926,7 @@ class SQLiteStorageProvider(
         reason: str,
         actor_ref: str | None = None,
         forgotten_at: datetime | None = None,
+        target_scope: MemoryTargetScope | None = None,
     ) -> int:
         """Point-in-time bulk forget of raw turns within a bounded scope.
 
@@ -901,6 +943,12 @@ class SQLiteStorageProvider(
             )
             if thread_ref is not None:
                 stmt = stmt.where(SourceItemRecord.thread_ref == thread_ref)
+            if target_scope is not None:
+                stmt = stmt.where(
+                    SourceItemRecord.container_ref == target_scope.container_ref,
+                    SourceItemRecord.actor_ref == target_scope.actor_ref,
+                    SourceItemRecord.visibility == target_scope.visibility,
+                )
             records = session.scalars(stmt).all()
             ts = forgotten_at or utc_now()
             for record in records:
@@ -916,6 +964,7 @@ class SQLiteStorageProvider(
         *,
         new_payload: dict,
         correction_reason: str,
+        index_entries: list[IndexEntry] | None = None,
     ) -> None:
         """In-place correction of a memory (pallium_correct).
 
@@ -932,17 +981,38 @@ class SQLiteStorageProvider(
         Raises KeyError if the memory_object does not exist.
         """
         def _do(session):
-            record = session.get(MemoryObjectRecord, memory_object_id)
-            if record is None:
-                raise KeyError(memory_object_id)
-            if record.lifecycle != "active" or record.superseded_by_id is not None:
+            # Acquire the SQLite writer before checking the active-head
+            # predicate. A service-level read may have raced with a
+            # supersession, so guard the mutation in SQL as well.
+            changed = session.execute(update(MemoryObjectRecord).where(
+                MemoryObjectRecord.id == memory_object_id,
+                MemoryObjectRecord.lifecycle == "active",
+                MemoryObjectRecord.superseded_by_id.is_(None),
+            ).values(
+                payload_json=self._dumps(new_payload) or "{}",
+                correction_reason=correction_reason,
+            )).rowcount
+            if not changed:
+                record = session.get(MemoryObjectRecord, memory_object_id)
+                if record is None:
+                    raise KeyError(memory_object_id)
                 raise SupersessionConflictError(
                     f"cannot correct non-active memory {memory_object_id!r} "
                     f"(lifecycle={record.lifecycle!r}, "
                     f"superseded_by_id={record.superseded_by_id!r})"
                 )
-            record.payload_json = self._dumps(new_payload) or "{}"
-            record.correction_reason = correction_reason
+            if index_entries is not None:
+                self._delete_index_entries_for_target_in_session(session, "memory_object", memory_object_id)
+                for entry in index_entries:
+                    if entry.index_type == "lexical":
+                        self._add_index_entry(session, entry)
+                    else:
+                        session.flush()
+                        try:
+                            with session.begin_nested():
+                                self._add_index_entry(session, entry)
+                        except Exception:  # Vector index remains best-effort.
+                            logger.debug("Memory correction: skipping vector index entry", exc_info=True)
         self._with_retry(_do)
 
     # ── /W3 explicit memory-write methods ────────────────────────────
@@ -1271,6 +1341,9 @@ class SQLiteStorageProvider(
         return None
 
     def create_index_entry(self, index_entry: IndexEntry) -> None:
+        self._with_retry(lambda session: self._add_index_entry(session, index_entry))
+
+    def _add_index_entry(self, session: Session, index_entry: IndexEntry) -> None:
         record = IndexEntryRecord(
             id=index_entry.id,
             target_kind=index_entry.target_kind,
@@ -1281,22 +1354,20 @@ class SQLiteStorageProvider(
             provider_name=index_entry.provider_name,
             provider_version=index_entry.provider_version,
         )
-        def _do(session):
-            session.add(record)
-            if index_entry.index_type == "lexical":
-                container_ref = self._resolve_container_ref_in_session(
-                    session, index_entry.target_kind, index_entry.target_id,
-                )
-                insert_lexical_fts_row(
-                    session,
-                    index_entry_id=index_entry.id,
-                    target_kind=index_entry.target_kind,
-                    target_id=index_entry.target_id,
-                    text_view=index_entry.text_view,
-                    text_view_name=index_entry.text_view_name,
-                    container_ref=container_ref,
-                )
-        self._with_retry(_do)
+        session.add(record)
+        if index_entry.index_type == "lexical":
+            container_ref = self._resolve_container_ref_in_session(
+                session, index_entry.target_kind, index_entry.target_id,
+            )
+            insert_lexical_fts_row(
+                session,
+                index_entry_id=index_entry.id,
+                target_kind=index_entry.target_kind,
+                target_id=index_entry.target_id,
+                text_view=index_entry.text_view,
+                text_view_name=index_entry.text_view_name,
+                container_ref=container_ref,
+            )
 
     def list_index_entries_for_target(self, target_kind: str, target_id: str) -> list[IndexEntry]:
         with self._session_factory() as session:

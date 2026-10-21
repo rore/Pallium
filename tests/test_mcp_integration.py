@@ -110,6 +110,66 @@ class TestMcpClientPassthrough:
         assert mcp_result == direct_result
 
 
+@pytest.mark.asyncio
+async def test_generic_mcp_memory_recall_correction_supersession_and_forget(
+    pallium_asgi_app, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_async_client = httpx.AsyncClient
+
+    def asgi_client(*args, **kwargs):
+        kwargs["transport"] = httpx.ASGITransport(app=pallium_asgi_app)
+        kwargs["base_url"] = "http://testserver"
+        return real_async_client(*args, **kwargs)
+
+    monkeypatch.setattr("app.mcp.client.httpx.AsyncClient", asgi_client)
+    monkeypatch.setenv("PALLIUM_BASE_URL", "http://testserver")
+    server = create_server()
+
+    async def call(name: str, arguments: dict) -> dict:
+        content, _ = await server.call_tool(name, arguments)
+        return json.loads(content[0].text)
+
+    scope = {
+        "container_ref": "git:github.com/example/recall",
+        "actor_ref": "recall-user",
+        "agent_ref": "codex",
+        "visibility": "private",
+    }
+    remembered = await call("pallium_remember", {
+        **scope, "thread_ref": "write-session",
+        "text": "Quartz lantern remains in vault", "type": "decision",
+    })
+    first_id = remembered["memory_object_id"]
+    later_scope = {**scope, "thread_ref": "later-session"}
+
+    async def recalled(query: str) -> list[dict]:
+        return (await call("pallium_query", {**later_scope, "query": query}))["results"]
+
+    assert [hit["memory_object_id"] for hit in await recalled("quartz lantern")] == [first_id]
+    assert (await call("pallium_correct", {
+        "memory_object_id": first_id,
+        "corrected_text": "Opal compass stays in archive",
+        "reason": "updated",
+    }))["corrected"] is True
+    assert [hit["memory_object_id"] for hit in await recalled("opal compass")] == [first_id]
+    assert await recalled("quartz lantern") == []
+
+    second_id = (await call("pallium_supersede", {
+        **scope, "thread_ref": "later-session",
+        "new_text": "Amber map stays in catalog", "supersedes_id": first_id,
+    }))["new_memory_object_id"]
+    third_id = (await call("pallium_supersede", {
+        **scope, "thread_ref": "third-session",
+        "new_text": "Cobalt key stays in cabinet", "supersedes_id": second_id,
+    }))["new_memory_object_id"]
+    assert [hit["memory_object_id"] for hit in await recalled("cobalt key")] == [third_id]
+    assert await recalled("amber map") == []
+    assert (await call("pallium_forget", {
+        "memory_object_id": third_id, "reason": "removed",
+    }))["forgotten"] is True
+    assert await recalled("cobalt key") == []
+
+
 class TestMcpEndpointReachable:
     """Verify the /mcp endpoint is actually mounted and responds to MCP protocol."""
 
