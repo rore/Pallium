@@ -13,13 +13,24 @@ checks with zero failures, errors or skips. The provider received the complete
 10,000-character hook spill limit unchanged, followed by a successful reply wake.
 Separate caller E2E covers the 24-hour liveness boundary and uncertain outcomes.
 
+The later service correction `a48b0fef` fixes two logger references in optional
+vector-failure paths. Eight public HTTP regressions and the 178-test affected
+memory subsystem passed, including lexical recall after vector failure. Native15
+is reused for unchanged host/plugin/MCP behavior; it did not exercise those
+injected service failures. Independent technical review accepted the corrected
+result; required human release acceptance remains pending. Its
+[CI run 39667217842](https://github.com/rore/Pallium/actions/runs/39667217842)
+remains failed in two Codex tests; Windows smoke and governance passed. The
+distinct failures and unreached assertions are retained in the qualification
+record below.
+
 The scoped native matrix passed on both Windows **Desktop and TUI**, with memory
 off and on, for pinned Hermes **v0.22.0** and **v0.22.2** sources. It ran in an
 isolated Windows Server 2025 VM with an unpacked app and synthetic providers.
 Runtime checks use public plugin capabilities rather than an exact Hermes
 version lock; a pass on these pins does not establish compatibility with every
 later release. Earlier gateway RPC Relay/History checks also passed on both pins;
-the accepted native UI/MCP/package matrix is the current changed-runtime proof.
+the accepted native UI/MCP/package matrix supplies the reused host evidence above.
 
 Both pins passed the complete native Desktop/TUI memory-off and memory-on
 journeys, including default Tool Search, Relay/wake, later-session History,
@@ -29,8 +40,8 @@ does not qualify Windows 11, MSIX or native updater behavior, native app Quit,
 automatic standalone MCP reconnection, paid-provider quality or every
 provider/memory combination. Earlier failed runs remain documented as failed in
 the package qualification record; the accepted matrix does not reclassify them.
-Current CI also retains a shared registration-availability failure; its scope and
-the passing lanes are recorded in the
+Earlier CI retains distinct shared registration and recovery availability
+failures; their scope and passing lanes are recorded in the
 [qualification history](designs/hermes-native-qualification.md#current-scoped-result).
 
 Additional isolated Linux TUI qualification passed on both releases at candidate

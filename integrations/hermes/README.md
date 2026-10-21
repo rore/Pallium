@@ -1,6 +1,6 @@
 # Pallium for Hermes
 
-This experimental package installs a native Hermes plugin, the discoverable `pallium-memory` skill, and the plugin-owned Pallium MCP bridge. Earlier gateway RPC Relay/History checks passed on Hermes v0.22.0 and v0.22.2; the accepted native UI/MCP/package matrix below proves the changed runtime. Setup never creates a global `mcp_servers` connection and preserves provider, toolset, Tool Search, other plugin, credential, and data settings.
+This experimental package installs a native Hermes plugin, the discoverable `pallium-memory` skill, and the plugin-owned Pallium MCP bridge. Earlier gateway RPC Relay/History checks passed on Hermes v0.22.0 and v0.22.2; the accepted native UI/MCP/package matrix below covers host/plugin behavior at `d5896a24`. Setup never creates a global `mcp_servers` connection and preserves provider, toolset, Tool Search, other plugin, credential, and data settings.
 
 For the public capability overview and support boundaries, see the
 [Hermes integration guide](../../docs/hermes-integration.md).
@@ -194,11 +194,18 @@ native app Quit, automatic standalone MCP reconnection, paid-provider quality or
 every provider/memory combination.
 
 Native evidence used Windows Server 2025 with an unpacked app and synthetic
-providers. Current CI passed Python 3.12, Windows and governance; Python 3.13
-failed on unchanged generic registration availability before hook assertions.
-That failed receipt remains an availability limitation, with full counts and
-classification in the [qualification record](../../docs/designs/hermes-native-qualification.md#current-scoped-result).
-The package remains experimental pending human release acceptance. A focused
+providers. The later service head `a48b0fef` fixes two logger references in
+optional vector-failure paths. Its eight public HTTP fault regressions and
+178-test affected memory subsystem passed. Vector import/build and remember
+vector-persistence failures preserve lexical recall; lexical failures still
+propagate with existing persistence timing. Native15 is reused for unchanged
+host/plugin/MCP behavior and does not prove these injected service failures.
+Current [CI 39667217842](https://github.com/rore/Pallium/actions/runs/39667217842)
+remains failed in two Codex tests; Windows smoke and governance passed. These
+and earlier generic registration and recovery CI failures remain failed in the
+[qualification record](../../docs/designs/hermes-native-qualification.md#current-scoped-result).
+Independent technical review accepted the corrected result. The package remains
+experimental pending corrected-revision human release acceptance. A focused
 gateway journey requires an isolated environment:
 
 ```powershell

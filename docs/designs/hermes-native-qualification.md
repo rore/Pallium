@@ -10,13 +10,55 @@ with zero failures, errors or skips: v0.22.0 in 420.693 seconds and v0.22.2 in
 synthetic providers. The package remains experimental pending human release
 acceptance; everyday installation remains a separate rollout decision.
 
-The corrected application is `b96a05e1cb7b7046243398922ccd497750807548`;
-`d5896a24` preserves that application and adds the test probe's JSON transport
+Native15's application was `b96a05e1cb7b7046243398922ccd497750807548`;
+`d5896a24` preserved that application and added the test probe's JSON transport
 correction and regression. The shared Windows/Linux journey passes a complete
 16,000-code-point Unicode wake through
 to the provider, followed by a short reply wake, retaining admission, privacy
 and cleanup checks. Separate deterministic caller E2E covers the 24-hour
 liveness boundary and uncertain outcomes.
+
+The later production head `a48b0fef48d91868ffefd903742ef025e66ceeed` corrects
+exactly two logger bindings in optional vector-failure catches. Native15 and
+the Linux matrix remain evidence for unchanged host/plugin/MCP normal behavior;
+they did not inject these service faults or test this exact whole application.
+Direct HTTP E2E covers vector import and construction failures across remember,
+correct and supersede, plus remember vector-persistence failure and unchanged
+lexical-failure propagation/persistence timing. Before the fix, seven cases
+failed with `NameError` and the lexical control passed (5.33 seconds). Afterward
+all eight passed (3.39 seconds); the affected memory HTTP/E2E/storage subsystem
+passed 178 tests with zero failures, errors or skips (57.76 seconds). Clean
+review accepted reuse of the existing native evidence without another host run.
+Independent technical review accepted the corrected source, actual main
+composition, final prose and distinct failed CI classifications. Corrected-head
+human acceptance remains pending; the earlier release acceptance applied to
+`5f21bfcb`.
+
+Corrected-source [CI 39667217842](https://github.com/rore/Pallium/actions/runs/39667217842)
+remains **failed**. Python 3.13 stopped at the unchanged Codex ordinary/mismatched
+fence test's second send (`mismatch` / `mismatch-fenced`): HTTP 503 `relay_busy`
+after 1600 ms, with `late_begin` and `setup_pragma` at 1599 ms. Registration and
+the ordinary send succeeded; fence creation, claims and preservation assertions
+were not reached. It recorded 3242 passes, 22 skips and one expected failure in
+296.99 seconds. Clean review accepts shared availability classification under
+the task owner's proceed policy, without establishing a cause or cure.
+
+Python 3.12 separately failed
+`test_first_cancelled_mcp_admission_records_validated_reply[registered]`: its
+one-second wait for the mocked registration callback did not complete, with
+`retained-register-registered-ok` reported by the Codex bridge during cleanup
+after the worker was released. The cancellation notification was not sent;
+cancellation-response, validated-reply logging, disposal and no-operation
+assertions were not reached. It recorded
+3147 passes, 16 skips and one expected failure in 349.75 seconds. This is a
+distinct failure, not the Python 3.13 send's HTTP 503. Neither lane is a passing
+full-suite result. Clean review found no demonstrated Hermes safety regression:
+the unchanged Codex retained lifecycle is not enabled by the Hermes server, and
+the new memory logger bindings do not affect that path. The missed deadline's
+cause remains unknown; this is no cancellation-success or identity-safety proof.
+Windows smoke passed 626 tests with seven skips in 164.20
+seconds; [governance 39667217848](https://github.com/rore/Pallium/actions/runs/39667217848)
+passed. Both Linux logs and the reviewed merge-source receipt are retained.
 
 The journey also checks the actual pinned `hook_output_spill` helper
 inside the gated disposable runtime: its default 10,000-character limit spills
@@ -50,7 +92,7 @@ Windows cases used synthetic providers. Paid-provider quality and every
 provider/memory combination remain untested. Runtime admission is capability
 based and is not hard-pinned to these release versions.
 
-Current candidate CI [39650707590](https://github.com/rore/Pallium/actions/runs/39650707590)
+Earlier candidate CI [39650707590](https://github.com/rore/Pallium/actions/runs/39650707590)
 remains failed. Python 3.12 passed the full non-slow suite: 7,921 passed, 93 skipped and
 two expected failures in 529.37 seconds. Python 3.13 failed at generic
 Codex/Claude registration before hook assertions: HTTP 503 `relay_busy` after
@@ -62,6 +104,11 @@ Independent review classified this as unchanged shared availability under the
 task owner's explicit policy allowing Hermes work to proceed alongside those
 failures. The failure remains an availability limitation; the Hermes changes
 do not repair it.
+
+The later predecessor `5f21bfcb` also retained failed generic Codex recovery CI
+with `late_begin`. That recovery failure is distinct from `d5896a24`'s initial
+registration HTTP 503 above; neither failed receipt is reclassified by the
+vector-logger repair or by the successor CI.
 
 Earlier failed receipts remain failed historical evidence. No read reset
 occurred in the accepted matrix, so its success does not establish a cure for
@@ -352,13 +399,14 @@ This covers integration transport and configuration, not paid-model quality or
 every provider/memory combination. These Linux results supplement the later
 Windows matrix and required CI results documented above.
 
-The current corrected application `b96a05e1cb7b7046243398922ccd497750807548`
+The host-qualified application `b96a05e1cb7b7046243398922ccd497750807548`
 passed all four actual Linux TUI cases again, independently accepted with zero
 failures, errors or skips. The v0.22.0 suite took 115.475 seconds and v0.22.2
 112.384 seconds. Memory-off used built-in `openai-api`; memory-on used the custom
 synthetic provider. The complete 16,000-code-point payload, subsequent reply,
 History, memory, two normal host/MCP generations and profile preservation passed.
-The later `d5896a24` probe transport correction leaves that application unchanged.
+The later `d5896a24` probe transport correction left that application unchanged;
+the subsequent `a48b0fef` service exception-path change has the HTTP proof above.
 
 Record the actual runner image and Windows version in every native result.
 Hosted Windows Server evidence must not be described as Windows 11 or installed
