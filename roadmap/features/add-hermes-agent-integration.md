@@ -10,34 +10,50 @@ lane: integration
 
 ## Summary
 
-Active draft PR #324 extends the experimental Desktop/TUI integration toward
+PR #324 is ready for review of the experimental Desktop/TUI integration toward
 production readiness, including scoped opt-in memory and normal-profile lifecycle
 qualification. Current owner Work Record: `.agent-workflow/tasks/hermes-production-slice4.md`.
-It remains active, draft and experimental. Fresh clean-context review at `353e8f83`
-withdrew the earlier combined technical GO after confirming two P1 blockers below.
-Human result approval is withdrawn; work is with the owner, not waiting on the
-user. The pinned short-journey matrix at `b3601c79` remains evidence, not a broad
-readiness claim. Owner guide changes remain separate from this roadmap update.
+The feature remains active and experimental. The two P1 blockers identified at
+`353e8f83` are resolved in runtime `b96a05e1`; clean independent result review
+accepted the fixes and corrected qualification below. Owner public-doc/Work Record
+review is underway separately; human result/release review and PR #324 merge
+remain pending. Earlier withdrawn approvals and failed evidence remain historical.
 
-### Confirmed readiness blockers and owner continuation (2026-10-21)
+### Resolved blockers and corrected qualification (2026-10-21)
 
-- [ ] **Ordinary-turn liveness:** cached `register_session` does not refresh trusted
-  ordinary-turn `last_seen`; after 24 hours the dormant session rejects MCP/wake.
-  The owner is planning the plugin-only correction using exact endpoint/generation
-  authority and missing caller-surface E2E coverage.
-- [ ] **Inbound payload and persistent fencing:** valid 1,601–16,000-character
-  service payloads can be claimed, then rejected by the 1,600-character renderer,
-  leaving persistent `claim_attempted` fencing across later delivery, reload and
-  expiry. The owner is planning full service-bound transport and lifecycle E2E,
-  preserving ambiguous-attempt and duplicate-activation fences.
+- [x] **Ordinary-turn liveness:** the stale trusted ordinary-turn `last_seen`
+  defect is corrected using exact endpoint/generation authority and independently
+  accepted caller-surface regressions, including the 24-hour boundary.
+- [x] **Inbound payload and persistent fencing:** full service-bound transport
+  replaces the 1,600-character rendering rejection for valid 1,601–16,000-character
+  input. Accepted lifecycle coverage preserves ambiguous-attempt and duplicate-
+  activation fences while allowing later deliveries, reload and expiry handling.
+
+Clean reviewer `hermes_blockers_clean_result` accepted 197 caller cases and two
+continuation cases on runtime `b96a05e1`. Four actual Linux TUI journeys on both
+pins passed in 115.475/112.384 seconds. Test-only Windows transport successor
+`d5896a24ec3b72c1f23f5323e43ab8d2a06e60ca` passed native
+[39650756737](https://github.com/rore/Pallium/actions/runs/39650756737), attempt 1:
+both jobs succeeded, each with 83 passes and zero failures, errors or skips in
+420.693/394.092 seconds. All eight Desktop/TUI × memory-off/on cells passed full
+16,000-character Unicode payload/default 10,000-character spill, one-claim/ACK,
+later wakes and post-reply context, lifecycle/privacy checks and all 16 cleanup
+receipts. No further execution is needed to establish these accepted results.
+
+Shared Linux 3.13 CI [39650707590](https://github.com/rore/Pallium/actions/runs/39650707590)
+remains **failed** at registration 503/`setup_deadline` (1,949 ms;
+`session_factory` 1,947 ms); the physical cause remains unknown and possible
+availability impact is not excluded.
+Linux 3.12 passed 7,921 cases with 93 skips and two expected failures; Windows
+and governance passed. Native run 14's prelaunch failure and prior reset failures
+remain retained, unexplained and uncured by this later success.
 
 The user explicitly authorized fixing both blockers, adding missing E2E
 regressions, fresh independent review and isolated execution before pushing the
 fixes. The existing High-risk `.agent-workflow/tasks/hermes-production-slice4.md`
-and PR #324 retain ownership. Next gate: reviewed fixes, both observable regressions,
-clean reviewer and exact-candidate requalification before renewed combined
-technical acceptance and separate human result/release review. No merge or live
-rollout is approved by the retained short-journey evidence.
+and PR #324 retain ownership. Next gate: complete the owner's final public-doc/Work
+Record review and separate human result/release review before merge. No merge or
+live rollout is approved by these qualification receipts alone.
 
 ### Retained Windows short-journey matrix (2026-10-21)
 
@@ -55,12 +71,12 @@ Candidate CI [39626448225](https://github.com/rore/Pallium/actions/runs/39626448
 and governance [39626448147](https://github.com/rore/Pallium/actions/runs/39626448147)
 passed. Each Linux Python lane passed 7,793 tests with 93 skips and two expected
 failures, in 373.26 and 499.06 seconds. Reuse the previously accepted four Linux
-TUI cells, Gateway and SDK2 evidence as baselines; they do not cover the two new
-blocker boundaries or qualify their future corrections. Native runs 11/12 remain failed and their original
+TUI cells, Gateway and SDK2 evidence as historical baselines, kept distinct from
+the corrected candidate above. Native runs 11/12 remain failed and their original
 causes unexplained; later passing evidence does not prove those failures cured.
 
-Next: follow the owner fix/E2E/review/requalification gate above, then finish guide
-alignment and renewed technical/human result review before merge. Evidence is Windows Server 2025
+Next: finish owner guide alignment and the remaining result/release review gates
+above before merge. Evidence is Windows Server 2025
 with an unpacked app and synthetic provider; it does not establish Windows 11,
 MSIX/updater behavior, graceful native Quit, automatic standalone MCP reconnect
 or ordinary-provider/model quality. No installed rollout or generic Relay
