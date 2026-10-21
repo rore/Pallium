@@ -2,6 +2,8 @@
 
 ## Adopted pre-BEGIN deadline correction - 2026-10-21
 
+Preparation checkpoint: tests-first commit8227124f00d176e8e63643fd2ec3297f64209cae is independently reviewed GO by /root/opencode297_resume_plan_review together with the unapplied guard and frozen single-node red runner. Evidence is ../windows313-pre-begin-deadline-20261021/independent-red-preparation-review.json and README.md. Guard patch SHAbd7ec806098303d865a6f67bc186eb2e5fab5c88b8d210692b777224ab81272f; reviewed runner729c3d4055fda2f79a8836a9f02f2ef69155602855a337adeb770ca227d88a88 unchanged. Required baseline result is the sole expected setup_deadline/actual late_begin assertion failure; any unrelated failure, unexpected pass, setup error or cap stops. Source remains guardless; no tests/collection executed. Manager slot release is still unconfirmed after substantive relay-reply-5a330770fbff5c96e43494676d8dfd3c05a5f1aeaf764716625894aa4856e091. State is Blocked solely for this external execution dependency and parent qualification; do not seek another human approval or infer release from elapsed time. Next action on actual release: revalidate record-only refrozen baseline head/source fences, run planned red once, then apply reviewed guard, commit and review frozen green before the one focused cohort. Retain active checkout/evidence for this unfinished task; no cleanup, full, push, hosted or installed action.
+
 Implementation preparation: six direct shared-helper boundary/DeadlineNone controls and three real HTTP/SQLite before/exact/over controls are now added only in tests/test_sqlite_write_retry.py. They observe SQLAlchemy statements and returned connections, unchanged structured503, public session readback, local writer release and a fresh subsequent acquisition. Existing deadline/late-BEGIN/exception tests and protected delivery contracts remain unchanged. Production guard remains absent for the planned bounded-over old-fails control; no application test or collection has executed. External guard proposal and frozen baseline runner are being prepared for independent actual-diff review. Execution remains queued behind the manager's Claude-focused slot, requested via relay-msg-5c26a227c82d492cb23d84badfe88247; pending transport is not slot release.
 
 Root instruction relay-reply-f0a07b29a9f54683cf2348d3f9f37296a050f85e60b2dcd07bef3ff9ab3d989c, delivery relay-delivery-d76db2311a5d4ec8bde901932b736e16, adopts the source-supported narrow pre-BEGIN correction. First implementation step: invoke /agent-workflow, resolve existing agent-workflow:service-performance, assess whole-change applicability and shared caller impact before code edits. Resolution found this existing Blocked record. The change is non-exempt; retain expanded High/Large for the whole task. storage/sqlite_queue.py is GRAY persistence under current policy, tests BLUE, with judgment raised for shared transaction-admission behavior and existing parent RED storage scope retained. No boundary/import/schema/API/accepted caller-contract change is proposed. This is manager scope adoption under the standing user objective, not a new direct human quote or environment approval.
@@ -2651,7 +2653,7 @@ Agent technical review: /root/architecture_check, clean nonimplementer source/pl
 
 **Exceptions:** None
 
-**State:** Ready to implement
+**State:** Blocked
 <!-- agent-workflow:end -->
 
 ### Final adbc Windows preparation boundaries — pre-edit checkpoint 2026-10-16
