@@ -170,6 +170,8 @@ async function connectDriver({ endpoint, sourceRoot, env = process.env, load = l
       async submit(text) {
         if (typeof text !== 'string' || !text) throw new Error('submit text must be non-empty')
         let stage = 'readiness'
+        let editorHandle
+        let primaryError
         try {
           const composer = await waitForComposerReady()
           stage = 'fill'
@@ -178,14 +180,28 @@ async function connectDriver({ endpoint, sourceRoot, env = process.env, load = l
           const button = await submitButton(composer, page, timeout)
           stage = 'enabled'
           await waitForEnabled(button)
-          stage = 'click'
-          await button.click()
+          stage = 'payload-check'
+          editorHandle = await composer.elementHandle()
+          if (!editorHandle || !(await editorHandle.isVisible()) || await editorHandle.innerText() !== text) {
+            throw new Error('Desktop composer payload changed before keyboard submit')
+          }
+          stage = 'keyboard-submit'
+          await editorHandle.press('Enter', {timeout})
           return { submitted: true }
         } catch (error) {
+          primaryError = error
           if (error && typeof error === 'object') {
             error.submitDiagnostics = {stage, snapshot: await submitPageSnapshot(page)}
           }
           throw error
+        } finally {
+          if (editorHandle) {
+            try {
+              await editorHandle.dispose()
+            } catch (disposeError) {
+              if (!primaryError) throw disposeError
+            }
+          }
         }
       },
       async wait(text) {

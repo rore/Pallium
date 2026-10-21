@@ -202,6 +202,11 @@ submit-control timeout and a secondary process-identity cleanup refusal. The
 second-release job remained unexecuted, including its targeted continuation.
 The [qualification record](../../docs/designs/hermes-native-qualification.md)
 retains those failures; no runtime correction or complete matrix is claimed.
+Run [39598460905](https://github.com/rore/Pallium/actions/runs/39598460905) on
+`534b546936ce9d9a2fb0d5a1e8415302c9c6b652` repeated the Desktop memory-on
+submit failure (61 passed, one failed); v0.22.2 was cancelled. The next reviewed
+caller uses ordinary Enter on one payload-verified editor, with no action retry.
+The failed button route remains unqualified; this is not an application fix.
 Required-CI shared-test availability failures affected Python 3.12 and 3.13 on
 different candidate heads; the Hermes changes did not repair them.
 These results do not qualify Windows 11, everyday MSIX/updater behavior, native

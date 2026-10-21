@@ -108,6 +108,7 @@ def test_commands_drive_only_public_visible_desktop_controls(tmp_path):
     result = run_node(r"""
 const d = require(process.argv[1]);
 const calls = [];
+let filledText = '';
 function loc(kind) {
   return {
     count: async () => 1,
@@ -117,7 +118,14 @@ function loc(kind) {
     isEnabled: async () => true,
     isVisible: async () => true,
     innerText: async () => '',
-    fill: async text => calls.push(['fill', text]),
+    fill: async text => { filledText = text; calls.push(['fill', text]); },
+    elementHandle: async () => {
+      const id = calls.filter(entry => entry[0] === 'elementHandle').length + 1;
+      calls.push(['elementHandle', id]);
+      return {isVisible: async () => true, innerText: async () => filledText,
+        press: async (key, options) => calls.push(['press', id, key, options.timeout]),
+        dispose: async () => calls.push(['dispose', id])};
+    },
     click: async () => calls.push(['click', kind]),
     waitFor: async options => calls.push(['waitFor', kind, options])
   };
@@ -169,6 +177,10 @@ const env = {GITHUB_ACTIONS:'true', RUNNER_ENVIRONMENT:'github-hosted', RUNNER_O
         ["text", "Réponse ✓ 日本語", {"exact": False}]
     ]
     assert [entry for entry in calls if entry[0] == "close"] == [["close"]]
+    assert [entry for entry in calls if entry[0] == "elementHandle"] == [["elementHandle", 1]]
+    assert [entry for entry in calls if entry[0] == "press"] == [["press", 1, "Enter", 30000]]
+    assert [entry for entry in calls if entry[0] == "dispose"] == [["dispose", 1]]
+    assert not [entry for entry in calls if entry[0] == "click" and entry[1] == 'button[type="submit"]']
     assert result["responses"] == [
         {"id": 1, "ok": True, "result": {"ready": True}},
         {"id": 2, "ok": True, "result": {"submitted": True}},
@@ -183,12 +195,15 @@ def test_submit_waits_for_payload_control_mount_and_visibility(tmp_path):
 const d = require(process.argv[1]);
 const env = {GITHUB_ACTIONS:'true', RUNNER_ENVIRONMENT:'github-hosted', RUNNER_OS:'Windows',
   RUNNER_ARCH:'X64', HERMES_NATIVE_CI_ISOLATION:'github-hosted-ephemeral-windows'};
-let waits=0, filled='', clicks=0, snapshotCalls=0;
+let waits=0, filled='', clicks=0, presses=0, pressTimeout=null, handleDisposals=0, snapshotCalls=0;
 const button={count:async()=>waits<1?0:1, isVisible:async()=>waits>=2,
   isEnabled:async()=>true, click:async()=>{clicks++;}};
 const form={count:async()=>1, locator:()=>button};
+const editorHandle={isVisible:async()=>true, innerText:async()=>filled,
+  press:async(key,options)=>{presses++; pressTimeout=options.timeout; if(key!=='Enter') throw Error('wrong key');},
+  dispose:async()=>{handleDisposals++;}};
 const composer={getAttribute:async name=>name==='contenteditable'?'true':null,
-  fill:async text=>{filled=text;}, locator:()=>form};
+  fill:async text=>{filled=text;}, locator:()=>form, elementHandle:async()=>editorHandle};
 const page={url:()=> 'file:///synthetic/index.html',
   locator:()=>({count:async()=>1, first:()=>composer}), waitForTimeout:async()=>{waits++;},
   evaluate:async()=>{snapshotCalls++; return {};}};
@@ -198,11 +213,11 @@ const browser={contexts:()=>[{pages:()=>[page]}],close:async()=>{}};
     timeout:1000,load:()=>({connectOverCDP:async()=>browser})});
   const submitted=await driver.submit('synthetic follow-up');
   await driver.close();
-  console.log(JSON.stringify({submitted,filled,waits,clicks,snapshotCalls}));
+  console.log(JSON.stringify({submitted,filled,waits,clicks,presses,pressTimeout,handleDisposals,snapshotCalls}));
 })().catch(e=>{console.error(e);process.exit(1)});
 """, tmp_path)
     assert result == {"submitted": {"submitted": True}, "filled": "synthetic follow-up", "waits": 2,
-                      "clicks": 1, "snapshotCalls": 0}
+                      "clicks": 0, "presses": 1, "pressTimeout": 1000, "handleDisposals": 1, "snapshotCalls": 0}
 
 
 def test_failed_submit_reports_bounded_metadata_without_retry(tmp_path):
@@ -211,7 +226,7 @@ const d = require(process.argv[1]);
 const {PassThrough} = require('node:stream');
 const env = {GITHUB_ACTIONS:'true', RUNNER_ENVIRONMENT:'github-hosted', RUNNER_OS:'Windows',
   RUNNER_ARCH:'X64', HERMES_NATIVE_CI_ISOLATION:'github-hosted-ephemeral-windows'};
-let mode=0, clicks=0, snapshotCalls=0;
+let mode=0, clicks=0, presses=0, handleDisposals=0, snapshotCalls=0;
 const buttons=Array.from({length:6},()=>({type:'submit',disabled:false,
   getAttribute:name=>name==='type'?'submit':null,
   getBoundingClientRect:()=>({x:1,y:2,width:3,height:4})}));
@@ -221,7 +236,9 @@ const form={tagName:'FORM',parentElement:null,querySelectorAll:selector=>{
 const makeComposer=(snapshotVisible=true)=>({parentElement:form,innerText:'private composer contents',snapshotVisible,
   getAttribute:name=>name==='contenteditable'?'true':null,closest:()=>form,
   getBoundingClientRect:()=>snapshotVisible?{x:1,y:2,width:3,height:4}:{x:0,y:0,width:0,height:0},
-  fill:async()=>{},locator:()=>({count:async()=>1,locator:()=>({count:async()=>1,
+  fill:async()=>{},elementHandle:async()=>({isVisible:async()=>true,innerText:async()=>'private prompt',
+    press:async()=>{presses++;throw Error('synthetic keyboard failure');},dispose:async()=>{handleDisposals++;}}),
+  locator:()=>({count:async()=>1,locator:()=>({count:async()=>1,
     isVisible:async()=>true,isEnabled:async()=>true,click:async()=>{clicks++;throw Error('synthetic click failure');}})})});
 const snapshotComposers=[makeComposer(false),makeComposer(false),makeComposer(false),makeComposer(true)];
 global.getComputedStyle=element=>({display:element.snapshotVisible===false?'none':'block',visibility:'visible'});
@@ -244,16 +261,16 @@ const browser={contexts:()=>[{pages:()=>[page]}],close:async()=>{}};
     stdin:input,stdout:output,load:()=>({connectOverCDP:async()=>browser})});
   for(let id=1;id<=3;id++) input.write(JSON.stringify({id,op:'submit',text:'private prompt'})+'\n');
   input.end(); await running;
-  console.log(JSON.stringify({clicks,snapshotCalls,responses:chunks.join('').trim().split('\n').map(JSON.parse)}));
+  console.log(JSON.stringify({clicks,presses,handleDisposals,snapshotCalls,responses:chunks.join('').trim().split('\n').map(JSON.parse)}));
 })().catch(e=>{console.error(e);process.exit(1)});
 """, tmp_path)
-    assert result["clicks"] == 3
+    assert result["clicks"] == 0 and result["presses"] == 3 and result["handleDisposals"] == 3
     assert result["snapshotCalls"] == 3
     captured, failed, timed_out = result["responses"]
     for index, response in enumerate((captured, failed, timed_out), 1):
         assert response["id"] == index and response["ok"] is False
-        assert response["error"] == "synthetic click failure"
-        assert response["diagnostics"]["stage"] == "click"
+        assert response["error"] == "synthetic keyboard failure"
+        assert response["diagnostics"]["stage"] == "keyboard-submit"
     snapshot = captured["diagnostics"]["snapshot"]
     assert snapshot["status"] == "captured" and snapshot["composerCount"] == 4
     assert snapshot["visibleComposerCount"] == 1
@@ -274,6 +291,45 @@ const browser={contexts:()=>[{pages:()=>[page]}],close:async()=>{}};
     assert failed["diagnostics"]["snapshot"]["status"] == "failed"
     assert set(failed["diagnostics"]["snapshot"]) == {"status"}
     assert timed_out["diagnostics"]["snapshot"]["status"] == "timeout"
+
+
+def test_submit_does_not_press_missing_detached_or_changed_editor_handle(tmp_path):
+    result = run_node(r"""
+const d = require(process.argv[1]);
+const {PassThrough} = require('node:stream');
+const env = {GITHUB_ACTIONS:'true', RUNNER_ENVIRONMENT:'github-hosted', RUNNER_OS:'Windows',
+  RUNNER_ARCH:'X64', HERMES_NATIVE_CI_ISOLATION:'github-hosted-ephemeral-windows'};
+let locateCalls=0, fills=0, presses=0, disposed=0;
+const button={count:async()=>1,isVisible:async()=>true,isEnabled:async()=>true,click:async()=>{throw Error('click forbidden');}};
+const form={count:async()=>1,locator:()=>button};
+let currentText='';
+const composer={getAttribute:async name=>name==='contenteditable'?'true':null,
+  fill:async text=>{fills++;currentText=text;},locator:()=>form,
+  elementHandle:async()=>{
+    if(currentText==='missing') return null;
+    return {isVisible:async()=>currentText!=='detached',innerText:async()=>currentText==='changed'?'':'changed',
+      press:async()=>{presses++;},dispose:async()=>{disposed++;}};
+  }};
+const page={url:()=> 'file:///synthetic/index.html',locator:()=>{locateCalls++;return {count:async()=>1,first:()=>composer};},
+  waitForTimeout:async()=>{},evaluate:async()=>{throw Error('bounded snapshot unavailable');}};
+const browser={contexts:()=>[{pages:()=>[page]}],close:async()=>{}};
+(async()=>{
+  const input=new PassThrough(),output=new PassThrough(),chunks=[];
+  output.on('data',chunk=>chunks.push(chunk.toString('utf8')));
+  const running=d.serveProtocol({endpoint:'ws://127.0.0.1:43123/devtools/browser/x',sourceRoot:'.',env,
+    stdin:input,stdout:output,load:()=>({connectOverCDP:async()=>browser})});
+  for(let id=1;id<=3;id++) input.write(JSON.stringify({id,op:'submit',text:['missing','detached','changed'][id-1]})+'\n');
+  input.end();await running;
+  console.log(JSON.stringify({locateCalls,fills,presses,disposed,responses:chunks.join('').trim().split('\n').map(JSON.parse)}));
+})().catch(e=>{console.error(e);process.exit(1)});
+""", tmp_path)
+    assert result["locateCalls"] == result["fills"] == 3
+    assert result["presses"] == 0 and result["disposed"] == 2
+    for index, response in enumerate(result["responses"], 1):
+        assert response["id"] == index and response["ok"] is False
+        assert response["error"] == "Desktop composer payload changed before keyboard submit"
+        assert response["diagnostics"]["stage"] == "payload-check"
+        assert response["diagnostics"]["snapshot"]["status"] == "failed"
 
 
 def test_composer_and_submit_ambiguity_fail_closed(tmp_path):

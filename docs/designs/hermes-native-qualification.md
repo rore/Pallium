@@ -1,5 +1,25 @@
 # Hermes native qualification
 
+Run [39598460905](https://github.com/rore/Pallium/actions/runs/39598460905), candidate
+`534b546936ce9d9a2fb0d5a1e8415302c9c6b652`, again failed v0.22.0 Desktop memory-on
+at History submission after New session (61 passed, one failed in 392.12 seconds).
+The new failure snapshot shows that click was entered, Send initially resolved
+then became invisible, and the visible composer was empty without a submit
+control. No History query or prompt appears in captured HTTP/provider evidence;
+this does not prove all internal effects or justify resubmitting. The other three
+UI cases passed. Parent source/cleanup passed in all four, but the failed driver
+exited 1 and its full journey remains unqualified. v0.22.2 was cancelled.
+
+The next reviewed driver uses the visible editor's ordinary plain Enter handler
+as its first and only submission action. Both pinned releases read live editor
+text on that path. It retains existing form/control readiness gates, then binds
+one editor, checks its exact nonempty payload and presses Enter once on that
+same element. Cleared, missing or detached input fails; there is no refill,
+fallback or retry after an ambiguous action. These gates do not prove idle state.
+This changes the test's caller mechanism; it does not repair or qualify the
+failed Send-button route. The integration and Windows matrix remain experimental
+until the current acceptance gates pass.
+
 Windows qualification remains incomplete. Diagnostic run
 [39593293647](https://github.com/rore/Pallium/actions/runs/39593293647), candidate
 `d5b7e3d9644801472674e1310aa484a7da75a62e`, passed three v0.22.0 UI cases but
