@@ -1,8 +1,12 @@
 # Hermes native qualification
 
-Status: the user approved the disposable runner in PR #328 and subsequently one
-additional attempt, for three total attempts within four runner-hours. All three
-attempts are consumed; no fourth dispatch or job rerun is authorized. The runner is merged; the first run is
+Status: the user approved the disposable runner in PR #328, subsequently one
+additional attempt, and then up to two further disposable-VM attempts in response
+to the renewed request on 2026-10-21. Five total attempts including reruns are
+authorized within the unchanged four-runner-hour ceiling. Three are consumed;
+at most two remain, subject to fresh candidate checks and remaining time.
+The isolated environment and evidence may be retained through completion.
+The runner is merged; the first run is
 [39474582150](https://github.com/rore/Pallium/actions/runs/39474582150), testing
 candidate `973f21902168bb81ef2fdc7fe629cecad836ff27`. It failed four native cases
 after 30 helper checks passed; the second release was cancelled by fail-fast.
@@ -24,7 +28,9 @@ three native cases after 58 checks passed. Desktop memory-off completed again;
 both TUI cases crashed the screen observer on an empty wide-character continuation
 cell, and Desktop memory-on rejected a valid nullable expansion field. Fail-fast
 cancelled v0.22.2. All four owned-cleanup and source postconditions passed.
-Further native execution needs a new explicit budget approval.
+Before further execution, reconcile actual attempts and conservative elapsed job
+time against the unchanged total ceiling; each next run's full worst-case time
+must fit. The additional approval does not waive candidate checks or review.
 Harness repair and pure replay are not a native pass.
 Hermes remains experimental. This approval excludes local recovery and everyday
 installation or rollout.

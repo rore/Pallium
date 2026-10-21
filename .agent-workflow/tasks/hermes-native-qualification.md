@@ -1,6 +1,10 @@
 # Disposable Hermes Windows qualification runner
 
+2026-10-21 current authority: the user directly approved continuing after the request for up to two more disposable-VM attempts within the original four-hour total cap: "Do what you need to make sure the integration works. If you need keep an isolated environment you can work on till its done". The cap is now five total native attempts including reruns; three consumed, at most two available. The14400-second total ceiling is unchanged; conservative consumption3795 seconds must be reconciled with actual attempts before dispatch, and each next run's full7200-second maximum must fit. Fresh candidate checks and independent review remain required. Keep the isolated environment/evidence; everyday environment, local native/build execution, paid inference and recovery remain excluded. Older exhausted-three-attempt statements below are retained historical evidence, superseded only on additional attempt authority.
+
 Latest terminal ledger: additional human-approved run39490754190 attempt1 tested b29299499cab10871cafd54e35ffdcdc6402940e and failed v0.22.0 with3 failed/58 passed; v0.22.2 cancelled fail-fast. Desktop memory-off complete journey passed again. Both TUI observers crashed on pyte empty wide-continuation rendering; Desktop memory-on reached expansion then rejected documented nullable match_text. All four cleanup/source postconditions passed. All THREE approved attempts are consumed within the original four-runner-hour ceiling; no fourth dispatch/job rerun is authorized. Fixture repairs and ordinary isolated CI do not replace missing native evidence or extend native execution authority. This supersedes older pending/two-attempt notes below; integration remains experimental.
+
+Latest execution preflight: exactly three terminal attempt1 runs; created_at-to-completed_at conservative total3800 seconds, including cancelled slots; next worst-case7200 gives11000 within14400. Workflow blob24af71218a155c1e80e647977af5f6e44b18239f unchanged. No dispatch; candidate CI/review held.
 
 <!-- agent-workflow:start -->
 **Outcome:**
@@ -13,13 +17,16 @@ One manual GitHub Actions workflow and its synthetic native qualification eviden
 Add .github/workflows/hermes-native-qualification.yml through a separate runner-only PR, merge that runner after validation, then dispatch an immutable Pallium candidate for two pinned Hermes releases. Preserve the separate feature PR and shared reliability ownership.
 
 **Constraints:**
-No everyday applications, services, configuration, credentials, data, launchers, installed versions or persistent environment changes. No local dependency builds/native launches, paid inference, publishing, secrets, schedules or existing CI/protection changes. At most two manual native runs including one fix/rerun, two sequential release jobs per run, sixty minutes per job and four runner-hours total. Failed/skipped checks are not qualification. Previously disclosed local recovery remains unapproved and untouched.
+No everyday applications, services, configuration, credentials, data, launchers, installed versions or persistent environment changes. No local dependency builds/native launches, paid inference, publishing, secrets, schedules or existing CI/protection changes. At most five manual native runs including all reruns, two sequential release jobs per run, sixty minutes per job and four runner-hours total. Failed/skipped checks are not qualification. Previously disclosed local recovery remains unapproved and untouched.
 
 **Completion criteria:**
 A reviewed manual runner is merged separately, validates exact candidate/source/runtime identities, runs four required UI/memory cases per release without skipped acceptance cases and retains synthetic evidence. Native outcomes and limits are reported accurately, and all repository work is pushed.
 
 **Requirement baseline:**
 {"source":"work-record-initial","outcome":"Qualify the Hermes integration through a manual disposable Windows runner without modifying the user's working environment.","scope":"Add .github/workflows/hermes-native-qualification.yml through a separate runner-only PR, merge that runner after validation, then dispatch an immutable Pallium candidate for two pinned Hermes releases. Preserve the separate feature PR and shared reliability ownership.","constraints":"No everyday applications, services, configuration, credentials, data, launchers, installed versions or persistent environment changes. No local dependency builds/native launches, paid inference, publishing, secrets, schedules or existing CI/protection changes. At most two manual native runs including one fix/rerun, two sequential release jobs per run, sixty minutes per job and four runner-hours total. Failed/skipped checks are not qualification. Previously disclosed local recovery remains unapproved and untouched.","completion_criteria":"A reviewed manual runner is merged separately, validates exact candidate/source/runtime identities, runs four required UI/memory cases per release without skipped acceptance cases and retains synthetic evidence. Native outcomes and limits are reported accurately, and all repository work is pushed."}
+
+**Behavior changes:**
+[{"target":"task-context.constraints","classification":"requirement-change","before":"No everyday applications, services, configuration, credentials, data, launchers, installed versions or persistent environment changes. No local dependency builds/native launches, paid inference, publishing, secrets, schedules or existing CI/protection changes. At most two manual native runs including one fix/rerun, two sequential release jobs per run, sixty minutes per job and four runner-hours total. Failed/skipped checks are not qualification. Previously disclosed local recovery remains unapproved and untouched.","after":"No everyday applications, services, configuration, credentials, data, launchers, installed versions or persistent environment changes. No local dependency builds/native launches, paid inference, publishing, secrets, schedules or existing CI/protection changes. At most five manual native runs including all reruns, two sequential release jobs per run, sixty minutes per job and four runner-hours total. Failed/skipped checks are not qualification. Previously disclosed local recovery remains unapproved and untouched.","reason":"The user directly answered the request for up to two additional disposable-VM attempts after three consumed attempts, within the unchanged original four-runner-hour total ceiling.","impact":"Two further attempts are available, subject to the remaining worst-case time budget, independent review and required candidate checks. Everyday environment, paid inference, local native execution and recovery remain excluded.","alternatives":"Keeping the exhausted three-attempt cap would prevent further native qualification despite the user's new direct authorization.","authority":{"scope":"task","name":"task-owner"},"approval":{"by":"user","reference":"Current chat, 2026-10-21: direct response to the two-additional-native-attempt request","verbatim":"Do what you need to make sure the integration works. If you need keep an isolated environment you can work on till its done"}}]
 
 **Relationships:**
 {"schema_version":1,"sources":[{"provider":"minimap","scope_ref":"roadmap:v1:git:github.com/rore/pallium#roadmap","local_ref":"item:v1:add-hermes-agent-integration"}],"pull_requests":["https://github.com/rore/Pallium/pull/328"]}
@@ -51,13 +58,15 @@ Repository correctness -> whole-change test selector, workflow/redline checks, i
 Agent technical review: /root/hermes_cd_plan_review independently reviewed the concrete proposal during the existing slice4 task, including full-SHA main-workflow checkout, native argv binding, candidate revalidation, isolation/evidence/no-skip limits. Findings were addressed before this implementation. Review is technical, not human authority. Staged result review follows.
 
 **Approvals:**
+Approved by user 2026-10-21: "Do what you need to make sure the integration works. If you need keep an isolated environment you can work on till its done"
+Direct response to the request for up to two additional disposable-VM attempts within the original four-hour total ceiling; five total attempts including reruns, three consumed. No other boundary is changed.
 Approved by user 2026-10-20: "Approved. And I told you this is a night job. Get this done"
 This directly answers the presented proposal to add and merge the separate disposable Windows runner and dispatch it at most twice, capped at four runner-hours. It does not authorize local recovery or everyday rollout.
 
 **Exceptions:**
 —
 
-**State:** Ready for review
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
