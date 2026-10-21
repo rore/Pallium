@@ -1,17 +1,17 @@
 # Pallium for Hermes
 
-This experimental package installs a native Hermes plugin, the discoverable `pallium-memory` skill, and the plugin-owned Pallium MCP bridge. Current source passed gateway RPC Relay/History on Hermes v0.22.0 and v0.22.2. Setup never creates a global `mcp_servers` connection and preserves provider, toolset, Tool Search, other plugin, credential, and data settings.
+This experimental package installs a native Hermes plugin, the discoverable `pallium-memory` skill, and the plugin-owned Pallium MCP bridge. Earlier gateway RPC Relay/History checks passed on Hermes v0.22.0 and v0.22.2; the accepted native UI/MCP/package matrix below proves the changed runtime. Setup never creates a global `mcp_servers` connection and preserves provider, toolset, Tool Search, other plugin, credential, and data settings.
 
 For the public capability overview and support boundaries, see the
 [Hermes integration guide](../../docs/hermes-integration.md).
 
 ## Production qualification in progress
 
-Fresh full-package review found two release blockers: cached registration can
-expire during ordinary use, and a valid inbound message above 1,600 characters
-can leave delivery fenced. Isolated fixes and new lifetime/maximum-payload E2E
-are being qualified. The accepted matrix below describes the earlier short
-journeys, not acceptance of the changed plugin.
+The corrected plugin renews the exact Relay endpoint during trusted ordinary
+turns and matching wakes. Caller E2E covers the 24-hour boundary, and the current
+native matrix passed complete 16,000-code-point Unicode deliveries with Hermes's
+default enabled 10,000-character hook spill limit unchanged, followed by reply
+wakes. Existing uncertain claim/admission fences remain intact.
 
 The scoped Windows native matrix is accepted for both Desktop and **TUI**, with
 memory off and on for Hermes v0.22.0 and v0.22.2. The package remains experimental
@@ -31,10 +31,10 @@ the host's global spill settings.
 | Released hosts | Actual Desktop and TUI journeys on the tested compatible releases | Windows Server 2025 unpacked-app matrix passed on v0.22.0 and v0.22.2: both surfaces, memory off/on; Linux TUI also passed on both pins |
 | Runtime compatibility | Public plugin identity, injection, hook and middleware contracts; clear missing-capability errors | Gateway and scoped native checks passed on both pins. Admission uses public capabilities, not a version lock; later releases need their own evidence |
 | Normal configuration | Default Tool Search and supported plugin coexistence | Native Windows tests used synthetic providers. Linux TUI covered built-in `openai-api` with memory off and custom synthetic provider with memory on; ordinary/paid-provider quality and all provider/memory combinations remain unqualified |
-| Full package | Skill, Relay, History and opt-in memory lifecycle; memory off leaves Relay/History functional | All eight Windows UI cells passed their complete journeys and profile lifecycle; Linux TUI default-off and opt-in lifecycles passed on both pins |
+| Full package | Skill, Relay, History and opt-in memory lifecycle; memory off leaves Relay/History functional | All eight Windows UI cells passed complete 16,000-character delivery, subsequent reply and profile lifecycle with default hook spill enabled; Linux TUI default-off and opt-in lifecycles passed on both pins |
 | Recovery | Busy/concurrent sessions, reset/close, host/service/MCP restart, stale routes and ambiguous outcomes | Busy turns, endpoint outage and controlled host/MCP relaunch passed in the scoped journeys. Automatic standalone MCP reconnection and untested failure modes remain unqualified |
 | Lifecycle | Disposable install/update/remove/rollback, repeated use and owned-process cleanup | Native repeat setup, status and removal preserved profile data on both Windows pins and both surfaces; caller ownership/conflict coverage remains separate |
-| Public documentation | Public entry points, setup/capability guides and bundled skill match final verified behavior; commands and links checked | Final alignment audit passed 11 documents, 91 local links/anchors and 3 setup commands; human release acceptance remains open |
+| Public documentation | Public entry points, setup/capability guides and bundled skill match final verified behavior; commands and links checked | Final alignment audit passed 11 documents, 93 local links/anchors and 3 setup commands; human release acceptance remains open |
 
 The [v0.22.2 release notes](https://github.com/NousResearch/hermes-agent/releases/tag/v0.22.2)
 identify v0.22.1 as an accidental build with a session-deletion issue; exclude it
@@ -172,16 +172,19 @@ omitting it retains the bounded container partition.
 
 ## Native qualification limits
 
-Current native gateway wake qualification passed on v0.22.0 and v0.22.2 with
+Earlier gateway wake qualification passed on v0.22.0 and v0.22.2 with
 disposable local-provider profiles and loopback stubs. Those gateway checks do
 not establish native UI interaction; accepted Windows UI evidence is summarized
 below.
-The accepted native run [39626758387](https://github.com/rore/Pallium/actions/runs/39626758387)
-tested candidate `b3601c79a8269e8a734450c67e9e40c3e330b9fb`. Independent review
+The accepted native run [39650756737](https://github.com/rore/Pallium/actions/runs/39650756737)
+tested candidate `d5896a24ec3b72c1f23f5323e43ab8d2a06e60ca`. Independent review
 accepted all eight Windows cells: v0.22.0 and v0.22.2, Desktop and TUI, memory
-off and on. Each release job passed 81 checks with zero failures, errors or skips.
-The complete journeys included later-session History, busy-turn handling,
-privacy/source checks, two process generations and profile update/status/removal.
+off and on. Each release job passed 83 checks with zero failures, errors or skips.
+The complete journeys included the full Unicode payload at the provider under
+default hook spill, subsequent reply, later-session History, busy-turn handling,
+privacy/source checks, two normal process generations and profile update/status/removal.
+All final audits recorded zero cancellations and zero fatal errors. The earlier
+`b3601c79` matrix remains historical evidence for its shorter journeys.
 Earlier failed and cancelled runs remain recorded as failures in the
 [qualification history](../../docs/designs/hermes-native-qualification.md); this
 accepted run does not reclassify them.
@@ -191,9 +194,12 @@ native app Quit, automatic standalone MCP reconnection, paid-provider quality or
 every provider/memory combination.
 
 Native evidence used Windows Server 2025 with an unpacked app and synthetic
-providers. Required CI passed on candidate `b3601c79` in both Linux lanes, Windows
-and governance. The package remains experimental pending human release
-acceptance. A focused gateway journey requires an isolated environment:
+providers. Current CI passed Python 3.12, Windows and governance; Python 3.13
+failed on unchanged generic registration availability before hook assertions.
+That failed receipt remains an availability limitation, with full counts and
+classification in the [qualification record](../../docs/designs/hermes-native-qualification.md#current-scoped-result).
+The package remains experimental pending human release acceptance. A focused
+gateway journey requires an isolated environment:
 
 ```powershell
 $env:HERMES_E2E_SOURCE = 'C:\path\to\pinned\hermes-agent'

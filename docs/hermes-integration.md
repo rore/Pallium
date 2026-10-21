@@ -5,20 +5,21 @@ acceptance. It bundles a native plugin, the `pallium-memory` skill and a
 profile-scoped MCP bridge. Everyday installation remains a separate rollout
 decision.
 
-The latest full-package review found two release blockers: ordinary host turns
-did not renew Relay liveness after 24 hours, and valid messages above 1,600
-characters could leave delivery fenced. Isolated corrections and their lifetime,
-maximum-payload and subsequent-delivery regressions are being qualified. The
-earlier native matrix below covers its original short journeys; it does not
-qualify the changed plugin or these newly identified boundaries.
+Independent review accepted all eight corrected-package Windows UI journeys in
+[native run 39650756737](https://github.com/rore/Pallium/actions/runs/39650756737),
+candidate `d5896a24ec3b72c1f23f5323e43ab8d2a06e60ca`. Each release job passed 83
+checks with zero failures, errors or skips. The provider received the complete
+16,000-code-point Unicode delivery with Hermes's default enabled
+10,000-character hook spill limit unchanged, followed by a successful reply wake.
+Separate caller E2E covers the 24-hour liveness boundary and uncertain outcomes.
 
 The scoped native matrix passed on both Windows **Desktop and TUI**, with memory
 off and on, for pinned Hermes **v0.22.0** and **v0.22.2** sources. It ran in an
 isolated Windows Server 2025 VM with an unpacked app and synthetic providers.
 Runtime checks use public plugin capabilities rather than an exact Hermes
 version lock; a pass on these pins does not establish compatibility with every
-later release. Current-source gateway RPC Relay/History proof also passed on both
-pins.
+later release. Earlier gateway RPC Relay/History checks also passed on both pins;
+the accepted native UI/MCP/package matrix is the current changed-runtime proof.
 
 Both pins passed the complete native Desktop/TUI memory-off and memory-on
 journeys, including default Tool Search, Relay/wake, later-session History,
@@ -28,12 +29,17 @@ does not qualify Windows 11, MSIX or native updater behavior, native app Quit,
 automatic standalone MCP reconnection, paid-provider quality or every
 provider/memory combination. Earlier failed runs remain documented as failed in
 the package qualification record; the accepted matrix does not reclassify them.
+Current CI also retains a shared registration-availability failure; its scope and
+the passing lanes are recorded in the
+[qualification history](designs/hermes-native-qualification.md#current-scoped-result).
 
 Additional isolated Linux TUI qualification passed on both releases at candidate
-`13029e38`: the full default-off journey used Hermes's built-in `openai-api`
+`b96a05e1`: the full default-off journey used Hermes's built-in `openai-api`
 configuration, and the memory-on journey used a custom synthetic provider.
-Both exercised busy-turn delivery, later-session History, host/MCP relaunch and
-profile update/removal. Provider credentials stayed out of both MCP generations.
+All four cases passed without skips: v0.22.0 took 115.475 seconds and v0.22.2
+112.384 seconds. The journeys exercised the complete long payload, busy-turn
+delivery, later-session History, host/MCP relaunch and profile update/removal.
+Provider credentials stayed out of both MCP generations.
 These offline checks use synthetic responses; they establish configuration and
 integration behavior, not paid-model quality or every provider/memory combination.
 
@@ -41,8 +47,8 @@ integration behavior, not paid-model quality or every provider/memory combinatio
 
 | Capability | Current boundary |
 |---|---|
-| Relay | 12 MCP tools for discovery, identity, work associations, messaging, status and trace; current gateway round trips passed on v0.22.0/v0.22.2 |
-| Session History | Capture plus `pallium_search_history`, `pallium_search_history_by_work_ref` and `pallium_expand_source`; current search and expansion passed through v0.22.0/v0.22.2 gateway RPC |
+| Relay | 12 MCP tools for discovery, identity, work associations, messaging, status and trace; native UI/MCP round trips passed in the current matrix on v0.22.0/v0.22.2 |
+| Session History | Capture plus `pallium_search_history`, `pallium_search_history_by_work_ref` and `pallium_expand_source`; search and expansion passed in the current native UI/MCP matrix on v0.22.0/v0.22.2 |
 | Skill and MCP | Bundled skill and plugin-owned stdio bridge; trusted conversation identity and private scope are supplied by the integration |
 | Package lifecycle | Explicit-profile setup, status, repeat setup/update and removal with ownership checks; running-host readiness is a separate check |
 | Derived memory | Eleven existing memory query/write tools are available through an explicit opt-in catalog; disabled by default. This adds tools, not automatic memory injection. The opt-in lifecycle passed on both pinned Windows Desktop/TUI releases and both tested Linux TUI releases |

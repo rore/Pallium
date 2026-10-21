@@ -2,15 +2,23 @@
 
 ## Current scoped result
 
-Fresh full-package review at `353e8f83` found two plugin release blockers:
-ordinary-turn registration expiry and valid long-payload fencing. Their isolated
-fixes and new caller E2E are under qualification. The accepted matrix below is
-historical short-journey evidence; it does not qualify the changed application.
-The renewed shared Windows/Linux journey uses a complete 16,000-code-point wake
-followed by a short reply wake, retaining all admission, privacy and cleanup
-checks. Separate deterministic caller E2E covers the 24-hour liveness boundary.
+Independent review accepted all eight actual Windows UI cells in native run
+[39650756737](https://github.com/rore/Pallium/actions/runs/39650756737), candidate
+`d5896a24ec3b72c1f23f5323e43ab8d2a06e60ca`. Both release jobs passed 83 checks
+with zero failures, errors or skips: v0.22.0 in 420.693 seconds and v0.22.2 in
+394.092 seconds. They ran on Windows Server 2025 with unpacked builds and
+synthetic providers. The package remains experimental pending human release
+acceptance; everyday installation remains a separate rollout decision.
 
-The enlarged journey also checks the actual pinned `hook_output_spill` helper
+The corrected application is `b96a05e1cb7b7046243398922ccd497750807548`;
+`d5896a24` preserves that application and adds the test probe's JSON transport
+correction and regression. The shared Windows/Linux journey passes a complete
+16,000-code-point Unicode wake through
+to the provider, followed by a short reply wake, retaining admission, privacy
+and cleanup checks. Separate deterministic caller E2E covers the 24-hour
+liveness boundary and uncertain outcomes.
+
+The journey also checks the actual pinned `hook_output_spill` helper
 inside the gated disposable runtime: its default 10,000-character limit spills
 the long synthetic text into an owned file but preserves the short placeholder.
 Actual UI execution then proves public request-middleware expansion and the raw
@@ -19,27 +27,21 @@ request middleware sees only the placeholder; later filters can inspect or veto
 full context. The helper proof uses per-call test output paths, not global or
 profile configuration changes.
 
-Independent review accepted all eight actual Windows UI cells in native run
-[39626758387](https://github.com/rore/Pallium/actions/runs/39626758387), candidate
-`b3601c79a8269e8a734450c67e9e40c3e330b9fb`. Each release job passed 81 checks
-with zero failures, errors or skips. The jobs ran on Windows Server 2025 with
-unpacked builds and synthetic providers. The package remains experimental pending
-human release acceptance; this scoped result does not claim general production
-readiness.
-
 | Hermes source pin | Surface | Memory | Result | Duration |
 |---|---|---|---|---:|
-| v0.22.0 `e06df9c2` | TUI | Off | Passed | 60.656 s |
-| v0.22.0 `e06df9c2` | TUI | On | Passed | 103.072 s |
-| v0.22.0 `e06df9c2` | Desktop | Off | Passed | 45.894 s |
-| v0.22.0 `e06df9c2` | Desktop | On | Passed | 60.140 s |
-| v0.22.2 `d923a5eb` | TUI | Off | Passed | 45.099 s |
-| v0.22.2 `d923a5eb` | TUI | On | Passed | 72.427 s |
-| v0.22.2 `d923a5eb` | Desktop | Off | Passed | 34.210 s |
-| v0.22.2 `d923a5eb` | Desktop | On | Passed | 43.857 s |
+| v0.22.0 `e06df9c2` | TUI | Off | Passed | 83.873 s |
+| v0.22.0 `e06df9c2` | TUI | On | Passed | 168.307 s |
+| v0.22.0 `e06df9c2` | Desktop | Off | Passed | 67.003 s |
+| v0.22.0 `e06df9c2` | Desktop | On | Passed | 85.642 s |
+| v0.22.2 `d923a5eb` | TUI | Off | Passed | 78.356 s |
+| v0.22.2 `d923a5eb` | TUI | On | Passed | 145.234 s |
+| v0.22.2 `d923a5eb` | Desktop | Off | Passed | 70.326 s |
+| v0.22.2 `d923a5eb` | Desktop | On | Passed | 85.781 s |
 
-All journeys passed History, privacy/source assertions, profile lifecycle,
-post-drain error audit, driver exit and normal two-generation cleanup. Windows
+All journeys passed busy-turn delivery, History, privacy/source assertions,
+profile preservation, post-drain error audit, driver exit 0 and normal
+two-generation cleanup. Memory-on cases completed the optional-memory lifecycle.
+All final audits recorded zero cancellations and zero fatal errors. Windows
 evidence used Server 2025 and unpacked apps; it does not qualify Windows 11,
 MSIX or updater behavior, native app Quit, or automatic standalone MCP
 reconnection. Linux TUI passed both pins separately: default-off used the built-in
@@ -48,16 +50,44 @@ Windows cases used synthetic providers. Paid-provider quality and every
 provider/memory combination remain untested. Runtime admission is capability
 based and is not hard-pinned to these release versions.
 
-Required CI for candidate `b3601c79` passed both Linux lanes and Windows in
-[run 39626448225](https://github.com/rore/Pallium/actions/runs/39626448225); the
-governance check passed in
-[run 39626448147](https://github.com/rore/Pallium/actions/runs/39626448147).
-Earlier failed receipts remain failed historical evidence; this accepted run
-does not reclassify them. No read reset occurred in the accepted matrix, so its
-success does not establish a cure for the earlier unexplained resets. Separate
-focused real-loopback tests exercise the explicit retirement cancellation boundary.
+Current candidate CI [39650707590](https://github.com/rore/Pallium/actions/runs/39650707590)
+remains failed. Python 3.12 passed the full non-slow suite: 7,921 passed, 93 skipped and
+two expected failures in 529.37 seconds. Python 3.13 failed at generic
+Codex/Claude registration before hook assertions: HTTP 503 `relay_busy` after
+1,949 ms, with `setup_deadline` / `session_factory` at 1,947 ms. It recorded
+3,131 passed, 22 skipped and one expected failure in 365.80 seconds; the exact
+failed iteration is unknown. Windows passed, as did governance
+[39650707403](https://github.com/rore/Pallium/actions/runs/39650707403).
+Independent review classified this as unchanged shared availability under the
+task owner's explicit policy allowing Hermes work to proceed alongside those
+failures. The failure remains an availability limitation; the Hermes changes
+do not repair it.
+
+Earlier failed receipts remain failed historical evidence. No read reset
+occurred in the accepted matrix, so its success does not establish a cure for
+the earlier unexplained resets. Separate focused real-loopback tests exercise
+the explicit retirement cancellation boundary.
 
 ## Prior candidate diagnostics
+
+Native run [39648573274](https://github.com/rore/Pallium/actions/runs/39648573274)
+on `b96a05e1` failed all four v0.22.0 UI cases before launch in the spill-helper
+probe: 78 checks passed and four failed in 43.308 seconds; v0.22.2 was cancelled.
+The parent sent UTF-8 JSON through a pipe decoded by the Windows child using its
+locale and `surrogateescape`; the helper correctly refused surrogate-containing
+UTF-8 output. The test-only correction uses ASCII JSON escapes, matching the
+existing driver transport. Its real-child `cp1252:surrogateescape` regression
+failed before the fix (one failure, 1.22 seconds) and passed afterward (one pass,
+0.59 seconds), preserving the exact 16,000-character payload and output file,
+helper defaults, placeholder and containment checks. Native15's pass does not
+reclassify native14.
+
+Independent review previously accepted the shorter journeys in
+[39626758387](https://github.com/rore/Pallium/actions/runs/39626758387), candidate
+`b3601c79a8269e8a734450c67e9e40c3e330b9fb`, with 81 passing checks and zero
+failures, errors or skips per release. Later full-package reviews found ordinary
+registration expiry and long-payload/spill blockers. That historical matrix did
+not cover the corrected lifetime and maximum-payload boundaries now proved above.
 
 Run [39617852210](https://github.com/rore/Pallium/actions/runs/39617852210), candidate
 `143683d650692aff52b7633cdbde4402ced0e966`, passed 66 v0.22.0 checks and failed
@@ -322,6 +352,14 @@ This covers integration transport and configuration, not paid-model quality or
 every provider/memory combination. These Linux results supplement the later
 Windows matrix and required CI results documented above.
 
+The current corrected application `b96a05e1cb7b7046243398922ccd497750807548`
+passed all four actual Linux TUI cases again, independently accepted with zero
+failures, errors or skips. The v0.22.0 suite took 115.475 seconds and v0.22.2
+112.384 seconds. Memory-off used built-in `openai-api`; memory-on used the custom
+synthetic provider. The complete 16,000-code-point payload, subsequent reply,
+History, memory, two normal host/MCP generations and profile preservation passed.
+The later `d5896a24` probe transport correction leaves that application unchanged.
+
 Record the actual runner image and Windows version in every native result.
 Hosted Windows Server evidence must not be described as Windows 11 or installed
 MSIX qualification. The Pallium release gate covers its profile
@@ -361,17 +399,16 @@ recognizes only the
 authored scope suffix on exact memory stages and waits for the actual Desktop
 submit control to mount; unexpected stage text and ambiguous controls still fail.
 It also checks an enabled, harmless peer hook and a bounded forwarding-endpoint
-outage before the first no-reply wake. These additions require native proof;
+outage before the first no-reply wake. These checks passed in the current matrix;
 endpoint downtime does not establish full service-process or MCP restart recovery.
-The next candidate also splits each journey into two owned process generations
+The current journey also uses two owned process generations
 using the same synthetic profile. It verifies exact old PID/birth/executable
 identities are gone before and after relaunch, then requires a real new-session
 MCP call and persisted memory/History reads. Desktop userData reuse requires the
 same prior profile/runtime/source, successful dispatcher cleanup and contained
 non-reparse paths. Both legs retain separate evidence. This is controlled
 owned-tree teardown and relaunch, without a graceful native Quit or automatic
-standalone MCP-reconnect claim. Native proof was pending when this procedure was
-written; the current result is recorded above.
+standalone MCP-reconnect claim. The current result is recorded above.
 Python network guards do not confine Electron/Chromium networking, and hosted
 runner environment markers are only accidental-launch guards, not an OS sandbox.
 The recorded approval covers this disposable runner and its bounded manual runs.
