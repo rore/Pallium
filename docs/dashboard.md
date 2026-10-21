@@ -48,6 +48,11 @@ free-text trace reasons. It has the same service-global dashboard access boundar
 filters are not authentication. It does not cancel, claim, acknowledge, move, or
 delete deliveries and does not clear old durable pending messages.
 
+Delivery rows are selected before reply counts and trace maxima are grouped for
+only the returned IDs, in the same read transaction. Unindexed aggregation and
+page ordering may still scan beyond the page; the output cap is not a SQLite
+work bound.
+
 The default page contains at most 50 deliveries; `limit` accepts 1–200. Each row
 includes opaque message/delivery/endpoint IDs, creation and expiry, stored and
 effective delivery state, lease classification, recipient state/check-in recency,

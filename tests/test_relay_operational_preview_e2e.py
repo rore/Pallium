@@ -211,19 +211,21 @@ def test_persisted_reservation_is_metadata_only_not_runtime_probe(preview, outco
 
 def test_privacy_is_enforced_in_sql_and_preview_uses_one_read_snapshot(preview):
     client, storage = preview
-    _seed(storage, {"id": "secret"})
+    _seed(storage, {"id": "secret"}, {"id": "offpage"})
     _trace(storage, "secret")
-    statements, read_transactions = [], []
+    _trace(storage, "offpage")
+    statements, read_transactions, parameters_by_statement = [], [], []
 
     def capture(connection, cursor, statement, parameters, context, executemany):
         statements.append(statement)
+        parameters_by_statement.append(parameters)
         if statement.lstrip().upper().startswith("SELECT"):
             read_transactions.append(connection.connection.driver_connection.in_transaction)
 
     event.listen(storage._relay_engine, "before_cursor_execute", capture)
     try:
-        first = client.get(URL)
-        second = client.get(URL)
+        first = client.get(URL, params={"limit": 1})
+        second = client.get(URL, params={"limit": 1})
     finally:
         event.remove(storage._relay_engine, "before_cursor_execute", capture)
     assert first.status_code == second.status_code == 200
@@ -235,7 +237,22 @@ def test_privacy_is_enforced_in_sql_and_preview_uses_one_read_snapshot(preview):
         assert column not in sql
     assert all(statement.lstrip().upper().startswith(("BEGIN", "SELECT")) for statement in statements)
     assert read_transactions and all(read_transactions)
-    assert len(read_transactions) == 6  # high-water, bounded page, bounded trace projection per request
+    assert len(read_transactions) == 10  # high-water, page, reply counts, trace maxima, trace projection per request
+    assert [row["delivery_id"] for row in first.json()["items"]] == ["secret"]
+    page_queries = [sql.lower() for sql in statements if " AS cursor_created_at" in sql]
+    assert len(page_queries) == 2
+    assert all("count(" not in sql and "max(" not in sql for sql in page_queries)
+    reply_queries = [(sql.lower(), params) for sql, params in zip(statements, parameters_by_statement)
+                     if " AS linked_reply_count" in sql]
+    trace_queries = [(sql.lower(), params) for sql, params in zip(statements, parameters_by_statement)
+                     if " AS latest_sequence" in sql]
+    assert len(reply_queries) == len(trace_queries) == 2
+    for sql, params in reply_queries:
+        assert "in_reply_to in (" in sql and "group by" in sql
+        assert tuple(params) == ("message-secret",)
+    for sql, params in trace_queries:
+        assert "delivery_id in (" in sql and "group by" in sql
+        assert "secret" in params and "offpage" not in params
 
 
 def test_trace_boundary_preserves_last_result_and_unknown_uncompleted_attempt(preview):
@@ -255,6 +272,42 @@ def test_trace_boundary_preserves_last_result_and_unknown_uncompleted_attempt(pr
     assert old["items"][0]["trace"]["latest"]["sequence"] == failed
     accepted = _trace(storage, "trace", outcome="accepted")
     assert client.get(URL).json()["items"][0]["trace"]["latest_completed"]["sequence"] == accepted
+
+
+@pytest.mark.parametrize("count,limit,with_trace,expected_selects", [
+    (0, 1, False, 2), (2, 1, False, 4), (201, 200, True, 5),
+])
+def test_aggregate_queries_follow_only_the_trimmed_page(preview, count, limit, with_trace, expected_selects):
+    client, storage = preview
+    _seed(storage, *({"id": f"delivery-{n:03}"} for n in range(count)))
+    if with_trace:
+        _trace(storage, f"delivery-{count - 1:03}")
+    captured = []
+
+    def capture(connection, cursor, statement, parameters, context, executemany):
+        if statement.lstrip().upper().startswith("SELECT"):
+            captured.append((statement.lower(), parameters))
+
+    event.listen(storage._relay_engine, "before_cursor_execute", capture)
+    try:
+        response = client.get(URL, params={"limit": limit})
+    finally:
+        event.remove(storage._relay_engine, "before_cursor_execute", capture)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert len(body["items"]) == min(count, limit)
+    assert body["has_more"] is (count > limit)
+    assert len(captured) == expected_selects
+    returned = {row["delivery_id"] for row in body["items"]}
+    replies = [(sql, params) for sql, params in captured if " as linked_reply_count" in sql]
+    traces = [(sql, params) for sql, params in captured if " as latest_sequence" in sql]
+    assert len(replies) == len(traces) == (1 if returned else 0)
+    for sql, params in replies:
+        assert "in_reply_to in (" in sql and "group by" in sql
+        assert set(params) == {"message-" + ident for ident in returned}
+    for sql, params in traces:
+        assert "delivery_id in (" in sql and "group by" in sql and "recorded_sequence <=" in sql
+        assert {value for value in params if isinstance(value, str) and value.startswith("delivery-")} == returned
 
 
 @pytest.mark.parametrize("spec,trace_stage,availability", [

@@ -1284,17 +1284,8 @@ def mount_dashboard(
             through = highwater if trace_through_sequence is None else trace_through_sequence
             if through > highwater:
                 raise HTTPException(status_code=422, detail="trace_through_sequence exceeds available high-water; continuity is unknown")
-            parent, child = aliased(RelayMessageRecord), aliased(RelayMessageRecord)
+            parent = aliased(RelayMessageRecord)
             created_order = func.coalesce(RelayMessageRecord.created_at, datetime.min.replace(tzinfo=timezone.utc))
-
-            def latest_sequence(completed=False):
-                query = select(func.max(RelayDeliveryTraceRecord.recorded_sequence)).where(
-                    RelayDeliveryTraceRecord.delivery_id == RelayDeliveryRecord.id,
-                    RelayDeliveryTraceRecord.recorded_sequence <= through,
-                )
-                if completed:
-                    query = query.where(RelayDeliveryTraceRecord.stage == "completed")
-                return query.correlate(RelayDeliveryRecord).scalar_subquery()
 
             query = select(
                 RelayDeliveryRecord.id.label("delivery_id"), RelayDeliveryRecord.message_id,
@@ -1307,9 +1298,7 @@ def mount_dashboard(
                 RelaySessionRecord.last_seen_at.label("recipient_last_seen_at"),
                 RelayCodexWakeReservationRecord.outcome.label("reservation_outcome"), RelayMessageRecord.in_reply_to,
                 select(parent.id).where(parent.id == RelayMessageRecord.in_reply_to).correlate(RelayMessageRecord).exists().label("parent_exists"),
-                select(func.count()).select_from(child).where(child.in_reply_to == RelayDeliveryRecord.message_id).correlate(RelayDeliveryRecord).scalar_subquery().label("linked_reply_count"),
                 RelayDeliveryRecord.trace_version, RelayDeliveryRecord.trace_pruned, RelayDeliveryRecord.trace_truncated,
-                latest_sequence().label("latest_sequence"), latest_sequence(True).label("completed_sequence"),
             ).select_from(RelayDeliveryRecord).outerjoin(
                 RelayMessageRecord, RelayMessageRecord.id == RelayDeliveryRecord.message_id,
             ).outerjoin(
@@ -1324,7 +1313,28 @@ def mount_dashboard(
             if before_at is not None:
                 query = query.where(or_(created_order < before_at, and_(created_order == before_at, RelayDeliveryRecord.id < before_id)))
             page = session.execute(query.order_by(created_order.desc(), RelayDeliveryRecord.id.desc()).limit(limit + 1)).mappings().all()
-            has_more, rows = len(page) > limit, page[:limit]
+            has_more, rows = len(page) > limit, [dict(row) for row in page[:limit]]
+            reply_counts, trace_sequences = {}, {}
+            if rows:
+                reply_counts = dict(session.execute(select(
+                    RelayMessageRecord.in_reply_to, func.count().label("linked_reply_count"),
+                ).where(RelayMessageRecord.in_reply_to.in_(sorted({row["message_id"] for row in rows})))
+                  .group_by(RelayMessageRecord.in_reply_to)).all())
+                sequence_rows = session.execute(select(
+                    RelayDeliveryTraceRecord.delivery_id,
+                    func.max(RelayDeliveryTraceRecord.recorded_sequence).label("latest_sequence"),
+                    func.max(case((RelayDeliveryTraceRecord.stage == "completed",
+                                   RelayDeliveryTraceRecord.recorded_sequence))).label("completed_sequence"),
+                ).where(
+                    RelayDeliveryTraceRecord.delivery_id.in_([row["delivery_id"] for row in rows]),
+                    RelayDeliveryTraceRecord.recorded_sequence <= through,
+                ).group_by(RelayDeliveryTraceRecord.delivery_id)).mappings()
+                trace_sequences = {row["delivery_id"]: row for row in sequence_rows}
+            for row in rows:
+                sequence = trace_sequences.get(row["delivery_id"], {})
+                row.update(linked_reply_count=reply_counts.get(row["message_id"], 0),
+                           latest_sequence=sequence.get("latest_sequence"),
+                           completed_sequence=sequence.get("completed_sequence"))
             sequences = {row[key] for row in rows for key in ("latest_sequence", "completed_sequence") if row[key] is not None}
             traces = {}
             if sequences:
