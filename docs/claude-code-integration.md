@@ -112,8 +112,14 @@ This command:
 1. Registers Pallium's session-bound stdio MCP server at Claude's user scope
 2. Registers 4 hook scripts (SessionStart, UserPromptSubmit, Stop, PreCompact)
 3. Appends Pallium agent instructions to `~/.claude/CLAUDE.md`
-4. Creates the hook state directory for dedup tracking
-5. Verifies the Pallium service is reachable
+4. Deploys the managed `pallium-memory` skill to `~/.claude/skills/pallium-memory`
+5. Creates the hook state directory for dedup tracking
+6. Verifies the Pallium service is reachable
+
+If skill replacement and restoring the old skill both fail, setup reports both
+errors and the retained previous-tree path. Keep that recovery directory until
+the old skill has been recovered. Successful replacement or restoration removes
+the staging files.
 
 To remove the integration:
 
