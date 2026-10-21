@@ -1806,9 +1806,15 @@ def create_router(
         )
 
     @router.get("/memory/{memory_object_id}/expand", response_model=MemoryExpandResponse)
-    def get_memory_expand(memory_object_id: str, container_ref: str | None = None) -> MemoryExpandResponse:
+    def get_memory_expand(
+        memory_object_id: str, container_ref: str | None = None,
+        query_actor_ref: str | None = None, query_visibility: Visibility | None = None,
+    ) -> MemoryExpandResponse:
         try:
-            raw_payload, items, match_text = service.get_memory_expand(memory_object_id, container_ref=container_ref)
+            raw_payload, items, match_text = service.get_memory_expand(
+                memory_object_id, container_ref=container_ref,
+                query_actor_ref=query_actor_ref, query_visibility=query_visibility,
+            )
         except KeyError:
             raise HTTPException(status_code=404, detail="memory object not found")
         filtered: dict | None = None
@@ -1942,6 +1948,7 @@ def create_router(
                 reason=request.reason,
                 source_ref=request.source_ref,
                 immediate=request.immediate,
+                target_scope=request.target_scope,
             )
         except KeyError:
             raise HTTPException(status_code=404, detail="memory object not found")
@@ -1957,16 +1964,20 @@ def create_router(
         memory_object_id: str, request: MemoryFeedbackRequest,
     ) -> MemoryFeedbackResponse:
         resolved_rater_ref = request.rater_ref or "local"
-        service.record_memory_feedback(
-            memory_object_id=memory_object_id,
-            rating=request.rating,
-            reason=request.reason,
-            query_context=request.query_context,
-            query_audit_log_id=request.query_audit_log_id,
-            rater_ref=resolved_rater_ref,
-            thread_ref=request.thread_ref,
-            container_ref=request.container_ref,
-        )
+        try:
+            service.record_memory_feedback(
+                memory_object_id=memory_object_id,
+                rating=request.rating,
+                reason=request.reason,
+                query_context=request.query_context,
+                query_audit_log_id=request.query_audit_log_id,
+                rater_ref=resolved_rater_ref,
+                thread_ref=request.thread_ref,
+                container_ref=request.container_ref,
+                target_scope=request.target_scope,
+            )
+        except KeyError:
+            raise HTTPException(status_code=404, detail="memory object not found") from None
         return MemoryFeedbackResponse(
             memory_object_id=memory_object_id,
             rating=request.rating,
@@ -2095,6 +2106,7 @@ def create_router(
                 memory_object_id,
                 corrected_text=request.corrected_text,
                 reason=request.reason,
+                target_scope=request.target_scope,
             )
         except KeyError:
             raise HTTPException(status_code=404, detail="memory object not found")
@@ -2111,6 +2123,7 @@ def create_router(
             old_id, new_id = service.supersede_memory(
                 new_text=request.new_text,
                 supersedes_id=request.supersedes_id,
+                target_scope=request.target_scope,
                 reason=request.reason,
                 type=request.type,
                 container_ref=request.container_ref,
@@ -2126,7 +2139,8 @@ def create_router(
         except KeyError:
             raise HTTPException(
                 status_code=404,
-                detail=f"memory object {request.supersedes_id!r} not found",
+                detail=("memory object not found" if request.target_scope is not None
+                        else f"memory object {request.supersedes_id!r} not found"),
             )
         except SupersessionConflictError as exc:
             raise HTTPException(status_code=409, detail=str(exc))
@@ -2144,7 +2158,7 @@ def create_router(
         memory_object_id: str, request: ForgetMemoryRequest,
     ) -> ForgetMemoryResponse:
         try:
-            forgotten = service.forget_memory(memory_object_id, reason=request.reason)
+            forgotten = service.forget_memory(memory_object_id, reason=request.reason, target_scope=request.target_scope)
         except KeyError:
             raise HTTPException(status_code=404, detail="memory object not found")
         return ForgetMemoryResponse(
@@ -2166,6 +2180,7 @@ def create_router(
                 thread_ref=request.thread_ref,
                 reason=request.reason,
                 actor_ref=request.actor_ref,
+                target_scope=request.target_scope,
             )
         except KeyError:
             raise HTTPException(status_code=404, detail="source item not found") from None
@@ -2178,6 +2193,7 @@ def create_router(
         try:
             service.record_procedure_outcome(
                 procedure_id=request.procedure_id,
+                target_scope=request.target_scope,
                 outcome=request.outcome,
                 evidence=request.evidence,
                 note=request.note,
@@ -2192,7 +2208,10 @@ def create_router(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         except KeyError as exc:
-            raise HTTPException(status_code=404, detail=str(exc))
+            raise HTTPException(
+                status_code=404,
+                detail="memory object not found" if request.target_scope is not None else str(exc),
+            )
         return RecordOutcomeResponse(
             procedure_id=request.procedure_id,
             outcome=request.outcome,

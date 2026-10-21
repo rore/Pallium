@@ -64,8 +64,8 @@ enabled_present = "enabled" in plugins
 enabled = plugins.get("enabled", [])
 if not isinstance(enabled, list) or any(not isinstance(item, str) for item in enabled):
     fail("invalid_plugins_enabled")
-if action in ("validate", "install") and enabled not in ([], [PLUGIN]):
-    fail("other_plugins_enabled")
+if enabled.count(PLUGIN) > 1:
+    fail("duplicate_plugin_enablement")
 entries = plugins.get("entries", {})
 if not isinstance(entries, dict):
     fail("invalid_plugin_entries")
@@ -79,25 +79,6 @@ if action in ("status", "remove") and entry is not None:
     if (expected_settings is not None
             and entry != {"allow_gateway_injection": True, "settings": expected_settings}):
         fail("plugin_config_conflict")
-if action in ("validate", "install"):
-    toolsets = config.get("platform_toolsets")
-    search = config.get("tools", {}).get("tool_search") if isinstance(config.get("tools"), dict) else None
-    model = config.get("model")
-    base = model.get("base_url") if isinstance(model, dict) else None
-    try:
-        parsed = __import__("urllib.parse", fromlist=["urlsplit"]).urlsplit(base)
-        loopback = parsed.scheme == "http" and parsed.hostname in ("127.0.0.1", "localhost", "::1") and not parsed.username and not parsed.password and not parsed.query and not parsed.fragment
-    except Exception:
-        loopback = False
-    if (not isinstance(toolsets, dict) or toolsets.get("cli") != ["hermes-cli"]
-            or not isinstance(search, dict) or search.get("enabled") != "off"
-            or not isinstance(model, dict) or model.get("provider") != "custom"
-            or not isinstance(model.get("default"), str) or not model.get("default")
-            or model.get("api_mode") != "chat_completions" or not loopback
-            or config.get("fallback_providers") != []
-            or config.get("fallback_model") not in (None, {})):
-        fail("frozen_local_profile_required")
-
 if action in ("validate", "status"):
     print(json.dumps({"ok": True, "config_sha256": digest,
                       "enabled_present": enabled_present, "enabled": enabled,
@@ -116,7 +97,8 @@ if action == "install":
     desired = request["settings"]
     new = dict(config)
     p = dict(plugins)
-    p["enabled"] = [PLUGIN]
+    if request.get("enable_plugin"):
+        p["enabled"] = enabled if PLUGIN in enabled else [*enabled, PLUGIN]
     e = dict(entries)
     e[PLUGIN] = {"allow_gateway_injection": True, "settings": desired}
     p["entries"] = e
@@ -129,10 +111,12 @@ else:
     new = dict(config)
     p = dict(plugins)
     remaining = [item for item in enabled if item != PLUGIN]
-    # Restore the baseline only when the installed value is still untouched.
-    # If a user disabled us or changed the list, preserve their current choice.
-    if enabled == [PLUGIN]:
-        baseline = request.get("enabled_before", {})
+    baseline = request.get("enabled_before", {})
+    expected = list(baseline.get("value", [])) if baseline.get("present") else []
+    if PLUGIN not in expected:
+        expected.append(PLUGIN)
+    # Restore absence as well as the list only while our install is still untouched.
+    if enabled == expected:
         if baseline.get("present"):
             p["enabled"] = baseline.get("value", [])
         else:
@@ -290,14 +274,17 @@ def _settings(args: argparse.Namespace, mcp_python: Path, repo: Path) -> dict[st
         raise ValueError("--actor-ref must be a trimmed, printable static actor identity")
     if args.visibility != "private":
         raise ValueError("this Hermes package currently requires --visibility private")
+    memory_enabled = getattr(args, "memory_enabled", False)
+    if type(memory_enabled) is not bool:
+        raise ValueError("memory_enabled must be a boolean")
     return {
-        "experimental_frozen_local_stub": True,
         "service_url": args.service_url.rstrip("/"),
         "container_ref": container_ref,
         "mcp_python": str(mcp_python),
         "mcp_repo": str(repo),
         "actor_ref": args.actor_ref,
         "visibility": args.visibility,
+        **({"memory_enabled": True} if memory_enabled else {}),
     }
 
 
@@ -350,7 +337,8 @@ def _remove_owned(destination: Path) -> tuple[Path, Path | None]:
 
 
 def install(home: Path, hermes_python: Path, service_url: str, container_ref: str,
-            actor_ref: str, visibility: str, mcp_python: Path, repo: Path) -> int:
+            actor_ref: str, visibility: str, mcp_python: Path, repo: Path,
+            *, memory_enabled: bool = False) -> int:
     home = _resolve_profile(home)
     hermes_python, mcp_python, repo = (p.resolve() for p in (hermes_python, mcp_python, repo))
     source = _integration_dir()
@@ -362,7 +350,8 @@ def install(home: Path, hermes_python: Path, service_url: str, container_ref: st
     if not mcp_python.is_file() or not (repo / "app" / "mcp" / "hermes.py").is_file():
         raise ValueError("--mcp-python or --mcp-repo does not identify the Pallium MCP adapter")
     settings = _settings(argparse.Namespace(service_url=service_url, container_ref=container_ref,
-                                            actor_ref=actor_ref, visibility=visibility), mcp_python, repo)
+                                            actor_ref=actor_ref, visibility=visibility,
+                                            memory_enabled=memory_enabled), mcp_python, repo)
     _validate_pallium_mcp(mcp_python)
     plugin_dir, skill_dir = _profile_paths(home)
     old_plugin = _read_marker(plugin_dir)
@@ -381,13 +370,9 @@ def install(home: Path, hermes_python: Path, service_url: str, container_ref: st
         if before.get("entry") != {"allow_gateway_injection": True,
                                     "settings": old_plugin.get("settings")}:
             raise ValueError("Pallium Hermes config was edited; refusing to replace it")
-        if before.get("enabled") != [PLUGIN_ID]:
-            raise ValueError("Pallium Hermes enablement was edited; refusing to replace it")
         enabled_before = old_plugin.get("enabled_before")
     else:
-        if before.get("enabled") != []:
-            raise ValueError("Hermes has an unowned Pallium enablement entry")
-        if before.get("entry") is not None:
+        if PLUGIN_ID in before.get("enabled", []) or before.get("entry") is not None:
             raise ValueError("Hermes already has an unowned Pallium plugin config entry")
         enabled_before = {"present": before.get("enabled_present", False), "value": before.get("enabled", [])}
     marker = {
@@ -410,6 +395,7 @@ def install(home: Path, hermes_python: Path, service_url: str, container_ref: st
             "expected_sha256": before["config_sha256"],
             "old_settings": old_plugin.get("settings") if old_plugin else None,
             "settings": settings,
+            "enable_plugin": old_plugin is None,
         })
     except BaseException as error:
         # The digest detects preflight conflicts, not overlapping writes. Preserve
@@ -454,6 +440,7 @@ def status(home: Path, hermes_python: Path) -> int:
     else:
         print(f"Pallium Hermes package is installed but disabled in {home}.")
     print("The profile config and owned file fingerprints match; live MCP readiness is not tested.")
+    print("Optional memory: " + ("enabled" if plugin_marker["settings"].get("memory_enabled", False) else "disabled"))
     return 0
 
 
@@ -525,6 +512,8 @@ def main(args: list[str] | None = None) -> int:
     parser.add_argument("--container-ref")
     parser.add_argument("--actor-ref")
     parser.add_argument("--visibility", choices=("private",))
+    parser.add_argument("--memory-enabled", action=argparse.BooleanOptionalAction, default=False,
+                        help="Expose optional memory tools (disabled by default)")
     parser.add_argument("--mcp-python", default=sys.executable,
                         help="Pallium Python with MCP SDK v1 (defaults to this interpreter)")
     parser.add_argument("--mcp-repo", default=str(_repo_root()), help="Pallium checkout containing app/mcp/hermes.py")
@@ -546,7 +535,8 @@ def main(args: list[str] | None = None) -> int:
         parser.error("--home must be an existing profile directory")
     try:
         return install(home, hermes_python, ns.service_url, ns.container_ref, ns.actor_ref,
-                       ns.visibility, Path(ns.mcp_python).expanduser(), Path(ns.mcp_repo).expanduser())
+                       ns.visibility, Path(ns.mcp_python).expanduser(), Path(ns.mcp_repo).expanduser(),
+                       memory_enabled=ns.memory_enabled)
     except Exception as exc:
         print(f"Pallium Hermes setup refused: {exc}", file=sys.stderr)
         return 2

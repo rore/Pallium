@@ -48,6 +48,10 @@ Pallium uses the session and repository identity to:
 Claude Code, Codex, and OpenCode are the current integrations. They remain
 independent tools and own their execution, user interaction, and workflow.
 
+The [Hermes package](hermes-integration.md) is experimental, with bounded gateway
+Relay/History proof. Desktop/TUI and the rest of its production qualification
+remain open; it is not included in the general integration guarantees above.
+
 ## Current default
 
 Relay and Session History do not require an LLM or derived memory. Derived

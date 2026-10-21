@@ -589,6 +589,251 @@ class TestRetrievalIntegration:
             ), {"i": new}).scalar()
         assert count >= 1, "superseded new memory must be indexed for retrieval"
 
+    def test_explicit_memory_recall_correction_scope_and_forgetting(self, client, storage):
+        def query(text, **overrides):
+            response = client.post("/query", json={
+                "text": text,
+                "limit": 20,
+                "container_ref": "git:test",
+                "thread_ref": "later-session",
+                "active_session_ref": "later-session",
+                "actor_ref": "test-actor",
+                "visibility": "private",
+                **overrides,
+            })
+            assert response.status_code == 200, response.text
+            return response.json()["results"]
+
+        remembered = _remember(client, text="Quartz lantern remains in vault")
+        first_id = remembered["memory_object_id"]
+        recalled = query("quartz lantern")
+        assert [item["memory_object_id"] for item in recalled] == [first_id]
+        assert recalled[0]["evidence"] == []
+
+        before = storage.get_memory_object(first_id).freshness_at
+        corrected = client.post(
+            f"/memory/{first_id}/correct",
+            json={"corrected_text": "Opal compass stays in archive", "reason": "updated"},
+        )
+        assert corrected.status_code == 200, corrected.text
+        corrected_hits = query("opal compass")
+        assert [item["memory_object_id"] for item in corrected_hits] == [first_id]
+        assert query("quartz lantern") == []
+        assert storage.get_memory_object(first_id).freshness_at == before
+
+        second_id = client.post("/memory/supersede", json={
+            **_PROVENANCE, "new_text": "Amber map stays in catalog",
+            "supersedes_id": first_id,
+        }).json()["new_memory_object_id"]
+        third_id = client.post("/memory/supersede", json={
+            **_PROVENANCE, "new_text": "Cobalt key stays in cabinet",
+            "supersedes_id": second_id,
+        }).json()["new_memory_object_id"]
+        assert [item["memory_object_id"] for item in query("cobalt key")] == [third_id]
+        assert query("amber map") == []
+
+        assert query("cobalt key", actor_ref="other-actor") == []
+        assert query("cobalt key", container_ref="git:other") == []
+        for metadata_filter in (
+            {"source_type": "message"}, {"role": "user"},
+            {"artifact_kind": "message"}, {"work_refs": ["work:other"]},
+        ):
+            assert query("cobalt key", **metadata_filter) == []
+
+        forgotten = client.post(f"/memory/{third_id}/forget", json={"reason": "removed"})
+        assert forgotten.status_code == 200, forgotten.text
+        assert query("cobalt key") == []
+        from core.filters import matches_filters
+        assert matches_filters(
+            storage.get_memory_object, storage.get_source_item,
+            storage.get_evidence_for_memory_object,
+            "memory_object", third_id, None,
+        ) is False
+
+    def test_correction_refreshes_populated_vector_index_before_next_query(self, client):
+        from core.models import QueryFilters
+        from retrieval.vector import VectorRetrievalProvider
+
+        class Index:
+            def __init__(self):
+                self.vectors = {}
+
+            def contains(self, entry_id):
+                return entry_id in self.vectors
+
+            def add(self, entry_id, vector):
+                self.vectors[entry_id] = vector
+
+            def search(self, query_vector, k):
+                return [(entry_id, 0.99) for entry_id in list(self.vectors)[:k]]
+
+            def entry_count(self):
+                return len(self.vectors)
+
+            def remove(self, entry_id):
+                self.vectors.pop(entry_id)
+
+            def known_entry_ids(self):
+                return set(self.vectors)
+
+            def save(self):
+                pass
+
+        class Embedding:
+            def embed(self, texts, *, mode="passage"):
+                return [[1.0, 0.0, 0.0, 0.0] for _ in texts]
+
+            def model_name(self):
+                return "test-embedding"
+
+            def dimensions(self):
+                return 4
+
+        service = client.app.state.pallium_service
+        storage = service._storage
+        vector_index = Index()
+        embedding = Embedding()
+        service._index_holder.swap(vector_index)
+        service._vector_embedder._embedding_provider = embedding
+        remembered = service.remember_memory(
+            text="Quartz lantern remains in vault", type="decision",
+            **{key: _PROVENANCE[key] for key in (
+                "container_ref", "actor_ref", "thread_ref", "agent_ref", "visibility"
+            )},
+        )
+        old_entry = next(
+            entry for entry in storage.list_index_entries_for_target("memory_object", remembered.id)
+            if entry.index_type == "vector"
+        )
+        assert service._vector_embedder.embed_and_persist_vector_entry(old_entry)
+        assert storage.count_index_entries_by_type("vector") == vector_index.entry_count() == 1
+
+        service.correct_memory(
+            remembered.id,
+            corrected_text="Opal compass stays in archive",
+            reason="updated",
+        )
+        new_entry = next(
+            entry for entry in storage.list_index_entries_for_target("memory_object", remembered.id)
+            if entry.index_type == "vector"
+        )
+        assert storage.count_index_entries_by_type("vector") == vector_index.entry_count() == 1
+        assert old_entry.id not in vector_index.known_entry_ids()
+        assert new_entry.id in vector_index.known_entry_ids()
+
+        provider = VectorRetrievalProvider(
+            storage, embedding, index_holder=service._index_holder,
+        )
+        result = provider.query(
+            "opal compass", limit=5,
+            filters=QueryFilters(
+                container_ref="git:test", actor_ref="test-actor", thread_ref="later-session",
+            ),
+            visibility="private", query_container_ref="git:test",
+            query_actor_ref="test-actor",
+        )
+        assert [item.memory_object_id for item in result.results] == [remembered.id]
+        assert result.results[0].payload["statement"] == "Opal compass stays in archive"
+
+    def test_failed_vector_refresh_removes_stale_ann_and_reconciles_new_term(self, client):
+        from core.models import QueryFilters
+        from retrieval.vector import VectorRetrievalProvider
+
+        class Index:
+            saved_ids: set[str] = set()
+
+            def __init__(self, ids=()):
+                self.ids = set(ids)
+
+            def contains(self, entry_id):
+                return entry_id in self.ids
+
+            def add(self, entry_id, vector):
+                self.ids.add(entry_id)
+
+            def search(self, query_vector, k):
+                return [(entry_id, 0.99) for entry_id in sorted(self.ids)[:k]]
+
+            def entry_count(self):
+                return len(self.ids)
+
+            def known_entry_ids(self):
+                return set(self.ids)
+
+            def remove(self, entry_id):
+                self.ids.remove(entry_id)
+
+            def save(self):
+                type(self).saved_ids = set(self.ids)
+
+        class Embedding:
+            def embed(self, texts, *, mode="passage"):
+                return [[1.0, 0.0, 0.0, 0.0] for _ in texts]
+
+            def model_name(self):
+                return "test-embedding"
+
+            def dimensions(self):
+                return 4
+
+        class FailingEmbedding(Embedding):
+            def embed(self, texts, *, mode="passage"):
+                raise RuntimeError("embedding unavailable")
+
+        service = client.app.state.pallium_service
+        storage = service._storage
+        vector_index = Index()
+        embedding = Embedding()
+        service._index_holder.swap(vector_index)
+        service._vector_embedder._embedding_provider = embedding
+        remembered = service.remember_memory(
+            text="Quartz lantern remains in vault", type="decision",
+            **{key: _PROVENANCE[key] for key in (
+                "container_ref", "actor_ref", "thread_ref", "agent_ref", "visibility"
+            )},
+        )
+        old_entry = next(
+            entry for entry in storage.list_index_entries_for_target("memory_object", remembered.id)
+            if entry.index_type == "vector"
+        )
+        assert service._vector_embedder.embed_and_persist_vector_entry(old_entry)
+        service._vector_embedder.save_vector_index()
+        assert Index.saved_ids == {old_entry.id}
+        service._vector_embedder._embedding_provider = FailingEmbedding()
+
+        service.correct_memory(
+            remembered.id,
+            corrected_text="Opal compass stays in archive",
+            reason="updated",
+        )
+        new_entry = next(
+            entry for entry in storage.list_index_entries_for_target("memory_object", remembered.id)
+            if entry.index_type == "vector"
+        )
+        assert old_entry.id not in vector_index.known_entry_ids()
+        assert new_entry.id not in vector_index.known_entry_ids()
+        assert storage.count_index_entries_by_type("vector") == 1
+        assert vector_index.entry_count() == 0
+        assert Index.saved_ids == set()
+
+        reloaded_index = Index(Index.saved_ids)
+        service._index_holder.swap(reloaded_index)
+        service._vector_embedder._embedding_provider = embedding
+        assert service._vector_embedder.reconcile() == 1
+        provider = VectorRetrievalProvider(
+            storage, embedding, index_holder=service._index_holder,
+        )
+        result = provider.query(
+            "opal compass", limit=5,
+            filters=QueryFilters(
+                container_ref="git:test", actor_ref="test-actor", thread_ref="later-session",
+            ),
+            visibility="private", query_container_ref="git:test",
+            query_actor_ref="test-actor",
+        )
+        assert [item.memory_object_id for item in result.results] == [remembered.id]
+        assert result.results[0].payload["statement"] == "Opal compass stays in archive"
+
 
 class TestOrdering:
     def test_created_at_monotonic_across_remembers(self, client, storage):

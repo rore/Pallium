@@ -1,4 +1,4 @@
-"""Released Hermes + production plugin + real Relay HTTP, local provider only."""
+"""Released Hermes gateway RPC + production plugin + real Relay HTTP, local provider only."""
 from __future__ import annotations
 
 import json
@@ -7,6 +7,7 @@ import os
 from collections import Counter
 from pathlib import Path
 import re
+import signal
 import socket
 import subprocess
 import sys
@@ -20,7 +21,10 @@ import yaml
 
 pytestmark = pytest.mark.slow
 
-HERMES_RELEASE = "d923a5eb487a17c0a68801bba9ef0f56c81040a8"
+HERMES_RELEASES = {
+    "v0.22.0": "e06df9c2eae6901f4c88f464e0ae6e753c0428b8",
+    "v0.22.2": "d923a5eb487a17c0a68801bba9ef0f56c81040a8",
+}
 SCOPE = {"container_ref": "git:example.test/team/hermes-e2e"}
 PEER_PAYLOADS = {"alpha": "PEER_PAYLOAD_ALPHA_é", "beta": "PEER_PAYLOAD_BETA_漢字"}
 HERMES_REPLIES = {"alpha": "HERMES_REPLY_ALPHA_é", "beta": "HERMES_REPLY_BETA_🌍"}
@@ -41,43 +45,188 @@ def _port() -> int:
 
 
 def _clean_host_environment(profile: Path) -> dict[str, str]:
-    # Start from Windows runtime essentials only. No inherited credential,
-    # provider, Hermes, Pallium, or Python configuration reaches the host.
-    allowed = {
-        "SYSTEMROOT", "WINDIR", "SYSTEMDRIVE", "COMSPEC", "PATH", "PATHEXT",
-        "PROCESSOR_ARCHITECTURE", "NUMBER_OF_PROCESSORS", "OS",
-    }
-    env = {key: value for key, value in os.environ.items() if key.upper() in allowed}
-    for name in ("tmp", "AppData/Roaming", "AppData/Local", "config", "data", "cache", "state"):
+    if os.name == "nt":
+        # Keep the existing Windows runtime essentials and profile layout unchanged.
+        allowed = {
+            "SYSTEMROOT", "WINDIR", "SYSTEMDRIVE", "COMSPEC", "PATH", "PATHEXT",
+            "PROCESSOR_ARCHITECTURE", "NUMBER_OF_PROCESSORS", "OS",
+        }
+        env = {key: value for key, value in os.environ.items() if key.upper() in allowed}
+        names = ("tmp", "AppData/Roaming", "AppData/Local", "config", "data", "cache", "state")
+    else:
+        # Linux Gateway runs with a fixed executable search path and no WSL/host configuration.
+        env = {"LANG": "C.UTF-8", "LC_ALL": "C.UTF-8", "PATH": "/usr/local/bin:/usr/bin:/bin"}
+        names = ("tmp", "config", "data", "cache", "state")
+    for name in names:
         (profile / name).mkdir(parents=True, exist_ok=True)
     env["HERMES_HOME"] = str(profile)
     env["HERMES_DASHBOARD_SESSION_TOKEN"] = "pallium-hermes-e2e-local-token"
-    env.update({
-        "HOME": str(profile), "USERPROFILE": str(profile),
-        "APPDATA": str(profile / "AppData" / "Roaming"),
-        "LOCALAPPDATA": str(profile / "AppData" / "Local"),
-        "TEMP": str(profile / "tmp"), "TMP": str(profile / "tmp"),
-        "XDG_CONFIG_HOME": str(profile / "config"),
-        "XDG_DATA_HOME": str(profile / "data"),
-        "XDG_CACHE_HOME": str(profile / "cache"),
-        "XDG_STATE_HOME": str(profile / "state"),
-    })
+    env.update({"HOME": str(profile), "XDG_CONFIG_HOME": str(profile / "config"),
+                "XDG_DATA_HOME": str(profile / "data"), "XDG_CACHE_HOME": str(profile / "cache"),
+                "XDG_STATE_HOME": str(profile / "state")})
+    if os.name == "nt":
+        env.update({"USERPROFILE": str(profile), "APPDATA": str(profile / "AppData" / "Roaming"),
+                    "LOCALAPPDATA": str(profile / "AppData" / "Local"),
+                    "TEMP": str(profile / "tmp"), "TMP": str(profile / "tmp")})
+    else:
+        env["TMPDIR"] = str(profile / "tmp")
     return env
 
 
-def _stop_owned_host(process: subprocess.Popen | None) -> None:
-    if process is None or process.poll() is not None:
+def _linux_process_identity(process: subprocess.Popen) -> tuple[int, int, str]:
+    stat = Path(f"/proc/{process.pid}/stat").read_text(encoding="utf-8", errors="surrogateescape")
+    fields = _linux_stat_fields(stat)
+    assert len(fields) > 19, f"could not read Linux process identity for {process.pid}"
+    process_group = int(fields[2])
+    assert process_group == process.pid, f"process {process.pid} did not own its isolated process group"
+    return process.pid, process_group, fields[19]
+
+
+def _linux_process_group_members(process_group: int) -> list[int]:
+    members = []
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdecimal():
+            continue
+        try:
+            stat = (entry / "stat").read_text(encoding="utf-8", errors="surrogateescape")
+        except FileNotFoundError:
+            continue
+        fields = _linux_stat_fields(stat)
+        if (fields and fields[0] not in {"Z", "X"} and len(fields) > 2
+                and fields[2].isdecimal() and int(fields[2]) == process_group):
+            members.append(int(entry.name))
+    return members
+
+
+def _linux_stat_fields(stat: str) -> list[str]:
+    # The command name can contain spaces and parentheses; fields after its final ')' are stable.
+    return stat[stat.rfind(")") + 2:].split()
+
+
+def _stop_owned_host(process: subprocess.Popen | None, identity: tuple[int, int, str] | None = None) -> None:
+    if process is None:
         return
     if os.name == "nt":
+        if process.poll() is not None:
+            return
         subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
-    else:
-        process.terminate()
+        try:
+            process.wait(timeout=8)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=5)
+        return
+
+    assert identity is not None and identity[:2] == (process.pid, process.pid), (
+        "missing or mismatched owned Linux process identity", process.pid, identity)
+    pid, process_group, _birth = identity
     try:
-        process.wait(timeout=8)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        process.wait(timeout=5)
+        current_identity = _linux_process_identity(process)
+    except FileNotFoundError:
+        current_identity = None
+    if current_identity is None:
+        assert not _linux_process_group_members(process_group), (
+            "refusing cleanup after process-group leader was reaped; ownership cannot be revalidated",
+            process_group,
+        )
+        process.wait()
+        return
+    assert current_identity == identity, f"refusing cleanup after PID reuse: {pid}"
+    if not _linux_process_group_members(process_group):
+        process.wait()
+        return
+    try:
+        os.killpg(process_group, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    deadline = time.monotonic() + 8
+    while _linux_process_group_members(process_group) and time.monotonic() < deadline:
+        time.sleep(.05)
+    if _linux_process_group_members(process_group):
+        try:
+            os.killpg(process_group, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    process.wait(timeout=8)
+    deadline = time.monotonic() + 5
+    while _linux_process_group_members(process_group) and time.monotonic() < deadline:
+        time.sleep(.05)
+    assert not _linux_process_group_members(process_group), (
+        "owned Linux process-group descendants survived cleanup", process_group)
+
+
+def test_linux_proc_stat_parser_handles_parenthesized_process_names():
+    tail = ["S", "1", "123", "123", *(["0"] * 15), "987654"]
+    fields = _linux_stat_fields("123 (worker (with ) parens)) " + " ".join(tail))
+    assert len(fields) == 20
+    assert fields[2] == "123" and fields[19] == "987654"
+
+
+def test_linux_cleanup_fails_closed_when_group_leader_was_reaped(monkeypatch):
+    class ExitedProcess:
+        pid = 123
+
+        def wait(self):
+            raise AssertionError("cleanup must not reap after refusing to signal")
+
+    def missing_identity(_process):
+        raise FileNotFoundError("synthetic reaped leader")
+
+    monkeypatch.setattr(os, "name", "posix")
+    monkeypatch.setattr(sys.modules[__name__], "_linux_process_identity", missing_identity)
+    monkeypatch.setattr(sys.modules[__name__], "_linux_process_group_members", lambda _group: [456])
+    monkeypatch.setattr(os, "killpg", lambda *_args: pytest.fail("cleanup signaled an unverified group"),
+                        raising=False)
+    with pytest.raises(AssertionError, match="leader was reaped"):
+        _stop_owned_host(ExitedProcess(), (123, 123, "789"))
+
+
+def test_linux_cleanup_signals_before_reaping_group_leader(monkeypatch):
+    events = []
+    killed = False
+
+    class OwnedProcess:
+        pid = 123
+
+        def poll(self):
+            raise AssertionError("cleanup must retain the process identity without polling")
+
+        def wait(self, timeout=None):
+            events.append(("wait", timeout))
+
+    def killpg(_group, sig):
+        nonlocal killed
+        events.append(("signal", sig))
+        killed |= sig == signal.SIGKILL
+
+    times = iter((0.0, 100.0, 101.0))
+    monkeypatch.setattr(os, "name", "posix")
+    monkeypatch.setattr(signal, "SIGKILL", 9, raising=False)
+    monkeypatch.setattr(sys.modules[__name__], "_linux_process_identity", lambda _process: (123, 123, "789"))
+    monkeypatch.setattr(sys.modules[__name__], "_linux_process_group_members",
+                        lambda _group: [] if killed else [123, 456])
+    monkeypatch.setattr(os, "killpg", killpg, raising=False)
+    monkeypatch.setattr(time, "monotonic", lambda: next(times, 200.0))
+    monkeypatch.setattr(time, "sleep", lambda _duration: None)
+    _stop_owned_host(OwnedProcess(), (123, 123, "789"))
+    assert events == [("signal", signal.SIGTERM), ("signal", signal.SIGKILL), ("wait", 8)]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Linux-only gateway environment")
+def test_linux_gateway_environment_is_contained(monkeypatch, tmp_path):
+    monkeypatch.setenv("OPENAI_API_KEY", "host-secret")
+    monkeypatch.setenv("WSL_DISTRO_NAME", "host-distro")
+    monkeypatch.setenv("PALLIUM_CONFIG", "host-config")
+    env = _clean_host_environment(tmp_path)
+    assert env == {
+        "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8", "PATH": "/usr/local/bin:/usr/bin:/bin",
+        "HERMES_HOME": str(tmp_path), "HERMES_DASHBOARD_SESSION_TOKEN": "pallium-hermes-e2e-local-token",
+        "HOME": str(tmp_path), "XDG_CONFIG_HOME": str(tmp_path / "config"),
+        "XDG_DATA_HOME": str(tmp_path / "data"), "XDG_CACHE_HOME": str(tmp_path / "cache"),
+        "XDG_STATE_HOME": str(tmp_path / "state"), "TMPDIR": str(tmp_path / "tmp"),
+    }
+    assert {"OPENAI_API_KEY", "WSL_DISTRO_NAME", "PALLIUM_CONFIG"}.isdisjoint(env)
 
 
 def test_released_hermes_idle_relay_roundtrip(client, tmp_path):
@@ -91,7 +240,7 @@ def test_released_hermes_idle_relay_roundtrip(client, tmp_path):
     assert interpreter.is_file(), f"HERMES_E2E_PYTHON does not exist: {interpreter}"
     revision = subprocess.run(["git", "-C", str(hermes), "rev-parse", "HEAD"],
                               check=True, capture_output=True, text=True).stdout.strip()
-    assert revision == HERMES_RELEASE, f"expected Hermes {HERMES_RELEASE}, got {revision}"
+    assert revision in HERMES_RELEASES.values(), f"unqualified Hermes release source: {revision}"
     source_changes = subprocess.run(
         ["git", "-C", str(hermes), "status", "--porcelain", "--untracked-files=all"],
         check=True, capture_output=True, text=True,
@@ -138,7 +287,9 @@ def test_released_hermes_idle_relay_roundtrip(client, tmp_path):
     closed_candidate_waiting = threading.Event()
     release_closed_candidate = threading.Event()
     process: subprocess.Popen | None = None
+    process_identity = None
     seed_drivers: list[subprocess.Popen] = []
+    seed_driver_identities = {}
     seed_driver_logs = []
     api_server = None
     provider_server = None
@@ -463,7 +614,10 @@ def test_released_hermes_idle_relay_roundtrip(client, tmp_path):
                  "--port", str(gateway_port), "--skip-build", "--isolated"],
                 cwd=hermes, env=_clean_host_environment(profile), stdout=log, stderr=subprocess.STDOUT,
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+                start_new_session=os.name != "nt",
             )
+        if os.name != "nt":
+            process_identity = _linux_process_identity(process)
         token = "pallium-hermes-e2e-local-token"
         uri = f"ws://127.0.0.1:{gateway_port}/api/ws?token={token}"
 
@@ -500,12 +654,16 @@ def test_released_hermes_idle_relay_roundtrip(client, tmp_path):
         for tag in ("alpha", "beta"):
             seed_log = (tmp_path / f"hermes-seed-{tag}.log").open("w", encoding="utf-8")
             seed_driver_logs.append(seed_log)
-            seed_drivers.append(subprocess.Popen(
+            seed_driver = subprocess.Popen(
                 [str(interpreter), str(seed_script), uri, str(hermes), tag, HERMES_SENDS[tag]],
                 cwd=hermes, env=_clean_host_environment(profile), stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE, stderr=seed_log, text=True, encoding="utf-8", errors="replace",
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
-            ))
+                start_new_session=os.name != "nt",
+            )
+            seed_drivers.append(seed_driver)
+            if os.name != "nt":
+                seed_driver_identities[seed_driver.pid] = _linux_process_identity(seed_driver)
         seed_results = {}
         for tag, seed_driver in zip(("alpha", "beta"), seed_drivers):
             seed_line = seed_driver.stdout.readline()
@@ -723,8 +881,11 @@ def test_released_hermes_idle_relay_roundtrip(client, tmp_path):
             cwd=hermes, env=_clean_host_environment(profile), stdin=subprocess.PIPE,
             stdout=subprocess.PIPE, stderr=history_log, text=True, encoding="utf-8", errors="replace",
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+            start_new_session=os.name != "nt",
         )
         seed_drivers.append(history_driver)
+        if os.name != "nt":
+            seed_driver_identities[history_driver.pid] = _linux_process_identity(history_driver)
         history_line = history_driver.stdout.readline()
         assert history_line, f"later Hermes history session failed to report its identity: {tmp_path / 'hermes-history.log'}"
         history_identity = json.loads(history_line)
@@ -853,9 +1014,9 @@ def test_released_hermes_idle_relay_roundtrip(client, tmp_path):
                 f"the {tag} Hermes reply did not use the MCP reply route")
             ack_event = eventually(lambda claimed_delivery=claimed_delivery: next((event for event in event_order
                 if event == ("ack", claimed_delivery["delivery_id"])), None),
-                f"the {tag} Hermes delivery was not acknowledged after provider execution")
-            assert event_order.index(("provider-response", claimed_delivery["delivery_id"])) < event_order.index(
-                ("ack", claimed_delivery["delivery_id"])), "Hermes ACK preceded provider completion"
+                f"the {tag} Hermes delivery was not acknowledged at host-context admission")
+            assert event_order.index(("ack", claimed_delivery["delivery_id"])) < event_order.index(
+                ("provider-response", claimed_delivery["delivery_id"])), "Hermes admission waited for provider completion"
             assert event_order.index(("provider-response", claimed_delivery["delivery_id"])) < event_order.index(
                 ("reply", claimed_delivery["delivery_id"])), "Hermes replied before the provider saw the peer delivery"
             assert event_order.index(("ack", claimed_delivery["delivery_id"])) < event_order.index(
@@ -893,7 +1054,13 @@ def test_released_hermes_idle_relay_roundtrip(client, tmp_path):
         assert not any(secret in provider_wire for secret in private_claim_values), (
             "private claim material, including Hermes receipts, was exposed to the model provider"
         )
-        assert process.poll() is None
+        if os.name == "nt":
+            assert process.poll() is None
+        else:
+            assert _linux_process_identity(process) == process_identity, "Hermes Gateway exited or changed identity"
+            process_stat = Path(f"/proc/{process.pid}/stat").read_text(
+                encoding="utf-8", errors="surrogateescape")
+            assert _linux_stat_fields(process_stat)[0] not in {"Z", "X"}, "Hermes Gateway exited"
         decoy = http("POST", "/relay/turn", {
             "runtime": "hermes", "session_ref": "hermes-e2e-unloaded-session", **SCOPE,
         })["session"]["endpoint_id"]
@@ -934,11 +1101,13 @@ def test_released_hermes_idle_relay_roundtrip(client, tmp_path):
         assert plugin_inventory() == plugins_before, "Hermes plugin inventory changed during the qualified turn"
 
         for seed_driver in seed_drivers:
-            if seed_driver.poll() is None:
+            try:
                 seed_driver.stdin.write("stop\n")
                 seed_driver.stdin.flush()
-                _stop_owned_host(seed_driver)
-        _stop_owned_host(process)
+            except (OSError, ValueError):
+                pass
+            _stop_owned_host(seed_driver, seed_driver_identities.get(seed_driver.pid))
+        _stop_owned_host(process, process_identity)
         process = None
 
         package_cli(*install_args)
@@ -975,30 +1144,54 @@ def test_released_hermes_idle_relay_roundtrip(client, tmp_path):
             f"events={discovery_gate_events}"
         )
     finally:
-        (tmp_path / "provider-requests.json").write_text(
-            json.dumps(provider_requests, ensure_ascii=False, indent=2), encoding="utf-8")
-        (tmp_path / "relay-calls.json").write_text(
-            json.dumps({"requests": relay_forwarded, "responses": relay_responses,
-                        "events": event_order, "plugin_sha256": plugin_sha256,
-                        "discovery_peak": discovery_peak,
-                        "discovery_gate_error": discovery_gate_error,
-                        "discovery_gate_events": discovery_gate_events,
-                        "ownership_marker": marker if "marker" in locals() else None,
-                        "hermes_source": str(hermes), "hermes_revision": revision,
-                        "sessions": seed_results if "seed_results" in locals() else {}},
-                       ensure_ascii=False, indent=2), encoding="utf-8")
+        active_exception = sys.exc_info()[1]
+        cleanup_errors = []
+        try:
+            (tmp_path / "provider-requests.json").write_text(
+                json.dumps(provider_requests, ensure_ascii=False, indent=2), encoding="utf-8")
+            (tmp_path / "relay-calls.json").write_text(
+                json.dumps({"requests": relay_forwarded, "responses": relay_responses,
+                            "events": event_order, "plugin_sha256": plugin_sha256,
+                            "discovery_peak": discovery_peak,
+                            "discovery_gate_error": discovery_gate_error,
+                            "discovery_gate_events": discovery_gate_events,
+                            "ownership_marker": marker if "marker" in locals() else None,
+                            "hermes_source": str(hermes), "hermes_revision": revision,
+                            "sessions": seed_results if "seed_results" in locals() else {}},
+                           ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception as exc:
+            cleanup_errors.append(f"artifact capture failed: {exc!r}")
         for seed_driver in seed_drivers:
-            if seed_driver.poll() is None:
-                try:
-                    seed_driver.stdin.write("stop\n")
-                    seed_driver.stdin.flush()
-                except (OSError, ValueError):
-                    pass
-                _stop_owned_host(seed_driver)
+            try:
+                seed_driver.stdin.write("stop\n")
+                seed_driver.stdin.flush()
+            except (OSError, ValueError):
+                pass
+            try:
+                _stop_owned_host(seed_driver, seed_driver_identities.get(seed_driver.pid))
+            except Exception as exc:
+                cleanup_errors.append(f"seed driver {seed_driver.pid} cleanup failed: {exc!r}")
         for seed_driver_log in seed_driver_logs:
-            seed_driver_log.close()
-        _stop_owned_host(process)
+            try:
+                seed_driver_log.close()
+            except Exception as exc:
+                cleanup_errors.append(f"seed driver log cleanup failed: {exc!r}")
+        try:
+            _stop_owned_host(process, process_identity)
+        except Exception as exc:
+            cleanup_errors.append(f"Gateway cleanup failed: {exc!r}")
         for server in (api_server, provider_server):
             if server is not None:
-                server.shutdown()
-                server.server_close()
+                try:
+                    server.shutdown()
+                except Exception as exc:
+                    cleanup_errors.append(f"HTTP server shutdown failed: {exc!r}")
+                try:
+                    server.server_close()
+                except Exception as exc:
+                    cleanup_errors.append(f"HTTP server close failed: {exc!r}")
+        if cleanup_errors:
+            message = "native Relay E2E cleanup problems: " + "; ".join(cleanup_errors)
+            if active_exception is None:
+                raise AssertionError(message)
+            active_exception.add_note(message)
