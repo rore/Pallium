@@ -1011,11 +1011,12 @@ def test_hermes_tui_failed_driver_does_not_mask_successful_cleanup(tmp_path, mon
     driver = NativeDriver.__new__(NativeDriver)
     driver.proc = SimpleNamespace(returncode=1)
     driver.python = driver.helper = driver.env = None
+    driver.identity = None
     driver.artifacts = tmp_path
     driver.reader = SimpleNamespace(join=lambda _timeout: None)
     driver.log = StringIO()
     monkeypatch.setattr("tests.test_hermes_tui_native_e2e.stop_owned_driver",
-                        lambda *_args: {"forced": False, "recovered": [], "alive": []})
+                        lambda *_args, identity=None: {"forced": False, "recovered": [], "alive": []})
     driver.close()
     assert driver.log.closed
     assert json.loads((tmp_path / "cleanup.json").read_text(encoding="utf-8")) == {
