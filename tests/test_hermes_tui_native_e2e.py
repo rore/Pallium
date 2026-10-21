@@ -1975,12 +1975,49 @@ print(json.dumps(dict(enabled=True, max_chars=spill.DEFAULT_MAX_CHARS, full_char
                      helper_sha256=hashlib.sha256(pathlib.Path(spill.__file__).read_bytes()).hexdigest())))
 '''
     result = subprocess.run([str(python), "-c", code, str(spill_root), str(source)],
-                            input=json.dumps({"context": NO_REPLY}, ensure_ascii=False),
+                            input=json.dumps({"context": NO_REPLY}, ensure_ascii=True),
                             cwd=home / "scratch", env=env, capture_output=True,
                             text=True, encoding="utf-8", timeout=20)
     (artifacts / "hook-spill-proof.txt").write_text(result.stdout + result.stderr, encoding="utf-8")
     assert result.returncode == 0, result.stdout + result.stderr
     return json.loads(result.stdout)
+
+
+def test_released_hook_spill_preserves_unicode_under_cp1252_child(tmp_path):
+    source, home, artifacts = tmp_path / "source", tmp_path / "home", tmp_path / "artifacts"
+    tools = source / "tools"
+    tools.mkdir(parents=True)
+    (home / "scratch").mkdir(parents=True)
+    artifacts.mkdir()
+    (tools / "__init__.py").write_text("", encoding="utf-8")
+    (tools / "hook_output_spill.py").write_text('''import os, pathlib, sys
+DEFAULT_ENABLED = True
+DEFAULT_MAX_CHARS = 10000
+DEFAULT_PREVIEW_HEAD = DEFAULT_PREVIEW_TAIL = 500
+
+def get_spill_config():
+    assert os.environ['PYTHONIOENCODING'] == 'cp1252:surrogateescape'
+    assert sys.stdin.encoding.lower() == 'cp1252'
+    assert sys.stdin.errors == 'surrogateescape'
+    return dict(enabled=True, max_chars=10000, preview_head=500, preview_tail=500, directory=None)
+
+def spill_if_oversized(text, session_id, source=None, config=None):
+    if len(text) <= config['max_chars']:
+        return text
+    path = pathlib.Path(config['directory']) / session_id / 'spill.txt'
+    path.parent.mkdir(parents=True)
+    path.write_text(text + '\\n', encoding='utf-8')
+    return str(path)
+''', encoding="utf-8")
+    prior_encoding = os.environ.get("PYTHONIOENCODING")
+    env = {**os.environ, "PYTHONPATH": str(source), "PYTHONNOUSERSITE": "1",
+           "PYTHONIOENCODING": "cp1252:surrogateescape"}
+    report = _verify_released_hook_spill(Path(sys.executable), source, home, env, artifacts)
+    assert os.environ.get("PYTHONIOENCODING") == prior_encoding
+    assert report["full_chars"] == len(NO_REPLY) == 16000
+    assert report["enabled"] is True and report["max_chars"] == 10000 and report["files"] == 1
+    files = list((home / "hook-spill-proof").rglob("*.txt"))
+    assert len(files) == 1 and files[0].read_text(encoding="utf-8") == NO_REPLY + "\n"
 
 
 @pytest.mark.parametrize("memory_enabled", [False, True], ids=["memory-off", "memory-on"])
