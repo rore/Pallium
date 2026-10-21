@@ -14,10 +14,10 @@ supported-version claim.
 
 | Gate | Required evidence | Current state |
 |---|---|---|
-| Released hosts | Actual Desktop and TUI journeys on current compatible releases | Desktop and TUI memory-off passed on v0.22.0; memory-on and v0.22.2 native journeys remain unqualified; gateway Relay/History passed on v0.22.0/v0.22.2 |
+| Released hosts | Actual Desktop and TUI journeys on current compatible releases | Linux TUI memory-off/on passed on both pins; older Windows Desktop/TUI memory-off passed on v0.22.0; the complete current Windows matrix remains open |
 | Runtime compatibility | Public plugin identity, injection, hook and middleware contracts; clear missing-capability errors | Current v0.22.0/v0.22.2 gateway checks passed; full native release coverage pending |
-| Normal configuration | Ordinary providers, default Tool Search, supported plugin coexistence | Default Tool Search and a harmless peer hook passed in the v0.22.0 Desktop and TUI memory-off cases; ordinary-provider behavior remains unqualified |
-| Full package | Skill, Relay, History and opt-in memory lifecycle; memory off leaves Relay/History functional | Native Desktop and TUI memory-off passed on v0.22.0; native opt-in memory lifecycle remains unqualified |
+| Normal configuration | Ordinary providers, default Tool Search, supported plugin coexistence | Built-in openai-api configuration, default Tool Search and a harmless peer hook passed in isolated Linux TUI checks on both releases; current Windows matrix and other providers remain unqualified |
+| Full package | Skill, Relay, History and opt-in memory lifecycle; memory off leaves Relay/History functional | Complete Linux TUI default-off and opt-in memory lifecycles passed on both pins; older Windows memory-off passed on v0.22.0; current Windows matrix remains open |
 | Recovery | Busy/concurrent sessions, reset/close, host/service/MCP restart, stale routes and ambiguous outcomes | Endpoint outage and controlled host/MCP relaunch passed in Desktop memory-off; a separate caller E2E proves queued delivery persistence across an owned Pallium process restart. Native service/MCP reconnection and the remaining matrix are unqualified |
 | Lifecycle | Disposable install/update/remove/rollback, repeated use and owned-process cleanup | Native repeat setup, status and removal preserved profile data in the passing Desktop and TUI memory-off cases; caller ownership/conflict coverage remains separate |
 | Public documentation | Public entry points, setup/capability guides and bundled skill match final verified behavior; commands and links checked | Initial alignment audit updated the guides; final production review still required |

@@ -22,6 +22,14 @@ fail-fast. That run tested candidate `f348f00f`; later busy-turn and source-comp
 changes still require native proof. This partial matrix does not establish production
 readiness. See the [latest retained run](https://github.com/rore/Pallium/actions/runs/39557493207).
 
+Additional isolated Linux TUI qualification passed on both releases at candidate
+`13029e38`: the full default-off journey used Hermes's built-in `openai-api`
+configuration, and the memory-on journey used a custom synthetic provider.
+Both exercised busy-turn delivery, later-session History, host/MCP relaunch and
+profile update/removal. Provider credentials stayed out of both MCP generations.
+These offline checks use synthetic responses; they establish configuration and
+integration behavior, not model quality or the remaining Windows matrix.
+
 ## Available in the experimental package
 
 | Capability | Current boundary |
@@ -89,8 +97,9 @@ with the quickstart's default-profile setup commands.
 Setup preserves the profile's provider, toolsets, Tool Search and other plugins;
 those are not intrinsic package requirements. It validates Hermes MCP SDK2 and
 a separate Pallium MCP SDK1 interpreter. It does not create a global
-`mcp_servers` entry. Ordinary providers, default Tool Search and plugin
-coexistence have not yet been qualified on the current source.
+`mcp_servers` entry. The current Linux TUI checks cover one built-in provider
+configuration, default Tool Search and a harmless peer hook. The complete current
+Windows matrix and other provider configurations remain unqualified.
 
 Memory tools are disabled by default. Pass `--memory-enabled` to opt in; pass
 `--no-memory-enabled` to disable them. Repeating setup without the opt-in flag

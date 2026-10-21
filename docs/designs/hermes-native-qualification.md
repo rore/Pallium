@@ -120,8 +120,20 @@ both pinned releases on clean candidate `1896605eef514e76f77b454afea44a92463aaed
 v0.22.0 took 106.15 seconds and v0.22.2 took 107.72 seconds. Independent review
 verified all four non-skipped cells, clean source and owned-process cleanup,
 two distinct host/MCP generations, later-session History and the optional-memory
-lifecycle. These runs use the custom synthetic provider. The built-in provider
-configuration path and final Windows matrix remain separate gates.
+lifecycle. These runs use the custom synthetic provider.
+
+On composed candidate `13029e3847b756b70cf387b4e0344262d0bf27a8`, the same two
+Linux cases passed on both releases again: v0.22.0 in 115.69 seconds and v0.22.2
+in 109.08 seconds. Memory-off now exercises the supported built-in `openai-api`
+configuration with explicit chat-completions mode and synthetic credentials/URL
+supplied only through the isolated environment. Each release recorded 31 matching
+chat-completions requests; the profile contained neither key nor base URL, and
+both inspected MCP generations omitted both provider variables. Memory-on retains
+the custom provider and complete optional-memory lifecycle. Independent result
+review accepted all four non-skipped cases and cleanup/source postconditions.
+This covers integration transport and configuration, not paid-model quality or
+every provider/memory combination. Required CI and final Windows qualification
+remain separate gates.
 
 Record the actual runner image and Windows version in every native result.
 Hosted Windows Server evidence must not be described as Windows 11 or installed
