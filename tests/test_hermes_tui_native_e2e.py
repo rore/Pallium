@@ -1603,7 +1603,7 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
             assert remember_request["thread_ref"] == session_id
             memory_query = next(row["body"] for row in forwarded if row["path"] == "/query"
                                 and row["body"].get("text") == "quartz lantern")
-            assert memory_query["active_session_ref"] == memory_session_id
+            assert memory_query["thread_ref"] == memory_session_id
         assert user["source_id"] == hashlib.sha256((SCOPE["container_ref"] + "\0" + session_id + "\0"
                                                     + user["metadata"]["hermes_message_uid"]).encode()).hexdigest()
         if memory_enabled:

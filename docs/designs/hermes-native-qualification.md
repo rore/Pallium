@@ -3,8 +3,8 @@
 Status: the user approved the disposable runner in PR #328, subsequently one
 additional attempt, and then up to two further disposable-VM attempts in response
 to the renewed request on 2026-10-21. Five total attempts including reruns are
-authorized within the unchanged four-runner-hour ceiling. Three are consumed;
-at most two remain, subject to fresh candidate checks and remaining time.
+authorized within the unchanged four-runner-hour ceiling. Four are consumed;
+at most one remains, subject to fresh candidate checks and remaining time.
 The isolated environment and evidence may be retained through completion.
 The runner is merged; the first run is
 [39474582150](https://github.com/rore/Pallium/actions/runs/39474582150), testing
@@ -32,6 +32,17 @@ Before further execution, reconcile actual attempts and conservative elapsed job
 time against the unchanged total ceiling; each next run's full worst-case time
 must fit. The additional approval does not waive candidate checks or review.
 Harness repair and pure replay are not a native pass.
+The fourth run
+[39557493207](https://github.com/rore/Pallium/actions/runs/39557493207) tested
+`f348f00f9b4ef0b6fbf63d0e87df245102318498`: 59 passed and two failed on v0.22.0.
+Both memory-off UI journeys completed. Both memory-on cases reached the memory
+lifecycle but failed an assertion using the History attribution field for an
+ordinary memory query. All four cleanup/source checks passed; v0.22.2 was
+cancelled. The corrected assertion is not yet natively qualified.
+Conservative elapsed accounting including cancelled jobs totals 5,026 seconds,
+leaving 9,374 of 14,400 seconds. The next run's 7,200-second maximum fits.
+The user now directs isolated local WSL validation first and remote Windows
+qualification last. Existing Windows runner checks remain unchanged.
 Hermes remains experimental. This approval excludes local recovery and everyday
 installation or rollout.
 
