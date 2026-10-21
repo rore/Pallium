@@ -13,12 +13,33 @@ lane: integration
 Active draft PR #324 extends the experimental Desktop/TUI integration toward
 production readiness, including scoped opt-in memory and normal-profile lifecycle
 qualification. Current owner Work Record: `.agent-workflow/tasks/hermes-production-slice4.md`.
-It remains active, draft and experimental preview support. The pinned Windows UI
-matrix is independently accepted at `b3601c79`; final combined technical review,
-separate human result review and PR #324 merge remain pending. The owner is aligning
-the public/bundled guides separately; this roadmap update does not complete them.
+It remains active, draft and experimental. Fresh clean-context review at `353e8f83`
+withdrew the earlier combined technical GO after confirming two P1 blockers below.
+Human result approval is withdrawn; work is with the owner, not waiting on the
+user. The pinned short-journey matrix at `b3601c79` remains evidence, not a broad
+readiness claim. Owner guide changes remain separate from this roadmap update.
 
-### Accepted Windows native matrix (2026-10-21)
+### Confirmed readiness blockers and owner continuation (2026-10-21)
+
+- [ ] **Ordinary-turn liveness:** cached `register_session` does not refresh trusted
+  ordinary-turn `last_seen`; after 24 hours the dormant session rejects MCP/wake.
+  The owner is planning the plugin-only correction using exact endpoint/generation
+  authority and missing caller-surface E2E coverage.
+- [ ] **Inbound payload and persistent fencing:** valid 1,601–16,000-character
+  service payloads can be claimed, then rejected by the 1,600-character renderer,
+  leaving persistent `claim_attempted` fencing across later delivery, reload and
+  expiry. The owner is planning full service-bound transport and lifecycle E2E,
+  preserving ambiguous-attempt and duplicate-activation fences.
+
+The user explicitly authorized fixing both blockers, adding missing E2E
+regressions, fresh independent review and isolated execution before pushing the
+fixes. The existing High-risk `.agent-workflow/tasks/hermes-production-slice4.md`
+and PR #324 retain ownership. Next gate: reviewed fixes, both observable regressions,
+clean reviewer and exact-candidate requalification before renewed combined
+technical acceptance and separate human result/release review. No merge or live
+rollout is approved by the retained short-journey evidence.
+
+### Retained Windows short-journey matrix (2026-10-21)
 
 Native [39626758387](https://github.com/rore/Pallium/actions/runs/39626758387),
 attempt 1, completed successfully on exact
@@ -34,12 +55,12 @@ Candidate CI [39626448225](https://github.com/rore/Pallium/actions/runs/39626448
 and governance [39626448147](https://github.com/rore/Pallium/actions/runs/39626448147)
 passed. Each Linux Python lane passed 7,793 tests with 93 skips and two expected
 failures, in 373.26 and 499.06 seconds. Reuse the previously accepted four Linux
-TUI cells, Gateway and SDK2 evidence; no repeated native qualification is needed
-for this accepted matrix. Native runs 11/12 remain failed and their original
+TUI cells, Gateway and SDK2 evidence as baselines; they do not cover the two new
+blocker boundaries or qualify their future corrections. Native runs 11/12 remain failed and their original
 causes unexplained; later passing evidence does not prove those failures cured.
 
-Next: finish the owner's guide alignment, final combined technical acceptance and
-separate human result review before merge. Qualification is Windows Server 2025
+Next: follow the owner fix/E2E/review/requalification gate above, then finish guide
+alignment and renewed technical/human result review before merge. Evidence is Windows Server 2025
 with an unpacked app and synthetic provider; it does not establish Windows 11,
 MSIX/updater behavior, graceful native Quit, automatic standalone MCP reconnect
 or ordinary-provider/model quality. No installed rollout or generic Relay
