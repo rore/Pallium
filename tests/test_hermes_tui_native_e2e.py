@@ -1550,7 +1550,7 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
             return [row for row in forwarded if row["method"] == "GET"
                     and row["path"].startswith("/relay/pending-candidate?")
                     and f"session_ref={session_id}" in row["path"]
-                    and pending_candidate_matches(row["response"], busy_delivery_id, address["endpoint_id"])]
+                    and pending_candidate_matches(row["response"], busy_delivery_id, address["exact_selector"])]
 
         eventually(lambda: len(busy_candidate_reads()) >= 2,
                    "busy native session did not re-poll the exact pending delivery", timeout=6)
