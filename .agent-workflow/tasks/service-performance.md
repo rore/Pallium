@@ -2,6 +2,8 @@
 
 ## Authorized integrated qualification - 2026-10-21
 
+Dependency cleared: direct GitHub verification confirms PR329 MERGED at2026-10-21T05:44:35Z with actual main d3528c2e89e3c3cef3d878cd0441b49f650186f1. Fetched object tree508c91f64320f27c48dbb59ad73f96d77de6ece9 equals qualified5ea0f60e tree. Both reused JUnit blobs remain exact matches; the seven-path329 merge delta is the inspected preview/docs/tests/support slice. Manager's local merge-receipt file was already unavailable, so its contents are not claimed; independent current GitHub metadata and Git objects establish the receipt. Existing PR325 is draft at remote b5cb; local clean preparation commit2ca0130c preserves the entire dirty record. Plan GO applies; proceed with normal isolated actual-main integration, followed by exact composition and frozen-artifact review. No qualification is started by this dependency receipt.
+
 Pallium Relay manager instruction relay-msg-ecf1c29f132b483f8e4f15a336e082e2, delivery relay-delivery-d891e0bfb3d147cc82407931c0168a6c, relays NEW direct human approval source551326c9-9b98-4448-9e38-100874370061. The manager asked: "May I run one integrated qualification after PR329 merges, stopping if it fails? This needs an explicit exception to your no-repeat instruction"; reported verbatim human response: "Approved and get this done alreafy". This is attributed manager-relayed human approval, not a new direct quote observed by this owner. It supersedes the no-additional-run restriction only for the finite integrated qualification below. Original requirement baseline, High/Large classification, all failures and independent188-PASS evidence remain unchanged; historical receipts do not qualify the new head. Normal non-exempt whole-change applicability remains because this includes storage, tests and CI beyond the documentation allowlist.
 
 Plan (first step): invoke /agent-workflow, resolve existing agent-workflow:service-performance and retain current risk classification before any source integration. Prepare read-only artifacts now; require verified actual PR329 merge receipt before integrating actual main into existing feat/windows313-retained-recovery. Preserve this complete dirty Work Record and external evidence; commit its accumulated qualification/approval history locally, then perform a normal main merge with no product/test accommodation. Verify expected CI/static-test overlap is byte-identical and all scoped product/fixture changes survive; stop for review on any unexpected conflict or semantic change. Do not advance primary/shared checkouts or installed state.
@@ -2549,7 +2551,7 @@ Agent technical review: /root/architecture_check, clean nonimplementer source/pl
 
 **Exceptions:** None
 
-**State:** Blocked or returned to planning
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ### Final adbc Windows preparation boundaries — pre-edit checkpoint 2026-10-16
