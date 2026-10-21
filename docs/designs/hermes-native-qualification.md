@@ -1,5 +1,25 @@
 # Hermes native qualification
 
+Run [39617852210](https://github.com/rore/Pallium/actions/runs/39617852210), candidate
+`143683d650692aff52b7633cdbde4402ced0e966`, passed 66 v0.22.0 checks and failed
+one, with zero skips in 396.29 seconds. Both Desktop memory modes completed
+through Ctrl+N, and TUI memory-on passed. TUI memory-off reached History before
+another read-only poll response reset; later privacy/profile checks were not
+reached. Its failed poll belongs to the original process generation, with a
+different session used after relaunch. Timing and cause remain unknown, and
+this case stays failed. v0.22.2 was cancelled. Full CI on this candidate passed
+both Linux lanes, Windows and governance; that does not cure prior incidents.
+
+The next reviewed fixture marks only the exact original poll scope immediately
+before its intentional process retirement. A completed HTTP 200 read response
+cancelled during that explicit boundary can be recorded provisionally, then
+accepted only after normal cleanup, old-generation death and a distinct later
+session are proved. Active/unmarked cancellations, mutations, non-200 responses,
+forwarding failures and unknown errors remain fatal. No second HTTP 500 is sent
+after response writing starts. A real-loopback cancellation/state/recovery test
+and a final audit after handler drain must pass before another native attempt.
+The earlier failed receipts are not reclassified as passes.
+
 Run [39612888749](https://github.com/rore/Pallium/actions/runs/39612888749), candidate
 `480c0613075869503f21ada404a263a23ce47811`, failed three v0.22.0 checks with
 64 passed and zero skips in 329.79 seconds. Both Desktop cases failed at the

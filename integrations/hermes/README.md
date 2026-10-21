@@ -233,6 +233,15 @@ checks; its cause remains unknown and fatal. v0.22.2 was cancelled. Parent
 source/cleanup success does not qualify these cases. The next reviewed driver
 uses one supported default Ctrl+N from the composer and the existing route and
 composer barriers, without action retries or application changes.
+Run [39617852210](https://github.com/rore/Pallium/actions/runs/39617852210) on
+`143683d650692aff52b7633cdbde4402ced0e966` passed both Desktop modes and TUI
+memory-on, but failed TUI memory-off on another read-only poll response reset
+(66 passed, one failed, zero skips); v0.22.2 was cancelled. Full CI passed.
+The next reviewed fixture distinguishes a narrowly recorded read cancellation
+during explicit original-process retirement from active or mutating failures.
+Cancellation remains provisional until normal cleanup and distinct-session
+proof pass, with all errors audited after handler drain. Existing failures stay
+failed; no complete matrix or production-readiness claim follows.
 These results do not qualify Windows 11, everyday MSIX/updater behavior, native
 app-quit behavior, automatic standalone MCP reconnection, paid-provider quality
 or every provider/memory combination.

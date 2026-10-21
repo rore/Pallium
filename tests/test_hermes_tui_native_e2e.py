@@ -6,6 +6,7 @@ Run the pure helper nodes first; they never import ConPTY or launch Hermes.
 from __future__ import annotations
 
 import hashlib
+import http.client
 import json
 import os
 import platform
@@ -13,13 +14,15 @@ from pathlib import Path
 import queue
 import re
 import shutil
+import socket
+import struct
 import subprocess
 import sys
 import threading
 import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit
 
 import pytest
 import yaml
@@ -216,6 +219,689 @@ def pending_candidate_matches(response, delivery_id, endpoint_id):
     return (isinstance(response, dict) and response.get("state") == "pending"
             and response.get("delivery_id") == delivery_id
             and response.get("recipient_endpoint_id") == endpoint_id)
+
+
+def _new_proxy_retirement_state():
+    return {"lock": threading.Lock(), "scope": None, "confirmed": False, "cancellations": []}
+
+
+def _mark_proxy_scope_retiring(retirement, scope):
+    assert set(scope) == {"runtime", "session_ref", "container_ref"}
+    with retirement["lock"]:
+        assert retirement["scope"] is None, "only the original session may be retired"
+        retirement["scope"] = dict(scope)
+        retirement["confirmed"] = False
+
+
+def _proxy_cancel_scope(path):
+    if re.search(r"%(?![0-9A-Fa-f]{2})", path):
+        return None
+    try:
+        parts = urlsplit(path)
+        pairs = parse_qsl(parts.query, keep_blank_values=True, strict_parsing=True,
+                          encoding="utf-8", errors="strict")
+    except (ValueError, UnicodeError):
+        return None
+    if (parts.scheme or parts.netloc or parts.path != "/relay/pending-candidate"
+            or parts.fragment or len(pairs) != 3):
+        return None
+    if {key for key, _ in pairs} != {"runtime", "session_ref", "container_ref"}:
+        return None
+    scope = dict(pairs)
+    if any(not value for value in scope.values()):
+        return None
+    return scope
+
+
+def _record_retired_read_disconnect(retirement, diagnostic, exc, forwarded):
+    if type(exc) not in {BrokenPipeError, ConnectionResetError, ConnectionAbortedError}:
+        return False
+    if (diagnostic.get("endpoint_role") != "api" or diagnostic.get("method") != "GET"
+            or diagnostic.get("response_status") != 200 or diagnostic.get("phase") != "response_write"):
+        return False
+    scope = _proxy_cancel_scope(diagnostic.get("path", ""))
+    if scope is None:
+        return False
+    request_id = diagnostic.get("request_id")
+    if not any(row.get("request", {}).get("request_id") == request_id and row.get("status") == 200
+               for row in forwarded):
+        return False
+    with retirement["lock"]:
+        retiring = retirement.get("scope")
+        if not retiring or scope != retiring:
+            return False
+        retirement["cancellations"].append({
+            **diagnostic,
+            "exception_type": type(exc).__name__,
+            "error": repr(exc),
+            "classification": "retired_read_response_disconnect",
+            "retirement_scope": dict(retiring),
+            "upstream_complete": True,
+        })
+    return True
+
+
+def _proxy_response_audit(retirement, server_errors):
+    with retirement["lock"]:
+        cancellations = [dict(row) for row in retirement["cancellations"]]
+        confirmed = bool(retirement["confirmed"])
+    issues = []
+    if cancellations and not confirmed:
+        issues.append("retired-read disconnect was not followed by confirmed cleanup and relaunch")
+    if server_errors:
+        issues.append(f"{len(server_errors)} fatal proxy server error(s) remain")
+    return {
+        "passed": not issues,
+        "retirement_confirmed": confirmed,
+        "cancellation_count": len(cancellations),
+        "fatal_server_error_count": len(server_errors),
+        "cancellations": cancellations,
+        "issues": issues,
+    }
+
+
+def _finalize_proxy_response_audit(artifacts, outcome, retirement, server_errors):
+    audit = _proxy_response_audit(retirement, server_errors)
+    outcome["server_errors"] = server_errors
+    outcome["proxy_response_audit"] = audit
+    primary_failure = any(outcome.get(key) for key in (
+        "journey_error", "cleanup_error", "source_postcondition_error", "artifact_capture_error",
+        "artifact_write_error", "server_shutdown_error", "result_artifact_error"))
+    late_error = None
+    if not audit["passed"]:
+        late_error = "proxy response audit failed: " + "; ".join(audit["issues"])
+        outcome["proxy_response_audit_error"] = late_error
+        if primary_failure:
+            outcome["secondary_proxy_response_audit_error"] = late_error
+        else:
+            outcome["status"] = "failed"
+            outcome["journey_error"] = late_error
+    result_path = Path(artifacts) / "result.json"
+    result_path.write_text(json.dumps(outcome, ensure_ascii=False, indent=2), encoding="utf-8")
+    if late_error and not primary_failure:
+        raise _ProxyResponseAuditFailure(late_error)
+    return audit
+
+
+class _ProxyResponseAuditFailure(AssertionError):
+    pass
+
+
+def _capture_secondary_finalization_failure(primary, outcome, field, exc):
+    key = "secondary_" + field
+    outcome[key] = repr(exc)
+    if primary is not None:
+        primary.add_note(f"{field}: {exc!r}")
+    return primary
+
+
+def _run_finalization_step(primary, outcome, field, action):
+    try:
+        return action(), primary, False
+    except BaseException as exc:
+        if primary is not None:
+            _capture_secondary_finalization_failure(primary, outcome, field, exc)
+            return None, primary, False
+        outcome[field] = repr(exc)
+        return None, exc, True
+
+
+def _run_proxy_response_finalization(primary, artifacts, outcome, retirement, server_errors):
+    try:
+        audit = _finalize_proxy_response_audit(artifacts, outcome, retirement, server_errors)
+    except _ProxyResponseAuditFailure as exc:
+        if primary is not None:
+            _capture_secondary_finalization_failure(primary, outcome, "proxy_response_audit_error", exc)
+            return None, primary, False
+        return None, exc, True
+    except BaseException as exc:
+        if primary is not None:
+            if outcome.get("secondary_proxy_response_audit_error"):
+                primary.add_note("proxy_response_audit_error: " + outcome["secondary_proxy_response_audit_error"])
+            _capture_secondary_finalization_failure(primary, outcome, "result_artifact_error", exc)
+            return None, primary, False
+        outcome["result_artifact_error"] = repr(exc)
+        outcome["status"] = "failed"
+        return None, exc, True
+    if primary is not None and outcome.get("secondary_proxy_response_audit_error"):
+        primary.add_note("proxy_response_audit_error: " + outcome["secondary_proxy_response_audit_error"])
+    return audit, primary, False
+
+
+def _finalize_native_proxy_tail(active_primary, primary, artifacts, outcome, retirement,
+                                server_errors, steps, success_conditions):
+    for field, action in steps:
+        _, primary, _ = _run_finalization_step(primary, outcome, field, action)
+    if primary is None and success_conditions():
+        outcome["status"] = "passed"
+    _, primary, _ = _run_proxy_response_finalization(
+        primary, artifacts, outcome, retirement, server_errors)
+    if active_primary is None and primary is not None:
+        raise primary
+    return primary
+
+
+def _make_native_http_handler(*, client, provider, provider_kind, forwarded, server_errors,
+                              provider_http_requests, retirement, body_write_barrier=None,
+                              response_ready_barrier=None):
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *_args):
+            pass
+
+        def send(self, status, body, content_type="application/json"):
+            self.request_diagnostic["phase"] = "response_encode"
+            raw = body if isinstance(body, bytes) else json.dumps(body, ensure_ascii=False).encode()
+            self.request_diagnostic.update(phase="response_write", response_status=status)
+            self.request_diagnostic["response_write_attempts"] = (
+                self.request_diagnostic.get("response_write_attempts", 0) + 1)
+            self.send_response(status)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            if body_write_barrier is not None:
+                body_write_barrier(self.request_diagnostic.copy(), raw)
+            self.wfile.write(raw)
+
+        def handle_request(self):
+            self.request_diagnostic = {
+                "request_id": uuid.uuid4().hex, "endpoint_role": self.server.endpoint_role,
+                "method": self.command, "path": self.path, "client_address": list(self.client_address),
+                "phase": "validation", "response_status": None, "response_write_attempts": 0,
+            }
+            try:
+                assert self.client_address[0] == "127.0.0.1"
+                assert self.headers.get("Host") == f"127.0.0.1:{self.server.server_port}"
+                assert self.path.startswith("/") and not urlsplit(self.path).netloc
+                self.request_diagnostic["phase"] = "read"
+                raw = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+                if self.server.endpoint_role == "api":
+                    self.request_diagnostic["phase"] = "forward"
+                    response = client.request(self.command, self.path, content=raw or None,
+                                              headers={"Content-Type": "application/json"})
+                    self.request_diagnostic["response_status"] = response.status_code
+                    body = response.json()
+                    forwarded.append({"method": self.command, "path": self.path,
+                                      "body": json.loads(raw) if raw else None,
+                                      "status": response.status_code, "response": body,
+                                      "request": self.request_diagnostic.copy()})
+                    if response_ready_barrier is not None:
+                        response_ready_barrier(self.request_diagnostic.copy(), response.status_code, body)
+                    self.send(response.status_code, response.content)
+                elif self.command == "GET" or self.path == "/api/show":
+                    self.send(*provider_metadata_response(self.path))
+                else:
+                    body = json.loads(raw)
+                    if provider_kind == "openai-api":
+                        evidence = synthetic_openai_request_evidence(
+                            self.path, body, self.headers.get("Authorization"))
+                        provider_http_requests.append(evidence)
+                        assert evidence["auth_matched"], "built-in provider did not send the synthetic Bearer key"
+                    else:
+                        assert self.path == "/v1/chat/completions", self.path
+                    text, call = provider.respond(body)
+                    message = {"role": "assistant", "content": text}
+                    if call:
+                        message["tool_calls"] = [{"index": 0, "id": f"local-{len(provider.requests)}",
+                                                  "type": "function", "function": {
+                                                      "name": call[0], "arguments": json.dumps(call[1], ensure_ascii=False)}}]
+                    finish = "tool_calls" if call else "stop"
+                    base = {"id": "local", "created": 1, "model": "pallium-local"}
+                    if body.get("stream"):
+                        chunks = [{**base, "object": "chat.completion.chunk", "choices": [
+                            {"index": 0, "delta": message, "finish_reason": None}]},
+                                  {**base, "object": "chat.completion.chunk", "choices": [
+                                      {"index": 0, "delta": {}, "finish_reason": finish}]}]
+                        wire = ("".join("data: " + json.dumps(chunk) + "\n\n" for chunk in chunks)
+                                + "data: [DONE]\n\n").encode()
+                        self.send(200, wire, "text/event-stream")
+                    else:
+                        self.send(200, {**base, "object": "chat.completion", "choices": [
+                            {"index": 0, "message": message, "finish_reason": finish}],
+                            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}})
+            except BaseException as exc:
+                diagnostic = self.request_diagnostic.copy()
+                if _record_retired_read_disconnect(retirement, diagnostic, exc, forwarded):
+                    return
+                server_errors.append({**diagnostic, "exception_type": type(exc).__name__, "error": repr(exc)})
+                if diagnostic["phase"] != "response_write":
+                    try:
+                        self.send(500, {"error": str(exc)})
+                    except BaseException as fallback_exc:
+                        server_errors.append({**self.request_diagnostic.copy(),
+                                              "exception_type": type(fallback_exc).__name__,
+                                              "error": repr(fallback_exc), "during": "error_response"})
+
+        do_POST = do_GET = handle_request
+
+    return Handler
+
+
+def _abort_loopback_response(server, path, *, method="GET", body=b""):
+    connection = socket.create_connection(("127.0.0.1", server.server_port), timeout=3)
+    connection.settimeout(3)
+    request = (f"{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{server.server_port}\r\n"
+               f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n").encode() + body
+    connection.sendall(request)
+    received = bytearray()
+    while b"\r\n\r\n" not in received:
+        chunk = connection.recv(4096)
+        if not chunk:
+            break
+        received.extend(chunk)
+    status_line = bytes(received).split(b"\r\n", 1)[0].decode("ascii", errors="replace")
+    connection.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+    connection.close()
+    return status_line
+
+
+def _start_api_proxy(client, forwarded, server_errors, retirement, *, provider=None,
+                     provider_kind="custom", provider_http_requests=None, body_write_barrier=None,
+                     response_ready_barrier=None):
+    handler = _make_native_http_handler(
+        client=client, provider=provider, provider_kind=provider_kind, forwarded=forwarded,
+        server_errors=server_errors, provider_http_requests=provider_http_requests or [],
+        retirement=retirement, body_write_barrier=body_write_barrier,
+        response_ready_barrier=response_ready_barrier)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    server.endpoint_role = "api"
+    server.daemon_threads = False
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, thread
+
+
+def _wait_for_proxy_record(retirement, server_errors, timeout=5):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        with retirement["lock"]:
+            if retirement["cancellations"]:
+                return "cancellation"
+        if server_errors:
+            return "server_error"
+        time.sleep(0.01)
+    raise AssertionError("proxy request did not produce a cancellation or fatal server record")
+
+
+def _proxy_public_get(server, path):
+    connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=3)
+    try:
+        connection.request("GET", path, headers={"Host": f"127.0.0.1:{server.server_port}"})
+        response = connection.getresponse()
+        body = response.read()
+        return response.status, json.loads(body)
+    finally:
+        connection.close()
+
+
+def _message_delivery_state(client, message):
+    response = client.get("/relay/messages/" + message["message_id"], params=SCOPE)
+    assert response.status_code == 200, response.text
+    return response.json()["deliveries"][0]
+
+
+def test_native_proxy_retired_read_disconnect_preserves_and_recovers_pending_delivery(client):
+    receiver_ref = "native-proxy-retired-read"
+    receiver, message = _create_pending_relay_delivery(
+        client, receiver_ref, "native-proxy-sender", "bounded pending payload")
+    before = _message_delivery_state(client, message)
+    assert before["state"] == "pending" and before["attempts"] == 0
+    assert isinstance(before["delivery_id"], str) and before["delivery_id"]
+    retirement = _new_proxy_retirement_state()
+    forwarded = []
+    server_errors = []
+    upstream_complete = threading.Event()
+    release_headers = threading.Event()
+    headers_sent = threading.Event()
+    release_body = threading.Event()
+
+    def response_ready_barrier(diagnostic, status, _body):
+        if (diagnostic["endpoint_role"] == "api" and diagnostic["method"] == "GET"
+                and diagnostic["path"] == _pending_candidate_path(receiver_ref) and status == 200):
+            upstream_complete.set()
+            if not release_headers.wait(5):
+                raise AssertionError("test did not release the response-header barrier")
+
+    def body_barrier(diagnostic, _raw):
+        if (diagnostic["endpoint_role"] == "api" and diagnostic["method"] == "GET"
+                and diagnostic["path"] == _pending_candidate_path(receiver_ref)):
+            headers_sent.set()
+            if not release_body.wait(5):
+                raise AssertionError("test did not release the response-body barrier")
+
+    server, thread = _start_api_proxy(
+        client, forwarded, server_errors, retirement, body_write_barrier=body_barrier,
+        response_ready_barrier=response_ready_barrier)
+    request_result = []
+    request_errors = []
+    request_path = _pending_candidate_path(receiver_ref)
+
+    def abort_request():
+        try:
+            request_result.append(_abort_loopback_response(server, request_path))
+        except BaseException as exc:
+            request_errors.append(exc)
+
+    request_thread = threading.Thread(target=abort_request, daemon=True)
+    request_thread.start()
+    try:
+        assert upstream_complete.wait(5), "upstream candidate response did not complete with HTTP 200"
+        assert any(row["path"] == request_path and row["status"] == 200 for row in forwarded)
+        _mark_proxy_scope_retiring(retirement, {
+            "runtime": "hermes", "session_ref": receiver_ref, "container_ref": SCOPE["container_ref"],
+        })
+        release_headers.set()
+        assert headers_sent.wait(5), "proxy did not reach the completed-200 response-write barrier"
+        request_thread.join(timeout=5)
+        assert not request_thread.is_alive(), "client did not reset after receiving response headers"
+        assert not request_errors, request_errors
+        assert request_result and int(request_result[0].split()[1]) == 200, request_result
+        release_body.set()
+        assert _wait_for_proxy_record(retirement, server_errors) == "cancellation"
+        assert not server_errors, server_errors
+        assert len(retirement["cancellations"]) == 1
+        cancellation = retirement["cancellations"][0]
+        assert cancellation["method"] == "GET" and cancellation["response_status"] == 200
+        assert cancellation["phase"] == "response_write"
+        assert cancellation["classification"] == "retired_read_response_disconnect"
+        assert cancellation["upstream_complete"] is True
+        assert cancellation["response_write_attempts"] == 1
+        assert len([row for row in forwarded if row["path"] == request_path and row["status"] == 200]) == 1
+
+        after = _message_delivery_state(client, message)
+        assert after["state"] == "pending" and after["attempts"] == 0
+        assert after["delivery_id"] == before["delivery_id"]
+        status, candidate = _proxy_public_get(server, request_path)
+        assert status == 200
+        assert pending_candidate_matches(candidate, before["delivery_id"], receiver["endpoint_id"])
+        with retirement["lock"]:
+            retirement["confirmed"] = True
+        assert _proxy_response_audit(retirement, server_errors)["passed"]
+    finally:
+        release_headers.set()
+        release_body.set()
+        request_thread.join(timeout=5)
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+    assert not thread.is_alive(), "loopback API proxy did not stop"
+
+
+@pytest.mark.parametrize("request_case", [
+    "active", "foreign", "wrong_method", "wrong_path", "upstream_non_200", "mutation",
+])
+def test_native_proxy_unproven_read_disconnect_remains_fatal(client, request_case):
+    receiver_ref = "native-proxy-fatal-read"
+    receiver, _message = _create_pending_relay_delivery(
+        client, receiver_ref, "native-proxy-fatal-sender", "fatal control payload")
+    retirement = _new_proxy_retirement_state()
+    if request_case != "active":
+        _mark_proxy_scope_retiring(retirement, {
+            "runtime": "hermes", "session_ref": receiver_ref, "container_ref": SCOPE["container_ref"],
+        })
+    forwarded = []
+    server_errors = []
+    request_session = "foreign-native-proxy-session" if request_case == "foreign" else receiver_ref
+    request_path = _pending_candidate_path(request_session)
+    method = "GET"
+    body = b""
+    proxy_client = client
+    if request_case == "wrong_method":
+        method, body = "POST", b"{}"
+    elif request_case == "wrong_path":
+        request_path = "/relay/sessions?" + urlencode({
+            "runtime": "hermes", "session_ref": receiver_ref, "container_ref": SCOPE["container_ref"],
+        })
+    elif request_case == "mutation":
+        method = "POST"
+        request_path = "/relay/turn"
+        body = json.dumps({
+            "runtime": "claude-code", "session_ref": "native-proxy-mutation-control",
+            "container_ref": SCOPE["container_ref"],
+        }).encode()
+    elif request_case == "upstream_non_200":
+        class Non200Client:
+            def request(self, method, path, **kwargs):
+                if path == request_path:
+                    return type("Response", (), {
+                        "status_code": 503, "content": b"{}", "json": lambda self: {},
+                    })()
+                return client.request(method, path, **kwargs)
+        proxy_client = Non200Client()
+
+    headers_sent = threading.Event()
+    release_body = threading.Event()
+
+    def body_barrier(_diagnostic, _raw):
+        headers_sent.set()
+        if not release_body.wait(5):
+            raise AssertionError("control test did not release the response-body barrier")
+
+    server, thread = _start_api_proxy(
+        proxy_client, forwarded, server_errors, retirement, body_write_barrier=body_barrier)
+    request_result = []
+    request_errors = []
+
+    def abort_request():
+        try:
+            request_result.append(_abort_loopback_response(server, request_path, method=method, body=body))
+        except BaseException as exc:
+            request_errors.append(exc)
+
+    request_thread = threading.Thread(target=abort_request, daemon=True)
+    request_thread.start()
+    try:
+        assert headers_sent.wait(5), "control request did not reach response-write barrier"
+        request_thread.join(timeout=5)
+        assert not request_thread.is_alive(), "control client did not reset after response headers"
+        assert not request_errors, request_errors
+    finally:
+        release_body.set()
+        request_thread.join(timeout=5)
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+    assert not thread.is_alive(), "loopback API proxy did not stop"
+    assert _wait_for_proxy_record(retirement, server_errors) == "server_error"
+    assert not retirement["cancellations"], retirement["cancellations"]
+    assert server_errors, server_errors
+    error = server_errors[0]
+    if request_case == "active":
+        assert error["path"] == _pending_candidate_path(receiver_ref)
+        assert error["response_status"] == 200
+    elif request_case == "foreign":
+        assert error["path"] == request_path and error["response_status"] == 200
+    elif request_case == "wrong_method":
+        assert error["method"] == "POST" and error["phase"] == "forward"
+        assert any(row.get("during") == "error_response" for row in server_errors[1:]), server_errors
+    elif request_case == "wrong_path":
+        assert error["path"] == request_path and error["response_status"] == 200
+    elif request_case == "mutation":
+        assert error["method"] == "POST" and error["path"] == "/relay/turn"
+        assert error["response_status"] == 200 and error["phase"] == "response_write"
+    else:
+        assert error["response_status"] == 503
+    if request_case not in {"wrong_path", "wrong_method"}:
+        assert len(server_errors) == 1, server_errors
+        assert error["phase"] == "response_write", error
+        assert error["response_write_attempts"] == 1, error
+
+
+@pytest.mark.parametrize("field,value", [
+    ("method", "POST"), ("path", "/relay/messages"), ("response_status", 503),
+    ("phase", "response_encode"),
+])
+def test_native_proxy_disconnect_classifier_rejects_other_request_shapes(field, value):
+    scope = {"runtime": "hermes", "session_ref": "session-exact", "container_ref": SCOPE["container_ref"]}
+    valid_diagnostic = {
+        "request_id": "request-1", "endpoint_role": "api", "method": "GET",
+        "path": _pending_candidate_path(scope["session_ref"]), "response_status": 200,
+        "phase": "response_write",
+    }
+    forwarded = [{"request": {"request_id": "request-1"}, "status": 200}]
+    negative = _new_proxy_retirement_state()
+    _mark_proxy_scope_retiring(negative, scope)
+    assert not _record_retired_read_disconnect(
+        negative, {**valid_diagnostic, field: value}, ConnectionResetError("reset"), forwarded)
+    assert not _record_retired_read_disconnect(
+        negative, {**valid_diagnostic, "phase": "forward"}, ConnectionResetError("reset"), forwarded)
+    assert not _record_retired_read_disconnect(
+        negative, {**valid_diagnostic, "phase": "response_encode"}, ConnectionResetError("reset"), forwarded)
+    assert not negative["cancellations"]
+
+    unsupported = _new_proxy_retirement_state()
+    _mark_proxy_scope_retiring(unsupported, scope)
+    assert not _record_retired_read_disconnect(
+        unsupported, valid_diagnostic, OSError("unsupported disconnect"), forwarded)
+    assert not unsupported["cancellations"]
+
+    positive = _new_proxy_retirement_state()
+    _mark_proxy_scope_retiring(positive, scope)
+    assert _record_retired_read_disconnect(
+        positive, valid_diagnostic, ConnectionResetError("reset"), forwarded)
+    assert len(positive["cancellations"]) == 1
+
+
+def test_native_proxy_cancel_scope_rejects_malformed_or_non_origin_form_urls():
+    valid = _pending_candidate_path("session-exact")
+    malformed_paths = [
+        valid + "&session_ref=duplicate",
+        "/relay/pending-candidate?runtime=hermes&session_ref=session-exact",
+        valid.replace("container_ref=git%3Aexample.test%2Fteam%2Fnative-ui", "container_ref="),
+        valid.replace("session-exact", "bad%"),
+        valid.replace("session-exact", "%FF"),
+        valid + "&runtime=other",
+        "/relay/pending-candidate?runtime=hermes&session_ref=session-exact&container_ref=",
+        "/relay/pending-candidate?runtime=hermes&session_ref=session-exact&container_ref=x%ZZ",
+        "http://127.0.0.1" + valid,
+    ]
+    assert all(_proxy_cancel_scope(path) is None for path in malformed_paths)
+
+
+def test_native_proxy_finalization_does_not_mask_active_primary_exception(tmp_path, monkeypatch):
+    original = RuntimeError("original journey failure")
+    active_primary = None
+    outcome = {"journey_error": repr(original), "status": "failed"}
+    retirement = _new_proxy_retirement_state()
+    result_dir = tmp_path / "late-audit"
+    result_dir.mkdir()
+    original_write_text = Path.write_text
+
+    def fail_result_write(path, *args, **kwargs):
+        if path.name == "result.json":
+            raise OSError("result artifact write failed")
+        return original_write_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", fail_result_write)
+    caught = None
+    server_errors = [{"phase": "response_write"}]
+    try:
+        try:
+            raise original
+        except BaseException as exc:
+            outcome["journey_error"] = repr(exc)
+            active_primary = exc
+            raise
+        finally:
+            def fail_cleanup():
+                raise RuntimeError("secondary cleanup failure")
+
+            def fail_source_check():
+                raise OSError("source postcondition failed")
+
+            def fail_artifact_capture():
+                raise OSError("artifact capture failed")
+
+            _finalize_native_proxy_tail(
+                active_primary, active_primary, result_dir, outcome, retirement, server_errors,
+                [
+                    ("cleanup_error", fail_cleanup),
+                    ("source_postcondition_error", fail_source_check),
+                    ("artifact_capture_error", fail_artifact_capture),
+                ],
+                lambda: False,
+            )
+    except RuntimeError as exc:
+        caught = exc
+
+    assert caught is original
+    assert active_primary is original
+    note_text = "\n".join(original.__notes__)
+    for field in ("cleanup_error", "source_postcondition_error", "artifact_capture_error",
+                  "proxy_response_audit_error", "result_artifact_error"):
+        assert "secondary_" + field in outcome
+        assert field in note_text, (field, original.__notes__)
+    assert outcome["status"] == "failed"
+
+
+def test_native_proxy_response_audit_requires_confirmation_and_writes_late_failure(tmp_path):
+    scope = {"runtime": "hermes", "session_ref": "audit-session", "container_ref": SCOPE["container_ref"]}
+    retirement = _new_proxy_retirement_state()
+    _mark_proxy_scope_retiring(retirement, scope)
+    diagnostic = {
+        "request_id": "audit-request", "endpoint_role": "api", "method": "GET",
+        "path": _pending_candidate_path(scope["session_ref"]), "response_status": 200,
+        "phase": "response_write",
+    }
+    forwarded = [{"request": {"request_id": "audit-request"}, "status": 200}]
+    assert _record_retired_read_disconnect(
+        retirement, diagnostic, ConnectionResetError("reset"), forwarded)
+    unconfirmed = tmp_path / "unconfirmed"
+    unconfirmed.mkdir()
+    with pytest.raises(AssertionError, match="not followed by confirmed cleanup"):
+        _finalize_proxy_response_audit(unconfirmed, {}, retirement, [])
+    unconfirmed_result = json.loads((unconfirmed / "result.json").read_text(encoding="utf-8"))
+    assert unconfirmed_result["status"] == "failed"
+    assert unconfirmed_result["proxy_response_audit"]["retirement_confirmed"] is False
+
+    with retirement["lock"]:
+        retirement["confirmed"] = True
+    clean = tmp_path / "confirmed"
+    clean.mkdir()
+    audit = _finalize_proxy_response_audit(clean, {"status": "passed"}, retirement, [])
+    assert audit["passed"] is True
+    assert json.loads((clean / "result.json").read_text(encoding="utf-8"))["status"] == "passed"
+
+    late = tmp_path / "late-fatal"
+    late.mkdir()
+    with pytest.raises(AssertionError, match="fatal proxy server error"):
+        _finalize_proxy_response_audit(late, {}, retirement, [{"phase": "response_write"}])
+    late_result = json.loads((late / "result.json").read_text(encoding="utf-8"))
+    assert late_result["status"] == "failed"
+    assert late_result["server_errors"] == [{"phase": "response_write"}]
+
+    primary = tmp_path / "primary"
+    primary.mkdir()
+    primary_outcome = {"journey_error": "original journey failure"}
+    _finalize_proxy_response_audit(primary, primary_outcome, retirement, [{"phase": "response_write"}])
+    primary_result = json.loads((primary / "result.json").read_text(encoding="utf-8"))
+    assert primary_result["journey_error"] == "original journey failure"
+    assert "secondary_proxy_response_audit_error" in primary_result
+
+
+def _create_pending_relay_delivery(client, receiver_ref, sender_ref, payload):
+    receiver_response = client.post("/relay/turn", json={
+        "runtime": "hermes", "session_ref": receiver_ref, **SCOPE,
+    })
+    assert receiver_response.status_code == 200, receiver_response.text
+    receiver = receiver_response.json()["session"]
+    sender_response = client.post("/relay/turn", json={
+        "runtime": "claude-code", "session_ref": sender_ref, **SCOPE,
+    })
+    assert sender_response.status_code == 200, sender_response.text
+    send_response = client.post("/relay/messages", json={
+        "sender_runtime": "claude-code", "sender_session_ref": sender_ref,
+        "recipient": receiver["endpoint_id"], "payload": payload, **SCOPE,
+    })
+    assert send_response.status_code == 200, send_response.text
+    return receiver, send_response.json()
+
+
+def _pending_candidate_path(session_ref, *, runtime="hermes", container_ref=None):
+    return "/relay/pending-candidate?" + urlencode({
+        "runtime": runtime,
+        "session_ref": session_ref,
+        "container_ref": SCOPE["container_ref"] if container_ref is None else container_ref,
+    })
 
 
 def test_hermes_peer_audit_records_only_host_turn_ids(tmp_path):
@@ -1294,81 +1980,10 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
     provider_http_requests = []
     api_server = None
     api_server_thread = None
-
-    class Handler(BaseHTTPRequestHandler):
-        def log_message(self, *_args):
-            pass
-
-        def send(self, status, body, content_type="application/json"):
-            self.request_diagnostic["phase"] = "response_encode"
-            raw = body if isinstance(body, bytes) else json.dumps(body, ensure_ascii=False).encode()
-            self.request_diagnostic.update(phase="response_write", response_status=status)
-            self.send_response(status)
-            self.send_header("Content-Type", content_type)
-            self.send_header("Content-Length", str(len(raw)))
-            self.end_headers()
-            self.wfile.write(raw)
-
-        def handle_request(self):
-            self.request_diagnostic = {
-                "request_id": uuid.uuid4().hex, "endpoint_role": self.server.endpoint_role,
-                "method": self.command, "path": self.path, "client_address": list(self.client_address),
-                "phase": "validation", "response_status": None,
-            }
-            try:
-                assert self.client_address[0] == "127.0.0.1"
-                assert self.headers.get("Host") == f"127.0.0.1:{self.server.server_port}"
-                assert self.path.startswith("/") and not urlsplit(self.path).netloc
-                self.request_diagnostic["phase"] = "read"
-                raw = self.rfile.read(int(self.headers.get("Content-Length", "0")))
-                if self.server.endpoint_role == "api":
-                    self.request_diagnostic["phase"] = "forward"
-                    response = client.request(self.command, self.path, content=raw or None,
-                                              headers={"Content-Type": "application/json"})
-                    self.request_diagnostic["response_status"] = response.status_code
-                    body = response.json()
-                    forwarded.append({"method": self.command, "path": self.path,
-                                      "body": json.loads(raw) if raw else None,
-                                      "status": response.status_code, "response": body,
-                                      "request": self.request_diagnostic.copy()})
-                    self.send(response.status_code, response.content)
-                elif self.command == "GET" or self.path == "/api/show":
-                    self.send(*provider_metadata_response(self.path))
-                else:
-                    body = json.loads(raw)
-                    if provider_kind == "openai-api":
-                        evidence = synthetic_openai_request_evidence(
-                            self.path, body, self.headers.get("Authorization"))
-                        provider_http_requests.append(evidence)
-                        assert evidence["auth_matched"], "built-in provider did not send the synthetic Bearer key"
-                    else:
-                        assert self.path == "/v1/chat/completions", self.path
-                    text, call = provider.respond(body)
-                    message = {"role": "assistant", "content": text}
-                    if call:
-                        message["tool_calls"] = [{"index": 0, "id": f"local-{len(provider.requests)}",
-                                                  "type": "function", "function": {
-                                                      "name": call[0], "arguments": json.dumps(call[1], ensure_ascii=False)}}]
-                    finish = "tool_calls" if call else "stop"
-                    base = {"id": "local", "created": 1, "model": "pallium-local"}
-                    if body.get("stream"):
-                        chunks = [{**base, "object": "chat.completion.chunk", "choices": [
-                            {"index": 0, "delta": message, "finish_reason": None}]},
-                                  {**base, "object": "chat.completion.chunk", "choices": [
-                                      {"index": 0, "delta": {}, "finish_reason": finish}]}]
-                        wire = ("".join("data: " + json.dumps(chunk) + "\n\n" for chunk in chunks)
-                                + "data: [DONE]\n\n").encode()
-                        self.send(200, wire, "text/event-stream")
-                    else:
-                        self.send(200, {**base, "object": "chat.completion", "choices": [
-                            {"index": 0, "message": message, "finish_reason": finish}],
-                            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}})
-            except BaseException as exc:
-                server_errors.append({**self.request_diagnostic, "exception_type": type(exc).__name__,
-                                      "error": repr(exc)})
-                self.send(500, {"error": str(exc)})
-
-        do_POST = do_GET = handle_request
+    retirement = _new_proxy_retirement_state()
+    Handler = _make_native_http_handler(
+        client=client, provider=provider, provider_kind=provider_kind, forwarded=forwarded,
+        server_errors=server_errors, provider_http_requests=provider_http_requests, retirement=retirement)
 
     api_port = _port()
     api_server = ThreadingHTTPServer(("127.0.0.1", api_port), Handler)
@@ -1376,6 +1991,7 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
     api_server.daemon_threads = False
     provider_server = ThreadingHTTPServer(("127.0.0.1", _port()), Handler)
     provider_server.endpoint_role = "provider"
+    provider_server.daemon_threads = False
     base_url = f"http://127.0.0.1:{api_server.server_port}"
     provider_url = f"http://127.0.0.1:{provider_server.server_port}/v1"
     endpoints = [("127.0.0.1", server.server_port) for server in (api_server, provider_server)]
@@ -1439,6 +2055,7 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
                "mcp_python_base": str(Path(sys._base_executable).resolve()),
                "mcp_python_base_sha256": hashlib.sha256(Path(sys._base_executable).read_bytes()).hexdigest(),
                "memory_ui_qualification": "enabled" if memory_enabled else "default-off"}
+    active_primary = None
     api_server_thread = threading.Thread(target=api_server.serve_forever, daemon=True)
     provider_server_thread = threading.Thread(target=provider_server.serve_forever, daemon=True)
     api_server_thread.start()
@@ -1498,6 +2115,10 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
                 assert not {"OPENAI_API_KEY", "OPENAI_BASE_URL"} & set(bridge_row["env"]), bridge_row
             old_ids = {(row["pid"], row["birthtime"], str(Path(row["exe"]).resolve()))
                        for row in first_processes}
+            _mark_proxy_scope_retiring(retirement, {
+                "runtime": "hermes", "session_ref": session_id,
+                "container_ref": SCOPE["container_ref"],
+            })
             driver.close()
             driver = None
             close_report = json.loads((leg_one / "cleanup.json").read_text(encoding="utf-8"))
@@ -1554,6 +2175,8 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
                 assert ("--memory-enabled" in bridge_args) is memory_enabled
             outcome["restart_leg_two_processes"] = next_processes
             outcome["restart_generations"] = {"first": sorted(old_ids), "second": sorted(new_ids)}
+            with retirement["lock"]:
+                retirement["confirmed"] = True
             return next_session
 
         driver.command("submit", text=PROMPT, marker="native-ui-origin")
@@ -1880,42 +2503,77 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
                        history_anchor_id=anchor_id)
     except BaseException as exc:
         outcome["journey_error"] = repr(exc)
+        active_primary = exc
         raise
     finally:
+        primary_exception = active_primary
         provider.release_busy.set()
-        try:
+
+        def close_owned_driver():
             if driver is not None:
                 driver.close()
                 outcome["owned_process_cleanup"] = "passed"
                 outcome["driver_returncode"] = driver.proc.returncode
                 outcome["driver_outcome"] = "passed" if driver.proc.returncode == 0 else "failed"
+        _, primary_exception, _ = _run_finalization_step(
+            primary_exception, outcome, "cleanup_error", close_owned_driver)
+
+        try:
+            capture_error = save_profile_diagnostics(profile, peer_audit, artifacts)
+            outcome["artifact_capture_error"] = capture_error
+            if capture_error:
+                exc = RuntimeError(capture_error)
+                if primary_exception is None:
+                    primary_exception = exc
+                else:
+                    _capture_secondary_finalization_failure(
+                        primary_exception, outcome, "artifact_capture_error", exc)
         except BaseException as exc:
-            outcome["cleanup_error"] = repr(exc)
-            raise
-        finally:
-            outcome["artifact_capture_error"] = save_profile_diagnostics(profile, peer_audit, artifacts)
-            for server, thread in ((api_server, api_server_thread),
-                                   (provider_server, provider_server_thread)):
+            if primary_exception is None:
+                outcome["artifact_capture_error"] = repr(exc)
+                primary_exception = exc
+            else:
+                _capture_secondary_finalization_failure(
+                    primary_exception, outcome, "artifact_capture_error", exc)
+
+        for server, thread in ((api_server, api_server_thread),
+                               (provider_server, provider_server_thread)):
+            def stop_endpoint(server=server, thread=thread):
                 server.shutdown()
                 server.server_close()
                 thread.join(timeout=5)
                 assert not thread.is_alive(), "native test endpoint thread did not stop"
-            (artifacts / "provider.json").write_text(json.dumps(provider.requests, ensure_ascii=False, indent=2), encoding="utf-8")
-            (artifacts / "provider-http.json").write_text(
-                json.dumps(provider_http_requests, ensure_ascii=False, indent=2), encoding="utf-8")
-            outcome["server_errors"] = server_errors
-            (artifacts / "http.json").write_text(json.dumps(forwarded, ensure_ascii=False, indent=2), encoding="utf-8")
-            try:
-                verify_source(source, os.environ["HERMES_TUI_BUNDLE_SHA256"])
-                assert subprocess.check_output(["git", "-C", str(root), "rev-parse", "HEAD"], text=True).strip() == revision
-                assert not subprocess.check_output(["git", "-C", str(root), "status", "--porcelain"], text=True).strip()
-                outcome["source_postcondition"] = "passed"
-            finally:
-                if (outcome.get("journey_assertions") == "passed" and outcome.get("owned_process_cleanup") == "passed"
-                        and outcome.get("source_postcondition") == "passed" and outcome.get("driver_returncode") == 0
-                        and not outcome.get("artifact_capture_error")):
-                    outcome["status"] = "passed"
-                (artifacts / "result.json").write_text(json.dumps(outcome, ensure_ascii=False, indent=2), encoding="utf-8")
-                if outcome.get("journey_assertions") == "passed":
-                    assert outcome.get("driver_returncode") == 0, "journey completed but native driver failed"
-                    assert not outcome.get("artifact_capture_error"), outcome["artifact_capture_error"]
+            _, primary_exception, _ = _run_finalization_step(
+                primary_exception, outcome, "server_shutdown_error", stop_endpoint)
+
+        def check_source_postcondition():
+            verify_source(source, os.environ["HERMES_TUI_BUNDLE_SHA256"])
+            assert subprocess.check_output(["git", "-C", str(root), "rev-parse", "HEAD"], text=True).strip() == revision
+            assert not subprocess.check_output(["git", "-C", str(root), "status", "--porcelain"], text=True).strip()
+            outcome["source_postcondition"] = "passed"
+
+        finalization_steps = [
+            ("artifact_write_error", lambda: (artifacts / "provider.json").write_text(
+                json.dumps(provider.requests, ensure_ascii=False, indent=2), encoding="utf-8")),
+            ("artifact_write_error", lambda: (artifacts / "provider-http.json").write_text(
+                json.dumps(provider_http_requests, ensure_ascii=False, indent=2), encoding="utf-8")),
+            ("artifact_write_error", lambda: (artifacts / "http.json").write_text(
+                json.dumps(forwarded, ensure_ascii=False, indent=2), encoding="utf-8")),
+            ("source_postcondition_error", check_source_postcondition),
+        ]
+        if outcome.get("journey_assertions") == "passed":
+            def check_journey_final_state():
+                assert outcome.get("driver_returncode") == 0, "journey completed but native driver failed"
+                assert not outcome.get("artifact_capture_error"), outcome["artifact_capture_error"]
+            finalization_steps.append(("journey_error", check_journey_final_state))
+
+        def success_conditions():
+            return (outcome.get("journey_assertions") == "passed"
+                    and outcome.get("owned_process_cleanup") == "passed"
+                    and outcome.get("source_postcondition") == "passed"
+                    and outcome.get("driver_returncode") == 0
+                    and not outcome.get("artifact_capture_error"))
+
+        _finalize_native_proxy_tail(
+            active_primary, primary_exception, artifacts, outcome, retirement,
+            server_errors, finalization_steps, success_conditions)
