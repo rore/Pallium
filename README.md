@@ -4,7 +4,7 @@
 
 Pallium is a local service that lets agent sessions across coding tools send
 messages to each other and search earlier session history. It currently supports
-Claude Code, Codex, and OpenCode.
+Claude Code, Codex, OpenCode, and Hermes Desktop/TUI.
 
 It connects sessions you already run; it does not create or manage them.
 
@@ -16,8 +16,8 @@ It connects sessions you already run; it does not create or manage them.
 
 Relay sends a plain-text message to another existing agent session. Pallium
 stores each message before attempting delivery. Where the integration supports
-it, Relay can start a recipient turn immediately; otherwise, the message remains
-pending for the recipient's next turn. You can send to a specific session or a
+it, Relay can start a recipient turn immediately. Delivery and recovery depend
+on the integration. You can send to a specific session or a
 named session.
 
 > Use Pallium Relay to send Codex: "The legacy endpoint is still used by mobile.
@@ -56,14 +56,10 @@ in its current form, but setup and behavior still have rough edges.
 
 ## Current status
 
-The [Hermes integration](docs/hermes-integration.md) remains experimental pending
-human release acceptance. Its scoped native matrix passed on Windows Server 2025
-with an unpacked app: Desktop and TUI memory-off/on journeys on v0.22.0 and
-v0.22.2. Synthetic-provider checks establish integration behavior, not paid-model
-quality, and Hermes is not included in the supported delivery guarantees below.
-
-Relay works across the current integrations. Every supported path has durable
-next-turn delivery; some qualified paths can also start a new turn. See the
+Relay works across the current integrations. Claude Code, Codex and OpenCode
+support durable next-turn delivery; some paths can also start a new turn. Hermes
+uses its native plugin for delivery and a profile-scoped MCP bridge for tools.
+See the [Hermes guide](docs/hermes-integration.md) for its delivery limits and the
 [Relay support details](docs/agent-relay.md#delivery-and-wake-behavior).
 
 Session History supports broad topic search, exact work-reference search, and
@@ -86,6 +82,9 @@ pallium setup claude-code       # or: pallium setup codex
 
 The OpenCode integration currently uses a local plugin. See its
 [setup guide](integrations/opencode/README.md).
+
+For Hermes Desktop or TUI, follow the
+[Hermes setup guide](docs/hermes-integration.md) to connect an explicit profile.
 
 Relay and Session History do not require an LLM provider. Derived memory is
 optional, disabled by default, and requires provider and model configuration
@@ -139,7 +138,7 @@ cross-user authorization model.
 - [Claude Code integration](docs/claude-code-integration.md)
 - [Codex integration](docs/codex-integration.md)
 - [OpenCode integration](integrations/opencode/README.md)
-- [Hermes integration (experimental)](docs/hermes-integration.md)
+- [Hermes integration](docs/hermes-integration.md)
 - [HTTP API](docs/http-api.md)
 - [Privacy and visibility](docs/privacy-and-visibility.md)
 - [Dashboard](docs/dashboard.md)

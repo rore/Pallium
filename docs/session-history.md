@@ -119,14 +119,13 @@ cross-user sharing or authorization system.
 
 ## Available now
 
-Integration catalogs differ. The [experimental Hermes package](hermes-integration.md)
+Integration catalogs differ. The [Hermes integration](hermes-integration.md)
 always exposes the three search/expansion tools below and captures private
 hook-observed text snapshots. An explicit setup opt-in adds source forgetting
 and the optional derived-memory tool catalog; neither promises automatic memory
 injection. History diagnostics remain unavailable. Completion capture has no
-current `request_source_item_id`. Native Desktop/TUI capture passed on both
-pinned Windows releases; Linux TUI also passed on both tested releases. Automatic
-standalone MCP reconnection remains unqualified. See its guide for
+current `request_source_item_id`. Automatic standalone MCP reconnection remains
+unqualified. See its guide for
 capture limits and provenance.
 
 - broad topic search across accessible earlier sessions with `pallium_search_history`

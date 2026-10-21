@@ -18,9 +18,8 @@ independently.
 ## Relay
 
 Relay routes an explicitly addressed message to another existing session.
-Pallium stores the message before attempting delivery. If a safe wake path is
-not available, the message remains pending for the recipient's next normal
-turn.
+Pallium stores the message before attempting delivery. Wake and next-turn
+delivery behavior depend on the recipient integration.
 
 Relay does not use history search, embeddings, ranking, or an LLM. See
 [Relay](agent-relay.md).
@@ -38,19 +37,20 @@ session content is historical evidence, not proof of current live state. See
 ## Shared foundation
 
 The current integrations register each agent session with the local service.
-Pallium uses the session and repository identity to:
+Pallium uses trusted session and scope identity to:
 
 - address Relay messages;
-- keep unrelated repositories separate;
+- scope history and memory to the configured container and visibility;
 - record where historical messages came from;
 - apply visibility rules before search or expansion.
 
-Claude Code, Codex, and OpenCode are the current integrations. They remain
-independent tools and own their execution, user interaction, and workflow.
+Claude Code, Codex, OpenCode, and Hermes Desktop/TUI are the current integrations.
+They remain independent tools and own their execution, user interaction, and
+workflow.
 
-The [Hermes package](hermes-integration.md) is experimental, with bounded gateway
-Relay/History proof. Desktop/TUI and the rest of its production qualification
-remain open; it is not included in the general integration guarantees above.
+The [Hermes integration](hermes-integration.md) bundles a native plugin, skill
+and profile-scoped MCP bridge for Relay, private Session History and opt-in
+memory tools. Its guide covers capture, wake and reconnection limits.
 
 ## Current default
 

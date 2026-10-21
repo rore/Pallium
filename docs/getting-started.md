@@ -83,17 +83,14 @@ and reinstalling the integration.
 OpenCode uses a local plugin path. Follow the
 [OpenCode integration guide](../integrations/opencode/README.md).
 
-Hermes has a separate [experimental integration guide](hermes-integration.md).
-Its scoped native matrix passed Desktop and TUI memory-off/on journeys on v0.22.0
-and v0.22.2 in an isolated Windows Server 2025 unpacked build. The package remains
-experimental pending human release acceptance. Setup targets an explicit existing
-Hermes profile and preserves its provider configuration. Use a disposable profile
-and loopback provider for qualification. Other provider configurations, paid-model
-quality and every provider/memory combination remain unqualified. Follow the Hermes guide
-rather than the default-profile setup commands above.
+For Hermes Desktop or TUI, follow the [Hermes integration guide](hermes-integration.md).
+Its plugin, skill and MCP bridge connect an explicit existing Hermes profile
+while preserving provider configuration. The guide covers private scope,
+delivery limits and optional memory; use its profile-specific setup commands.
 
-Open two sessions in the same Git repository after setup. Pallium derives their
-shared container from the repository identity while keeping each session
+For Claude Code, Codex or OpenCode, open two sessions in the same Git repository
+after setup. Pallium derives their shared container from the repository identity
+while keeping each session
 separately addressable.
 
 ## 3. Try Relay
