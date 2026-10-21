@@ -217,6 +217,9 @@ class SQLiteQueueMixin:
                         raise busy_error("setup_deadline")
                     native_timeout_ms = min(native_timeout_ms, remaining_ms)
                 acquire_phase("setup_pragma", lambda: conn.execute(text(f"PRAGMA busy_timeout={native_timeout_ms}")))
+                if (acquisition_deadline is not None
+                        and time.monotonic() >= acquisition_deadline):
+                    raise busy_error("setup_deadline")
                 acquire_phase("begin_immediate", lambda: conn.execute(text("BEGIN IMMEDIATE")))
                 if acquisition_deadline is not None and time.monotonic() >= acquisition_deadline:
                     try:
