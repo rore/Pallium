@@ -246,6 +246,123 @@ def test_explicit_supersession_preserves_best_effort_vector_indexing(client, mon
         assert connection.execute(text("SELECT count(*) FROM lexical_fts WHERE target_id=:mid"), {"mid": new}).scalar() == 1
 
 
+def _assert_explicit_memory_is_lexically_retrievable(client, mid, statement):
+    expanded = client.get(f"/memory/{mid}/expand")
+    assert expanded.status_code == 200, expanded.text
+    assert expanded.json()["payload"]["statement"] == statement
+    before = memories(client)
+    row = next(row for row in before if row["id"] == mid)
+    assert row["lifecycle"] == "active"
+    assert row["origin_session_id"] == PROVENANCE["thread_ref"]
+    response = client.post("/query", json={
+        **SCOPE, "text": "opal lantern", "limit": 20,
+        "thread_ref": "later-session", "active_session_ref": "later-session",
+    })
+    assert response.status_code == 200, response.text
+    hits = response.json()["results"]
+    assert [hit["memory_object_id"] for hit in hits] == [mid]
+    assert hits[0]["payload"]["statement"] == statement
+    assert memories(client) == before
+
+
+@pytest.mark.parametrize("operation", ["remember", "correct", "supersede"])
+@pytest.mark.parametrize("failure", ["import", "build"])
+def test_explicit_writes_keep_lexical_retrieval_when_vector_construction_fails(client, monkeypatch, operation, failure):
+    import builtins
+    import core.indexing as indexing
+
+    previous = remember(client, text="Cobalt compass remains in cabinet") if operation != "remember" else None
+    statement = "Opal lantern remains in archive שלום"
+    faults = []
+    with monkeypatch.context() as fault:
+        if failure == "import":
+            original = builtins.__import__
+
+            def fail_import(name, globals=None, locals=None, fromlist=(), level=0):
+                if (name == "semantic.agent_conversation_memory_embedding"
+                        and fromlist and "VECTOR_EMBEDDING_PROVIDER_NAME" in fromlist):
+                    faults.append(name)
+                    raise ImportError("synthetic vector provider import failure")
+                return original(name, globals, locals, fromlist, level)
+
+            fault.setattr(builtins, "__import__", fail_import)
+        else:
+            original = indexing.build_index_entry
+
+            def fail_build(**kwargs):
+                if kwargs["index_type"] == indexing.VECTOR_INDEX_TYPE:
+                    faults.append(kwargs["target_id"])
+                    raise RuntimeError("synthetic vector entry construction failure")
+                return original(**kwargs)
+
+            fault.setattr(indexing, "build_index_entry", fail_build)
+        if operation == "remember":
+            response = client.post("/memory/remember", json={**PROVENANCE, "type": "decision", "text": statement})
+        elif operation == "correct":
+            response = mutate(client, operation, previous, target_scope=SCOPE, corrected_text=statement)
+        else:
+            response = mutate(client, operation, previous, target_scope=SCOPE, new_text=statement)
+    assert len(faults) == 1
+    assert response.status_code == 200, response.text
+    result = response.json()
+    if operation == "supersede":
+        mid = result["new_memory_object_id"]
+        assert result["old_memory_object_id"] == previous and mid != previous
+        assert result["superseded"] is True
+        assert next(row for row in memories(client) if row["id"] == previous)["lifecycle"] == "superseded"
+        assert {row["id"] for row in memories(client, lifecycle="active")} == {mid}
+    else:
+        mid = result["memory_object_id"]
+        if operation == "correct":
+            assert mid == previous and result["corrected"] is True
+    if failure == "build":
+        assert faults == [mid]
+    _assert_explicit_memory_is_lexically_retrievable(client, mid, statement)
+    if previous is not None:
+        stale = client.post("/query", json={**SCOPE, "text": "cobalt compass", "limit": 20,
+            "thread_ref": "later-session", "active_session_ref": "later-session"})
+        assert stale.status_code == 200 and stale.json()["results"] == []
+
+
+def test_remember_keeps_lexical_retrieval_when_vector_persistence_fails(client, monkeypatch):
+    storage = client.app.state.pallium_service._storage
+    original = storage.create_index_entry
+    failed_ids = []
+
+    def fail_vector(entry):
+        if entry.index_type == "vector":
+            failed_ids.append(entry.target_id)
+            raise RuntimeError("synthetic vector persistence failure")
+        return original(entry)
+
+    monkeypatch.setattr(storage, "create_index_entry", fail_vector)
+    statement = "Opal lantern remains in archive שלום"
+    mid = remember(client, text=statement)
+    assert failed_ids == [mid]
+    _assert_explicit_memory_is_lexically_retrievable(client, mid, statement)
+
+
+def test_remember_lexical_persistence_failure_still_propagates(client, monkeypatch):
+    storage = client.app.state.pallium_service._storage
+    attempted = []
+
+    def fail_lexical(entry):
+        attempted.append(entry.index_type)
+        raise RuntimeError("synthetic lexical persistence failure")
+
+    monkeypatch.setattr(storage, "create_index_entry", fail_lexical)
+    statement = "Opal lantern remains in archive שלום"
+    with pytest.raises(RuntimeError, match="synthetic lexical persistence failure"):
+        remember(client, text=statement)
+    assert attempted == ["lexical"]
+    rows = memories(client)
+    assert len(rows) == 1 and rows[0]["lifecycle"] == "active"
+    assert client.get(f"/memory/{rows[0]['id']}/expand").json()["payload"]["statement"] == statement
+    response = client.post("/query", json={**SCOPE, "text": "opal lantern", "limit": 20,
+        "thread_ref": "later-session", "active_session_ref": "later-session"})
+    assert response.status_code == 200 and response.json()["results"] == []
+
+
 @pytest.mark.parametrize(("stored", "requester", "expected"), [
     ({}, {}, 200),
     ({}, {"query_actor_ref": "actor-b", "query_visibility": "private"}, 200),

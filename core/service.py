@@ -1777,7 +1777,7 @@ class PalliumService:
                 )
             )
         except Exception:  # noqa: BLE001 -- vector index is best-effort
-            logger.debug("W3 explicit write: skipping vector index entry", exc_info=True)
+            self._logger.debug("W3 explicit write: skipping vector index entry", exc_info=True)
         return entries
 
     def _index_explicit_write(self, memory_object_id: str, memory_type: str, text: str) -> None:
@@ -1787,7 +1787,7 @@ class PalliumService:
             except Exception:  # noqa: BLE001 -- preserve best-effort vector persistence
                 if entry.index_type == "lexical":
                     raise
-                logger.debug("W3 explicit write: skipping vector index entry", exc_info=True)
+                self._logger.debug("W3 explicit write: skipping vector index entry", exc_info=True)
 
     def remember_memory(
         self,
