@@ -35,9 +35,11 @@ after the full delivery context is present in the assembled request for that
 host session/turn. The ACK records host-context receipt before provider
 completion; it does not prove model/provider completion or action. The package
 does not expose receive/ACK tools. A saved send or wake attempt is not proof of
-receipt. Automatic recovery, busy/reset/close/restart behavior and ordinary-turn
-fallback are still unqualified; do not apply another integration's wake
-guarantees to Hermes.
+receipt. Endpoint outage and controlled host/MCP relaunch passed in the Desktop
+memory-off journey. A separate caller E2E proves queued delivery persistence
+across an owned Pallium process restart. Automatic native reconnection,
+busy/reset/close behavior across the full matrix and ordinary-turn fallback remain
+unqualified; do not apply another integration's wake guarantees to Hermes.
 
 After an admitted delivery's exact host turn ends, the integration releases its
 local wake fence even if the agent did not reply. Missing or stale turn-end

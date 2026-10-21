@@ -18,7 +18,7 @@ supported-version claim.
 | Runtime compatibility | Public plugin identity, injection, hook and middleware contracts; clear missing-capability errors | Current v0.22.0/v0.22.2 gateway checks passed; full native release coverage pending |
 | Normal configuration | Ordinary providers, default Tool Search, supported plugin coexistence | Default Tool Search and a harmless peer hook passed in the v0.22.0 Desktop memory-off case; ordinary-provider behavior remains unqualified |
 | Full package | Skill, Relay, History and opt-in memory lifecycle; memory off leaves Relay/History functional | Native Desktop memory-off passed on v0.22.0; native opt-in memory lifecycle remains unqualified |
-| Recovery | Busy/concurrent sessions, reset/close, host/service/MCP restart, stale routes and ambiguous outcomes | Endpoint outage and controlled host/MCP relaunch passed in one Desktop case; full service restart and remaining native coverage pending |
+| Recovery | Busy/concurrent sessions, reset/close, host/service/MCP restart, stale routes and ambiguous outcomes | Endpoint outage and controlled host/MCP relaunch passed in Desktop memory-off; a separate caller E2E proves queued delivery persistence across an owned Pallium process restart. Native service/MCP reconnection and the remaining matrix are unqualified |
 | Lifecycle | Disposable install/update/remove/rollback, repeated use and owned-process cleanup | Native repeat setup, status and removal preserved profile data in the passing Desktop case; caller ownership/conflict coverage remains separate |
 | Public documentation | Public entry points, setup/capability guides and bundled skill match final verified behavior; commands and links checked | Initial alignment audit updated the guides; final production review still required |
 
@@ -161,17 +161,29 @@ omitting it retains the bounded container partition.
 Current native gateway wake qualification passed on v0.22.0 and v0.22.2 with
 disposable local-provider profiles and loopback stubs. These checks do not
 establish actual Desktop or TUI interaction.
-Hosted native run [39483789032](https://github.com/rore/Pallium/actions/runs/39483789032)
+Hosted native runs [39483789032](https://github.com/rore/Pallium/actions/runs/39483789032)
+and [39490754190](https://github.com/rore/Pallium/actions/runs/39490754190)
 passed the complete Desktop memory-off journey on v0.22.0, including default Tool
 Search, Relay/wake, later-session History, a harmless peer hook, endpoint outage,
 controlled host/MCP relaunch and profile update/status/removal. The TUI off/on and
-Desktop memory-on cases failed; fail-fast cancelled v0.22.2. TUI text observation
-cannot reconstruct cursor-forward redraws by stripping ANSI controls. The memory
-fixture also rejected a valid mixed memory/History query response; its reviewed
-correction has pure tests, but has not passed another native run. This evidence
-is Windows Server 2025, image `win25-vs2026`/`20261018.275.1`, with an unpacked app
-and synthetic provider. The complete native matrix and ordinary-provider behavior
-remain unqualified. A focused gateway journey requires an isolated environment:
+Desktop memory-on cases failed; fail-fast cancelled v0.22.2. Run2 exposed cursor
+redraw and mixed memory/History fixture errors. Run3 used the corrected fixtures,
+then failed on an orphan wide-character cell in the terminal observer and a valid
+nullable expansion field in the memory script. Reviewed test-only corrections at
+`31f1b240` passed parser and memory-script regressions in the Python 3.13 full
+suite; they have not passed a complete native matrix. The separate service-process
+E2E passed on Python 3.12 and 3.13, preserving exact queued endpoint/message/delivery
+IDs through public claim, ACK, reply and final-state reads. That is queue
+persistence proof, not native automatic MCP reconnection.
+
+Native evidence uses Windows Server 2025 with an unpacked app and synthetic
+provider: run2 image `win25-vs2026`/`20261018.275.1`; run3 image
+`win25-vs2026`/`20261007.264.1`. Required CI remains red on Python 3.12 Relay
+acquisition failures in unchanged tests. Both failed attempts are retained in
+[CI 39493899447](https://github.com/rore/Pallium/actions/runs/39493899447); neither
+the isolated pass nor the failed retry establishes a reliability fix. The complete
+native matrix remains unqualified, and the package stays experimental. A focused
+gateway journey requires an isolated environment:
 
 ```powershell
 $env:HERMES_E2E_SOURCE = 'C:\path\to\pinned\hermes-agent'
