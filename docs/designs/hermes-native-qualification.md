@@ -115,6 +115,14 @@ previously skipped for missing prerequisites subsequently passed. These are
 Linux subsystem/Gateway results, not native TUI or Windows Desktop acceptance.
 Complete useful local validation before spending the remaining remote attempt.
 
+The complete Linux TUI journey subsequently passed with memory off and on for
+both pinned releases on clean candidate `1896605eef514e76f77b454afea44a92463aaed9`:
+v0.22.0 took 106.15 seconds and v0.22.2 took 107.72 seconds. Independent review
+verified all four non-skipped cells, clean source and owned-process cleanup,
+two distinct host/MCP generations, later-session History and the optional-memory
+lifecycle. These runs use the custom synthetic provider. The built-in provider
+configuration path and final Windows matrix remain separate gates.
+
 Record the actual runner image and Windows version in every native result.
 Hosted Windows Server evidence must not be described as Windows 11 or installed
 MSIX qualification. The Pallium release gate covers its profile

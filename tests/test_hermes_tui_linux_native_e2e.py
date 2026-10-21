@@ -18,4 +18,5 @@ def test_released_hermes_tui_in_linux_namespace(client, tmp_path, memory_enabled
     manifest = os.environ.get("PALLIUM_LINUX_QUALIFICATION_MANIFEST")
     if not root and not manifest:
         pytest.skip("root-proven Linux Hermes qualification namespace is not configured")
-    _shared_journey(client, tmp_path, memory_enabled, "tui")
+    _shared_journey(client, tmp_path, memory_enabled, "tui",
+                    "custom" if memory_enabled else "openai-api")

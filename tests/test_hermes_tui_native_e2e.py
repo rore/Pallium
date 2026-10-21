@@ -31,6 +31,7 @@ from tests.fixtures.hermes_tui_driver import (
     isolated_env,
     node_preload_source,
     python_guard_source,
+    synthetic_openai_request_evidence,
     TuiConsole,
     self_check_guards,
     seed_models_dev_cache,
@@ -1117,7 +1118,10 @@ print("fresh native model cache and disabled manifest loaded without network")
 
 @pytest.mark.parametrize("memory_enabled", [False, True], ids=["memory-off", "memory-on"])
 @pytest.mark.parametrize("surface", ["tui", "desktop"])
-def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, surface):
+def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, surface, provider_kind="custom"):
+    assert provider_kind in {"custom", "openai-api"}
+    if provider_kind == "openai-api":
+        assert sys.platform == "linux" and not memory_enabled, "built-in provider proof is the Linux memory-off leg"
     if sys.platform == "linux":
         assert surface == "tui", "Linux qualification supports only the actual TUI surface"
         from tests.fixtures.hermes_linux_guard import require_linux_qualification
@@ -1163,6 +1167,7 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
     provider = ScriptedProvider(memory_enabled=memory_enabled)
     forwarded = []
     server_errors = []
+    provider_http_requests = []
     api_server = None
     api_server_thread = None
 
@@ -1195,8 +1200,14 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
                 elif self.command == "GET" or self.path == "/api/show":
                     self.send(*provider_metadata_response(self.path))
                 else:
-                    assert self.path == "/v1/chat/completions", self.path
                     body = json.loads(raw)
+                    if provider_kind == "openai-api":
+                        evidence = synthetic_openai_request_evidence(
+                            self.path, body, self.headers.get("Authorization"))
+                        provider_http_requests.append(evidence)
+                        assert evidence["auth_matched"], "built-in provider did not send the synthetic Bearer key"
+                    else:
+                        assert self.path == "/v1/chat/completions", self.path
                     text, call = provider.respond(body)
                     message = {"role": "assistant", "content": text}
                     if call:
@@ -1230,9 +1241,11 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
     provider_server = ThreadingHTTPServer(("127.0.0.1", _port()), Handler)
     provider_server.endpoint_role = "provider"
     base_url = f"http://127.0.0.1:{api_server.server_port}"
+    provider_url = f"http://127.0.0.1:{provider_server.server_port}/v1"
     endpoints = [("127.0.0.1", server.server_port) for server in (api_server, provider_server)]
     env = isolated_env(home, source=source, python=python, node=node, guard_dir=guard_dir,
-                       preload=preload, egress_log=egress, endpoints=endpoints)
+                       preload=preload, egress_log=egress, endpoints=endpoints,
+                       openai_base_url=provider_url if provider_kind == "openai-api" else None)
     if os.name == "nt":
         env.update({key: os.environ[key] for key in (*RUNNER_MARKERS, "RUNNER_TEMP")})
     if surface == "desktop":
@@ -1250,9 +1263,12 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
         assert "HERMES_STATE_DB_GUARD_BYPASS" not in env
         require_contained_paths(profile)
     profile.mkdir()
-    config = {"model": {"provider": "custom", "default": "pallium-local", "api_key": "synthetic-only",
-                         "api_mode": "chat_completions", "context_length": 128000,
-                         "base_url": f"http://127.0.0.1:{provider_server.server_port}/v1"},
+    model_config = ({"provider": "openai-api", "default": "pallium-local", "api_mode": "chat_completions",
+                     "context_length": 128000} if provider_kind == "openai-api" else {
+        "provider": "custom", "default": "pallium-local", "api_key": "synthetic-only",
+        "api_mode": "chat_completions", "context_length": 128000, "base_url": provider_url,
+    })
+    config = {"model": model_config,
               "agent": {"api_max_retries": 1}, "fallback_providers": [],
               "platform_toolsets": {"cli": ["hermes-cli"]}, "updates": {"check": False},
               "model_catalog": {"enabled": False},
@@ -1342,6 +1358,8 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
             (leg_one / "owned-processes.json").write_text(json.dumps(first_processes, indent=2), encoding="utf-8")
             first_bridges = [row for row in first_processes if "app.mcp.hermes" in row["argv"]]
             assert first_bridges, "first native leg had no owned Hermes MCP process"
+            for bridge_row in first_bridges:
+                assert not {"OPENAI_API_KEY", "OPENAI_BASE_URL"} & set(bridge_row["env"]), bridge_row
             old_ids = {(row["pid"], row["birthtime"], str(Path(row["exe"]).resolve()))
                        for row in first_processes}
             driver.close()
@@ -1381,6 +1399,8 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
             next_processes = driver.command("inspect")["processes"]
             next_bridges = [row for row in next_processes if "app.mcp.hermes" in row["argv"]]
             assert next_bridges, "restarted native leg has no owned Hermes MCP process"
+            for bridge_row in next_bridges:
+                assert not {"OPENAI_API_KEY", "OPENAI_BASE_URL"} & set(bridge_row["env"]), bridge_row
             new_ids = {(row["pid"], row["birthtime"], str(Path(row["exe"]).resolve()))
                        for row in next_processes}
             assert old_ids.isdisjoint(new_ids), "host/backend/MCP process generation was reused"
@@ -1669,6 +1689,11 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
         if memory_enabled:
             assert query["active_session_ref"] != memory_session_id, "History stayed in the preceding memory session"
         assert not server_errors, server_errors
+        if provider_kind == "openai-api":
+            assert provider_http_requests, "built-in provider made no chat-completions request"
+            assert all(row["path"] == "/v1/chat/completions" and row["model"] == "pallium-local"
+                       and row["auth_matched"] for row in provider_http_requests), provider_http_requests
+            assert "api_key" not in config["model"] and "base_url" not in config["model"]
         assert not egress.exists() or not egress.read_text(encoding="utf-8").strip(), "unexpected child egress attempt"
         secrets = {peer_delivery[key] for key in ("receipt", "claim_token")}
         secrets.update(delivery[key] for row in forwarded if row["path"] == "/relay/turn"
@@ -1740,6 +1765,8 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
                 thread.join(timeout=5)
                 assert not thread.is_alive(), "native test endpoint thread did not stop"
             (artifacts / "provider.json").write_text(json.dumps(provider.requests, ensure_ascii=False, indent=2), encoding="utf-8")
+            (artifacts / "provider-http.json").write_text(
+                json.dumps(provider_http_requests, ensure_ascii=False, indent=2), encoding="utf-8")
             outcome["server_errors"] = server_errors
             (artifacts / "http.json").write_text(json.dumps(forwarded, ensure_ascii=False, indent=2), encoding="utf-8")
             try:

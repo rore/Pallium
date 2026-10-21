@@ -10,11 +10,46 @@ import subprocess
 import sys
 import threading
 import time
+from urllib.parse import urlsplit
 
 RELEASES = {
     "e06df9c2eae6901f4c88f464e0ae6e753c0428b8": "0.22.0",
     "d923a5eb487a17c0a68801bba9ef0f56c81040a8": "0.22.2",
 }
+
+SYNTHETIC_OPENAI_API_KEY = "pallium-hermes-synthetic-openai-key"
+
+
+def synthetic_openai_environment(base_url: str) -> dict[str, str]:
+    parsed = urlsplit(base_url)
+    assert (parsed.scheme == "http" and parsed.hostname == "127.0.0.1" and parsed.port
+            and parsed.path == "/v1" and not parsed.query and not parsed.fragment and not parsed.username
+            and not parsed.password), "built-in provider must use the numeric loopback v1 endpoint"
+    return {"OPENAI_API_KEY": SYNTHETIC_OPENAI_API_KEY, "OPENAI_BASE_URL": base_url}
+
+
+def assert_synthetic_openai_environment(env: dict[str, str], expected_url: str | None = None) -> None:
+    key, url = env.get("OPENAI_API_KEY"), env.get("OPENAI_BASE_URL")
+    assert (key is None) == (url is None), "synthetic OpenAI key and URL must be selected together"
+    if key is None:
+        return
+    assert key == SYNTHETIC_OPENAI_API_KEY, "unexpected OpenAI credential in isolated environment"
+    expected = synthetic_openai_environment(url)
+    assert expected["OPENAI_BASE_URL"] == url
+    if expected_url is not None:
+        assert url == expected_url, "OpenAI URL must name this journey's owned provider"
+    try:
+        endpoints = json.loads(env["PALLIUM_TUI_ALLOWED_ENDPOINTS"])
+    except (KeyError, json.JSONDecodeError) as exc:
+        raise AssertionError("isolated provider endpoint allowlist is missing or malformed") from exc
+    assert ["127.0.0.1", urlsplit(url).port] in endpoints, "OpenAI URL is outside the owned endpoint allowlist"
+
+
+def synthetic_openai_request_evidence(path: str, body: dict, authorization: str | None) -> dict[str, object]:
+    assert path == "/v1/chat/completions", f"unexpected built-in provider route: {path}"
+    assert body.get("model") == "pallium-local", f"unexpected built-in provider model: {body.get('model')}"
+    return {"path": path, "model": body["model"],
+            "auth_matched": authorization == f"Bearer {SYNTHETIC_OPENAI_API_KEY}"}
 
 
 def seed_models_dev_cache(profile: Path) -> Path:
@@ -164,7 +199,7 @@ for (const name of ["node:dns", "node:dns/promises"]) {
 
 def isolated_env(home: Path, *, source: Path, python: Path, node: Path,
                  guard_dir: Path, preload: Path, egress_log: Path,
-                 endpoints: list[tuple[str, int]]) -> dict[str, str]:
+                 endpoints: list[tuple[str, int]], openai_base_url: str | None = None) -> dict[str, str]:
     if os.name != "nt":
         from tests.fixtures.hermes_linux_guard import require_contained_paths, require_linux_qualification
 
@@ -187,7 +222,9 @@ def isolated_env(home: Path, *, source: Path, python: Path, node: Path,
             "PALLIUM_LINUX_QUALIFICATION_ROOT": os.environ["PALLIUM_LINUX_QUALIFICATION_ROOT"],
             "PALLIUM_LINUX_QUALIFICATION_MANIFEST": os.environ["PALLIUM_LINUX_QUALIFICATION_MANIFEST"],
         }
-        assert_isolated_env(env, home)
+        if openai_base_url is not None:
+            env.update(synthetic_openai_environment(openai_base_url))
+        assert_isolated_env(env, home, openai_base_url=openai_base_url)
         return env
     systemroot = os.environ["SYSTEMROOT"]
     env = {
@@ -229,7 +266,7 @@ def isolated_env(home: Path, *, source: Path, python: Path, node: Path,
     return env
 
 
-def assert_isolated_env(env: dict[str, str], home: Path) -> None:
+def assert_isolated_env(env: dict[str, str], home: Path, *, openai_base_url: str | None = None) -> None:
     if os.name != "nt":
         expected = {
             "HOME": home, "TMPDIR": home / "Temp", "XDG_CONFIG_HOME": home / ".config",
@@ -247,8 +284,10 @@ def assert_isolated_env(env: dict[str, str], home: Path) -> None:
         assert not hermes_home.is_relative_to(default_hermes_home), "synthetic Hermes home collides with platform default"
         assert (hermes_home / "state.db").resolve().is_relative_to(home.resolve())
         assert "HERMES_STATE_DB_GUARD_BYPASS" not in env, "do not disable Hermes's live-DB safety guard"
+        assert_synthetic_openai_environment(env, openai_base_url)
         assert not any(any(word in key.upper() for word in (
-            "API_KEY", "TOKEN", "SECRET", "ACCESS_KEY", "SIDECAR", "ATTACH")) for key in env), (
+            "API_KEY", "TOKEN", "SECRET", "ACCESS_KEY", "SIDECAR", "ATTACH"))
+                        and key != "OPENAI_API_KEY" for key in env), (
                 "credential or host-attachment variable passed to Hermes")
         return
     expected = {
@@ -263,6 +302,7 @@ def assert_isolated_env(env: dict[str, str], home: Path) -> None:
     for key, path in expected.items():
         actual = Path(env[key]).resolve()
         assert actual.is_relative_to(home.resolve()) and actual == path.resolve(), (key, actual, path)
+    assert "OPENAI_API_KEY" not in env and "OPENAI_BASE_URL" not in env
     assert not any(any(word in key.upper() for word in ("API_KEY", "TOKEN", "SECRET", "ACCESS_KEY", "SIDECAR", "ATTACH"))
                    for key in env), "credential or host-attachment variable passed to Hermes"
 
