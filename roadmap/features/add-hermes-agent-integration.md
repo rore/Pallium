@@ -213,10 +213,12 @@ attempts within the original four runner hours. Owner authority commit
 `80bb856c8485511a16b2fe46d3efc881f7e5dac2` records a cap of five total attempts:
 three consumed and two available at this authorization checkpoint. The cumulative
 14,400-second ceiling is unchanged; check remaining attempt count and runner time
-before each dispatch, with fresh candidate CI and review still required. See the
+before each dispatch and verify CI/review evidence still applies to that exact
+candidate; this does not require CI to run after the authorization timestamp. See the
 existing [native qualification Work Record](https://github.com/rore/Pallium/blob/80bb856c8485511a16b2fe46d3efc881f7e5dac2/.agent-workflow/tasks/hermes-native-qualification.md)
 and [production slice-4 Work Record](https://github.com/rore/Pallium/blob/80bb856c8485511a16b2fe46d3efc881f7e5dac2/.agent-workflow/tasks/hermes-production-slice4.md).
-This supersedes the historical attempt cap only: it grants no PR #324 merge,
+This explicitly supersedes the referenced native qualification Work Record's
+historical two-run cap only: it grants no PR #324 merge,
 installed-environment change, paid-provider run or local native execution authority.
 
 **Owner-reported fourth dispatch:** run
@@ -225,7 +227,10 @@ all-CI-green `f348f00f` candidate for the original eight core journeys only, not
 the new busy-session/current `b50` composition qualification. Four attempts are
 consumed at this report; at most one remains under the five-total cap, including
 reruns, subject to a fresh ledger and the unchanged 14,400-second ceiling. Dispatch
-is not a passing result or qualification of a different candidate.
+is not a passing result or qualification of a different candidate. This scope note
+records the owner's report, not an independent attestation of its dispatch gates.
+The owner subsequently reported this run failed with 59 passes and two memory-
+fixture failures; the second release was cancelled. No native acceptance is claimed.
 
 Complete TUI, opt-in memory, both-release, ordinary-provider and broader
 coexistence/recovery qualification remain open. Controlled owned-tree relaunch
