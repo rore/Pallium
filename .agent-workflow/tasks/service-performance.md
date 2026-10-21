@@ -1,5 +1,13 @@
 # Service-wide performance investigation and correction
 
+## Adopted short-leaf qualification normalization - 2026-10-21
+
+Manager app-message from thread01a0d7ce-83c6-77e2-90f7-d413894059e1 adopts qualification-only normalization to a fresh private run leaf no longer than8characters, reusing the proven existing private root. First implementation step is invoking /agent-workflow and retaining existing agent-workflow:service-performance normal non-exempt expanded High/Large before preparation edits. Application, tests, runtime, runner, lock, isolation and every lifecycle oracle remain unchanged. No product/OS/config/binding fix or physical-cause claim is authorized. Existing separate human objective approval remains unchanged; this is manager adoption within that scope. Independent /root/opencode297_resume_plan_review source conclusion/proposal GO supports this exact setup normalization and proof requirement; it does not establish Windows policy or cure the earlier failure.
+
+Discovery/result reused: write_json_atomic creates parent then basename+UUID temporary; saved failure has Errno2 and no native winerror. No inspected connected parent-removal path established. New full basetemp82characters added10 over prior72; captured temporary path265 would project255 under prior base. Both unchanged health parameters passed in priorf6a9 report. Keep failed current4000case/3996normal/22of78mandatory/56unobserved result failed and separate from all accepted focused evidence. No causal inference from those comparisons. Original complete review JSON remains unchanged.
+
+Plan: only this Work Record and external preparation files at ../windows313-shortleaf-health-20261021/ are edited. Use fresh h78a under existing private root w313-9b1ydz5j; read-only preflight found that leaf/evidence absent, parent exists, and currentd4f4288a clean with only WR differences from tested9d07. Commit one preparation checkpoint, freeze exact head/source/lock/private recipe with unchanged accepted runner729c3d40 and20-minute owned watchdog, then independent actual-recipe/source GO before executing ONCE the transport and completed_trace parameters of tests/test_health.py::test_production_factory_drains_claude_wake_thread_before_storage_close through every unchanged existing lifecycle assertion. Use normal focused -x -q -n0, fresh private basetemp/JUnit and active assertions; no binding or deadline override. Manager explicitly grants the free sole local app-test slot and no further root/user wait for this one reviewed two-case cohort. Any unexpected failure/cap preserves/classifies/releases slot and stops without retry/diagnostics. Report actual start and immediate terminal slot release. Require independent actual-result GO. If and only if both pass and that review gives GO, prepare a fresh exact full78 manifest at ../windows313-shortleaf-full78-20261021/ with a different fresh short leaf f78a; no full execution until root separately accepts/releases it. No repeated54/21/69 components, broad/full execution, CI/push/installed changes, shutdown-oracle weakening or cleanup. Whole PR325 remains NO-GO; structured Ready to implement applies only to the bounded adopted setup check and returns Blocked for parent qualification after terminal disposition.
+
 ## Post-guard required-full terminal disposition - 2026-10-21
 
 Manager app-message from thread01a0d7ce-83c6-77e2-90f7-d413894059e1 accepted exact clean9d07e7b9916f7e438a6e710d4c636d504beb1a37/tree4b58c74a4abe3d8385c820167c325574b9a2bb50, manifestb9d286e352bf71cfc43a30c83295bca34681b5380b4af3d17c3c17fb9df57669, recipefe6b7bbff1a9d89a976bf925dee7ebebab7cccea02a789be55c238c3a648e341 and unchanged accepted runner729c3d40 after independent PREPARATION GO, and explicitly released the sole app-test slot after Claude terminated. Preflight confirmed exact hashes/clean source and no intent/running/result/JUnit or private run state. ONE required full started10:55:23.4272298UTC, PID38776, with the existing private locked runtime/default non-slow xdist4 selection and unchanged20-minute owned watchdog. No focused repeat or pre-execution waiting commit occurred.
@@ -2675,7 +2683,7 @@ Agent technical review: /root/architecture_check, clean nonimplementer source/pl
 
 **Exceptions:** None
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ### Final adbc Windows preparation boundaries — pre-edit checkpoint 2026-10-16
