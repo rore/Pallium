@@ -24,6 +24,7 @@ main capabilities, then use the integration and reference guides as needed.
 | [Claude Code](claude-code-integration.md) | Hooks, MCP tools, Relay delivery, and history capture for Claude Code |
 | [Codex](codex-integration.md) | Hooks, MCP tools, Relay delivery, and history capture for Codex |
 | [OpenCode](../integrations/opencode/README.md) | Local OpenCode plugin setup and current limitations |
+| [Hermes](hermes-integration.md) | Desktop/TUI plugin, skill, profile-scoped MCP tools, and setup limits |
 
 ## Reference
 
@@ -40,7 +41,6 @@ main capabilities, then use the integration and reference guides as needed.
 | Document | What it covers |
 |---|---|
 | [Derived Memory](derived-memory.md) | The optional derived-memory subsystem, retrieval, lifecycle, and limitations |
-| [Hermes integration](hermes-integration.md) | Experimental package, accepted scoped Windows matrix, setup and support boundaries |
 | [Agent Integration](agent-integration.md) | Building a custom integration; mostly advanced derived-memory behavior |
 | [Slack derived-memory example](integration-example.md) | A custom Slack integration using the derived-memory API |
 | [Derived-memory benchmarks](benchmarks.md) | Evaluation of the optional derived-memory subsystem |

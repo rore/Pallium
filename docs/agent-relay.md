@@ -4,14 +4,11 @@ Relay sends a bounded plain-text message from one existing agent session to
 another. Pallium stores the message before attempting delivery, so a busy or
 unavailable recipient can receive it later.
 
-Pallium currently ships Relay integrations for Claude Code, Codex, and OpenCode.
-The [experimental Hermes package](hermes-integration.md) passed native Desktop
-and TUI memory-off/on journeys on v0.22.0 and v0.22.2 in an isolated Windows
-Server 2025 unpacked build; Linux TUI passed on both tested releases. Other
-provider configurations and automatic standalone MCP reconnect/fallback remain
-unqualified, and Hermes is not part of the supported wake/fallback paths listed
-below. Its ACK records host-context
-receipt before provider completion, not model/provider completion or action.
+Pallium ships Relay integrations for Claude Code, Codex, OpenCode, and Hermes
+Desktop/TUI. The [Hermes integration](hermes-integration.md) uses a native plugin
+for incoming delivery and profile-scoped MCP tools for messaging. Its ACK records
+host-context receipt before provider completion, not model/provider completion
+or action. Its wake and recovery limits differ from the other integrations.
 
 Sessions must connect to the same local Pallium service. Cross-container routing is service-global; Session History and derived-memory scoping are unchanged. Routing uses explicit session identity; it does not use search,
 embeddings, ranking, or an LLM.
@@ -240,7 +237,8 @@ does not prove that the model acted on it.
 ## Delivery and wake behavior
 
 Pallium persists first, then attempts the safest delivery supported by the
-recipient runtime on the qualified paths listed below. If wake is unsupported, disabled, unsafe, or unavailable,
+recipient runtime. For the Claude Code, Codex and OpenCode paths listed below,
+if wake is unsupported, disabled, unsafe, or unavailable,
 the same message remains pending for the recipient's next natural turn.
 
 | Runtime | Current behavior |
@@ -249,6 +247,11 @@ the same message remains pending for the recipient's next natural turn.
 | Codex on Windows and Linux | Exact-session wake is qualified for tasks loaded by their Codex runtime. If a task is unloaded, the Pallium delivery stays pending for its next supported hook turn; native unloaded-queue persistence is not claimed. Windows also proves overtaken-wake suppression, and Linux requires the installed hook to be trusted. |
 | OpenCode | Durable next-turn delivery; active wake is deferred. |
 | Claude Code and Codex on macOS | Durable next-turn delivery; active wake is not yet qualified. |
+
+Hermes Desktop/TUI uses its own delivery lifecycle. Automatic standalone MCP
+reconnection and ordinary-turn fallback are not qualified; see the
+[Hermes delivery limits](hermes-integration.md). The table's fallback guarantees
+do not extend to Hermes.
 
 This table follows the current
 [wake roadmap](../roadmap/features/add-wake-first-relay-delivery.md). Recheck it
