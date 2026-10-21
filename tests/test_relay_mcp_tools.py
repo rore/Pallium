@@ -44,7 +44,7 @@ async def test_registered_send_same_id_recovers_lost_committed_response(
 ):
     sender = "retry-sender"
     await asgi_post("/relay/turn", {"runtime": "codex", "session_ref": sender, **_SCOPE})
-    target = await asgi_post("/relay/turn", {"runtime": _RUNTIME, "session_ref": _SESSION, **_SCOPE})
+    target = (await asgi_post("/relay/turn", {"runtime": _RUNTIME, "session_ref": _SESSION, **_SCOPE}))["session"]
     lost = False
     requests = []
 
@@ -143,7 +143,7 @@ async def test_registered_send_identity_boundaries_and_generated_ids(
 ):
     bind_asgi_work_refs(monkeypatch, asgi_post, asgi_get)
     await asgi_post("/relay/turn", {"runtime": "codex", "session_ref": "boundary-sender", **_SCOPE})
-    target = await asgi_post("/relay/turn", {"runtime": _RUNTIME, "session_ref": _SESSION, **_SCOPE})
+    target = (await asgi_post("/relay/turn", {"runtime": _RUNTIME, "session_ref": _SESSION, **_SCOPE}))["session"]
     arguments = {
         "message": "שלום 🌍", "recipient": target["endpoint_id"],
         "sender_runtime": "codex", "sender_session_ref": "boundary-sender",
