@@ -56,12 +56,11 @@ in its current form, but setup and behavior still have rough edges.
 
 ## Current status
 
-The [Hermes integration](docs/hermes-integration.md) remains experimental while
-the current Windows matrix completes. Actual Desktop and TUI memory-off/on
-journeys passed on v0.22.0 in an isolated Windows Server 2025 unpacked build;
-v0.22.2 remains under qualification. Synthetic-provider checks establish
-integration behavior, not paid-model quality, and Hermes is not included in the
-supported delivery guarantees below.
+The [Hermes integration](docs/hermes-integration.md) remains experimental pending
+human release acceptance. Its scoped native matrix passed on Windows Server 2025
+with an unpacked app: Desktop and TUI memory-off/on journeys on v0.22.0 and
+v0.22.2. Synthetic-provider checks establish integration behavior, not paid-model
+quality, and Hermes is not included in the supported delivery guarantees below.
 
 Relay works across the current integrations. Every supported path has durable
 next-turn delivery; some qualified paths can also start a new turn. See the

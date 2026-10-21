@@ -1,5 +1,47 @@
 # Hermes native qualification
 
+## Current scoped result
+
+Independent review accepted all eight actual Windows UI cells in native run
+[39626758387](https://github.com/rore/Pallium/actions/runs/39626758387), candidate
+`b3601c79a8269e8a734450c67e9e40c3e330b9fb`. Each release job passed 81 checks
+with zero failures, errors or skips. The jobs ran on Windows Server 2025 with
+unpacked builds and synthetic providers. The package remains experimental pending
+human release acceptance; this scoped result does not claim general production
+readiness.
+
+| Hermes source pin | Surface | Memory | Result | Duration |
+|---|---|---|---|---:|
+| v0.22.0 `e06df9c2` | TUI | Off | Passed | 60.656 s |
+| v0.22.0 `e06df9c2` | TUI | On | Passed | 103.072 s |
+| v0.22.0 `e06df9c2` | Desktop | Off | Passed | 45.894 s |
+| v0.22.0 `e06df9c2` | Desktop | On | Passed | 60.140 s |
+| v0.22.2 `d923a5eb` | TUI | Off | Passed | 45.099 s |
+| v0.22.2 `d923a5eb` | TUI | On | Passed | 72.427 s |
+| v0.22.2 `d923a5eb` | Desktop | Off | Passed | 34.210 s |
+| v0.22.2 `d923a5eb` | Desktop | On | Passed | 43.857 s |
+
+All journeys passed History, privacy/source assertions, profile lifecycle,
+post-drain error audit, driver exit and normal two-generation cleanup. Windows
+evidence used Server 2025 and unpacked apps; it does not qualify Windows 11,
+MSIX or updater behavior, native app Quit, or automatic standalone MCP
+reconnection. Linux TUI passed both pins separately: default-off used the built-in
+`openai-api` configuration, while memory-on used a custom synthetic provider.
+Windows cases used synthetic providers. Paid-provider quality and every
+provider/memory combination remain untested. Runtime admission is capability
+based and is not hard-pinned to these release versions.
+
+Required CI for candidate `b3601c79` passed both Linux lanes and Windows in
+[run 39626448225](https://github.com/rore/Pallium/actions/runs/39626448225); the
+governance check passed in
+[run 39626448147](https://github.com/rore/Pallium/actions/runs/39626448147).
+Earlier failed receipts remain failed historical evidence; this accepted run
+does not reclassify them. No read reset occurred in the accepted matrix, so its
+success does not establish a cure for the earlier unexplained resets. Separate
+focused real-loopback tests exercise the explicit retirement cancellation boundary.
+
+## Prior candidate diagnostics
+
 Run [39617852210](https://github.com/rore/Pallium/actions/runs/39617852210), candidate
 `143683d650692aff52b7633cdbde4402ced0e966`, passed 66 v0.22.0 checks and failed
 one, with zero skips in 396.29 seconds. Both Desktop memory modes completed
@@ -10,7 +52,7 @@ different session used after relaunch. Timing and cause remain unknown, and
 this case stays failed. v0.22.2 was cancelled. Full CI on this candidate passed
 both Linux lanes, Windows and governance; that does not cure prior incidents.
 
-The next reviewed fixture marks only the exact original poll scope immediately
+At that stage, the proposed fixture marked only the exact original poll scope immediately
 before its intentional process retirement. A completed HTTP 200 read response
 cancelled during that explicit boundary can be recorded provisionally, then
 accepted only after normal cleanup, old-generation death and a distinct later
@@ -61,7 +103,7 @@ and empty text. An initially fresh route is a state barrier rather than proof
 of a transition; actual later-session identity checks remain required. This is
 a test-caller correction, with no forced navigation, action retry, increased
 timeout or application change. Its visibility precondition failed in run
-39612888749 above; native qualification remains incomplete.
+39612888749 above; native qualification remained incomplete at that point.
 
 Run [39603091244](https://github.com/rore/Pallium/actions/runs/39603091244), candidate
 `f0da4ee1b2534da1b7ab9f3e94f41740dea8cbd3`, progressed through Desktop memory-on
@@ -97,10 +139,11 @@ one editor, checks its exact nonempty payload and presses Enter once on that
 same element. Cleared, missing or detached input fails; there is no refill,
 fallback or retry after an ambiguous action. These gates do not prove idle state.
 This changes the test's caller mechanism; it does not repair or qualify the
-failed Send-button route. The integration and Windows matrix remain experimental
-until the current acceptance gates pass.
+failed Send-button route. At that point, the integration and Windows matrix
+remained experimental pending native proof; the scoped matrix later passed as
+recorded above. The failed Send-button route itself remains unqualified.
 
-Windows qualification remains incomplete. Diagnostic run
+At that point Windows qualification remained incomplete. Diagnostic run
 [39593293647](https://github.com/rore/Pallium/actions/runs/39593293647), candidate
 `d5b7e3d9644801472674e1310aa484a7da75a62e`, passed three v0.22.0 UI cases but
 failed Desktop memory-on while submitting History after New session. The submit
@@ -159,17 +202,20 @@ The fourth run
 Both memory-off UI journeys completed. Both memory-on cases reached the memory
 lifecycle but failed an assertion using the History attribution field for an
 ordinary memory query. All four cleanup/source checks passed; v0.22.2 was
-cancelled. The corrected assertion is not yet natively qualified.
+cancelled. The corrected assertion was not yet qualified at that stage; the later
+accepted matrix does not change that failed receipt.
 At the time of the fourth run, conservative elapsed accounting including
 cancelled jobs totaled 5,026 seconds, leaving 9,374 seconds under the then-current
 14,400-second cap. Later user direction removed that cap. The user’s preference
 for local WSL validation before remote Windows qualification was fulfilled for
 this candidate and remains the order for future material changes.
-Hermes remains experimental pending the current Windows matrix. The approval
-excludes local recovery and everyday installation or rollout.
+At that stage Hermes remained experimental pending the then-current Windows
+matrix. The approval excluded local recovery and everyday installation or
+rollout. The accepted scoped result is recorded at the top; the package remains
+experimental pending human release acceptance.
 
-The remaining integration proof needs real Desktop and Ink TUI journeys. Gateway
-RPC tests and test-helper checks establish narrower contracts. The current
+At that stage, the remaining integration proof needed real Desktop and Ink TUI
+journeys. Gateway RPC tests and test-helper checks establish narrower contracts. The then-current
 [qualification matrix](../../integrations/hermes/README.md#production-qualification-in-progress)
 remains authoritative about unqualified behavior.
 
@@ -203,7 +249,8 @@ Windows x64 archive hash before executing it from runner temp. Use supported Nod
 `npm run pack --workspace apps/desktop`. Fail explicitly on each native command
 error and missing or ambiguous output; do not install MSIX packages or patch
 upstream source. Build prerequisites and the unpacked executable layout passed
-on v0.22.0; v0.22.2 native build/execution remains unverified by this workflow.
+on v0.22.0; native builds/execution for both pins were subsequently verified in
+the accepted run documented above.
 
 Dependency install scripts and Desktop startup can write outside redirected
 profile paths. A temporary profile does not isolate those effects: Windows
@@ -235,7 +282,8 @@ On candidate `2943fc75`, local subsystem checks passed 234 with three skips;
 released Gateway E2E passed on both pinned hosts, and the two SDK2 bridge cases
 previously skipped for missing prerequisites subsequently passed. These are
 Linux subsystem/Gateway results, not native TUI or Windows Desktop acceptance.
-Complete useful local validation before spending the remaining remote attempt.
+Complete useful local validation first. The local WSL pass remains the preferred
+step before remote qualification for future material changes.
 
 The complete Linux TUI journey subsequently passed with memory off and on for
 both pinned releases on clean candidate `1896605eef514e76f77b454afea44a92463aaed9`:
@@ -254,8 +302,8 @@ both inspected MCP generations omitted both provider variables. Memory-on retain
 the custom provider and complete optional-memory lifecycle. Independent result
 review accepted all four non-skipped cases and cleanup/source postconditions.
 This covers integration transport and configuration, not paid-model quality or
-every provider/memory combination. Required CI and final Windows qualification
-remain separate gates.
+every provider/memory combination. These Linux results supplement the later
+Windows matrix and required CI results documented above.
 
 Record the actual runner image and Windows version in every native result.
 Hosted Windows Server evidence must not be described as Windows 11 or installed
@@ -290,8 +338,9 @@ are compared after each step, alongside unrelated settings, plugin metadata and
 a Unicode note. Removal must delete only Pallium-owned package entries/files.
 The Desktop adapter uses the owned unpacked executable and a numeric-loopback
 Chromium CDP endpoint; it shares the identity-checked watchdog and cleanup ledger
-with TUI. Mocked adapter checks do not establish Desktop qualification. The full
-native matrix remains unaccepted. The shared fixture now recognizes only the
+with TUI. Mocked adapter checks do not establish Desktop qualification. The
+accepted run above now covers the full scoped native matrix. The shared fixture
+recognizes only the
 authored scope suffix on exact memory stages and waits for the actual Desktop
 submit control to mount; unexpected stage text and ambiguous controls still fail.
 It also checks an enabled, harmless peer hook and a bounded forwarding-endpoint
@@ -304,7 +353,8 @@ MCP call and persisted memory/History reads. Desktop userData reuse requires the
 same prior profile/runtime/source, successful dispatcher cleanup and contained
 non-reparse paths. Both legs retain separate evidence. This is controlled
 owned-tree teardown and relaunch, without a graceful native Quit or automatic
-standalone MCP-reconnect claim. Native proof remains pending.
+standalone MCP-reconnect claim. Native proof was pending when this procedure was
+written; the current result is recorded above.
 Python network guards do not confine Electron/Chromium networking, and hosted
 runner environment markers are only accidental-launch guards, not an OS sandbox.
 The recorded approval covers this disposable runner and its bounded manual runs.

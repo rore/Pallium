@@ -40,7 +40,7 @@ main capabilities, then use the integration and reference guides as needed.
 | Document | What it covers |
 |---|---|
 | [Derived Memory](derived-memory.md) | The optional derived-memory subsystem, retrieval, lifecycle, and limitations |
-| [Hermes integration](hermes-integration.md) | Experimental package, accepted Windows v0.22.0 evidence, setup and remaining Windows qualification |
+| [Hermes integration](hermes-integration.md) | Experimental package, accepted scoped Windows matrix, setup and support boundaries |
 | [Agent Integration](agent-integration.md) | Building a custom integration; mostly advanced derived-memory behavior |
 | [Slack derived-memory example](integration-example.md) | A custom Slack integration using the derived-memory API |
 | [Derived-memory benchmarks](benchmarks.md) | Evaluation of the optional derived-memory subsystem |
