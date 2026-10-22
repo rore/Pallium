@@ -7,8 +7,8 @@ on:
     branches: [main]
   workflow_dispatch:
     inputs:
-      harness_only:
-        description: Run only the 38-case Linux harness preflight
+      capture_only:
+        description: Run one diagnostic capture after harness safety
         type: boolean
         required: false
         default: false
@@ -22,7 +22,7 @@ concurrency:
 
 jobs:
   select:
-    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.harness_only) }}
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.capture_only) }}
     runs-on: ubuntu-latest
     outputs:
       lane: ${{ steps.plan.outputs.lane }}
@@ -292,10 +292,13 @@ jobs:
           tests/test_relay_load_smoke.py
           -m slow -n 0 -q --durations=20
 
-  harness-preflight:
-    if: github.event_name == 'workflow_dispatch' && inputs.harness_only
+  preworker-capture:
+    if: github.event_name == 'workflow_dispatch' && inputs.capture_only
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      actions: read
     steps:
       - uses: actions/checkout@v4
         with:
@@ -307,6 +310,33 @@ jobs:
         run: pip install -e ".[dev,vector,mcp]"
       - name: Run harness preflight
         run: python scripts/relay_targeted_boundary_capture.py --harness-only --output "$RUNNER_TEMP/harness-preflight"
+      - name: Check remaining capture budget
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python - <<'PY'
+          import datetime, json, os, pathlib, subprocess
+          run, attempt = os.environ["GITHUB_RUN_ID"], int(os.environ["GITHUB_RUN_ATTEMPT"])
+          endpoint = f"repos/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{run}/attempts/{attempt}/jobs?per_page=100"
+          raw = subprocess.check_output(["gh", "api", endpoint], timeout=15)
+          assert len(raw) <= 256 * 1024, "job metadata exceeds bound"
+          payload = json.loads(raw)
+          assert payload["total_count"] == len(payload["jobs"]), "incomplete job metadata"
+          jobs = [job for job in payload["jobs"] if job["name"] == "preworker-capture"]
+          assert len(jobs) == 1, "missing or ambiguous current job"
+          job = jobs[0]
+          assert job["run_id"] == int(run) and job["run_attempt"] == attempt and job["status"] == "in_progress"
+          started = datetime.datetime.fromisoformat(job["started_at"].replace("Z", "+00:00"))
+          elapsed = (datetime.datetime.now(datetime.timezone.utc) - started).total_seconds()
+          remaining = 25 * 60 - elapsed
+          receipt = {"job_id": job["id"], "run_attempt": attempt,
+                     "remaining_seconds": remaining, "required_seconds": 1335,
+                     "enough": 0 <= elapsed and remaining >= 1335}
+          pathlib.Path(os.environ["RUNNER_TEMP"], "harness-preflight", "job-budget.json").write_text(json.dumps(receipt))
+          assert receipt["enough"], "insufficient job budget for capture, settlement and evidence"
+          PY
+      - name: Run targeted pre-worker capture
+        run: python scripts/relay_targeted_boundary_capture.py --run --output "$RUNNER_TEMP/preworker-capture"
       - name: Upload harness evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -315,11 +345,19 @@ jobs:
           path: ${{ runner.temp }}/harness-preflight
           if-no-files-found: warn
           retention-days: 7
+      - name: Upload capture evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: preworker-capture
+          path: ${{ runner.temp }}/preworker-capture
+          if-no-files-found: warn
+          retention-days: 7
 
   result:
     name: CI result
     needs: [select, focused, test, windows-smoke, windows-full, nightly-slow-smoke]
-    if: always() && !(github.event_name == 'workflow_dispatch' && inputs.harness_only)
+    if: always() && !(github.event_name == 'workflow_dispatch' && inputs.capture_only)
     runs-on: ubuntu-latest
     steps:
       - name: Require every selected lane to succeed
