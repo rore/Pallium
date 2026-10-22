@@ -368,6 +368,12 @@ its original project. An intentional fixed-scope compatibility installation does
 not follow cwd. These automatic-mode paths still require the native qualification
 described in the Hermes guide.
 
+Integrations that use conditional disposal opt in during registration. For these
+endpoints, reopening advances the scope generation even when the legacy close
+route was used, so a delayed callback cannot close a successor. Ordinary endpoints
+keep their established reopen behavior. See the [HTTP API](http-api.md#relay) for
+the enrollment and conditional-close contract.
+
 ## Limits and scope
 
 - message and reply text: at most 16,000 Unicode code points

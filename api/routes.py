@@ -827,8 +827,6 @@ def create_router(
             request_data.pop("claim_expires_at_ms")
         relay_request = dict(request_data)
         relay_request["exact_delivery_id"] = relay_request.pop("wake_delivery_id", None)
-        if not request.guarded_lifecycle:
-            relay_request.pop("guarded_lifecycle")
         reservation = None
         try:
             if request.runtime == "codex" and request.wake_delivery_id is not None:

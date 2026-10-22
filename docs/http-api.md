@@ -28,6 +28,7 @@ shape.
 |---|---|
 | `POST /relay/turn` | Register or update a session and claim eligible deliveries. |
 | `POST /relay/sessions/close` | Close a session and release its alias. |
+| `POST /relay/sessions/close-if-current` | Close only the current guarded session incarnation. |
 | `GET /relay/sessions` | List recent sessions, or resolve an exact runtime/session identity regardless of activity, with lifecycle, health and last-active metadata. |
 | `POST /relay/sessions/name` | Assign or transfer an alias. |
 | `POST /relay/messages` | Persist and send a new message. |
@@ -36,6 +37,25 @@ shape.
 | `GET /relay/messages/{message_id}/trace` | Read bounded, nonmutating activation evidence and current delivery snapshots. Shared attempt stages use `shared: true` and omit the other message delivery ID. |
 | `POST /relay/deliveries/ack` | Acknowledge automatic hook delivery. |
 | `POST /relay/deliveries/mcp-ack` | Acknowledge MCP recovery delivery. |
+
+`POST /relay/turn` accepts `guarded_lifecycle: true` only when registering a
+session. The returned session must confirm `guarded_lifecycle: true`. Enrollment
+is persistent: later omitted or false values do not disable it. For an enrolled
+endpoint, reopening after either close route advances `scope_generation`; an
+ordinary endpoint retains its existing reopen behavior.
+
+`POST /relay/sessions/close-if-current` requires `runtime`, `session_ref`,
+`container_ref`, `expected_endpoint_id` and `expected_scope_generation`. It closes
+only an enrolled endpoint matching that exact snapshot. A stale or unenrolled
+endpoint returns 409, a missing session returns 404, and malformed or incomplete
+guards return 422. Repeated closure of the same current snapshot is valid. Reopening an enrolled endpoint, or moving any endpoint, at the signed 64-bit
+generation maximum returns 409 without a partial transition.
+
+The original `/relay/sessions/close` still permits an unconditional close; its
+optional expected endpoint/generation fields must be supplied together and are
+compared when present. Use guarded enrollment and `close-if-current` when a
+callback can outlive a session. An older service's missing enrollment witness or
+missing route is a refusal, never a reason to retry an unconditional close.
 
 ### Optional derived memory
 
