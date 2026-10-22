@@ -109,14 +109,16 @@ def _tool_response_text(result):
     blocks = wire.get("content")
     if type(is_error) is not bool or not isinstance(blocks, list):
         return json.dumps({"error": "Pallium MCP returned an unsupported response", "operation_uncertain": True})
-    if is_error:
-        return json.dumps({"error": "Pallium MCP refused the request", "operation_uncertain": True})
     if any(not isinstance(block, dict) or block.get("type") != "text"
            or not isinstance(block.get("text"), str) for block in blocks):
         return json.dumps({"error": "Pallium MCP returned an unsupported response", "operation_uncertain": True})
     text = "\n".join(block["text"] for block in blocks)
     if len(text) > MAX_RESPONSE_CHARS:
         return json.dumps({"error": "Pallium MCP response exceeded the supported budget", "operation_uncertain": True})
+    if is_error:
+        refused = (wire.get("_meta") == {"pallium_hermes": {"operation_uncertain": False}}
+                   and wire["_meta"]["pallium_hermes"]["operation_uncertain"] is False)
+        return json.dumps({"error": "Pallium MCP refused the request", "operation_uncertain": not refused})
     return text
 
 

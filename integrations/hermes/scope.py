@@ -399,7 +399,7 @@ def resolve_scope(cwd: object, previous: dict | None = None,
         remote = _git(current, ["remote", "get-url", "origin"], deadline)
         if remote:
             if "?" in remote or "#" in remote:
-                raise ValueError("origin query and fragment are unsupported for project identity")
+                raise ValueError("origin is not a safe supported Git remote")
             repository_ref = canonical_git_remote(remote)
             # Keep legacy spelling only after validating credentials and secrets.
             if repository_ref is None:
@@ -420,6 +420,12 @@ def resolve_scope(cwd: object, previous: dict | None = None,
         actor = previous.get("actor_ref") or "local"
     if not actor:
         actor = _git(current, ["config", "user.name"], deadline) or "local"
+    if (not isinstance(actor, str) or actor != actor.strip() or not 0 < len(actor) <= 255
+            or not actor.isprintable()):
+        raise ValueError("project actor identity is not supported")
+    if (not isinstance(container, str) or container != container.strip() or not 0 < len(container) <= 512
+            or not container.isprintable()):
+        raise ValueError("project container identity is not supported")
     refs = []
     if repository_ref:
         refs = [{"scope_ref": f"roadmap:v1:{repository_ref}#roadmap" if ref.startswith("agent-workflow:") else repository_ref,

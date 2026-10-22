@@ -114,6 +114,136 @@ def test_one_profile_concurrent_projects_and_actors(client, project_plugin, tmp_
     assert _sessions(client, _project("b"), "s0") == []
 
 
+@pytest.mark.parametrize("reload", [False, True])
+def test_completed_turn_chain_never_readmits_stale_callbacks(client, project_plugin, tmp_path, monkeypatch, reload):
+    module, ctx, pre, create, _calls, _settings = project_plugin
+    roots = {name: _repo(tmp_path, name) for name in ("a", "b", "c")}
+    for name in roots:
+        assert pre(str(roots[name]), turn=name)
+        ctx.hooks["on_session_end"](session_id="session", turn_id=name)
+    owner = create(ctx.state) if reload else ctx
+    assert pre(str(roots["c"]), turn="current", context=owner)
+    before = _sessions(client, _project("c"))
+    writes = []
+    http = module._json_request
+
+    def observe(base, method, path, **kwargs):
+        if method != "GET":
+            writes.append(path)
+        return http(base, method, path, **kwargs)
+
+    monkeypatch.setattr(module, "_json_request", observe)
+    for name in roots:
+        assert pre(str(roots[name]), turn=name, context=owner) is None
+        assert "error" in json.loads(_mcp_tool(owner, "pallium_relay_address", {}, session="session", turn=name))
+        _capture(owner, "session", name, "stale")
+    assert writes == []
+    assert _sessions(client, _project("c")) == before
+    assert json.loads(_mcp_tool(owner, "pallium_relay_address", {}, session="session", turn="current"))["scope"]["container_ref"] == _project("c")
+
+
+def test_unfinished_old_turn_cannot_rebind_after_reload(client, project_plugin, tmp_path):
+    _module, ctx, pre, create, _calls, _settings = project_plugin
+    roots = {name: _repo(tmp_path, name) for name in ("a", "b", "c")}
+    for name in roots:
+        assert pre(str(roots[name]), turn=name)
+    owner = create(ctx.state)
+    assert pre(str(roots["a"]), turn="a", context=owner) is None
+    assert _sessions(client, _project("a")) == []
+    assert _sessions(client, _project("c"))[0]["scope_generation"] == 2
+
+
+def test_reload_transition_before_publication_retains_original_turn_reservation(client, project_plugin, tmp_path, monkeypatch):
+    _module, ctx, pre, create, _calls, _settings = project_plugin
+    a, b = _repo(tmp_path, "a"), _repo(tmp_path, "b")
+    get, put = ctx.state.get, ctx.state.set
+    successors = []
+
+    def interleave(key, value):
+        previous = get(key)
+        put(key, value)
+        if (key.startswith("operation:") and value is None and isinstance(previous, dict)
+                and previous.get("operation") == "capture_user" and not successors):
+            successor = create(ctx.state)
+            successors.append(successor)
+            assert pre(str(b), turn="b", context=successor)
+
+    monkeypatch.setattr(ctx.state, "set", interleave)
+    assert pre(str(a), turn="a", history=[{"role": "user", "content": "hello"}]) is None
+    assert successors
+    assert pre(str(a), turn="a", context=successors[0]) is None
+    assert _sessions(client, _project("a")) == []
+    assert _sessions(client, _project("b"))[0]["scope_generation"] == 1
+
+
+def test_reload_end_during_active_stamp_write_cannot_revive_turn(client, project_plugin, tmp_path, monkeypatch):
+    _module, ctx, pre, create, _calls, _settings = project_plugin
+    root = _repo(tmp_path, "a")
+    put, successors = ctx.state.set, []
+
+    def interleave(key, value):
+        if key.startswith("turn:") and isinstance(value, dict) and value.get("state") == "active" and not successors:
+            successor = create(ctx.state)
+            successors.append(successor)
+            successor.hooks["on_session_end"](session_id="session", turn_id="a")
+        put(key, value)
+
+    monkeypatch.setattr(ctx.state, "set", interleave)
+    pre(str(root), turn="a")
+    assert successors
+    assert pre(str(root), turn="a", context=successors[0]) is None
+    assert "error" in json.loads(_mcp_tool(ctx, "pallium_relay_address", {}, session="session", turn="a"))
+    assert "error" in json.loads(_mcp_tool(successors[0], "pallium_relay_address", {}, session="session", turn="a"))
+
+
+def test_active_turn_reload_preserves_authority_but_malformed_stamp_refuses(client, project_plugin, tmp_path):
+    _module, ctx, pre, create, _calls, _settings = project_plugin
+    root = _repo(tmp_path, "a")
+    assert pre(str(root), turn="a")
+    original = _sessions(client, _project("a"))
+    owner = create(ctx.state)
+    assert pre(str(root), turn="a", context=owner)
+    resumed = _sessions(client, _project("a"))[0]
+    assert (resumed["endpoint_id"], resumed["scope_generation"]) == (
+        original[0]["endpoint_id"], original[0]["scope_generation"])
+    stamp_key = next(key for key in ctx.state.values if key.startswith("turn:"))
+    ctx.state.set(stamp_key, {"version": 1, "state": "active"})
+    assert pre(str(root), turn="a", context=owner) is None
+    assert "error" in json.loads(_mcp_tool(owner, "pallium_relay_address", {}, session="session", turn="a"))
+
+
+@pytest.mark.parametrize("reload", [False, True])
+def test_finalized_turn_cannot_resume_closed_incarnation(client, project_plugin, tmp_path, reload):
+    _module, ctx, pre, create, _calls, _settings = project_plugin
+    root = _repo(tmp_path, "a")
+    assert pre(str(root), turn="a")
+    ctx.hooks["on_session_finalize"](session_id="session")
+    owner = create(ctx.state) if reload else ctx
+    assert pre(str(root), turn="a", context=owner) is None
+    assert _sessions(client, _project("a"))[0]["state"] == "closed"
+    assert pre(str(root), turn="new", context=owner)
+    assert _sessions(client, _project("a"))[0]["scope_generation"] == 1
+    assert pre(str(root), turn="a", context=owner) is None
+
+
+@pytest.mark.parametrize("actor", ["x" * 256, "unsafe\nactor", "unsafe\tactor"])
+def test_invalid_actor_never_reaches_admission_or_capture(client, project_plugin, tmp_path, monkeypatch, actor):
+    module, _ctx, pre, _create, _calls, _settings = project_plugin
+    root = _repo(tmp_path, "a", actor=actor)
+    writes = []
+    http = module._json_request
+
+    def observe(base, method, path, **kwargs):
+        if method != "GET":
+            writes.append(path)
+        return http(base, method, path, **kwargs)
+
+    monkeypatch.setattr(module, "_json_request", observe)
+    assert pre(str(root), history=[{"role": "user", "content": "hello"}]) is None
+    assert writes == []
+    assert _sessions(client, _project("a")) == []
+
+
 def test_project_chain_and_frozen_callbacks_do_not_borrow_new_authority(client, project_plugin, tmp_path, monkeypatch):
     module, ctx, pre, _create, calls, _settings = project_plugin
     roots = {name: _repo(tmp_path, name) for name in ("a", "b", "c")}

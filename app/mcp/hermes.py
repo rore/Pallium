@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import inspect
+import json
 from collections.abc import Mapping
 from dataclasses import replace
 from functools import wraps
@@ -50,6 +51,23 @@ _META_KEY = "pallium_hermes"
 _MAX_ID_CHARS = 255
 _MAX_RECEIPT_CHARS = 64
 _MAX_DELIVERY_ID_CHARS = 64
+_RELAY_MUTATIONS = frozenset({
+    "pallium_relay_send", "pallium_relay_reply", "pallium_relay_name",
+    "pallium_relay_attach_work_ref", "pallium_relay_detach_work_ref",
+})
+_RELAY_ERROR_FIELDS = frozenset({
+    "error", "status_code", "detail", "min_max_chars", "error_kind", "retryable", "action",
+})
+
+
+def _refused_request():
+    from mcp.types import CallToolResult, TextContent
+
+    text = "Pallium MCP refused the request"
+    return CallToolResult(
+        isError=True, content=[TextContent(type="text", text=text)], structuredContent={"result": text},
+        _meta={"pallium_hermes": {"operation_uncertain": False}},
+    )
 
 
 def _as_mapping(value: object) -> dict[str, Any] | None:
@@ -204,13 +222,25 @@ def make_tool_adapter(context: PalliumContext, *, memory_enabled: bool = False) 
                         bound.arguments["request_source_item_id"] = nested["request_source_item_id"]
                 if tool_name == "pallium_relay_reply":
                     bound.arguments["receipt"] = identity.reply_receipt
-            except (TypeError, ValueError) as exc:
-                raise ToolError(str(exc)) from None
             except Exception:
-                raise ToolError("invalid Hermes MCP request context") from None
+                return _refused_request()
             with bind_hermes_request(HermesMcpRequest(request_scope, identity)):
-                result = handler(*bound.args, **bound.kwargs)
-                return await result if inspect.isawaitable(result) else result
+                try:
+                    result = handler(*bound.args, **bound.kwargs)
+                    return await result if inspect.isawaitable(result) else result
+                except ToolError as exc:
+                    if tool_name in _RELAY_MUTATIONS:
+                        try:
+                            error = json.loads(str(exc))
+                        except (TypeError, ValueError):
+                            error = None
+                        # Only the Relay HTTP adapter's known refusals establish a definite outcome.
+                        if (isinstance(error, dict) and set(error) <= _RELAY_ERROR_FIELDS
+                                and isinstance(error.get("error"), str) and error["error"]
+                                and type(error.get("status_code")) is int
+                                and error["status_code"] in {404, 409, 422}):
+                            return _refused_request()
+                    raise
 
         return guarded
 

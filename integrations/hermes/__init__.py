@@ -352,12 +352,61 @@ def register(ctx):
         return bool(left and right and all(left.get(field) == right.get(field) for field in (
             "container_ref", "actor_ref", "endpoint_id", "scope_generation")))
 
+    def turn_key(session_id, turn_id):
+        return key("turn", session_id + "\0" + turn_id)
+
+    def saved_turn(session_id, turn_id):
+        value = state.get(turn_key(session_id, turn_id))
+        if value is None:
+            return None
+        if (not isinstance(value, dict) or type(value.get("version")) is not int or value.get("version") != 1
+                or value.get("state") not in {"pending", "active", "ended"}):
+            raise ValueError("Saved Hermes turn authority is invalid")
+        if value["state"] != "ended" and (
+                not _text(value.get("user_digest"), 64)
+                or not _text(value.get("container_ref"), 512) or not _host_id(value.get("actor_ref"))
+                or not _text(value.get("nonce"), 64)
+                or (value["state"] == "active" and (
+                    not _text(value.get("endpoint_id"), 128)
+                    or type(value.get("scope_generation")) is not int or value["scope_generation"] < 0))):
+            raise ValueError("Saved Hermes turn authority is invalid")
+        return value
+
+    def is_ended_turn(session_id, turn_id):
+        if not automatic:
+            return ended_turns.get(session_id) == turn_id
+        try:
+            return (state.get(key("ended-turn", session_id + "\0" + turn_id)) is not None
+                    or (saved_turn(session_id, turn_id) or {}).get("state") == "ended")
+        except ValueError:
+            return True
+
+    def publish_turn(session_id, turn_id, record, reservation):
+        if (not profile_ok() or is_ended_turn(session_id, turn_id)
+                or scope(session_id) != {k: v for k, v in record.items()
+                if k not in {"user_digest", "request_source_item_id", "recall_context"}}
+                or state.get(key("lifecycle", session_id)) is not None
+                or saved_turn(session_id, turn_id) != reservation):
+            return False
+        stamp = dict(reservation, state="active", **{
+            field: record[field] for field in ("endpoint_id", "scope_generation")})
+        # Retain compact authority metadata across reloads; never evict an old turn into new authority.
+        state.set(turn_key(session_id, turn_id), stamp)
+        turn_bindings[(session_id, turn_id)] = record
+        return not is_ended_turn(session_id, turn_id)
+
     def turn_scope(session_id, turn_id):
         if not automatic:
             return scope(session_id)
         with lock:
             frozen = turn_bindings.get((session_id, turn_id))
-            if (ended_turns.get(session_id) == turn_id or state.get(key("lifecycle", session_id)) is not None
+            try:
+                stamp = saved_turn(session_id, turn_id)
+            except ValueError:
+                return None
+            if (is_ended_turn(session_id, turn_id) or not stamp or stamp["state"] != "active"
+                    or not same_authority(stamp, frozen)
+                    or state.get(key("lifecycle", session_id)) is not None
                     or not same_authority(frozen, scope(session_id))):
                 return None
             return frozen
@@ -562,7 +611,7 @@ def register(ctx):
                 poller = threading.Thread(target=poll, name="pallium-hermes-relay", daemon=True)
                 poller.start()
 
-    def pre_llm_call_bound(session_id="", turn_id="", user_message="", candidate=None, **_context):
+    def pre_llm_call_bound(session_id="", turn_id="", user_message="", candidate=None, reservation=None, **_context):
         if not profile_ok() or not _host_id(session_id) or not _host_id(turn_id):
             return None
         container = candidate["container_ref"] if automatic else topology_signature[1]
@@ -605,7 +654,8 @@ def register(ctx):
                             frozen = {**record, "user_digest": hashlib.sha256(text.encode()).hexdigest(),
                                       "request_source_item_id": captured["source_item_id"] if captured else None,
                                       "recall_context": captured["context"] if captured else ""}
-                            turn_bindings[(session_id, turn_id)] = frozen
+                            if not publish_turn(session_id, turn_id, frozen, reservation):
+                                return None
                     ensure_poller()
                     if bridge:
                         orientation = {
@@ -640,7 +690,8 @@ def register(ctx):
             if not register_session(session_id, expected=record, candidate=candidate):
                 return None
             if automatic:
-                turn_bindings[(session_id, turn_id)] = record
+                if not publish_turn(session_id, turn_id, record, reservation):
+                    return None
         except Exception:
             LOG.debug("Hermes Relay wake session refresh deferred", exc_info=True)
             return None
@@ -650,7 +701,7 @@ def register(ctx):
             if (not profile_ok() or not current or not same_wake(current, wake)
                     or current.get("state") != "injection_attempted"
                     or current_record != record
-                    or ended_turns.get(session_id) == turn_id):
+                    or is_ended_turn(session_id, turn_id)):
                 return None
             wake = dict(current, state="claim_attempted", turn_id=turn_id)
             state.set(key("wake", session_id), wake)
@@ -684,7 +735,7 @@ def register(ctx):
             current = wake_scope(session_id)
             if (not profile_ok() or not current or not same_wake(current, wake)
                     or current.get("state") != "claim_attempted"
-                    or ended_turns.get(session_id) == turn_id):
+                    or is_ended_turn(session_id, turn_id)):
                 return None
             wake = dict(current, state="claimed")
             state.set(key("wake", session_id), wake)
@@ -699,6 +750,15 @@ def register(ctx):
             return None
         with session_lock(session_id):
             try:
+                if is_ended_turn(session_id, turn_id):
+                    return None
+                observed = saved_turn(session_id, turn_id)
+                digest = hashlib.sha256((user_message if isinstance(user_message, str) else "").encode()).hexdigest()
+                if observed and (observed["state"] != "active"
+                        or not same_authority(observed, scope(session_id))
+                        or state.get(key("lifecycle", session_id)) is not None
+                        or observed["user_digest"] != digest):
+                    return None
                 if (state.get(key("lifecycle", session_id)) or {}).get("state") == "close_deferred":
                     close_session(session_id=session_id)
                 if ctx.session_surface() not in {"desktop", "tui", "cli", "acp"}:
@@ -706,6 +766,9 @@ def register(ctx):
                 from .scope import resolve_scope
                 candidate = resolve_scope(ctx.session_cwd(), previous=scope(session_id),
                                           actor_override=topology_signature[4])
+                if observed and (candidate["container_ref"] != observed["container_ref"]
+                                 or candidate["actor_ref"] != observed["actor_ref"]):
+                    return None
                 frozen = turn_bindings.get((session_id, turn_id))
                 if frozen and (not same_authority(frozen, scope(session_id))
                                or candidate["container_ref"] != frozen["container_ref"]
@@ -713,7 +776,13 @@ def register(ctx):
                                or (frozen.get("user_digest") is not None and frozen["user_digest"] !=
                                    hashlib.sha256((user_message if isinstance(user_message, str) else "").encode()).hexdigest())):
                     return None
-                return pre_llm_call_bound(session_id, turn_id, user_message, candidate=candidate, **_context)
+                reservation = observed or {"version": 1, "state": "pending", "user_digest": digest,
+                    "container_ref": candidate["container_ref"], "actor_ref": candidate["actor_ref"],
+                    "nonce": secrets.token_urlsafe(18)}
+                if observed is None:
+                    state.set(turn_key(session_id, turn_id), reservation)
+                return pre_llm_call_bound(session_id, turn_id, user_message, candidate=candidate,
+                                          reservation=reservation, **_context)
             except Exception:
                 LOG.warning("Hermes project scope unavailable; this turn has no Pallium authority", exc_info=True)
                 return None
@@ -727,7 +796,7 @@ def register(ctx):
                 and same_wake(current, claim["wake"])
                 and record.get("endpoint_id") == current.get("endpoint_id")
                 and (not automatic or turn_scope(session_id, turn_id) is not None)
-                and ended_turns.get(session_id) != turn_id)
+                and not is_ended_turn(session_id, turn_id))
 
     def current_view(session_id, turn_id, view):
         record = scope(session_id)
@@ -735,7 +804,7 @@ def register(ctx):
                 and profile_ok() and record is not None
                 and record.get("endpoint_id") == view["endpoint_id"]
                 and (not automatic or turn_scope(session_id, turn_id) is not None)
-                and ended_turns.get(session_id) != turn_id)
+                and not is_ended_turn(session_id, turn_id))
 
     def llm_request(request, session_id="", turn_id="", api_request_id="", **_context):
         if (not isinstance(request, dict) or not _host_id(session_id)
@@ -776,7 +845,7 @@ def register(ctx):
             claim = claims.get(session_id) if isinstance(session_id, str) else None
             view = turn_contexts.get((session_id, turn_id)) if _host_id(session_id) and _host_id(turn_id) else None
             contexts = [item["rendered"] for item in (*claims.values(), *turn_contexts.values())]
-            if isinstance(session_id, str) and ended_turns.get(session_id) == turn_id:
+            if isinstance(session_id, str) and is_ended_turn(session_id, turn_id):
                 return None
         owns_context = _has_claimed_context(request, contexts)
         if not profile_ok():
@@ -833,7 +902,7 @@ def register(ctx):
             if (not profile_ok() or not current_wake or not same_wake(current_wake, wake)
                     or current_wake.get("state") != "claimed"
                     or not current_claim or not same_wake(current_claim.get("wake"), wake)
-                    or ended_turns.get(session_id) == turn_id
+                    or is_ended_turn(session_id, turn_id)
                     or current_admission or observed_requests.get(session_id)):
                 return
             observed_requests[session_id] = observation
@@ -863,7 +932,7 @@ def register(ctx):
                     or current_wake.get("state") != "claimed"
                     or not current_claim or not same_wake(current_claim.get("wake"), wake)
                     or current_admission
-                    or ended_turns.get(session_id) == turn_id):
+                    or is_ended_turn(session_id, turn_id)):
                 if observed_requests.get(session_id) == observation:
                     observed_requests.pop(session_id, None)
                 return
@@ -915,7 +984,7 @@ def register(ctx):
         with lock:
             current = admitted.get(session_id)
             current = dict(current) if current else None
-            turn_ended = ended_turns.get(session_id) == turn_id
+            turn_ended = is_ended_turn(session_id, turn_id)
         if (not current or current["turn_id"] != turn_id or current["delivery_id"] != delivery_id
                 or not _text(current.get("receipt"), 512)
                 or turn_ended):
@@ -945,7 +1014,7 @@ def register(ctx):
             if (not profile_ok() or not persisted or not same_wake(persisted, current["wake"])
                     or persisted.get("state") != "admitted"
                     or not latest or not same_wake(latest.get("wake"), current["wake"])
-                    or ended_turns.get(session_id) == turn_id):
+                    or is_ended_turn(session_id, turn_id)):
                 return "Relay reply submitted; the host turn changed before completion was recorded."
             state.set(key("wake", session_id), dict(persisted, state="complete"))
             clear_wake(session_id, persisted)
@@ -995,7 +1064,7 @@ def register(ctx):
                 with lock:
                     current = admitted.get(session_id)
                     current = dict(current) if current else None
-                    turn_ended = ended_turns.get(session_id) == identity[1]
+                    turn_ended = is_ended_turn(session_id, identity[1])
                 if (not current or current["turn_id"] != identity[1]
                         or current["delivery_id"] != delivery_id
                         or turn_ended
@@ -1044,7 +1113,7 @@ def register(ctx):
                         if (profile_ok() and persisted and same_wake(persisted, current["wake"])
                                 and persisted.get("state") == "admitted"
                                 and latest and same_wake(latest.get("wake"), current["wake"])
-                                and ended_turns.get(session_id) != identity[1]):
+                                and not is_ended_turn(session_id, identity[1])):
                             state.set(key("wake", session_id), dict(persisted, state="complete"))
                             clear_wake(session_id, persisted)
             return result
@@ -1139,10 +1208,12 @@ def register(ctx):
                 finish_operation(session_id, operation)
 
     def clear_session(session_id="", turn_id="", **_context):
-        if not _host_id(session_id) or not _host_id(turn_id):
+        if not profile_ok() or not _host_id(session_id) or not _host_id(turn_id):
             return
         with lock:
             if automatic:
+                # Separate from publication so an in-flight reload cannot overwrite completion.
+                state.set(key("ended-turn", session_id + "\0" + turn_id), True)
                 turn_bindings.pop((session_id, turn_id), None)
                 ended_turns[session_id] = turn_id
             if turn_contexts.pop((session_id, turn_id), None) is not None:
