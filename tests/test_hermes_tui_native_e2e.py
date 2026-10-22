@@ -226,10 +226,14 @@ def composer_observation(text, memory_enabled, mode="fixed", *, require_scope=Fa
     recalled = guidance[len(expected_guidance):]
     if mode == "fixed":
         assert not recalled, guidance
-    if recalled:
-        assert recalled.startswith(recalled_prefix) and recalled.endswith(recalled_suffix), guidance
-        recalled_rows = recalled[len(recalled_prefix):-len(recalled_suffix)].splitlines()
+    elif recalled.startswith(recalled_prefix):
+        recalled_text, recalled_close, recalled = recalled[len(recalled_prefix):].partition(recalled_suffix)
+        assert recalled_close, guidance
+        recalled_rows = recalled_text.splitlines()
         assert recalled_rows and all(isinstance(json.loads(row), dict) for row in recalled_rows), guidance
+    if mode == "cwd":
+        assert not recalled or recalled.startswith("\n\n"), guidance
+        assert "[Pallium recalled context" not in recalled and "[End Pallium recalled context" not in recalled, guidance
     return prompt, scope
 
 
@@ -279,6 +283,21 @@ def test_native_scope_mode_and_cwd_orientation_are_strict(monkeypatch):
                       "memory_object_id": None, "expand_available": False, "evidence": []}) \
         + "\n[End Pallium recalled context]"
     assert composer_observation(recalled, False, "cwd", require_scope=True)[0] == PROMPT
+    for decorated in (prompt + "\n\nAdditional host context.", recalled + "\n\nAdditional host context."):
+        assert composer_observation(decorated, False, "cwd", require_scope=True)[0] == PROMPT
+        provider = ScriptedProvider(scope_mode="cwd")
+        request = {"messages": [{"role": "user", "content": decorated}],
+                   "tools": [{"function": {"name": "skill_view"}}]}
+        assert provider.respond(request) == (None, ("skill_view", {"name": "pallium-memory"}))
+        assert provider.orientations[PROMPT]["request_source_item_id"] == "source-1"
+        assert provider.requests[0]["messages"][0]["content"] == decorated
+    for invalid in (prompt + "\nExtra text", recalled + "\nExtra text",
+                    recalled.replace("\n[End Pallium recalled context]", ""),
+                    prompt + "\n\nHost context." + recalled[len(prompt):],
+                    prompt + "\n\n[Pallium recalled context - malformed]",
+                    recalled + "\n\n[End Pallium recalled context - malformed]"):
+        with pytest.raises(AssertionError):
+            composer_observation(invalid, False, "cwd", require_scope=True)
     with pytest.raises(AssertionError):
         composer_observation(recalled.replace("lower-authority", "trusted"), False, "cwd")
     scope = {**SCOPE, "thread_ref": "turn-1", "actor_ref": "native-ui-actor", "agent_ref": "hermes",
