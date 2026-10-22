@@ -496,10 +496,28 @@ def test_node_preload_allows_one_native_websocket_and_blocks_url_protocol_and_ot
     server_thread.start()
     try:
         port = server.server_address[1]
-        script = r'''const protocols = ["hermes-gateway-v1", "hermes-gateway-ticket.syntheticQualificationToken"];
+        script = r'''const net = require("node:net");
+const guardedConnect = net.Socket.prototype.connect;
+net.Socket.prototype.connect = function(...args) {
+ const normalized = Array.isArray(args[0]) ? args[0] : args;
+ const first = normalized[0];
+ const fields = {};
+ if (first && typeof first === "object") {
+  for (const key of ["host","hostname","port","family","localAddress","localPort","path","socketPath","autoSelectFamily"])
+   if (first[key] === null || ["string","number","boolean"].includes(typeof first[key])) fields[key] = first[key];
+ }
+ console.error(JSON.stringify({kind:"connect",types:normalized.map(value=>typeof value),
+  fields,lookup_type:typeof first?.lookup}));
+ return guardedConnect.apply(this,args);
+};
+const protocols = ["hermes-gateway-v1", "hermes-gateway-ticket.syntheticQualificationToken"];
 const ws = new WebSocket(process.env.PALLIUM_TUI_GATEWAY_WS, protocols);
 ws.addEventListener("open", () => { ws.close(); console.log("opened"); });
-ws.addEventListener("error", () => { console.error("websocket failed"); process.exitCode = 2; });
+ws.addEventListener("error", event => {
+ console.error(JSON.stringify({kind:"websocket-error",name:event.error?.name,code:event.error?.code,
+  cause_name:event.error?.cause?.name,cause_code:event.error?.cause?.code}));
+ process.exitCode = 2;
+});
 '''
         env = _private_env(tmp_path, node, python, port)
         env["NODE_OPTIONS"] = f'--require="{preload.as_posix()}"'
@@ -509,6 +527,9 @@ ws.addEventListener("error", () => { console.error("websocket failed"); process.
         server.shutdown()
         server.server_close()
         server_thread.join(timeout=2)
+    (tmp_path / "websocket-control.json").write_text(json.dumps({
+        "returncode": result.returncode, "stdout": result.stdout, "stderr": result.stderr,
+        "server_observation": observed}, indent=2), encoding="utf-8")
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "opened"
     assert observed == {"path": "/api/ws", "native_protocols": True}
