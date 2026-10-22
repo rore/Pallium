@@ -74,11 +74,80 @@ def install_copied_runtime_guard(python: Path, source: Path, guard: str, *, allo
 
 
 HELPER = r'''
-import builtins, contextlib, io, json, os, re, runpy, sys, threading
+import builtins, contextlib, io, json, os, re, runpy, sys, threading, types
 from pathlib import Path
 threading.Timer(300, lambda: os._exit(79)).start()
 source = Path.cwd()
 phase = 'run_path'
+ensure_observation = {'status': 'not_reached', 'calls': 0, 'returns': 0,
+                      'state': None, 'reason_code': None}
+ensure_filename = None
+
+def observe_ensure(frame, event, arg):
+    try:
+        if (frame.f_code.co_filename != ensure_filename
+                or frame.f_code.co_name != 'ensure_gateway_runtime'):
+            return
+        if event == 'call':
+            if ensure_observation['calls'] >= 2:
+                ensure_observation['status'] = 'multiple_calls'
+                return
+            ensure_observation['calls'] += 1
+            ensure_observation['status'] = ('observing' if ensure_observation['calls'] == 1
+                                            else 'multiple_calls')
+        elif event == 'return':
+            if ensure_observation['returns'] >= ensure_observation['calls']:
+                ensure_observation['status'] = 'observer_error'
+                return
+            ensure_observation['returns'] += 1
+            if ensure_observation['status'] == 'multiple_calls':
+                return
+            if arg is None:
+                ensure_observation['status'] = 'none_or_unwind'
+                return
+            module = sys.modules.get(frame.f_globals.get('__name__'))
+            if type(module) is not types.ModuleType:
+                ensure_observation['status'] = 'unexpected_return'
+                return
+            discovery_type = vars(module).get('GatewayDiscovery')
+            if type(arg) is not discovery_type:
+                ensure_observation['status'] = 'unexpected_return'
+                return
+            fields = object.__getattribute__(arg, '__dict__')
+            if type(fields) is not dict or 'state' not in fields or 'reason_code' not in fields:
+                ensure_observation['status'] = 'unexpected_return'
+                return
+            state, reason = fields['state'], fields['reason_code']
+            ensure_observation['state'] = (state if type(state) is str and state in {
+                'absent', 'starting', 'ready', 'draining', 'incompatible', 'inaccessible', 'conflict'
+            } else 'unrecognized')
+            ensure_observation['reason_code'] = (reason if reason is None or
+                (type(reason) is str and reason in {
+                    'authorization', 'runtime_exited', 'runtime_start_failed', 'deadline',
+                    'control_timeout', 'invalid_control_peer', 'unsafe_control_path',
+                    'unsafe_control_permissions', 'unsafe_control_pointer', 'invalid_control_pointer',
+                    'unsafe_control_peer', 'profile_mismatch', 'profile_parked',
+                    'invalid_runtime_state', 'runtime_protocol', 'session_authority_unavailable',
+                    'update_paused'
+                }) else 'unrecognized')
+            ensure_observation['status'] = 'returned'
+    except BaseException:
+        ensure_observation['status'] = 'observer_error'
+
+def ensure_gateway_bootstrap(bootstrap):
+    global ensure_filename
+    previous_profiler = sys.getprofile()
+    assert previous_profiler is None, 'qualification helper already has a profiler'
+    ensure_filename = str((source / 'hermes_cli/gateway_runtime.py').resolve())
+    ensure_observation['status'] = 'observing'
+    sys.setprofile(observe_ensure)
+    try:
+        return bootstrap['bootstrap'](True)
+    finally:
+        sys.setprofile(previous_profiler)
+        if ensure_observation['status'] == 'observing':
+            ensure_observation['status'] = ('no_matching_call' if ensure_observation['calls'] == 0
+                                            else 'no_return')
 
 def safe_frames(exc):
     rows = []
@@ -111,7 +180,7 @@ try:
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         bootstrap = runpy.run_path(str(source / 'ui-tui/scripts/gateway_bootstrap.py'))
         phase = 'bootstrap'
-        grant = bootstrap['bootstrap'](True)
+        grant = ensure_gateway_bootstrap(bootstrap)
         phase = 'imports'
         from hermes_cli.gateway_runtime_discovery import query_identify
         from hermes_cli.gateway_runtime import _endpoint
@@ -163,7 +232,8 @@ except BaseException as exc:
         exception_type = (exception_class.__name__
                           if getattr(builtins, exception_class.__name__, None) is exception_class else 'Exception')
         diagnostic = {'error': 'native gateway qualification failed', 'phase': phase,
-                      'exception_type': exception_type, 'frames': safe_frames(exc)}
+                      'exception_type': exception_type, 'frames': safe_frames(exc),
+                      'ensure': dict(ensure_observation)}
         print(json.dumps(diagnostic, sort_keys=True), flush=True)
     except BaseException:
         print('{"error":"native gateway qualification failed"}', flush=True)
@@ -203,6 +273,20 @@ _GATEWAY_ERROR_PHASES = frozenset({
     'run_path', 'bootstrap', 'imports', 'query_identify', 'endpoint',
     'identity_validation', 'grant_validation', 'verify', 'command',
 })
+_GATEWAY_ERROR_STATES = frozenset({
+    'absent', 'starting', 'ready', 'draining', 'incompatible', 'inaccessible', 'conflict',
+})
+_GATEWAY_ERROR_REASONS = frozenset({
+    'authorization', 'runtime_exited', 'runtime_start_failed', 'deadline', 'control_timeout',
+    'invalid_control_peer', 'unsafe_control_path', 'unsafe_control_permissions',
+    'unsafe_control_pointer', 'invalid_control_pointer', 'unsafe_control_peer',
+    'profile_mismatch', 'profile_parked', 'invalid_runtime_state', 'runtime_protocol',
+    'session_authority_unavailable', 'update_paused',
+})
+_GATEWAY_ENSURE_STATUSES = frozenset({
+    'not_reached', 'observing', 'returned', 'none_or_unwind', 'unexpected_return', 'multiple_calls',
+    'no_matching_call', 'no_return', 'observer_error',
+})
 _BUILTIN_EXCEPTION_NAMES = frozenset(
     name for name in dir(builtins)
     if isinstance(getattr(builtins, name), type)
@@ -212,7 +296,7 @@ _BUILTIN_EXCEPTION_NAMES = frozenset(
 
 def _valid_gateway_error(result):
     if (type(result) is not dict
-            or set(result) != {'error', 'phase', 'exception_type', 'frames'}
+            or set(result) != {'error', 'phase', 'exception_type', 'frames', 'ensure'}
             or result.get('error') != 'native gateway qualification failed'):
         return False
     phase, exception_type = result.get('phase'), result.get('exception_type')
@@ -236,6 +320,20 @@ def _valid_gateway_error(result):
                 or any(part in {'', '.', '..'} for part in filename.split('/'))
                 or any(ord(char) < 32 for char in filename)):
             return False
+    ensure = result.get('ensure')
+    if (type(ensure) is not dict
+            or set(ensure) != {'status', 'calls', 'returns', 'state', 'reason_code'}
+            or type(ensure.get('status')) is not str
+            or ensure['status'] not in _GATEWAY_ENSURE_STATUSES
+            or type(ensure.get('calls')) is not int or not 0 <= ensure['calls'] <= 2
+            or type(ensure.get('returns')) is not int or not 0 <= ensure['returns'] <= ensure['calls']):
+        return False
+    state, reason = ensure.get('state'), ensure.get('reason_code')
+    if (state is not None and (type(state) is not str or state not in (_GATEWAY_ERROR_STATES | {'unrecognized'}))):
+        return False
+    if (reason is not None
+            and (type(reason) is not str or reason not in (_GATEWAY_ERROR_REASONS | {'unrecognized'}))):
+        return False
     return True
 
 

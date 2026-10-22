@@ -706,6 +706,9 @@ def test_real_helper_retains_partial_bootstrap_child_for_final_tree_cleanup(tmp_
     source = tmp_path / "synthetic-source"
     scripts = source / "ui-tui" / "scripts"
     scripts.mkdir(parents=True)
+    native_package = source / "hermes_cli"
+    native_package.mkdir()
+    (native_package / "__init__.py").write_text("", encoding="utf-8")
     witness = tmp_path / "spawned-child.json"
     marker = "qualification-partial-" + uuid.uuid4().hex
     secrets = (
@@ -713,16 +716,36 @@ def test_real_helper_retains_partial_bootstrap_child_for_final_tree_cleanup(tmp_
         "synthetic-bootstrap-stderr-must-never-escape",
         "synthetic-exception-message-must-never-escape",
         "SyntheticPrivateExceptionName",
+        "decoy-private-state",
+        "decoy-private-reason",
     )
-    bootstrap = (
+    native_runtime = (
         "import json,os,subprocess,sys,psutil\nfrom pathlib import Path\n"
-        f"Error = type({secrets[3]!r}, (RuntimeError,), {{'__module__': 'builtins'}}) if {spoofed_exception!r} else RuntimeError\n"
-        "def bootstrap(start):\n"
-        "    assert start is True\n"
+        "class GatewayDiscovery:\n"
+        "    def __init__(self,state,reason_code): self.state=state; self.reason_code=reason_code\n"
+        "def ensure_gateway_runtime(*args,**kwargs):\n"
         "    options={'start_new_session':True} if os.name!='nt' else {}\n"
         f"    child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(120)',{marker!r}],**options)\n"
         "    process=psutil.Process(child.pid)\n"
         f"    Path({str(witness)!r}).write_text(json.dumps({{'pid':child.pid,'birthtime':process.create_time(),'exe':process.exe()}}))\n"
+        "    return GatewayDiscovery('ready','authorization')\n"
+    )
+    (native_package / "gateway_runtime.py").write_text(native_runtime, encoding="utf-8")
+    (native_package / "decoy.py").write_text(
+        "class GatewayDiscovery:\n"
+        "    state='decoy-private-state'\n"
+        "    reason_code='decoy-private-reason'\n"
+        "def ensure_gateway_runtime(): return GatewayDiscovery()\n", encoding="utf-8")
+    bootstrap = (
+        "import json,os,subprocess,sys,psutil\nfrom pathlib import Path\n"
+        f"sys.path.insert(0,{str(source)!r})\n"
+        "from hermes_cli.gateway_runtime import ensure_gateway_runtime\n"
+        "from hermes_cli.decoy import ensure_gateway_runtime as decoy_ensure\n"
+        f"Error = type({secrets[3]!r}, (RuntimeError,), {{'__module__': 'builtins'}}) if {spoofed_exception!r} else RuntimeError\n"
+        "def bootstrap(start):\n"
+        "    assert start is True\n"
+        "    assert ensure_gateway_runtime().state == 'ready'\n"
+        "    decoy_ensure()\n"
         f"    print({secrets[0]!r})\n"
         f"    print({secrets[1]!r},file=sys.stderr)\n"
         f"    raise Error({secrets[2]!r})\n"
@@ -756,6 +779,10 @@ def test_real_helper_retains_partial_bootstrap_child_for_final_tree_cleanup(tmp_
         assert diagnostic["error"] == "native gateway qualification failed"
         assert diagnostic["phase"] == "bootstrap"
         assert diagnostic["exception_type"] == ("Exception" if spoofed_exception else "RuntimeError")
+        assert diagnostic["ensure"] == {
+            "status": "returned", "calls": 1, "returns": 1,
+            "state": "ready", "reason_code": "authorization",
+        }
         assert any(frame["file"] == "ui-tui/scripts/gateway_bootstrap.py"
                    for frame in diagnostic["frames"])
         rendered = line + json.dumps(saved_diagnostic)
@@ -806,8 +833,183 @@ def test_real_helper_retains_partial_bootstrap_child_for_final_tree_cleanup(tmp_
         assert not remaining_out and not stderr
 
 
+@pytest.mark.parametrize("value_case", [
+    "unknown_state", "subclass_state", "unknown_reason", "subclass_reason",
+])
+def test_real_helper_normalizes_unrecognized_gateway_state_and_reason(tmp_path, value_case):
+    from tests.fixtures.hermes_gateway_driver import HELPER
+
+    node, python = _runtime_paths(tmp_path)
+    source = tmp_path / "synthetic-source"
+    scripts = source / "ui-tui" / "scripts"
+    scripts.mkdir(parents=True)
+    native_package = source / "hermes_cli"
+    native_package.mkdir()
+    (native_package / "__init__.py").write_text("", encoding="utf-8")
+    state = "'ready'"
+    reason = "'authorization'"
+    if value_case == "unknown_state":
+        state = "'private-state-value'"
+    elif value_case == "subclass_state":
+        state = "PrivateValue('ready')"
+    elif value_case == "unknown_reason":
+        reason = "'private-reason-value'"
+    else:
+        reason = "PrivateValue('authorization')"
+    native_runtime = (
+        "class PrivateValue(str): pass\n"
+        "class GatewayDiscovery:\n"
+        "    def __init__(self,state,reason_code): self.state=state; self.reason_code=reason_code\n"
+        "def ensure_gateway_runtime(*args,**kwargs):\n"
+        f"    return GatewayDiscovery({state},{reason})\n"
+    )
+    (native_package / "gateway_runtime.py").write_text(native_runtime, encoding="utf-8")
+    (native_package / "decoy.py").write_text(
+        "class GatewayDiscovery:\n"
+        "    state='decoy-private-state'\n"
+        "    reason_code='decoy-private-reason'\n"
+        "def ensure_gateway_runtime(): return GatewayDiscovery()\n", encoding="utf-8")
+    (scripts / "gateway_bootstrap.py").write_text(
+        f"import sys\nsys.path.insert(0,{str(source)!r})\n"
+        "from hermes_cli.gateway_runtime import ensure_gateway_runtime\n"
+        "from hermes_cli.decoy import ensure_gateway_runtime as decoy_ensure\n"
+        "def bootstrap(start):\n"
+        "    assert start is True\n"
+        "    ensure_gateway_runtime()\n"
+        "    decoy_ensure()\n"
+        "    raise RuntimeError('private-exception-message')\n", encoding="utf-8")
+    env = _private_env(tmp_path, node, python)
+    env["HERMES_HOME"] = str(tmp_path / "hermes-profile")
+    Path(env["HERMES_HOME"]).mkdir()
+    proc = subprocess.Popen([str(python), "-c", HELPER, str(source), "f" * 40], env=env,
+                            cwd=tmp_path, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, text=True, encoding="utf-8")
+    try:
+        line, stderr = proc.communicate("close\n", timeout=10)
+        diagnostic = json.loads(line)
+        assert diagnostic["ensure"] == {
+            "status": "returned", "calls": 1, "returns": 1,
+            "state": "unrecognized" if "state" in value_case else "ready",
+            "reason_code": "unrecognized" if "reason" in value_case else "authorization",
+        }
+        assert all(secret not in line for secret in (
+            "private-state-value", "private-reason-value", "decoy-private-state",
+            "decoy-private-reason", "private-exception-message"))
+        assert proc.returncode == 78 and stderr == ""
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.communicate(timeout=5)
+
+
+@pytest.mark.parametrize("scenario", [
+    "return", "raise", "preexisting_profiler", "none_return", "two_call",
+])
+def test_gateway_helper_profiler_lifecycle_uses_only_extracted_functions(tmp_path, scenario):
+    import ast
+    from tests.fixtures.hermes_gateway_driver import HELPER
+
+    parsed = ast.parse(HELPER)
+    selected = []
+    found_functions = set()
+    found_assignments = set()
+    function_names = {"observe_ensure", "ensure_gateway_bootstrap"}
+    assignment_names = {"ensure_observation", "ensure_filename"}
+    for node in parsed.body:
+        if isinstance(node, ast.FunctionDef) and node.name in function_names:
+            selected.append(node)
+            found_functions.add(node.name)
+        elif isinstance(node, ast.Assign):
+            names = {target.id for target in node.targets if isinstance(target, ast.Name)}
+            selected_names = names & assignment_names
+            if selected_names:
+                selected.append(node)
+                found_assignments.update(selected_names)
+    assert found_functions == function_names
+    assert found_assignments == assignment_names
+
+    source = (tmp_path / "synthetic-source").resolve()
+    target = source / "hermes_cli" / "gateway_runtime.py"
+    module_name = f"_gateway_profiler_lifecycle_{id(tmp_path)}"
+    previous_module = sys.modules.get(module_name)
+    native = types.ModuleType(module_name)
+    native.behavior = scenario
+    native.calls = []
+    native_source = (
+        "class GatewayDiscovery:\n"
+        "    def __init__(self,state,reason_code): self.state=state; self.reason_code=reason_code\n"
+        "def ensure_gateway_runtime():\n"
+        "    calls.append(True)\n"
+        "    if behavior == 'raise': raise RuntimeError('private')\n"
+        "    if behavior == 'none_return': return None\n"
+        "    return GatewayDiscovery('ready','authorization')\n"
+    )
+    exec(compile(native_source, str(target), "exec"), native.__dict__)
+    namespace = {"sys": sys, "types": types, "Path": Path, "source": source}
+    exec(compile(ast.Module(body=selected, type_ignores=[]), "<selected-helper-functions>", "exec"), namespace)
+    bootstrap_calls = []
+
+    def bootstrap(start):
+        bootstrap_calls.append(start)
+        assert start is True
+        result = native.ensure_gateway_runtime()
+        if scenario == "two_call":
+            result = native.ensure_gateway_runtime()
+        return result
+
+    original_profiler = sys.getprofile()
+    existing_profiler = lambda frame, event, arg: None
+    try:
+        sys.setprofile(None)
+        sys.modules[module_name] = native
+        if scenario == "preexisting_profiler":
+            sys.setprofile(existing_profiler)
+            with pytest.raises(AssertionError, match="already has a profiler"):
+                namespace["ensure_gateway_bootstrap"]({"bootstrap": bootstrap})
+            assert sys.getprofile() is existing_profiler
+            assert bootstrap_calls == [] and native.calls == []
+            assert namespace["ensure_observation"]["status"] == "not_reached"
+        elif scenario == "raise":
+            with pytest.raises(RuntimeError, match="private"):
+                namespace["ensure_gateway_bootstrap"]({"bootstrap": bootstrap})
+            assert sys.getprofile() is None
+            assert namespace["ensure_observation"] == {
+                "status": "none_or_unwind", "calls": 1, "returns": 1,
+                "state": None, "reason_code": None,
+            }
+        else:
+            result = namespace["ensure_gateway_bootstrap"]({"bootstrap": bootstrap})
+            assert sys.getprofile() is None
+            if scenario == "none_return":
+                assert result is None
+                assert namespace["ensure_observation"] == {
+                    "status": "none_or_unwind", "calls": 1, "returns": 1,
+                    "state": None, "reason_code": None,
+                }
+            elif scenario == "two_call":
+                assert namespace["ensure_observation"] == {
+                    "status": "multiple_calls", "calls": 2, "returns": 2,
+                    "state": "ready", "reason_code": "authorization",
+                }
+            else:
+                assert namespace["ensure_observation"] == {
+                    "status": "returned", "calls": 1, "returns": 1,
+                    "state": "ready", "reason_code": "authorization",
+                }
+        if scenario != "preexisting_profiler":
+            assert bootstrap_calls == [True]
+        assert len(native.calls) == (2 if scenario == "two_call" else int(scenario != "preexisting_profiler"))
+    finally:
+        sys.setprofile(original_profiler)
+        if previous_module is None:
+            sys.modules.pop(module_name, None)
+        else:
+            sys.modules[module_name] = previous_module
+
+
 @pytest.mark.parametrize("malformation", [
     "unknown_field", "absolute_path", "traversal", "custom_type", "invalid_line", "too_many_frames",
+    "unknown_ensure_field", "invalid_ensure_count", "invalid_ensure_state", "invalid_ensure_status",
 ])
 def test_gateway_helper_error_diagnostic_rejects_malformed_payload_without_persistence(tmp_path, malformation):
     import queue
@@ -817,6 +1019,8 @@ def test_gateway_helper_error_diagnostic_rejects_malformed_payload_without_persi
         "phase": "bootstrap",
         "exception_type": "RuntimeError",
         "frames": [{"file": "ui-tui/scripts/gateway_bootstrap.py", "function": "bootstrap", "line": 12}],
+        "ensure": {"status": "returned", "calls": 1, "returns": 1,
+                   "state": "inaccessible", "reason_code": "authorization"},
     }
     if malformation == "unknown_field":
         diagnostic["ticket"] = "must-not-persist"
@@ -828,8 +1032,16 @@ def test_gateway_helper_error_diagnostic_rejects_malformed_payload_without_persi
         diagnostic["exception_type"] = "SecretCustomError"
     elif malformation == "invalid_line":
         diagnostic["frames"][0]["line"] = True
-    else:
+    elif malformation == "too_many_frames":
         diagnostic["frames"] *= 9
+    elif malformation == "unknown_ensure_field":
+        diagnostic["ensure"]["ticket"] = "must-not-persist"
+    elif malformation == "invalid_ensure_count":
+        diagnostic["ensure"]["calls"] = True
+    elif malformation == "invalid_ensure_state":
+        diagnostic["ensure"]["state"] = "private-state-value"
+    elif malformation == "invalid_ensure_status":
+        diagnostic["ensure"]["status"] = "private-status-value"
 
     receiver = object.__new__(OwnedGateway)
     receiver.replies = queue.Queue()
