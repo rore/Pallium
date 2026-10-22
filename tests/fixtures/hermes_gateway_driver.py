@@ -6,7 +6,9 @@ import hashlib
 import importlib.machinery
 import os
 from pathlib import Path
+import builtins
 import queue
+import re
 import subprocess
 import threading
 import tempfile
@@ -72,24 +74,57 @@ def install_copied_runtime_guard(python: Path, source: Path, guard: str, *, allo
 
 
 HELPER = r'''
-import contextlib, io, json, os, runpy, sys, threading
+import builtins, contextlib, io, json, os, re, runpy, sys, threading
 from pathlib import Path
 threading.Timer(300, lambda: os._exit(79)).start()
-source = Path(sys.argv[1]).resolve()
-expected_sha = sys.argv[2]
-home = Path(os.environ['HERMES_HOME']).resolve()
+source = Path.cwd()
+phase = 'run_path'
+
+def safe_frames(exc):
+    rows = []
+    frame = exc.__traceback__
+    while frame is not None and len(rows) < 8:
+        code = frame.tb_frame.f_code
+        raw = code.co_filename
+        if raw in {'<string>', '<stdin>'}:
+            filename = '<helper>'
+        else:
+            try:
+                filename = Path(raw).resolve().relative_to(source).as_posix()
+            except (OSError, RuntimeError, ValueError):
+                filename = None
+        function = code.co_name
+        if not isinstance(function, str) or not re.fullmatch(r'[A-Za-z0-9_<>.-]{1,80}', function):
+            function = '<function>'
+        line = frame.tb_lineno
+        if (filename is not None and len(filename) <= 180
+                and type(line) is int and line > 0):
+            rows.append({'file': filename, 'function': function, 'line': line})
+        frame = frame.tb_next
+    return rows
+
 try:
+    phase = 'run_path'
+    source = Path(sys.argv[1]).resolve()
+    expected_sha = sys.argv[2]
+    home = Path(os.environ['HERMES_HOME']).resolve()
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         bootstrap = runpy.run_path(str(source / 'ui-tui/scripts/gateway_bootstrap.py'))
+        phase = 'bootstrap'
         grant = bootstrap['bootstrap'](True)
+        phase = 'imports'
         from hermes_cli.gateway_runtime_discovery import query_identify
         from hermes_cli.gateway_runtime import _endpoint
         from gateway.status import get_process_start_time
 
     def receipt():
+        global phase
+        phase = 'query_identify'
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             identity = query_identify(home, timeout=5)
+            phase = 'endpoint'
             discovery = _endpoint(identity, home, home)
+            phase = 'identity_validation'
             assert discovery.state == 'ready' and discovery.endpoint is not None
             endpoint = discovery.endpoint
             assert endpoint.control_home == str(home)
@@ -103,27 +138,43 @@ try:
                     'hermes_home': identity['hermes_home'], 'code_sha': identity['code_sha']}
 
     original = receipt()
+    phase = 'grant_validation'
     assert {key: grant[key] for key in ('url', 'profile_id', 'instance_id')} == {
         key: original[key] for key in ('url', 'profile_id', 'instance_id')}
     assert isinstance(grant.get('protocols'), list) and len(grant['protocols']) == 2
     del grant
     print(json.dumps(original, sort_keys=True), flush=True)
+    phase = 'command'
     for command in sys.stdin:
         if command.strip() == 'verify':
+            phase = 'verify'
             current = receipt()
+            phase = 'verify'
             assert current == original
             print(json.dumps(current, sort_keys=True), flush=True)
         elif command.strip() == 'close':
             break
         else:
+            phase = 'command'
             raise ValueError('unknown qualification command')
-except BaseException:
-    print(json.dumps({'error': 'native gateway qualification failed'}), flush=True)
-    # Keep any newly spawned daemon discoverable until the owning driver cleans its tree.
-    for command in sys.stdin:
-        if command.strip() == 'close':
-            break
-    os._exit(78)
+except BaseException as exc:
+    try:
+        exception_class = type(exc)
+        exception_type = (exception_class.__name__
+                          if getattr(builtins, exception_class.__name__, None) is exception_class else 'Exception')
+        diagnostic = {'error': 'native gateway qualification failed', 'phase': phase,
+                      'exception_type': exception_type, 'frames': safe_frames(exc)}
+        print(json.dumps(diagnostic, sort_keys=True), flush=True)
+    except BaseException:
+        print('{"error":"native gateway qualification failed"}', flush=True)
+    finally:
+        # Keep any newly spawned daemon discoverable until the owning driver cleans its tree.
+        try:
+            for command in sys.stdin:
+                if command.strip() == 'close':
+                    break
+        finally:
+            os._exit(78)
 os._exit(0)
 '''
 
@@ -146,6 +197,46 @@ def gateway_guard_witness(path: Path, receipt: dict, guard: dict):
     assert all(row['path'] == guard['path'] and row['sha256'] == guard['sha256']
                and row['socket_guard_active'] is True for row in matching), matching
     return matching
+
+
+_GATEWAY_ERROR_PHASES = frozenset({
+    'run_path', 'bootstrap', 'imports', 'query_identify', 'endpoint',
+    'identity_validation', 'grant_validation', 'verify', 'command',
+})
+_BUILTIN_EXCEPTION_NAMES = frozenset(
+    name for name in dir(builtins)
+    if isinstance(getattr(builtins, name), type)
+    and issubclass(getattr(builtins, name), BaseException)
+)
+
+
+def _valid_gateway_error(result):
+    if (type(result) is not dict
+            or set(result) != {'error', 'phase', 'exception_type', 'frames'}
+            or result.get('error') != 'native gateway qualification failed'):
+        return False
+    phase, exception_type = result.get('phase'), result.get('exception_type')
+    if (type(phase) is not str or phase not in _GATEWAY_ERROR_PHASES
+            or type(exception_type) is not str
+            or exception_type not in (_BUILTIN_EXCEPTION_NAMES | {'Exception'})):
+        return False
+    frames = result.get('frames')
+    if type(frames) is not list or not 1 <= len(frames) <= 8:
+        return False
+    for frame in frames:
+        if type(frame) is not dict or set(frame) != {'file', 'function', 'line'}:
+            return False
+        filename, function, line = frame['file'], frame['function'], frame['line']
+        if (not isinstance(filename, str) or not filename or len(filename) > 180
+                or not isinstance(function, str) or not re.fullmatch(r'[A-Za-z0-9_<>.-]{1,80}', function)
+                or type(line) is not int or line <= 0):
+            return False
+        if filename != '<helper>' and (
+                filename.startswith(('/', '\\')) or '\\' in filename or ':' in filename
+                or any(part in {'', '.', '..'} for part in filename.split('/'))
+                or any(ord(char) < 32 for char in filename)):
+            return False
+    return True
 
 
 class OwnedGateway:
@@ -193,8 +284,14 @@ class OwnedGateway:
             result = self.replies.get(timeout=65)
         except queue.Empty:
             raise AssertionError('native gateway qualification helper timed out') from None
-        assert isinstance(result, dict) and 'error' not in result, 'native gateway qualification helper failed'
-        assert set(result) == {'url', 'profile_id', 'instance_id', 'pid', 'start_time', 'hermes_home', 'code_sha'}
+        if type(result) is dict and 'error' in result:
+            if _valid_gateway_error(result):
+                with (self.artifacts / 'gateway-error.json').open('x', encoding='utf-8') as stream:
+                    json.dump(result, stream, sort_keys=True, indent=2)
+            raise AssertionError('native gateway qualification helper failed') from None
+        if (type(result) is not dict or set(result) != {
+                'url', 'profile_id', 'instance_id', 'pid', 'start_time', 'hermes_home', 'code_sha'}):
+            raise AssertionError('native gateway qualification helper returned invalid receipt') from None
         return result
 
     def save(self, name):

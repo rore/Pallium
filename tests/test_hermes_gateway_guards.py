@@ -693,7 +693,8 @@ else:
         shutil.rmtree(control_root)
 
 
-def test_real_helper_retains_partial_bootstrap_child_for_final_tree_cleanup(tmp_path, monkeypatch):
+@pytest.mark.parametrize("spoofed_exception", [False, True])
+def test_real_helper_retains_partial_bootstrap_child_for_final_tree_cleanup(tmp_path, monkeypatch, spoofed_exception):
     import queue
     import uuid
     from tests.fixtures.hermes_gateway_driver import HELPER
@@ -707,16 +708,24 @@ def test_real_helper_retains_partial_bootstrap_child_for_final_tree_cleanup(tmp_
     scripts.mkdir(parents=True)
     witness = tmp_path / "spawned-child.json"
     marker = "qualification-partial-" + uuid.uuid4().hex
-    secret = "synthetic-ticket-must-never-escape"
+    secrets = (
+        "synthetic-bootstrap-stdout-must-never-escape",
+        "synthetic-bootstrap-stderr-must-never-escape",
+        "synthetic-exception-message-must-never-escape",
+        "SyntheticPrivateExceptionName",
+    )
     bootstrap = (
         "import json,os,subprocess,sys,psutil\nfrom pathlib import Path\n"
+        f"Error = type({secrets[3]!r}, (RuntimeError,), {{'__module__': 'builtins'}}) if {spoofed_exception!r} else RuntimeError\n"
         "def bootstrap(start):\n"
         "    assert start is True\n"
         "    options={'start_new_session':True} if os.name!='nt' else {}\n"
         f"    child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(120)',{marker!r}],**options)\n"
         "    process=psutil.Process(child.pid)\n"
         f"    Path({str(witness)!r}).write_text(json.dumps({{'pid':child.pid,'birthtime':process.create_time(),'exe':process.exe()}}))\n"
-        f"    raise RuntimeError({secret!r})\n"
+        f"    print({secrets[0]!r})\n"
+        f"    print({secrets[1]!r},file=sys.stderr)\n"
+        f"    raise Error({secrets[2]!r})\n"
     )
     (scripts / "gateway_bootstrap.py").write_text(bootstrap, encoding="utf-8")
     env = _private_env(tmp_path, node, python)
@@ -735,8 +744,23 @@ def test_real_helper_retains_partial_bootstrap_child_for_final_tree_cleanup(tmp_
     try:
         tree = OwnedTree(proc.pid, python, ledger=tmp_path / "owned-ledger.json")
         line = replies.get(timeout=10)
-        assert json.loads(line) == {"error": "native gateway qualification failed"}
-        assert secret not in line and proc.poll() is None, "failed helper exited before final ownership refresh"
+        diagnostic = json.loads(line)
+        receiver = object.__new__(OwnedGateway)
+        receiver.replies = queue.Queue()
+        receiver.replies.put(diagnostic)
+        receiver.artifacts = tmp_path
+        with pytest.raises(AssertionError, match="native gateway qualification helper failed"):
+            receiver.receive()
+        saved_diagnostic = json.loads((tmp_path / "gateway-error.json").read_text(encoding="utf-8"))
+        assert saved_diagnostic == diagnostic
+        assert diagnostic["error"] == "native gateway qualification failed"
+        assert diagnostic["phase"] == "bootstrap"
+        assert diagnostic["exception_type"] == ("Exception" if spoofed_exception else "RuntimeError")
+        assert any(frame["file"] == "ui-tui/scripts/gateway_bootstrap.py"
+                   for frame in diagnostic["frames"])
+        rendered = line + json.dumps(saved_diagnostic)
+        assert all(secret not in rendered for secret in secrets)
+        assert proc.poll() is None, "failed helper exited before final ownership refresh"
         child = json.loads(witness.read_text(encoding="utf-8"))
         process = psutil.Process(child["pid"])
         assert process.create_time() == child["birthtime"]
@@ -779,7 +803,41 @@ def test_real_helper_retains_partial_bootstrap_child_for_final_tree_cleanup(tmp_
         proc.stdin.close()
         proc.stdout.close()
         proc.stderr.close()
-        assert not remaining_out and not stderr and secret not in line
+        assert not remaining_out and not stderr
+
+
+@pytest.mark.parametrize("malformation", [
+    "unknown_field", "absolute_path", "traversal", "custom_type", "invalid_line", "too_many_frames",
+])
+def test_gateway_helper_error_diagnostic_rejects_malformed_payload_without_persistence(tmp_path, malformation):
+    import queue
+
+    diagnostic = {
+        "error": "native gateway qualification failed",
+        "phase": "bootstrap",
+        "exception_type": "RuntimeError",
+        "frames": [{"file": "ui-tui/scripts/gateway_bootstrap.py", "function": "bootstrap", "line": 12}],
+    }
+    if malformation == "unknown_field":
+        diagnostic["ticket"] = "must-not-persist"
+    elif malformation == "absolute_path":
+        diagnostic["frames"][0]["file"] = "/private/source/bootstrap.py"
+    elif malformation == "traversal":
+        diagnostic["frames"][0]["file"] = "../private/bootstrap.py"
+    elif malformation == "custom_type":
+        diagnostic["exception_type"] = "SecretCustomError"
+    elif malformation == "invalid_line":
+        diagnostic["frames"][0]["line"] = True
+    else:
+        diagnostic["frames"] *= 9
+
+    receiver = object.__new__(OwnedGateway)
+    receiver.replies = queue.Queue()
+    receiver.replies.put(diagnostic)
+    receiver.artifacts = tmp_path
+    with pytest.raises(AssertionError, match="native gateway qualification helper failed"):
+        receiver.receive()
+    assert not (tmp_path / "gateway-error.json").exists()
 
 
 def test_installed_sdk2_guard_survives_source_pythonpath_and_fails_closed(tmp_path):
