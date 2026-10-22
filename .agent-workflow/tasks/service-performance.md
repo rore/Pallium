@@ -2,6 +2,8 @@
 
 ## PR340 bounded test-mechanics delivery replan - 2026-10-22
 
+Private runtime ready for independent provenance/runner review: ONE authorized locked uv sync completed in24.001s, uv exit0, no cap, all source/head/lock/clean fences held and owned root/streams settled. New venv/cache only at `build/pr340-qualification-runtime-20261022`; old environment preserved. Locked dev/vector/mcp export plus full installed-distribution comparison matched all66 selected dependency pins exactly, including pyte0.8.2; project0.1.0, user site disabled, Python3.13.14/SQLite3.53.1. This is runtime qualification, not a test result or hosted patch-version parity. `runtime-manifest.json` and setup recipe/result/logs preserve provenance. The byte-identical accepted process runner records its generic `pytest_exit` field as uv exit for setup, explicitly labelled; no application pytest was run. Next: freeze ONE default-topology full non-slow recipe with unchanged1200000ms cap, fresh private external home/config/temp, assertions active, complete source/head/lock/environment fences and all ten required identities; independent exact runtime/runner GO plus free-slot evidence precede execution. Any failure/cap stops without retry. Full/CI/merge evidence remains pending.
+
 Runtime-scope correction authorized by manager in turn `01a1614b-ff9a-7742-8baa-72d9c0bbf78a`: create ONE fresh task-private venv under repository build, synced from current reviewed lock/project with dev/vector/mcp test extras, including pyte0.8.2. This supersedes the prior no-install restriction only for that isolated environment. Preserve old runtime/evidence; no global/user/installed-clone/service/hook/config/PATH or source/lock changes. Use existing uv and already installed Python3.13.14, disable Python downloads and keep setup cache/private state within the new task directory. Verify the entire selected dependency manifest against the current lock and preserve setup provenance, rather than patching pyte into the old environment. Setup failure preserves/stops. Independent runtime plus frozen runner GO still precedes the ONE default-topology local full with unchanged20min cap. No full test has run yet.
 
 Manager explicitly adopted the repository's actual full-lane requirements for this contribution in turn `01a16149-1964-7371-82b8-4e79d8b0734d`, replacing the manager-added four-full-profile premerge method. All failed manual reports remain failed; broader reliability, PR325 and full-Windows acceptance remain open. Independent `/root/opencode297_resume_plan_review` gives conditional adequacy GO, execution HOLD. The conditional method is one isolated current-source local full non-slow suite using default topology and the unchanged1200000ms owned watchdog, then, only after passing actual-result/package review, same-PR publication and natural current-source automatic Linux3.12/3.13 full, Windows smoke, CI aggregate and governance checks. All ten affected identities must pass normally in applicable complete reports; fresh main/review/protection checks precede normal merge. Any local or required-CI failure/cap preserves, classifies and stops without an incidental patch/rerun loop. No dependency installation, diagnostic, CI change, timeout increase, manual dispatch or installed operation is authorized.
@@ -2639,7 +2641,7 @@ Agent technical review: /root/architecture_check, clean nonimplementer source/pl
 
 **Exceptions:** None
 
-**State:** Blocked
+**State:** Ready to implement
 
 <!-- agent-workflow:end -->
 
