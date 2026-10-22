@@ -2,6 +2,10 @@
 
 ## Adopted readiness temporary-cleanup correction - 2026-10-22
 
+Local full and combined package accepted for conditional same-PR publication: frozen `baacebd5d053a24c5c7014203b1eb6d6b51d4f7d`, tree `2bcf09f6ddbb9371bd5dd85331f1260d3ed4c1b1`; native7991passed/37skipped/2declaredxfailed,8030unique cases, zero failures/errors/duplicates, all12affected identities normalonce. Footer549.24s, runner/pytest0, outer554.3240945s uncapped. Source/head/lock/clean/runtime/owned-root/stream fences held; direct-child snapshot empty and stderr empty. Native JUnit SHA256 `e8fc422f00d4c8d82e0107154f919de4f301b48c292a1d5e5996abfd06cd3276`; stdout SHA256 `706b782a3f179a10c2fbe71a371c8b91082e54ff8e738fae2cd25cad7dffac6e`. Evidence `build/pr340-product-full-20261022/` retains exact recipe, slot proof, raw reports, native reconciliation and nonpass reasons. Skips are29platform,4opt-in liveLLM,2privateHermes,1hosted-process-only,1requires-usearch-absent; no affected skip or model-cache failure skip. No rerun occurred.
+
+Result review: independent `/root/opencode297_resume_plan_review` verified actual native counts/footer/identities/hashes/fences/nonpasses and returned LOCAL FULL plus combined package GO for conditional normal samePR publication under the explicitly adopted product method. Fresh fetch confirms main remains642b1716, documentation-only since the prior reviewed application composition. This record-only publication successor preserves all accepted application/test bytes. Remaining gates: current-source ordinary Linux312/313 full plus twelve native identities, Windows313smoke complete-file selection inference, CI aggregate, Redline/Workflow, and fresh main/review/protection/head checks before normal merge. Historical failures remain failed; missing-event cause, broader reliability/fullWindows and PR325 remain unfinished. No installed environment operation is released.
+
 Product-method adoption: manager actual turns `01a16204-eff1-72b3-b433-c67d367b08c4` and `01a16205-651e-73c1-b347-150cbdb713b4` explicitly adopt the concrete six-path product-containing proposal after independent method GO, conditional on exact frozen runtime/runner review, clean prelaunch workflow/selector and successful free-slot evidence. Exactly ONE default-four-worker local full with unchanged1200000ms cap; all12affected identities normalonce. FullPASS plus independent actual/package GO conditionally permits normal samePR publication, natural required CI and final normal merge checks, without another user/manager wait. Windows smoke cleanup coverage is selection-based inference only; local/Linux require native individual receipts. No manualmatrix, extra cohorts, diagnostics, dependency install, retry, incidental fix or installed change. Any failure/cap/drift stops automatic execution for classification.
 
 Independent `/root/opencode297_resume_plan_review` method adequacy GO accepts this product-specific replan, with the Windows smoke evidence clarification incorporated in `build/codex-readiness-cleanup-20261022/product-qualification-plan.md`. This is execution authority conditional on actual gates, not qualification GO. Preparing a fresh recipe with existing66-pin runtime and unchanged owned runner; all historical failures and wider reliability scope remain open.
@@ -2665,7 +2669,7 @@ Agent technical review: /root/architecture_check, clean nonimplementer source/pl
 
 **Exceptions:** None
 
-**State:** Ready to implement
+**State:** Ready for review
 
 <!-- agent-workflow:end -->
 
