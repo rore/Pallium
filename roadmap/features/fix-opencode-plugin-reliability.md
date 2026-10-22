@@ -60,6 +60,32 @@ re-resolve them before implementing remaining work.
 | OC-7 directory ownership | Independently reviewed, qualified and merged in [PR297](https://github.com/rore/Pallium/pull/297), merge `178fea16e36946ffed68fb4bdd93da76056d5f73`. Installed deployment remains separate. |
 | OC-8 deletion authority | Native reachability/qualification question remains open; do not promote the mock concern to a confirmed native defect. |
 
+### Current qualification boundary (2026-10-22)
+
+[PR #340](https://github.com/rore/Pallium/pull/340) remains draft and unqualified
+at published `9188720f4f15e3ac918105c6c0efb5392c37927e`. Automatic CI
+[39695623972](https://github.com/rore/Pallium/actions/runs/39695623972) and
+governance passed, but complete manual
+[39695648270](https://github.com/rore/Pallium/actions/runs/39695648270) failed
+all four platform/version profiles. All eight changed cases passed once in their
+normal selections; those rows cannot qualify failed profiles, and no passing
+complete Windows profile is established for this contribution.
+
+A local-only OpenCode clock-origin fixture correction at `7d2340d` (record
+`9efe1da`) received independent RED-one/GREEN-two review. It proves the bounded
+fixture mechanism, not the historical hosted failure's exclusive cause, product
+repair or complete qualification; it is not published or full-qualified.
+Shared availability remains unresolved. OC-1, OC-4, OC-6 and OC-8 remain open.
+
+Next: the owner reviews source and saved evidence only to determine whether
+complete serial qualification is feasible while preserving every test, each
+test's internal concurrency, mandatory checks and existing time limits.
+Completion of that review requires an explicit feasibility/adequacy disposition
+and bounded next proposal; it does not authorize implementation, tests,
+diagnostics, CI edits or execution. Evidence and alternatives:
+`build/opencode-lease-clock-origin-20261022/qualification-reassessment.md`.
+No acceptance gate is changed by this roadmap checkpoint.
+
 PR302's accepted result and evidence are recorded in
 [OpenCode disposal reliability](../../.agent-workflow/tasks/opencode-disposal-reliability.md).
 Its package, full Python and isolated native results supersede the pending
