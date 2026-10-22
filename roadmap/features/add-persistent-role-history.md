@@ -80,6 +80,10 @@ historical backfill, and changes to delivery reliability unrelated to this contr
 2. Turns before naming or after name release/change are not attributed to the
    former name. Resume, repeated calls, delayed ingestion and concurrent takeover
    preserve source-time attribution without affecting unrelated work refs.
+   Explicitly test B taking A's name while A is inactive, then A resuming without
+   a local rename: existing name discovery reports A no longer holds it; A's new
+   turns are not attributed to that name, while A's earlier history remains.
+   Collection tests stopping the old role guidance; Pallium adds no role state.
 3. Missing identity, conflicting holder, unavailable capture, unsupported host,
    empty results and partial coverage have honest, actionable outcomes. Scoped
    search and expansion cannot expose unauthorized containers or deleted content.
