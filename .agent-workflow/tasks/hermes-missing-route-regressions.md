@@ -39,11 +39,11 @@ User request: "ok, let's reproduce this in isolation and add the missing regress
 
 **Plan review:** Agent technical review: /root/hermes_route_review, clean-context nonimplementer, GO before implementation. Require separate pinned actual-source routing proof because the existing Context fixture stubs injection; retain stage-specific refusal outcomes and distinguish route probes from whole-host/UI qualification.
 
-**Approvals:** Direct user authorization covers isolated reproduction, regression tests, review and push. No installed rollout, production correction, upstream submission or automatic recovery is authorized by this test task.
+**Approvals:** Direct user authorization covers isolated reproduction, regression tests, review and push. The user subsequently instructed: "If those failures aren't related to Hermes, don't let them block this. Merge PR #347 and leave the shared failures with the reliability owner." This authorizes the scoped merge with retained shared CI failures following independent impact review; it does not authorize changing failed checks, repository protection or installed state. No installed rollout, production correction, upstream submission or automatic recovery is authorized.
 
 **Exceptions:** —
 
-**State:** Blocked
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -70,6 +70,14 @@ Whole-change selector build/hermes-route-test-plan.json requires full non-slow v
 
 ## Result review
 
-Agent technical review: /root/hermes_route_review, clean-context nonimplementer, technical GO after correcting source-origin coverage. Reviewed revision: a709e37b99bc30d36c9a627ea0a5b5cba5eba812. Verification adequacy: accepted final three-case actual-source proof,199-case caller subsystem, source hashes and corrected interpreter provenance for this bounded regression scope; this does not qualify full UI behavior or automatic recovery. Full-suite failures and hosted results require separate explicit evaluation; draft PR remains unmerged. Worktree and local evidence retained for active follow-up; everyday environment is untouched.
+Agent technical review: /root/hermes_route_review, clean-context nonimplementer, technical GO after correcting source-origin coverage.
+
+Reviewed revision: a709e37b99bc30d36c9a627ea0a5b5cba5eba812.
+
+Verification adequacy: accepted final three-case actual-source proof,199-case caller subsystem, source hashes and corrected interpreter provenance for this bounded regression scope; this does not qualify full UI behavior or automatic recovery. The final hosted result and user-authorized disposition follow below. Worktree and local evidence retained for follow-up; everyday environment is untouched.
 
 The same reviewer independently evaluated the terminal local full log: GO for scoped push and authoritative hosted CI, NO-GO for merge/all-green claims. Codex busy test reached an unexpected memory path; Claude lifecycle omitted prompt registration and logged temporary-write failure; Codex recovery reported unavailable. Their causes remain unproven. Only PowerShell resolution is directly established as a local prerequisite failure. Retain the protected contract unchanged and the full result failed/incomplete. Final bookkeeping changes only this record; tested code remains identical to a709e37b. Workflow check is clean with zero blocking failures/advisories.
+
+Final hosted evidence and the same independent review are recorded in https://github.com/rore/Pallium/pull/347#issuecomment-6337410803. All 199 Hermes plugin cases, including both new cases, passed in Python 3.12. Windows and governance passed; aggregate CI remains FAILED. Python 3.13 failed an unchanged Codex setup send with relay_busy; Python 3.12 failed a separate unchanged Codex redelivery hook unavailable-path assertion, without an established common cause. The reviewer accepted the scoped Hermes proof and found no concrete Hermes-specific safety blocker. The user's subsequent exact merge instruction supersedes the earlier hold for broad validation; no all-green, cure or harmlessness claim is made.
+
+Merge preparation: reuse the accepted technical review of a709e37b because all test/probe/doc blobs are identical. This successor changes only this record to capture authorization and current state. Current main c1c36091aedefbfe111844b60b04b027a3d188db differs from the reviewed base only in unrelated role-history roadmap files, with no overlapping application, fixture or test changes. Live classic main protection returns404 and effective rules are empty; no protection bypass is needed. PR inline comments and review threads are empty. Merge only the verified final head and leave the exact shared failures with the existing reliability owner. Canonical Hermes roadmap remains manager-owned; send the verified merge/contribution for owner reconciliation. Retain this task checkout and ignored proof while the handoff is pending; no local rollout.
