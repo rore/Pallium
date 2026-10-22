@@ -4,7 +4,9 @@ This plugin connects OpenCode sessions to the local Pallium service. It records
 selected turns for Session History, delivers Relay messages on normal turns, and
 supports optional derived-memory processing.
 
-## What you get
+## Capabilities
+
+<a id="what-you-get"></a>
 
 ### Relay
 
@@ -17,7 +19,7 @@ next normal turn. An opt-in V2 adapter adds native queued wake delivery; its
 qualification limits are listed below. It is a separate plugin entry and does
 not replace an existing global V1 loader automatically.
 
-> List Pallium Relay recipients, then send `codex:@review`: "The API response
+> List Pallium Relay recipients, then send `@review`: "The API response
 > still needs the legacy field."
 
 ### Session History
@@ -35,7 +37,16 @@ The plugin can ingest turns, request compact memory, and inject selected results
 Failure and retry triggers remain opt-in. None of this is required for Relay
 routing or deliberate Session History search.
 
-## Install
+## Prerequisites
+
+- A running local Pallium service with the MCP endpoint enabled; see [Getting Started](../../docs/getting-started.md).
+- OpenCode and a stable checkout containing the complete plugin directory.
+- Choose V1 for passive normal-turn delivery or deliberately opt in to V2. Combined V2 coverage is isolated Windows OpenCode 2.0.24; other releases/platforms and global installation are unqualified.
+- Provider credentials are needed by Pallium only for optional derived memory, not Relay or raw History.
+
+## Setup
+
+<a id="install"></a>
 
 ### 1. Run Pallium
 
@@ -55,22 +66,6 @@ OpenCode needs both pieces:
   delivery, and optional derived-memory behavior;
 - the Pallium MCP endpoint for Relay send/reply tools and deliberate Session
   History search.
-
-From npm, once the package is published:
-
-```jsonc
-{
-  "$schema": "https://opencode.ai/config.json",
-  "plugin": ["@pallium/opencode"],
-  "mcp": {
-    "pallium": {
-      "type": "remote",
-      "url": "http://localhost:19836/mcp",
-      "enabled": true
-    }
-  }
-}
-```
 
 The stable V1 local loader uses the explicit plugin file:
 
@@ -108,17 +103,6 @@ in one OpenCode configuration.
 }
 ```
 
-Current combined ownership and capture qualification covers isolated Windows
-OpenCode 2.0.24. Earlier 2.0.22 lifecycle/capture results remain historical;
-2.0.22 was not rerun on this combined source. This does not imply compatibility
-with every V2 release. The isolated Windows E2E uses
-`PALLIUM_OPENCODE_V2_BINARY` and a local mock provider. It verifies idle and busy
-wakes, tool continuation across a Pallium restart after ACK, pre-claim retry,
-OpenCode hard restart, service startup recovery, history capture and deletion.
-It also reloads the production plugin while a claimed Relay response body is
-withheld, verifies the retired callback sends no ACK or payload to the provider,
-and verifies successor delivery after claim-lease recovery.
-
 A relative plugin path is resolved from the configuration file. For a global
 install, put the entry in `~/.config/opencode/opencode.json` and use a path that
 reaches the checked-out plugin file.
@@ -142,7 +126,16 @@ The plugin automatically registers the bundled `pallium-memory` skill and
 `/pallium-memory` command. Their compatibility names remain memory-oriented, but
 their guidance covers all three Pallium uses.
 
-## V1 and V2 Relay behavior
+## Verify the connection
+
+1. Check the configured service with `curl http://localhost:19836/status` (use your configured port).
+2. Start OpenCode with exactly one Pallium adapter and confirm its MCP tools are available.
+3. Ask for this session's Relay address. Exchange a short message and reply with another connected session; V1 needs a normal recipient turn.
+4. Record a distinctive finding, then search and expand it in a later session in the same History container. Confirm returned text, not just successful registration.
+
+## Delivery and recovery
+
+<a id="v1-and-v2-relay-behavior"></a>
 
 V1 uses the normal-turn `/relay/turn` path. Relay messages are included on a
 natural OpenCode turn. V2 polls its native queue in process and asks OpenCode to
@@ -157,6 +150,17 @@ window with at most four requests in flight; a later owner can enroll after the
 lease expires if detach fails. Repeated disposal shares one result. Cleanup
 attempts every hook and reports disposal failures rather than claiming success.
 Client cancellation cannot undo a request the service already committed.
+A closed session or changed container scope invalidates the old binding. If compaction removes a
+queued native input before V2 can verify it, V2 does not guess that delivery was
+admitted or queue it again. Relay keeps the item available for a later normal
+turn after its claim lease expires. V1 remains the passive fallback when V2 is
+not configured or its native wake cannot be verified.
+
+## History and memory
+
+Session History records selected user and assistant turns for scoped search and
+expansion; it is not a complete OpenCode transcript mirror.
+
 V2 assistant capture keeps the existing aggregate after the latest native user.
 Every selected assistant must have a valid native message ID and a finite
 `time.completed` marker. Empty text (including tool-only turns) and text over
@@ -168,14 +172,60 @@ container, native session and the final selected assistant ID. Pallium's existin
 source uniqueness resolves a committed write whose response was lost. Only a
 valid single receipt under current native ownership marks the capture successful;
 failed writes remain retryable.
-A closed session or
-changed container scope invalidates the old binding. If compaction removes a
-queued native input before V2 can verify it, V2 does not guess that delivery was
-admitted or queue it again. Relay keeps the item available for a later normal
-turn after its claim lease expires. V1 remains the passive fallback when V2 is
-not configured or its native wake cannot be verified.
 
-## How the hooks map
+Use `pallium_search_history` or an exact known work reference with
+`pallium_search_history_by_work_ref`, then `pallium_expand_source` with the returned
+page lookup lineage. Relay routes across containers on the same service; History
+and optional memory still follow [visibility rules](../../docs/privacy-and-visibility.md).
+Derived memory is optional and needs separate service configuration; the plugin
+can query and inject selected results.
+
+## Update and removal
+
+Keep the checkout and its shared helper files at the configured path. For an
+update, review the chosen adapter and reload the host after updating its files.
+Switch V1/V2 deliberately; do not load both or silently replace a global loader.
+
+To remove the integration, back up your configuration, close the affected host,
+remove only the configured Pallium plugin entry, its `mcp.pallium` entry and the
+Pallium guidance block you added. Preserve other plugins and guidance. Reload
+OpenCode and verify Pallium is no longer loaded. This does not uninstall the
+shared Pallium service or delete its History/memory data.
+
+## Compatibility and troubleshooting
+
+Current combined ownership and capture qualification covers isolated Windows
+OpenCode 2.0.24. This does not imply compatibility with every V2 release.
+The isolated Windows E2E uses
+`PALLIUM_OPENCODE_V2_BINARY` and a local mock provider. It verifies idle and busy
+wakes, tool continuation across a Pallium restart after ACK, pre-claim retry,
+OpenCode hard restart, service startup recovery, history capture and deletion.
+It also reloads the production plugin while a claimed Relay response body is
+withheld, verifies the retired callback sends no ACK or payload to the provider,
+and verifies successor delivery after claim-lease recovery.
+
+<a id="known-gaps"></a>
+
+- V1 remains passive. Current combined V2 qualification is limited to isolated
+  Windows OpenCode 2.0.24; other releases/platforms and the global installation
+  remain unqualified. Native admission and ACK do not guarantee interrupted task completion.
+- Usage-audit population is server-owned after durable assistant ingestion.
+- Compaction records the latest assistant turn but does not run a pre-compaction
+  query.
+- Session orientation runs on `session.created`, not on every resumed session.
+- Git discovery is synchronous and bounded; a hung Git call can briefly block
+  the OpenCode event loop.
+- There is no `pallium setup opencode` command. Plugin, MCP, and guidance setup
+  remain manual.
+
+For missing tools, check both the plugin path and MCP URL. For a pending
+delivery, confirm which adapter is loaded and inspect Relay status/trace before
+retrying an operation whose outcome is uncertain. A recorded send or native
+queue acceptance is not proof that the payload reached context.
+
+## Reference
+
+### How the hooks map
 
 | Pallium behavior | Claude hook | OpenCode adapter |
 |---|---|---|
@@ -199,7 +249,7 @@ Python integrations. See
 [the injection policy specification](../../docs/specs/2026-06-27-injection-policy-abstention.md)
 for the optional derived-memory details.
 
-## Files
+### Files
 
 ```text
 integrations/opencode/
@@ -225,7 +275,7 @@ integrations/opencode/
 helpers. Each runtime keeps a self-contained adapter; parity tests compare their
 observable behavior.
 
-## Configuration
+### Configuration
 
 | Environment variable | Default | Meaning |
 |---|---|---|
@@ -235,7 +285,7 @@ observable behavior.
 Per-session deduplication and container-pinning state uses
 `~/.pallium/hooks/state/`, the same format as the Python integrations.
 
-## Tests
+### Tests
 
 ```bash
 cd integrations/opencode
@@ -245,17 +295,3 @@ npm test
 The suite covers container derivation, redaction parity, deduplication, session
 pinning, injection budgets, turn extraction, hook behavior, and fail-safe
 operation when Pallium is unavailable.
-
-## Known gaps
-
-- V1 remains passive. Current combined V2 qualification is limited to isolated
-  Windows OpenCode 2.0.24; other releases/platforms and the global installation
-  remain unqualified. Native admission and ACK do not guarantee interrupted task completion.
-- Usage-audit population is server-owned after durable assistant ingestion.
-- Compaction records the latest assistant turn but does not run a pre-compaction
-  query.
-- Session orientation runs on `session.created`, not on every resumed session.
-- Git discovery is synchronous and bounded; a hung Git call can briefly block
-  the OpenCode event loop.
-- There is no `pallium setup opencode` command. Plugin, MCP, and guidance setup
-  remain manual.
