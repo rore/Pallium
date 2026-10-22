@@ -48,19 +48,37 @@ Adopted by coordinator `01a16320-c588-72b0-a098-cb3d137b1e75` for the human's re
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
 
 Fresh isolated `C:/Dev/rore/Pallium/build/codex-retained-idle-reenrollment-20261022`, branch `feat/codex-retained-idle-reenrollment`, base `5d1679364d8404601b0be14216746d2b8fe2f286`. Hook checkout and native evidence are retained separately. Agent Workflow/Redline loaded; no product/test edits or tests yet. Same canonical Minimap association remains valid for this accepted assignment; do not create duplicate explicit associations.
 
-Independent final plan/security GO obtained before edits. Existing private runtime verified once in `build/focused-runtime.json`: Python3.13.14/SQLite3.53.1/pytest8.4.2, imports this exact checkout, current uv.lock SHA256da005e5ef72c5e239b5275dca3e5ec81ae36d955389309cb68865a107578a82f unchanged from the accepted local-full environment. No install, broad run or new harness. Next: draft one exact protocol regression, review its concrete serial runner/cleanup, observe baseline RED once before product edits, then coherent focused GREEN verification.
+Independent final plan/security GO obtained before edits. Existing private runtime verified once in `build/focused-runtime.json`: Python3.13.14/SQLite3.53.1/pytest8.4.2, imports this exact checkout, current uv.lock SHA256da005e5ef72c5e239b5275dca3e5ec81ae36d955389309cb68865a107578a82f unchanged from the accepted local-full environment. No install, broad run or new harness. Protocol and HTTP companion regressions drafted in disjoint test files by the bounded workers; parent owns execution and records.
+
+Baseline gate passed before product edits: exact protocol node `tests/test_codex_worker_reconnect.py::test_admitted_idle_retirement_freshly_enrolls_three_times_without_foreground` failed as expected, `idle retirement 1 required another foreground caller`, 1 failed in5.95s, exit1. Initial real MCP registration succeeded. Evidence: `build/idle-retirement-baseline.xml`. Implementation worker released only after this receipt. Next: review the smallest worker/source-test diff and connected HTTP runner, then coherent focused verification and independent result review.
+
+Implemented one borrowed-witness candidate helper shared by foreground acquisition and admitted idle recovery. The idle path uses the existing reconnect budget, freshly authenticates, and settles the old witness before accepting its successor; cleanup uncertainty rejects the successor. No new retry loop, dependency, persisted authority or timeout. Connected source tests preserve foreground trust/cancellation and cover twenty idle authority/cleanup cases plus three shared-budget limits. Protocol and real HTTP/native-equivalent journeys each cover three cycles; integration documentation aligned. Independent source/runner review found no blocking finding before execution.
+
+Runner correction, not product evidence: first setup error could not create default sandbox temp (`build/idle-retirement-baseline-setup-error.xml`). Task-local basetemp avoided that error but the process stalled before test execution and was stopped. One 25-second process watchdog located the stall in pytest-asyncio loop construction, `socket._fallback_socketpair.accept`, not in product/test execution. The same exact node then ran outside the sandbox with an unused task-local basetemp/profile and a 30-second process watchdog (not reached). Future focused asynchronous runs use this execution scope; no persistent environment/configuration change. Each basetemp must be absent before pytest is allowed to own it.
 
 ## Evidence
 
 Native acceptance already complete: one marker recovered after fresh ordinary source authentication, then source retired again. Reuse exact receipts; no native rerun. Current service/installed identity is5d; cached MCP loaded revision remains unknown. Root owns this isolated repair; Hermes owns live rollout.
 
+Focused verification: `build/focused-green-01.xml`, 174 passed/1 failed in46.46s. Cohort: entire source reconnect file; new HTTP idle-recovery journey; existing HTTP service-replacement and first-real-caller/replacement journeys; unchanged protected busy-wake file. The only failure was the protected overtaken-wake fixture resolving its checkout-local tmp_path to the real Git project, so its competing hook could not claim the fixture-scoped delivery. This was a runner-layout error: `common.resolve_container_ref` intentionally follows a recognized Git project. No protected test or assertion changed. Only that exact failed node reran with an unused private OS temp directory outside Git ancestry: `build/protected-contract-corrected-temp.xml`, 1 passed in2.20s, exit0. Reuse the other174 passing results; do not present the initial run as fully green. All175 selected cases now have passing evidence against unchanged source/test files, whose SHA256 identities are in `build/focused-tested-files.json`. Watchdogs did not fire. Both failure receipts remain available.
+
+No full suite, new native test, publication, installation or rollout in this phase. Fake OS/bootstrap/Desktop boundaries mean the HTTP journey proves the connected observable contract, not native host authentication/reliability. First admission, failed/uncertain attempts and protected caller-visible contracts remain intact. Shared primary and installed checkout untouched. Retain this task checkout/evidence for the manager's qualification decision.
+
+Final isolated compliance: fresh import-boundary report has zero violations; actual whole-change Redline verdict GRAY, four substantive files/615 changed lines within policy (Work Record excluded); Agent Workflow clean/exit0 with no failed predicates in `build/final-workflow.json`; `git diff --check` clean. No protected behavior-contract file changed.
+
 ## Result review
 
-Pending. No qualification, merge or installed-use claim.
+Agent technical review: /root/retained_idle_security_plan_review — final source and focused-evidence GO.
+Reviewed revision: working tree on 5c5295e2fa038f5e3fe1bfa057695241cae5e697; exact four reviewed/tested file identities in build/focused-tested-files.json.
+Verification adequacy: sufficient for this isolated implementation and handoff: three-cycle protocol/HTTP progress, twenty idle authority/cleanup cases, three finite-budget cases and connected unchanged protected controls; 174 passing cases plus the unchanged failed node passing after the documented runner-layout correction. Native host/full-suite/rollout qualification remains outside this phase.
+
+Independent clean-context result review: `/root/retained_idle_security_plan_review`, final GO for this isolated repair and handoff. Reviewed the actual source/tests/docs and both focused receipts; accepted borrowed witness ownership, fresh authentication, unchanged first-caller/foreground fences, one finite recovery budget, three-cycle progress and exact HTTP payload emission/ACK. Accepted the runner-layout correction with the failed protected receipt preserved and unchanged node passing outside Git ancestry. No blocking findings. This is source/focused-evidence acceptance only; broad qualification, publication, merge and installed-use remain unclaimed.
+
+Recovery: branch `feat/codex-retained-idle-reenrollment`, preimplementation plan revision `5c5295e2fa038f5e3fe1bfa057695241cae5e697`, reviewed tested file hashes `build/focused-tested-files.json`. Root retains the isolated checkout for coordinator handoff; Hermes retains sole live-rollout ownership. Next action is the manager's bounded qualification decision, using this reviewed change and existing native receipt; do not create another live chat/marker or repeat passing checks without a new reason.

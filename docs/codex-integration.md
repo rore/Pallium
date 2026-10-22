@@ -215,6 +215,13 @@ uncertain responses and changed identity or capability do not. This retries
 admission, not a message or tool call. First enrollment still requires an actual
 runtime request. Installed restart-recovery qualification remains open.
 
+A previously accepted worker also attempts bounded fresh authentication after a
+resolved idle source-channel deadline or transport failure. It retains the old
+service exit witness until the attempt settles, requires unchanged capability
+and continuity, and never restores the cleared service registration. Exhausted
+or uncertain recovery stops automatic attempts; a later runtime request follows
+the existing admission rules.
+
 New wake reservations start as `prepared`. Recovery can resume that exact
 generation after a restart, but either wake path must atomically change it to
 `uncertain` before submitting anything. Competing workers cannot submit the same
