@@ -71,6 +71,7 @@ def main() -> None:
             metadata["agent_work_trace_turn"] = work_trace_meta
             metadata["cwd"] = cwd
 
+        source_turn_id = source_turn_key(payload.get("turn_id"))
         item_payload = {
             "source_type": SOURCE_TYPE,
             "source_id": f"cdx-{uuid.uuid4().hex[:12]}",
@@ -83,8 +84,9 @@ def main() -> None:
             "actor_ref": actor_ref,
             "visibility": "private",
             "artifact_kind": "message",
-            "source_turn_id": source_turn_key(payload.get("turn_id")),
         }
+        if source_turn_id is not None:
+            item_payload["source_turn_id"] = source_turn_id
         if metadata:
             item_payload["metadata"] = metadata
 

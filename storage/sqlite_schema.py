@@ -59,7 +59,10 @@ class SourceItemRecord(Base):
     forgotten_reason = Column(Text, nullable=True)
     source_turn_id = Column(String, nullable=True)
     relay_name = Column(String, nullable=True)
-    relay_attribution_state = Column(String, nullable=False, default="unknown")
+    # Keep raw SQL writers that predate role attribution compatible.
+    relay_attribution_state = Column(
+        String, nullable=False, default="unknown", server_default="unknown"
+    )
     created_at = Column(DateTime(timezone=True), nullable=False)
 
 
