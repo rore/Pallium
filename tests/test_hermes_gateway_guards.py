@@ -694,13 +694,14 @@ else:
 
 
 def test_real_helper_retains_partial_bootstrap_child_for_final_tree_cleanup(tmp_path, monkeypatch):
-    import psutil
     import queue
     import uuid
     from tests.fixtures.hermes_gateway_driver import HELPER
     from tests.fixtures.hermes_tui_driver import OwnedTree
 
     node, python = _runtime_paths(tmp_path)
+    import psutil
+
     source = tmp_path / "synthetic-source"
     scripts = source / "ui-tui" / "scripts"
     scripts.mkdir(parents=True)
