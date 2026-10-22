@@ -21,6 +21,9 @@ description: Relay, Session History, optional derived memory.
   Current-work search. Copy injected `work_ref`; if absent, broaden; never guess.
 - `pallium_search_history`
   Broad topic search; `work_refs` is compatibility-only. Omit `actor_ref` normally.
+  For history under a known Relay name, get the current name with
+  `pallium_relay_address`, then pass exact `relay_name`; this searches that
+  historical name and does not expand access beyond the injected container.
 - `pallium_expand_source`
   After a promising search hit, call `pallium_expand_source` with its `source_item_id` and pass the search result's `lookup_event_id` as `parent_lookup_id`.
 - History retry [procedure](references/history-replay.md): delivered-page ledger; query repair; retry the same failed page max twice; unread pages; page-specific lookup lineage; Revalidate completed sources by content revision; bounded retries. A historical recap is not live state; verify current state live.

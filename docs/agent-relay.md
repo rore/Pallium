@@ -98,9 +98,10 @@ have a shorter preview with the same continuation mechanism.
 
 Call `pallium_relay_address` when a user asks for the current agent's Relay
 address. It resolves the integration-provided session identity itself and returns
-the canonical `exact_selector` plus `alias_selector` when the session has a
-name. The caller does not supply or guess a runtime or session ID. Missing,
-ambiguous, or malformed identity fails closed.
+the canonical `exact_selector`, `relay_name_state` (`named` or `unnamed`), and
+optional `relay_name` / `alias_selector` when the session has a name. The caller
+does not supply or guess a runtime or session ID. Missing, ambiguous, or malformed
+identity fails closed.
 
 ## Select a recipient
 

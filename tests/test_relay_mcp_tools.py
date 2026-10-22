@@ -1352,6 +1352,7 @@ async def test_relay_address_lifecycle_uses_trusted_current_session(
         "runtime": _RUNTIME,
         "session_ref": _SESSION,
         "exact_selector": session["endpoint_id"],
+        "relay_name_state": "unnamed",
     }
     assert await address() == expected
 
@@ -1361,6 +1362,8 @@ async def test_relay_address_lifecycle_uses_trusted_current_session(
         "alias": "relay-dev",
         **_SCOPE,
     })
+    expected["relay_name_state"] = "named"
+    expected["relay_name"] = "relay-dev"
     expected["alias_selector"] = "@relay-dev"
     assert await address() == expected
 
@@ -1369,7 +1372,9 @@ async def test_relay_address_lifecycle_uses_trusted_current_session(
         "session_ref": _SESSION,
         **_SCOPE,
     })
+    expected.pop("relay_name")
     expected.pop("alias_selector")
+    expected["relay_name_state"] = "unnamed"
     assert await address() == expected
 
 

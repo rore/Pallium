@@ -26,6 +26,7 @@ read_turn = _common.read_turn
 resolve_container_ref = _common.resolve_container_ref
 start_hook_deadline = _common.start_hook_deadline
 work_ref_warning = _common.work_ref_warning
+source_turn_key = _common.source_turn_key
 
 CONTENT_LENGTH_GATE = 20_000
 
@@ -82,6 +83,7 @@ def main() -> None:
             "actor_ref": actor_ref,
             "visibility": "private",
             "artifact_kind": "message",
+            "source_turn_id": source_turn_key(payload.get("turn_id")),
         }
         if metadata:
             item_payload["metadata"] = metadata
