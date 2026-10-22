@@ -3,6 +3,7 @@ import asyncio
 from contextlib import ExitStack
 from contextlib import contextmanager
 import io
+import inspect
 import json
 from types import SimpleNamespace
 
@@ -156,6 +157,115 @@ def test_unsupported_descriptor_is_rejected_before_mutation():
         with pytest.raises(ValueError, match="unsupported attribute descriptor"):
             capture.replace(stack, owner, "call", replacement)
     assert owner.call is original and mutations == []
+
+
+@pytest.mark.parametrize("selected", [False, True])
+@pytest.mark.parametrize("failure", [None, ValueError("native error"), asyncio.CancelledError()])
+def test_slotted_class_guard_preserves_delegate_and_inherited_restoration(selected, failure):
+    calls, result = [], object()
+    class BaseLimiter:
+        __slots__ = ()
+        async def acquire_on_behalf_of(self, borrower):
+            calls.append((self, borrower))
+            if failure is not None:
+                raise failure
+            return result
+    BaseLimiter.acquire_on_behalf_of.__module__ = "anyio.fake"
+    class Limiter(BaseLimiter):
+        __slots__ = ()
+    limiter, unrelated, borrower = Limiter(), Limiter(), object()
+    original = BaseLimiter.acquire_on_behalf_of
+    recorder = capture.Recorder()
+    token = capture.REQUEST.set(1)
+    try:
+        with ExitStack() as stack:
+            capture.install_acquire(limiter, recorder, stack)
+            assert Limiter.acquire_on_behalf_of is not original
+            target = limiter if selected else unrelated
+            if failure is None:
+                assert asyncio.run(target.acquire_on_behalf_of(borrower)) is result
+            else:
+                with pytest.raises(type(failure)) as raised:
+                    asyncio.run(target.acquire_on_behalf_of(borrower))
+                assert raised.value is failure
+            assert calls == [(target, borrower)]
+            assert len(recorder.events) == (2 if selected else 0)
+    finally:
+        capture.REQUEST.reset(token)
+    assert "acquire_on_behalf_of" not in vars(Limiter)
+    assert Limiter.acquire_on_behalf_of is original
+
+
+@pytest.mark.parametrize("conflict", [False, True])
+def test_slotted_class_partial_restore_and_foreign_replacement_conflict(conflict):
+    class Limiter:
+        __slots__ = ()
+        async def acquire_on_behalf_of(self, borrower):
+            pass
+    Limiter.acquire_on_behalf_of.__module__ = "anyio.fake"
+    original = Limiter.acquire_on_behalf_of
+    limiter, stack = Limiter(), ExitStack()
+    try:
+        capture.install_acquire(limiter, capture.Recorder(), stack)
+        if conflict:
+            async def foreign(self, borrower):
+                pass
+            Limiter.acquire_on_behalf_of = foreign
+            with pytest.raises(RuntimeError, match="restoration conflict"):
+                stack.close()
+            assert Limiter.acquire_on_behalf_of is foreign
+        else:
+            with pytest.raises(ValueError, match="partial setup"):
+                with stack:
+                    raise ValueError("partial setup")
+            assert Limiter.acquire_on_behalf_of is original
+    finally:
+        stack.close()
+        Limiter.acquire_on_behalf_of = original
+
+
+def test_real_selected_and_unrelated_anyio_limiters_preserve_native_contract():
+    import anyio
+    limiter, unrelated = anyio.CapacityLimiter(1), anyio.CapacityLimiter(1)
+    original_static = inspect.getattr_static(limiter, "acquire_on_behalf_of")
+    original_class = type(limiter).acquire_on_behalf_of
+    recorder = capture.Recorder()
+    async def journey():
+        borrower, other_borrower = object(), object()
+        token = capture.REQUEST.set(1)
+        try:
+            assert await limiter.acquire_on_behalf_of(borrower) is None
+            assert limiter.statistics().borrowers == (borrower,)
+            assert len(recorder.events) == 2
+            assert await unrelated.acquire_on_behalf_of(other_borrower) is None
+            assert unrelated.statistics().borrowers == (other_borrower,)
+            assert len(recorder.events) == 2
+            with pytest.raises(RuntimeError):
+                await limiter.acquire_on_behalf_of(borrower)
+            started = asyncio.Event()
+            async def blocked():
+                started.set()
+                await limiter.acquire_on_behalf_of(object())
+            task = asyncio.create_task(blocked())
+            await started.wait()
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            assert len(recorder.events) == 6
+            assert limiter.statistics().borrowers == (borrower,)
+            assert "acquire_not_completed" in recorder.reasons
+        finally:
+            if borrower in limiter.statistics().borrowers:
+                limiter.release_on_behalf_of(borrower)
+            if other_borrower in unrelated.statistics().borrowers:
+                unrelated.release_on_behalf_of(other_borrower)
+            capture.REQUEST.reset(token)
+    with ExitStack() as stack:
+        capture.install_acquire(limiter, recorder, stack)
+        asyncio.run(journey())
+    assert inspect.getattr_static(limiter, "acquire_on_behalf_of") is original_static
+    assert type(limiter).acquire_on_behalf_of is original_class
+    assert limiter.borrowed_tokens == unrelated.borrowed_tokens == 0
 
 
 def test_native_teardown_precedes_restoration_and_write(tmp_path, monkeypatch):
@@ -336,11 +446,13 @@ def test_exited_root_unresolved_stream_drain_is_incomplete_without_signal(tmp_pa
     assert {"descendant_stream_drain", "drain_incomplete"}.issubset(result["reasons"])
 
 
-def fake_owned_run(tmp_path, monkeypatch, *, failure, process):
+def fake_owned_run(tmp_path, monkeypatch, *, failure, process, launches=None):
     private = tmp_path / "private"
     private.mkdir()
     @contextmanager
     def temporary(**kwargs):
+        if launches is not None:
+            launches.append(("temporary", kwargs))
         yield str(private)
     monkeypatch.setattr(capture, "tempfile", SimpleNamespace(TemporaryDirectory=temporary))
     monkeypatch.setattr(capture, "sys", SimpleNamespace(platform="linux", version_info=(3, 12),
@@ -350,7 +462,11 @@ def fake_owned_run(tmp_path, monkeypatch, *, failure, process):
     monkeypatch.setattr(capture, "os", SimpleNamespace(environ={}, mkfifo=lambda *args: None,
         open=lambda *args: 42, fdopen=lambda *args, **kwargs: io.BytesIO(),
         O_RDONLY=1, O_WRONLY=2, O_NONBLOCK=4))
-    monkeypatch.setattr(capture, "subprocess", SimpleNamespace(Popen=lambda *args, **kwargs: process,
+    def popen(command, **kwargs):
+        if launches is not None:
+            launches.append(("launch", command, kwargs))
+        return process
+    monkeypatch.setattr(capture, "subprocess", SimpleNamespace(Popen=popen,
         TimeoutExpired=capture.subprocess.TimeoutExpired, PIPE=-1))
     calls = []
     before = {"git_status": " M dirty" if failure == "dirty" else "", "baseline_ok": True}
@@ -373,6 +489,21 @@ def fake_owned_run(tmp_path, monkeypatch, *, failure, process):
     output = tmp_path / "output"
     assert capture.run(output) == 1
     return json.loads((output / "runner.json").read_text())
+
+
+def test_owned_run_passes_short_private_basetemp_to_actual_launch_command(tmp_path, monkeypatch):
+    launches = []
+    process = SimpleNamespace(pid=4321, returncode=7, poll=lambda: 7,
+                              stdout=io.BytesIO(), stderr=io.BytesIO())
+    result = fake_owned_run(tmp_path, monkeypatch, failure=None, process=process, launches=launches)
+    assert launches[0] == ("temporary", {"prefix": "p"})
+    _, command, options = launches[1]
+    base, = [arg.split("=", 1)[1] for arg in command if arg.startswith("--basetemp=")]
+    assert capture.Path(base) == tmp_path / "private" / "p"
+    assert f"--basetemp={base}" in result["command"]
+    assert command[command.index("tests/"):command.index("tests/") + 3] == ["tests/", "-x", "-q"]
+    assert capture.Path(options["env"]["TMPDIR"]).parent == capture.Path(base).parent
+    assert options["start_new_session"] is True
 
 
 @pytest.mark.parametrize("failure", ["fence", "stat", "mutation"])

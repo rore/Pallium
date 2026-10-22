@@ -32,6 +32,7 @@ OUTPUT_LIMIT = 16 * 1024 * 1024
 RESERVE = 128 * 1024
 BASE = "e3117d2cac28046e701b707c38942d8b40ee881e"
 ALLOWED = {"scripts/relay_targeted_boundary_capture.py", "tests/test_relay_targeted_boundary_capture.py",
+           "tests/test_relay_targeted_boundary_fixture.py",
            ".github/workflows/ci.yml", ".agent-workflow/tasks/service-performance.md"}
 REQUEST = ContextVar("boundary_request", default=None)
 STAGES = {"asgi_entry", "route_entry", "acquire_start", "acquire_end"}
@@ -84,13 +85,14 @@ def replace(stack, owner, name, replacement):
         except TypeError:
             raise ValueError("unsupported attribute owner") from None
     def restore():
-        if getattr(owner, name) is replacement:
-            if owned:
-                setattr(owner, name, original)
-            else:
-                delattr(owner, name)
-    stack.callback(restore)
+        if getattr(owner, name, object()) is not replacement:
+            raise RuntimeError("observer restoration conflict")
+        if owned:
+            setattr(owner, name, original)
+        else:
+            delattr(owner, name)
     setattr(owner, name, replacement)
+    stack.callback(restore)
     return original
 
 
@@ -127,16 +129,42 @@ def acquire_observer(original, recorder):
     return acquire
 
 
+def install_acquire(limiter, recorder, stack):
+    try:
+        vars(limiter)
+    except TypeError:
+        cls = type(limiter)
+        original = inspect.getattr_static(cls, "acquire_on_behalf_of")
+        bound = limiter.acquire_on_behalf_of
+        if (not inspect.isfunction(original) or not original.__module__.startswith("anyio.")
+                or original.__name__ != "acquire_on_behalf_of"
+                or getattr(bound, "__self__", None) is not limiter
+                or getattr(bound, "__func__", None) is not original):
+            raise ValueError("unsupported limiter class method")
+        observed = acquire_observer(bound, recorder)
+        # Other instances pay one process-wide identity check during this private observation.
+        async def acquire_on_behalf_of(self, borrower):
+            if self is limiter:
+                return await observed(borrower)
+            return await original(self, borrower)
+        replace(stack, cls, "acquire_on_behalf_of", acquire_on_behalf_of)
+    else:
+        replace(stack, limiter, "acquire_on_behalf_of", acquire_observer(limiter.acquire_on_behalf_of, recorder))
+
+
 def install(client, recorder, stack, *, limiter_lookup=recover_limiter):
-    from fastapi.routing import APIRoute
-    routes = [route for route in client.app.routes
-              if isinstance(route, APIRoute) and route.path == "/relay/turn" and "POST" in route.methods]
+    from fastapi import routing
+    iterate = getattr(routing, "iter_route_contexts", None)
+    contexts = iterate(client.app.routes) if iterate is not None else client.app.routes
+    routes = [route for route in contexts
+              if isinstance(getattr(route, "original_route", route), routing.APIRoute)
+              and route.path == "/relay/turn" and "POST" in route.methods]
     if len(routes) != 1 or client._transport.app is not client.app:
         raise ValueError("unsupported private transport or route")
     route = routes[0]
     call = route.dependant.call
     limiter = limiter_lookup(call)
-    replace(stack, limiter, "acquire_on_behalf_of", acquire_observer(limiter.acquire_on_behalf_of, recorder))
+    install_acquire(limiter, recorder, stack)
 
     async def route_entry(*args, **kwargs):
         recorder.record("route_entry")
@@ -198,7 +226,7 @@ def observation(recorder, native_path):
         recorder.incomplete("native_spans_missing")
     result = {"complete": not recorder.reasons, "reasons": sorted(recorder.reasons),
               "events": recorder.events, "native_stages": native,
-              "limitation": "observer perturbation; admission holder and physical cause unknown"}
+              "limitation": "observer perturbation; slotted limiter class adds a process-wide identity check; admission holder and physical cause unknown"}
     if len(json.dumps(result).encode()) > JSON_LIMIT:
         result = {"complete": False, "reasons": ["json_cap"], "events": [], "native_stages": []}
     return result
@@ -364,7 +392,7 @@ def run(output):
             raise ValueError("source baseline differs")
         result["versions"] = {dist.metadata["Name"]: dist.version for dist in importlib.metadata.distributions()}
         result["python"] = sys.version
-        with tempfile.TemporaryDirectory(prefix="pallium-boundary-") as private:
+        with tempfile.TemporaryDirectory(prefix="p") as private:
             root = Path(private)
             env = os.environ.copy()
             for key in ("HOME", "USERPROFILE", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "TMPDIR", "TEMP", "TMP"):
@@ -378,7 +406,7 @@ def run(output):
             reader = os.open(fifo, os.O_RDONLY | os.O_NONBLOCK)
             writer = os.open(fifo, os.O_WRONLY | os.O_NONBLOCK)
             command = [sys.executable, "-m", "pytest", "-p", "scripts.relay_targeted_boundary_capture",
-                       "tests/", "-x", "-q", f"--junitxml={fifo}"]
+                       "tests/", "-x", "-q", f"--basetemp={root / 'p'}", f"--junitxml={fifo}"]
             result["command"] = command[:-1] + ["--junitxml=<private-fifo>"]
             try:
                 with os.fdopen(reader, "rb", buffering=0) as junit, os.fdopen(writer, "wb", buffering=0) as keeper:
