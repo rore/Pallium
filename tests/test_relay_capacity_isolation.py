@@ -1542,10 +1542,11 @@ def test_relay_and_diagnostics_survive_saturated_memory_worker_capacity(tmp_path
             blocked = asyncio.create_task(client.get("/_test/block-memory-worker"))
             try:
                 assert await asyncio.to_thread(started.wait, 5.0)
-                health, status, queue, turn = await asyncio.wait_for(
+                health, status, queue, summary, turn = await asyncio.wait_for(
                     asyncio.gather(
                         client.get("/health"), client.get("/status"),
                         client.get("/debug/queue/health"),
+                        client.get("/dashboard/api/relay/summary"),
                         client.post("/relay/turn", json={
                             "runtime": "codex", "session_ref": "capacity-target",
                             "container_ref": "git:example.test/capacity",
@@ -1554,6 +1555,8 @@ def test_relay_and_diagnostics_survive_saturated_memory_worker_capacity(tmp_path
                     ), timeout=5.0,
                 )
                 assert health.status_code in {200, 503} and turn.status_code == 200
+                assert summary.status_code == 200
+                assert summary.json()["deliveries"]["pending_now"] == 0
                 assert set(status.json()) == {
                     "pending_items", "oldest_pending_age_seconds",
                     "total_source_items", "total_memory_objects",
@@ -2276,3 +2279,112 @@ def test_operation_tracking_early_failure_drains_before_storage_close(tmp_path, 
     assert drain_entered.is_set()
     assert drain_gate_observations and all(drain_gate_observations)
     assert close_observations and all(drained and finished for drained, finished in close_observations)
+
+
+@pytest.mark.parametrize("cancel_target", ["queued", "started"])
+def test_summary_cancellation_keeps_diagnostic_workers_owned_until_drain(
+    client, monkeypatch, cancel_target,
+):
+    from app import codex_readiness
+
+    app = client.app
+    first, full, release = threading.Event(), threading.Event(), threading.Event()
+    finished, closed = threading.Event(), threading.Event()
+    lock = threading.Lock()
+    started_count = completed_count = 0
+    original_read = codex_readiness.read
+
+    def held_readiness():
+        nonlocal started_count, completed_count
+        with lock:
+            started_count += 1
+            first.set()
+            if started_count == 2:
+                full.set()
+        try:
+            assert release.wait(10), "summary worker watchdog expired"
+            assert not closed.is_set(), "summary accessed closed storage"
+            return original_read()
+        finally:
+            with lock:
+                completed_count += 1
+                if completed_count == (2 if cancel_target == "queued" else 3):
+                    finished.set()
+
+    monkeypatch.setattr(codex_readiness, "read", held_readiness)
+
+    async def exercise():
+        queued = asyncio.Event()
+        original_dispatch = anyio.to_thread.run_sync
+
+        async def observe_dispatch(operation, *args, **kwargs):
+            if asyncio.current_task().get_name() == "summary-queued":
+                queued.set()
+            return await original_dispatch(operation, *args, **kwargs)
+
+        monkeypatch.setattr(anyio.to_thread, "run_sync", observe_dispatch)
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as http:
+            requests = [asyncio.create_task(http.get("/dashboard/api/relay/summary"))]
+            barrier = None
+            try:
+                assert await asyncio.to_thread(first.wait, 1)
+                status, queue = await asyncio.wait_for(asyncio.gather(
+                    http.get("/status"), http.get("/debug/queue/health"),
+                ), 2)
+                assert status.status_code == queue.status_code == 200
+                requests.append(asyncio.create_task(http.get("/dashboard/api/relay/summary")))
+                assert await asyncio.to_thread(full.wait, 1)
+                requests.append(asyncio.create_task(
+                    http.get("/dashboard/api/relay/summary"), name="summary-queued",
+                ))
+                await asyncio.wait_for(queued.wait(), 1)
+                assert started_count == 2 and not requests[2].done()
+                cancelled = requests[2 if cancel_target == "queued" else 0]
+                cancelled.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await cancelled
+                barrier = await _start_operation_barrier(app)
+                await _assert_barrier_waiting(barrier)
+                assert not finished.is_set()
+                turn = await asyncio.wait_for(http.post("/relay/turn", json={
+                    "runtime": "claude-code", "session_ref": "summary-drain-target",
+                    "container_ref": "git:example.test/summary-drain",
+                }), 1)
+                assert turn.status_code == 200
+                release.set()
+                results = await asyncio.wait_for(asyncio.gather(*requests, return_exceptions=True), 2)
+                assert sum(isinstance(result, asyncio.CancelledError) for result in results) == 1
+                responses = [result for result in results if isinstance(result, httpx.Response)]
+                assert len(responses) == 2 and all(result.status_code == 200 for result in responses)
+                assert await asyncio.to_thread(finished.wait, 1)
+                assert await asyncio.wait_for(barrier, 1)
+                assert started_count == completed_count == (2 if cancel_target == "queued" else 3)
+                closed.set()
+                app.state.pallium_service._storage.close()
+            finally:
+                release.set()
+                await asyncio.gather(*requests, return_exceptions=True)
+                if barrier is not None:
+                    await asyncio.wait_for(barrier, 2)
+
+    asyncio.run(exercise())
+
+
+def test_standalone_summary_mount_preserves_sqlite_and_unsupported_responses(client):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from app.dashboard import mount_dashboard
+    from core.codex_wake import CodexWakeRegistry
+
+    standalone = FastAPI()
+    standalone.state.pallium_service = client.app.state.pallium_service
+    mount_dashboard(standalone, codex_wake_registry=CodexWakeRegistry())
+    with TestClient(standalone) as http:
+        response = http.get("/dashboard/api/relay/summary")
+        assert response.status_code == 200
+        assert response.json()["deliveries"]["pending_now"] == 0
+        standalone.state.pallium_service = SimpleNamespace(_storage=object())
+        unsupported = http.get("/dashboard/api/relay/summary")
+        assert unsupported.status_code == 501
+        assert unsupported.json() == {"error": "requires SQLite backend"}
