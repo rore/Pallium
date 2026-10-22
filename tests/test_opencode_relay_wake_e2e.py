@@ -147,7 +147,8 @@ def test_expired_claim_lease_can_be_recovered_through_context(client, monkeypatc
     monkeypatch.setattr(sqlite_relay, "_now", lambda value=None: real_now(value) if value is not None else clock[0])
     for _ in range(4):
         clock[0] += timedelta(seconds=14)
-        assert _wake(client, base, "poll").status_code == 200
+        polled = _wake(client, base, "poll")
+        assert polled.status_code == 200, polled.text
     clock[0] += timedelta(seconds=5)
     assert _wake(client, base, "poll").status_code == 200
     stale = _wake(client, base, "context", **snap)
@@ -162,6 +163,40 @@ def test_expired_claim_lease_can_be_recovered_through_context(client, monkeypatc
     assert recovered.status_code == 200, recovered.text
     assert recovered.json()["deliveries"][0]["delivery_id"] == first["delivery_id"]
     assert recovered.json()["deliveries"][0]["attempts"] == first["attempts"] + 1
+
+
+def test_expired_claim_lease_recovery_survives_delayed_context_response(client, monkeypatch, tmp_path):
+    import json
+    import sys
+    import time
+
+    original_wake = _wake
+    delays, polls = [], []
+
+    def delayed_wake(client, base, operation, **extra):
+        response = original_wake(client, base, operation, **extra)
+        if operation == "context" and not delays:
+            assert response.status_code == 200, response.text
+            started = time.monotonic()
+            time.sleep(1.2)
+            delays.append(time.monotonic() - started)
+            assert delays[0] >= 1.1
+        elif operation == "poll" and delays:
+            detail = response.json().get("detail")
+            polls.append({"status": response.status_code, "detail": detail})
+            if response.status_code == 409:
+                assert detail == "OpenCode registration is missing or stale"
+        return response
+
+    monkeypatch.setattr(sys.modules[__name__], "_wake", delayed_wake)
+    try:
+        test_expired_claim_lease_can_be_recovered_through_context(client, monkeypatch)
+        assert len(delays) == 1 and len(polls) == 6
+        assert all(poll["status"] == 200 for poll in polls)
+    finally:
+        (tmp_path / "lease-clock-control.json").write_text(
+            json.dumps({"delay_seconds": delays, "post_context_polls": polls}), encoding="utf-8",
+        )
 
 
 def test_owner_lease_expiry_allows_rebind_without_losing_anchor(client, monkeypatch):
