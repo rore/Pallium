@@ -1,5 +1,7 @@
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+import threading
+from types import SimpleNamespace
 
 import pytest
 
@@ -266,6 +268,223 @@ def test_concurrent_capacity_admission_keeps_exactly_three_explicit_refs(client)
         row for row in _list(client, session="concurrent")["work_refs"]
         if row["origin"] == "explicit"
     ]) == 3
+
+
+@pytest.fixture
+def relay_settlement_control(client, monkeypatch):
+    store = client.app.state.pallium_service._storage
+    factory, attach = store._relay_session_factory, store.relay_attach_work_ref
+    local = threading.local()
+    control = SimpleNamespace(
+        mode="close", cleanup_error=None, hold_b=False,
+        held=threading.Event(), release=threading.Event(),
+        b_active=threading.Event(), release_b=threading.Event(),
+        begins=[], failures=[], closes=[], commit_returned=False, rollback_returned=False,
+        pool=ThreadPoolExecutor(max_workers=2),
+    )
+
+    def pause(connection):
+        control.native_active = connection.connection.driver_connection.in_transaction
+        control.held.set()
+        assert control.release.wait(5), "transaction control was not released"
+
+    def session_factory():
+        session = factory()
+        role = getattr(local, "role", None)
+        if role is None:
+            return session
+        connection, close = session.connection, session.close
+
+        def observed_connection(*args, **kwargs):
+            conn = connection(*args, **kwargs)
+            execute = conn.execute
+
+            def observed_execute(statement, *args, **kwargs):
+                sql = str(statement).strip().upper()
+                if sql == "BEGIN IMMEDIATE":
+                    control.begins.append(role)
+                if role == "A":
+                    if sql == "COMMIT" and control.mode == "active":
+                        pause(conn)
+                    if sql == "COMMIT" and control.mode in {"rollback-failed", "rollback-inflight"}:
+                        raise RuntimeError("controlled commit failure")
+                    if sql == "ROLLBACK" and control.mode == "rollback-failed":
+                        raise RuntimeError("controlled rollback failure")
+                result = execute(statement, *args, **kwargs)
+                if role == "B" and sql == "BEGIN IMMEDIATE" and control.hold_b:
+                    assert conn.connection.driver_connection.in_transaction
+                    control.b_active.set()
+                    assert control.release_b.wait(5), "successor transaction was not released"
+                if role == "A":
+                    if sql == "COMMIT":
+                        control.commit_returned = True
+                        if control.mode == "commit-ambiguous":
+                            raise RuntimeError("controlled commit failure")
+                    if sql == "ROLLBACK":
+                        control.rollback_returned = True
+                    if ((sql == "COMMIT" and control.mode == "commit-inflight")
+                            or (sql == "ROLLBACK" and control.mode == "rollback-inflight")
+                            or (sql == f"PRAGMA BUSY_TIMEOUT={store._DEFAULT_BUSY_TIMEOUT_MS}"
+                                and control.mode == "reset")):
+                        pause(conn)
+                        if control.cleanup_error == "reset":
+                            raise RuntimeError("controlled reset failure")
+                return result
+
+            monkeypatch.setattr(conn, "execute", observed_execute)
+            if role == "A":
+                control.connection = conn
+            return conn
+
+        def observed_close(*args, **kwargs):
+            control.closes.append(role)
+            if role == "A" and control.mode in {"close", "rollback-failed", "commit-ambiguous"}:
+                pause(control.connection)
+            result = close(*args, **kwargs)
+            if role == "A" and control.cleanup_error == "close":
+                raise RuntimeError("controlled close failure")
+            return result
+
+        monkeypatch.setattr(session, "connection", observed_connection)
+        monkeypatch.setattr(session, "close", observed_close)
+        return session
+
+    def labelled_attach(**kwargs):
+        previous = getattr(local, "role", None)
+        value = kwargs["work_ref"]["local_ref"]
+        local.role = value[-1] if value in {"item:A", "item:B", "item:C"} else None
+        try:
+            return attach(**kwargs)
+        except BaseException as exc:
+            control.failures.append((local.role, getattr(exc, "acquisition_stage", None)))
+            raise
+        finally:
+            local.role = previous
+
+    monkeypatch.setattr(store, "_relay_session_factory", session_factory)
+    monkeypatch.setattr(store, "relay_attach_work_ref", labelled_attach)
+    try:
+        yield control
+    finally:
+        control.release.set()
+        control.release_b.set()
+        control.pool.shutdown(wait=False, cancel_futures=True)
+        for worker in tuple(control.pool._threads):
+            worker.join(5)
+            assert not worker.is_alive(), "owned HTTP worker did not settle"
+
+
+def _association_pairs(client, session="worker"):
+    return {(row["scope_ref"], row["local_ref"], row["origin"])
+            for row in _list(client, session)["work_refs"]}
+
+
+@pytest.mark.parametrize("settlement", ["commit", "rollback"])
+@pytest.mark.parametrize("cleanup,error", [
+    ("close", None), ("reset", None), ("close", "close"), ("reset", "reset"),
+])
+def test_settled_relay_write_releases_gate_before_cleanup(
+    client, relay_settlement_control, settlement, cleanup, error,
+):
+    control = relay_settlement_control
+    control.mode, control.cleanup_error = cleanup, error
+    scope = "scope:gate-cleanup"
+    _turn(client)
+    seeds = [f"item:seed-{index}" for index in range(2 if settlement == "commit" else 3)]
+    for value in seeds:
+        assert _attach(client, {"scope_ref": scope, "local_ref": value}).status_code == 200
+    expected = {(scope, value, "explicit") for value in seeds}
+    if settlement == "commit":
+        expected.add((scope, "item:A", "explicit"))
+
+    first = control.pool.submit(_attach, client, {"scope_ref": scope, "local_ref": "item:A"})
+    assert control.held.wait(5), "writer A did not enter settled cleanup"
+    assert not first.done() and control.native_active is False
+    assert control.commit_returned == (settlement == "commit")
+    assert control.rollback_returned == (settlement == "rollback")
+    second = control.pool.submit(_attach, client, {"scope_ref": scope, "local_ref": "item:B"})
+    response = second.result(timeout=3)
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["code"] == "association_limit"
+    assert control.begins == ["A", "B"]
+    assert _association_pairs(client) == expected
+    assert not first.done(), "A cleanup was not held during B admission"
+    control.release.set()
+    if error == "close":
+        with pytest.raises(RuntimeError, match="controlled close failure"):
+            first.result(timeout=5)
+    else:
+        assert first.result(timeout=5).status_code == (200 if settlement == "commit" else 409)
+    assert control.closes == (["A", "B"] if cleanup == "close" else ["B", "A"])
+    assert _association_pairs(client) == expected
+
+
+@pytest.mark.parametrize("close_error", [False, True])
+def test_settled_writer_cleanup_cannot_release_active_successor_gate(
+    client, relay_settlement_control, close_error,
+):
+    control = relay_settlement_control
+    control.cleanup_error = "close" if close_error else None
+    control.hold_b = True
+    scope = "scope:gate-successor"
+    _turn(client)
+    _turn(client, "successor")
+    first = control.pool.submit(_attach, client, {"scope_ref": scope, "local_ref": "item:A"})
+    assert control.held.wait(5)
+    second = control.pool.submit(_attach, client, {"scope_ref": scope, "local_ref": "item:B"}, "successor")
+    assert control.b_active.wait(3), "B could not begin during A's settled cleanup"
+    control.release.set()
+    if close_error:
+        with pytest.raises(RuntimeError, match="controlled close failure"):
+            first.result(timeout=3)
+    else:
+        assert first.result(timeout=3).status_code == 200
+    assert not second.done()
+    third = _attach(client, {"scope_ref": scope, "local_ref": "item:C"}, "successor")
+    assert third.status_code == 503, third.text
+    assert third.json()["detail"] == {"code": "relay_busy", "retryable": True}
+    assert ("C", "local_gate") in control.failures and control.begins == ["A", "B"]
+    assert _association_pairs(client) == {(scope, "item:A", "explicit")}
+    assert _association_pairs(client, "successor") == set()
+    control.release_b.set()
+    assert second.result(timeout=5).status_code == 200
+    assert _association_pairs(client, "successor") == {(scope, "item:B", "explicit")}
+    assert control.closes == ["A", "B"]
+
+
+@pytest.mark.parametrize("stage", [
+    "active", "commit-inflight", "rollback-failed", "rollback-inflight", "commit-ambiguous",
+])
+def test_unsettled_relay_write_keeps_gate_until_observed_terminal_return(
+    client, relay_settlement_control, stage,
+):
+    control = relay_settlement_control
+    control.mode = stage
+    scope = "scope:gate-unsettled"
+    _turn(client)
+    first = control.pool.submit(_attach, client, {"scope_ref": scope, "local_ref": "item:A"})
+    assert control.held.wait(5), "A did not enter the unsettled boundary"
+    assert control.native_active == (stage in {"active", "rollback-failed"})
+    assert not first.done()
+    second = _attach(client, {"scope_ref": scope, "local_ref": "item:B"})
+    assert second.status_code == 503, second.text
+    assert second.json()["detail"] == {"code": "relay_busy", "retryable": True}
+    assert ("B", "local_gate") in control.failures and control.begins == ["A"]
+    committed = stage in {"commit-inflight", "commit-ambiguous"}
+    expected = {(scope, "item:A", "explicit")} if committed else set()
+    assert _association_pairs(client) == expected
+    control.release.set()
+    if stage in {"rollback-failed", "rollback-inflight", "commit-ambiguous"}:
+        with pytest.raises(RuntimeError, match="controlled commit failure"):
+            first.result(timeout=5)
+    else:
+        assert first.result(timeout=5).status_code == 200
+        expected = {(scope, "item:A", "explicit")}
+    assert control.closes == ["A"]
+    assert _association_pairs(client) == expected
+    assert _attach(client, {"scope_ref": scope, "local_ref": "item:B"}).status_code == 200
+    assert control.begins == ["A", "B"]
+    assert _association_pairs(client) == expected | {(scope, "item:B", "explicit")}
 
 
 def test_alias_transfer_does_not_transfer_associations_and_reopen_retains_them(client, drain_queue):
