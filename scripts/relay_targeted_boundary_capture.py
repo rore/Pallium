@@ -244,17 +244,37 @@ def fences():
         digest.update(name.encode())
         digest.update(Path(name).read_bytes())
     changes = set(git("diff", "--name-only", BASE, "--").splitlines())
-    if changes - ALLOWED:
-        raise ValueError("source baseline differs")
     return {"head": git("rev-parse", "HEAD"), "tree": git("rev-parse", "HEAD^{tree}"),
-            "source_lock_sha256": digest.hexdigest(), "baseline": BASE}
+            "source_lock_sha256": digest.hexdigest(), "baseline": BASE,
+            "baseline_ok": not bool(changes - ALLOWED),
+            "diagnostic_sha256": {name: hashlib.sha256(Path(name).read_bytes()).hexdigest()
+                                  for name in sorted(ALLOWED)},
+            "git_status": git("status", "--porcelain=v1", "--untracked-files=all")}
 
 
 def terminate_group(process, sig):
+    # A reaped root no longer reserves its PID/PGID for our owned process group.
+    if process.returncode is not None:
+        return
     try:
         os.killpg(process.pid, sig)
     except ProcessLookupError:
         pass
+
+
+def settle_owned(process, result):
+    """Terminate only an unreaped child, then bounded-wait for its native exit."""
+    if process.poll() is None and "owned_process_unsettled" not in result["reasons"]:
+        terminate_group(process, signal.SIGTERM)
+        try:
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            terminate_group(process, signal.SIGKILL)
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                result["reasons"].append("owned_process_unsettled")
+    result["native_exit"] = process.returncode
 
 
 def collect(process, streams, output, *, wall=1200, term=10, drain=5,
@@ -262,15 +282,15 @@ def collect(process, streams, output, *, wall=1200, term=10, drain=5,
     """Drain all owned streams with one shared retained-byte cap."""
     selector = selectors.DefaultSelector()
     handles = {}
-    for name, stream in streams.items():
-        os.set_blocking(stream.fileno(), False)
-        selector.register(stream, selectors.EVENT_READ, name)
-        handles[name] = (output / name).open("xb")
     started = time.monotonic()
     total, stop_at, killed_at, exited_at = 0, None, None, None
     reasons = set()
     settled = False
     try:
+        for name, stream in streams.items():
+            os.set_blocking(stream.fileno(), False)
+            selector.register(stream, selectors.EVENT_READ, name)
+            handles[name] = (output / name).open("xb")
         while True:
             now = time.monotonic()
             exited = process.poll() is not None
@@ -281,15 +301,16 @@ def collect(process, streams, output, *, wall=1200, term=10, drain=5,
                 fifo_writer = None
             if stop_at is None and (now - started >= wall or "output_cap" in reasons):
                 reasons.add("timeout" if now - started >= wall else "output_cap")
-                terminate_group(process, signal.SIGTERM)
+                if not exited:
+                    terminate_group(process, signal.SIGTERM)
                 stop_at = now
-            if stop_at is not None and killed_at is None and now - stop_at >= term:
+            if not exited and stop_at is not None and killed_at is None and now - stop_at >= term:
                 terminate_group(process, signal.SIGKILL)
                 killed_at = now
-            if exited_at is not None and stop_at is None and now - exited_at >= drain and selector.get_map():
+            if exited_at is not None and now - exited_at >= drain and selector.get_map():
                 reasons.add("descendant_stream_drain")
-                stop_at = now
-                terminate_group(process, signal.SIGTERM)
+                reasons.add("drain_incomplete")
+                break
             if exited and not selector.get_map():
                 break
             if killed_at is not None and now - killed_at >= drain:
@@ -307,11 +328,6 @@ def collect(process, streams, output, *, wall=1200, term=10, drain=5,
                 if len(keep) != len(chunk):
                     reasons.add("output_cap")
         if process.poll() is None:
-            reasons.add("owned_process_unsettled")
-            terminate_group(process, signal.SIGKILL)
-        try:
-            process.wait(timeout=drain)
-        except subprocess.TimeoutExpired:
             reasons.add("owned_process_unsettled")
         settled = process.returncode is not None and not selector.get_map()
     finally:
@@ -332,6 +348,10 @@ def run(output):
     try:
         before = fences()
         result["before"] = before
+        if before["git_status"]:
+            raise ValueError("capture requires clean checkout")
+        if not before["baseline_ok"]:
+            raise ValueError("source baseline differs")
         result["versions"] = {dist.metadata["Name"]: dist.version for dist in importlib.metadata.distributions()}
         result["python"] = sys.version
         with tempfile.TemporaryDirectory(prefix="pallium-boundary-") as private:
@@ -358,11 +378,12 @@ def run(output):
                     result.update(collect(process, {"stdout.log": process.stdout, "stderr.log": process.stderr,
                                                     "native-junit.xml": junit}, output, fifo_writer=keeper))
             finally:
-                if process is not None and not result.get("owned_settled", False):
-                    terminate_group(process, signal.SIGKILL)
                 if process is not None:
-                    process.stdout.close()
-                    process.stderr.close()
+                    try:
+                        settle_owned(process, result)
+                    finally:
+                        process.stdout.close()
+                        process.stderr.close()
             result["after"] = fences()
             if before != result["after"]:
                 result["reasons"].append("source_fence_changed")
@@ -378,12 +399,7 @@ def run(output):
     except Exception as exc:
         result["reasons"].append("tooling_failure:" + type(exc).__name__)
         if process is not None:
-            terminate_group(process, signal.SIGKILL)
-            try:
-                process.wait(timeout=5)
-                result["native_exit"] = process.returncode
-            except subprocess.TimeoutExpired:
-                result["reasons"].append("owned_process_unsettled")
+            result["native_exit"] = process.returncode
     encoded = json.dumps(result, indent=2).encode()
     if len(encoded) > RESERVE:
         encoded = json.dumps({"complete": False, "native_exit": result["native_exit"],

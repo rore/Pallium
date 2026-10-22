@@ -1,6 +1,8 @@
 """Pure observer/runner safety: no application, database, server or child journey."""
 import asyncio
 from contextlib import ExitStack
+from contextlib import contextmanager
+import io
 import json
 from types import SimpleNamespace
 
@@ -227,7 +229,7 @@ class FakeSelector:
         pass
 
 
-def test_shared_stream_cap_preserves_native_exit_and_only_signals_owned_group(tmp_path, monkeypatch):
+def test_exited_root_stream_cap_preserves_native_exit_without_signal(tmp_path, monkeypatch):
     chunks = iter([b"0123456789", b""])
     monkeypatch.setattr(capture, "selectors", SimpleNamespace(DefaultSelector=FakeSelector, EVENT_READ=1))
     monkeypatch.setattr(capture, "os", SimpleNamespace(set_blocking=lambda *args: None, read=lambda *args: next(chunks)))
@@ -239,7 +241,7 @@ def test_shared_stream_cap_preserves_native_exit_and_only_signals_owned_group(tm
     assert result["native_exit"] == 9
     assert "output_cap" in result["reasons"]
     assert (tmp_path / "stdout.log").read_bytes() == b"0123"
-    assert {pid for pid, _ in signals} == {4321}
+    assert signals == []
 
 
 def test_owned_timeout_terminates_then_kills_and_bounds_unsettled_drain(tmp_path, monkeypatch):
@@ -270,3 +272,120 @@ def test_normal_exit_drains_without_signal_and_closes_fifo_keeper_once(tmp_path,
                              tmp_path, fifo_writer=keeper)
     assert result["reasons"] == [] and result["native_exit"] == 1
     assert result["owned_settled"] and closed == [True]
+
+
+def test_exited_root_unresolved_stream_drain_is_incomplete_without_signal(tmp_path, monkeypatch):
+    monkeypatch.setattr(capture, "selectors", SimpleNamespace(DefaultSelector=lambda: FakeSelector(ready=False), EVENT_READ=1))
+    monkeypatch.setattr(capture, "os", SimpleNamespace(set_blocking=lambda *args: None))
+    ticks = iter(range(100))
+    monkeypatch.setattr(capture, "time", SimpleNamespace(monotonic=lambda: next(ticks)))
+    monkeypatch.setattr(capture, "terminate_group", lambda *args: pytest.fail("reaped root must not signal"))
+    process = SimpleNamespace(pid=4321, returncode=7, poll=lambda: 7)
+    result = capture.collect(process, {"stdout.log": SimpleNamespace(fileno=lambda: 42)}, tmp_path, drain=1)
+    assert result["native_exit"] == 7 and not result["owned_settled"]
+    assert {"descendant_stream_drain", "drain_incomplete"}.issubset(result["reasons"])
+
+
+def fake_owned_run(tmp_path, monkeypatch, *, failure, process):
+    private = tmp_path / "private"
+    private.mkdir()
+    @contextmanager
+    def temporary(**kwargs):
+        yield str(private)
+    monkeypatch.setattr(capture, "tempfile", SimpleNamespace(TemporaryDirectory=temporary))
+    monkeypatch.setattr(capture, "sys", SimpleNamespace(platform="linux", version_info=(3, 12),
+                                                       executable="fake-python", version="fake"))
+    monkeypatch.setattr(capture, "importlib", SimpleNamespace(metadata=SimpleNamespace(distributions=lambda: [])))
+    monkeypatch.setattr(capture, "signal", SimpleNamespace(SIGTERM=15, SIGKILL=9))
+    monkeypatch.setattr(capture, "os", SimpleNamespace(environ={}, mkfifo=lambda *args: None,
+        open=lambda *args: 42, fdopen=lambda *args, **kwargs: io.BytesIO(),
+        O_RDONLY=1, O_WRONLY=2, O_NONBLOCK=4))
+    monkeypatch.setattr(capture, "subprocess", SimpleNamespace(Popen=lambda *args, **kwargs: process,
+        TimeoutExpired=capture.subprocess.TimeoutExpired, PIPE=-1))
+    calls = []
+    before = {"git_status": " M dirty" if failure == "dirty" else "", "baseline_ok": True}
+    def fence():
+        calls.append(True)
+        if len(calls) == 2 and failure == "fence":
+            raise ValueError("post-success fence")
+        if len(calls) == 2 and failure == "mutation":
+            return {**before, "git_status": " M scripts/relay_targeted_boundary_capture.py"}
+        return before
+    monkeypatch.setattr(capture, "fences", fence)
+    def collect(process, streams, output, **kwargs):
+        if failure == "collection":
+            raise OSError("partial collection")
+        (output / "observation.json").write_text('{"complete": true}')
+        if failure != "stat":
+            (output / "native-junit.xml").write_text("native")
+        return {"native_exit": process.returncode, "reasons": [], "owned_settled": True}
+    monkeypatch.setattr(capture, "collect", collect)
+    output = tmp_path / "output"
+    assert capture.run(output) == 1
+    return json.loads((output / "runner.json").read_text())
+
+
+@pytest.mark.parametrize("failure", ["fence", "stat", "mutation"])
+def test_post_success_tooling_failure_or_mutation_preserves_exit_without_signaling(tmp_path, monkeypatch, failure):
+    monkeypatch.setattr(capture, "terminate_group", lambda *args: pytest.fail("reaped root must not signal"))
+    process = SimpleNamespace(pid=4321, returncode=7, poll=lambda: 7,
+                              stdout=io.BytesIO(), stderr=io.BytesIO())
+    result = fake_owned_run(tmp_path, monkeypatch, failure=failure, process=process)
+    assert result["native_exit"] == 7 and not result["complete"]
+    if failure == "mutation":
+        assert result["after"]["git_status"]
+        assert "source_fence_changed" in result["reasons"]
+    else:
+        assert any(reason.startswith("tooling_failure:") for reason in result["reasons"])
+
+
+def test_partial_collection_exception_terminates_and_bounded_waits_owned_exit(tmp_path, monkeypatch):
+    signals, waits = [], []
+    process = SimpleNamespace(pid=4321, returncode=None, stdout=io.BytesIO(), stderr=io.BytesIO())
+    process.poll = lambda: process.returncode
+    def wait(timeout):
+        waits.append(timeout)
+        if timeout == 10:
+            raise capture.subprocess.TimeoutExpired("fake", timeout)
+        process.returncode = -9
+        return -9
+    process.wait = wait
+    monkeypatch.setattr(capture, "terminate_group", lambda process, sig: signals.append(sig))
+    result = fake_owned_run(tmp_path, monkeypatch, failure="collection", process=process)
+    assert signals == [15, 9] and waits == [10, 5]
+    assert result["native_exit"] == -9 and not result["complete"]
+    assert process.stdout.closed and process.stderr.closed
+
+
+def test_dirty_checkout_blocks_before_child_launch(tmp_path, monkeypatch):
+    monkeypatch.setattr(capture, "terminate_group", lambda *args: pytest.fail("no child was launched"))
+    result = fake_owned_run(tmp_path, monkeypatch, failure="dirty", process=None)
+    assert result["native_exit"] is None and not result["complete"]
+    assert result["before"]["git_status"]
+    assert result["reasons"] == ["tooling_failure:ValueError"]
+
+
+def test_fences_hash_all_diagnostic_paths_and_retain_dirty_status(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    for name in capture.ALLOWED:
+        path = capture.Path(name)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(name.encode())
+    capture.Path("product.py").write_text("unchanged")
+    monkeypatch.setattr(capture, "subprocess", SimpleNamespace(check_output=lambda *args, **kwargs: b"product.py\0"))
+    dirty = []
+    def git(*args):
+        if args[0] == "status":
+            return " M scripts/relay_targeted_boundary_capture.py" if dirty else ""
+        if args[0] == "diff":
+            return "scripts/relay_targeted_boundary_capture.py"
+        return "frozen"
+    monkeypatch.setattr(capture, "git", git)
+    before = capture.fences()
+    assert set(before["diagnostic_sha256"]) == capture.ALLOWED
+    capture.Path("scripts/relay_targeted_boundary_capture.py").write_text("changed")
+    dirty.append(True)
+    after = capture.fences()
+    assert before["source_lock_sha256"] == after["source_lock_sha256"]
+    assert before["diagnostic_sha256"] != after["diagnostic_sha256"]
+    assert not before["git_status"] and after["git_status"] and after["baseline_ok"]
