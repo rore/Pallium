@@ -94,7 +94,13 @@ def install_guard(work: Path, repo: Path, sdk1: Path) -> list:
             if flags & (os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_APPEND):
                 require(Path(path).resolve().is_relative_to(work), event, path)
         elif event in {"os.mkdir", "os.remove", "os.rmdir", "os.chmod", "os.utime", "os.truncate"}:
-            require(Path(args[0]).resolve().is_relative_to(work), event, args[0])
+            path = args[0]
+            if isinstance(path, int):
+                try:
+                    path = Path(f"/proc/self/fd/{path}").resolve(strict=True)
+                except (OSError, RuntimeError, ValueError):
+                    require(False, event, args[0])
+            require(Path(path).resolve().is_relative_to(work), event, args[0])
         elif event in {"os.rename", "os.link", "os.symlink"}:
             require(all(Path(p).resolve().is_relative_to(work) for p in args[:2]), event)
         elif event in {"socket.connect", "socket.bind"}:
