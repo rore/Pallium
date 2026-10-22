@@ -137,14 +137,14 @@ def test_context_exact_claim_ack_and_response_loss_are_idempotent(client):
 def test_expired_claim_lease_can_be_recovered_through_context(client, monkeypatch):
     import storage.sqlite_relay as sqlite_relay
 
+    real_now = sqlite_relay._now
+    clock = [datetime.now(timezone.utc)]
+    monkeypatch.setattr(sqlite_relay, "_now", lambda value=None: real_now(value) if value is not None else clock[0])
     base = _setup(client)
     _send(client, base)
     wake = _wake(client, base, "poll").json()["wake"]
     snap = _snapshot(base, wake)
     first = _wake(client, base, "context", **snap).json()["deliveries"][0]
-    real_now = sqlite_relay._now
-    clock = [datetime.now(timezone.utc)]
-    monkeypatch.setattr(sqlite_relay, "_now", lambda value=None: real_now(value) if value is not None else clock[0])
     for _ in range(4):
         clock[0] += timedelta(seconds=14)
         polled = _wake(client, base, "poll")
