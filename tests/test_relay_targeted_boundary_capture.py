@@ -5,6 +5,7 @@ from contextlib import contextmanager
 import io
 import inspect
 import json
+import shutil
 from types import SimpleNamespace
 
 import pytest
@@ -446,20 +447,24 @@ def test_exited_root_unresolved_stream_drain_is_incomplete_without_signal(tmp_pa
     assert {"descendant_stream_drain", "drain_incomplete"}.issubset(result["reasons"])
 
 
-def fake_owned_run(tmp_path, monkeypatch, *, failure, process, launches=None):
+def fake_owned_run(tmp_path, monkeypatch, *, failure, process, launches=None, harness_only=False):
     private = tmp_path / "private"
     private.mkdir()
     @contextmanager
     def temporary(**kwargs):
         if launches is not None:
             launches.append(("temporary", kwargs))
-        yield str(private)
+        try:
+            yield str(private)
+        finally:
+            if failure != "root_left_behind":
+                shutil.rmtree(private)
     monkeypatch.setattr(capture, "tempfile", SimpleNamespace(TemporaryDirectory=temporary))
     monkeypatch.setattr(capture, "sys", SimpleNamespace(platform="linux", version_info=(3, 12),
                                                        executable="fake-python", version="fake"))
     monkeypatch.setattr(capture, "importlib", SimpleNamespace(metadata=SimpleNamespace(distributions=lambda: [])))
     monkeypatch.setattr(capture, "signal", SimpleNamespace(SIGTERM=15, SIGKILL=9))
-    monkeypatch.setattr(capture, "os", SimpleNamespace(environ={}, mkfifo=lambda *args: None,
+    monkeypatch.setattr(capture, "os", SimpleNamespace(environ={capture.OUTPUT_ENV: "inherited-output"}, mkfifo=lambda *args: None,
         open=lambda *args: 42, fdopen=lambda *args, **kwargs: io.BytesIO(),
         O_RDONLY=1, O_WRONLY=2, O_NONBLOCK=4))
     def popen(command, **kwargs):
@@ -479,15 +484,58 @@ def fake_owned_run(tmp_path, monkeypatch, *, failure, process, launches=None):
         return before
     monkeypatch.setattr(capture, "fences", fence)
     def collect(process, streams, output, **kwargs):
+        if launches is not None:
+            launches.append(("collect", kwargs))
         if failure == "collection":
             raise OSError("partial collection")
         (output / "observation.json").write_text('{"complete": true}')
-        if failure != "stat":
+        if harness_only:
+            suite = capture.ET.Element("testsuite", tests="38", errors="0", failures="0", skipped="0")
+            for module, names in capture.HARNESS_INVENTORY.items():
+                for name in names:
+                    capture.ET.SubElement(suite, "testcase", classname=module, name=name)
+            cases = list(suite)
+            if failure == "xml_duplicate":
+                cases[-1].attrib.update(cases[0].attrib)
+            if failure == "xml_wrong":
+                cases[0].set("name", "unexpected_test")
+            if failure == "xml_missing_case":
+                suite.remove(cases[0])
+                suite.set("tests", "37")
+            if failure == "xml_declared":
+                suite.set("tests", "37")
+            if failure in {"failure", "error", "skipped"}:
+                capture.ET.SubElement(cases[0], failure)
+                suite.set({"failure": "failures", "error": "errors", "skipped": "skipped"}[failure], "1")
+            report = capture.ET.Element("testsuites")
+            report.append(suite)
+            if failure != "xml_missing":
+                capture.ET.ElementTree(report).write(output / "native-junit.xml")
+            receipt = {"installed": True, "restored": True, "observation_complete": True,
+                       "socket": {"bound_closed_removed": True, "native_path_bytes": 99,
+                                  "modeled_linux_path_bytes": 100}}
+            if failure == "receipt_invalid":
+                receipt["installed"] = 1
+            if failure == "socket_missing":
+                receipt.pop("socket")
+            if failure == "socket_unbound":
+                receipt["socket"]["bound_closed_removed"] = False
+            for scenario, key, value in [("native_overmax", "native_path_bytes", 101),
+                                         ("modeled_overmax", "modeled_linux_path_bytes", 101),
+                                         ("native_zero", "native_path_bytes", 0),
+                                         ("modeled_negative", "modeled_linux_path_bytes", -1),
+                                         ("native_boolean", "native_path_bytes", True)]:
+                if failure == scenario:
+                    receipt["socket"][key] = value
+            if failure != "receipt_missing":
+                (output / "fixture.json").write_text(json.dumps(receipt))
+        elif failure != "stat":
             (output / "native-junit.xml").write_text("native")
-        return {"native_exit": process.returncode, "reasons": [], "owned_settled": True}
+        return {"native_exit": process.returncode, "reasons": [], "owned_settled": failure != "owned_unsettled"}
     monkeypatch.setattr(capture, "collect", collect)
     output = tmp_path / "output"
-    assert capture.run(output) == 1
+    expected = 0 if harness_only and failure is None and process.returncode == 0 else 1
+    assert capture.run(output, harness_only=harness_only) == expected
     return json.loads((output / "runner.json").read_text())
 
 
@@ -504,6 +552,38 @@ def test_owned_run_passes_short_private_basetemp_to_actual_launch_command(tmp_pa
     assert command[command.index("tests/"):command.index("tests/") + 3] == ["tests/", "-x", "-q"]
     assert capture.Path(options["env"]["TMPDIR"]).parent == capture.Path(base).parent
     assert options["start_new_session"] is True
+    assert launches[2][1]["wall"] == 1200
+    assert result["mode"] == "full" and result["private_root_removed"]
+    scenarios = [None, "xml_missing", "xml_duplicate", "xml_wrong", "xml_missing_case", "xml_declared",
+                 "failure", "error", "skipped", "receipt_missing", "receipt_invalid", "socket_missing",
+                 "socket_unbound", "native_overmax", "modeled_overmax", "native_zero", "modeled_negative",
+                 "native_boolean", "root_left_behind", "owned_unsettled", "nonzero"]
+    for index, scenario in enumerate(scenarios):
+        case = tmp_path / f"harness-{index}"
+        case.mkdir()
+        launches = []
+        exit_code = 7 if scenario == "nonzero" else 0
+        process = SimpleNamespace(pid=4321, returncode=exit_code, poll=lambda: exit_code,
+                                  stdout=io.BytesIO(), stderr=io.BytesIO())
+        result = fake_owned_run(case, monkeypatch, failure=scenario, process=process,
+                                launches=launches, harness_only=True)
+        assert launches[0] == ("temporary", {"prefix": "p"})
+        _, command, options = launches[1]
+        assert command[3:5] == ["tests/test_relay_targeted_boundary_capture.py",
+                                "tests/test_relay_targeted_boundary_fixture.py"]
+        assert command[5:11] == ["-q", "-n", "0", "-o", "addopts=", "--durations=20"]
+        assert "tests/" not in command and "-p" not in command
+        assert not any("test_agent_relay_hooks" in part for part in command)
+        base = case / "private" / "p" / "popen-gw3"
+        assert f"--basetemp={base}" in command
+        assert capture.OUTPUT_ENV not in options["env"]
+        assert options["env"]["PALLIUM_HARNESS_EVIDENCE"] == str(case / "output" / "fixture.json")
+        assert launches[2][1]["wall"] == 300
+        assert result["mode"] == "harness_only" and result["native_exit"] == exit_code
+        assert result["complete"] is (scenario is None)
+        assert result["private_root_removed"] is (scenario != "root_left_behind")
+        if scenario is None:
+            assert result["native_all_normal"] and result["fixture_socket_receipts_valid"]
 
 
 @pytest.mark.parametrize("failure", ["fence", "stat", "mutation"])

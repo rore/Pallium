@@ -21,6 +21,7 @@ import sys
 import tempfile
 import time
 from types import MemberDescriptorType
+import xml.etree.ElementTree as ET
 
 import pytest
 
@@ -38,6 +39,50 @@ REQUEST = ContextVar("boundary_request", default=None)
 STAGES = {"asgi_entry", "route_entry", "acquire_start", "acquire_end"}
 NATIVE_FIELDS = {"submitted", "entered", "returned", "await_finished", "delay_entered",
                  "delay_finished", "send_finished", "status", "thread_id"}
+HARNESS_INVENTORY = {
+    "tests.test_relay_targeted_boundary_capture": """
+test_acquire_delegates_once_preserves_borrower_result_and_exception[None]
+test_acquire_delegates_once_preserves_borrower_result_and_exception[failure1]
+test_acquire_delegates_once_preserves_borrower_result_and_exception[failure2]
+test_recorder_uncorrelated_caps_and_clock_fault_are_contained
+test_actual_dependant_callable_and_transport_are_wrapped_and_restored
+test_partial_install_can_restore_independently
+test_slotted_dependant_restores_saved_value_with_inherited_method_control[False]
+test_slotted_dependant_restores_saved_value_with_inherited_method_control[True]
+test_unsupported_descriptor_is_rejected_before_mutation
+test_slotted_class_guard_preserves_delegate_and_inherited_restoration[None-False]
+test_slotted_class_guard_preserves_delegate_and_inherited_restoration[None-True]
+test_slotted_class_guard_preserves_delegate_and_inherited_restoration[failure1-False]
+test_slotted_class_guard_preserves_delegate_and_inherited_restoration[failure1-True]
+test_slotted_class_guard_preserves_delegate_and_inherited_restoration[failure2-False]
+test_slotted_class_guard_preserves_delegate_and_inherited_restoration[failure2-True]
+test_slotted_class_partial_restore_and_foreign_replacement_conflict[False]
+test_slotted_class_partial_restore_and_foreign_replacement_conflict[True]
+test_real_selected_and_unrelated_anyio_limiters_preserve_native_contract
+test_native_teardown_precedes_restoration_and_write
+test_non_target_fixture_does_not_resolve_client
+test_native_sanitization_retains_only_allowed_scalars
+test_closure_provenance_is_exact
+test_recover_exact_owned_limiter_chain_with_fake_instances
+test_json_cap_and_observer_fault_do_not_change_delegate_result
+test_exited_root_stream_cap_preserves_native_exit_without_signal
+test_owned_timeout_terminates_then_kills_and_bounds_unsettled_drain
+test_normal_exit_drains_without_signal_and_closes_fifo_keeper_once
+test_exited_root_unresolved_stream_drain_is_incomplete_without_signal
+test_owned_run_passes_short_private_basetemp_to_actual_launch_command
+test_post_success_tooling_failure_or_mutation_preserves_exit_without_signaling[fence]
+test_post_success_tooling_failure_or_mutation_preserves_exit_without_signaling[stat]
+test_post_success_tooling_failure_or_mutation_preserves_exit_without_signaling[mutation]
+test_partial_collection_exception_terminates_and_bounded_waits_owned_exit
+test_dirty_checkout_blocks_before_child_launch
+test_fences_hash_all_diagnostic_paths_and_retain_dirty_status
+""".split(),
+    "tests.test_relay_targeted_boundary_fixture": """
+test_actual_private_fixture_installs_correlates_and_restores
+test_short_private_worker_path_binds_longest_existing_unix_socket_fixture
+test_default_install_partial_real_fixture_restores_effective_route_and_limiter
+""".split(),
+}
 
 
 class Recorder:
@@ -376,13 +421,41 @@ def collect(process, streams, output, *, wall=1200, term=10, drain=5,
             "owned_settled": settled}
 
 
-def run(output):
+def harness_evidence(output):
+    expected = {(module, name) for module, names in HARNESS_INVENTORY.items() for name in names}
+    report = ET.parse(output / "native-junit.xml").getroot()
+    suites = report.findall("testsuite")
+    cases = report.findall(".//testcase")
+    identities = [(case.get("classname"), case.get("name")) for case in cases]
+    normal = (report.tag == "testsuites" and len(suites) == 1
+              and int(suites[0].get("tests", "-1")) == 38
+              and all(int(suites[0].get(key, "-1")) == 0 for key in ("failures", "errors", "skipped"))
+              and len(cases) == len(set(identities)) == len(expected) == 38
+              and set(identities) == expected
+              and not any(report.findall(".//" + tag) for tag in ("failure", "error", "skipped")))
+    path = output / "fixture.json"
+    if path.stat().st_size > JSON_LIMIT:
+        raise ValueError("fixture evidence cap")
+    receipt = json.loads(path.read_text(encoding="utf-8"))
+    socket = receipt.get("socket", {})
+    witnessed = (all(receipt.get(key) is True for key in ("installed", "restored", "observation_complete"))
+                 and socket.get("bound_closed_removed") is True
+                 and all(type(socket.get(key)) is int and 0 < socket[key] <= 100
+                         for key in ("native_path_bytes", "modeled_linux_path_bytes")))
+    return normal, witnessed
+
+
+def run(output, *, harness_only=False):
     if sys.platform != "linux" or sys.version_info[:2] != (3, 12):
         raise ValueError("capture requires Linux Python 3.12")
     output = output.absolute()
     output.mkdir(mode=0o700, parents=False, exist_ok=False)
-    result = {"complete": False, "native_exit": None, "reasons": []}
+    result = {"complete": False, "native_exit": None, "reasons": [],
+              "mode": "harness_only" if harness_only else "full", "private_root_removed": None}
+    if harness_only:
+        result.update(native_all_normal=False, fixture_socket_receipts_valid=False)
     process = None
+    root = None
     try:
         before = fences()
         result["before"] = before
@@ -400,6 +473,10 @@ def run(output):
                 directory.mkdir()
                 env[key] = str(directory)
             env.update({OUTPUT_ENV: str(output), "PYTHONNOUSERSITE": "1", "PYTHONDONTWRITEBYTECODE": "1"})
+            if harness_only:
+                env.pop(OUTPUT_ENV, None)
+                env["PALLIUM_HARNESS_EVIDENCE"] = str(output / "fixture.json")
+                (root / "p").mkdir()
             fifo = root / "native-junit.fifo"
             os.mkfifo(fifo, 0o600)
             # Keep a writer until the owned child exits, then expose EOF to the drain.
@@ -407,6 +484,12 @@ def run(output):
             writer = os.open(fifo, os.O_WRONLY | os.O_NONBLOCK)
             command = [sys.executable, "-m", "pytest", "-p", "scripts.relay_targeted_boundary_capture",
                        "tests/", "-x", "-q", f"--basetemp={root / 'p'}", f"--junitxml={fifo}"]
+            if harness_only:
+                command = [sys.executable, "-m", "pytest",
+                           "tests/test_relay_targeted_boundary_capture.py",
+                           "tests/test_relay_targeted_boundary_fixture.py",
+                           "-q", "-n", "0", "-o", "addopts=", "--durations=20",
+                           f"--basetemp={root / 'p' / 'popen-gw3'}", f"--junitxml={fifo}"]
             result["command"] = command[:-1] + ["--junitxml=<private-fifo>"]
             try:
                 with os.fdopen(reader, "rb", buffering=0) as junit, os.fdopen(writer, "wb", buffering=0) as keeper:
@@ -414,7 +497,8 @@ def run(output):
                                                start_new_session=True)
                     # The collection loop closes the idempotent keeper on child exit.
                     result.update(collect(process, {"stdout.log": process.stdout, "stderr.log": process.stderr,
-                                                    "native-junit.xml": junit}, output, fifo_writer=keeper))
+                                                    "native-junit.xml": junit}, output, fifo_writer=keeper,
+                                          wall=300 if harness_only else 1200))
             finally:
                 if process is not None:
                     try:
@@ -425,12 +509,21 @@ def run(output):
             result["after"] = fences()
             if before != result["after"]:
                 result["reasons"].append("source_fence_changed")
-        try:
-            observed = json.loads((output / "observation.json").read_text(encoding="utf-8"))
-            if not observed.get("complete"):
-                result["reasons"].append("observation_incomplete")
-        except Exception:
-            result["reasons"].append("target_missing_or_observation_unreadable")
+        if harness_only:
+            result["native_all_normal"], result["fixture_socket_receipts_valid"] = harness_evidence(output)
+            if not result["native_all_normal"] or result["native_exit"] != 0:
+                result["reasons"].append("native_harness_incomplete")
+            if not result["fixture_socket_receipts_valid"]:
+                result["reasons"].append("fixture_socket_evidence_incomplete")
+            if not result.get("owned_settled"):
+                result["reasons"].append("owned_process_unsettled")
+        else:
+            try:
+                observed = json.loads((output / "observation.json").read_text(encoding="utf-8"))
+                if not observed.get("complete"):
+                    result["reasons"].append("observation_incomplete")
+            except Exception:
+                result["reasons"].append("target_missing_or_observation_unreadable")
         if not (output / "native-junit.xml").stat().st_size:
             result["reasons"].append("junit_missing")
         result["complete"] = not result["reasons"]
@@ -438,6 +531,11 @@ def run(output):
         result["reasons"].append("tooling_failure:" + type(exc).__name__)
         if process is not None:
             result["native_exit"] = process.returncode
+    finally:
+        result["private_root_removed"] = root is None or not root.exists()
+        if not result["private_root_removed"]:
+            result["complete"] = False
+            result["reasons"].append("private_root_not_removed")
     encoded = json.dumps(result, indent=2).encode()
     if len(encoded) > RESERVE:
         encoded = json.dumps({"complete": False, "native_exit": result["native_exit"],
@@ -448,7 +546,9 @@ def run(output):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--run", action="store_true", required=True)
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--run", action="store_true")
+    mode.add_argument("--harness-only", action="store_true")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    raise SystemExit(run(args.output))
+    raise SystemExit(run(args.output, harness_only=args.harness_only))
