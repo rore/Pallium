@@ -43,7 +43,7 @@ Private installation paths, configuration, credentials and runtime receipts stay
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Blocked
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -60,4 +60,10 @@ Private online rehearsal copies of both databases passed full integrity checks, 
 
 ## Result review
 
-Pending local transition and verification. Blocked only for the actual technical plan, private preflight and any uncovered scope decisions; not waiting on generic reliability diagnosis.
+Service-only independent result GO by /root/hermes_route_review after read-only inspection of actual installed HEAD/diff, stopped backup and transition receipts, wrapper terminal result, post-start process/interpreter provenance and all three readiness bodies. No remaining service-result finding. Profile installation and actual Hermes Relay/History verification remain pending the two profile-specific human decisions; shared reliability diagnosis is not a gate.
+
+Service update completed at exact reviewed merged revision5d1679364d8404601b0be14216746d2b8fe2f286. Before changing source, the supported wrapper stopped the service and a verified stopped raw/config snapshot plus integrity-checked standalone database pair were retained. The explicit original skill-refresh recovery stash remains available; all70raw files and94clean-filter-equivalent stat-only files have byte-verified backups. Fast-forward preserved the seven reviewed existing overlays, with no staged content or production-source diff. Other integration configuration hashes and installed runtime configuration remain unchanged.
+
+Native PowerShell7.6.5 restart wrapper completed with exit0. Post-start listener/process-chain and installed-interpreter source mapping point to the stable installed checkout. Health reports ready/initialized/embedding/vector ready; status reports ingestionok; queue diagnostics show no pending, unclaimable, leased or recent failed items. No snapshot was restored over resumed writes. An earlier stop attempt under legacy PowerShell did not complete, and a source-transition precondition first refused a whitespace-parsed status row before any file/index/source mutation; corrected native/raw-byte procedures passed. Failed-attempt evidence remains private.
+
+Hermes host and selected profile remain unchanged. Remaining profile gates are the deliberate fixed private History scope and safe host quiescence; no permission is inferred to close an active host with unsaved work. No provider/model calls, host upgrades or dependency installations were performed. The manager received the stable-service interval for coordinated acceptance. Relay failed closed because this resumed context lacks injected scope; the authorized app-message fallback was used without inferring service failure.
