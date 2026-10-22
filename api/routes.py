@@ -23,6 +23,7 @@ from api.schemas import (
     RelayReplyRequest,
     RelaySendRequest,
     RelaySessionCloseRequest,
+    RelaySessionCloseIfCurrentRequest,
     RelaySessionWorkRefsResponse,
     RelayWorkRefAttachResponse,
     RelayWorkRefDetachResponse,
@@ -826,6 +827,8 @@ def create_router(
             request_data.pop("claim_expires_at_ms")
         relay_request = dict(request_data)
         relay_request["exact_delivery_id"] = relay_request.pop("wake_delivery_id", None)
+        if not request.guarded_lifecycle:
+            relay_request.pop("guarded_lifecycle")
         reservation = None
         try:
             if request.runtime == "codex" and request.wake_delivery_id is not None:
@@ -935,6 +938,15 @@ def create_router(
     @router.post("/relay/sessions/close", response_model=RelaySessionResponse)
     async def relay_close_session(request: RelaySessionCloseRequest):
         return await _with_relay_activation(await _relay_call("close_session", lambda: _relay().close_session(**request.model_dump())))
+
+    @router.post("/relay/sessions/close-if-current", response_model=RelaySessionResponse)
+    async def relay_close_session_if_current(request: RelaySessionCloseIfCurrentRequest):
+        return await _with_relay_activation(await _relay_call(
+            "close_session_if_current",
+            lambda: _relay().close_session(
+                **request.model_dump(), require_guarded_lifecycle=True,
+            ),
+        ))
 
     @router.post("/relay/opencode/wake", response_model=RelayOpenCodeWakeResponse)
     async def opencode_wake(request: RelayOpenCodeWakeRequest):

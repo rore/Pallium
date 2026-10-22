@@ -202,6 +202,7 @@ class RelayService:
         max_response_chars: int = 0,
         max_messages: int = RELAY_TURN_MAX_MESSAGES,
         register_session: bool = True,
+        guarded_lifecycle: bool = False,
         structural_work_refs: Any = None,
         exact_delivery_id: str | None = None,
         claim_expires_at_ms: int | None = None,
@@ -213,6 +214,10 @@ class RelayService:
         now: datetime | None = None,
     ) -> dict[str, Any]:
         container = self._scope(container_ref)
+        if type(guarded_lifecycle) is not bool:
+            raise ValueError("guarded_lifecycle must be a boolean")
+        if guarded_lifecycle and not register_session:
+            raise ValueError("guarded_lifecycle requires session registration")
         if max_chars < 0:
             raise ValueError("max_chars must be >= 0 (0 = no limit)")
         if max_response_chars < 0:
@@ -255,6 +260,11 @@ class RelayService:
             value is not None for value in transition
         ):
             raise ValueError("Relay scope transition fields are required together")
+        if previous_scope_generation is not None and (
+            type(previous_scope_generation) is not int
+            or not 0 <= previous_scope_generation <= 2**63 - 1
+        ):
+            raise ValueError("invalid previous_scope_generation")
         if previous_container_ref is not None:
             previous_container_ref = self._scope(previous_container_ref)
             previous_endpoint_id = _opaque(previous_endpoint_id, "previous_endpoint_id")
@@ -277,6 +287,7 @@ class RelayService:
             previous_container_ref=previous_container_ref,
             previous_endpoint_id=previous_endpoint_id,
             previous_scope_generation=previous_scope_generation,
+            **({"guarded_lifecycle": True} if guarded_lifecycle else {}),
             now=now,
         )
         if structural_work_refs is None:
@@ -528,8 +539,12 @@ class RelayService:
             "offset": offset,
             "limit": limit,
         }
-    def close_session(self, **scope: Any) -> dict[str, Any]:
+    def close_session(
+        self, *, require_guarded_lifecycle: bool = False, **scope: Any,
+    ) -> dict[str, Any]:
         container = self._scope(scope["container_ref"])
+        if type(require_guarded_lifecycle) is not bool:
+            raise ValueError("require_guarded_lifecycle must be a boolean")
         endpoint, generation = scope.get("expected_endpoint_id"), scope.get("expected_scope_generation")
         if (endpoint is None) != (generation is None):
             raise ValueError("expected_endpoint_id and expected_scope_generation are required together")
@@ -540,11 +555,14 @@ class RelayService:
             if type(generation) is not int or not 0 <= generation <= 2**63 - 1:
                 raise ValueError("invalid expected_scope_generation")
             guards = {"expected_endpoint_id": endpoint, "expected_scope_generation": generation}
+        if require_guarded_lifecycle and endpoint is None:
+            raise ValueError("a current endpoint snapshot is required")
         return self._store.relay_close_session(
             runtime=validate_runtime(scope["runtime"]),
             session_ref=_opaque(scope["session_ref"], "session_ref"),
             container_ref=container,
             **guards,
+            **({"require_guarded_lifecycle": True} if require_guarded_lifecycle else {}),
         )
 
     def list_sessions(

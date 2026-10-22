@@ -147,7 +147,10 @@ def _expiry_iso(value: datetime) -> str | None:
     return None if _now(value) == _DURABLE_EXPIRY else _iso(value)
 
 
-def _session_view(row: RelaySessionRecord, now: datetime, recent_seconds: int, scope_generation: int = 0) -> dict[str, Any]:
+def _session_view(
+    row: RelaySessionRecord, now: datetime, recent_seconds: int,
+    scope_generation: int = 0, guarded_lifecycle: bool = False,
+) -> dict[str, Any]:
     if row.state == "closed":
         lifecycle = "closed"
     else:
@@ -166,6 +169,7 @@ def _session_view(row: RelaySessionRecord, now: datetime, recent_seconds: int, s
         "last_seen_at": _iso(row.last_seen_at),
         "closed_at": _iso(row.closed_at),
         "scope_generation": scope_generation,
+        "guarded_lifecycle": bool(guarded_lifecycle),
     }
 
 
@@ -1378,6 +1382,7 @@ class SQLiteRelayMixin:
         return _session_view(
             row, now, recent_seconds,
             int(generation.generation) if generation is not None else 0,
+            bool(generation.guarded_lifecycle) if generation is not None else False,
         )
 
     @staticmethod
@@ -1453,11 +1458,16 @@ class SQLiteRelayMixin:
         opencode_wake: dict[str, Any] | None = None,
         max_response_chars: int = 0,
         register_session: bool = True,
+        guarded_lifecycle: bool = False,
         previous_container_ref: str | None = None,
         previous_endpoint_id: str | None = None,
         previous_scope_generation: int | None = None,
         now: datetime | None = None,
     ) -> dict[str, Any]:
+        if type(guarded_lifecycle) is not bool:
+            raise ValueError("guarded_lifecycle must be a boolean")
+        if guarded_lifecycle and not register_session:
+            raise RelayConflictError("guarded lifecycle requires session registration")
         if not register_session and any(
             value is not None
             for value in (previous_container_ref, previous_endpoint_id, previous_scope_generation)
@@ -1533,6 +1543,11 @@ class SQLiteRelayMixin:
             ).one_or_none()
             registered, generation_row = current_scope if current_scope is not None else (None, None)
             generation = int(generation_row.generation) if generation_row is not None else 0
+            if previous_scope_generation is not None and (
+                type(previous_scope_generation) is not int
+                or not 0 <= previous_scope_generation <= 2**63 - 1
+            ):
+                raise RelayConflictError("invalid Relay scope generation")
             if previous_container_ref is not None:
                 if previous_endpoint_id is None or previous_scope_generation is None:
                     raise RelayConflictError("incomplete Relay scope transition")
@@ -1543,6 +1558,8 @@ class SQLiteRelayMixin:
                     if registered is None or registered.state not in {"active", "unreachable"} or registered.id != previous_endpoint_id or generation != previous_scope_generation:
                         raise RelayConflictError("stale or invalid Relay scope transition")
                 elif registered is not None:
+                    if previous_scope_generation == 2**63 - 1:
+                        raise RelayConflictError("Relay endpoint generation exhausted")
                     if registered.state != "active" or registered.id != previous_endpoint_id or generation != previous_scope_generation + 1:
                         raise RelayConflictError("Relay scope destination is occupied or stale")
                     if source is not None:
@@ -1555,10 +1572,15 @@ class SQLiteRelayMixin:
                         raise RelayConflictError("Relay transition source is not active")
                     if generation != previous_scope_generation:
                         raise RelayConflictError("stale Relay scope generation")
+                    if generation >= 2**63 - 1:
+                        raise RelayConflictError("Relay endpoint generation exhausted")
                     source.container_ref = container_ref
                     generation = previous_scope_generation + 1
                     if generation_row is None:
-                        db.add(RelayEndpointGenerationRecord(endpoint_id=source.id, generation=generation))
+                        generation_row = RelayEndpointGenerationRecord(
+                            endpoint_id=source.id, generation=generation,
+                        )
+                        db.add(generation_row)
                     else:
                         generation_row.generation = generation
                     registered = source
@@ -1582,6 +1604,11 @@ class SQLiteRelayMixin:
                 )
                 db.add(registered)
                 db.flush()
+                if guarded_lifecycle:
+                    generation_row = RelayEndpointGenerationRecord(
+                        endpoint_id=registered.id, generation=0, guarded_lifecycle=1,
+                    )
+                    db.add(generation_row)
             else:
                 if not register_session and registered.state != "active":
                     return finalize({
@@ -1591,16 +1618,33 @@ class SQLiteRelayMixin:
                         "remaining_count": 0,
                     })
                 if register_session:
-                    if registered.state == "closed":
-                        incarnation = db.get(RelayEndpointGenerationRecord, registered.id)
+                    incarnation = generation_row
+                    opted_in = guarded_lifecycle or bool(
+                        incarnation is not None and incarnation.guarded_lifecycle
+                    )
+                    if registered.state == "closed" and opted_in:
                         previous_generation = incarnation.generation if incarnation is not None else 0
                         if previous_generation >= 2**63 - 1:
                             raise RelayConflictError("Relay endpoint generation exhausted")
                         generation = previous_generation + 1
                         if incarnation is None:
-                            db.add(RelayEndpointGenerationRecord(endpoint_id=registered.id, generation=generation))
+                            incarnation = RelayEndpointGenerationRecord(
+                                endpoint_id=registered.id, generation=generation,
+                                guarded_lifecycle=1,
+                            )
+                            db.add(incarnation)
                         else:
                             incarnation.generation = generation
+                    if guarded_lifecycle:
+                        if incarnation is None:
+                            incarnation = RelayEndpointGenerationRecord(
+                                endpoint_id=registered.id, generation=generation,
+                                guarded_lifecycle=1,
+                            )
+                            db.add(incarnation)
+                        else:
+                            incarnation.guarded_lifecycle = 1
+                    generation_row = incarnation
                     registered.state = "active"
                     registered.closed_at = None
                     registered.last_seen_at = current
@@ -1646,7 +1690,10 @@ class SQLiteRelayMixin:
                 eligible_query = eligible_query.options(defer(RelayMessageRecord.payload)).execution_options(yield_per=16)
             else:
                 eligible_query = eligible_query.where(RelayDeliveryRecord.id == exact_delivery_id)
-            session_view = _session_view(registered, current, 24 * 60 * 60, generation)
+            session_view = _session_view(
+                registered, current, 24 * 60 * 60, generation,
+                bool(generation_row.guarded_lifecycle) if generation_row is not None else False,
+            )
             selected: list[tuple[RelayDeliveryRecord, RelayMessageRecord, dict[str, Any], int, str]] = []
             used = 0
 
@@ -1944,6 +1991,7 @@ class SQLiteRelayMixin:
             return _session_view(
                 session, _now(now), recent_seconds,
                 int(generation.generation) if generation is not None else 0,
+                bool(generation.guarded_lifecycle) if generation is not None else False,
             )
 
     def relay_work_ref_participant_counts(
@@ -2062,6 +2110,7 @@ class SQLiteRelayMixin:
         container_ref: str,
         expected_endpoint_id: str | None = None,
         expected_scope_generation: int | None = None,
+        require_guarded_lifecycle: bool = False,
     ) -> dict[str, Any]:
         current = _now()
         with self._begin_relay_immediate() as db:
@@ -2077,6 +2126,12 @@ class SQLiteRelayMixin:
                 current_generation = generation.generation if generation is not None else 0
                 if row.id != expected_endpoint_id or current_generation != expected_scope_generation:
                     raise RelayConflictError("Relay close snapshot is stale")
+                if require_guarded_lifecycle and not (
+                    generation is not None and generation.guarded_lifecycle
+                ):
+                    raise RelayConflictError("Relay endpoint does not use guarded lifecycle")
+            elif require_guarded_lifecycle:
+                raise RelayConflictError("Relay close snapshot is required")
             row.state = "closed"
             row.closed_at = current
             if runtime == "opencode":

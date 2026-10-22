@@ -477,7 +477,7 @@ def test_bulk_delete_is_profile_scoped_and_uncertain_close_survives_reload(clien
     attempts = []
 
     def fail_close(base, method, path, **kwargs):
-        if path == "/relay/sessions/close":
+        if path == "/relay/sessions/close-if-current":
             attempts.append(kwargs["body"])
             if kwargs["body"]["session_ref"] == "one":
                 raise TimeoutError("close response unknown")
@@ -494,6 +494,53 @@ def test_bulk_delete_is_profile_scoped_and_uncertain_close_survives_reload(clien
     assert len(attempts) == 2  # No unguarded close retry or lifecycle reset.
 
 
+
+
+def test_missing_persisted_opt_in_witness_refuses_before_capture(client, project_plugin, tmp_path, monkeypatch):
+    module, ctx, pre, _create, _calls, _settings = project_plugin
+    a = _repo(tmp_path, "old-service")
+    http = module._json_request
+    turns, captures = [], []
+
+    def omit_witness(base, method, path, **kwargs):
+        if path == "/relay/turn":
+            turns.append(kwargs["body"])
+            result = http(base, method, path, **kwargs)
+            result["session"].pop("guarded_lifecycle", None)
+            return result
+        if path in {"/item-and-query", "/items"}:
+            captures.append(path)
+        return http(base, method, path, **kwargs)
+
+    monkeypatch.setattr(module, "_json_request", omit_witness)
+    assert pre(str(a), turn="old-service", message="must not capture") is None
+    assert len(turns) == 1 and turns[0]["guarded_lifecycle"] is True
+    assert captures == []
+
+
+def test_missing_conditional_close_route_keeps_reload_fence_without_legacy_fallback(
+    client, project_plugin, tmp_path, monkeypatch,
+):
+    module, ctx, pre, create, _calls, _settings = project_plugin
+    a = _repo(tmp_path, "missing-close-route")
+    assert pre(str(a), turn="before-close")
+    attempts = []
+    http = module._json_request
+
+    def old_service(base, method, path, **kwargs):
+        if path in {"/relay/sessions/close-if-current", "/relay/sessions/close"}:
+            attempts.append(path)
+            if path == "/relay/sessions/close-if-current":
+                raise HTTPError(base + path, 404, "route missing", {}, None)
+        return http(base, method, path, **kwargs)
+
+    monkeypatch.setattr(module, "_json_request", old_service)
+    ctx.hooks["on_session_finalize"](session_id="session")
+    assert attempts == ["/relay/sessions/close-if-current"]
+    assert _sessions(client, _project("missing-close-route"))[0]["state"] == "recent"
+    reloaded = create(ctx.state)
+    assert pre(str(a), turn="after-reload", context=reloaded) is None
+    assert attempts == ["/relay/sessions/close-if-current"]
 def test_close_callback_started_during_transition_cannot_close_successor(client, project_plugin, tmp_path, monkeypatch):
     module, ctx, pre, _create, _calls, _settings = project_plugin
     a, b = _repo(tmp_path, "a"), _repo(tmp_path, "b")
@@ -512,7 +559,7 @@ def test_close_callback_started_during_transition_cannot_close_successor(client,
         if path == "/relay/turn" and kwargs.get("body", {}).get("container_ref") == _project("b"):
             entered.set()
             assert release.wait(5)
-        if path == "/relay/sessions/close":
+        if path == "/relay/sessions/close-if-current":
             closes.append(kwargs["body"])
         return http(base, method, path, **kwargs)
 
@@ -604,7 +651,7 @@ def test_finalize_after_reload_defers_until_inflight_operation_finishes(client, 
         return result
 
     def observe(base, method, path, **kwargs):
-        if path == "/relay/sessions/close":
+        if path == "/relay/sessions/close-if-current":
             assert completed.is_set()
             closes.append(kwargs["body"])
         return http(base, method, path, **kwargs)

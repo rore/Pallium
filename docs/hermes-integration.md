@@ -114,6 +114,11 @@ they do not authorize overwriting an unowned file.
 
 <a id="compatibility-and-limits"></a>
 
+- Automatic project scope also requires a Pallium service that confirms guarded
+  session enrollment and supports conditional session closure. If that capability
+  is missing, admission is refused before History capture; there is no fallback to
+  fixed scope or unconditional closure. Update the service through its normal
+  installation procedure before using automatic mode.
 - Automatic project scope requires public `session_cwd` and `session_surface`
   capabilities. Source inspection confirms these APIs in v0.22.3; the complete
   automatic-mode native Desktop/TUI matrix is still pending. Admission uses

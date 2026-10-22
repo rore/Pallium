@@ -339,6 +339,7 @@ def register(ctx):
 
     def active(session, session_id, endpoint, scoped_container=None):
         return (isinstance(session, dict) and session.get("runtime") == RUNTIME
+                and (not automatic or session.get("guarded_lifecycle") is True)
                 and session.get("session_ref") == session_id
                 and session.get("container_ref") == (scoped_container if automatic else container)
                 and session.get("endpoint_id") == endpoint and session.get("state") == "recent"
@@ -464,6 +465,7 @@ def register(ctx):
                         or rows[0].get("container_ref") != saved["container_ref"]
                         or rows[0].get("endpoint_id") != saved["endpoint_id"]
                         or rows[0].get("scope_generation") != saved["scope_generation"]
+                        or rows[0].get("guarded_lifecycle") is not True
                         or rows[0].get("state") not in ({"closed"} if resuming else {"recent", "dormant"})
                         or (not resuming and rows[0].get("destination_health") != "active")):
                     return None
@@ -480,6 +482,7 @@ def register(ctx):
                     "runtime": RUNTIME, "session_ref": session_id,
                     "container_ref": candidate["container_ref"],
                     "max_chars": 1, "max_response_chars": 1, "max_messages": 1,
+                    "guarded_lifecycle": True,
                     "structural_work_refs": candidate.get("work_refs", []), **transition,
                 })
             except HTTPError as exc:
@@ -487,6 +490,8 @@ def register(ctx):
                     state.set(key("transition", session_id), None)
                 raise
             session = result.get("session") if isinstance(result, dict) else None
+            if isinstance(session, dict) and session.get("guarded_lifecycle") is not True:
+                LOG.warning("Pallium service did not confirm guarded lifecycle; update the service before using automatic project scope")
             if (not isinstance(session, dict) or not _text(session.get("endpoint_id"), 128)
                     or type(session.get("scope_generation")) is not int
                     or session["scope_generation"] < 0
@@ -1260,7 +1265,7 @@ def register(ctx):
                 attempt = {"version": 1, "state": "closing", "scope": record}
                 state.set(key("lifecycle", identifier), attempt)
                 try:
-                    result = _json_request(base, "POST", "/relay/sessions/close", body={
+                    result = _json_request(base, "POST", "/relay/sessions/close-if-current", body={
                         "runtime": RUNTIME, "session_ref": identifier,
                         "container_ref": record["container_ref"],
                         "expected_endpoint_id": record["endpoint_id"],

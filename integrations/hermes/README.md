@@ -30,6 +30,10 @@ for a comparison with other hosts. This page is the package command reference.
 - Use a running local Pallium service. Normal setup requires public
   `session_cwd` and `session_surface` APIs and derives project/actor from the exact
   session's local cwd. Private visibility is the default and only accepted value.
+- The service must confirm guarded lifecycle enrollment and support conditional
+  closure for automatic mode. An older service is refused before capture; the
+  plugin never falls back to an unconditional close. Update the service using its
+  normal installation procedure; profile setup does not upgrade it.
 - Keep the Pallium checkout at a stable path; the bridge configuration contains
   absolute interpreter and checkout paths.
 
