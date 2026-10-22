@@ -365,10 +365,31 @@ def host(args):
                         "query_visibility": "private", "before": 1, "after": 1})
             assert sum(row["content"] == initial_results[0]["marker"] for row in raw["items"]) == 1
             receipt["http"].append({"history_context": raw})
+        a_source_ids = {row["source_item_id"] for row in raw["items"]}
+        a_content = (initial_results[0]["marker"], "completed 漢字 initial-a")
         with session("b", "reader-b", "tui"):
             pre("reader-b", "search-b", "search unrelated project")
-            absent = tool("pallium_search_history", {"query": initial_results[0]["marker"], "limit": 10}, "reader-b", "search-b")
-            assert absent["results"] == [], absent
+            scoped = tool("pallium_search_history", {"query": initial_results[0]["marker"], "limit": 10}, "reader-b", "search-b")
+            # Related B hits are valid; the privacy boundary is A's IDs/content.
+            assert a_source_ids.isdisjoint(row["source_item_id"] for row in scoped["results"]), scoped
+            assert all(text not in json.dumps(scoped, ensure_ascii=False) for text in a_content)
+            for hit in scoped["results"]:
+                context = http(args.base, "/source/" + hit["source_item_id"] + "/context",
+                    {"container_ref": PROJECTS["b"], "query_actor_ref": "actor-b",
+                     "query_visibility": "private", "parent_lookup_id": scoped["lookup_event_id"]})
+                assert a_source_ids.isdisjoint(row["source_item_id"] for row in context["items"]), context
+                assert all(text not in json.dumps(context, ensure_ascii=False) for text in a_content)
+                receipt["http"].append({"project_b_history_context": context})
+            refused = tool("pallium_expand_source", {"source_item_id": found["results"][0]["source_item_id"],
+                "parent_lookup_id": scoped["lookup_event_id"]}, "reader-b", "search-b", error=True)
+            assert all(text not in json.dumps(refused, ensure_ascii=False) for text in a_content)
+            own = tool("pallium_search_history", {"query": initial_results[1]["marker"], "role": "user", "limit": 10}, "reader-b", "search-b")
+            b_hit = next(row for row in own["results"] if initial_results[1]["marker"] in row["excerpt"])
+            expanded_b = tool("pallium_expand_source", {"source_item_id": b_hit["source_item_id"],
+                "parent_lookup_id": own["lookup_event_id"]}, "reader-b", "search-b")
+            assert initial_results[1]["marker"] in json.dumps(expanded_b, ensure_ascii=False)
+            assert a_source_ids.isdisjoint(row["source_item_id"] for row in expanded_b["items"]), expanded_b
+            assert all(text not in json.dumps(expanded_b, ensure_ascii=False) for text in a_content)
         receipt["checks"].append("real History search/expand, completion dedup and project isolation")
         # End each old turn before following a three-project chain.
         manager.invoke_hook("on_session_end", session_id="reader-a", turn_id="search-a")
