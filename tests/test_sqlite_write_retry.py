@@ -192,6 +192,127 @@ class TestImmediateTransactionRetry:
         finally:
             storage.close()
 
+    @pytest.mark.parametrize(
+        ("deadline", "elapsed", "refused"),
+        [(None, .44, False), (None, .45, False), (None, .46, False),
+         (.45, .44, False), (.45, .45, True), (.45, .46, True)],
+        ids=["unbounded-before", "unbounded-exact", "unbounded-over",
+             "bounded-before", "bounded-exact", "bounded-over"],
+    )
+    def test_setup_pragma_deadline_before_begin_and_fresh_acquisition(
+        self, storage, monkeypatch, deadline, elapsed, refused,
+    ):
+        from storage import sqlite_queue
+
+        clock, sessions, bodies = [0.0], [], []
+        native_monotonic = time.monotonic
+        monkeypatch.setattr(sqlite_queue, "time", SimpleNamespace(
+            **{**vars(time), "monotonic": lambda: clock[0]},
+        ))
+
+        def factory():
+            session, connection = MagicMock(), MagicMock()
+            session.connection.return_value = connection
+            def execute(statement):
+                if len(sessions) == 1 and str(statement) == "PRAGMA busy_timeout=100":
+                    clock[0] = elapsed
+            connection.execute.side_effect = execute
+            sessions.append((session, connection))
+            return session
+
+        if refused:
+            with pytest.raises(ImmediateTransactionBusyError) as refusal:
+                with storage._begin_immediate_for(factory, acquisition_deadline=deadline):
+                    bodies.append("first")
+            assert refusal.value.acquisition_stage == "setup_deadline"
+        else:
+            with storage._begin_immediate_for(factory, acquisition_deadline=deadline):
+                bodies.append("first")
+
+        assert len(sessions) == 1
+        first, connection = sessions[0]
+        statements = [str(call.args[0]) for call in connection.execute.call_args_list]
+        assert statements.count("BEGIN IMMEDIATE") == (0 if refused else 1)
+        assert statements.count("COMMIT") == (0 if refused else 1)
+        assert "ROLLBACK" not in statements
+        assert first.flush.call_count == (0 if refused else 1)
+        assert first.close.call_count == 1 and statements[-1] == "PRAGMA busy_timeout=15000"
+        assert bodies == ([] if refused else ["first"])
+
+        clock[0] = 1.0
+        with storage._begin_immediate_for(
+            factory, acquisition_deadline=None if deadline is None else 1.45,
+        ) as active:
+            bodies.append("fresh")
+            assert active is sessions[1][0] and active is not first
+        fresh, connection = sessions[1]
+        statements = [str(call.args[0]) for call in connection.execute.call_args_list]
+        assert statements.count("BEGIN IMMEDIATE") == statements.count("COMMIT") == 1
+        assert "ROLLBACK" not in statements
+        assert fresh.flush.call_count == fresh.close.call_count == 1
+        assert statements[-1] == "PRAGMA busy_timeout=15000"
+        assert bodies == (["fresh"] if refused else ["first", "fresh"])
+        assert time.monotonic is native_monotonic and sqlite_queue.time.sleep is time.sleep
+
+    @pytest.mark.parametrize("elapsed", [.44, .45, .46], ids=["before", "exact", "over"])
+    def test_relay_setup_pragma_deadline_http_refusal_and_fresh_registration(
+        self, client, monkeypatch, elapsed,
+    ):
+        from sqlalchemy import event
+        from storage import sqlite_queue
+
+        storage = client.app.state.pallium_service._storage
+        clock, statements, checked_in, armed = [0.0], [], [], [True]
+        native_monotonic = time.monotonic
+        monkeypatch.setattr(sqlite_queue, "time", SimpleNamespace(
+            **{**vars(time), "monotonic": lambda: clock[0]},
+        ))
+
+        def observe(_conn, _cursor, statement, _params, _context, _many):
+            statements.append(statement)
+            if armed[0] and statement == f"PRAGMA busy_timeout={storage._RELAY_IMMEDIATE_BUSY_TIMEOUT_MS}":
+                armed[0] = False
+                clock[0] = elapsed
+
+        def checkin(_connection, _record):
+            checked_in.append(1)
+
+        engine = storage._relay_engine
+        event.listen(engine, "before_cursor_execute", observe)
+        event.listen(engine, "checkin", checkin)
+        scope = "git:example.test/deadline-Δ"
+        body = {"runtime": "claude-code", "session_ref": "first-שלום", "container_ref": scope}
+        refused = elapsed >= .45
+        try:
+            response = client.post("/relay/turn", json=body)
+            assert response.status_code == (503 if refused else 200), response.text
+            if refused:
+                assert response.json() == {"detail": {"code": "relay_busy", "retryable": True}}
+                assert "BEGIN IMMEDIATE" not in statements and "COMMIT" not in statements
+                assert "ROLLBACK" not in statements
+            else:
+                assert "BEGIN IMMEDIATE" in statements and "COMMIT" in statements
+            assert not armed[0] and checked_in
+            assert statements[-1] == "PRAGMA busy_timeout=15000"
+            assert not storage._relay_writer_lock.locked()
+            listed = client.get("/relay/sessions", params={"container_ref": scope})
+            assert listed.status_code == 200, listed.text
+            assert {item["session_ref"] for item in listed.json()} == (set() if refused else {"first-שלום"})
+
+            clock[0] = 1.0
+            response = client.post("/relay/turn", json={**body, "session_ref": "fresh-你好"})
+            assert response.status_code == 200, response.text
+            assert not storage._relay_writer_lock.locked()
+            listed = client.get("/relay/sessions", params={"container_ref": scope})
+            assert listed.status_code == 200, listed.text
+            assert {item["session_ref"] for item in listed.json()} == (
+                {"fresh-你好"} if refused else {"first-שלום", "fresh-你好"}
+            )
+            assert time.monotonic is native_monotonic and sqlite_queue.time.sleep is time.sleep
+        finally:
+            event.remove(engine, "before_cursor_execute", observe)
+            event.remove(engine, "checkin", checkin)
+
     def test_relay_native_wait_uses_remaining_local_acquisition_budget(self, storage, monkeypatch):
         from storage import sqlite_queue
         clock = [0.0]

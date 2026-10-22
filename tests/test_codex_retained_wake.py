@@ -1021,7 +1021,7 @@ def recover(journey, *, hook_completed=None):
 
 def _observe_transition_attempts(journey, monkeypatch, operation, *, force_refusal=False):
     """Observe one journey's bounded transition; recovery stays explicit in its test."""
-    assert operation in {"release", "retry", "retry_target", "begin_native_attempt"}
+    assert operation in {"release", "retry", "retry_target", "begin_native_attempt", "reserve"}
     relay = journey[1]
     original = relay.codex_wake_transition
     attempts = []
@@ -1030,7 +1030,8 @@ def _observe_transition_attempts(journey, monkeypatch, operation, *, force_refus
         if actual_operation != operation:
             return original(actual_operation, **kwargs)
         attempt = {"reservation": kwargs.get("reservation"),
-                   "reservations": kwargs.get("reservations", ())}
+                   "reservations": kwargs.get("reservations", ()),
+                   "values": kwargs.get("values")}
         attempts.append(attempt)
         try:
             if force_refusal and len(attempts) == 1:
@@ -1039,7 +1040,8 @@ def _observe_transition_attempts(journey, monkeypatch, operation, *, force_refus
                     "controlled transition refusal",
                     acquisition_stage={"release": "setup_deadline",
                                        "retry": "late_begin", "retry_target": "late_begin",
-                                       "begin_native_attempt": "retry_exhausted"}[operation],
+                                       "begin_native_attempt": "retry_exhausted",
+                                       "reserve": "retry_exhausted"}[operation],
                 )
             result = original(actual_operation, **kwargs)
         except Exception as error:

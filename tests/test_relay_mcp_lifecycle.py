@@ -10,7 +10,12 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
+
+from api.routes import create_router
+from core.relay import RelayService
+from storage.sqlite import SQLiteStorageProvider
 
 SCOPE = {"container_ref": "git:example.test/relay-mcp"}
 RUNTIME = "claude-code"
@@ -78,6 +83,25 @@ def _reply(client: TestClient, delivery_id: str, receipt: str = "bogus-receipt",
 @pytest.fixture
 def relay_storage(client: TestClient):
     return client.app.state.pallium_service._storage
+
+
+@pytest.fixture(params=[False, True], ids=["co-located", "separate-relay-db"])
+def receipt_http(request, client: TestClient, tmp_path):
+    service = client.app.state.pallium_service
+    main_url = f"sqlite:///{tmp_path / 'receipt-main.db'}"
+    relay_url = f"sqlite:///{tmp_path / 'receipt-relay.db'}" if request.param else None
+    relay_storage = SQLiteStorageProvider(main_url, relay_database_url=relay_url)
+    request.addfinalizer(relay_storage.close)
+    assert (relay_storage._engine is relay_storage._relay_engine) is (relay_url is None)
+    callbacks = []
+    app = FastAPI()
+    app.include_router(create_router(
+        service, relay_service=RelayService(relay_storage),
+        relay_ack_callback=lambda result, scope: callbacks.append((result, scope)),
+    ))
+    http = TestClient(app)
+    request.addfinalizer(http.close)
+    yield http, relay_storage, callbacks
 
 
 # ── cases ──────────────────────────────────────────────────────────────────────
@@ -750,3 +774,444 @@ def test_atomic_reply_failure_rolls_back_delivery_claim(client: TestClient, rela
         ).scalar_one_or_none()
     assert stored_delivery.state == "claimed"
     assert reply is None
+
+
+@pytest.mark.parametrize("null_claim_token", [False, True])
+def test_delivered_invalid_receipt_is_rejected_while_sqlite_writer_is_held(
+    receipt_http, null_claim_token: bool, monkeypatch: pytest.MonkeyPatch,
+):
+    client, relay_storage, callbacks = receipt_http
+    _register(client)
+    message = _send(client, "terminal receipt")
+    delivery = _turn(client)["deliveries"][0]
+    assert _mcp_ack(client, delivery["delivery_id"], delivery["receipt"]).status_code == 200
+    callbacks.clear()
+    if null_claim_token:
+        from storage.sqlite_schema import RelayDeliveryRecord
+
+        with relay_storage._begin_relay_immediate() as db:
+            db.get(RelayDeliveryRecord, delivery["delivery_id"]).claim_token = None
+
+    writer_calls = []
+    begin = relay_storage._begin_relay_immediate
+
+    def observe_writer():
+        writer_calls.append(True)
+        return begin()
+
+    monkeypatch.setattr(relay_storage, "_begin_relay_immediate", observe_writer)
+    receipt = "wrong-receipt" if not null_claim_token else delivery["receipt"]
+    with relay_storage._relay_engine.connect() as lock:
+        lock.exec_driver_sql("BEGIN IMMEDIATE")
+        response = _mcp_ack(
+            client, delivery["delivery_id"], receipt,
+            container_ref="git:other/receipt-scope",
+        )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "receipt does not match delivered claim"
+    assert callbacks == []
+    assert writer_calls == []
+    status = client.get(f"/relay/messages/{message['message_id']}", params=SCOPE)
+    assert status.status_code == 200
+    row = status.json()["deliveries"][0]
+    assert tuple(row[key] for key in (
+        "delivery_id", "state", "attempts", "recipient_endpoint_id",
+        "recipient_runtime", "recipient_session_ref", "recipient_container_ref",
+    )) == (
+        delivery["delivery_id"], "delivered", 1, delivery["recipient_endpoint_id"],
+        delivery["recipient_runtime"], delivery["recipient_session_ref"],
+        delivery["recipient_container_ref"],
+    )
+
+
+@pytest.mark.parametrize("delivered", [False, True])
+def test_valid_receipt_still_enters_writer_and_preserves_refusal(
+    receipt_http, delivered: bool, monkeypatch: pytest.MonkeyPatch,
+):
+    client, relay_storage, _callbacks = receipt_http
+    _register(client)
+    message = _send(client, "valid receipt")
+    delivery = _turn(client)["deliveries"][0]
+    if delivered:
+        assert _mcp_ack(client, delivery["delivery_id"], delivery["receipt"]).status_code == 200
+
+    from core.errors import ImmediateTransactionBusyError
+
+    events = []
+    track = [False]
+    factory = relay_storage._relay_session_factory
+
+    def tracked_factory():
+        session = factory()
+        if track[0]:
+            track[0] = False
+            close = session.close
+
+            def observe_close():
+                close()
+                events.append("read-close")
+
+            session.close = observe_close
+        return session
+
+    monkeypatch.setattr(relay_storage, "_relay_session_factory", tracked_factory)
+    begin = relay_storage._begin_relay_immediate
+
+    def refuse_writer():
+        events.append("writer")
+        raise ImmediateTransactionBusyError("database is locked (immediate transaction retry exhausted)")
+
+    monkeypatch.setattr(relay_storage, "_begin_relay_immediate", refuse_writer)
+    track[0] = True
+    response = _mcp_ack(client, delivery["delivery_id"], delivery["receipt"])
+    assert response.status_code == 503
+    assert response.json() == {"detail": {"code": "relay_busy", "retryable": True}}
+    assert response.headers["Retry-After"] == "1"
+    assert events == ["read-close", "writer"]
+    monkeypatch.setattr(relay_storage, "_begin_relay_immediate", begin)
+    track[0] = False
+    succeeded = _mcp_ack(
+        client, delivery["delivery_id"], delivery["receipt"],
+        **({"container_ref": "git:other/receipt-scope"} if delivered else {}),
+    )
+    assert succeeded.status_code == 200
+    assert set(succeeded.json()) == {"delivery_id", "state", "delivered_at", "already_delivered"}
+    assert succeeded.json()["delivery_id"] == delivery["delivery_id"]
+    assert succeeded.json()["state"] == "delivered"
+    assert succeeded.json()["delivered_at"] is not None
+    assert succeeded.json()["already_delivered"] is delivered
+    status = client.get(f"/relay/messages/{message['message_id']}", params=SCOPE)
+    assert status.status_code == 200
+    row = status.json()["deliveries"][0]
+    assert (row["delivery_id"], row["state"], row["attempts"]) == (
+        delivery["delivery_id"], "delivered", 1,
+    )
+    if delivered:
+        assert _turn(client)["deliveries"] == []
+
+
+@pytest.mark.parametrize("release_before_error", [False, True])
+@pytest.mark.parametrize("invalidate_fails", [False, True])
+def test_read_close_failure_salvages_independently_and_stops_before_writer(
+    receipt_http, monkeypatch: pytest.MonkeyPatch,
+    release_before_error: bool, invalidate_fails: bool,
+):
+    client, relay_storage, _callbacks = receipt_http
+    _register(client)
+    _send(client, "close failure")
+    delivery = _turn(client)["deliveries"][0]
+    assert _mcp_ack(client, delivery["delivery_id"], delivery["receipt"]).status_code == 200
+    factory = relay_storage._relay_session_factory
+    events = []
+    close_error = RuntimeError("read close failed")
+
+    def failing_factory():
+        session = factory()
+        connection = session.connection()
+        close_session = session.close
+        close_connection = connection.close
+        invalidate_connection = connection.invalidate
+        invalidate_session = session.invalidate
+
+        def fail_close():
+            events.append("session-close")
+            if release_before_error:
+                close_session()
+            raise close_error
+
+        def fail_invalidate():
+            events.append("connection-invalidate")
+            if invalidate_fails:
+                raise RuntimeError("salvage invalidate failed")
+            invalidate_connection()
+
+        def observe_connection_close():
+            events.append("connection-close")
+            close_connection()
+
+        def observe_session_invalidate():
+            events.append("session-invalidate")
+            invalidate_session()
+
+        session.close = fail_close
+        connection.invalidate = fail_invalidate
+        connection.close = observe_connection_close
+        session.invalidate = observe_session_invalidate
+        return session
+
+    monkeypatch.setattr(relay_storage, "_relay_session_factory", failing_factory)
+
+    def forbidden_writer():
+        events.append("writer")
+        raise AssertionError("writer entered after read close failed")
+
+    monkeypatch.setattr(relay_storage, "_begin_relay_immediate", forbidden_writer)
+    with pytest.raises(RuntimeError) as raised:
+        _mcp_ack(client, delivery["delivery_id"], "wrong-receipt")
+    assert raised.value is close_error
+    expected_events = (["session-close", "connection-close"] if release_before_error else ["session-close"]) + [
+        "connection-invalidate", "connection-close", "session-invalidate",
+    ]
+    if not release_before_error:
+        expected_events.append("connection-invalidate")
+    assert events == expected_events
+
+
+@pytest.mark.parametrize("uncertainty", ["read", "compare", "nonascii", "corrupt"])
+def test_preflight_uncertainty_closes_read_then_uses_original_writer(
+    receipt_http, monkeypatch: pytest.MonkeyPatch, uncertainty: str,
+):
+    client, relay_storage, _callbacks = receipt_http
+    _register(client)
+    _send(client, "uncertain preflight")
+    delivery = _turn(client)["deliveries"][0]
+    assert _mcp_ack(client, delivery["delivery_id"], delivery["receipt"]).status_code == 200
+    if uncertainty == "corrupt":
+        from storage.sqlite_schema import RelayDeliveryRecord
+
+        with relay_storage._begin_relay_immediate() as db:
+            db.get(RelayDeliveryRecord, delivery["delivery_id"]).claim_token = b"corrupt-token"
+    events = []
+    factory = relay_storage._relay_session_factory
+    begin = relay_storage._begin_relay_immediate
+    preflight_session = [True]
+
+    def failing_factory():
+        session = factory()
+        if preflight_session[0]:
+            preflight_session[0] = False
+            close = session.close
+
+            def observe_close():
+                close()
+                events.append("read-close")
+
+            session.close = observe_close
+            if uncertainty == "read":
+                session.execute = lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                    RuntimeError("preflight read failed")
+                )
+        return session
+
+    monkeypatch.setattr(relay_storage, "_relay_session_factory", failing_factory)
+    if uncertainty == "compare":
+        import storage.sqlite_relay as sqlite_relay
+
+        monkeypatch.setattr(
+            sqlite_relay.hmac, "compare_digest",
+            lambda *_args: (_ for _ in ()).throw(RuntimeError("comparison failed")),
+        )
+
+    from core.errors import ImmediateTransactionBusyError
+
+    def refuse_writer():
+        events.append("writer")
+        raise ImmediateTransactionBusyError("database is locked (immediate transaction retry exhausted)")
+
+    if uncertainty in {"nonascii", "corrupt"}:
+        def enter_writer():
+            events.append("writer")
+            return begin()
+
+        monkeypatch.setattr(relay_storage, "_begin_relay_immediate", enter_writer)
+        expected = TypeError if uncertainty == "nonascii" else AttributeError
+        with pytest.raises(expected):
+            _mcp_ack(client, delivery["delivery_id"], "wrong-✓" if uncertainty == "nonascii" else "receipt")
+    else:
+        monkeypatch.setattr(relay_storage, "_begin_relay_immediate", refuse_writer)
+        response = _mcp_ack(client, delivery["delivery_id"], "wrong receipt")
+        assert response.status_code == 503
+    assert events == ["read-close", "writer"]
+
+
+def test_terminal_invalid_receipt_after_separate_provider_reopen(
+    client: TestClient, tmp_path,
+):
+    service = client.app.state.pallium_service
+    main_url = f"sqlite:///{tmp_path / 'reopened-main.db'}"
+    relay_url = f"sqlite:///{tmp_path / 'reopened-relay.db'}"
+    provider = SQLiteStorageProvider(main_url, relay_database_url=relay_url)
+    try:
+        first_app = FastAPI()
+        first_app.include_router(create_router(service, relay_service=RelayService(provider)))
+        with TestClient(first_app) as first:
+            _register(first)
+            message = _send(first, "reopen terminal")
+            delivery = _turn(first)["deliveries"][0]
+            assert _mcp_ack(first, delivery["delivery_id"], delivery["receipt"]).status_code == 200
+    finally:
+        provider.close()
+
+    reopened = SQLiteStorageProvider(main_url, relay_database_url=relay_url)
+    try:
+        second_app = FastAPI()
+        second_app.include_router(create_router(service, relay_service=RelayService(reopened)))
+        with TestClient(second_app) as second:
+            response = _mcp_ack(second, delivery["delivery_id"], "wrong-after-reopen")
+            assert response.status_code == 409
+            assert response.json()["detail"] == "receipt does not match delivered claim"
+            status = second.get(f"/relay/messages/{message['message_id']}", params=SCOPE)
+            assert status.status_code == 200
+            row = status.json()["deliveries"][0]
+            assert (row["delivery_id"], row["state"], row["attempts"]) == (
+                delivery["delivery_id"], "delivered", 1,
+            )
+    finally:
+        reopened.close()
+
+
+@pytest.mark.parametrize("interleaving", ["reclaim", "expiry", "competing-ack"])
+def test_writer_revalidates_after_preflight_snapshot(
+    receipt_http, monkeypatch: pytest.MonkeyPatch, interleaving: str,
+):
+    client, relay_storage, _callbacks = receipt_http
+    _register(client)
+    message = _send(client, f"interleaving {interleaving}")
+    delivery = _turn(client)["deliveries"][0]
+    events = []
+    active = [False]
+    new_claim = [None]
+    factory = relay_storage._relay_session_factory
+    begin = relay_storage._begin_relay_immediate
+
+    def tracked_factory():
+        session = factory()
+        if active[0]:
+            active[0] = False
+            close = session.close
+
+            def observe_close():
+                close()
+                events.append("read-close")
+
+            session.close = observe_close
+        return session
+
+    monkeypatch.setattr(relay_storage, "_relay_session_factory", tracked_factory)
+
+    def interleave_then_begin():
+        from storage.sqlite_schema import RelayMessageRecord
+
+        assert events == ["read-close"]
+        active[0] = False
+        if interleaving == "competing-ack":
+            monkeypatch.setattr(relay_storage, "_begin_relay_immediate", begin)
+            relay_storage.relay_ack(
+                delivery_id=delivery["delivery_id"], claim_token=delivery["claim_token"],
+                container_ref=SCOPE["container_ref"],
+            )
+            monkeypatch.setattr(relay_storage, "_begin_relay_immediate", interleave_then_begin)
+        elif interleaving == "reclaim":
+            from storage.sqlite_schema import RelayDeliveryRecord
+
+            with begin() as db:
+                db.get(RelayDeliveryRecord, delivery["delivery_id"]).lease_expires_at = (
+                    datetime.now(timezone.utc) - timedelta(seconds=1)
+                )
+            monkeypatch.setattr(relay_storage, "_begin_relay_immediate", begin)
+            new_claim[0] = _turn(client)["deliveries"][0]
+            assert new_claim[0]["receipt"] != delivery["receipt"]
+            monkeypatch.setattr(relay_storage, "_begin_relay_immediate", interleave_then_begin)
+        else:
+            with begin() as db:
+                db.get(RelayMessageRecord, message["message_id"]).expires_at = (
+                    datetime.now(timezone.utc) - timedelta(seconds=1)
+                )
+        events.append("interleaved")
+        events.append("writer")
+        return begin()
+
+    monkeypatch.setattr(relay_storage, "_begin_relay_immediate", interleave_then_begin)
+    active[0] = True
+    try:
+        response = _mcp_ack(client, delivery["delivery_id"], delivery["receipt"])
+        assert events == ["read-close", "interleaved", "writer"]
+        if interleaving == "competing-ack":
+            assert response.status_code == 200
+            assert response.json()["already_delivered"] is True
+            expected = "delivered"
+        else:
+            assert response.status_code == 409
+            expected = "claimed" if interleaving == "reclaim" else "expired"
+    finally:
+        active[0] = False
+        monkeypatch.setattr(relay_storage, "_begin_relay_immediate", begin)
+        monkeypatch.setattr(relay_storage, "_relay_session_factory", factory)
+    status = client.get(f"/relay/messages/{message['message_id']}", params=SCOPE)
+    assert status.status_code == 200
+    row = status.json()["deliveries"][0]
+    assert (row["delivery_id"], row["state"]) == (delivery["delivery_id"], expected)
+    if interleaving == "reclaim":
+        assert row["attempts"] == 2
+        assert row["receipt"] == new_claim[0]["receipt"]
+
+
+@pytest.mark.parametrize(
+    ("state", "expected_status", "expected_detail"),
+    [
+        ("pending", 409, "delivery is not in claimed state"),
+        ("claimed-live", 409, "receipt does not match current claim"),
+        ("claimed", 409, "claim lease has expired"),
+        ("expired", 409, "delivery is not in claimed state"),
+        ("suppressed", 409, "delivery is not in claimed state"),
+        ("missing", 404, "relay entity not found in the requested scope"),
+        ("orphan", 404, "relay entity not found in the requested scope"),
+        ("claimed-null-token", 409, "receipt does not match current claim"),
+    ],
+)
+def test_nonterminal_and_missing_rows_reach_original_writer(
+    receipt_http, state: str, expected_status: int, expected_detail: str,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    client, relay_storage, _callbacks = receipt_http
+    _register(client)
+    if state == "missing":
+        delivery_id, receipt, message_id = "no-such-delivery", "anything", None
+    else:
+        message = _send(client, f"admission {state}")
+        delivery = message["deliveries"][0]
+        delivery_id, receipt, message_id = delivery["delivery_id"], "wrong-receipt", message["message_id"]
+        if state != "pending":
+            delivery = _turn(client)["deliveries"][0]
+            receipt = delivery["receipt"]
+        if state == "claimed-live":
+            receipt = "wrong-receipt"
+        if state in {"expired", "suppressed", "claimed-null-token", "orphan"}:
+            from storage.sqlite_schema import RelayDeliveryRecord
+
+            with relay_storage._begin_relay_immediate() as db:
+                stored = db.get(RelayDeliveryRecord, delivery_id)
+                if state == "expired":
+                    stored.state = "expired"
+                    stored.claim_token = None
+                elif state == "suppressed":
+                    stored.state = "suppressed"
+                    stored.claim_token = None
+                elif state == "claimed-null-token":
+                    stored.claim_token = None
+                else:
+                    stored.message_id = "orphaned-parent"
+        elif state == "claimed":
+            from storage.sqlite_schema import RelayDeliveryRecord
+
+            with relay_storage._begin_relay_immediate() as db:
+                db.get(RelayDeliveryRecord, delivery_id).lease_expires_at = (
+                    datetime.now(timezone.utc) - timedelta(seconds=1)
+                )
+
+    begin = relay_storage._begin_relay_immediate
+    events = []
+
+    def observe_writer():
+        events.append("writer")
+        return begin()
+
+    monkeypatch.setattr(relay_storage, "_begin_relay_immediate", observe_writer)
+    response = _mcp_ack(client, delivery_id, receipt)
+    assert (response.status_code, response.json()["detail"]) == (expected_status, expected_detail)
+    assert events == ["writer"]
+    if message_id is not None and state != "orphan":
+        status = client.get(f"/relay/messages/{message_id}", params=SCOPE)
+        assert status.status_code == 200
+        assert status.json()["deliveries"][0]["delivery_id"] == delivery_id

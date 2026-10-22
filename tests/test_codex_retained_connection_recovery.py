@@ -431,11 +431,40 @@ def test_reconnect_catalog_timeout_preserves_authority_for_next_recovery(http_wa
 @pytest.mark.parametrize("initial_fault", ["timeout", "native-failure"])
 @pytest.mark.parametrize("change", ["source", "epoch", "server", "schema", "unresolved"])
 def test_reopen_denies_changed_registration_authority(
-        http_wake, retained, monkeypatch, change, initial_fault):
+        http_wake, retained, monkeypatch, change, initial_fault, force_refusal=False,
+        force_release_refusal=False):
     from app import codex_bridge_pipe as bridge
+    from tests.test_codex_retained_wake import _observe_transition_attempts, _single_typed_transition_refusal
 
-    http, service, _, natives = _defer_on_state_timeout(
-        http_wake, retained, bridge, native_failure=initial_fault == "native-failure")
+    assert not (force_refusal and force_release_refusal)
+    with monkeypatch.context() as preparation:
+        release_attempts = _observe_transition_attempts(
+            http_wake, preparation, "release", force_refusal=force_release_refusal,
+        )
+        http, service, _, natives = _defer_on_state_timeout(
+            http_wake, retained, bridge, native_failure=initial_fault == "native-failure")
+    _, _, registry, _, _, _, workers = http_wake
+    delivery = http.get("/relay/messages/retained-journey", params=SCOPE).json()["deliveries"][0]
+    original_registration = service.retained_registration
+    original_fields = dict(original_registration)
+    original_reservations = registry.reservations()
+    relay = http_wake[1]
+    original_relay_initialized, original_relay_snapshot = relay.codex_wake_snapshot()
+    assert original_relay_initialized is True
+    original_natives = tuple(natives)
+    original_handles = tuple(desktop.handle for desktop in natives)
+    original_closed = tuple(desktop.closed for desktop in natives)
+    reopen_entries = []
+    original_reopen = service._reopen_registration
+
+    def observe_reopen():
+        reopen_entries.append(True)
+        return original_reopen()
+
+    monkeypatch.setattr(service, "_reopen_registration", observe_reopen)
+    attempts = _observe_transition_attempts(
+        http_wake, monkeypatch, "reserve", force_refusal=force_refusal,
+    )
     original_connect = bridge._DesktopIO
 
     def reconnect(*args):
@@ -456,13 +485,90 @@ def test_reopen_denies_changed_registration_authority(
     elif change == "schema":
         monkeypatch.setattr(bridge, "_DesktopIO", reconnect)
 
-    recover(http_wake)
+    expected_values = {
+        "recipient_endpoint_id": delivery["recipient_endpoint_id"],
+        "delivery_id": delivery["delivery_id"],
+        "session_ref": TARGET,
+        "container_ref": SCOPE["container_ref"],
+    }
+    resumptions = []
+    if original_reservations:
+        assert not force_refusal
+        assert _single_typed_transition_refusal(release_attempts)
+        retained_reservation, = original_reservations
+        assert release_attempts[0]["reservations"] == (retained_reservation,)
+        assert original_relay_snapshot == (retained_reservation,)
+        assert {key: getattr(retained_reservation, key) for key in expected_values} == expected_values
+        assert type(retained_reservation.generation) is int and 0 < retained_reservation.generation < 2**63
+        assert retained_reservation.outcome == "prepared"
+        assert retained_reservation.correlated_claim_attempts is None
+        assert retained_reservation.retry_not_before is None
+        original_reconcile = registry.reconcile
 
+        def observe_reconcile(reservation):
+            result = original_reconcile(reservation)
+            resumptions.append((reservation, result))
+            return result
+
+        monkeypatch.setattr(registry, "reconcile", observe_reconcile)
+    if force_release_refusal:
+        assert original_reservations
+        assert release_attempts[0].get("forced") is True
+    recover(http_wake)
+    if original_reservations:
+        assert not attempts
+        assert resumptions == [(retained_reservation, ("resume", retained_reservation))]
+    else:
+        assert len(attempts) == 1
+        attempt, = attempts
+        assert attempt.get("values") == expected_values
+        if force_refusal:
+            assert attempt.get("forced") is True
+        selected_attempt = attempt
+        if _single_typed_transition_refusal(attempts):
+            assert attempt.get("acquisition_stage") == "retry_exhausted"
+            assert not reopen_entries
+            assert service.retained_registration is original_registration
+            assert service.retained_registration == original_fields
+            assert registry.reservations() == original_reservations
+            assert relay.codex_wake_snapshot() == (original_relay_initialized, original_relay_snapshot)
+            assert all(not worker.is_alive() for worker in workers)
+            assert tuple(natives) == original_natives
+            assert tuple(desktop.handle for desktop in natives) == original_handles
+            assert tuple(desktop.closed for desktop in natives) == original_closed
+            assert all(desktop.owners == [] for desktop in natives)
+            pending = http.get("/relay/messages/retained-journey", params=SCOPE).json()["deliveries"][0]
+            assert pending["delivery_id"] == delivery["delivery_id"]
+            assert pending["state"] == "pending" and pending["attempts"] == 0
+            recover(http_wake)
+            assert len(attempts) == 2
+            selected_attempt = attempts[1]
+            assert selected_attempt.get("values") == expected_values
+        assert "error_type" not in selected_attempt
+        assert selected_attempt.get("result") is not None
+    assert reopen_entries, "recovery did not enter the original reopen"
     assert service.retained_registration is None
     assert not any(desktop.owners for desktop in natives)
     assert http.get("/relay/messages/retained-journey", params={
         "container_ref": "git:example.test/retained-東京"}).json()["deliveries"][0]["state"] == "pending"
 
+
+@pytest.mark.parametrize("initial_fault", ["timeout", "native-failure"])
+@pytest.mark.parametrize("change", ["source", "epoch", "server", "schema", "unresolved"])
+def test_reopen_denies_changed_authority_after_initial_release_refusal(
+        http_wake, retained, monkeypatch, change, initial_fault):
+    test_reopen_denies_changed_registration_authority(
+        http_wake, retained, monkeypatch, change=change, initial_fault=initial_fault,
+        force_release_refusal=True,
+    )
+
+
+def test_reopen_denies_changed_authority_after_first_reserve_refusal(
+        http_wake, retained, monkeypatch):
+    test_reopen_denies_changed_registration_authority(
+        http_wake, retained, monkeypatch, change="epoch", initial_fault="timeout",
+        force_refusal=True,
+    )
 
 @pytest.mark.parametrize("native_failure", [False, True])
 def test_unresolved_read_cancellation_clears_reopen_authority(http_wake, retained, native_failure):

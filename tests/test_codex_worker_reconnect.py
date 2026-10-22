@@ -1386,6 +1386,7 @@ def test_busy_and_startup_recovery_share_finite_budget(monkeypatch, bound):
 async def test_busy_response_does_not_preserve_changed_or_unresolved_admission(monkeypatch, denial):
     clients, calls = [], []
     admitted_ready, ready_responses = threading.Event(), []
+    recovery_finished, shutdown_released = threading.Event(), []
     proof = "7" * 64
 
     class Native:
@@ -1430,6 +1431,19 @@ async def test_busy_response_does_not_preserve_changed_or_unresolved_admission(m
         def dispose(self):
             self.disposals += 1
 
+    if denial == "service-gone":
+        class ObservedWorker(lifecycle.InventoryWorker):
+            def _finish(self, client, **kwargs):
+                super()._finish(client, **kwargs)
+                if (len(clients) > 1 and client is clients[1]
+                        and client.disposals == 1 and not client.unresolved
+                        and self._restart_allowed):
+                    # Shutdown follows completed cleanup, before another real retry.
+                    recovery_finished.set()
+                    shutdown_released.append(self.stop_event.wait(2))
+
+        monkeypatch.setattr(lifecycle, "InventoryWorker", ObservedWorker)
+
     server = _protocol_server(monkeypatch, Native)
 
     async def exercise(session):
@@ -1447,10 +1461,14 @@ async def test_busy_response_does_not_preserve_changed_or_unresolved_admission(m
         else:
             result = await _actual_status(session, "busy")
         assert not result.isError
-        await asyncio.sleep(.03)
+        if denial == "service-gone":
+            assert await asyncio.to_thread(recovery_finished.wait, 1)
+        else:
+            await asyncio.sleep(.03)
 
     await _serve_protocol(server, exercise)
     if denial == "service-gone":
+        assert shutdown_released == [True]
         assert len(clients) == 2
         assert len(calls) == 3
         assert calls[2] == {"thread_ref": "actual-runtime", "turn_ref": "admitted"}
