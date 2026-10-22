@@ -178,6 +178,8 @@ def test_memory_opt_in_update_and_disable_preserve_profile(tmp_path, monkeypatch
     assert not settings.get("memory_enabled", False)
     assert setup_hermes.main([*args, "--memory-enabled"]) == 0
     assert state["config"]["plugins"]["entries"][PLUGIN]["settings"]["memory_enabled"] is True
+    assert setup_hermes.main(args) == 0
+    assert state["config"]["plugins"]["entries"][PLUGIN]["settings"]["memory_enabled"] is True
     assert setup_hermes.main([*args, "--memory-enabled"]) == 0
     assert setup_hermes.main([*args, "--no-memory-enabled"]) == 0
     assert not state["config"]["plugins"]["entries"][PLUGIN]["settings"].get("memory_enabled", False)
@@ -383,3 +385,42 @@ def test_setup_uses_common_canonical_container_scope(tmp_path, monkeypatch):
     assert setup_hermes.main(args) == 0
     settings = state["config"]["plugins"]["entries"][PLUGIN]["settings"]
     assert settings["container_ref"] == "git:github.com/team/project"
+
+
+def test_normal_setup_uses_session_scope_and_preserves_profile_on_update(tmp_path, monkeypatch):
+    home = tmp_path / "hermes-home"
+    state, _ = _install_fake_hermes(monkeypatch, home)
+    original = copy.deepcopy(state["config"])
+    _, repo = _source(tmp_path, monkeypatch)
+    args = ["--home", str(home), "--hermes-python", sys.executable,
+            "--service-url", SETTINGS["service_url"], "--mcp-repo", str(repo)]
+    assert setup_hermes.main([*args, "--memory-enabled"]) == 0
+    settings = state["config"]["plugins"]["entries"][PLUGIN]["settings"]
+    assert settings["scope_mode"] == "cwd"
+    assert "container_ref" not in settings and "actor_ref" not in settings
+    assert setup_hermes.main(args) == 0
+    assert state["config"]["plugins"]["entries"][PLUGIN]["settings"]["memory_enabled"] is True
+    assert setup_hermes.main([*args, "--no-memory-enabled"]) == 0
+    assert not state["config"]["plugins"]["entries"][PLUGIN]["settings"].get("memory_enabled", False)
+    assert setup_hermes.main(["--home", str(home), "--hermes-python", sys.executable, "--status"]) == 0
+    assert setup_hermes.main(["--home", str(home), "--hermes-python", sys.executable, "--uninstall"]) == 0
+    assert state["config"] == original
+
+
+def test_unsupported_session_scope_fails_before_install_mutation(tmp_path, monkeypatch):
+    home = tmp_path / "hermes-home"
+    state, config_path = _install_fake_hermes(monkeypatch, home)
+    original, raw = copy.deepcopy(state), config_path.read_bytes()
+    _, repo = _source(tmp_path, monkeypatch)
+    original_run = setup_hermes._run_hermes
+
+    def unsupported(python, profile, action, request=None):
+        if action == "validate" and request.get("scope_mode") == "cwd":
+            raise ValueError("hermes_session_cwd_api_required")
+        return original_run(python, profile, action, request)
+
+    monkeypatch.setattr(setup_hermes, "_run_hermes", unsupported)
+    assert setup_hermes.main(["--home", str(home), "--hermes-python", sys.executable,
+                             "--service-url", SETTINGS["service_url"], "--mcp-repo", str(repo)]) == 2
+    assert state == original and config_path.read_bytes() == raw
+    assert not any(p.exists() for p in setup_hermes._profile_paths(home))

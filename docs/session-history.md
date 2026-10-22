@@ -121,12 +121,22 @@ cross-user sharing or authorization system.
 
 Integration catalogs differ. The [Hermes integration](hermes-integration.md)
 always exposes the three search/expansion tools below and captures private
-hook-observed text snapshots. An explicit setup opt-in adds source forgetting
-and the optional derived-memory tool catalog; neither promises automatic memory
-injection. History diagnostics remain unavailable. Completion capture has no
-current `request_source_item_id`. Automatic standalone MCP reconnection remains
-unqualified. See its guide for
-capture limits and provenance.
+hook-observed text snapshots. In normal cwd mode, supported user text is captured
+before inference; confirmed capture can survive interruption. Assistant capture
+requires a completion callback. Source identity describes an observed turn, not
+proof of a durable Hermes message or database commit. Confirmed user capture
+supplies current `request_source_item_id` automatically to History search through
+trusted metadata; callers must not supply or guess it. Eligible branch and Work
+Record origins are discovered from the session project and admitted through Relay.
+
+An explicit setup opt-in adds source forgetting and the optional derived-memory
+tool catalog. Separately, service-selected recall can enter bounded,
+lower-authority context during normal user capture even with memory tools off.
+Semantic packages default to disabled. History diagnostics remain unavailable;
+automatic standalone MCP reconnection remains unqualified. Automatic scope requires public
+session-cwd/session-surface APIs, present in inspected v0.22.3 source; the complete
+native Desktop/TUI matrix is pending. Older v0.22.0/v0.22.2 native receipts apply
+to fixed scope only. See the guide for capture bounds, compatibility and provenance.
 
 - broad topic search across accessible earlier sessions with `pallium_search_history`
 - exact-reference search with `pallium_search_history_by_work_ref`

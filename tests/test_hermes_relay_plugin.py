@@ -189,6 +189,7 @@ def plugin_context(client, monkeypatch):
         "plugins": {"enabled": ["user-plugin", "pallium-hermes-relay"], "entries": {
             "user-plugin": {"settings": {"keep": "value"}},
             "pallium-hermes-relay": {"allow_gateway_injection": True, "settings": {
+                "scope_mode": "fixed",
                 "service_url": "http://127.0.0.1:29999", **SCOPE,
             }},
         }},

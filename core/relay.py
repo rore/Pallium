@@ -530,10 +530,21 @@ class RelayService:
         }
     def close_session(self, **scope: Any) -> dict[str, Any]:
         container = self._scope(scope["container_ref"])
+        endpoint, generation = scope.get("expected_endpoint_id"), scope.get("expected_scope_generation")
+        if (endpoint is None) != (generation is None):
+            raise ValueError("expected_endpoint_id and expected_scope_generation are required together")
+        guards = {}
+        if endpoint is not None:
+            if not isinstance(endpoint, str) or _ENDPOINT_ID_RE.fullmatch(endpoint) is None:
+                raise ValueError("invalid expected_endpoint_id")
+            if type(generation) is not int or not 0 <= generation <= 2**63 - 1:
+                raise ValueError("invalid expected_scope_generation")
+            guards = {"expected_endpoint_id": endpoint, "expected_scope_generation": generation}
         return self._store.relay_close_session(
             runtime=validate_runtime(scope["runtime"]),
             session_ref=_opaque(scope["session_ref"], "session_ref"),
             container_ref=container,
+            **guards,
         )
 
     def list_sessions(

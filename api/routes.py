@@ -22,7 +22,7 @@ from api.schemas import (
     RelayDeliveryTraceResponse,
     RelayReplyRequest,
     RelaySendRequest,
-    RelaySessionMutationRequest,
+    RelaySessionCloseRequest,
     RelaySessionWorkRefsResponse,
     RelayWorkRefAttachResponse,
     RelayWorkRefDetachResponse,
@@ -933,7 +933,7 @@ def create_router(
         )
 
     @router.post("/relay/sessions/close", response_model=RelaySessionResponse)
-    async def relay_close_session(request: RelaySessionMutationRequest):
+    async def relay_close_session(request: RelaySessionCloseRequest):
         return await _with_relay_activation(await _relay_call("close_session", lambda: _relay().close_session(**request.model_dump())))
 
     @router.post("/relay/opencode/wake", response_model=RelayOpenCodeWakeResponse)

@@ -1591,6 +1591,16 @@ class SQLiteRelayMixin:
                         "remaining_count": 0,
                     })
                 if register_session:
+                    if registered.state == "closed":
+                        incarnation = db.get(RelayEndpointGenerationRecord, registered.id)
+                        previous_generation = incarnation.generation if incarnation is not None else 0
+                        if previous_generation >= 2**63 - 1:
+                            raise RelayConflictError("Relay endpoint generation exhausted")
+                        generation = previous_generation + 1
+                        if incarnation is None:
+                            db.add(RelayEndpointGenerationRecord(endpoint_id=registered.id, generation=generation))
+                        else:
+                            incarnation.generation = generation
                     registered.state = "active"
                     registered.closed_at = None
                     registered.last_seen_at = current
@@ -2050,6 +2060,8 @@ class SQLiteRelayMixin:
         runtime: str,
         session_ref: str,
         container_ref: str,
+        expected_endpoint_id: str | None = None,
+        expected_scope_generation: int | None = None,
     ) -> dict[str, Any]:
         current = _now()
         with self._begin_relay_immediate() as db:
@@ -2058,6 +2070,13 @@ class SQLiteRelayMixin:
             )
             if row is None:
                 raise RelayNotFoundError("relay entity not found in the requested scope")
+            if (expected_endpoint_id is None) != (expected_scope_generation is None):
+                raise RelayConflictError("incomplete Relay close snapshot")
+            if expected_endpoint_id is not None:
+                generation = db.get(RelayEndpointGenerationRecord, row.id)
+                current_generation = generation.generation if generation is not None else 0
+                if row.id != expected_endpoint_id or current_generation != expected_scope_generation:
+                    raise RelayConflictError("Relay close snapshot is stale")
             row.state = "closed"
             row.closed_at = current
             if runtime == "opencode":

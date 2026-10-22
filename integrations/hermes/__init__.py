@@ -1,4 +1,4 @@
-"""Experimental Hermes Relay and History adapter using public plugin hooks."""
+"""Hermes Relay and History adapter using public, session-owned plugin hooks."""
 from __future__ import annotations
 
 import hashlib
@@ -10,6 +10,7 @@ import secrets
 import threading
 from typing import Any
 from urllib.parse import urlencode, urlsplit
+from urllib.error import HTTPError
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 LOG = logging.getLogger("pallium.hermes")
@@ -184,16 +185,23 @@ def _require_pallium_config(plugin_id, service_url, container_ref):
             or not isinstance(settings, dict)
             or settings.get("service_url") != service_url or settings.get("container_ref") != container_ref):
         raise ValueError("Hermes Pallium plugin configuration is missing or changed")
+    mode = settings.get("scope_mode")
+    if mode not in {"cwd", "fixed"}:
+        raise ValueError("Hermes Pallium requires scope_mode=cwd; rerun setup for this profile")
+    if mode == "cwd" and container_ref is not None:
+        raise ValueError("Hermes cwd scope must not configure a profile container_ref")
     bridge = tuple(settings.get(key) for key in ("mcp_python", "mcp_repo", "actor_ref", "visibility"))
     memory_enabled = settings.get("memory_enabled", False)
     if type(memory_enabled) is not bool or memory_enabled and bridge[0] is None:
         raise ValueError("Hermes optional memory requires a boolean setting and configured MCP bridge")
     if any(value is not None for value in bridge) and (
-            not all(isinstance(value, str) and value.strip() == value and value for value in bridge)
+            not all(isinstance(value, str) and value.strip() == value and value
+                    for value in (bridge[0], bridge[1], bridge[3]))
             or not Path(bridge[0]).is_absolute() or not Path(bridge[1]).is_absolute()
-            or not _host_id(bridge[2]) or bridge[3] != "private"):
+            or (bridge[2] is not None and not _host_id(bridge[2]))
+            or (mode == "fixed" and not _host_id(bridge[2])) or bridge[3] != "private"):
         raise ValueError("Hermes MCP requires explicit interpreter, checkout, actor and private scope")
-    return (service_url, container_ref, *bridge, memory_enabled)
+    return (service_url, container_ref, *bridge, memory_enabled, mode)
 
 
 def _host_capabilities(ctx):
@@ -228,17 +236,23 @@ def _host_capabilities(ctx):
 
 def register(ctx):
     profile, state = _host_capabilities(ctx)
-    base, container = ctx.get_config("service_url", ""), ctx.get_config("container_ref", "")
+    base, container = ctx.get_config("service_url", ""), ctx.get_config("container_ref", None)
     topology_signature = _require_pallium_config("pallium-hermes-relay", base, container)
+    automatic = topology_signature[7] == "cwd"
+    if automatic:
+        for capability in ("session_cwd", "session_surface"):
+            if not callable(getattr(ctx, capability, None)):
+                raise ValueError(f"Unsupported Hermes plugin capability: {capability}; cwd scope requires the public session API")
     parsed = urlsplit(base if isinstance(base, str) else "")
     if (parsed.scheme != "http" or parsed.hostname not in {"127.0.0.1", "localhost", "::1"}
             or parsed.username or parsed.password or parsed.query or parsed.fragment
-            or not _text(container, 512)):
+            or (not automatic and not _text(container, 512))):
         raise ValueError("Configure an explicit loopback service_url and exact container_ref")
     lock, stop = threading.RLock(), threading.Event()
     reply_identity = contextvars.ContextVar("pallium_hermes_reply_identity", default=None)
     sessions, claims, admitted, observed_requests, ended_turns = {}, {}, {}, {}, {}
     turn_contexts = {}
+    turn_bindings, session_locks = {}, {}
     poller = None
     bridge = None
     if topology_signature[2] is not None:
@@ -264,11 +278,23 @@ def register(ctx):
             return False
 
     def key(kind, session_id):
-        digest = hashlib.sha256((profile + "\0" + container + "\0" + session_id).encode()).hexdigest()
+        digest = hashlib.sha256((profile + "\0" + (container or "cwd:v1") + "\0" + session_id).encode()).hexdigest()
         return f"{kind}:{digest}"
 
     def scope(session_id):
         value = state.get(key("session", session_id))
+        if automatic:
+            if value is None:
+                return None
+            if (not isinstance(value, dict) or value.get("version") != 1
+                    or value.get("service_url") != base or value.get("profile") != profile
+                    or value.get("session_ref") != session_id
+                    or not _text(value.get("container_ref"), 512)
+                    or not _host_id(value.get("actor_ref")) or not _text(value.get("cwd"), 32768)
+                    or not _text(value.get("endpoint_id"), 128)
+                    or type(value.get("scope_generation")) is not int or value["scope_generation"] < 0):
+                raise ValueError("Saved Hermes project scope is invalid; refusing automatic reassignment")
+            return value
         if (isinstance(value, dict) and value.get("profile") == profile
                 and value.get("container_ref") == container and value.get("session_ref") == session_id
                 and _text(value.get("endpoint_id"), 128)):
@@ -277,6 +303,14 @@ def register(ctx):
 
     def wake_scope(session_id):
         value = state.get(key("wake", session_id))
+        if automatic and value is not None:
+            if (not isinstance(value, dict) or value.get("profile") != profile
+                    or value.get("session_ref") != session_id
+                    or not _text(value.get("container_ref"), 512)
+                    or not _text(value.get("endpoint_id"), 128) or not _text(value.get("delivery_id"), 64)
+                    or not _text(value.get("nonce"), 64)):
+                raise ValueError("Saved Hermes wake scope is invalid; refusing to discard its fence")
+            return value
         if (isinstance(value, dict) and value.get("profile") == profile
                 and value.get("container_ref") == container and value.get("session_ref") == session_id
                 and _text(value.get("endpoint_id"), 128) and _text(value.get("delivery_id"), 64)
@@ -286,6 +320,8 @@ def register(ctx):
 
     def same_wake(left, right):
         fields = ("profile", "container_ref", "session_ref", "endpoint_id", "delivery_id", "nonce", "turn_id")
+        if automatic:
+            fields += ("actor_ref", "scope_generation")
         return isinstance(left, dict) and isinstance(right, dict) and all(
             left.get(field) == right.get(field) for field in fields
         )
@@ -301,13 +337,132 @@ def register(ctx):
         if observation and observation[0] == wake.get("turn_id") and observation[2] == wake.get("delivery_id"):
             observed_requests.pop(session_id, None)
 
-    def active(session, session_id, endpoint):
+    def active(session, session_id, endpoint, scoped_container=None):
         return (isinstance(session, dict) and session.get("runtime") == RUNTIME
-                and session.get("session_ref") == session_id and session.get("container_ref") == container
+                and session.get("session_ref") == session_id
+                and session.get("container_ref") == (scoped_container if automatic else container)
                 and session.get("endpoint_id") == endpoint and session.get("state") == "recent"
                 and session.get("destination_health") == "active")
 
-    def register_session(session_id, expected=None):
+    def session_lock(session_id):
+        with lock:
+            return session_locks.setdefault(session_id, threading.RLock())
+
+    def same_authority(left, right):
+        return bool(left and right and all(left.get(field) == right.get(field) for field in (
+            "container_ref", "actor_ref", "endpoint_id", "scope_generation")))
+
+    def turn_scope(session_id, turn_id):
+        if not automatic:
+            return scope(session_id)
+        with lock:
+            frozen = turn_bindings.get((session_id, turn_id))
+            if (ended_turns.get(session_id) == turn_id or state.get(key("lifecycle", session_id)) is not None
+                    or not same_authority(frozen, scope(session_id))):
+                return None
+            return frozen
+
+    def begin_operation(session_id, record, operation):
+        if state.get(key("operation", session_id)) is not None:
+            return None
+        attempt = {"version": 1, "operation": operation, "nonce": secrets.token_urlsafe(18),
+                   "container_ref": record["container_ref"], "endpoint_id": record["endpoint_id"],
+                   "scope_generation": record["scope_generation"], "state": "inflight"}
+        state.set(key("operation", session_id), attempt)
+        return attempt
+
+    def finish_operation(session_id, attempt, uncertain=False):
+        if state.get(key("operation", session_id)) == attempt:
+            state.set(key("operation", session_id), dict(attempt, state="uncertain") if uncertain else None)
+            if uncertain:
+                LOG.error("Hermes Pallium operation outcome is uncertain for session %s in %s; "
+                          "project transitions remain fenced pending status verification", session_id, attempt["container_ref"])
+            elif (state.get(key("lifecycle", session_id)) or {}).get("state") == "close_deferred":
+                close_session(session_id=session_id)
+
+    def register_dynamic_session(session_id, candidate, expected):
+        # The session lock spans admission and publication; other sessions remain independent.
+        with session_lock(session_id):
+            saved = scope(session_id)
+            if expected is not None and saved != expected:
+                return None
+            if (candidate is None or state.get(key("transition", session_id)) is not None
+                    or state.get(key("operation", session_id)) is not None):
+                LOG.warning("Hermes Pallium admission is fenced by an outstanding operation for session %s; "
+                            "verify its original project status before recovery", session_id)
+                return None
+            changed = saved and (saved["container_ref"], saved["actor_ref"]) != (
+                candidate["container_ref"], candidate["actor_ref"])
+            wake = wake_scope(session_id)
+            lifecycle = state.get(key("lifecycle", session_id))
+            resuming = (saved and isinstance(lifecycle, dict) and lifecycle.get("state") == "closed"
+                        and lifecycle.get("scope") == saved)
+            if lifecycle is not None and not resuming:
+                LOG.warning("Hermes Pallium lifecycle outcome is unconfirmed for session %s; "
+                            "verify the saved endpoint before recovery", session_id)
+                return None
+            if changed and (wake and wake.get("state") not in {"complete", "closed"}):
+                return None
+            transition = {}
+            if saved:
+                rows = _json_request(base, "GET", "/relay/sessions", query={
+                    "runtime": RUNTIME, "session_ref": session_id,
+                    "container_ref": saved["container_ref"], "include_inactive": "true",
+                })
+                if (not isinstance(rows, list) or len(rows) != 1
+                        or not isinstance(rows[0], dict)
+                        or rows[0].get("runtime") != RUNTIME or rows[0].get("session_ref") != session_id
+                        or rows[0].get("container_ref") != saved["container_ref"]
+                        or rows[0].get("endpoint_id") != saved["endpoint_id"]
+                        or rows[0].get("scope_generation") != saved["scope_generation"]
+                        or rows[0].get("state") not in ({"closed"} if resuming else {"recent", "dormant"})
+                        or (not resuming and rows[0].get("destination_health") != "active")):
+                    return None
+                if not resuming:
+                    transition = {"previous_container_ref": saved["container_ref"],
+                                  "previous_endpoint_id": saved["endpoint_id"],
+                                  "previous_scope_generation": saved["scope_generation"]}
+            if not profile_ok() or scope(session_id) != saved:
+                return None
+            attempt = {"previous": saved, "candidate": candidate}
+            state.set(key("transition", session_id), attempt)
+            try:
+                result = _json_request(base, "POST", "/relay/turn", body={
+                    "runtime": RUNTIME, "session_ref": session_id,
+                    "container_ref": candidate["container_ref"],
+                    "max_chars": 1, "max_response_chars": 1, "max_messages": 1,
+                    "structural_work_refs": candidate.get("work_refs", []), **transition,
+                })
+            except HTTPError as exc:
+                if 400 <= exc.code < 500 and state.get(key("transition", session_id)) == attempt:
+                    state.set(key("transition", session_id), None)
+                raise
+            session = result.get("session") if isinstance(result, dict) else None
+            if (not isinstance(session, dict) or not _text(session.get("endpoint_id"), 128)
+                    or type(session.get("scope_generation")) is not int
+                    or session["scope_generation"] < 0
+                    or not active(session, session_id, session["endpoint_id"], candidate["container_ref"])):
+                return None
+            record = {**candidate, "version": 1, "service_url": base, "profile": profile,
+                      "session_ref": session_id, "endpoint_id": session["endpoint_id"],
+                      "scope_generation": session["scope_generation"],
+                      "admitted_work_refs": [row["work_ref"] for row in result.get("work_refs", [])
+                                             if isinstance(row, dict) and _text(row.get("work_ref"), 128)]
+                      if result.get("structural_work_refs_status") == "complete" else []}
+            with lock:
+                if (not profile_ok() or scope(session_id) != saved
+                        or state.get(key("transition", session_id)) != attempt):
+                    return None
+                state.set(key("session", session_id), record)
+                state.set(key("transition", session_id), None)
+                if resuming:
+                    state.set(key("lifecycle", session_id), None)
+                sessions[session_id] = record
+            return record
+
+    def register_session(session_id, expected=None, candidate=None):
+        if automatic:
+            return register_dynamic_session(session_id, candidate, expected)
         saved = scope(session_id)
         if expected is not None and saved != expected:
             return None
@@ -352,8 +507,9 @@ def register(ctx):
         return record
 
     def poll_session(session_id, record):
-        if not profile_ok():
+        if not profile_ok() or automatic and state.get(key("lifecycle", session_id)) is not None:
             return
+        container = record["container_ref"]
         candidate = _json_request(base, "GET", "/relay/pending-candidate", query={
             "runtime": RUNTIME, "session_ref": session_id, "container_ref": container,
         })
@@ -363,6 +519,8 @@ def register(ctx):
             return
         nonce = secrets.token_urlsafe(18)
         wake = {"profile": profile, "container_ref": container, "session_ref": session_id,
+                **({"actor_ref": record["actor_ref"], "scope_generation": record["scope_generation"]}
+                   if automatic else {}),
                 "endpoint_id": record["endpoint_id"], "delivery_id": candidate["delivery_id"],
                 "nonce": nonce, "state": "injection_attempted"}
         with lock:
@@ -392,7 +550,8 @@ def register(ctx):
                 if stop.is_set() or not profile_ok():
                     return
                 try:
-                    poll_session(session_id, record)
+                    with session_lock(session_id):
+                        poll_session(session_id, record)
                 except Exception:
                     LOG.debug("Hermes Relay metadata poll deferred for %s", session_id, exc_info=True)
 
@@ -403,28 +562,66 @@ def register(ctx):
                 poller = threading.Thread(target=poll, name="pallium-hermes-relay", daemon=True)
                 poller.start()
 
-    def pre_llm_call(session_id="", turn_id="", user_message="", **_context):
+    def pre_llm_call_bound(session_id="", turn_id="", user_message="", candidate=None, **_context):
         if not profile_ok() or not _host_id(session_id) or not _host_id(turn_id):
             return None
+        container = candidate["container_ref"] if automatic else topology_signature[1]
         text = user_message if isinstance(user_message, str) else ""
         with lock:
             wake = wake_scope(session_id)
+        if (automatic and text.startswith("[[PALLIUM_RELAY_WAKE:")
+                and (wake is None or text != _marker(wake["delivery_id"], wake["nonce"]))):
+            return None
         if wake is None or text != _marker(wake["delivery_id"], wake["nonce"]):
             try:
-                if register_session(session_id):
+                record = register_session(session_id, candidate=candidate)
+                if record:
+                    if automatic:
+                        frozen = turn_bindings.get((session_id, turn_id))
+                        if frozen is None:
+                            from .turn_capture import capture_user
+                            capture_operation = None
+
+                            def capture_http(*args, **kwargs):
+                                nonlocal capture_operation
+                                capture_operation = begin_operation(session_id, record, "capture_user")
+                                if capture_operation is None:
+                                    raise ValueError("Hermes capture has an outstanding operation")
+                                return _json_request(*args, **kwargs)
+
+                            try:
+                                captured = capture_user(
+                                    capture_http, base=base, profile=profile,
+                                    session_id=session_id, turn_id=turn_id,
+                                    scope={**record, "work_refs": record.get("admitted_work_refs", [])},
+                                    user_message=user_message,
+                                    conversation_history=_context.get("conversation_history"))
+                            finally:
+                                if capture_operation is not None:
+                                    finish_operation(session_id, capture_operation)
+                            if (not profile_ok() or scope(session_id) != record
+                                    or state.get(key("lifecycle", session_id)) is not None):
+                                return None
+                            frozen = {**record, "user_digest": hashlib.sha256(text.encode()).hexdigest(),
+                                      "request_source_item_id": captured["source_item_id"] if captured else None,
+                                      "recall_context": captured["context"] if captured else ""}
+                            turn_bindings[(session_id, turn_id)] = frozen
                     ensure_poller()
                     if bridge:
                         orientation = {
                             "container_ref": container, "thread_ref": session_id,
-                            "actor_ref": topology_signature[4], "agent_ref": RUNTIME,
+                            "actor_ref": record.get("actor_ref", topology_signature[4]), "agent_ref": RUNTIME,
                             "visibility": topology_signature[5],
                         }
+                        if automatic and frozen.get("request_source_item_id"):
+                            orientation["request_source_item_id"] = frozen["request_source_item_id"]
                         return {"context": "[Pallium scope — " + json.dumps(orientation, ensure_ascii=False)
                                 + "]\nRelay MCP tools bind this conversation automatically. "
                                 "Use the bundled pallium-memory skill for Relay and Session History. "
                                 "History captures hook-observed text snapshots, not proof of host persistence or delivery. "
-                                + ("Optional memory tools are enabled with fixed private write scope."
-                                   if topology_signature[6] else "Optional memory tools are disabled in this profile.")}
+                                + ("Optional memory tools are enabled with private write scope."
+                                   if topology_signature[6] else "Optional memory tools are disabled in this profile.")
+                                + (("\n" + frozen["recall_context"]) if automatic and frozen["recall_context"] else "")}
             except Exception:
                 LOG.debug("Hermes Relay session registration deferred", exc_info=True)
             return None
@@ -434,11 +631,16 @@ def register(ctx):
         if existing and existing["turn_id"] == turn_id and same_wake(existing["wake"], wake):
             return {"context": _placeholder(wake["delivery_id"], wake["nonce"])}
         if (wake.get("state") != "injection_attempted" or not record
-                or wake.get("endpoint_id") != record.get("endpoint_id")):
+                or wake.get("endpoint_id") != record.get("endpoint_id")
+                or (automatic and (not same_authority(record, wake)
+                    or candidate["container_ref"] != record["container_ref"]
+                    or candidate["actor_ref"] != record["actor_ref"]))):
             return None
         try:
-            if not register_session(session_id, expected=record):
+            if not register_session(session_id, expected=record, candidate=candidate):
                 return None
+            if automatic:
+                turn_bindings[(session_id, turn_id)] = record
         except Exception:
             LOG.debug("Hermes Relay wake session refresh deferred", exc_info=True)
             return None
@@ -466,7 +668,7 @@ def register(ctx):
         })
         session = result.get("session") if isinstance(result, dict) else None
         deliveries = result.get("deliveries") if isinstance(result, dict) else None
-        if (not profile_ok() or not active(session, session_id, wake["endpoint_id"])
+        if (not profile_ok() or not active(session, session_id, wake["endpoint_id"], container)
                 or not isinstance(deliveries, list) or len(deliveries) != 1):
             return None
         delivery = deliveries[0]
@@ -490,6 +692,32 @@ def register(ctx):
                                   "delivery": delivery, "rendered": rendered}
         return {"context": _placeholder(wake["delivery_id"], wake["nonce"])}
 
+    def pre_llm_call(session_id="", turn_id="", user_message="", **_context):
+        if not automatic:
+            return pre_llm_call_bound(session_id, turn_id, user_message, **_context)
+        if not profile_ok() or not _host_id(session_id) or not _host_id(turn_id):
+            return None
+        with session_lock(session_id):
+            try:
+                if (state.get(key("lifecycle", session_id)) or {}).get("state") == "close_deferred":
+                    close_session(session_id=session_id)
+                if ctx.session_surface() not in {"desktop", "tui", "cli", "acp"}:
+                    raise ValueError("Pallium cwd scope requires a supported local Hermes session")
+                from .scope import resolve_scope
+                candidate = resolve_scope(ctx.session_cwd(), previous=scope(session_id),
+                                          actor_override=topology_signature[4])
+                frozen = turn_bindings.get((session_id, turn_id))
+                if frozen and (not same_authority(frozen, scope(session_id))
+                               or candidate["container_ref"] != frozen["container_ref"]
+                               or candidate["actor_ref"] != frozen["actor_ref"]
+                               or (frozen.get("user_digest") is not None and frozen["user_digest"] !=
+                                   hashlib.sha256((user_message if isinstance(user_message, str) else "").encode()).hexdigest())):
+                    return None
+                return pre_llm_call_bound(session_id, turn_id, user_message, candidate=candidate, **_context)
+            except Exception:
+                LOG.warning("Hermes project scope unavailable; this turn has no Pallium authority", exc_info=True)
+                return None
+
     def current_claim(session_id, turn_id, claim):
         current = wake_scope(session_id)
         record = scope(session_id)
@@ -498,6 +726,7 @@ def register(ctx):
                 and current.get("state") in {"claimed", "admitted"}
                 and same_wake(current, claim["wake"])
                 and record.get("endpoint_id") == current.get("endpoint_id")
+                and (not automatic or turn_scope(session_id, turn_id) is not None)
                 and ended_turns.get(session_id) != turn_id)
 
     def current_view(session_id, turn_id, view):
@@ -505,6 +734,7 @@ def register(ctx):
         return (view is not None and turn_contexts.get((session_id, turn_id)) is view
                 and profile_ok() and record is not None
                 and record.get("endpoint_id") == view["endpoint_id"]
+                and (not automatic or turn_scope(session_id, turn_id) is not None)
                 and ended_turns.get(session_id) != turn_id)
 
     def llm_request(request, session_id="", turn_id="", api_request_id="", **_context):
@@ -584,6 +814,7 @@ def register(ctx):
             return
         wake, delivery = claim["wake"], claim["delivery"]
         record = scope(session_id)
+        container = wake["container_ref"]
         if (wake.get("state") != "claimed" or wake.get("turn_id") != turn_id or not record
                 or record.get("endpoint_id") != wake.get("endpoint_id")
                 or delivery.get("delivery_id") != wake.get("delivery_id")
@@ -673,6 +904,10 @@ def register(ctx):
             )
             return "Relay reply refused: trusted host session or turn context is missing."
         turn_id = identity[1]
+        record = turn_scope(session_id, turn_id)
+        if automatic and record is None:
+            return "Relay reply refused: this turn's project authority changed."
+        container = record["container_ref"] if automatic else topology_signature[1]
         delivery_id, payload = args.get("delivery_id"), args.get("payload")
         if (not _text(delivery_id, 64) or not isinstance(payload, str)
                 or not payload.strip() or len(payload) > MAX_REPLY_CHARS):
@@ -687,10 +922,19 @@ def register(ctx):
             return "Relay reply refused: no delivery admitted for this host session and turn."
         if not profile_ok():
             return "Relay reply refused: frozen Hermes profile changed."
-        result = _json_request(base, "POST", "/relay/replies", body={
-            "delivery_id": delivery_id, "receipt": current["receipt"],
-            "payload": payload, "container_ref": container,
-        })
+        operation = begin_operation(session_id, record, "relay_reply") if automatic else None
+        if automatic and operation is None:
+            return "Relay reply refused: an earlier operation is unconfirmed; verify Relay status."
+        uncertain = True
+        try:
+            result = _json_request(base, "POST", "/relay/replies", body={
+                "delivery_id": delivery_id, "receipt": current["receipt"],
+                "payload": payload, "container_ref": container,
+            })
+            uncertain = not isinstance(result, dict) or not result.get("message_id")
+        finally:
+            if operation is not None:
+                finish_operation(session_id, operation, uncertain)
         if not profile_ok():
             return "Relay reply submitted while the Hermes profile changed; verify Relay status."
         if not isinstance(result, dict) or not result.get("message_id"):
@@ -730,9 +974,10 @@ def register(ctx):
                 return json.dumps({"error": "Pallium MCP requires this host's trusted session and turn"})
             if not isinstance(args, dict) or set(args) - allowed:
                 return json.dumps({"error": "Pallium MCP received unsupported tool arguments"})
-            record = scope(session_id)
+            record = turn_scope(session_id, identity[1]) if automatic else scope(session_id)
             if not record:
                 return json.dumps({"error": "Pallium session is not registered by this host"})
+            container = record["container_ref"]
             try:
                 rows = _json_request(base, "GET", "/relay/sessions", query={
                     "runtime": RUNTIME, "session_ref": session_id, "container_ref": container,
@@ -741,7 +986,8 @@ def register(ctx):
             except Exception:
                 return json.dumps({"error": "Pallium could not verify the current session"})
             if (not isinstance(rows, list) or len(rows) != 1
-                    or not active(rows[0], session_id, record["endpoint_id"])):
+                    or not active(rows[0], session_id, record["endpoint_id"], container)
+                    or (automatic and rows[0].get("scope_generation") != record["scope_generation"])):
                 return json.dumps({"error": "Pallium current session is inactive or changed"})
             current, private_reply = None, None
             if name == TOOL_NAME:
@@ -760,7 +1006,32 @@ def register(ctx):
                 private_reply = {"delivery_id": delivery_id, "receipt": current["receipt"]}
             if not profile_ok():
                 return json.dumps({"error": "Pallium profile changed before MCP dispatch"})
-            result = bridge.call(name, args, tuple(identity), private_reply)
+            mutation = name in {
+                "pallium_relay_send", "pallium_relay_reply", "pallium_relay_name",
+                "pallium_relay_attach_work_ref", "pallium_relay_detach_work_ref",
+                "pallium_ingest", "pallium_remember", "pallium_correct", "pallium_supersede",
+                "pallium_forget", "pallium_forget_source", "pallium_record_outcome",
+                "pallium_flag_memory", "pallium_rate_memory",
+            }
+            operation = begin_operation(session_id, record, name) if automatic else None
+            if automatic and operation is None and mutation:
+                return json.dumps({"error": "An earlier Pallium operation is uncertain; verify status before retrying or changing projects"})
+            uncertain = mutation
+            try:
+                result = bridge.call(name, args, tuple(identity), private_reply, **({
+                    "scope": {"container_ref": container, "actor_ref": record["actor_ref"], **({
+                        "request_source_item_id": record["request_source_item_id"]
+                    } if record.get("request_source_item_id") else {})}
+                } if automatic else {}))
+                try:
+                    outcome = json.loads(result)
+                except (TypeError, ValueError):
+                    outcome = None
+                uncertain = mutation and (outcome is None or isinstance(outcome, dict)
+                                          and outcome.get("operation_uncertain") is True)
+            finally:
+                if operation is not None:
+                    finish_operation(session_id, operation, uncertain)
             if current is not None:
                 try:
                     accepted = json.loads(result)
@@ -784,6 +1055,14 @@ def register(ctx):
         if (not bridge or not profile_ok() or not _host_id(session_id) or not _host_id(turn_id)
                 or not isinstance(conversation_history, list)):
             return
+        frozen = turn_scope(session_id, turn_id) if automatic else None
+        if automatic and frozen is None:
+            return
+        if (automatic and frozen.get("user_digest") is not None
+                and (not isinstance(user_message, str) or frozen["user_digest"] !=
+                     hashlib.sha256(user_message.encode()).hexdigest())):
+            return
+        container = frozen["container_ref"] if automatic else topology_signature[1]
         # Only this callback's current pair; never backfill prior or injected context.
         user_index = next((i for i in range(len(conversation_history) - 1, -1, -1)
                            if isinstance(conversation_history[i], dict)
@@ -796,7 +1075,7 @@ def register(ctx):
         if user.get("content") != user_message or assistant.get("content") != assistant_response:
             return
         for row in (user, assistant):
-            if (not _host_id(row.get("message_uid"))
+            if ((not automatic or row["role"] != "user") and not _host_id(row.get("message_uid"))
                     or not _text(row.get("content"), MAX_HISTORY_CHARS)
                     or not row["content"].strip() or row.get("tool_calls")
                     or row.get("display_kind") not in (None, "")
@@ -806,7 +1085,7 @@ def register(ctx):
                         "_verification_continuation", "_dropped_toolcall_nudge"))):
                 LOG.debug("Hermes History skipped an unsupported current text pair")
                 return
-        if user["message_uid"] == assistant["message_uid"]:
+        if user.get("message_uid") == assistant.get("message_uid"):
             return
         metadata = {"capture_stage": "post_llm_call", "hermes_turn_id": turn_id}
         try:
@@ -815,39 +1094,57 @@ def register(ctx):
             })
             record = scope(session_id)
             if (record and isinstance(refs, dict)
-                    and active(refs.get("session"), session_id, record["endpoint_id"])
+                    and active(refs.get("session"), session_id, record["endpoint_id"], container)
+                    and (not automatic or refs["session"].get("scope_generation") == frozen["scope_generation"])
                     and isinstance(refs.get("work_refs"), list)):
                 keys = [ref["work_ref"] for ref in refs["work_refs"][:20]
                         if isinstance(ref, dict) and _text(ref.get("work_ref"), 128)]
                 if keys:
                     metadata["pallium_work_refs"] = keys
+            elif automatic:
+                return
         except Exception:
             LOG.debug("Hermes History work references unavailable")
+            if automatic:
+                return
         wake = wake_scope(session_id)
         synthetic = user_message.startswith("[[PALLIUM_RELAY_WAKE:")
         if synthetic and (not wake or user_message != _marker(wake["delivery_id"], wake["nonce"])):
             return
         rows = []
         for row in ((assistant,) if synthetic else (user, assistant)):
-            uid = row["message_uid"]
-            source_id = hashlib.sha256((container + "\0" + session_id + "\0" + uid).encode()).hexdigest()
+            uid = row.get("message_uid")
+            if automatic and row["role"] == "user":
+                from .turn_capture import user_source_id
+                source_id = user_source_id(profile, container, session_id, turn_id)
+            else:
+                source_id = hashlib.sha256((container + "\0" + session_id + "\0" + uid).encode()).hexdigest()
             rows.append({
                 "source_type": RUNTIME, "source_id": source_id, "content_type": "text/plain",
                 "content": row["content"], "role": row["role"], "artifact_kind": "message",
                 "container_ref": container, "thread_ref": session_id, "agent_ref": RUNTIME,
-                "actor_ref": topology_signature[4], "visibility": "private",
-                "metadata": {**metadata, "hermes_message_uid": uid,
+                "actor_ref": frozen["actor_ref"] if automatic else topology_signature[4], "visibility": "private",
+                "metadata": {**metadata, **({"hermes_message_uid": uid} if _host_id(uid) else {}),
                              "capture_origin": "relay_wake" if synthetic else "user_turn"},
             })
+        operation = begin_operation(session_id, frozen, "capture_completion") if automatic else None
+        if automatic and operation is None:
+            return
         try:
             _json_request(base, "POST", "/items", body=rows)
         except Exception:
             LOG.warning("Hermes History capture unavailable; this snapshot was not confirmed")
+        finally:
+            if operation is not None:
+                finish_operation(session_id, operation)
 
     def clear_session(session_id="", turn_id="", **_context):
         if not _host_id(session_id) or not _host_id(turn_id):
             return
         with lock:
+            if automatic:
+                turn_bindings.pop((session_id, turn_id), None)
+                ended_turns[session_id] = turn_id
             if turn_contexts.pop((session_id, turn_id), None) is not None:
                 ended_turns[session_id] = turn_id
             wake = wake_scope(session_id)
@@ -865,19 +1162,84 @@ def register(ctx):
                 if observation and observation[0] == turn_id:
                     observed_requests.pop(session_id, None)
 
+    def close_session(session_id="", profile=None, deleted_ids=None, **_context):
+        if not automatic or not profile_ok() or profile is not None and profile != ctx.profile_name:
+            return
+        identifiers = []
+        if _host_id(session_id):
+            identifiers.append(session_id)
+        if deleted_ids is not None:
+            if not isinstance(deleted_ids, list) or any(not _host_id(value) for value in deleted_ids):
+                return
+            identifiers.extend(value for value in deleted_ids if value not in identifiers)
+        for identifier in identifiers:
+            record = scope(identifier)
+            with session_lock(identifier):
+                if not record or not profile_ok() or scope(identifier) != record:
+                    continue
+                existing = state.get(key("lifecycle", identifier))
+                if state.get(key("operation", identifier)) is not None:
+                    if existing is None:
+                        state.set(key("lifecycle", identifier), {"version": 1, "state": "close_deferred", "scope": record})
+                    continue
+                if existing is not None and not (
+                        isinstance(existing, dict) and existing.get("state") == "close_deferred"
+                        and existing.get("scope") == record):
+                    continue
+                attempt = {"version": 1, "state": "closing", "scope": record}
+                state.set(key("lifecycle", identifier), attempt)
+                try:
+                    result = _json_request(base, "POST", "/relay/sessions/close", body={
+                        "runtime": RUNTIME, "session_ref": identifier,
+                        "container_ref": record["container_ref"],
+                        "expected_endpoint_id": record["endpoint_id"],
+                        "expected_scope_generation": record["scope_generation"],
+                    })
+                except Exception:
+                    LOG.warning("Hermes session close is unconfirmed; exact project lifecycle remains fenced", exc_info=True)
+                    continue
+                if (not isinstance(result, dict) or result.get("endpoint_id") != record["endpoint_id"]
+                        or result.get("runtime") != RUNTIME or result.get("session_ref") != identifier
+                        or result.get("container_ref") != record["container_ref"]
+                        or type(result.get("scope_generation")) is not int
+                        or result.get("scope_generation") != record["scope_generation"]
+                        or result.get("state") != "closed" or scope(identifier) != record
+                        or state.get(key("lifecycle", identifier)) != attempt):
+                    continue
+                state.set(key("lifecycle", identifier), dict(attempt, state="closed"))
+                wake = wake_scope(identifier)
+                if wake and same_authority(wake, record):
+                    state.set(key("wake", identifier), dict(wake, state="closed"))
+                with lock:
+                    sessions.pop(identifier, None)
+                    for binding_key in [item for item in turn_bindings if item[0] == identifier]:
+                        turn_bindings.pop(binding_key, None)
+
     def unload():
         stop.set()
         with lock:
             turn_contexts.clear()
+            turn_bindings.clear()
             thread = poller
         if thread and thread is not threading.current_thread():
             thread.join(timeout=HTTP_TIMEOUT_SECONDS + 0.5)
 
+    def serialized(callback):
+        if not automatic:
+            return callback
+
+        def invoke(*args, session_id="", **kwargs):
+            if not _host_id(session_id):
+                return callback(*args, session_id=session_id, **kwargs)
+            with session_lock(session_id):
+                return callback(*args, session_id=session_id, **kwargs)
+        return invoke
+
     ctx.register_hook("pre_llm_call", pre_llm_call)
-    ctx.register_hook("post_llm_call", post_llm_call)
-    ctx.register_middleware("llm_request", llm_request)
-    ctx.register_middleware("llm_execution", llm_execution)
-    ctx.register_middleware("tool_execution", tool_execution)
+    ctx.register_hook("post_llm_call", serialized(post_llm_call))
+    ctx.register_middleware("llm_request", serialized(llm_request))
+    ctx.register_middleware("llm_execution", serialized(llm_execution))
+    ctx.register_middleware("tool_execution", serialized(tool_execution))
     if bridge:
         for tool in bridge.catalog:
             ctx.register_tool(
@@ -897,5 +1259,8 @@ def register(ctx):
             }, "required": ["delivery_id", "payload"], "additionalProperties": False}},
             handler=reply,
         )
-    ctx.register_hook("on_session_end", clear_session)
+    ctx.register_hook("on_session_end", serialized(clear_session))
+    if automatic:
+        ctx.register_hook("on_session_finalize", close_session)
+        ctx.register_hook("on_session_delete", close_session)
     ctx.on_unload(unload)

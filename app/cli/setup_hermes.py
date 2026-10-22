@@ -54,6 +54,14 @@ try:
 except Exception:
     fail("hermes_config_unreadable")
 request = json.loads(sys.stdin.read() or "{}")
+if action == "validate" and request.get("scope_mode") == "cwd":
+    try:
+        from hermes_cli.plugins import PluginContext
+        supported = all(callable(getattr(PluginContext, name, None)) for name in ("session_cwd", "session_surface"))
+    except Exception:
+        supported = False
+    if not supported:
+        fail("hermes_session_cwd_api_required")
 digest = hashlib.sha256(original).hexdigest()
 config = raw
 if "plugins" in config and not isinstance(config["plugins"], dict):
@@ -263,15 +271,19 @@ def _resolve_profile(home: Path) -> Path:
 def _settings(args: argparse.Namespace, mcp_python: Path, repo: Path) -> dict[str, Any]:
     if not _is_loopback_http(args.service_url):
         raise ValueError("--service-url must be an explicit loopback HTTP URL")
-    if (not isinstance(args.container_ref, str) or not args.container_ref.strip()
-            or args.container_ref != args.container_ref.strip() or len(args.container_ref) > 512
-            or not args.container_ref.isprintable()):
-        raise ValueError("--container-ref must be a non-empty exact scope")
-    container_ref = validate_explicit_container_ref(args.container_ref)
-    if (not isinstance(args.actor_ref, str) or not args.actor_ref.strip()
+    container_ref = None
+    if args.container_ref is not None:
+        if (not isinstance(args.container_ref, str) or not args.container_ref.strip()
+                or args.container_ref != args.container_ref.strip() or len(args.container_ref) > 512
+                or not args.container_ref.isprintable()):
+            raise ValueError("--container-ref must be a non-empty exact scope")
+        container_ref = validate_explicit_container_ref(args.container_ref)
+    if args.actor_ref is not None and (not isinstance(args.actor_ref, str) or not args.actor_ref.strip()
             or args.actor_ref != args.actor_ref.strip() or len(args.actor_ref) > 255
             or not args.actor_ref.isprintable()):
         raise ValueError("--actor-ref must be a trimmed, printable static actor identity")
+    if container_ref is not None and args.actor_ref is None:
+        raise ValueError("explicit fixed scope requires --actor-ref")
     if args.visibility != "private":
         raise ValueError("this Hermes package currently requires --visibility private")
     memory_enabled = getattr(args, "memory_enabled", False)
@@ -279,10 +291,11 @@ def _settings(args: argparse.Namespace, mcp_python: Path, repo: Path) -> dict[st
         raise ValueError("memory_enabled must be a boolean")
     return {
         "service_url": args.service_url.rstrip("/"),
-        "container_ref": container_ref,
+        "scope_mode": "fixed" if container_ref is not None else "cwd",
+        **({"container_ref": container_ref} if container_ref is not None else {}),
         "mcp_python": str(mcp_python),
         "mcp_repo": str(repo),
-        "actor_ref": args.actor_ref,
+        **({"actor_ref": args.actor_ref} if args.actor_ref is not None else {}),
         "visibility": args.visibility,
         **({"memory_enabled": True} if memory_enabled else {}),
     }
@@ -336,9 +349,9 @@ def _remove_owned(destination: Path) -> tuple[Path, Path | None]:
     return stage, backup
 
 
-def install(home: Path, hermes_python: Path, service_url: str, container_ref: str,
-            actor_ref: str, visibility: str, mcp_python: Path, repo: Path,
-            *, memory_enabled: bool = False) -> int:
+def install(home: Path, hermes_python: Path, service_url: str, container_ref: str | None,
+            actor_ref: str | None, visibility: str, mcp_python: Path, repo: Path,
+            *, memory_enabled: bool | None = None) -> int:
     home = _resolve_profile(home)
     hermes_python, mcp_python, repo = (p.resolve() for p in (hermes_python, mcp_python, repo))
     source = _integration_dir()
@@ -349,10 +362,6 @@ def install(home: Path, hermes_python: Path, service_url: str, container_ref: st
         raise ValueError("Pallium Hermes skill source is incomplete")
     if not mcp_python.is_file() or not (repo / "app" / "mcp" / "hermes.py").is_file():
         raise ValueError("--mcp-python or --mcp-repo does not identify the Pallium MCP adapter")
-    settings = _settings(argparse.Namespace(service_url=service_url, container_ref=container_ref,
-                                            actor_ref=actor_ref, visibility=visibility,
-                                            memory_enabled=memory_enabled), mcp_python, repo)
-    _validate_pallium_mcp(mcp_python)
     plugin_dir, skill_dir = _profile_paths(home)
     old_plugin = _read_marker(plugin_dir)
     old_skill = _read_marker(skill_dir)
@@ -363,9 +372,15 @@ def install(home: Path, hermes_python: Path, service_url: str, container_ref: st
             raise ValueError("Pallium Hermes ownership markers disagree")
         _verify_owned_tree(plugin_dir, old_plugin, "plugin_files")
         _verify_owned_tree(skill_dir, old_plugin, "skill_files")
+    if memory_enabled is None:
+        memory_enabled = old_plugin.get("settings", {}).get("memory_enabled", False) if old_plugin else False
+    settings = _settings(argparse.Namespace(service_url=service_url, container_ref=container_ref,
+                                            actor_ref=actor_ref, visibility=visibility,
+                                            memory_enabled=memory_enabled), mcp_python, repo)
+    _validate_pallium_mcp(mcp_python)
     source_plugin_files = _tree_digests(source)
     source_skill_files = _tree_digests(skill_source)
-    before = _run_hermes(hermes_python, home, "validate")
+    before = _run_hermes(hermes_python, home, "validate", {"scope_mode": settings["scope_mode"]})
     if old_plugin:
         if before.get("entry") != {"allow_gateway_injection": True,
                                     "settings": old_plugin.get("settings")}:
@@ -509,11 +524,11 @@ def main(args: list[str] | None = None) -> int:
     mode.add_argument("--status", action="store_true", help="Read package state without modifying it")
     mode.add_argument("--uninstall", action="store_true", help="Remove unchanged Pallium-owned artifacts")
     parser.add_argument("--service-url")
-    parser.add_argument("--container-ref")
-    parser.add_argument("--actor-ref")
-    parser.add_argument("--visibility", choices=("private",))
-    parser.add_argument("--memory-enabled", action=argparse.BooleanOptionalAction, default=False,
-                        help="Expose optional memory tools (disabled by default)")
+    parser.add_argument("--container-ref", help="Explicit fixed-scope compatibility override; normal setup follows session cwd")
+    parser.add_argument("--actor-ref", help="Explicit actor override; defaults to session-project Git identity")
+    parser.add_argument("--visibility", choices=("private",), default="private")
+    parser.add_argument("--memory-enabled", action=argparse.BooleanOptionalAction, default=None,
+                        help="Memory tools: disabled on new install; preserve existing selection on update")
     parser.add_argument("--mcp-python", default=sys.executable,
                         help="Pallium Python with MCP SDK v1 (defaults to this interpreter)")
     parser.add_argument("--mcp-repo", default=str(_repo_root()), help="Pallium checkout containing app/mcp/hermes.py")
@@ -527,7 +542,7 @@ def main(args: list[str] | None = None) -> int:
         return status(home, hermes_python)
     if ns.uninstall:
         return uninstall(home, hermes_python)
-    missing = [name for name in ("service_url", "container_ref", "actor_ref", "visibility")
+    missing = [name for name in ("service_url",)
                if getattr(ns, name) is None]
     if missing:
         parser.error("install requires --" + ", --".join(name.replace("_", "-") for name in missing))

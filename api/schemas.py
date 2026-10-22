@@ -909,6 +909,17 @@ class RelaySessionMutationRequest(BaseModel):
     container_ref: str = Field(min_length=1, max_length=512)
 
 
+class RelaySessionCloseRequest(RelaySessionMutationRequest):
+    expected_endpoint_id: str | None = Field(default=None, pattern=r"^relay-session-[0-9a-f]{32}$")
+    expected_scope_generation: int | None = Field(default=None, ge=0, le=2**63 - 1, strict=True)
+
+    @model_validator(mode="after")
+    def validate_close_snapshot(self):
+        if (self.expected_endpoint_id is None) != (self.expected_scope_generation is None):
+            raise ValueError("expected_endpoint_id and expected_scope_generation are required together")
+        return self
+
+
 class RelayOpenCodeWakeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

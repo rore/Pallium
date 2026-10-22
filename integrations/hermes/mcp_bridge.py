@@ -90,7 +90,7 @@ def _tool_catalog(result, *, memory_enabled=False):
         schema["additionalProperties"] = False
         description = description or ""
         description += (
-            " Hermes supplies trusted conversation identity and fixed private scope; only the listed arguments are accepted."
+            " Hermes supplies trusted conversation identity and session project scope; only the listed arguments are accepted."
             if name in HISTORY_TOOLS else
             " Hermes supplies self identity, scope and private receipts; only the listed arguments are accepted."
             " Incoming delivery is handled by hooks; receive/ACK tools are not exposed."
@@ -104,19 +104,19 @@ def _tool_catalog(result, *, memory_enabled=False):
 def _tool_response_text(result):
     wire = _wire_model(result)
     if "resultType" in wire and wire["resultType"] != "complete":
-        return json.dumps({"error": "Pallium MCP returned an incomplete response"})
+        return json.dumps({"error": "Pallium MCP returned an incomplete response", "operation_uncertain": True})
     is_error = wire.get("isError")
     blocks = wire.get("content")
     if type(is_error) is not bool or not isinstance(blocks, list):
-        return json.dumps({"error": "Pallium MCP returned an unsupported response"})
+        return json.dumps({"error": "Pallium MCP returned an unsupported response", "operation_uncertain": True})
     if is_error:
-        return json.dumps({"error": "Pallium MCP refused the request"})
+        return json.dumps({"error": "Pallium MCP refused the request", "operation_uncertain": True})
     if any(not isinstance(block, dict) or block.get("type") != "text"
            or not isinstance(block.get("text"), str) for block in blocks):
-        return json.dumps({"error": "Pallium MCP returned an unsupported response"})
+        return json.dumps({"error": "Pallium MCP returned an unsupported response", "operation_uncertain": True})
     text = "\n".join(block["text"] for block in blocks)
     if len(text) > MAX_RESPONSE_CHARS:
-        return json.dumps({"error": "Pallium MCP response exceeded the supported budget"})
+        return json.dumps({"error": "Pallium MCP response exceeded the supported budget", "operation_uncertain": True})
     return text
 
 
@@ -160,10 +160,11 @@ class RelayMcpBridge:
                    "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA"}
         env = {key: value for key, value in os.environ.items() if key.upper() in allowed}
         base, container, actor, visibility, memory_enabled = self.config
+        fixed_args = ["--container-ref", container, "--actor-ref", actor] if container is not None else []
         params = StdioServerParameters(
             command=self.python, cwd=self.repo, env=env,
-            args=["-m", "app.mcp.hermes", "--base-url", base, "--container-ref", container,
-                  "--actor-ref", actor, "--visibility", visibility,
+            args=["-m", "app.mcp.hermes", "--base-url", base, *fixed_args,
+                  "--visibility", visibility,
                   *(["--memory-enabled"] if memory_enabled else [])],
         )
         async with stdio_client(params) as (reader, writer):
@@ -181,7 +182,7 @@ class RelayMcpBridge:
         result = await self._session.call_tool(name, arguments=arguments, meta=metadata)
         return _tool_response_text(result)
 
-    def call(self, name, arguments, identity, reply=None):
+    def call(self, name, arguments, identity, reply=None, *, scope=None):
         if (name not in self.allowed_tools or self._finished.is_set() or not self._ready.is_set()
                 or self._session is None):
             return json.dumps({"error": "Pallium MCP is unavailable"})
@@ -189,10 +190,21 @@ class RelayMcpBridge:
                 or any(not isinstance(value, str) or not value.strip() for value in identity)):
             return json.dumps({"error": "Pallium MCP requires this host's trusted session and turn"})
         session, turn = identity
+        if self.config[1] is None:
+            if (not isinstance(scope, dict) or not {"container_ref", "actor_ref"} <= set(scope)
+                    or not set(scope) <= {"container_ref", "actor_ref", "request_source_item_id"}
+                    or any(not isinstance(v, str) or not v or v != v.strip() or not v.isprintable()
+                           or len(v) > (512 if k == "container_ref" else 255) for k, v in scope.items())):
+                return json.dumps({"error": "Pallium MCP requires trusted session project scope"})
+            container = scope["container_ref"]
+        else:
+            if scope is not None:
+                return json.dumps({"error": "Fixed Pallium MCP transport refuses dynamic scope"})
+            container = self.config[1]
         values = json.loads(json.dumps(arguments))
         if name in HISTORY_TOOLS:
             fixed = {
-                "container_ref": self.config[1],
+                "container_ref": container,
                 "thread_ref": session,
                 "visibility": self.config[3],
             }
@@ -202,23 +214,30 @@ class RelayMcpBridge:
                 return json.dumps({"error": "Pallium History refused conflicting conversation scope"})
             values.update(fixed)
         else:
-            values["container_ref"] = self.config[1]
+            if values.get("container_ref") not in (None, container):
+                return json.dumps({"error": "Pallium MCP refused conflicting project scope"})
+            values["container_ref"] = container
         if name == "pallium_relay_send":
             values.update(sender_runtime="hermes", sender_session_ref=session)
         elif name == "pallium_relay_name":
             values.update(current_runtime="hermes", current_session_ref=session)
-        scope = {"session_id": session, "turn_id": turn}
+        metadata = {"session_id": session, "turn_id": turn}
+        if scope is not None:
+            metadata["scope"] = {k: scope[k] for k in ("container_ref", "actor_ref")}
+            if scope.get("request_source_item_id") is not None:
+                metadata["request_source_item_id"] = scope["request_source_item_id"]
         if reply is not None:
-            scope["reply"] = dict(reply)
+            metadata["reply"] = dict(reply)
         future = asyncio.run_coroutine_threadsafe(
-            self._call(name, values, {"pallium_hermes": scope}), self._loop)
+            self._call(name, values, {"pallium_hermes": metadata}), self._loop)
         try:
             return future.result(timeout=TIMEOUT_SECONDS)
         except concurrent.futures.TimeoutError:
             future.cancel()
-            return json.dumps({"error": "Pallium MCP timed out; the operation may have committed. Check status before retrying."})
+            return json.dumps({"error": "Pallium MCP timed out; the operation may have committed. Check status before retrying.",
+                               "operation_uncertain": True})
         except Exception:
-            return json.dumps({"error": "Pallium MCP failed; verify status before retrying."})
+            return json.dumps({"error": "Pallium MCP failed; verify status before retrying.", "operation_uncertain": True})
 
     def close(self):
         if self._loop is not None and not self._finished.is_set():
