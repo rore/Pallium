@@ -77,14 +77,25 @@ fixture mechanism, not the historical hosted failure's exclusive cause, product
 repair or complete qualification; it is not published or full-qualified.
 Shared availability remains unresolved. OC-1, OC-4, OC-6 and OC-8 remain open.
 
-Next: the owner reviews source and saved evidence only to determine whether
-complete serial qualification is feasible while preserving every test, each
-test's internal concurrency, mandatory checks and existing time limits.
-Completion of that review requires an explicit feasibility/adequacy disposition
-and bounded next proposal; it does not authorize implementation, tests,
-diagnostics, CI edits or execution. Evidence and alternatives:
-`build/opencode-lease-clock-origin-20261022/qualification-reassessment.md`.
-No acceptance gate is changed by this roadmap checkpoint.
+The serial-full proposal was rejected because its estimated five-to-nine-hour
+cost and cross-test topology remained uncertain. The explicit test-mechanics
+replan retains the actual mandatory local full run and PR checks; broader Windows
+reliability and separate PR #325 qualification remain open.
+
+The one corrected-source local full run at `79040c4e` failed after 2,421 passes,
+one failure, three skips and one xfail. In
+`test_codex_wake::test_relay_transport_timing_is_bounded_and_dashboard_projected[unavailable-30000]`,
+the second `record_wake_event` returned false before later assertions. The
+missing branch/exception evidence supports no fix or historical-cause claim.
+Record-only repair `9c135ecc` received independent GO and checker exit zero; it
+does not qualify application behavior, and the original prelaunch checker exit
+two remains preserved. Next: resolve the failed mandatory qualification's
+evidence-supported disposition before any new execution or supported fix is
+proposed. The clean owner checkout/private environment remain retained with no
+execution running. Evidence: `build/pr340-test-mechanics-full-20261022` and the
+prior `build/opencode-lease-clock-origin-20261022/qualification-reassessment.md`.
+No test, internal concurrency, mandatory check or time limit is weakened; this
+roadmap amendment authorizes no application execution, diagnostics or CI edits.
 
 PR302's accepted result and evidence are recorded in
 [OpenCode disposal reliability](../../.agent-workflow/tasks/opencode-disposal-reliability.md).
