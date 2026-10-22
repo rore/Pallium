@@ -20,9 +20,13 @@ establish normal CWD behavior; preserve its delivered scope and limits.
 
 The lifecycle compatibility correction and affected 293-case cohort have independent
 acceptance. The complete non-slow census and its retained failures are recorded in
-the parity Work Record; shared setup failure remains separately owned. Real normal-CWD
-frontend regressions are prepared for exact released 0.22.4, but have not run.
-The accepted public-hook/tool proof does not replace that frontend qualification.
+the parity Work Record; shared setup failure remains separately owned. A fresh clean
+review found an actor A→B→A authority gap; its correction passed 57 isolated
+project-scope cases with zero skips and independent result acceptance.
+The first actual 0.22.4 CWD TUI attempt stopped before model execution because the
+qualification guard blocked its native local gateway. Guard propagation and the
+remaining Desktop/TUI qualification are still open. The accepted public-hook/tool
+proof does not replace that frontend qualification.
 
 PR #324 delivered the reviewed Desktop/TUI integration toward
 production readiness, including scoped opt-in memory and normal-profile lifecycle
