@@ -2,6 +2,8 @@
 
 ## Adopted OpenCode fixture clock origin RED1/GREEN2 - 2026-10-22
 
+Accepted focused GREEN result: source `7d2340d316252421fd19434909d6a35457eece22`, tree `c2b16f567809491c5cef02aab2c437636f0c6c44`. ONE original+companion cohort passed two unique cases, zero failures/errors/skips, native footer `2 passed in 2.65s`; pytest/runner exits0, outer5.9966134s uncapped. Control records one real post-context delay1.200445500027854s and six subsequent polls200. JUnit SHA256 `e81c5307225e4693408921d2ca768298945b2f8d665d5799772ac39f98ee038a`, stdout `29f19eb47fec3cd3edd92f07aeea03540d8490f7811ae52af007a85a4170b204`, control `8405f5c6c7a16ff6a9adbedf5506bdce2b1084f7008bbda6f4386aeea0518d94`. Successful immediate private-interpreter inventory preceded execution; source/head/lock/clean fences held, root/streams completed, bounded direct-child snapshot empty, stderr empty. Independent `/root/opencode297_resume_plan_review` actual RESULT GO. Evidence: `build/opencode-lease-clock-origin-20261022/green/native-reconciliation.json`. No historical409 exclusive-cause, product TTL repair, full profile, merge or installed qualification is claimed. Full qualification remains FAILED; six other boundaries remain unresolved. `qualification-reassessment.md` records the exact missing complete profiles and alternative delivery scopes for manager adoption. No further full execution/publication/CI is released; retain this checkout for unfinished draftPR340.
+
 GREEN implementation checkpoint: moved only the existing three-statement wall-clock fixture block before `_setup`. The companion and all other module nodes are unchanged from the accepted RED source; all nine original assertions have identical ASTs. No product code, monotonic clock, owner TTL, SQL acquisition deadline, configuration or installed environment changed. Static scope proof and exact move diff are saved under `build/opencode-lease-clock-origin-20261022`. Freeze the committed source and unchanged reviewed runner, obtain independent exact GREEN review, then run the original and delayed-context companion exactly once. Broader qualification remains failed and publication is not authorized.
 
 RED result checkpoint: ONE reviewed companion at clean257129fab120991eb0f1e31c3d10bc096e157ad8 produced exactly the intended bodyfailure, originalmaintenancepoll200assert receives public409/detail OpenCode registration is missing or stale. Receipt oneactualpostcommitdelay1.200563599995803s and onepostcontextpoll409, SHA77f85695c76ef6b3527c34869a75ca171748d0a3333bf4cf5454ac639ce64243. Native1failure/0errors/skips, footer1failed3.39s, pytest1/runner2/toolsession70835exit1 expectedRED, outer11.6925s uncapped. JUnit86ea882fdbf8ee35d99e36dab0712d83aaeed009fe07982ce777371a3613ae1a/stdout7c5738de0690cc36259d6b43c6dcfc8afa1fb6760d7cc4174fa7ac590a5334ed; allhead/source/lock/clean/root/streamfencesheld/directchildsnapshotempty/stderrempty. Independent /root/opencode297_resume_plan_review actualRED GO. Controlledfixturedefect established, historical409exclusivecause notclaimed. NextonlyauthorizedGREEN change movesexisting3statementwallclockblockbefore_setup, companion/all9originalassertions unchanged, independentactualGREENdiff/frozenrunnerGO beforeONEtwo-nodecohort. No broadexecution/pub/installedchange.
@@ -2627,7 +2629,7 @@ Agent technical review: /root/architecture_check, clean nonimplementer source/pl
 
 **Exceptions:** None
 
-**State:** Ready to implement
+**State:** Blocked
 
 <!-- agent-workflow:end -->
 
