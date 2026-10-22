@@ -335,4 +335,3 @@ def test_existing_sqlite_rows_migrate_to_unknown_attribution(tmp_path):
     assert restored.relay_name is None
     assert restored.relay_attribution_state == "unknown"
     migrated.close()
-

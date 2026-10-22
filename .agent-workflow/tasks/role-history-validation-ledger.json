@@ -5,7 +5,8 @@
   "merge_base_origin_main": "2768022ebf8b302d09a9955da38f3fc5d61504a4",
   "tested_code_head": "6cacba359e762b3f4a426fe6c55d4e414c2e3c9a",
   "post_test_source_change_paths": [
-    ".agent-workflow/tasks/role-history.md"
+    ".agent-workflow/tasks/role-history.md",
+    "tests/test_role_history.py"
   ],
   "current_source_sha256": {
     "storage/sqlite_schema.py": "9c892f39e122635c0589cbd6c8102c497b897bf95a196cee786dfc5549d32883",
@@ -21,7 +22,8 @@
     "tests/test_historical_lookup_judge.py": "d1d7f73dcb553993bbf49290629a674339c26bc2a316c6f0562d17c5eed84e28",
     "integrations/codex/skills/pallium-memory/SKILL.md": "1400f2aafedc02f8881668c937dc44b2dd4a5e590409008e1acbf00bc1d3e568",
     "integrations/claude-code/skills/pallium-memory/SKILL.md": "1400f2aafedc02f8881668c937dc44b2dd4a5e590409008e1acbf00bc1d3e568",
-    ".agent-workflow/tasks/role-history.md": "fe10e67bdd652e9ce080f1e2b26f7aea035ad4031134af86616f71e1f8116a23"
+    ".agent-workflow/tasks/role-history.md": "fe10e67bdd652e9ce080f1e2b26f7aea035ad4031134af86616f71e1f8116a23",
+    "tests/test_role_history.py": "b3996f4282ce6bf433ca6dd76d661d3d9fab7ec768ee4bd2a55b5a42fe4e4a37"
   },
   "runs": {
     "residual-4880": {
@@ -44381,5 +44383,8 @@
       },
       "reuse": "Excluded as a blanket source receipt; guidance nodes were individually revalidated in the final 15-node cohort, and changed test contracts were covered by final-source residual/remainder receipts where present."
     }
+  },
+  "post_test_nonbehavioral_changes": {
+    "tests/test_role_history.py": "Removed one trailing blank line after final focused tests; no test or implementation semantics changed."
   }
 }
