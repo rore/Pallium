@@ -1,7 +1,7 @@
 # Documentation
 
 Pallium connects existing agent sessions and keeps earlier session work
-searchable. Current integrations are listed separately below. Start with the two
+searchable. Start with the two
 main capabilities, then use the integration and reference guides as needed.
 
 ## Start
@@ -19,12 +19,17 @@ main capabilities, then use the integration and reference guides as needed.
 
 ## Coding-tool integrations
 
-| Document | What it covers |
-|---|---|
-| [Claude Code](claude-code-integration.md) | Hooks, MCP tools, Relay delivery, and history capture for Claude Code |
-| [Codex](codex-integration.md) | Hooks, MCP tools, Relay delivery, and history capture for Codex |
-| [OpenCode](../integrations/opencode/README.md) | Local OpenCode plugin setup and current limitations |
-| [Hermes](hermes-integration.md) | Desktop/TUI plugin, skill, profile-scoped MCP tools, and setup limits |
+| Integration | Setup | Connection |
+|---|---|---|
+| [Claude Code](claude-code-integration.md) | `pallium setup claude-code` | Hooks, skill and session-bound stdio MCP |
+| [Codex](codex-integration.md) | `pallium setup codex` | Hooks, skill and session-bound stdio MCP |
+| [OpenCode](../integrations/opencode/README.md) | Configure the local plugin, MCP and guidance | V1 plugin or opt-in V2 adapter, with remote MCP |
+| [Hermes Desktop/TUI](hermes-integration.md) | Profile-specific `pallium setup hermes` | Native plugin, skill and profile-scoped MCP bridge |
+
+Each guide follows the same path: capabilities, prerequisites, setup, verification,
+delivery and recovery, History and memory, update and removal, compatibility, and
+reference. Use the shared [Relay delivery table](agent-relay.md#delivery-and-wake-behavior)
+to compare wake and fallback support.
 
 ## Reference
 

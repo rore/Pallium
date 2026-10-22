@@ -9,8 +9,18 @@ global `mcp_servers` entry.
 See the [Hermes integration guide](../../docs/hermes-integration.md) for the
 capability overview and supported behavior.
 
+## Capabilities
+
+The package supplies Relay, private Session History, a discoverable skill and
+profile-scoped tools. Memory tools are optional, with no automatic injection.
+Use the [integration guide](../../docs/hermes-integration.md) for the everyday
+workflow and the shared [delivery table](../../docs/agent-relay.md#delivery-and-wake-behavior)
+for a comparison with other hosts. This page is the package command reference.
+
+## Prerequisites
+
 <a id="prepare-an-isolated-profile"></a>
-## Choose a profile and interpreters
+<a id="choose-a-profile-and-interpreters"></a>
 
 - Use an existing Hermes profile and pass its exact `HERMES_HOME` directory.
   For a trial, choose a separate profile rather than replacing your everyday one.
@@ -27,7 +37,9 @@ checks ownership fingerprints, but the native writer has no atomic compare-and-s
 against simultaneous external edits. After an uncertain config write, inspect
 the preserved configuration and reported conflict before retrying.
 
-## Install, inspect, and remove
+## Setup
+
+<a id="install-inspect-and-remove"></a>
 
 From the Pallium checkout, replace the example paths and scope with your values:
 
@@ -51,6 +63,8 @@ on later setup/update calls that should preserve the opt-in. Omitting that flag
 returns the catalog to disabled; `--no-memory-enabled` explicitly disables it.
 The catalog adds eleven memory query/write tools, not automatic memory injection.
 
+## Verify the connection
+
 Inspect the configured installation:
 
 ```powershell
@@ -58,26 +72,18 @@ python -m app.run setup hermes --home C:\path\to\hermes-profile `
   --hermes-python C:\path\to\hermes-venv\Scripts\python.exe --status
 ```
 
-Remove unchanged package-owned artifacts:
-
-```powershell
-python -m app.run setup hermes --home C:\path\to\hermes-profile `
-  --hermes-python C:\path\to\hermes-venv\Scripts\python.exe --uninstall
-```
-
-Repeating setup updates an unchanged owned installation. Edited owned files and
-unowned collisions are refused. Removal restores the original `plugins.enabled`
-state, removes this plugin's exact config entry and preserves unrelated nested
-configuration, other plugins and data. A detected ownership conflict is not
-permission to overwrite those files. Status checks fingerprints, not running-host
-or live MCP readiness.
+Status checks configuration, not live readiness. Start the selected profile and
+follow the [connection check](../../docs/hermes-integration.md#verify-the-connection)
+to exchange a message/reply and verify captured History.
 
 The skill is installed under `$HERMES_HOME/skills/pallium-memory/` for normal
 Hermes discovery. The default catalog contains twelve Relay and three History
 tools. The plugin supplies current host identity and private scope; callers must
 not invent replacements.
 
-## Relay behavior
+## Delivery and recovery
+
+<a id="relay-behavior"></a>
 
 Incoming messages support 16,000 Unicode code points and host-bound replies
 2,400. The plugin renews the exact Relay endpoint during trusted host activity;
@@ -102,7 +108,9 @@ reply. Missing or stale callbacks cannot release a newer wake; uncertain claim/A
 state stays fenced. Serialization is local to one plugin process. Use status and
 trace for uncertain outcomes rather than resending blindly.
 
-## Session History
+## History and memory
+
+<a id="session-history"></a>
 
 The `post_llm_call` hook captures private, plain-text user/final-assistant snapshots
 with stable host session, turn and message IDs. Duplicate callbacks do not create
@@ -133,9 +141,29 @@ query retains the configured actor filter; expansion follows canonical
 same-container/matching-global visibility. Mutations use trusted profile and host
 session provenance. See [Session History](../../docs/session-history.md).
 
+## Update and removal
+
+Repeat the setup command to update unchanged package-owned files, including
+`--memory-enabled` if preserving that opt-in. Stop the target host and other
+profile writers first. Remove unchanged package-owned artifacts:
+
+```powershell
+python -m app.run setup hermes --home C:\path\to\hermes-profile `
+  --hermes-python C:\path\to\hermes-venv\Scripts\python.exe --uninstall
+```
+
+Repeating setup updates an unchanged owned installation. Edited owned files and
+unowned collisions are refused. Removal restores the original `plugins.enabled`
+state, removes this plugin's exact config entry and preserves unrelated nested
+configuration, other plugins and data. A detected ownership conflict is not
+permission to overwrite those files. Status checks fingerprints, not running-host
+or live MCP readiness.
+
 <a id="production-qualification-in-progress"></a>
 <a id="native-qualification-limits"></a>
-## Compatibility and limits
+## Compatibility and troubleshooting
+
+<a id="compatibility-and-limits"></a>
 
 Hermes v0.22.0 and v0.22.2 have Linux TUI and Windows Desktop/TUI integration
 coverage, with memory off and on. Admission uses public capabilities rather than
@@ -153,3 +181,9 @@ Use Hermes's supported installation/update path. Dependency builds and Desktop
 URL registration can escape a temporary profile: contributor qualification needs
 a disposable OS environment, as described in
 [native validation](../../docs/designs/hermes-native-qualification.md).
+
+## Reference
+
+- [Hermes integration workflow](../../docs/hermes-integration.md)
+- [Session History search and expansion](../../docs/session-history.md)
+- [Native validation and coverage boundaries](../../docs/designs/hermes-native-qualification.md)

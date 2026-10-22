@@ -48,9 +48,16 @@ Claude Code, Codex, OpenCode, and Hermes Desktop/TUI are the current integration
 They remain independent tools and own their execution, user interaction, and
 workflow.
 
-The [Hermes integration](hermes-integration.md) bundles a native plugin, skill
-and profile-scoped MCP bridge for Relay, private Session History and opt-in
-memory tools. Its guide covers capture, wake and reconnection limits.
+| Integration | Host connection |
+|---|---|
+| [Claude Code](claude-code-integration.md) | Automatic hooks, bundled skill and session-bound stdio MCP |
+| [Codex](codex-integration.md) | Automatic hooks, bundled skill and session-bound stdio MCP |
+| [OpenCode](../integrations/opencode/README.md) | V1 plugin or opt-in V2 adapter, bundled guidance/skill and remote MCP |
+| [Hermes Desktop/TUI](hermes-integration.md) | Native plugin, bundled skill and profile-scoped MCP bridge |
+
+These adapters share the service APIs. Host identity, capture, wake and recovery
+remain integration-specific; compare the [Relay delivery table](agent-relay.md#delivery-and-wake-behavior)
+and use the matching guide for setup.
 
 ## Current default
 

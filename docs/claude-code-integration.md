@@ -4,12 +4,14 @@ This guide connects Claude Code to the local Pallium service. The integration
 registers each session, records governed turns for Session History, delivers
 Relay messages, and supports Pallium's optional derived-memory behavior.
 
-## What You Get
+<a id="what-you-get"></a>
+
+## Capabilities
 
 ### Relay
 
 - send messages to another connected session; current integrations are Claude
-  Code, Codex, and OpenCode
+  Code, Codex, OpenCode, and Hermes
 - receive attributed messages and reply to the sender
 - wake an existing Claude Code session on qualified Windows and Linux paths
 - keep undelivered messages for the next normal turn
@@ -27,38 +29,6 @@ Relay messages, and supports Pallium's optional derived-memory behavior.
 - retrieve or inject selected memory on later turns
 - inspect, flag, and write memory through MCP tools
 
-Claude Code wake is qualified on Windows and on the installed Linux UDS path
-tested on Ubuntu 24.04 with Claude Code 2.1.250. macOS wake remains
-qualification work and retains next-turn delivery.
-
-## Architecture
-
-```
-┌────────────────────────┐
-│     Claude Code        │
-│                        │
-│  hooks ──────────────────── HTTP ──┐
-│  MCP tools ──────────────── HTTP ──┤
-└────────────────────────┘           │
-                                     ▼
-                              ┌─────────────┐
-                              │   Pallium   │
-                              │local service│
-                              │             │
-                              │ port 19836  │
-                              └──────┬──────┘
-                                     │
-                              ┌──────▼──────┐
-                              │ ~/.pallium/ │
-                              │   data/     │
-                              └─────────────┘
-```
-
-Pallium runs as an always-on local service independent of Claude Code's
-lifecycle. Multiple Claude Code sessions (same or different repos) share one
-Pallium instance, isolated by `container_ref` (derived from the git remote
-URL).
-
 ## Prerequisites
 
 - Python 3.12+ with Pallium installed from source
@@ -67,7 +37,9 @@ URL).
   memory
 - Git (for container derivation from repos)
 
-## 1. Start Pallium
+## Setup
+
+### 1. Start Pallium
 
 Install and start the service (one-time):
 
@@ -93,7 +65,7 @@ To manage the service:
 | `pallium service restart` | Restart the installed service on Linux |
 | `scripts/restart-service.ps1` | Restart the installed service for local Windows development and clear stale child processes |
 | `pallium service uninstall` | Remove OS registration (data preserved) |
-| `pallium service uninstall --remove-data` | Remove registration and all data |
+| `pallium service uninstall --remove-data` | Remove registration and the managed default service home; custom homes are refused |
 
 For debugging, run in the foreground:
 
@@ -101,7 +73,7 @@ For debugging, run in the foreground:
 pallium service run --port 19836
 ```
 
-## 2. Register with Claude Code
+### 2. Register with Claude Code
 
 ```bash
 pallium setup claude-code
@@ -121,13 +93,48 @@ errors and the retained previous-tree path. Keep that recovery directory until
 the old skill has been recovered. Successful replacement or restoration removes
 the staging files.
 
-To remove the integration:
+<a id="verify-its-working"></a>
 
-```bash
-pallium setup claude-code --uninstall
-```
+## Verify the connection
 
-## How It Works
+After setup, open two Claude Code sessions in the same Git repository.
+
+### Verify Relay
+
+1. In the second session, ask: “Use Pallium Relay to name this session `review`.”
+2. In the first session, ask it to list Relay recipients and send a short message
+   to the verified `@review` name.
+3. Confirm that the second session receives the attributed message and can reply.
+
+Qualified Windows and Linux installations can start a new Claude Code turn. On
+macOS and other unqualified paths, make a normal turn in the recipient session
+to collect the pending message.
+
+### Verify Session History
+
+1. In one session, record a clear decision or investigation finding.
+2. In the other, ask it to search Session History for that earlier work.
+3. Expand the relevant result and confirm that the nearby messages provide the
+   expected context.
+
+This uses `pallium_search_history` followed by `pallium_expand_source`. It does
+not depend on automatic derived-memory injection.
+
+History retry: keep a delivered-page ledger across query repair; retry the same failed page at most twice, continue unread pages, and keep page-specific lookup lineage. Revalidate completed sources by content revision; use bounded retries. A historical recap is not live state; verify current state live. See [procedure](../integrations/claude-code/skills/pallium-memory/references/history-replay.md).
+
+### Optional: verify derived memory
+
+If derived memory is configured, use `pallium_query` for the earlier decision or
+inspect an automatically injected memory block. No injection is also a valid
+outcome when Pallium abstains; use `pallium_query_debug` to inspect why.
+
+<a id="how-it-works"></a>
+
+## Delivery and recovery
+
+Claude Code wake is qualified on Windows and on the installed Linux UDS path
+tested on Ubuntu 24.04 with Claude Code 2.1.250. macOS wake remains
+qualification work and retains next-turn delivery.
 
 ### Hooks (Automatic)
 
@@ -150,26 +157,16 @@ release ownership safely. A hook can still return a bounded failure if it
 cannot acquire the lock. Mixed hook/service versions do not share this protocol,
 so coordinated installation is required for the race protection.
 
-### MCP Tools (Explicit)
+## History and memory
 
-The main operations are:
-
-| Need | Tools |
-|---|---|
-| Get this session's Relay address | `pallium_relay_address` (identity is resolved by the integration) |
-| Find a recipient when its container is unknown | `pallium_relay_discover_recipients` (read-only candidates; verify before sending) |
-| Send or reply through Relay | `pallium_relay_recipients`, `pallium_relay_name`, `pallium_relay_send`, `pallium_relay_reply`, `pallium_relay_status` |
-| Search earlier sessions | `pallium_search_history`, then `pallium_expand_source` for surrounding turns |
-| Use optional derived memory | `pallium_query`, `pallium_expand`, `pallium_flag_memory`, `pallium_ingest`, and the explicit memory-write tools |
-| Check the service | `pallium_status` |
-
-`pallium_relay_receive` and `pallium_relay_ack` are recovery or non-hook
-integration tools. Do not use them in a session receiving Relay automatically
-through hooks.
+Session History works without derived memory. Derived memory is optional and
+disabled by default; provider-backed packages require a configured provider and
+model.
 
 ### Scoping
 
-Each repo gets its own Pallium container, derived from the git remote URL:
+Each repo gets its own container for Session History and configured derived
+memory, derived from the git remote URL:
 
 | Scenario | Container |
 |----------|-----------|
@@ -178,8 +175,10 @@ Each repo gets its own Pallium container, derived from the git remote URL:
 | Not a git repo | `path:<hash-of-cwd>` |
 
 Multiple Claude Code sessions in the same repo share the container but keep
-distinct threads. Relay addressing and Session History work across those
-sessions; configured derived memory follows the same scope.
+distinct threads. History and configured derived memory follow that scope.
+Relay requires trusted sender scope, but exact endpoint IDs and service-global
+`@name` addresses route across containers on the same service. Ordinary recipient
+discovery remains container-local.
 
 ### Optional derived-memory capture
 
@@ -208,52 +207,7 @@ After 2 independent flags from different sessions, the memory is suppressed
 and stops appearing in results. For details on the flagging mechanism, see
 [agent-integration.md — Flagging Wrong Memories](agent-integration.md#flagging-wrong-memories).
 
-## Verify It's Working
-
-After setup, open two Claude Code sessions in the same Git repository.
-
-### Verify Relay
-
-1. In the second session, ask: “Use Pallium Relay to name this session `review`.”
-2. In the first session, ask it to list Relay recipients and send a short message
-   to `claude-code:@review`.
-3. Confirm that the second session receives the attributed message and can reply.
-
-Qualified Windows and Linux installations can start a new Claude Code turn. On
-macOS and other unqualified paths, make a normal turn in the recipient session
-to collect the pending message.
-
-### Verify Session History
-
-1. In one session, record a clear decision or investigation finding.
-2. In the other, ask it to search Session History for that earlier work.
-3. Expand the relevant result and confirm that the nearby messages provide the
-   expected context.
-
-This uses `pallium_search_history` followed by `pallium_expand_source`. It does
-not depend on automatic derived-memory injection.
-
-History retry: keep a delivered-page ledger across query repair; retry the same failed page at most twice, continue unread pages, and keep page-specific lookup lineage. Revalidate completed sources by content revision; use bounded retries. A historical recap is not live state; verify current state live. See [procedure](../integrations/claude-code/skills/pallium-memory/references/history-replay.md).
-
-### Optional: verify derived memory
-
-If derived memory is configured, use `pallium_query` for the earlier decision or
-inspect an automatically injected memory block. No injection is also a valid
-outcome when Pallium abstains; use `pallium_query_debug` to inspect why.
-
-## Troubleshooting
-
-| Symptom | Check |
-|---|---|
-| Pallium tools are unavailable | Run `pallium service status`, then re-run `pallium setup claude-code`. |
-| Relay recipient is missing | Make a normal turn in both sessions, confirm they use the same repository, then list recipients again. |
-| Relay message remains pending | Make a normal recipient turn or inspect `pallium_relay_status`; active wake is not qualified on every platform. |
-| Session History search is empty | Confirm the hooks are present in `~/.claude/settings.json` and search for a distinctive phrase from the earlier turn. |
-| Hook errors or slow responses | Check `http://localhost:19836/debug/queue/health` and the configured embedding provider. |
-| Derived memory is absent or irrelevant | Derived memory is optional. Use `pallium_query_debug` before changing prompts or policy. |
-| MCP reports “Pallium not configured” | Re-run setup; it supplies `PALLIUM_BASE_URL` automatically. |
-
-## Optional derived-memory policy
+### Optional derived-memory policy
 
 The optional `[injection.policy]` configuration controls whether each derived
 memory type may appear proactively, only after an event, only on demand, or not
@@ -263,7 +217,92 @@ See [Configuration — Injection Policy](configuration.md#injection-policy-abste
 [Derived Memory](derived-memory.md#when-pallium-returns-nothing), and the
 [detailed policy specification](specs/2026-06-27-injection-policy-abstention.md).
 
-## Configuration
+## Update and removal
+
+Re-run `pallium setup claude-code` from the checkout you intend to keep after
+updating Pallium. Restart Claude Code to load the updated integration. Re-run
+setup with `--port <port>` when retargeting the service.
+
+Back up your host configuration and close affected sessions before removing the
+integration:
+
+```bash
+pallium setup claude-code --uninstall
+```
+
+Uninstall removes this host's managed MCP registration, hooks, instructions and
+skill. It also deletes the shared `~/.pallium/hooks/state` directory, which can
+affect other active Claude Code or Codex sessions using that state. It preserves
+the service and stored History and memory.
+
+To remove the service registration separately, use `pallium service uninstall`.
+Data is preserved unless `--remove-data` is requested. That option only deletes
+the marked default `~/.pallium` service home; custom homes are refused and must
+be inspected and removed manually.
+
+<a id="troubleshooting"></a>
+
+## Compatibility and troubleshooting
+
+| Symptom | Check |
+|---|---|
+| Pallium tools are unavailable | Run `pallium service status`, then re-run `pallium setup claude-code`. |
+| Relay recipient is missing | Make a normal turn in both sessions and confirm they use the same local service. Ordinary discovery is container-local; use an exact endpoint or service-global `@name` for cross-container routing. |
+| Relay message remains pending | Make a normal recipient turn or inspect `pallium_relay_status`; active wake is not qualified on every platform. |
+| Session History search is empty | Confirm the hooks are present in `~/.claude/settings.json` and search for a distinctive phrase from the earlier turn. |
+| Hook errors or slow responses | Check `http://localhost:19836/debug/queue/health` and the configured embedding provider. |
+| Derived memory is absent or irrelevant | Derived memory is optional. Use `pallium_query_debug` before changing prompts or policy. |
+| MCP reports “Pallium not configured” | Re-run setup; it supplies `PALLIUM_BASE_URL` automatically. |
+
+## Reference
+
+### Architecture
+
+```
+┌────────────────────────┐
+│     Claude Code        │
+│                        │
+│  hooks ──────────────────── HTTP ──┐
+│  MCP tools (stdio) ─────── HTTP ──┤
+└────────────────────────┘           │
+                                     ▼
+                              ┌─────────────┐
+                              │   Pallium   │
+                              │local service│
+                              │             │
+                              │ port 19836  │
+                              └──────┬──────┘
+                                     │
+                              ┌──────▼──────┐
+                              │ ~/.pallium/ │
+                              │   data/     │
+                              └─────────────┘
+```
+
+Pallium runs as an always-on local service independent of Claude Code's
+lifecycle. Multiple Claude Code sessions (same or different repos) share one
+Pallium instance. Session History and configured derived memory are scoped by
+`container_ref` (derived from the git remote URL). Relay routes exact endpoint
+IDs and service-global `@name` addresses across containers on that service.
+
+### MCP Tools (Explicit)
+
+The main operations are:
+
+| Need | Tools |
+|---|---|
+| Get this session's Relay address | `pallium_relay_address` (identity is resolved by the integration) |
+| Find a recipient when its container is unknown | `pallium_relay_discover_recipients` (read-only candidates; verify before sending) |
+| Send or reply through Relay | `pallium_relay_recipients`, `pallium_relay_name`, `pallium_relay_send`, `pallium_relay_reply`, `pallium_relay_status` |
+| Search earlier sessions | `pallium_search_history`, then `pallium_expand_source` for surrounding turns |
+| Use optional derived memory | `pallium_query`, `pallium_expand`, `pallium_flag_memory`, `pallium_ingest`, and the explicit memory-write tools |
+| Check the service | `pallium_status` |
+
+`pallium_relay_receive` and `pallium_relay_ack` are recovery or non-hook
+integration tools. Do not use them in a session receiving Relay automatically
+through hooks.
+
+### Configuration
 
 | Setting | Default | Override |
 |---------|---------|----------|
@@ -282,12 +321,13 @@ installed database; custom offline setup needs an explicit `PALLIUM_RELAY_SQLITE
 A missing or mismatched binding stops wake intent writes instead of risking replay
 by a different instance. An outage after setup keeps the pinned write-ahead path.
 
-## Concurrent Sessions
+### Concurrent Sessions
 
-Multiple Claude Code sessions on the same repo work correctly:
+Multiple Claude Code sessions on the same local Pallium service can coexist:
 
 - Each session has its own thread (from `session_id`)
-- Sessions in the same repo share Relay addressing and Session History
+- Sessions in the same repo share Session History
+- Exact endpoints and service-global `@name` addresses route Relay across containers
 - Configured derived memory follows the same container scope
 - Thread-level state doesn't leak between sessions
 - SQLite WAL mode handles concurrent reads safely

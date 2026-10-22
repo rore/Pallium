@@ -20,8 +20,8 @@ it, Relay can start a recipient turn immediately. Delivery and recovery depend
 on the integration. You can send to a specific session or a
 named session.
 
-> Use Pallium Relay to send Codex: "The legacy endpoint is still used by mobile.
-> Do not remove it."
+> List Pallium Relay recipients, verify `@review`, then send it: "The legacy
+> endpoint is still used by mobile. Do not remove it."
 
 [Read the Relay guide](docs/agent-relay.md).
 
@@ -56,11 +56,9 @@ in its current form, but setup and behavior still have rough edges.
 
 ## Current status
 
-Relay works across the current integrations. Claude Code, Codex and OpenCode
-support durable next-turn delivery; some paths can also start a new turn. Hermes
-uses its native plugin for delivery and a profile-scoped MCP bridge for tools.
-See the [Hermes guide](docs/hermes-integration.md) for its delivery limits and the
-[Relay support details](docs/agent-relay.md#delivery-and-wake-behavior).
+Relay works across the current integrations. Wake, next-turn delivery and recovery
+depend on the receiving host. Compare all four in the
+[Relay delivery table](docs/agent-relay.md#delivery-and-wake-behavior).
 
 Session History supports broad topic search, exact work-reference search, and
 nearby-message lookup. It does not require an LLM provider, and optional derived
@@ -80,11 +78,12 @@ pallium service install
 pallium setup claude-code       # or: pallium setup codex
 ```
 
-The OpenCode integration currently uses a local plugin. See its
-[setup guide](integrations/opencode/README.md).
-
-For Hermes Desktop or TUI, follow the
-[Hermes setup guide](docs/hermes-integration.md) to connect an explicit profile.
+| Integration | Setup guide |
+|---|---|
+| Claude Code | [Hooks, skill and MCP setup](docs/claude-code-integration.md#setup) |
+| Codex | [Hooks, skill and MCP setup](docs/codex-integration.md#setup) |
+| OpenCode | [Local plugin, MCP and guidance setup](integrations/opencode/README.md#setup) |
+| Hermes Desktop/TUI | [Native plugin, skill and profile-scoped MCP setup](docs/hermes-integration.md#setup) |
 
 Relay and Session History do not require an LLM provider. Derived memory is
 optional, disabled by default, and requires provider and model configuration

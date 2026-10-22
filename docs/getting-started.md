@@ -7,7 +7,7 @@ message, and searches earlier session work.
 
 - Python 3.12 or 3.13 recommended
 - Git
-- Claude Code or Codex for the shortest setup path
+- Claude Code, Codex, OpenCode or Hermes Desktop/TUI
 - an OpenAI-compatible or Anthropic API key only if you enable optional
   derived memory
 
@@ -68,30 +68,25 @@ python -m app.run --host 127.0.0.1 --port 8000 --processors 1
 
 ## 2. Connect a coding tool
 
-Run the setup command for the tool you use:
+Choose the integration you use:
 
-```bash
-pallium setup claude-code
-# or
-pallium setup codex
-```
+| Integration | Setup |
+|---|---|
+| [Claude Code](claude-code-integration.md#setup) | `pallium setup claude-code` |
+| [Codex](codex-integration.md#setup) | `pallium setup codex`, then restart and review new or changed hooks |
+| [OpenCode](../integrations/opencode/README.md#setup) | Configure the local plugin, remote MCP and guidance; there is no setup CLI |
+| [Hermes Desktop/TUI](hermes-integration.md#setup) | Use the profile-specific setup command with explicit profile, interpreters and private scope |
 
 Run setup from the checkout you intend to keep. The integrations contain
 absolute local paths, so moving or deleting that checkout requires uninstalling
 and reinstalling the integration.
 
-OpenCode uses a local plugin path. Follow the
-[OpenCode integration guide](../integrations/opencode/README.md).
-
-For Hermes Desktop or TUI, follow the [Hermes integration guide](hermes-integration.md).
-Its plugin, skill and MCP bridge connect an explicit existing Hermes profile
-while preserving provider configuration. The guide covers private scope,
-delivery limits and optional memory; use its profile-specific setup commands.
-
 For Claude Code, Codex or OpenCode, open two sessions in the same Git repository
 after setup. Pallium derives their shared container from the repository identity
-while keeping each session
-separately addressable.
+while keeping each session separately addressable. For Hermes, use the same
+explicit private scope when you want shared History; follow its guide to select
+an existing profile. Relay can address sessions across containers on the same
+service; History and memory remain scoped.
 
 ## 3. Try Relay
 
@@ -104,16 +99,16 @@ In the first session, ask:
 > List Pallium Relay recipients.
 
 Confirm that the `review` name points to the intended session, then send a
-small message. Use the target runtime shown by recipient discovery
-(`@review`). An exact session or name is safer
-than a runtime-wide send when several sessions are open:
+small message using its verified `@review` name. Regular sends require an exact
+session address or a name; a bare runtime is rejected:
 
 > Use Pallium Relay to send `@review`: "Please check whether the API change
 > preserves the old response field."
 
-On qualified Windows and Linux paths for Claude Code and Codex, Pallium can
-start a new turn in the existing session. OpenCode, macOS, and other unqualified
-paths keep the message pending until the next normal recipient turn.
+Wake and recovery depend on the receiving integration. Compare all four in the
+[Relay delivery table](agent-relay.md#delivery-and-wake-behavior), then use the
+recipient guide's verification steps. A saved send is not proof of receipt;
+confirm the attributed message and reply in the intended session.
 
 The recipient can reply using the received delivery. Pallium derives the return
 address; the recipient does not need to look up the sender again.
