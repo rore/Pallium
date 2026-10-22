@@ -2621,9 +2621,11 @@ def test_no_hook_completion_preserves_delivery_until_real_hook_recovery(
     assert delivered["state"] == "delivered"
     assert delivered["destination_health"] == "active"
     assert delivered["attempts"] == 1
-    assert route.post("/relay/turn", json={
+    final_turn = route.post("/relay/turn", json={
         "runtime": "codex", "session_ref": "target", **scope,
-    }).json()["deliveries"] == []
+    })
+    assert final_turn.status_code == 200, final_turn.text
+    assert final_turn.json()["deliveries"] == []
 
     # The authoritative ACK performed by the hook releases the exact reservation.
     assert not codex_wake._scheduled_session_generations
