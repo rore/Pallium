@@ -48,7 +48,7 @@ Adopted by coordinator `01a16320-c588-72b0-a098-cb3d137b1e75` for the human's re
 
 **Exceptions:** —
 
-**State:** Ready for review
+**State:** Blocked
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -68,6 +68,12 @@ Implemented one borrowed-witness candidate helper shared by foreground acquisiti
 Runner correction, not product evidence: first setup error could not create default sandbox temp (`build/idle-retirement-baseline-setup-error.xml`). Task-local basetemp avoided that error but the process stalled before test execution and was stopped. One 25-second process watchdog located the stall in pytest-asyncio loop construction, `socket._fallback_socketpair.accept`, not in product/test execution. The same exact node then ran outside the sandbox with an unused task-local basetemp/profile and a 30-second process watchdog (not reached). Future focused asynchronous runs use this execution scope; no persistent environment/configuration change. Each basetemp must be absent before pytest is allowed to own it.
 
 ## Evidence
+
+Phase2 required full run STOPPED for manager disposition; no retry or publication. Exact head `4f0efc7a1bce6ab549852e35161b0e6a8abeaebe`, unchanged reviewed production source, qualified private runtime/lock, 658 captured source/test/config hashes. Byte-identical existing runner, same1200000ms cap, fresh private OS temp outside Git ancestry. Evidence: `build/full-qualification-01/{recipe.json,intent.json,running.json,result.json,junit.xml,stdout.log,stderr.log}`. Pytest exit2 after fail-fast xdist interruption: 2 failed,2748 passed,3 skipped,1 xfailed in357.11s; runner finished376.53s, not capped, exact root exit verified, streams complete, no direct children in its bounded snapshot, source/lock/head unchanged and checkout clean. No universal descendant-exit claim.
+
+Failure1: `tests/test_codex_retained_connection_recovery.py::test_actual_mcp_idle_ready_preserves_or_fences_source_channel[resolved-transport-failure]` expected2 registrations after a fresh caller but observed3. Read-only source inspection found this connected eighteen-case matrix still explicitly asserts that idle retirement never retries enrollment. It was omitted from the focused mechanism adaptation; the new autonomous fresh registration plus subsequent actual caller can explain the third registration, but the matrix needs explicit disposition and preserved authority assertions before editing. No test has been changed or weakened.
+
+Failure2: `tests/test_health.py::test_production_factory_drains_claude_wake_thread_before_storage_close[transport]` failed writing its atomic intent temporary file. The private path chosen for this run produces a264-character filename; the parent intents directory exists. A Windows path-length runner limitation is plausible, not yet experimentally established. The prior qualified recipe used a shorter private root. No file-write probe or retry was performed. Preserve the complete failed receipt; manager decides any bounded matrix alignment/shorter-temp verification and remaining qualification. Full qualification has not passed; the prepared PR body remains unpublished.
 
 Native acceptance already complete: one marker recovered after fresh ordinary source authentication, then source retired again. Reuse exact receipts; no native rerun. Current service/installed identity is5d; cached MCP loaded revision remains unknown. Root owns this isolated repair; Hermes owns live rollout.
 
