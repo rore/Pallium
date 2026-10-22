@@ -36,13 +36,13 @@
 - Honest parity and authority -> evidence-linked integration comparison and decision audit, explicit material-difference disposition, changed docs/commands verified and clean-context technical plan/result review.
 - Regression safety -> scripts/test-plan.py --base origin/main, affected subsystem, full non-slow lane once and Agent Workflow/Redline checks; no everyday environment mutation.
 
-**Plan review:** Pending clean-context technical review after bounded host/API and parity discovery; no product implementation authorized by this field yet.
+**Plan review:** Agent technical review: /root/hermes_parity_plan_review, clean-context nonimplementer, reviewed f624997c and actual host/plugin/MCP sources. Accepted one bridge with immutable per-call metadata and session-owned persistent/frozen-turn bindings; implementation must validate versioned records, serialize/recheck exact transitions, preserve unresolved wakes and historical actor/forget filters, and verify real public-host context in addition to fixture E2E. Normal cwd capability refusal on older hosts is within the explicit correction authority; no fixed fallback or host upgrade. Structural work discovery, actor resolution and memory opt-in preservation belong in the correction. Remaining History/injection/disposal differences require actual public-API investigation and cannot be silently waived. This written plan adopts those refinements.
 
 **Approvals:** Approved by user 2026-10-22: "ok, now continue with fixing this". Exact desired correction follows: "hermes should work like every other integration. first, this should be aligned and we should make sure we don't have other such cases". This authorizes isolated parity correction/audit, not a new material behavior departure or local rollout.
 
 **Exceptions:** —
 
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -52,6 +52,8 @@ Workflow invoked before product edits. Whole-change scope includes application/p
 ## Evidence
 
 Authoritative Minimap item-ref returned roadmap:v1:git:github.com/rore/pallium#roadmap / item:v1:add-hermes-agent-integration. Existing explicit current-session participation was verified and reused. Manager informed by Relay message relay-msg-ea7dcdaa447c40e0911fd4585cf0c08e; owner reconciliation pending.
+
+Whole-change intended path union requires normal workflow; initial checker now blocks only on technical review before that review was recorded. Reporter consumed the actual boundary report (no listed violations), but the boundary adapter itself exited1 with blank diagnostic; this is retained as an unpassed check, not treated as a green boundary run. API and parity agents were read-only. Clean plan review completed before product edits. Initial inherited experimental scope is traced through dc730848, f0ba4647 and slice3 records; no exact everyday-fixed-scope approval was found in inspected sources. User correction was presented in chat. Concrete instruction/promotion feedback sent to @astra-reviewer as relay-msg-0fff938a12ed47459fdbbe82e45b0d42.
 
 ## Result review
 
