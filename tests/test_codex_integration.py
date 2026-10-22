@@ -1344,6 +1344,74 @@ def test_codex_public_lifecycle_converges_across_checkouts_and_uninstall(
     assert json.loads(hooks_path.read_text(encoding="utf-8")) == after_uninstall
     assert 'trusted_hash = "sha256:owned"' in config_path.read_text(encoding="utf-8")
 
+def test_codex_readiness_publish_error_survives_temporary_cleanup_error(monkeypatch, tmp_path):
+    script = str(tmp_path / "hook-δ.py")
+    codex_readiness.setup(python=sys.executable, script=script, changed=True, home=tmp_path)
+    marker = codex_readiness.marker_path(tmp_path)
+    original = marker.read_bytes()
+    publication_error = OSError("publication refused")
+    publications, cleanups = [], []
+
+    def refuse_publication(temporary, target):
+        assert Path(target) == marker
+        publications.append(Path(temporary))
+        raise publication_error
+
+    def refuse_cleanup(temporary):
+        path = Path(temporary)
+        assert path.parent == marker.parent and path.name.startswith("codex-")
+        assert path.exists()
+        cleanups.append(path)
+        raise PermissionError("temporary cleanup refused")
+
+    local_os = SimpleNamespace(**vars(codex_readiness.os))
+    local_os.replace, local_os.unlink = refuse_publication, refuse_cleanup
+    monkeypatch.setattr(codex_readiness, "os", local_os)
+    with pytest.raises(OSError) as caught:
+        codex_readiness._write({**json.loads(original), "updated_at": "unpublished"}, tmp_path)
+    assert caught.value is publication_error
+    assert not codex_readiness.record_wake_event(
+        python=sys.executable, script=script, delivery_id="relay-delivery-" + "a" * 32,
+        stage="hook_started", home=tmp_path,
+    )
+    assert marker.read_bytes() == original
+    assert codex_readiness.read(tmp_path).get("relay_wake_evidence", []) == []
+    assert len(publications) == 2 and cleanups == publications
+
+
+def test_codex_readiness_committed_event_survives_temporary_cleanup_error(monkeypatch, tmp_path):
+    script = str(tmp_path / "hook-δ.py")
+    delivery_id = "relay-delivery-" + "b" * 32
+    codex_readiness.setup(python=sys.executable, script=script, changed=True, home=tmp_path)
+    assert codex_readiness.record_wake_event(
+        python=sys.executable, script=script, delivery_id=delivery_id,
+        stage="hook_started", home=tmp_path,
+    )
+    marker = codex_readiness.marker_path(tmp_path)
+    cleanups = []
+
+    def refuse_cleanup(temporary):
+        path = Path(temporary)
+        assert path.parent == marker.parent and path.name.startswith("codex-")
+        assert not path.exists(), "native replacement must already have consumed the temporary file"
+        cleanups.append(path)
+        raise PermissionError("temporary cleanup refused")
+
+    local_os = SimpleNamespace(**vars(codex_readiness.os))
+    local_os.unlink = refuse_cleanup
+    monkeypatch.setattr(codex_readiness, "os", local_os)
+    assert codex_readiness.record_wake_event(
+        python=sys.executable, script=script, delivery_id=delivery_id,
+        stage="relay_request_completed", outcome="unavailable", elapsed_ms=30000, home=tmp_path,
+    )
+    events = codex_readiness.read(tmp_path)["relay_wake_evidence"]
+    assert len(events) == 2 and len(cleanups) == 1
+    assert {key: value for key, value in events[-1].items() if key != "recorded_at"} == {
+        "delivery_id": delivery_id, "stage": "relay_request_completed", "reason": None,
+        "outcome": "unavailable", "elapsed_ms": 30000,
+    }
+
+
 def test_codex_readiness_public_reader_serializes_setup(monkeypatch, tmp_path):
     from contextlib import contextmanager
 

@@ -159,6 +159,8 @@ def test_tcp_ack_receipt_precedes_owned_callback_and_shutdown_drains(
     monkeypatch.setattr(dependencies, "schedule_codex_relay_wake", schedule)
     monkeypatch.setattr(app_main, "build_storage_provider", own_storage)
     monkeypatch.setattr("app.mcp.server.create_server", lambda **_: (_ for _ in ()).throw(ImportError()))
+    # Keep periodic recovery from racing the ACK-owned scheduler observation.
+    monkeypatch.setattr(app_main, "start_claude_wake_reconciler", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(codex_bridge_pipe, "start_shadow_service", lambda *_: None)
     monkeypatch.setattr(codex_bridge_pipe, "start_inventory_service", lambda **_: None)
     monkeypatch.setattr(codex_bridge_pipe, "start_retained_service", lambda **_: None)
@@ -253,6 +255,199 @@ def test_tcp_ack_receipt_precedes_owned_callback_and_shutdown_drains(
     assert response.status_code == 200, response.text
     assert response.json()["delivery_id"] == first["delivery_id"]
     assert response.json()["state"] == "delivered"
+
+
+@pytest.mark.parametrize("receipt_ack", [False, True])
+def test_failed_ack_callback_recovers_next_delivery_once_through_native_fence(
+    tmp_path, monkeypatch, caplog, receipt_ack,
+) -> None:
+    from contextlib import ExitStack
+    from app import dependencies, main as app_main, codex_bridge_pipe, codex_wake
+    from core.claude_wake import ClaudeWakeRegistry
+    from core.relay import RelayService
+    from fastapi.testclient import TestClient
+
+    callback_calls, native_calls = [], []
+    original_router = dependencies.create_router
+    storage_closed = threading.Event()
+    with ExitStack() as cleanup:
+        original_storage = app_main.build_storage_provider
+
+        def own_storage(*args, **kwargs):
+            storage = original_storage(*args, **kwargs)
+            original_close = storage.close
+
+            def close():
+                storage_closed.set()
+                original_close()
+
+            storage.close = close
+            cleanup.callback(storage.close)
+            return storage
+
+        def router(service, **kwargs):
+            callback = kwargs["relay_ack_callback"]
+
+            def fail_first_callback(result, scope):
+                callback_calls.append(result["delivery_id"])
+                if len(callback_calls) == 1:
+                    raise RuntimeError("controlled ACK cleanup failure")
+                return callback(result, scope)
+
+            kwargs["relay_ack_callback"] = fail_first_callback
+            kwargs["relay_send_callback"] = None
+            return original_router(service, **kwargs)
+
+        monkeypatch.setattr(dependencies, "create_router", router)
+        monkeypatch.setattr(app_main, "build_storage_provider", own_storage)
+        monkeypatch.setattr(app_main, "start_claude_wake_reconciler", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr("app.mcp.server.create_server", lambda **_: (_ for _ in ()).throw(ImportError()))
+        monkeypatch.setattr(codex_bridge_pipe, "start_shadow_service", lambda *_: None)
+        monkeypatch.setattr(codex_bridge_pipe, "start_inventory_service", lambda **_: None)
+        monkeypatch.setattr(codex_bridge_pipe, "start_retained_service", lambda **_: None)
+        monkeypatch.setattr(codex_bridge_pipe, "retained_wake_enabled", lambda: False)
+        monkeypatch.setattr(codex_wake, "_codex_home", lambda: tmp_path)
+        monkeypatch.setattr(codex_wake, "_codex_executable", lambda: "fake-codex")
+
+        def popen(argv, **_kwargs):
+            native_calls.append(argv)
+            return SimpleNamespace(returncode=0, communicate=lambda **_args: (None, ""))
+
+        monkeypatch.setattr(codex_wake, "_popen", popen)
+        app = create_app(AppConfig(
+            storage_backend="sqlite", sqlite_url=f"sqlite:///{tmp_path / 'main.db'}",
+            relay_sqlite_url=f"sqlite:///{tmp_path / 'relay.db'}",
+            default_use_case="demo_agent_memory", semantic_packages=DEMO_SEMANTIC_PACKAGES,
+            vector_index=VectorIndexConfig(enabled=False),
+        ))
+        cleanup.callback(app.state.pallium_service.close)
+        registry = app.state.codex_wake_registry
+        cleanup.callback(codex_wake.drain_codex_relay_wakes, registry)
+        assert registry.initialize(old_owner_drained=True)
+        client = cleanup.enter_context(TestClient(app))
+        scope = {"container_ref": "git:example.test/ack-callback-recovery"}
+
+        for session in ("sender", "target"):
+            response = client.post("/relay/turn", json={
+                "runtime": "codex", "session_ref": session, **scope,
+            })
+            assert response.status_code == 200, response.text
+        sent = []
+        for payload in ("first café 東京", "next café 東京"):
+            response = client.post("/relay/messages", json={
+                "sender_runtime": "codex", "sender_session_ref": "sender",
+                "recipient": "codex:target", "payload": payload, **scope,
+            })
+            assert response.status_code == 200, response.text
+            sent.append(response.json())
+
+        first = sent[0]["deliveries"][0]
+        next_delivery = sent[1]["deliveries"][0]
+        old = registry.reserve(
+            recipient_endpoint_id=first["recipient_endpoint_id"],
+            delivery_id=first["delivery_id"], session_ref="target", **scope,
+        )
+        assert old is not None
+        claimed = client.post("/relay/turn", json={
+            "runtime": "codex", "session_ref": "target", "max_messages": 1,
+            "wake_delivery_id": first["delivery_id"], **scope,
+        })
+        assert claimed.status_code == 200, claimed.text
+        delivery, = claimed.json()["deliveries"]
+        assert (delivery["delivery_id"], delivery["attempts"]) == (first["delivery_id"], 1)
+
+        path = "/relay/deliveries/mcp-ack" if receipt_ack else "/relay/deliveries/ack"
+        proof = {"receipt": delivery["receipt"]} if receipt_ack else {"claim_token": delivery["claim_token"]}
+        ack = client.post(path, json={"delivery_id": first["delivery_id"], **proof, **scope})
+        assert ack.status_code == 200, ack.text
+        assert ack.json()["state"] == "delivered"
+        assert callback_calls == [first["delivery_id"]]
+        assert any("Relay ACK callback failed after persistence" in record.message or
+                   "Relay MCP ACK callback failed after persistence" in record.message
+                   for record in caplog.records)
+        first_readback = client.get(f"/relay/messages/{sent[0]['message_id']}", params=scope)
+        assert first_readback.status_code == 200, first_readback.text
+        first_stored, = first_readback.json()["deliveries"]
+        assert (first_stored["delivery_id"], first_stored["state"], first_stored["attempts"]) == (
+            first["delivery_id"], "delivered", 1,
+        )
+        assert registry.run_if_current(old, lambda: native_calls.append("stale")) == (False, None)
+        assert native_calls == []
+
+        relay = RelayService(app.state.pallium_service._storage)
+        dependencies.recover_expired_relay_wakes(
+            relay, ClaudeWakeRegistry(), codex_registry=registry,
+        )
+        codex_wake.drain_codex_relay_wakes(registry)
+        current = registry.snapshot(next_delivery["recipient_endpoint_id"])
+        assert current is not None
+        assert current.delivery_id == next_delivery["delivery_id"]
+        assert current.recipient_endpoint_id == next_delivery["recipient_endpoint_id"]
+        assert (current.session_ref, current.container_ref) == ("target", scope["container_ref"])
+        assert current.generation > old.generation
+        assert current.outcome == "accepted"
+        assert len(native_calls) == 1
+        assert native_calls[0][:6] == [
+            "fake-codex", "queue", "--profile", "pallium-relay",
+            "--thread", "target",
+        ]
+        assert native_calls[0][6] == "--message"
+        assert next_delivery["delivery_id"] in native_calls[0][7]
+        assert registry.run_if_current(old, lambda: native_calls.append("stale")) == (False, None)
+        next_pending = client.get(f"/relay/messages/{sent[1]['message_id']}", params=scope)
+        assert next_pending.status_code == 200, next_pending.text
+        next_pending_row, = next_pending.json()["deliveries"]
+        assert (next_pending_row["delivery_id"], next_pending_row["state"], next_pending_row["attempts"]) == (
+            next_delivery["delivery_id"], "pending", 0,
+        )
+
+        for _ in range(3):
+            dependencies.recover_expired_relay_wakes(
+                relay, ClaudeWakeRegistry(), codex_registry=registry,
+            )
+            codex_wake.drain_codex_relay_wakes(registry)
+            assert registry.snapshot(next_delivery["recipient_endpoint_id"]) == current
+        assert len(native_calls) == 1
+
+        claimed_next = client.post("/relay/turn", json={
+            "runtime": "codex", "session_ref": "target", "max_messages": 1,
+            "wake_delivery_id": next_delivery["delivery_id"], **scope,
+        })
+        assert claimed_next.status_code == 200, claimed_next.text
+        next_claim, = claimed_next.json()["deliveries"]
+        assert (next_claim["delivery_id"], next_claim["attempts"]) == (
+            next_delivery["delivery_id"], 1,
+        )
+        next_proof = {"receipt": next_claim["receipt"]} if receipt_ack else {
+            "claim_token": next_claim["claim_token"],
+        }
+        next_ack = client.post(path, json={
+            "delivery_id": next_delivery["delivery_id"], **next_proof, **scope,
+        })
+        assert next_ack.status_code == 200, next_ack.text
+        next_readback = client.get(f"/relay/messages/{sent[1]['message_id']}", params=scope)
+        assert next_readback.status_code == 200, next_readback.text
+        next_stored, = next_readback.json()["deliveries"]
+        assert (next_stored["delivery_id"], next_stored["state"], next_stored["attempts"]) == (
+            next_delivery["delivery_id"], "delivered", 1,
+        )
+        assert registry.run_if_current(
+            current, lambda: native_calls.append("stale-next"),
+        ) == (False, None)
+        dependencies.recover_expired_relay_wakes(
+            relay, ClaudeWakeRegistry(), codex_registry=registry,
+        )
+        codex_wake.drain_codex_relay_wakes(registry)
+        assert registry.snapshot(next_delivery["recipient_endpoint_id"]) is None
+        assert len(native_calls) == 1
+        assert callback_calls == [first["delivery_id"], next_delivery["delivery_id"]]
+        first_final = client.get(f"/relay/messages/{sent[0]['message_id']}", params=scope)
+        assert first_final.status_code == 200, first_final.text
+        first_final_row, = first_final.json()["deliveries"]
+        assert (first_final_row["delivery_id"], first_final_row["state"], first_final_row["attempts"]) == (
+            first["delivery_id"], "delivered", 1,
+        )
+    assert storage_closed.is_set()
 
 
 @pytest.mark.parametrize("failure", [
