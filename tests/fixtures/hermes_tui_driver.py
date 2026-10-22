@@ -235,7 +235,7 @@ function exactGatewayConnect(args) {
   let host, port;
   if (first && typeof first === "object" && !Array.isArray(first)) {
     if (first.path !== undefined || first.socketPath !== undefined || first.lookup !== undefined
-        || first.localAddress !== undefined || first.localPort !== undefined
+        || (first.localAddress !== undefined && first.localAddress !== null) || first.localPort !== undefined
         || (first.family !== undefined && first.family !== 4)
         || (first.host !== undefined && first.hostname !== undefined && first.host !== first.hostname)) return false;
     host = first.host === undefined ? first.hostname : first.host;

@@ -545,7 +545,10 @@ const urlDenied = urls.every(url => check(() => new WebSocket(url,
  ["hermes-gateway-v1", "hermes-gateway-ticket.syntheticQualificationToken"])));
 const protocolDenied = [[], ["hermes-gateway-v1"], ["bad", "hermes-gateway-ticket.syntheticQualificationToken"],
  ["hermes-gateway-v1", "bad"]].every(protocols => check(() => new WebSocket(process.env.PALLIUM_TUI_GATEWAY_WS, protocols)));
-const socketDenied = check(() => require("node:net").connect({host:"127.0.0.1", port:port + 1}));
+const socketDenied = check(() => require("node:net").connect({host:"127.0.0.1", port:port + 1}))
+ && check(() => require("node:net").connect({host:"127.0.0.1", port:port + 1,localAddress:null}));
+const sourceBindingDenied = ["127.0.0.1","0.0.0.0","::1","",0,false,{},[]].every(localAddress =>
+ check(() => require("node:net").connect({host:"127.0.0.1",port,localAddress})));
 const staticDenied = [() => require("node:net").createServer().listen(0),
  () => require("node:tls").connect(1), () => require("node:dgram").createSocket("udp4").bind(0),
  () => require("node:http").get(`http://127.0.0.1:${port}/`),
@@ -553,7 +556,7 @@ const staticDenied = [() => require("node:net").createServer().listen(0),
 const websocketStatic = globalThis.WebSocket.CONNECTING === 0 && globalThis.WebSocket.OPEN === 1
  && globalThis.WebSocket.CLOSING === 2 && globalThis.WebSocket.CLOSED === 3;
 globalThis.fetch(`http://127.0.0.1:${port}/`).then(() => process.exit(5), () => {
- if (!(urlDenied && protocolDenied && socketDenied && staticDenied && websocketStatic)) process.exit(4);
+ if (!(urlDenied && protocolDenied && socketDenied && sourceBindingDenied && staticDenied && websocketStatic)) process.exit(4);
  console.log("denied");
 });
 '''
