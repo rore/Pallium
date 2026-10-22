@@ -43,7 +43,7 @@ User request: "ok, let's reproduce this in isolation and add the missing regress
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Blocked
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -60,12 +60,16 @@ The actual-source probes establish repeated live-restore admission_conflict with
 
 ## Evidence
 
-Initial intended-path applicability and Redline reports are retained in build/. Actual reproduction, test runs and source/runtime receipts are pending. Historical production qualification remains unchanged in PR324 and its records.
+Initial applicability and fresh final Redline reports are retained in build/. Actual reproduction and source/runtime receipts are retained in build/hermes-route-evidence/. Independently verified all4,248 release files against canonical Git blobs. Hermes child interpreter is Python3.14.6 at /qualification/envs/hermes-0222-copy/bin/python, SHA2562f7fff382c9d335d6d63f134b55cb8ced9d0b2e1d47e6f210ad3f059adfa71c1; outer pytest/exporter uses3.12.3. The summary's original ambiguous python_version label was corrected to exporter_python_version, with separate child version/path and exact-interpreter receipt. Historical production qualification remains unchanged in PR324 and its records.
 
 Focused new host-boundary node:2passed in2.33s; affected plugin subsystem:199passed/3slow-deselected in113.71s, receipts build/hermes-route-host-boundary.xml and hermes-route-subsystem.xml. Final actual-source guard run5:3passed in3.29s with zero skips, build/hermes-route-real-r5.log and driver-hashes JSON; actual guest JUnit/results retained. Source-only earlier attempts1/2 failed provenance, while3/4 passed narrower guards; do not discard them. The final proof covers the explicitly pinned release/function topology, not macOS/Windows, full UI, paid models, every Hermes release or recovery after uncertain admission. No source-mixing allowance or assertion suppression.
 
-AST and contributor local-link audit plus git diff --check passed. Whole-change selector build/hermes-route-test-plan.json requires full non-slow validation. One local protected-guest full run and normal PR platform CI remain to be evaluated; no further full native/UI matrix is needed for unchanged product code. Clean independent reviewer has code-level GO after provenance corrections; final evidence/result review follows selected validation. Existing application boundary report is reused only because production/import policy is unchanged.
+AST and contributor local-link audit plus git diff --check passed. Fresh final Redline is BLUE,4counted files/414lines; no production, protected-contract, dependency or workflow change. Existing application boundary report is reused only because production/import policy is unchanged.
+
+Whole-change selector build/hermes-route-test-plan.json requires full non-slow validation. Candidate a709e37b99bc30d36c9a627ea0a5b5cba5eba812 was frozen for validation. Protected-guest full attempt failed collection on missing numpy; Windows task-Python full attempt failed collection on missing pyte. Neither is application-pass evidence. A justified Windows retry extracted only the existing lock-hashed pure-Python pyte0.8.2 wheel into a new ignored task-local overlay, without installing into any interpreter. Its sanitized temporary HOME/profile/PATH excluded provider credentials and persistent environment changes. Result:4failed/501passed in88.72s, retained build/hermes-route-local-full-windows-r2.log/xml. Failures are unchanged Codex busy-wake/recovery, Claude hook lifecycle and CI PowerShell selection tests; the last explicitly cannot find PowerShell on the restricted child PATH. No causal explanation is asserted for the other failures, and no protected assertion is changed. Full validation is not green. Next action is the existing normal hosted platform CI after the coherent push, with independent impact assessment; no blind local retry or reliability takeover. Task-owned WSL distro is stopped, ordinary Ubuntu/defaults unchanged. No further full UI matrix is needed for unchanged product code.
 
 ## Result review
 
-Pending implementation and verification. Worktree retained for this active assignment; everyday environment is untouched.
+Agent technical review: /root/hermes_route_review, clean-context nonimplementer, technical GO after correcting source-origin coverage. Reviewed revision: a709e37b99bc30d36c9a627ea0a5b5cba5eba812. Verification adequacy: accepted final three-case actual-source proof,199-case caller subsystem, source hashes and corrected interpreter provenance for this bounded regression scope; this does not qualify full UI behavior or automatic recovery. Full-suite failures and hosted results require separate explicit evaluation; draft PR remains unmerged. Worktree and local evidence retained for active follow-up; everyday environment is untouched.
+
+The same reviewer independently evaluated the terminal local full log: GO for scoped push and authoritative hosted CI, NO-GO for merge/all-green claims. Codex busy test reached an unexpected memory path; Claude lifecycle omitted prompt registration and logged temporary-write failure; Codex recovery reported unavailable. Their causes remain unproven. Only PowerShell resolution is directly established as a local prerequisite failure. Retain the protected contract unchanged and the full result failed/incomplete. Final bookkeeping changes only this record; tested code remains identical to a709e37b. Workflow check is clean with zero blocking failures/advisories.
