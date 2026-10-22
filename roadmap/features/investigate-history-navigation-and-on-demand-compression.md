@@ -37,6 +37,21 @@ options/payloads are also required for real-usage confirmation; a verified
 evaluator adapter and honest cost accounting are required before execution.
 Completion of the prior feature is not evidence of case readiness.
 
+### Concrete planning-recall incident (2026-10-02)
+
+A newly authorized incident supplies development evidence: the original planning
+exchange is stored, but an agent's user-role-only search excludes its
+assistant-authored list while returning automated user-role prompts. This is not
+an independent holdout and does not reopen the old corpus census. The scoped
+[planning-retrieval correction](../../.agent-workflow/tasks/history-planning-retrieval.md)
+is in implementation: preserve exact filters, improve both-role/topic/neighbor
+guidance, and fix the separately identified source-only lexical candidate window
+being exhausted by excluded sources. No heartbeat suppression, new ranking weight,
+index or compression is selected. Caller tests measure candidate recovery and
+delivered evidence, not downstream task accuracy. Broader representation
+comparisons remain queued; this concrete bugfix does not depend on their holdout
+gate and does not complete them.
+
 ## Time-boxed comparisons
 
 Current baseline (2026-09-12): PR #169 already ships compact response-local session
