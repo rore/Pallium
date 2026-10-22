@@ -793,6 +793,7 @@ def create_app(config: AppConfig | None = None, routing_overrides: RoutingOverri
             show_roi=resolved_config.features.dashboard_roi,
             relay_service=dashboard_relay_service,
             codex_wake_registry=codex_wake_registry,
+            diagnostic_runner=run_diagnostic_operation,
         )
         claude_wake_registry = build_claude_wake_registry(resolved_config.resolved_relay_sqlite_url)
         app.state.claude_wake_registry = claude_wake_registry

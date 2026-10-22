@@ -869,11 +869,24 @@ def test_reconciler_does_not_retry_uncertain_native_write(
     )
 
     observed: list[tuple[str, object, object, int]] = []
+    first_transport_finished = threading.Event()
     accepted = threading.Event()
+    workers: list[threading.Thread] = []
+    original_schedule = claude_wake.schedule_claude_relay_wake
+
+    def capture_worker(*args, **kwargs):
+        worker = original_schedule(*args, **kwargs)
+        if worker is not None:
+            workers.append(worker)
+        return worker
+
+    monkeypatch.setattr(claude_wake, "schedule_claude_relay_wake", capture_worker)
 
     def transport(_socket_path: str, _token: str) -> str:
         delivery = relay.message_status(message_id=sent["message_id"], **scope)["deliveries"][0]
         observed.append((delivery["state"], delivery["claim_token"], delivery["receipt"], delivery["attempts"]))
+        if len(observed) == 1:
+            first_transport_finished.set()
         if len(observed) == 4:
             accepted.set()
             return "accepted"
@@ -883,14 +896,23 @@ def test_reconciler_does_not_retry_uncertain_native_write(
     reconciler = ClaudeWakeReconciler(registry, relay, interval_seconds=0.01)
     reconciler.start()
     try:
+        assert first_transport_finished.wait(timeout=5), "wake transport did not complete its status read"
         assert not accepted.wait(timeout=0.1), observed
     finally:
         reconciler.stop()
-    assert observed == [("pending", None, None, 0)]
-    assert reconciler._thread is not None and not reconciler._thread.is_alive()
+        reconciler_thread = reconciler._thread
+        if reconciler_thread is not None:
+            reconciler_thread.join(timeout=2)
+        for worker in tuple(workers):
+            worker.join(timeout=5)
+        assert reconciler_thread is not None and not reconciler_thread.is_alive()
+        assert all(not worker.is_alive() for worker in workers)
 
+    assert observed == [("pending", None, None, 0)]
+
+@pytest.mark.parametrize("transport_result", ("accepted", "retryable"))
 def test_recovery_does_not_rearm_inflight_while_native_worker_is_active(
-    client, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    client, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, transport_result: str,
 ) -> None:
     import threading
 
@@ -919,6 +941,9 @@ def test_recovery_does_not_rearm_inflight_while_native_worker_is_active(
     }
     started = threading.Event()
     release = threading.Event()
+    recovery_started = threading.Event()
+    recovery_finished = threading.Event()
+    transport_watchdog_failed = threading.Event()
     retried = threading.Event()
     transport_calls: list[tuple[str, str]] = []
 
@@ -926,27 +951,60 @@ def test_recovery_does_not_rearm_inflight_while_native_worker_is_active(
         transport_calls.append((socket_path, token))
         if len(transport_calls) == 1:
             started.set()
-            assert release.wait(timeout=1)
+            if not release.wait(timeout=5):
+                transport_watchdog_failed.set()
         else:
             retried.set()
-        return "accepted"
+        return transport_result
 
     monkeypatch.setattr(claude_wake, "claude_wake_transport", transport)
+    original_recover_registration_intents = claude_wake.recover_claude_registration_intents
+
+    def observe_recovery_start(registry_arg, relay_arg):
+        recovery_started.set()
+        return original_recover_registration_intents(registry_arg, relay_arg)
+
+    monkeypatch.setattr(claude_wake, "recover_claude_registration_intents", observe_recovery_start)
     worker = claude_wake.schedule_claude_relay_wake(result, scope, registry=registry)
-    assert worker is not None and started.wait(timeout=1)
-    wall[0] = 102.0
+    assert worker is not None
+    recovery_errors: list[BaseException] = []
+
+    def recover() -> None:
+        try:
+            claude_wake.recover_claude_relay_wakes(registry, relay)
+        except BaseException as exc:
+            recovery_errors.append(exc)
+        finally:
+            recovery_finished.set()
+
+    recovery_thread: threading.Thread | None = None
     try:
-        claude_wake.recover_claude_relay_wakes(registry, relay)
+        assert started.wait(timeout=1)
+        wall[0] = 102.0
+        recovery_thread = threading.Thread(target=recover, name="claude-wake-held-recovery")
+        recovery_thread.start()
+        assert recovery_started.wait(timeout=5)
+        assert not recovery_finished.wait(timeout=0.1)
         assert transport_calls == [(PAYLOAD["socket_path"], PAYLOAD["token"])]
-        candidate = next(iter(registry.recovery_candidates()))
-        assert candidate["state"] == "wake_inflight" and candidate["delivery_id"] == delivery["delivery_id"]
         pending = relay.message_status(message_id=sent["message_id"], **scope)["deliveries"][0]
         assert pending["state"] == "pending"
         assert tuple(pending[key] for key in ("claim_token", "receipt", "attempts")) == (None, None, 0)
     finally:
         release.set()
-        worker.join(timeout=1)
-    assert not worker.is_alive()
+        worker.join(timeout=5)
+        if recovery_thread is not None:
+            recovery_thread.join(timeout=5)
+        assert not worker.is_alive()
+        assert recovery_thread is None or not recovery_thread.is_alive()
+
+    assert not transport_watchdog_failed.is_set(), "held native transport exceeded its bounded release wait"
+    assert recovery_finished.is_set()
+    assert not recovery_errors, recovery_errors
+    candidate = next(iter(registry.recovery_candidates()))
+    assert candidate["state"] == "wake_inflight" and candidate["delivery_id"] == delivery["delivery_id"]
+    pending = relay.message_status(message_id=sent["message_id"], **scope)["deliveries"][0]
+    assert pending["state"] == "pending"
+    assert tuple(pending[key] for key in ("claim_token", "receipt", "attempts")) == (None, None, 0)
 
     claude_wake.recover_claude_relay_wakes(registry, relay)
     assert not retried.is_set()
