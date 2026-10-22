@@ -220,7 +220,7 @@ function deny(kind, target) {
 const rawGateway = process.env.PALLIUM_TUI_GATEWAY_WS;
 let gateway = null, gatewayPort = null;
 if (rawGateway !== undefined) {
-  const match = /^ws:\/\/127\\.0\\.0\\.1:([1-9][0-9]{0,4})\/api\/ws$/.exec(rawGateway);
+  const match = /^ws:\\/\\/127\\.0\\.0\\.1:([1-9][0-9]{0,4})\\/api\\/ws$/.exec(rawGateway);
   if (!match || match[0] !== rawGateway || Number(match[1]) > 65535) process.exit(78);
   gateway = rawGateway;
   gatewayPort = Number(match[1]);
