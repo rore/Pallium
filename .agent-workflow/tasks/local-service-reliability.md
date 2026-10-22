@@ -37,11 +37,11 @@
 
 **Plan review:** Agent technical review: /root/reliability_summary_plan_review, reviewed source b9435b5dfac19bafb095ad05a7a551e3c6c35bb5 and current recorded plan, GO with conditions in the Plan review note below. Independent follow-up confirms Elevated for actual gray/blue surfaces; no High-risk surface is in this scoped correction.
 
-**Approvals:** Manager chat 01a16320-c588-72b0-a098-cb3d137b1e75 relayed the user's explicit assignment on 2026-10-22: "assign someone to own the local service reliability investigation and drive it to a fix. waiting messages and queue timeouts are the priority, keep overhead minimal". The manager assigned this chat sole investigation/fix ownership, with existing reconnect work retained by its owner. The human separately approved cross-chat communication directly here. Repository diagnosis/fix is authorized; live mutation remains separate and absent.
+**Approvals:** Approved by user 2026-10-22, relayed verbatim from manager chat 01a16320-c588-72b0-a098-cb3d137b1e75: "i approve all fixes for reliability and stability". Continuing repository-fix authority covers this incident and necessary corrections after independent technical review; it does not waive validation/contracts or authorize unspecified installed rollout. Manager chat 01a16320-c588-72b0-a098-cb3d137b1e75 relayed the user's explicit assignment on 2026-10-22: "assign someone to own the local service reliability investigation and drive it to a fix. waiting messages and queue timeouts are the priority, keep overhead minimal". The manager assigned this chat sole investigation/fix ownership, with existing reconnect work retained by its owner. The human separately approved cross-chat communication directly here. Repository diagnosis/fix is authorized; live mutation remains separate and absent.
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Blocked
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -60,7 +60,7 @@ Existing reconnect candidate production cb63998e0fc665700b3de70fdf7885a46b1aa1a4
 
 ## Result review
 
-Pending diagnosis, implementation and verification. No live change or completed reliability correction is claimed.
+Agent technical review: /root/reliability_summary_result_review. Reviewed revision: 276915e4b28cc6829b0f867407495a9916c9b3c5 against5d167936. No code findings; focused HTTP lifecycle and123-test affected subsystem evidence are adequate for the scoped dispatch correction. Final verification acceptance is conditional on fresh required PR CI: local full is RED as recorded below, and no merge/live/global reliability completion is claimed. The current block is qualification, not missing user implementation authority.
 
 ## Diagnostic checkpoint (2026-10-22)
 
@@ -83,3 +83,25 @@ The synchronous summary SQL/body is unchanged; app/main.py now forwards the exis
 Fresh origin/main remains5d167936. Whole-change selector reports full lane; its single required full non-slow run has started in build/summary-qualification-full using the already-qualified runtime, isolated short non-Git homes/appdata/temp and scrubbed provider variables, with a20minute outer cap. The existing owner was notified to avoid competing qualification. Full result and clean independent result review remain pending; this is not release/live closure.
 
 The owner completed the one controlled post-real-COMMIT experiment: A held the gate after COMMIT returned and DBAPI in_transaction=false; B returned actual503/local_gate after450.001ms with no native transaction; concurrent/final HTTP reads retained exactly3 refs and A returned200 after bounded release. This proves unnecessary post-settlement gate holding can cause admission refusal, not attribution of the original full failure/live timeout. Exact source69cb709d remained clean; evidence is owner's build/local-gate-postcommit-01. Owner is preparing helper/caller inventory, concrete once-only settlement-release/failure/A-B-C ownership plan and independent technical review before any separate persistence correction. No storage code is imported here.
+
+Human continuing reliability/stability repository-fix approval was forwarded immediately to the existing lock/reconnect owner. No repeated repository-plan permission is needed within that scope after technical review; live changes still require exact described impact and approval.
+
+## Assumption correction: lock diagnostic boundary
+
+Owner source review corrected the post-COMMIT observer interpretation: it held the Connection.execute wrapper after delegated native COMMIT returned, before the storage helper observed execute returning. The receipt therefore establishes an in-flight/post-native-COMMIT gate hold, NOT a cleanup-only boundary that a safe settlement callback could release. Earlier cleanup-only claims above are superseded, not erased. The observed503 remains a valid negative guard: do not release while COMMIT's caller-visible completion is withheld. A positive cleanup baseline must gate Session.close after storage observed successful COMMIT. No product correction is established yet; owner is correcting its plan/coverage and must not overlap this branch's active full run. The summary correction and its existing proof are unchanged.
+
+## Full-lane harness disposition
+
+The first full non-slow command tests/ -x -q ended uncapped exit2 after434.47s pytest/438.309s runner:4082 passed,2 failed,3 skipped,1 xfailed. Failures were tests/test_health.py::test_production_factory_drains_claude_wake_thread_before_storage_close[transport] during long atomic intent temporary-file creation, and tests/test_hook_common_parity.py::test_work_refs_stops_parent_walk_at_64[cc_common_parity] with explicit WinError206. App/test/runtime hashes match276915e4. The default nested private pytest root exceeded Windows path limits; only the ignored runner now supplies a shorter explicit --basetemp under the same private non-Git state/p. Both recorded failures passed under --lf --lfnf=none -q -n0, exactly2 passed/39 deselected in2.07s, source unchanged. Evidence: build/summary-qualification-full and summary-path-failures-01. All12 observed runner/descendant Python PID plus creation-time identities were absent at the final check; this is snapshot evidence, not universal descendant proof.
+
+Agent technical review: /root/reliability_summary_result_review found no code defects on276915e4 against5d167936 and accepted the focused/subsystem coverage as appropriate. Its full-failure review supports the path diagnosis but explicitly rejects partial/unread coverage as a replacement for full qualification. It recommends one fresh complete lane on the corrected harness, requiring uncapped exit0 and matching source hashes; no blind retry or full-green claim. Root is holding that lane until the existing owner's one corrected Session.close boundary control ends. Final technical verification acceptance remains pending.
+
+Initial governance check lacked a generated Redline verdict and blocked as expected. After the actual import-linter and Redline reporter ran, import violations were empty, actual verdictGRAY/no API/schema/security/config/protected-contract changes or triggered checkpoints, and workflow check was clean with0failed predicates. Genuine artifacts are build/import-linter-report.json, redline-verdict.json and summary-workflow-check.json; no assertion/status/protection override was used.
+
+## Corrected full lane and draft disposition
+
+The independent-review-approved fresh full on the shorter private basetemp ended uncapped exit2,251.69s pytest/255.057s runner:2423 passed,1 failed,3 skipped,1 xfailed. Failure: tests/test_codex_wake.py::test_relay_transport_timing_is_bounded_and_dashboard_projected[unavailable-30000]; its second record_wake_event returnedFalse before the summary HTTP call. Readiness implementation/test are unchanged in276915e4. Retained private failed-test artifact is valid JSON520bytes, one hook_started event, no transport event, one-byte lock and no temporary files. This does not identify whether lock/read/write/release failed; no physical cause or cure is asserted. All14 snapshot-owned PID/creation identities were absent; limitation remains snapshot-only. Evidence: build/summary-qualification-short-full and readiness-failed-artifact-inspection.json.
+
+Fresh clean reviewer source-classifies this as a pre-request failure outside the candidate delta, with no additional summary-specific safety proof missing. It accepts the scoped code judgment and allows a draft PR, retaining local fullRED, with fresh required PR CI as the outstanding full gate. Do not merge/declare verification complete without green required CI; investigate any matching fresh failure. No third local full loop is scheduled. The owner's corrected Session.close control is separate Relay SQL gate diagnosis, not a readiness-marker diagnostic; it now owns the test slot.
+
+Implementation checkpoint276915e4 is pushed. This successor changes only the Work Record; code/test hashes remain the reviewed and focused/subsystem-tested identity. Draft publication will capture the returned exact PR URL here. Existing broader incident/canonical item remains active and owner-managed; neither local environment nor Hermes profile was changed.
