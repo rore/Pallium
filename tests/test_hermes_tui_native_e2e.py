@@ -257,7 +257,8 @@ def confirmed_item_query(rows, prompt):
     response = row["response"]
     assert isinstance(body, dict) and body.get("role") == "user" and body.get("content") == prompt, row
     source_item_id = response.get("source_item_id") if isinstance(response, dict) else None
-    assert isinstance(source_item_id, str) and source_item_id and source_item_id == source_item_id.strip(), row
+    assert isinstance(source_item_id, str) and source_item_id and source_item_id == source_item_id.strip(), (
+        "source_item_id missing or invalid", row)
     return body, source_item_id
 
 
@@ -1430,8 +1431,8 @@ class ScriptedProvider:
         available = {row["function"]["name"] for row in body["tools"]}
         latest = next(row["content"] for row in reversed(messages) if row.get("role") == "user")
         assert isinstance(latest, str), latest
-        if latest.startswith((PROMPT, BUSY_TURN_PROMPT, HISTORY_PROMPT, MEMORY_SESSION_PROMPT,
-                              "native-ui-memory-")):
+        if self.scope_mode == "cwd" and latest.startswith((
+                PROMPT, BUSY_TURN_PROMPT, HISTORY_PROMPT, MEMORY_SESSION_PROMPT, "native-ui-memory-")):
             prompt, orientation = composer_observation(latest, self.memory_enabled, self.scope_mode,
                                                        require_scope=self.scope_mode == "cwd")
             if orientation is not None:
