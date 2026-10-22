@@ -65,6 +65,27 @@ Keep decisions local to this feature, without another registry or memory store:
 - Verify naming/capture/search behavior on each supported integration; publish
   actual support and limitations rather than assuming uniform host behavior.
 
+## Current-name Recovery After Compaction
+
+Source inspection on 2026-10-22 found that the existing Relay turn response includes
+`session.alias` (`storage/sqlite_relay.py`), and takeover clears the former holder's
+alias. Codex and Claude turn-start hooks already call `relay_turn`, but their
+`format_injection` scope omits the name. Revalidate these findings on pickup.
+
+Prefer exposing that validated current name through the existing injected context:
+no new store, role registration or extra request on the normal hook path. Represent
+confirmed name, confirmed unnamed, and unavailable distinctly. Never substitute a
+cached name after lookup failure or interpret a missing field from an older
+integration as confirmed loss. Keep output bounded and identity checks intact.
+
+Test next-turn injection after compaction and compaction within an ongoing turn
+separately: do not assume both invoke the same hook. Where injection cannot restore
+fresh identity, inspect existing supported read-only self-discovery before adding
+anything. The current naming mutation with no name clears it; it is NOT a lookup.
+Publish host-specific recovery limits rather than promise uniform behavior or
+instantaneous notification of takeover during a running turn. Collection owns
+the small durable instruction connecting current name to role-file discovery.
+
 ## Out of Scope
 
 Role files, role identity/registry or adoption/departure APIs, learning implementation, background reviewers/schedulers,
@@ -84,6 +105,10 @@ historical backfill, and changes to delivery reliability unrelated to this contr
    a local rename: existing name discovery reports A no longer holds it; A's new
    turns are not attributed to that name, while A's earlier history remains.
    Collection tests stopping the old role guidance; Pallium adds no role state.
+   Repeat recovery after compaction with retained ownership and external takeover;
+   verify named/unnamed/unavailable outputs, source identity validation, and that
+   recovery never renames, clears or reclaims the name. Cover both next-turn and
+   within-turn compaction on supported hosts, reporting unsupported paths explicitly.
 3. Missing identity, conflicting holder, unavailable capture, unsupported host,
    empty results and partial coverage have honest, actionable outcomes. Scoped
    search and expansion cannot expose unauthorized containers or deleted content.
