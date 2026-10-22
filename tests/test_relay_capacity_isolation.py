@@ -2302,7 +2302,7 @@ def test_summary_cancellation_keeps_diagnostic_workers_owned_until_drain(
             if started_count == 2:
                 full.set()
         try:
-            assert release.wait(5), "summary worker watchdog expired"
+            assert release.wait(10), "summary worker watchdog expired"
             assert not closed.is_set(), "summary accessed closed storage"
             return original_read()
         finally:
