@@ -49,6 +49,41 @@ only materially affected host evidence. Keep exact source/runtime hashes and
 independent review references with the result. Do not combine partial or skipped
 cases into a complete matrix or count helper tests as actual UI coverage.
 
+## Missing-route regression probes
+
+[Hermes #142844](https://github.com/NousResearch/hermes-agent/issues/142844) concerns
+a live local session whose scoped gateway route is absent. The opt-in
+[`test_hermes_route_recovery_e2e.py`](../../tests/test_hermes_route_recovery_e2e.py)
+probes the affected upstream v0.22.4 source at
+`4d04303818b61bf3aa09278af48356315515965b` inside the protected Linux boundary:
+
+- Actual gateway authority/database admissions remain queued when repeated drain
+  claims pause with `admission_conflict`. Healthy and cold restore controls, plus
+  refusal to take over a non-stray rival session, distinguish the failure.
+- Gateway-backed plugin injection can return scheduling success, then refuse
+  dispatch when the route is absent. No admission is created in this case; its
+  diagnostic is "not routed", not the live-restore conflict.
+- TUI-owned injection uses the shipped host binding and enqueue helpers with
+  synthetic busy-session dictionaries. An exact-session marker can enter that
+  queue despite an absent gateway route, without invoking the gateway.
+
+Set `HERMES_E2E_SOURCE` to that release source and `HERMES_E2E_PYTHON` to its
+compatible isolated interpreter, then run
+`python -m pytest tests/test_hermes_route_recovery_e2e.py -q -n 0 -m slow`
+inside the existing qualification namespace. The probe verifies source hashes,
+import origins, private synthetic profiles and owned cleanup. These are actual
+source/queue probes, not full Desktop/TUI, provider or platform qualification;
+they do not expand the release matrix above or repair upstream behavior.
+
+The ordinary production-plugin/HTTP regressions in
+[`test_hermes_relay_plugin.py`](../../tests/test_hermes_relay_plugin.py) separately
+verify that host scheduling or refusal does not claim or ACK an unseen Relay
+delivery, repeated polling does not inject duplicates, and later consumption of
+the original marker admits only the exact session before allowing a new delivery.
+Host acceptance, queued input, context receipt and agent completion remain
+different observations. No automatic resend, gateway restart or route-store
+repair is added; inspect both Relay state and the host diagnostic before recovery.
+
 ## Disposable Windows runner
 
 Use the existing manual-only

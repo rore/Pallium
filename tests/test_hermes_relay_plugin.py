@@ -436,6 +436,109 @@ def _persisted_wake(ctx, session="ses_שלום"):
                 if key.startswith("wake:") and value.get("session_ref") == session)
 
 
+@pytest.mark.parametrize("host_accepted", [True, False], ids=["scheduled", "refused"])
+def test_host_boundary_keeps_unobserved_delivery_unclaimed(
+        client, plugin_context, monkeypatch, host_accepted):
+    """Host acceptance is scheduling evidence, not proof of either Hermes topology."""
+    module, create, _ = plugin_context
+    monkeypatch.setattr(module, "POLL_SECONDS", .01)
+    original_http = module._json_request
+    positive_reads, ack_bodies = [], []
+    third_candidate, release_candidate, injected = (
+        threading.Event(), threading.Event(), threading.Event())
+
+    def observed_http(base, method, path, **kwargs):
+        result = original_http(base, method, path, **kwargs)
+        if path == "/relay/deliveries/ack":
+            ack_bodies.append(kwargs["body"])
+        if (path == "/relay/pending-candidate" and result
+                and kwargs["query"]["session_ref"] == "ses_שלום"):
+            positive_reads.append(result)
+            if len(positive_reads) == 3:
+                # Two positive poll iterations have completed before this barrier.
+                third_candidate.set()
+                if not release_candidate.wait(5):
+                    raise TimeoutError("test did not release the observed candidate")
+        return result
+
+    monkeypatch.setattr(module, "_json_request", observed_http)
+    ctx = create()
+
+    def schedule_marker(text, **kwargs):
+        ctx.injections.append((text, kwargs))
+        injected.set()
+        return host_accepted
+
+    monkeypatch.setattr(ctx, "inject_message", schedule_marker)
+    ctx.hooks["pre_llm_call"](session_id="ses_שלום", turn_id="seed", user_message="seed")
+    ctx.hooks["on_session_end"](session_id="ses_שלום")
+    endpoint = client.get("/relay/sessions", params={"runtime": "hermes", **SCOPE}).json()[0]["endpoint_id"]
+    message = send(client, endpoint, payload="Queued context שלום 🌍 — original delivery")
+    delivery_id = message["deliveries"][0]["delivery_id"]
+    try:
+        assert third_candidate.wait(3), "poller did not revisit the positive candidate"
+        assert injected.is_set()
+        assert positive_reads == [{
+            "delivery_id": delivery_id, "recipient_endpoint_id": endpoint, "state": "pending",
+        }] * 3
+        assert len(ctx.injections) == 1
+        marker, target = ctx.injections[0]
+        assert target == {"role": "user", "session_key": "ses_שלום"}
+        assert message["payload"] not in marker
+        wake = _persisted_wake(ctx)
+        assert wake["delivery_id"] == delivery_id and wake["endpoint_id"] == endpoint
+        assert wake["state"] == ("injection_attempted" if host_accepted else "injection_refused")
+        before = status(client, message)["deliveries"][0]
+        assert before["delivery_id"] == delivery_id
+        assert before["recipient_session_ref"] == "ses_שלום"
+        assert before["state"] == "pending" and before["attempts"] == 0
+        assert before["claim_token"] is None and before["receipt"] is None
+        assert before["delivered_at"] is None and ack_bodies == []
+
+        # A different host session cannot consume the original queued marker.
+        assert ctx.hooks["pre_llm_call"](
+            session_id="ses_other", turn_id="foreign", user_message=marker) is None
+        assert status(client, message)["deliveries"][0] == before
+        assert ack_bodies == []
+    finally:
+        release_candidate.set()
+
+    if not host_accepted:
+        return
+
+    context = ctx.hooks["pre_llm_call"](
+        session_id="ses_שלום", turn_id="delayed", user_message=marker)["context"]
+    claimed = status(client, message)["deliveries"][0]
+    assert claimed["state"] == "claimed" and claimed["attempts"] == 1
+    assert claimed["delivered_at"] is None and ack_bodies == []
+    request = {"messages": [{"role": "user", "content": marker + "\n\n" + context}]}
+    expanded = _request_stage(ctx, request, turn="delayed")
+    assert message["payload"] in expanded["messages"][0]["content"]
+    assert status(client, message)["deliveries"][0]["state"] == "claimed"
+    _observe_request(ctx, expanded, turn="delayed")
+    _observe_request(ctx, expanded, turn="delayed", api_request_id="retry")
+    assert len(ack_bodies) == 1 and ack_bodies[0]["delivery_id"] == delivery_id
+    delivered = status(client, message)["deliveries"][0]
+    assert delivered["state"] == "delivered" and delivered["attempts"] == 1
+    assert delivered["delivered_at"] is not None
+    assert len(ctx.injections) == 1
+
+    ctx.hooks["on_session_end"](session_id="ses_שלום", turn_id="delayed")
+    injected.clear()
+    next_message = send(client, endpoint, payload="Next delivery ✓")
+    assert injected.wait(3), "turn end did not permit the next delivery"
+    assert len(ctx.injections) == 2
+    next_marker, next_target = ctx.injections[1]
+    assert next_marker != marker and next_target == target
+    assert _persisted_wake(ctx)["delivery_id"] == next_message["deliveries"][0]["delivery_id"]
+    assert status(client, next_message)["deliveries"][0]["attempts"] == 0
+    _admit_plugin_wake(ctx, next_marker, "next")
+    assert [body["delivery_id"] for body in ack_bodies] == [
+        delivery_id, next_message["deliveries"][0]["delivery_id"],
+    ]
+    assert status(client, next_message)["deliveries"][0]["state"] == "delivered"
+
+
 def test_turn_end_retires_admitted_no_reply_wakes_for_successive_deliveries(client, plugin_context):
     _, create, _ = plugin_context
     ctx, marker, message = _plugin_wake(client, create)
