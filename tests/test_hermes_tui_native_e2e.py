@@ -28,6 +28,7 @@ import pytest
 import yaml
 
 from tests.fixtures.hermes_desktop_driver import RUNNER_MARKERS, require_runner_gate
+from tests.fixtures.hermes_gateway_driver import gateway_guard_witness, install_copied_runtime_guard, prepare_private_control
 
 from tests.fixtures.hermes_tui_driver import (
     assert_isolated_env,
@@ -2273,6 +2274,10 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
         assert "HERMES_STATE_DB_GUARD_BYPASS" not in env
         require_contained_paths(profile)
     profile.mkdir()
+    shared_gateway = scope_mode == "cwd" and surface == "tui"
+    if scope_mode == "cwd":
+        qualification_root = Path("/qualification") if sys.platform == "linux" else Path(env["RUNNER_TEMP"])
+        prepare_private_control(env, qualification_root)
     model_config = ({"provider": "openai-api", "default": "pallium-local", "api_mode": "chat_completions",
                      "context_length": 128000} if provider_kind == "openai-api" else {
         "provider": "custom", "default": "pallium-local", "api_key": "synthetic-only",
@@ -2298,6 +2303,7 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
     shutil.copyfile(peer_fixture / "hermes_native_peer_plugin.yaml", peer_manifest)
     shutil.copyfile(peer_fixture / "hermes_native_peer_plugin.py", peer_source)
     peer_audit = peer_plugin / "audit.jsonl"
+    guard_witness = artifacts / "gateway-guard-witness.jsonl"
     unrelated = profile / "unrelated-note.txt"
     unrelated.write_text("Preserve this note é 漢字 🌍", encoding="utf-8")
     seed_models_dev_cache(profile)
@@ -2326,6 +2332,13 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
             observer_runtime = prepare_terminal_runtime(python, source, home, artifacts, env)
             (artifacts / "terminal-observer-runtime.json").write_text(
                 json.dumps(observer_runtime, indent=2), encoding="utf-8")
+        if scope_mode == "cwd":
+            guard_runtime = install_copied_runtime_guard(
+                python, source, python_guard_source(), allowed_root=qualification_root)
+            outcome["copied_runtime_guard"] = guard_runtime
+            env.update(PALLIUM_TUI_GUARD_PATH=guard_runtime["path"],
+                       PALLIUM_TUI_GUARD_SHA256=guard_runtime["sha256"],
+                       PALLIUM_TUI_GUARD_WITNESS=str(guard_witness), PYTHONPATH=str(source))
         setup_args = [sys.executable, "-m", "app.run", "setup", "hermes", "--home", str(profile),
                       "--hermes-python", str(python), "--service-url", base_url]
         if scope_mode == "fixed":
@@ -2364,13 +2377,24 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
         spec = leg_one / "driver-spec.json"
         spec.write_text(json.dumps({"home": str(home), "source": str(source), "python": str(python),
                                     "surface": surface,
+                                    "shared_gateway": shared_gateway,
                                     "git": str(qualification_git), "git_sha256": qualification_git_sha256,
                                     "bundle_sha256": os.environ["HERMES_TUI_BUNDLE_SHA256"],
                                     "python_base": runtime_versions["python_base"],
                                     "python_base_sha256": runtime_versions["python_base_sha256"],
                                     "parent_pid": os.getpid()}), encoding="utf-8")
         driver = NativeDriver(python, spec, env)
-        assert driver.read(155) == {"ready": True}
+        assert driver.read(290 if shared_gateway else 155) == {"ready": True}
+
+        def verify_gateway_guard(leg):
+            if not shared_gateway:
+                return
+            receipt = json.loads((leg / "gateway-after.json").read_text(encoding="utf-8"))
+            matching = eventually(lambda: gateway_guard_witness(guard_witness, receipt, guard_runtime),
+                                  "owned gateway incarnation emitted no guard witness")
+            outcome.setdefault("gateway_guard_witnesses", []).append({"pid": receipt["pid"], "rows": matching})
+
+        verify_gateway_guard(leg_one)
 
         def restart_same_profile():
             nonlocal driver
@@ -2399,6 +2423,7 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
             next_spec = leg_two / "driver-spec.json"
             next_spec.write_text(json.dumps({"home": str(home), "source": str(source),
                 "python": str(python), "surface": surface,
+                "shared_gateway": shared_gateway,
                 "git": str(qualification_git), "git_sha256": qualification_git_sha256,
                 "bundle_sha256": os.environ["HERMES_TUI_BUNDLE_SHA256"],
                 "python_base": runtime_versions["python_base"],
@@ -2406,7 +2431,8 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
                 "parent_pid": os.getpid(), "previous_spec": str(spec),
                 "reuse_user_data": surface == "desktop"}), encoding="utf-8")
             driver = NativeDriver(python, next_spec, env)
-            assert driver.read(155) == {"ready": True}
+            assert driver.read(290 if shared_gateway else 155) == {"ready": True}
+            verify_gateway_guard(leg_two)
             driver.command("new")
             if memory_enabled:
                 driver.command("submit", text=MEMORY_SESSION_PROMPT, marker="native-ui-memory-session")

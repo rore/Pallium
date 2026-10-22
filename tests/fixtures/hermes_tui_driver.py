@@ -107,10 +107,36 @@ def classify_bridge_connections(bridge: dict, service_endpoint: tuple[str, int],
 
 
 def python_guard_source() -> str:
-    return '''import json, os, socket, threading
+    return '''import json, os, socket, stat, threading
+from pathlib import Path
 
-_ALLOWED = {tuple(x) for x in json.loads(os.environ.get("PALLIUM_TUI_ALLOWED_ENDPOINTS", "[]"))}
-assert _ALLOWED and all(host == "127.0.0.1" and type(port) is int and 0 < port < 65536 for host, port in _ALLOWED)
+def _configuration():
+    try:
+        raw = json.loads(os.environ["PALLIUM_TUI_ALLOWED_ENDPOINTS"])
+        if not isinstance(raw, list) or not raw:
+            raise ValueError()
+        allowed = set()
+        for row in raw:
+            if (not isinstance(row, list) or len(row) != 2 or row[0] != "127.0.0.1"
+                    or type(row[1]) is not int or not 1 <= row[1] <= 65535):
+                raise ValueError()
+            allowed.add((row[0], row[1]))
+        control_raw = json.loads(os.environ.get("PALLIUM_TUI_ALLOWED_CONTROL_PATHS", "[]"))
+        if not isinstance(control_raw, list) or (control_raw and os.name == "nt"):
+            raise ValueError()
+        controls = set()
+        for raw_path in control_raw:
+            if not isinstance(raw_path, str) or not raw_path or not Path(raw_path).is_absolute():
+                raise ValueError()
+            path = Path(raw_path)
+            if str(path.resolve(strict=False)) != raw_path:
+                raise ValueError()
+            controls.add(raw_path)
+        return allowed, controls
+    except BaseException:
+        os._exit(78)
+
+_ALLOWED, _CONTROL_PATHS = _configuration()
 _LOG = os.environ.get("PALLIUM_TUI_EGRESS_LOG")
 _IPC_LOG = os.environ.get("PALLIUM_TUI_IPC_LOG")
 _ipc = threading.local()
@@ -119,8 +145,24 @@ def _record(path, row):
         with open(path, "a", encoding="utf-8") as f: f.write(json.dumps(row) + "\\n")
 def _allowed(address):
     return isinstance(address, tuple) and len(address) >= 2 and (str(address[0]), int(address[1])) in _ALLOWED
-def _deny(address):
-    if getattr(_ipc, "active", False) and address[0] in ("127.0.0.1", "::1"):
+def _allowed_control(sock, address):
+    if not (sock is not None and sock.family == getattr(socket, "AF_UNIX", None)
+            and sock.type == socket.SOCK_STREAM and isinstance(address, str) and address in _CONTROL_PATHS):
+        return False
+    try:
+        path = Path(address)
+        parent, node = path.parent.lstat(), path.lstat()
+        return (str(path.resolve(strict=True)) == address
+                and stat.S_ISDIR(parent.st_mode) and parent.st_uid == os.getuid()
+                and stat.S_IMODE(parent.st_mode) == 0o700
+                and stat.S_ISSOCK(node.st_mode) and node.st_uid == os.getuid()
+                and stat.S_IMODE(node.st_mode) == 0o600)
+    except (OSError, RuntimeError):
+        return False
+def _deny(address, sock=None):
+    if _allowed_control(sock, address): return
+    if (getattr(_ipc, "active", False) and isinstance(address, tuple) and address
+            and address[0] in ("127.0.0.1", "::1")):
         _record(_IPC_LOG, {"kind": "stdlib_socketpair", "address": repr(address)})
         return
     if not _allowed(address):
@@ -130,11 +172,11 @@ _orig_connect, _orig_connect_ex = socket.socket.connect, socket.socket.connect_e
 _orig_getaddrinfo, _orig_socketpair = socket.getaddrinfo, socket.socketpair
 def _connect(self, address):
     if self.type & socket.SOCK_DGRAM: return _sendto(self, address)
-    _deny(address)
+    _deny(address, self)
     return _orig_connect(self, address)
 def _connect_ex(self, address):
     if self.type & socket.SOCK_DGRAM: return _sendto(self, address)
-    _deny(address)
+    _deny(address, self)
     return _orig_connect_ex(self, address)
 def _getaddrinfo(host, port, *args, **kwargs):
     _deny((host, port))
@@ -157,11 +199,11 @@ if os.name == "nt":
     _original_iocp_connect = IocpProactor.connect
     async def _async_sock_connect(self, sock, address):
         if sock.type & socket.SOCK_DGRAM: return _sendto(sock, address)
-        _deny(address)
+        _deny(address, sock)
         return await _original_sock_connect(self, sock, address)
     def _iocp_connect(self, sock, address):
         if sock.type & socket.SOCK_DGRAM: return _sendto(sock, address)
-        _deny(address)
+        _deny(address, sock)
         return _original_iocp_connect(self, sock, address)
     BaseProactorEventLoop.sock_connect = _async_sock_connect
     IocpProactor.connect = _iocp_connect
@@ -175,8 +217,41 @@ function deny(kind, target) {
   if (log) fs.appendFileSync(log, JSON.stringify({kind, target: String(target)}) + "\\n");
   throw new Error("Hermes TUI qualification blocked Node network access");
 }
+const rawGateway = process.env.PALLIUM_TUI_GATEWAY_WS;
+let gateway = null, gatewayPort = null;
+if (rawGateway !== undefined) {
+  const match = /^ws:\/\/127\\.0\\.0\\.1:([1-9][0-9]{0,4})\/api\/ws$/.exec(rawGateway);
+  if (!match || match[0] !== rawGateway || Number(match[1]) > 65535) process.exit(78);
+  gateway = rawGateway;
+  gatewayPort = Number(match[1]);
+}
 const net = require("node:net");
-net.Socket.prototype.connect = function(...args) { return deny("socket", args[0]); };
+const originalConnect = net.Socket.prototype.connect;
+function exactGatewayConnect(args) {
+  if (args.length === 1 && Array.isArray(args[0])) args = args[0];
+  if (args.length && typeof args[args.length - 1] === "function") args = args.slice(0, -1);
+  if (args.length < 1 || args.length > 2) return false;
+  const first = args[0];
+  let host, port;
+  if (first && typeof first === "object" && !Array.isArray(first)) {
+    if (first.path !== undefined || first.socketPath !== undefined || first.lookup !== undefined
+        || first.localAddress !== undefined || first.localPort !== undefined
+        || (first.family !== undefined && first.family !== 4)
+        || (first.host !== undefined && first.hostname !== undefined && first.host !== first.hostname)) return false;
+    host = first.host === undefined ? first.hostname : first.host;
+    port = first.port;
+  } else if (typeof first === "number" && typeof args[1] === "string") {
+    port = first;
+    host = args[1];
+  } else {
+    return false;
+  }
+  return !!gateway && host === "127.0.0.1" && (port === gatewayPort || port === String(gatewayPort));
+}
+net.Socket.prototype.connect = function(...args) {
+  if (!exactGatewayConnect(args)) return deny("socket", args[0]);
+  return originalConnect.apply(this, args);
+};
 net.Server.prototype.listen = function(...args) { return deny("listen", args[0]); };
 const tls = require("node:tls");
 tls.connect = (...args) => deny("tls", args[0]);
@@ -188,7 +263,21 @@ for (const name of ["node:http", "node:https"]) {
   mod.get = (...args) => deny(name, args[0]);
 }
 globalThis.fetch = async (...args) => deny("fetch", args[0]);
-globalThis.WebSocket = class { constructor(url) { return deny("WebSocket", url); } };
+const OriginalWebSocket = globalThis.WebSocket;
+if (typeof OriginalWebSocket === "function") {
+  globalThis.WebSocket = class extends OriginalWebSocket {
+    constructor(url, protocols) {
+      const ticket = Array.isArray(protocols) && protocols.length === 2
+        && protocols[0] === "hermes-gateway-v1" && typeof protocols[1] === "string"
+        ? /^hermes-gateway-ticket\\.[A-Za-z0-9_-]{1,4096}$/.exec(protocols[1]) : null;
+      if (!gateway || typeof url !== "string" || url !== gateway || !ticket || ticket[0] !== protocols[1])
+        return deny("WebSocket", url);
+      super(url, protocols);
+    }
+  };
+} else {
+  globalThis.WebSocket = class { constructor(url) { return deny("WebSocket", url); } };
+}
 require("node:http2").connect = (...args) => deny("http2", args[0]);
 for (const name of ["node:dns", "node:dns/promises"]) {
   const dns = require(name);
@@ -607,12 +696,13 @@ class OwnedTree:
 
 class TuiConsole:
     def __init__(self, python: Path, source: Path, home: Path, env: dict[str, str], artifacts: Path,
-                 stopped: threading.Event, tree: OwnedTree):
+                 stopped: threading.Event, tree: OwnedTree, gateway=None):
         self.parts = []
         self._init_screen_observer()
         self.read_error = None
         self.artifacts = artifacts
         self.stopped = stopped
+        self.gateway = gateway
         preflight = (
             "import pathlib,runpy,sys,socket,sitecustomize;"
             "assert socket.socket.connect is sitecustomize._connect;"
@@ -725,6 +815,8 @@ class TuiConsole:
             assert not self.stopped.is_set() and time.monotonic() < deadline and self.proc.isalive(), self.text[-3000:]
             time.sleep(.1)
         self.wait("ready │", timeout=90)
+        if self.gateway is not None:
+            self.gateway.verify_and_release()
 
     def close(self):
         self.proc.cancel_io()
@@ -811,6 +903,10 @@ def driver_main(spec_path: Path):
     """The explicit disposable 3.14 interpreter alone starts the real UI."""
     spec = json.loads(spec_path.read_text(encoding="utf-8"))
     home, source, python = (Path(spec[key]).resolve() for key in ("home", "source", "python"))
+    surface = spec.get("surface", "tui")
+    shared_gateway = spec.get("shared_gateway", False)
+    assert surface in {"tui", "desktop"}, "unknown native UI surface"
+    assert type(shared_gateway) is bool, "shared_gateway must be a strict boolean"
     from hermes_desktop_driver import DesktopConsole, require_runner_gate
     if os.name == "nt":
         require_runner_gate(dict(os.environ), home, source, spec_path.parent)
@@ -826,12 +922,25 @@ def driver_main(spec_path: Path):
     assert_isolated_env(dict(os.environ), home)
     import socket
     import sitecustomize
-    assert Path(sitecustomize.__file__).resolve() == Path(os.environ["PYTHONPATH"].split(os.pathsep)[-1]) / "sitecustomize.py"
+    guard_path = os.environ.get("PALLIUM_TUI_GUARD_PATH")
+    guard_sha256 = os.environ.get("PALLIUM_TUI_GUARD_SHA256")
+    assert (guard_path is None) == (guard_sha256 is None), "installed guard witness is incomplete"
+    assert not shared_gateway or guard_path is not None, "shared gateway requires the copied-runtime guard"
+    if guard_path is None:
+        assert Path(sitecustomize.__file__).resolve() == Path(os.environ["PYTHONPATH"].split(os.pathsep)[-1]) / "sitecustomize.py"
+    else:
+        installed_guard = Path(guard_path).resolve()
+        assert installed_guard == Path(sitecustomize.__file__).resolve()
+        assert re.fullmatch(r"[0-9a-fA-F]{64}", guard_sha256)
+        assert hashlib.sha256(installed_guard.read_bytes()).hexdigest() == guard_sha256.lower()
     assert socket.socket.connect is sitecustomize._connect
     git = Path(spec["git"]).resolve()
     assert git.is_file() and hashlib.sha256(git.read_bytes()).hexdigest() == spec["git_sha256"].lower(), (
         "qualification Git executable changed")
-    verify_source(source, spec["bundle_sha256"], git=git)
+    release = verify_source(source, spec["bundle_sha256"], git=git)
+    if shared_gateway:
+        assert surface == "tui" and release == "0.22.4", "shared native gateway requires the released 0.22.4 TUI"
+    revision = next(revision for revision, version in RELEASES.items() if version == release)
     import psutil
     import queue
 
@@ -877,10 +986,8 @@ def driver_main(spec_path: Path):
     # Own the entire driver subtree before any ConPTY constructor or spawn can fail.
     owned_python = Path(sys._base_executable if os.name == "nt" else sys.executable)
     tree = OwnedTree(os.getpid(), owned_python, ledger=spec_path.parent / "owned-processes-ledger.json")
-    console = None
+    console, gateway = None, None
     try:
-        surface = spec.get("surface", "tui")
-        assert surface in {"tui", "desktop"}, "unknown native UI surface"
         console_class = DesktopConsole if surface == "desktop" else TuiConsole
         # Retain a partial Desktop constructor so failed startup logs can still be closed and saved.
         if surface == "desktop":
@@ -889,7 +996,17 @@ def driver_main(spec_path: Path):
                              reuse_user_data=spec.get("reuse_user_data", False),
                              previous_spec=spec.get("previous_spec"))
         else:
-            console = console_class(python, source, home, dict(os.environ), spec_path.parent, stopped, tree)
+            tui_env = dict(os.environ)
+            tui_env.pop("PALLIUM_TUI_GATEWAY_WS", None)
+            if shared_gateway:
+                from hermes_gateway_driver import OwnedGateway, gateway_target
+
+                gateway = OwnedGateway(python, source, tui_env, spec_path.parent, tree, revision)
+                gateway_url = gateway.receipt["url"]
+                gateway_target(gateway_url)
+                tui_env["PALLIUM_TUI_GATEWAY_WS"] = gateway_url
+            console = console_class(python, source, home, tui_env, spec_path.parent, stopped, tree,
+                                    gateway=gateway)
         console.ready()
         print(json.dumps({"ready": True}), flush=True)
         while not stopped.is_set():

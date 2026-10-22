@@ -69,6 +69,8 @@ def prepare_terminal_runtime(python, source, home, artifacts, env):
     bootstrap_env = {key: env[key] for key in (
         "SYSTEMROOT", "WINDIR", "COMSPEC", "PATH", "PATHEXT", "TEMP", "TMP",
         "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA",
+        "PALLIUM_TUI_ALLOWED_ENDPOINTS", "PALLIUM_TUI_ALLOWED_CONTROL_PATHS",
+        "PALLIUM_TUI_EGRESS_LOG", "PALLIUM_TUI_IPC_LOG",
     ) if key in env}
     manifest = runner_temp / "hermes-terminal-observer.json"
     cache = runner_temp / "hermes-terminal-observer-cache"
