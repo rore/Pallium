@@ -39,9 +39,9 @@
 
 **Approvals:** Approved by user 2026-10-22, relayed verbatim from manager chat 01a16320-c588-72b0-a098-cb3d137b1e75: "i approve all fixes for reliability and stability". Continuing repository-fix authority covers this incident and necessary corrections after independent technical review; it does not waive validation/contracts or authorize unspecified installed rollout. Manager chat 01a16320-c588-72b0-a098-cb3d137b1e75 relayed the user's explicit assignment on 2026-10-22: "assign someone to own the local service reliability investigation and drive it to a fix. waiting messages and queue timeouts are the priority, keep overhead minimal". The manager assigned this chat sole investigation/fix ownership, with existing reconnect work retained by its owner. The human separately approved cross-chat communication directly here. Repository diagnosis/fix is authorized; live mutation remains separate and absent.
 
-**Exceptions:** â€”
+**Exceptions:** —
 
-**State:** Blocked
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -59,6 +59,12 @@ Hermes parity checkpoint d63b5223921cbb5345e0e6e3496012b279fc5336 is clean/pushe
 Existing reconnect candidate production cb63998e0fc665700b3de70fdf7885a46b1aa1a4, aligned head58ae2262976ed61604719473801b8cd9704414e7, branch feat/codex-retained-idle-reenrollment, Work Record codex-retained-idle-reenrollment. Owner reports175 focused passes and accepted bounded causal matrix. Its one full qualification started12:40:23UTC with a twenty-minute cap; no duplicate/competing run is authorized here. Owner will deliver actual result. That patch does not explain the live HTTP timeout; no attribution is imported.
 
 ## Result review
+
+Agent technical review: /root/reliability_composition_review
+Reviewed revision: aef7bbf3824e11d6fe7fee709efb36f86473eb4e
+Verification adequacy: GO for combined source, full evidence and the11-line operations guidance. Full8029passed/37skipped/2xfailed, zero errors/failures, all affected classes pass without skips, exact6file/runtime identities unchanged. External exact-head CI/governance and separate High human result review remain open. Technical acceptance does not authorize merge or live rollout. See Combined verification and final technical review below for evidence and limits.
+
+## Earlier summary-only review (superseded by combined result)
 
 Agent technical review: /root/reliability_summary_result_review. Reviewed revision: 276915e4b28cc6829b0f867407495a9916c9b3c5 against5d167936. No code findings; focused HTTP lifecycle and123-test affected subsystem evidence are adequate for the scoped dispatch correction. Final verification acceptance is conditional on fresh required PR CI: local full is RED as recorded below, and no merge/live/global reliability completion is claimed. The current block is qualification, not missing user implementation authority.
 
@@ -135,3 +141,15 @@ Old summary-only7f CI39793452316 has Python3.12/3.13 and Windows smoke passed; f
 ## Composed implementation
 
 Imported only the accepted three-file settlement patch after composition plan GO. All three working-file SHA256 values exactly match owner manifest fea82705; receipt build/summary-settlement-composition.json. Summary application/test files remain the accepted7f identities. No retained-source reconnect changes, owner record, schema, protected assertions or workflows imported. Whole-change selector still requires full non-slow tests/ -x -q. Actual import-linter violations empty, Redline GRAY/no triggered checkpoints; workflow clean/exit0 at High/Moderate. Existing ignored runner now records all6 affected application/test identities; same qualified interpreter, private non-Git homes and short basetemp,20minute full outer cap, no production/test deadline changes. One composed full is next; exact PR CI and final independent result/human review remain open.
+
+## Combined verification and final technical review
+
+Exact application/test candidate aef7bbf3824e11d6fe7fee709efb36f86473eb4e passed the selected full non-slow tests/ -x -q:8029 passed,37 skipped,2xfailed618.14s; runner641.038s exit0, uncapped, all6 recorded source/test hashes unchanged and qualified runtime SHA256 b91bcd22d44cc887f829bd1c3e12e1c8c5eab01dde1b433fe6af45990ebf4be2. JUnit8068cases includes37skips+2xfails in its skipped field, no failures/errors. All changed classes passed without skips: capacity61, work-ref E2E34, write-retry58. All16 selected protected behavior contracts passed. stderr empty. All12 observed PID+creation identities were absent after completion; this is bounded snapshot evidence, not universal descendant proof. Evidence: build/summary-settlement-composed-full/{result.json,junit.xml,census-summary.json,stdout.log,process-exit-check.json}. Previous failed/capped receipts remain preserved and no historical causal cure is inferred.
+
+Agent technical review: /root/reliability_composition_review. Reviewed revision: aef7bbf3824e11d6fe7fee709efb36f86473eb4e plus the11-line operations-doc addition. Verification adequacy: GO for source/evidence/docs; exact owner patch identity, all changed cases exercised, full zero-error completion accepted. Existing raw asyncio cancellation limitation remains explicit; no strict physical two-worker bound is claimed. Reviewer found an unrelated UTF-8 glyph rewrite in the draft prose; restored exact source glyphs in operations guidance and Exceptions before acceptance. Final docs diff is11 insertions/0deletions. CI39796390753 and governance39796390542 remain separate exact-head gates; technical review is not human result approval, merge or live activation. State is Ready for review with those external gates and separate High human result review still open.
+
+The sole local test slot is now clear and explicitly assigned to existing retained-source owner for its minimal5-file incremental composition/onefull on this base, after clean composition-assumption review. That separate waiting-delivery contribution remains unfinished; no readiness/native/installed outcome is inferred from this summary+gate full. Canonical add-wake-first-relay-delivery remains owner-managed; no whole-feature closure.
+
+Skill feedback trigger2 dropped: the draft encoding rewrite was this task's file-edit error, not an agent-workflow defect. The corrected docs and Work Record preserve UTF-8 explicitly. No upstream issue is appropriate.
+
+Exact aef governance39796390542 failed only exceptions.well_formed: the draft file write had encoded the Exceptions em dash as mojibake. Actual completed-job log is retained in build/aef-governance-job.log; the glyph is now restored and local final checker is clean/exit0. The first Ready-for-review local check also correctly required separately formatted Result review fields; those actual technical review fields are now present, earlier review history retained. Neither correction changes application/tests/requirements/protection. Fresh successor governance is required; the failed job stays failed.
