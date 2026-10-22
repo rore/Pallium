@@ -18,6 +18,12 @@ Hermes installation and readiness remain incomplete pending parity qualification
 and final result review. Historical fixed-profile qualification below does not
 establish normal CWD behavior; preserve its delivered scope and limits.
 
+The lifecycle compatibility correction and affected 293-case cohort have independent
+acceptance. The complete non-slow census and its retained failures are recorded in
+the parity Work Record; shared setup failure remains separately owned. Real normal-CWD
+frontend regressions are prepared for exact released 0.22.4, but have not run.
+The accepted public-hook/tool proof does not replace that frontend qualification.
+
 PR #324 delivered the reviewed Desktop/TUI integration toward
 production readiness, including scoped opt-in memory and normal-profile lifecycle
 qualification. Historical slice-4 Work Record: `.agent-workflow/tasks/hermes-production-slice4.md`.

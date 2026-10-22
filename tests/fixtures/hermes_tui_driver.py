@@ -15,6 +15,7 @@ from urllib.parse import urlsplit
 RELEASES = {
     "e06df9c2eae6901f4c88f464e0ae6e753c0428b8": "0.22.0",
     "d923a5eb487a17c0a68801bba9ef0f56c81040a8": "0.22.2",
+    "4d04303818b61bf3aa09278af48356315515965b": "0.22.4",
 }
 
 SYNTHETIC_OPENAI_API_KEY = "pallium-hermes-synthetic-openai-key"
@@ -307,11 +308,11 @@ def assert_isolated_env(env: dict[str, str], home: Path, *, openai_base_url: str
                    for key in env), "credential or host-attachment variable passed to Hermes"
 
 
-def verify_source(source: Path, expected_entry_sha256: str) -> str:
-    """Accept only the two reviewed releases, a clean checkout, and the supplied bundle digest."""
+def verify_source(source: Path, expected_entry_sha256: str, *, git: Path | str | None = None) -> str:
+    """Accept only reviewed releases, a clean checkout, and the supplied bundle digest."""
     source = source.resolve()
     assert not (source / ".env").exists(), "Hermes project .env must be absent; ignored files can contain credentials"
-    git = os.environ.get("PALLIUM_TUI_GIT", "git")
+    git = str(Path(git).resolve()) if git is not None else os.environ.get("PALLIUM_TUI_GIT", "git")
     revision = subprocess.run([git, "-C", str(source), "rev-parse", "HEAD"], check=True,
                               capture_output=True, text=True, timeout=10).stdout.strip()
     assert revision in RELEASES, f"unqualified Hermes revision: {revision}"
@@ -827,7 +828,10 @@ def driver_main(spec_path: Path):
     import sitecustomize
     assert Path(sitecustomize.__file__).resolve() == Path(os.environ["PYTHONPATH"].split(os.pathsep)[-1]) / "sitecustomize.py"
     assert socket.socket.connect is sitecustomize._connect
-    verify_source(source, spec["bundle_sha256"])
+    git = Path(spec["git"]).resolve()
+    assert git.is_file() and hashlib.sha256(git.read_bytes()).hexdigest() == spec["git_sha256"].lower(), (
+        "qualification Git executable changed")
+    verify_source(source, spec["bundle_sha256"], git=git)
     import psutil
     import queue
 
