@@ -76,6 +76,10 @@ and delete callbacks close the saved exact endpoint and generation; an uncertain
 close remains fenced. These lifecycle paths still require current native
 Desktop/TUI qualification.
 
+Changing project or actor retires earlier turn authority, including after a
+plugin reload. Invalid saved authority is refused without clearing pending
+delivery or operation fences.
+
 ## History and memory
 
 History captures private, hook-observed plain-text snapshots, not a complete

@@ -153,6 +153,128 @@ def test_unfinished_old_turn_cannot_rebind_after_reload(client, project_plugin, 
     assert _sessions(client, _project("c"))[0]["scope_generation"] == 2
 
 
+@pytest.mark.parametrize("reload", [False, True])
+def test_actor_aba_invalidates_old_turn_without_changing_relay_scope(
+    client, project_plugin, tmp_path, monkeypatch, reload,
+):
+    module, ctx, pre, create, calls, _settings = project_plugin
+    root = _repo(tmp_path, "actor-aba", actor="actor-A")
+    writes = []
+    http = module._json_request
+
+    def observe(base, method, path, **kwargs):
+        if method != "GET":
+            writes.append(path)
+        return http(base, method, path, **kwargs)
+
+    monkeypatch.setattr(module, "_json_request", observe)
+    old_message = "history marker café actor A"
+    assert pre(str(root), turn="actor-a", message=old_message,
+               history=[{"role": "user", "content": old_message}])
+    original = _sessions(client, _project("actor-aba"))[0]
+    session_key = next(key for key in ctx.state.values if key.startswith("session:"))
+    original_incarnation = ctx.state.values[session_key]["authority_incarnation"]
+    old_source = json.loads(_mcp_tool(ctx, "pallium_relay_address", {},
+                                    session="session", turn="actor-a"))["scope"]["request_source_item_id"]
+
+    subprocess.run(["git", "-C", str(root), "config", "user.name", "actor-B"],
+                   check=True, capture_output=True)
+    assert pre(str(root), turn="actor-b", message="history marker café actor B")
+    middle = _sessions(client, _project("actor-aba"))[0]
+    middle_incarnation = ctx.state.values[session_key]["authority_incarnation"]
+    assert (middle["endpoint_id"], middle["scope_generation"]) == (
+        original["endpoint_id"], original["scope_generation"])
+
+    owner = create(ctx.state) if reload else ctx
+    reloaded_incarnation = None
+    if reload:
+        session_key = next(key for key in owner.state.values if key.startswith("session:"))
+        reloaded_incarnation = owner.state.values[session_key]["authority_incarnation"]
+    subprocess.run(["git", "-C", str(root), "config", "user.name", "actor-A"],
+                   check=True, capture_output=True)
+    current_message = "history marker café actor A again"
+    assert pre(str(root), turn="actor-c", message=current_message,
+               history=[{"role": "user", "content": current_message}], context=owner)
+    current = _sessions(client, _project("actor-aba"))[0]
+    current_incarnation = owner.state.values[session_key]["authority_incarnation"]
+    assert (current["endpoint_id"], current["scope_generation"]) == (
+        original["endpoint_id"], original["scope_generation"])
+
+    before_stale = list(writes)
+    assert pre(str(root), turn="actor-a", message=old_message,
+               history=[{"role": "user", "content": old_message}], context=owner) is None
+    calls_before = len(calls)
+    assert "error" in json.loads(_mcp_tool(owner, "pallium_relay_send", {
+        "recipient": "@nobody", "message": "stale mutation"}, session="session", turn="actor-a"))
+    assert len(calls) == calls_before
+    owner.hooks["post_llm_call"](
+        session_id="session", turn_id="actor-a", user_message=old_message,
+        assistant_response="stale answer", conversation_history=[
+            {"role": "user", "content": old_message, "message_uid": "actor-a-user"},
+            {"role": "assistant", "content": "stale answer", "message_uid": "actor-a-answer"},
+        ])
+    assert writes == before_stale
+    old_context = client.get(f"/source/{old_source}/context", params={
+        "container_ref": _project("actor-aba"), "query_actor_ref": "actor-A",
+        "query_visibility": "private", "before": 0, "after": 0})
+    assert old_context.status_code == 200, old_context.text
+    assert "stale answer" not in old_context.text
+    assert old_message in [row["content"] for row in old_context.json()["items"]]
+
+    address = json.loads(_mcp_tool(owner, "pallium_relay_address", {}, session="session", turn="actor-c"))
+    assert address["scope"]["container_ref"] == _project("actor-aba")
+    assert address["scope"]["actor_ref"] == "actor-A"
+    owner.hooks["post_llm_call"](
+        session_id="session", turn_id="actor-c", user_message=current_message,
+        assistant_response="current answer", conversation_history=[
+            {"role": "user", "content": current_message, "message_uid": "actor-c-user"},
+            {"role": "assistant", "content": "current answer", "message_uid": "actor-c-answer"},
+        ])
+    assert writes[-1] == "/items"
+    current_source = address["scope"]["request_source_item_id"]
+    current_context = client.get(f"/source/{current_source}/context", params={
+        "container_ref": _project("actor-aba"), "query_actor_ref": "actor-A",
+        "query_visibility": "private", "before": 0, "after": 1})
+    assert current_context.status_code == 200, current_context.text
+    assert "current answer" in [row["content"] for row in current_context.json()["items"]]
+    assert middle_incarnation != original_incarnation
+    assert current_incarnation != middle_incarnation
+    if reload:
+        assert reloaded_incarnation == middle_incarnation
+
+
+@pytest.mark.parametrize("target", ["session", "turn"])
+@pytest.mark.parametrize("incarnation", [None, {}, "", " " * 32, "x" * 33, "漢" * 32])
+def test_missing_or_malformed_automatic_incarnation_refuses_callbacks(
+    client, project_plugin, tmp_path, monkeypatch, target, incarnation,
+):
+    module, ctx, pre, _create, calls, _settings = project_plugin
+    root = _repo(tmp_path, "bad-incarnation-" + target)
+    assert pre(str(root), turn="a", message="history marker café",
+               history=[{"role": "user", "content": "history marker café"}])
+    state_key = next(key for key in ctx.state.values if key.startswith(target + ":"))
+    if incarnation is None:
+        ctx.state.values[state_key].pop("authority_incarnation")
+    else:
+        ctx.state.values[state_key]["authority_incarnation"] = incarnation
+    saved = json.loads(json.dumps(ctx.state.values))
+    writes, http = [], module._json_request
+
+    def observe(base, method, path, **kwargs):
+        if method != "GET":
+            writes.append(path)
+        return http(base, method, path, **kwargs)
+
+    monkeypatch.setattr(module, "_json_request", observe)
+    assert pre(str(root), turn="a", message="history marker café",
+               history=[{"role": "user", "content": "history marker café"}]) is None
+    assert "error" in json.loads(_mcp_tool(ctx, "pallium_relay_send", {
+        "recipient": "@nobody", "message": "must not dispatch"}, session="session", turn="a"))
+    assert writes == []
+    assert calls == []
+    assert ctx.state.values == saved
+
+
 def test_reload_transition_before_publication_retains_original_turn_reservation(client, project_plugin, tmp_path, monkeypatch):
     _module, ctx, pre, create, _calls, _settings = project_plugin
     a, b = _repo(tmp_path, "a"), _repo(tmp_path, "b")
@@ -323,7 +445,8 @@ def test_failed_transition_does_not_publish_and_reload_keeps_uncertainty(client,
     assert "error" in json.loads(_mcp_tool(resumed, "pallium_relay_address", {}, session="session", turn="retry"))
 
 
-def test_uncertain_wake_stays_in_original_project_across_reload(client, project_plugin, tmp_path):
+@pytest.mark.parametrize("actor_only", [False, True])
+def test_uncertain_wake_stays_in_original_project_across_reload(client, project_plugin, tmp_path, actor_only):
     _module, ctx, pre, create, _calls, _settings = project_plugin
     a, b = _repo(tmp_path, "a"), _repo(tmp_path, "b")
     assert pre(str(a), turn="a")
@@ -333,12 +456,18 @@ def test_uncertain_wake_stays_in_original_project_across_reload(client, project_
                           "recipient": endpoint, "payload": "pending original project", "container_ref": _project("a")})
     assert message.status_code == 200, message.text
     marker = _await(lambda: ctx.injections and ctx.injections[-1][0])
+    original_scope = next(value.copy() for key, value in ctx.state.values.items() if key.startswith("session:"))
+    if actor_only:
+        b = a
+        subprocess.run(["git", "-C", str(a), "config", "user.name", "actor-new"],
+                       check=True, capture_output=True)
     assert pre(str(b), turn="b") is None
     assert pre(str(b), turn="stale-wake", message=marker) is None
     assert _sessions(client, _project("b")) == []
     resumed = create(ctx.state)
     assert pre(str(b), turn="reload", context=resumed) is None
     assert pre(str(b), turn="reload-wake", message=marker, context=resumed) is None
+    assert next(value for key, value in ctx.state.values.items() if key.startswith("session:")) == original_scope
     response = client.get("/relay/messages/" + message.json()["message_id"], params={"container_ref": _project("a")})
     assert response.json()["deliveries"][0]["state"] == "pending"
 
@@ -581,10 +710,15 @@ def test_close_callback_started_during_transition_cannot_close_successor(client,
     assert _sessions(client, _project("b"))[0]["state"] == "recent"
 
 
-def test_inflight_operation_reload_fence_clears_after_exact_completion(client, project_plugin, tmp_path, monkeypatch):
+@pytest.mark.parametrize("actor_only", [False, True])
+def test_inflight_operation_reload_fence_clears_after_exact_completion(client, project_plugin, tmp_path, monkeypatch, actor_only):
     module, ctx, pre, create, _calls, _settings = project_plugin
     a, b = _repo(tmp_path, "a"), _repo(tmp_path, "b")
     assert pre(str(a), turn="a")
+    if actor_only:
+        b = a
+        subprocess.run(["git", "-C", str(a), "config", "user.name", "actor-new"],
+                       check=True, capture_output=True)
     bridge_type = sys.modules[module.__name__ + ".mcp_bridge"].RelayMcpBridge
     original = bridge_type.call
     entered, release = threading.Event(), threading.Event()
@@ -605,14 +739,21 @@ def test_inflight_operation_reload_fence_clears_after_exact_completion(client, p
             release.set()
         assert "error" not in json.loads(tool.result(timeout=5))
     assert pre(str(b), turn="after-completion", context=reloaded)
-    assert _sessions(client, _project("b"))[0]["scope_generation"] == 1
+    assert _sessions(client, _project("a" if actor_only else "b"))[0]["scope_generation"] == (0 if actor_only else 1)
+    assert json.loads(_mcp_tool(reloaded, "pallium_relay_address", {}, "session", "after-completion"))["scope"]["actor_ref"] == ("actor-new" if actor_only else "actor-b")
 
 
 @pytest.mark.parametrize("mutation", [False, True])
-def test_only_uncertain_mutations_retain_project_fence(client, project_plugin, tmp_path, monkeypatch, mutation):
+@pytest.mark.parametrize("actor_only", [False, True])
+def test_only_uncertain_mutations_retain_project_fence(client, project_plugin, tmp_path, monkeypatch, mutation, actor_only):
     module, ctx, pre, create, _calls, _settings = project_plugin
     a, b = _repo(tmp_path, "a"), _repo(tmp_path, "b")
     assert pre(str(a), turn="a")
+    original_scope = next(value.copy() for key, value in ctx.state.values.items() if key.startswith("session:"))
+    if actor_only:
+        b = a
+        subprocess.run(["git", "-C", str(a), "config", "user.name", "actor-new"],
+                       check=True, capture_output=True)
     bridge_type = sys.modules[module.__name__ + ".mcp_bridge"].RelayMcpBridge
     monkeypatch.setattr(bridge_type, "call", lambda *args, **kwargs: json.dumps({"error": "transport failed", "operation_uncertain": True}))
     name = "pallium_relay_send" if mutation else "pallium_relay_address"
@@ -620,7 +761,12 @@ def test_only_uncertain_mutations_retain_project_fence(client, project_plugin, t
     reloaded = create(ctx.state)
     outcome = pre(str(b), turn="b", context=reloaded)
     assert (outcome is None) is mutation
-    assert bool(_sessions(client, _project("b"))) is not mutation
+    if actor_only:
+        current_scope = next(value for key, value in ctx.state.values.items() if key.startswith("session:"))
+        assert (current_scope == original_scope) is mutation
+        assert current_scope["actor_ref"] == ("actor-a" if mutation else "actor-new")
+    else:
+        assert bool(_sessions(client, _project("b"))) is not mutation
 
 
 def test_unsafe_origin_never_registers_or_logs_secret(client, project_plugin, tmp_path, caplog):

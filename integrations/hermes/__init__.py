@@ -46,6 +46,11 @@ def _host_id(value):
     return _text(value, 255) and value == value.strip() and value.isprintable()
 
 
+def _incarnation(value):
+    return (_text(value, 32) and len(value) == 32 and value.isascii()
+            and all(char.isalnum() or char in "-_" for char in value))
+
+
 def _current_user_text(request):
     if not isinstance(request, dict):
         return None
@@ -291,6 +296,7 @@ def register(ctx):
                     or value.get("session_ref") != session_id
                     or not _text(value.get("container_ref"), 512)
                     or not _host_id(value.get("actor_ref")) or not _text(value.get("cwd"), 32768)
+                    or not _incarnation(value.get("authority_incarnation"))
                     or not _text(value.get("endpoint_id"), 128)
                     or type(value.get("scope_generation")) is not int or value["scope_generation"] < 0):
                 raise ValueError("Saved Hermes project scope is invalid; refusing automatic reassignment")
@@ -308,6 +314,7 @@ def register(ctx):
                     or value.get("session_ref") != session_id
                     or not _text(value.get("container_ref"), 512)
                     or not _text(value.get("endpoint_id"), 128) or not _text(value.get("delivery_id"), 64)
+                    or not _incarnation(value.get("authority_incarnation"))
                     or not _text(value.get("nonce"), 64)):
                 raise ValueError("Saved Hermes wake scope is invalid; refusing to discard its fence")
             return value
@@ -321,7 +328,7 @@ def register(ctx):
     def same_wake(left, right):
         fields = ("profile", "container_ref", "session_ref", "endpoint_id", "delivery_id", "nonce", "turn_id")
         if automatic:
-            fields += ("actor_ref", "scope_generation")
+            fields += ("actor_ref", "scope_generation", "authority_incarnation")
         return isinstance(left, dict) and isinstance(right, dict) and all(
             left.get(field) == right.get(field) for field in fields
         )
@@ -350,8 +357,9 @@ def register(ctx):
             return session_locks.setdefault(session_id, threading.RLock())
 
     def same_authority(left, right):
-        return bool(left and right and all(left.get(field) == right.get(field) for field in (
-            "container_ref", "actor_ref", "endpoint_id", "scope_generation")))
+        return bool(left and right and _incarnation(left.get("authority_incarnation"))
+                    and all(left.get(field) == right.get(field) for field in (
+                        "container_ref", "actor_ref", "endpoint_id", "scope_generation", "authority_incarnation")))
 
     def turn_key(session_id, turn_id):
         return key("turn", session_id + "\0" + turn_id)
@@ -369,6 +377,7 @@ def register(ctx):
                 or not _text(value.get("nonce"), 64)
                 or (value["state"] == "active" and (
                     not _text(value.get("endpoint_id"), 128)
+                    or not _incarnation(value.get("authority_incarnation"))
                     or type(value.get("scope_generation")) is not int or value["scope_generation"] < 0))):
             raise ValueError("Saved Hermes turn authority is invalid")
         return value
@@ -390,7 +399,7 @@ def register(ctx):
                 or saved_turn(session_id, turn_id) != reservation):
             return False
         stamp = dict(reservation, state="active", **{
-            field: record[field] for field in ("endpoint_id", "scope_generation")})
+            field: record[field] for field in ("endpoint_id", "scope_generation", "authority_incarnation")})
         # Retain compact authority metadata across reloads; never evict an old turn into new authority.
         state.set(turn_key(session_id, turn_id), stamp)
         turn_bindings[(session_id, turn_id)] = record
@@ -403,12 +412,13 @@ def register(ctx):
             frozen = turn_bindings.get((session_id, turn_id))
             try:
                 stamp = saved_turn(session_id, turn_id)
+                current_scope = scope(session_id)
             except ValueError:
                 return None
             if (is_ended_turn(session_id, turn_id) or not stamp or stamp["state"] != "active"
                     or not same_authority(stamp, frozen)
                     or state.get(key("lifecycle", session_id)) is not None
-                    or not same_authority(frozen, scope(session_id))):
+                    or not same_authority(frozen, current_scope)):
                 return None
             return frozen
 
@@ -416,6 +426,7 @@ def register(ctx):
         if state.get(key("operation", session_id)) is not None:
             return None
         attempt = {"version": 1, "operation": operation, "nonce": secrets.token_urlsafe(18),
+                   "authority_incarnation": record["authority_incarnation"],
                    "container_ref": record["container_ref"], "endpoint_id": record["endpoint_id"],
                    "scope_generation": record["scope_generation"], "state": "inflight"}
         state.set(key("operation", session_id), attempt)
@@ -503,6 +514,11 @@ def register(ctx):
                       "admitted_work_refs": [row["work_ref"] for row in result.get("work_refs", [])
                                              if isinstance(row, dict) and _text(row.get("work_ref"), 128)]
                       if result.get("structural_work_refs_status") == "complete" else []}
+            # Actor-only transitions do not advance Relay's project generation.
+            record["authority_incarnation"] = (saved["authority_incarnation"] if saved and all(
+                saved[field] == record[field] for field in (
+                    "container_ref", "actor_ref", "endpoint_id", "scope_generation"))
+                else secrets.token_urlsafe(24))
             with lock:
                 if (not profile_ok() or scope(session_id) != saved
                         or state.get(key("transition", session_id)) != attempt):
@@ -573,7 +589,8 @@ def register(ctx):
             return
         nonce = secrets.token_urlsafe(18)
         wake = {"profile": profile, "container_ref": container, "session_ref": session_id,
-                **({"actor_ref": record["actor_ref"], "scope_generation": record["scope_generation"]}
+                **({"actor_ref": record["actor_ref"], "scope_generation": record["scope_generation"],
+                    "authority_incarnation": record["authority_incarnation"]}
                    if automatic else {}),
                 "endpoint_id": record["endpoint_id"], "delivery_id": candidate["delivery_id"],
                 "nonce": nonce, "state": "injection_attempted"}
