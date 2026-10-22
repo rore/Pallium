@@ -310,11 +310,11 @@ def relay_settlement_control(client, monkeypatch):
                         raise RuntimeError("controlled commit failure")
                     if sql == "ROLLBACK" and control.mode == "rollback-failed":
                         raise RuntimeError("controlled rollback failure")
-                result = execute(statement, *args, **kwargs)
-                if role == "B" and sql == "BEGIN IMMEDIATE" and control.hold_b:
+                if role == "B" and sql == "COMMIT" and control.hold_b:
                     assert conn.connection.driver_connection.in_transaction
                     control.b_active.set()
                     assert control.release_b.wait(5), "successor transaction was not released"
+                result = execute(statement, *args, **kwargs)
                 if role == "A":
                     if sql == "COMMIT":
                         control.commit_returned = True
