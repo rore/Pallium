@@ -2,6 +2,8 @@
 
 ## Targeted pre-worker capture - explicitly narrowed scope 2026-10-22
 
+PUBLICATION BLOCKER: independently reviewed final package33e94e654fdf74157b780bc326efd893554385ed/tree d31e4e32a0470d25b0f36200fa07d70a7cf0fea9 is ready for ONE Linux harness-only preflight. Automatic approval review rejected git push to existing rore/Pallium diagnostic branch before execution, twice: direct user authority required for source/history remote publication; actual manager turn01a16294-d463-7042-8a7d-b2c4b315c441 explicitly authorizing normalFF diagnosticbranch was supplied on second attempt but rejected as untrusted manager/tool output. No push/dispatch occurred and no bypass attempted. Specific direct-user question pending for exactly reviewed33e package/destination plus one preflight. Local50normalPASS/final independentGO and raw evidence retained at targeted-capture/linux-preflight. Resume only upon that direct approval; inspect receipts and publish reviewed33e, not a later unreviewed record-only commit. Retain this isolated checkout under pal-dev1 for that exact owner/approval-dependent preflight. No installed/product/lock/full/latency or roadmap changes.
+
 LOCAL PREFLIGHT SAFETY VERIFIED: actual independent workflow and runner/test GO preceded focused execution. Fifty safety/workflow cases passed normally in36.96s, zero failures/errors/skips; exact accepted38identity inventory and mutually exclusive workflow routing self-checks passed. Raw XML/stdout/stderr/source hashes and private-root-removedTrue are retained in targeted-capture/linux-preflight. Initial sandbox attempt failed before tests at private directory creation; elevated execution used the identical reviewed driver and succeeded. Whole10path merge-base inventory matches; fresh Redline/workflow exit1 advisory with no blocking predicates. No full/latency/actualfixture journey ran locally. Ready for frozen-package review and the one authorized hosted38case preflight; no automatic retry.
 
 RESUMED AUTHORIZED LINUX HARNESS PREFLIGHT: manager app continuation adopts prior Relay authority relay-reply-52908413c9b8bcc8d3034ef32097bae810975cc7d268916ac25a08bdff08d4b9 at07:48:26UTC. ONE Linux312 harness-only38case preflight after independent exact workflow/runner/package GO; max10min job, short private temp, all38normalPASS including actual fixture installation/matching/restoration and native AF_UNIX bind/cleanup. No full/latency suite, installed/product/lock mutation or new user wait. First checked saved receipts and live branch runs: only terminal failed39735588795 and39737061959 exist, no preflight dispatch or running job. Preserve all previous evidence.
@@ -3368,7 +3370,7 @@ Agent technical review: /root/architecture_check, clean nonimplementer source/pl
 
 **Exceptions:** None
 
-**State:** Ready for review
+**State:** Blocked
 
 <!-- agent-workflow:end -->
 
