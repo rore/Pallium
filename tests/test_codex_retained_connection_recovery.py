@@ -102,7 +102,9 @@ async def test_actual_mcp_idle_ready_preserves_or_fences_source_channel(
     source = service.source
     manifest = {"epoch": service.epoch}
     registrations, operations, workers, clients = [], [], [], []
+    registration_sources, source_resources, recoveries = [], [], []
     idle_observed, disposed = threading.Event(), threading.Event()
+    recovery_completed, replacement_observed = threading.Event(), threading.Event()
     native_type, worker_type = bridge.NativeInventoryClient, lifecycle.InventoryWorker
     monkeypatch.setattr(bridge, "_read_private", lambda *args: json.dumps(manifest).encode())
 
@@ -110,11 +112,21 @@ async def test_actual_mcp_idle_ready_preserves_or_fences_source_channel(
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)
             workers.append(self)
+        def _recover_if_gone(self, *args, **kwargs):
+            result = super()._recover_if_gone(*args, **kwargs)
+            if result[1]:
+                recoveries.append(result)
+                recovery_completed.set()
+            elif len(clients) == 2 and result[0] is clients[1] and len(registrations) == 2:
+                replacement_observed.set()
+            return result
 
     monkeypatch.setattr(lifecycle, "InventoryWorker", Worker)
 
     class IO:
         unresolved = False
+        def __init__(self, index):
+            self.index, self.closed = index, False
         def write(self, value, deadline):
             self.request = value
         def read(self, deadline):
@@ -143,12 +155,14 @@ async def test_actual_mcp_idle_ready_preserves_or_fences_source_channel(
             result = service._process(value, service.source, value["sequence"] - 1, deadline)
             if value["verb"] == "register":
                 registrations.append(dict(value))
+                registration_sources.append(self.index)
             elif registrations and idle_result == "busy":
                 result = {**result, "status": "unavailable", "reason": "busy"}
             return {**result, "version": 1, "epoch": service.epoch,
                     "sequence": value["sequence"]}
         def close(self):
             # The inherited loop EOF proof independently verifies this exact cleanup.
+            self.closed = True
             service._drop()
             disposed.set()
             if idle_result == "disposal-failure":
@@ -173,8 +187,9 @@ async def test_actual_mcp_idle_ready_preserves_or_fences_source_channel(
         if clients:
             # The service's next accepted source handle names the same live process.
             service.source = Peer(service.w, source.pid, creation=source.creation)
-        client.io, client.sequence = IO(), 0
+        client.io, client.sequence = IO(len(clients)), 0
         client.continuity, client.unresolved = None, False
+        source_resources.append((client.io, client.peer, client.source))
         clients.append(client)
         return client
 
@@ -183,39 +198,76 @@ async def test_actual_mcp_idle_ready_preserves_or_fences_source_channel(
 
     async def exercise(session):
         assert not (await _actual_status(session, "first")).isError
-        assert len(registrations) == len(operations) == 1
+        assert len(operations) == 1
+        assert (registrations[0]["thread_ref"], registrations[0]["turn_ref"]) == ("actual-runtime", "first")
         assert await asyncio.to_thread(idle_observed.wait, 1)
         worker, = workers
         if idle_result in {"resolved-transport-failure", "resolved-deadline", "different-thread"}:
-            assert await asyncio.to_thread(disposed.wait, 1)
+            assert await asyncio.to_thread(recovery_completed.wait, 1)
+            assert await asyncio.to_thread(replacement_observed.wait, 1)
+            assert recoveries == [(clients[1], True)]
             assert not service.unresolved and not source.gone
-            assert service.retained_registration is None and service.custody is None
-            assert len(clients) == len(registrations) == 1, "idle retirement retried enrollment"
+            assert len(clients) == len(registrations) == 2 and len(operations) == 1
+            assert registration_sources == [0, 1]
+            assert [(value["thread_ref"], value["turn_ref"]) for value in registrations] == [
+                ("actual-runtime", "first"), ("actual-runtime", "first")]
+            replacement = clients[1]
+            replacement_io, custody = replacement.io, service.custody
+            assert worker._thread.is_alive() and worker._restart_allowed
+            assert replacement_io is source_resources[1][0] and not replacement_io.closed
+            assert clients[0].io is clients[0].source is clients[0].peer is None
+            assert all(resource.closed for resource in source_resources[0])
+            assert registrations[0]["continuity"] is None
+            assert registrations[1]["continuity"] == clients[0].continuity == replacement.continuity
+            assert all(value["epoch"] == manifest["epoch"] for value in registrations)
+            assert service.retained_registration is not None and custody is not None
+            assert service.caller == service.retained_registration["caller"] == ("actual-runtime", "first")
+            desktop_count = len(natives)
             if idle_result == "different-thread":
                 fresh = await session.call_tool("pallium_relay_status", {"message_id": "message"},
                     meta={"threadId": "different-runtime", "turnId": "fresh"})
                 assert not fresh.isError
                 await asyncio.to_thread(worker._thread.join, 1)
                 assert not worker._thread.is_alive() and not worker._restart_allowed
-                assert len(clients) == len(registrations) == 1
+                assert len(clients) == len(registrations) == 2 and len(operations) == 2
+                assert registration_sources == [0, 1]
+                assert replacement.io is replacement.source is replacement.peer is None
+                assert replacement_io.closed
+                assert service.retained_registration is None and service.custody is None
             else:
                 assert not (await _actual_status(session, "fresh")).isError
-                assert len(registrations) == 2 and len(operations) == 2
-                assert registrations[1]["continuity"] == clients[0].continuity
-                assert service.retained_registration is not None and service.custody is not None
+                assert len(clients) == 2 and len(registrations) == 3 and len(operations) == 2
+                assert registration_sources == [0, 1, 1]
+                assert [(value["thread_ref"], value["turn_ref"]) for value in registrations] == [
+                    ("actual-runtime", "first"), ("actual-runtime", "first"), ("actual-runtime", "fresh")]
+                assert registrations[2]["continuity"] == registrations[1]["continuity"] == replacement.continuity
+                assert registrations[2]["epoch"] == manifest["epoch"]
+                assert registrations[2]["sequence"] > registrations[1]["sequence"]
+                assert replacement.io is replacement_io and not replacement_io.closed
+                assert service.custody is custody and len(natives) == desktop_count
+                assert service.caller == service.retained_registration["caller"] == ("actual-runtime", "fresh")
+                assert recoveries == [(replacement, True)]
         elif idle_result in {"healthy", "busy"}:
             assert worker._thread.is_alive() and worker._restart_allowed
             assert service.retained_registration is not None and service.custody is not None
             assert not disposed.is_set() and not source.gone
             assert len(registrations) == 1 and len(operations) == 1
+            assert len(clients) == 1 and registration_sources == [0] and not recoveries
         else:
             await asyncio.to_thread(worker._thread.join, 1)
             assert not worker._thread.is_alive() and not worker._restart_allowed
             assert not (await _actual_status(session, "fresh")).isError
             assert len(clients) == len(registrations) == 1 and len(operations) == 2
+            assert registration_sources == [0]
         assert all(not desktop.owners for desktop in natives)
 
-    await _serve_protocol(server, exercise)
+    try:
+        await _serve_protocol(server, exercise)
+    finally:
+        for worker in workers:
+            await worker.stop()
+            await asyncio.to_thread(worker._thread.join, 1)
+            assert not worker._thread.is_alive()
 
 
 def test_missing_saved_registration_is_not_reported_as_peer_mismatch(retained):
