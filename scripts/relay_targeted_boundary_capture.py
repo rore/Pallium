@@ -20,6 +20,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from types import MemberDescriptorType
 
 import pytest
 
@@ -72,7 +73,16 @@ class Recorder:
 def replace(stack, owner, name, replacement):
     """Restore only our own mutation, including originally inherited methods."""
     original = getattr(owner, name)
-    owned = name in vars(owner)
+    descriptor = inspect.getattr_static(type(owner), name, None)
+    if isinstance(descriptor, MemberDescriptorType):
+        owned = True
+    else:
+        if hasattr(descriptor, "__get__") and not inspect.isfunction(descriptor):
+            raise ValueError("unsupported attribute descriptor")
+        try:
+            owned = name in vars(owner)
+        except TypeError:
+            raise ValueError("unsupported attribute owner") from None
     def restore():
         if getattr(owner, name) is replacement:
             if owned:

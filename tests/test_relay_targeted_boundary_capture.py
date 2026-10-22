@@ -108,6 +108,56 @@ def test_partial_install_can_restore_independently(monkeypatch):
     assert client._transport.app is client.app
 
 
+@pytest.mark.parametrize("partial", [False, True])
+def test_slotted_dependant_restores_saved_value_with_inherited_method_control(monkeypatch, partial):
+    client, route, limiter, borrower, calls = fake_client()
+    original_call = route.dependant.call
+    class SlottedDependant:
+        __slots__ = ("call",)
+    route.dependant = SlottedDependant()
+    route.dependant.call = original_call
+    original_replace = capture.replace
+    def fail_after_slot(stack, owner, name, replacement):
+        if partial and owner is client._transport:
+            raise ValueError("partial install after slot mutation")
+        return original_replace(stack, owner, name, replacement)
+    monkeypatch.setattr(capture, "replace", fail_after_slot)
+    stack = ExitStack()
+    try:
+        if partial:
+            with pytest.raises(ValueError, match="partial install"):
+                capture.install(client, capture.Recorder(), stack, limiter_lookup=lambda _: limiter)
+        else:
+            capture.install(client, capture.Recorder(), stack, limiter_lookup=lambda _: limiter)
+            assert asyncio.run(client._transport.app({"type": "http"}, None, None)) == "admitted"
+            assert calls == [borrower]
+        assert route.dependant.call is not original_call
+        assert "acquire_on_behalf_of" in vars(limiter)
+    finally:
+        stack.close()
+    assert route.dependant.call is original_call
+    assert not hasattr(route.dependant, "__dict__")
+    assert "acquire_on_behalf_of" not in vars(limiter)
+    assert client._transport.app is client.app
+
+
+def test_unsupported_descriptor_is_rejected_before_mutation():
+    original, replacement = object(), object()
+    mutations = []
+    class Descriptor:
+        def __get__(self, owner, cls):
+            return original
+        def __set__(self, owner, value):
+            mutations.append(value)
+    class Owner:
+        call = Descriptor()
+    owner = Owner()
+    with ExitStack() as stack:
+        with pytest.raises(ValueError, match="unsupported attribute descriptor"):
+            capture.replace(stack, owner, "call", replacement)
+    assert owner.call is original and mutations == []
+
+
 def test_native_teardown_precedes_restoration_and_write(tmp_path, monkeypatch):
     order = []
     stack = ExitStack()
