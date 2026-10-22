@@ -5,9 +5,10 @@ import logging
 import math
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Literal
+from typing import Awaitable, Callable, Literal
 
 from fastapi import Body, FastAPI, HTTPException, Query
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import and_, case, func, or_, select, tuple_
@@ -476,6 +477,7 @@ def mount_dashboard(
     show_roi: bool = False,
     relay_service: RelayService | None = None,
     codex_wake_registry: CodexWakeRegistry | None = None,
+    diagnostic_runner: Callable[[Callable[[], JSONResponse]], Awaitable[JSONResponse]] | None = None,
 ) -> None:
     assets_dir = Path(__file__).resolve().parent.parent / "assets"
     dashboard_codex_registry = codex_wake_registry
@@ -575,8 +577,7 @@ def mount_dashboard(
         for item in items:
             item.pop("_at")
         return JSONResponse(content={"items": items[:limit]})
-    @app.get("/dashboard/api/relay/summary")
-    def dashboard_relay_summary() -> JSONResponse:
+    def dashboard_relay_summary_body() -> JSONResponse:
         service = app.state.pallium_service
         storage = service._storage
         if not isinstance(storage, SQLiteStorageProvider):
@@ -939,6 +940,11 @@ def mount_dashboard(
                 getattr(dashboard_codex_registry, "retained_service", None),
             ),
         })
+
+    @app.get("/dashboard/api/relay/summary")
+    async def dashboard_relay_summary() -> JSONResponse:
+        runner = diagnostic_runner or run_in_threadpool
+        return await runner(dashboard_relay_summary_body)
 
     @app.get("/dashboard/api/relay/overview")
     def dashboard_relay_overview(
