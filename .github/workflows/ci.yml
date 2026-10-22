@@ -6,6 +6,12 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      capture_only:
+        description: Run the targeted pre-worker boundary capture
+        type: boolean
+        required: false
+        default: false
   schedule:
     # Nightly full run (incl. the full Windows matrix). Off-peak, off :00.
     - cron: "17 6 * * *"
@@ -16,6 +22,7 @@ concurrency:
 
 jobs:
   select:
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.capture_only) }}
     runs-on: ubuntu-latest
     outputs:
       lane: ${{ steps.plan.outputs.lane }}
@@ -285,10 +292,34 @@ jobs:
           tests/test_relay_load_smoke.py
           -m slow -n 0 -q --durations=20
 
+  preworker-boundary-capture:
+    if: github.event_name == 'workflow_dispatch' && inputs.capture_only
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install -e ".[dev,vector,mcp]"
+      - name: Check capture observer safety
+        run: python -m pytest --noconftest -q -n 0 -o addopts='' tests/test_relay_targeted_boundary_capture.py --durations=20
+      - name: Run targeted pre-worker capture
+        run: python scripts/relay_targeted_boundary_capture.py --run --output "$RUNNER_TEMP/preworker-capture"
+      - name: Upload capture evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: preworker-boundary-capture-1
+          path: ${{ runner.temp }}/preworker-capture
+          if-no-files-found: warn
+          retention-days: 7
+
   result:
     name: CI result
     needs: [select, focused, test, windows-smoke, windows-full, nightly-slow-smoke]
-    if: always()
+    if: always() && !(github.event_name == 'workflow_dispatch' && inputs.capture_only)
     runs-on: ubuntu-latest
     steps:
       - name: Require every selected lane to succeed
