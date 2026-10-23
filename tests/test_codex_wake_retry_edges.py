@@ -740,11 +740,16 @@ def test_expired_claim_survives_repeated_lost_notifications_and_scope_move(
         assert not any(event[0] == "ack" or event[0] == "emit" and (
             "private-payload-東京" in event[2] or "later-payload-東京" in event[2]
         ) for event in events)
-        for message_id, attempts in (("retained-journey", 1), ("expired-claim-backlog", 0)):
+        for message_id, delivery_id, state, attempts in (
+            ("retained-journey", first["delivery_id"], "claimed", 1),
+            ("expired-claim-backlog", backlog["delivery_id"], "pending", 0),
+        ):
             result = http.get(f"/relay/messages/{message_id}", params=sender_scope)
             assert result.status_code == 200, result.text
             delivery, = result.json()["deliveries"]
-            assert delivery["state"] == "pending" and delivery["attempts"] == attempts
+            assert (delivery["delivery_id"], delivery["state"], delivery["attempts"]) == (
+                delivery_id, state, attempts,
+            )
         hook = sys.modules["relay_test_retained_session_start"]
         returned = hook.relay_turn(
             "codex", TARGET, sender_scope["container_ref"], max_chars=1,
