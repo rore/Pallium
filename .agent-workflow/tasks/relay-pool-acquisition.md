@@ -34,13 +34,13 @@ Unrelated policy/errors and lifecycle preservation -> tests/test_sqlite_relay_is
 Write safety and budget preservation -> tests/test_sqlite_write_retry.py plus HTTP readback assert refused turns absent, gates/handles released, preserved pool-exhausted attribution, and unchanged acquisition/settlement boundaries.
 Validation adequacy and evidence provenance -> Preserve both diagnostic attempts and accepted review; run focused files with -n 0 and affected Relay/storage/protected-contract cohorts only under reserved bounded executor slots. scripts/test-plan.py --base origin/main selects whole-change checks; run its required full non-slow lane once before PR and required CI. Reuse reliable unchanged evidence; no duplicate full run or unapproved runtime launch.
 
-**Plan review:** Pending independent technical review; no production edit yet.
+**Plan review:** Agent technical review: /root/relay_gate_plan_review, production-plan GO on efb4628857d01e6f13d7b6e7a02a58fe942b0c3a and 8d714a0615fc8f9870b6180d2557b48af6704540; see Plan review below. No blocking findings; implementation boundaries and verification accepted.
 
 **Approvals:** Existing isolated reliability authority: user message 01a163d8-1ab3-7053-8639-f61daa6de2af in manager chat: "i approve all fixes for reliability and stability". Current manager assignment explicitly authorizes this focused production correction; no live rollout authority.
 
 **Exceptions:** —
 
-**State:** Blocked or returned to planning
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Evidence
@@ -58,4 +58,10 @@ Pre-edit discovery: source caller search covers constructor, maintenance opener,
 Pre-edit boundary backend passed; intended-path Redline is GRAY with storage/core watch surfaces and no API/schema/visibility edits. The applicability checker requires the normal workflow for the mixed change. Technical mechanism review pending.
 
 Caller discovery also found tests/test_storage_sqlite.py's private engine-factory wrapper. Update its option forwarding if the factory gains a Relay-only keyword; preserve existing schema/index authorizer assertions. SQLAlchemy's native dialect pool-class selection distinguishes file/URI memory behavior and avoids a new URL heuristic. No product edits or runtime tests have occurred.
+
+## Plan review
+
+Agent technical review: /root/relay_gate_plan_review. Reviewed revision: 8d714a0615fc8f9870b6180d2557b48af6704540 (initial context efb4628857d01e6f13d7b6e7a02a58fe942b0c3a), production source still unchanged. Decision: GO, no blocking architecture finding. Verification adequacy: the planned native-pool HTTP E2E, error-boundary, memory/URI, maintenance, lifecycle and ordinary-policy cases are adequate; include pool recovery between retries and preserve attribution without masking a later unrelated error.
+
+The reviewer confirms a separate co-located file pool is necessary to preserve main callers, finite admission and all Relay read/write error handling without racing timeout mutation. Use native dialect pool-class selection, narrow 3o7r translation with cause retained, role-specific maintenance handling, all-owned-engine disposal and one reclaim per physical file. Preserve authorizer assertions in the private-factory wrapper. No new human approval is required under the existing isolated reliability authority. This review approves the plan only; focused/subsystem checks, required full/CI and result review remain open.
 
