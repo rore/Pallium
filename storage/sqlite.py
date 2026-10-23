@@ -190,7 +190,10 @@ class SQLiteStorageProvider(
         cls._validate_relay_schema(relay_database_url, require_tables=True)
 
     @classmethod
-    def _validate_relay_schema(cls, database_url: str, *, require_tables: bool = False) -> None:
+    def _validate_relay_schema(
+        cls, database_url: str, *, require_tables: bool = False,
+        require_guarded_lifecycle: bool = False,
+    ) -> None:
         path = cls._sqlite_path(database_url)
         if path is None or not path.exists():
             return
@@ -217,12 +220,22 @@ class SQLiteStorageProvider(
                     or (require_tables and not required_relay_tables)
                 ):
                     raise RuntimeError(f"Relay schema is incomplete in {path}; refusing startup")
+                if require_guarded_lifecycle and "relay_endpoint_generations" not in tables:
+                    raise RuntimeError(
+                        "Relay maintenance requires the guarded lifecycle schema; start the normal service once to upgrade it"
+                    )
                 for table, columns in {**required, **optional}.items():
                     if table not in tables:
                         continue
                     actual = {row[1] for row in connection.execute(f"PRAGMA table_info({table})")}
+                    if table == "relay_endpoint_generations" and require_guarded_lifecycle:
+                        columns = columns | {"guarded_lifecycle"}
                     missing = columns - actual
                     if missing:
+                        if require_guarded_lifecycle and "guarded_lifecycle" in missing:
+                            raise RuntimeError(
+                                "Relay maintenance requires the guarded lifecycle schema; start the normal service once to upgrade it"
+                            )
                         raise RuntimeError(
                             f"Relay schema missing required columns in {table}: {', '.join(sorted(missing))}"
                         )
@@ -253,7 +266,9 @@ class SQLiteStorageProvider(
     @classmethod
     def open_relay_maintenance(cls, relay_database_url: str) -> "SQLiteStorageProvider":
         """Open an existing Relay database without running schema migrations."""
-        cls._validate_relay_schema(relay_database_url, require_tables=True)
+        cls._validate_relay_schema(
+            relay_database_url, require_tables=True, require_guarded_lifecycle=True,
+        )
         instance = cls.__new__(cls)
         instance._relay_writer_lock = threading.Lock()
         engine = cls._create_engine(relay_database_url)

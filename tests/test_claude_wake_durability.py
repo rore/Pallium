@@ -590,7 +590,7 @@ def test_stale_closed_intent_cannot_remove_newer_intent(tmp_path: Path) -> None:
 def test_reconciler_stop_joins_its_thread(tmp_path: Path) -> None:
     from app.claude_wake import ClaudeWakeReconciler
 
-    reconciler = ClaudeWakeReconciler(ClaudeWakeRegistry(state_dir=tmp_path), SimpleNamespace(pending_candidate=lambda **_kwargs: None), interval_seconds=0.01)
+    reconciler = ClaudeWakeReconciler(ClaudeWakeRegistry(state_dir=tmp_path), SimpleNamespace(wake_candidates=lambda **_kwargs: []), interval_seconds=0.01)
     reconciler.start()
     reconciler.stop()
     assert reconciler._thread is not None and not reconciler._thread.is_alive()
@@ -770,7 +770,7 @@ def test_recovery_never_retries_rollback_inflight(tmp_path: Path, monkeypatch: p
     assert registry.probe(runtime="claude-code", session_ref=PAYLOAD["session_ref"], container_ref=PAYLOAD["container_ref"], delivery_id="delivery", recipient_endpoint_id=ENDPOINT_ID, transport=lambda *_: "accepted")
     restarted = ClaudeWakeRegistry(state_dir=tmp_path, wall_clock=lambda: wall[0])
     calls = []
-    relay = SimpleNamespace(pending_candidate=lambda **kwargs: calls.append(kwargs) or {"delivery_id": "delivery", "state": "pending"})
+    relay = SimpleNamespace(wake_candidates=lambda **kwargs: calls.append(kwargs) or [{"delivery_id": "delivery", "state": "pending"}])
     scheduled = []
     monkeypatch.setattr(claude_wake, "schedule_claude_relay_wake", lambda result, scope, *, registry, **_kwargs: scheduled.append((result, scope)) or None)
     claude_wake.recover_claude_relay_wakes(restarted, relay)
@@ -1724,8 +1724,8 @@ def test_restart_recovery_persists_unreachable_relay_health(
     persisted = threading.Event()
 
     class RelayWitness:
-        def pending_candidate(self, **kwargs: object) -> dict | None:
-            return relay.pending_candidate(**kwargs)
+        def wake_candidates(self, **kwargs: object) -> list[dict]:
+            return relay.wake_candidates(**kwargs)
 
         def mark_unreachable(self, **kwargs: object) -> bool:
             changed = relay.mark_unreachable(**kwargs)
@@ -1787,21 +1787,32 @@ def test_recovery_health_callbacks_bind_each_exact_candidate(
     def schedule(_result: object, _scope: object, *, registry: object, on_unreachable, **_kwargs) -> None:
         callbacks.append(on_unreachable)
 
+    metadata_reads = []
+
+    def wake_candidates(**kwargs):
+        metadata_reads.append(kwargs)
+        return [
+            {
+                "delivery_id": "delivery-" + item["session_ref"],
+                "recipient_endpoint_id": "relay-session-" + suffix * 32,
+                "recipient_runtime": "claude-code",
+                "recipient_session_ref": item["session_ref"],
+                "container_ref": item["container_ref"],
+                "state": "pending",
+            }
+            for item, suffix in ((PAYLOAD, "a"), (second, "b"))
+            if kwargs.get("delivery_id") in (None, "delivery-" + item["session_ref"])
+        ]
+
     relay = SimpleNamespace(
-        pending_candidate=lambda **kwargs: {
-            "delivery_id": "delivery-" + str(kwargs["session_ref"]),
-            "recipient_endpoint_id": (
-                "relay-session-"
-                + ("b" if kwargs["session_ref"] == second["session_ref"] else "a") * 32
-            ),
-            "state": "pending",
-        },
+        wake_candidates=wake_candidates,
         mark_unreachable=lambda **kwargs: marked.append((
             str(kwargs["session_ref"]), str(kwargs["container_ref"])
         )) or True,
     )
     monkeypatch.setattr(claude_wake, "schedule_claude_relay_wake", schedule)
     claude_wake.recover_claude_relay_wakes(registry, relay)
+    assert metadata_reads == [{}]
     assert len(callbacks) == 2
     for callback in callbacks:
         callback(datetime.now(timezone.utc))

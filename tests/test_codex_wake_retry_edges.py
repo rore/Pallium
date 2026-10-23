@@ -176,6 +176,7 @@ def test_due_retry_reads_moved_scope_and_hook_acks_same_delivery(
     now = [datetime(2030, 9, 5, tzinfo=timezone.utc)]
     _freeze_clock(monkeypatch, now)
     delivery = send()
+    original_scope = SCOPE["container_ref"]
     initial = registry.snapshot(delivery["recipient_endpoint_id"])
     assert initial is not None and initial.outcome == "uncertain"
     assert len(desktop.owners) == 1
@@ -215,7 +216,7 @@ def test_due_retry_reads_moved_scope_and_hook_acks_same_delivery(
         assert registry.snapshot(initial.recipient_endpoint_id) == initial
         assert initial.container_ref == SCOPE["container_ref"]
         assert len(desktop.owners) == 1
-        response = http.get("/relay/messages/retained-journey", params=moved_scope)
+        response = http.get("/relay/messages/retained-journey", params={"container_ref": original_scope})
         assert response.status_code == 200, response.text
         pending = response.json()["deliveries"][0]
         assert pending["delivery_id"] == delivery["delivery_id"]
@@ -242,11 +243,36 @@ def test_due_retry_reads_moved_scope_and_hook_acks_same_delivery(
     events = []
     monkeypatch.setitem(SCOPE, "container_ref", moved_scope["container_ref"])
     run_hook = _hook_runner(http, monkeypatch, "idle", events, tmp_path)
+    run_hook(allow_return=True)
+    assert not any(event[0] == "ack" or event[0] == "emit" and "private-payload-東京" in event[2]
+                   for event in events)
+    pending = http.get("/relay/messages/retained-journey", params={"container_ref": original_scope})
+    assert pending.status_code == 200
+    assert pending.json()["deliveries"][0]["state"] == "pending"
+    assert pending.json()["deliveries"][0]["attempts"] == 0
+
+    returned = http.post("/relay/turn", json={
+        "runtime": "codex", "session_ref": TARGET, "container_ref": original_scope,
+        "previous_container_ref": moved_scope["container_ref"],
+        "previous_endpoint_id": moved.json()["session"]["endpoint_id"],
+        "previous_scope_generation": moved.json()["session"]["scope_generation"],
+        "max_chars": 1, "max_messages": 1,
+    })
+    assert returned.status_code == 200 and returned.json()["deliveries"] == []
+    assert returned.json()["session"]["endpoint_id"] == delivery["recipient_endpoint_id"]
+    monkeypatch.setitem(SCOPE, "container_ref", original_scope)
+    events.clear()
     run_hook()
-    assert events[-1] == ("ack",)
-    current = http.get("/relay/messages/retained-journey", params=moved_scope)
+    assert [event for event in events if event[0] == "ack"] == [("ack",)]
+    assert sum(event[0] == "emit" and "private-payload-東京" in event[2] for event in events) == 1
+    current = http.get("/relay/messages/retained-journey", params={"container_ref": original_scope})
     assert current.status_code == 200
     assert current.json()["deliveries"][0]["state"] == "delivered"
+    assert current.json()["deliveries"][0]["attempts"] == 1
+    events.clear()
+    run_hook(allow_return=True)
+    assert not any(event[0] == "ack" or event[0] == "emit" and "private-payload-東京" in event[2]
+                   for event in events)
 
 
 def test_due_retry_refusal_preserves_authority_then_hook_acks_moved_delivery(
@@ -670,6 +696,7 @@ def test_expired_claim_survives_repeated_lost_notifications_and_scope_move(
         "payload": "later-payload-東京", **sender_scope,
     })
     assert response.status_code == 200, response.text
+    backlog = response.json()["deliveries"][0]
     if moved:
         session = claim.json()["session"]
         response = http.post("/relay/turn", json={
@@ -681,6 +708,7 @@ def test_expired_claim_survives_repeated_lost_notifications_and_scope_move(
         })
         assert response.status_code == 200, response.text
         assert response.json()["deliveries"] == []
+        moved_session = response.json()["session"]
         monkeypatch.setitem(SCOPE, "container_ref", "git:example.test/expired-move-東京")
 
     restarted = CodexWakeRegistry(relay_service=relay)
@@ -702,16 +730,63 @@ def test_expired_claim_survives_repeated_lost_notifications_and_scope_move(
         assert registry.begin_native_attempt(stale) is None
     events = []
     run_hook = _hook_runner(http, monkeypatch, "notLoaded", events, tmp_path)
-    desktop.on_owner = lambda request: run_hook(request["params"]["arguments"]["prompt"])
+    desktop.on_owner = lambda request: run_hook(
+        request["params"]["arguments"]["prompt"], allow_return=moved,
+    )
     now[0] += timedelta(seconds=60)
     recover(journey)
     assert len(desktop.owners) == 5
-    assert [event[0] for event in events] == ["emit", "ack"]
-    assert "private-payload-東京" in events[0][2] and "later-payload-東京" in events[0][2]
+    if moved:
+        assert not any(event[0] == "ack" or event[0] == "emit" and (
+            "private-payload-東京" in event[2] or "later-payload-東京" in event[2]
+        ) for event in events)
+        for message_id, delivery_id, state, attempts in (
+            ("retained-journey", first["delivery_id"], "claimed", 1),
+            ("expired-claim-backlog", backlog["delivery_id"], "pending", 0),
+        ):
+            result = http.get(f"/relay/messages/{message_id}", params=sender_scope)
+            assert result.status_code == 200, result.text
+            delivery, = result.json()["deliveries"]
+            assert (delivery["delivery_id"], delivery["state"], delivery["attempts"]) == (
+                delivery_id, state, attempts,
+            )
+        hook = sys.modules["relay_test_retained_session_start"]
+        returned = hook.relay_turn(
+            "codex", TARGET, sender_scope["container_ref"], max_chars=1,
+            request=hook.relay_request,
+        )
+        assert returned is not None and returned["deliveries"] == []
+        assert returned["session"]["endpoint_id"] == first["recipient_endpoint_id"]
+        assert returned["session"]["scope_generation"] == moved_session["scope_generation"] + 1
+        monkeypatch.setitem(SCOPE, "container_ref", sender_scope["container_ref"])
+        events.clear()
+        run_hook()
+        assert [event[0] for event in events] == ["emit", "ack"]
+        assert first["delivery_id"] in events[0][2]
+        assert backlog["delivery_id"] in events[0][2]
+        assert events[0][2].count("private-payload-東京") == 1
+        assert events[0][2].count("later-payload-東京") == 1
+    else:
+        assert [event[0] for event in events] == ["emit", "ack"]
+        assert "private-payload-東京" in events[0][2] and "later-payload-東京" in events[0][2]
     for message_id in ("retained-journey", "expired-claim-backlog"):
         result = http.get(f"/relay/messages/{message_id}", params=sender_scope)
         assert result.status_code == 200, result.text
-        assert result.json()["deliveries"][0]["state"] == "delivered"
+        delivery, = result.json()["deliveries"]
+        assert delivery["state"] == "delivered"
+        assert delivery["attempts"] == (2 if message_id == "retained-journey" else 1)
+    if moved:
+        events.clear()
+        run_hook(allow_return=True)
+        assert not any(event[0] == "ack" or event[0] == "emit" and (
+            "private-payload-東京" in event[2] or "later-payload-東京" in event[2]
+        ) for event in events)
+        for message_id in ("retained-journey", "expired-claim-backlog"):
+            result = http.get(f"/relay/messages/{message_id}", params=sender_scope)
+            assert result.status_code == 200, result.text
+            delivery, = result.json()["deliveries"]
+            assert delivery["state"] == "delivered"
+            assert delivery["attempts"] == (2 if message_id == "retained-journey" else 1)
     assert restarted.reservations() == ()
     capsys.readouterr()
 

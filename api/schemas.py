@@ -881,6 +881,7 @@ class RelayTurnRequest(BaseModel):
     )
     max_messages: int = Field(default=3, ge=0)
     register_session: bool = True
+    guarded_lifecycle: bool = Field(default=False, strict=True)
     structural_work_refs: Any = None
     wake_delivery_id: str | None = Field(
         default=None, pattern=r"^relay-delivery-[0-9a-f]{32}$"
@@ -891,10 +892,12 @@ class RelayTurnRequest(BaseModel):
     )
     previous_container_ref: str | None = Field(default=None, min_length=1, max_length=512)
     previous_endpoint_id: str | None = Field(default=None, min_length=1, max_length=128)
-    previous_scope_generation: int | None = Field(default=None, ge=0)
+    previous_scope_generation: int | None = Field(default=None, ge=0, le=2**63 - 1, strict=True)
 
     @model_validator(mode="after")
     def validate_transition_fields(self):
+        if self.guarded_lifecycle and not self.register_session:
+            raise ValueError("guarded_lifecycle requires session registration")
         values = (self.previous_container_ref, self.previous_endpoint_id, self.previous_scope_generation)
         if any(value is not None for value in values) and not all(value is not None for value in values):
             raise ValueError("previous_container_ref, previous_endpoint_id, and previous_scope_generation are required together")
@@ -907,6 +910,22 @@ class RelaySessionMutationRequest(BaseModel):
     runtime: RelayRuntime
     session_ref: str = Field(min_length=1, max_length=255)
     container_ref: str = Field(min_length=1, max_length=512)
+
+
+class RelaySessionCloseRequest(RelaySessionMutationRequest):
+    expected_endpoint_id: str | None = Field(default=None, pattern=r"^relay-session-[0-9a-f]{32}$")
+    expected_scope_generation: int | None = Field(default=None, ge=0, le=2**63 - 1, strict=True)
+
+    @model_validator(mode="after")
+    def validate_close_snapshot(self):
+        if (self.expected_endpoint_id is None) != (self.expected_scope_generation is None):
+            raise ValueError("expected_endpoint_id and expected_scope_generation are required together")
+        return self
+
+
+class RelaySessionCloseIfCurrentRequest(RelaySessionMutationRequest):
+    expected_endpoint_id: str = Field(pattern=r"^relay-session-[0-9a-f]{32}$")
+    expected_scope_generation: int = Field(ge=0, le=2**63 - 1, strict=True)
 
 
 class RelayOpenCodeWakeRequest(BaseModel):
@@ -999,6 +1018,7 @@ class RelaySessionResponse(BaseModel):
     last_seen_at: datetime
     closed_at: datetime | None = None
     scope_generation: int = Field(default=0, ge=0)
+    guarded_lifecycle: bool = False
     activation: RelayActivationResponse | None = None
 
 

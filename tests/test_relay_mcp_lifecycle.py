@@ -132,7 +132,11 @@ def test_scope_transition_preserves_endpoint_alias_work_refs_and_deliveries(clie
     assert moved_session["endpoint_id"] == endpoint
     assert moved_session["scope_generation"] == 1
     assert moved_session["container_ref"] == b["container_ref"]
-    assert moved.json()["deliveries"][0]["payload"] == "queued before move"
+    assert moved.json()["deliveries"] == []
+    pending = client.get(f"/relay/messages/{sent.json()['message_id']}", params=a)
+    assert pending.status_code == 200, pending.text
+    assert pending.json()["deliveries"][0]["state"] == "pending"
+    assert pending.json()["deliveries"][0]["attempts"] == 0
 
     refs = client.get("/relay/sessions/work-refs", params={
         "runtime": "codex", "session_ref": session, **b,
@@ -147,10 +151,24 @@ def test_scope_transition_preserves_endpoint_alias_work_refs_and_deliveries(clie
         "runtime": "codex", "session_ref": session, **a,
         "previous_container_ref": b["container_ref"],
         "previous_endpoint_id": endpoint,
-        "previous_scope_generation": 1,
+        "previous_scope_generation": moved_session["scope_generation"],
     })
     assert back.status_code == 200, back.text
     assert back.json()["session"]["scope_generation"] == 2
+    assert back.json()["session"]["endpoint_id"] == endpoint
+    delivery, = back.json()["deliveries"]
+    assert delivery["delivery_id"] == sent.json()["deliveries"][0]["delivery_id"]
+    assert delivery["payload"] == "queued before move" and delivery["attempts"] == 1
+    acknowledged = client.post("/relay/deliveries/ack", json={
+        "delivery_id": delivery["delivery_id"], "claim_token": delivery["claim_token"], **a,
+    })
+    assert acknowledged.status_code == 200, acknowledged.text
+    settled = client.get(f"/relay/messages/{sent.json()['message_id']}", params=a)
+    assert settled.status_code == 200, settled.text
+    assert settled.json()["deliveries"][0]["state"] == "delivered"
+    assert settled.json()["deliveries"][0]["attempts"] == 1
+    replay = client.post("/relay/turn", json={"runtime": "codex", "session_ref": session, **a})
+    assert replay.status_code == 200 and replay.json()["deliveries"] == []
 
     stale = client.post("/relay/turn", json={
         "runtime": "codex", "session_ref": session, **b,

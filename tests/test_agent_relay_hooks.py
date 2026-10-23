@@ -2068,16 +2068,41 @@ def test_legacy_pin_bootstraps_endpoint_alias_and_queued_delivery(
     assert calls == [("GET", "/relay/sessions"), ("POST", "/relay/turn")]
     assert result["session"]["endpoint_id"] == endpoint
     assert result["session"]["alias"] == "legacy-alias"
-    assert [item["payload"] for item in result["deliveries"]] == ["queued legacy delivery"]
-    delivery, = result["deliveries"]
+    assert result["deliveries"] == []
+    pending = client.get(f"/relay/messages/{sent.json()['message_id']}", params={"container_ref": old})
+    assert pending.status_code == 200, pending.text
+    assert pending.json()["deliveries"][0]["state"] == "pending"
+    assert pending.json()["deliveries"][0]["attempts"] == 0
+
+    return_calls = []
+    def return_request(method, path, body, *, timeout):
+        return_calls.append((method, path))
+        assert (method, path) == ("POST", "/relay/turn")
+        response = client.post(path, json=body)
+        assert response.status_code == 200, response.text
+        return response.json()
+    returned = common.relay_turn(runtime, "legacy-target", old, max_chars=1000, request=return_request)
+    assert return_calls == [("POST", "/relay/turn")]
+    assert returned["session"]["endpoint_id"] == endpoint
+    assert returned["session"]["alias"] == "legacy-alias"
+    assert [item["payload"] for item in returned["deliveries"]] == ["queued legacy delivery"]
+    delivery, = returned["deliveries"]
+    assert delivery["delivery_id"] == sent.json()["deliveries"][0]["delivery_id"]
     assert delivery["attempts"] == 1
     assert client.post("/relay/deliveries/ack", json={
         "delivery_id": delivery["delivery_id"], "claim_token": delivery["claim_token"],
-        "container_ref": new,
+        "container_ref": old,
     }).status_code == 200
-    status = client.get(f"/relay/messages/{sent.json()['message_id']}", params={"container_ref": new})
+    status = client.get(f"/relay/messages/{sent.json()['message_id']}", params={"container_ref": old})
     assert status.status_code == 200, status.text
     assert status.json()["deliveries"][0]["state"] == "delivered"
+    assert status.json()["deliveries"][0]["attempts"] == 1
+    replay = common.relay_turn(runtime, "legacy-target", old, max_chars=1000, request=return_request)
+    assert replay["session"]["endpoint_id"] == endpoint
+    assert replay["deliveries"] == []
+    final = client.get(f"/relay/messages/{sent.json()['message_id']}", params={"container_ref": old})
+    assert final.status_code == 200, final.text
+    assert final.json()["deliveries"][0]["attempts"] == 1
 
 
 @pytest.mark.parametrize("runtime", ["claude-code", "codex"])

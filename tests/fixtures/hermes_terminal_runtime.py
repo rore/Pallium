@@ -41,7 +41,7 @@ def prepare_terminal_runtime(python, source, home, artifacts, env):
         prefix = Path(runtime["prefix"])
         assert prefix != Path(runtime["base_prefix"]), "observer target must be a venv"
         assert python.resolve().is_relative_to(prefix.resolve()), "interpreter outside target venv"
-        assert prefix.name in {"hermes-0220-copy", "hermes-0222-copy"}, prefix
+        assert prefix.name in {"hermes-0220-copy", "hermes-0222-copy", "hermes-0224-copy"}, prefix
         for name, module in runtime["modules"].items():
             if module is not None:
                 assert Path(module["path"]).resolve().is_relative_to(prefix.resolve()), (name, module)
@@ -69,6 +69,8 @@ def prepare_terminal_runtime(python, source, home, artifacts, env):
     bootstrap_env = {key: env[key] for key in (
         "SYSTEMROOT", "WINDIR", "COMSPEC", "PATH", "PATHEXT", "TEMP", "TMP",
         "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA",
+        "PALLIUM_TUI_ALLOWED_ENDPOINTS", "PALLIUM_TUI_ALLOWED_CONTROL_PATHS",
+        "PALLIUM_TUI_EGRESS_LOG", "PALLIUM_TUI_IPC_LOG",
     ) if key in env}
     manifest = runner_temp / "hermes-terminal-observer.json"
     cache = runner_temp / "hermes-terminal-observer-cache"

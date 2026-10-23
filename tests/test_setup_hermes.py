@@ -3,11 +3,14 @@ from __future__ import annotations
 import copy
 import errno
 import hashlib
+import importlib.metadata
+import io
 import json
 import os
 from pathlib import Path
 import shutil
 import sys
+from types import ModuleType
 
 import pytest
 
@@ -177,6 +180,8 @@ def test_memory_opt_in_update_and_disable_preserve_profile(tmp_path, monkeypatch
     settings = state["config"]["plugins"]["entries"][PLUGIN]["settings"]
     assert not settings.get("memory_enabled", False)
     assert setup_hermes.main([*args, "--memory-enabled"]) == 0
+    assert state["config"]["plugins"]["entries"][PLUGIN]["settings"]["memory_enabled"] is True
+    assert setup_hermes.main(args) == 0
     assert state["config"]["plugins"]["entries"][PLUGIN]["settings"]["memory_enabled"] is True
     assert setup_hermes.main([*args, "--memory-enabled"]) == 0
     assert setup_hermes.main([*args, "--no-memory-enabled"]) == 0
@@ -383,3 +388,86 @@ def test_setup_uses_common_canonical_container_scope(tmp_path, monkeypatch):
     assert setup_hermes.main(args) == 0
     settings = state["config"]["plugins"]["entries"][PLUGIN]["settings"]
     assert settings["container_ref"] == "git:github.com/team/project"
+
+
+def test_normal_setup_uses_session_scope_and_preserves_profile_on_update(tmp_path, monkeypatch):
+    home = tmp_path / "hermes-home"
+    state, _ = _install_fake_hermes(monkeypatch, home)
+    original = copy.deepcopy(state["config"])
+    _, repo = _source(tmp_path, monkeypatch)
+    args = ["--home", str(home), "--hermes-python", sys.executable,
+            "--service-url", SETTINGS["service_url"], "--mcp-repo", str(repo)]
+    assert setup_hermes.main([*args, "--memory-enabled"]) == 0
+    settings = state["config"]["plugins"]["entries"][PLUGIN]["settings"]
+    assert settings["scope_mode"] == "cwd"
+    assert "container_ref" not in settings and "actor_ref" not in settings
+    assert setup_hermes.main(args) == 0
+    assert state["config"]["plugins"]["entries"][PLUGIN]["settings"]["memory_enabled"] is True
+    assert setup_hermes.main([*args, "--no-memory-enabled"]) == 0
+    assert not state["config"]["plugins"]["entries"][PLUGIN]["settings"].get("memory_enabled", False)
+    assert setup_hermes.main(["--home", str(home), "--hermes-python", sys.executable, "--status"]) == 0
+    assert setup_hermes.main(["--home", str(home), "--hermes-python", sys.executable, "--uninstall"]) == 0
+    assert state["config"] == original
+
+
+@pytest.mark.parametrize("error", ["hermes_session_cwd_api_required", "hermes_bound_session_key_api_required"])
+def test_unsupported_session_scope_fails_before_install_mutation(tmp_path, monkeypatch, error):
+    home = tmp_path / "hermes-home"
+    state, config_path = _install_fake_hermes(monkeypatch, home)
+    original, raw = copy.deepcopy(state), config_path.read_bytes()
+    _, repo = _source(tmp_path, monkeypatch)
+    original_run = setup_hermes._run_hermes
+
+    def unsupported(python, profile, action, request=None):
+        if action == "validate" and request.get("scope_mode") == "cwd":
+            raise ValueError(error)
+        return original_run(python, profile, action, request)
+
+    monkeypatch.setattr(setup_hermes, "_run_hermes", unsupported)
+    assert setup_hermes.main(["--home", str(home), "--hermes-python", sys.executable,
+                             "--service-url", SETTINGS["service_url"], "--mcp-repo", str(repo)]) == 2
+    assert state == original and config_path.read_bytes() == raw
+    assert not any(p.exists() for p in setup_hermes._profile_paths(home))
+
+
+@pytest.mark.parametrize("route_api", ["missing", "not-callable", "callable"])
+def test_config_helper_checks_route_capability_without_reading_a_route(
+    tmp_path, monkeypatch, capsys, route_api,
+):
+    import mcp.client.stdio
+
+    path = tmp_path / "config.yaml"
+    original = b"# unchanged profile\n"
+    path.write_bytes(original)
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("validation must not invoke session accessors or write config")
+
+    for name in ("hermes_cli", "gateway"):
+        package = ModuleType(name)
+        package.__path__ = []
+        monkeypatch.setitem(sys.modules, name, package)
+    config = ModuleType("hermes_cli.config")
+    config.get_config_path = lambda: path
+    config.require_readable_config_before_write = lambda _path: {}
+    config.atomic_config_write = config.atomic_config_replace = forbidden
+    plugins = ModuleType("hermes_cli.plugins")
+    plugins.PluginContext = type("PluginContext", (), {
+        "session_cwd": forbidden, "session_surface": forbidden,
+    })
+    context = ModuleType("gateway.session_context")
+    if route_api != "missing":
+        context.bound_session_key = forbidden if route_api == "callable" else None
+    for module in (config, plugins, context):
+        monkeypatch.setitem(sys.modules, module.__name__, module)
+    monkeypatch.setattr(importlib.metadata, "version", lambda _name: "2.0.0")
+    monkeypatch.setattr(sys, "argv", ["qualification-helper", "validate"])
+    monkeypatch.setattr(sys, "stdin", io.StringIO('{"scope_mode":"cwd"}'))
+    with pytest.raises(SystemExit) as stopped:
+        exec(compile(setup_hermes._CONFIG_HELPER, "<config-helper>", "exec"), {})
+    result = json.loads(capsys.readouterr().out)
+    assert stopped.value.code == (0 if route_api == "callable" else 2)
+    assert result["ok"] is (route_api == "callable")
+    if route_api != "callable":
+        assert result["error"] == "hermes_bound_session_key_api_required"
+    assert path.read_bytes() == original and list(tmp_path.iterdir()) == [path]

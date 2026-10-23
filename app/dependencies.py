@@ -797,11 +797,20 @@ def build_router(
             runtime, session_ref, container_ref,
         )):
             return
-        candidate = relay_service.pending_candidate(
-            runtime=runtime,
-            session_ref=live_scope["session_ref"],
-            container_ref=live_scope["container_ref"],
-        )
+        if runtime in {"codex", "claude-code"}:
+            candidate = next((row for row in relay_service.wake_candidates()
+                if isinstance(row, dict)
+                and row.get("recipient_endpoint_id") == endpoint_id
+                and row.get("recipient_runtime") == runtime
+                and row.get("recipient_session_ref") == session_ref
+                and row.get("container_ref") == container_ref
+                and row.get("state") == "pending"), None)
+        else:
+            candidate = relay_service.pending_candidate(
+                runtime=runtime,
+                session_ref=live_scope["session_ref"],
+                container_ref=live_scope["container_ref"],
+            )
         if candidate is not None:
             _relay_wake_dispatch(
                 {

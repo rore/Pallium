@@ -1706,6 +1706,7 @@ def test_default_setup_and_http_transport_isolation(monkeypatch):
 
 
 def _hook_runner(http, monkeypatch, state, events, tmp_path):
+    turn_witness = []
     script = "user_prompt_submit" if state == "idle" else "session_start"
     # Restore the previous alias (including absence) for existing hook state isolation.
     monkeypatch.setitem(sys.modules, "codex_common", sys.modules.get("codex_common"))
@@ -1724,7 +1725,10 @@ def _hook_runner(http, monkeypatch, state, events, tmp_path):
     def relay(method, path, body, **kwargs):
         response = http.request(method, path, json=body)
         assert response.status_code == 200, response.text
-        return response.json()
+        result = response.json()
+        if (method, path) == ("POST", "/relay/turn"):
+            turn_witness.append(result.get("deliveries") == [])
+        return result
     monkeypatch.setattr(hook, "relay_request", relay)
     original_emit = hook.emit_context
     def emit(text, event):
@@ -1740,12 +1744,18 @@ def _hook_runner(http, monkeypatch, state, events, tmp_path):
         events.append(("ack",))
         return deliveries
     monkeypatch.setattr(hook, "acknowledge_relay", ack)
-    def run(prompt="natural resume"):
+    def run(prompt="natural resume", *, allow_return=False):
+        turn_witness.clear()
         monkeypatch.setattr(hook, "read_hook_input", lambda: {
             "cwd": ".", "session_id": TARGET, "source": "resume", "prompt": prompt})
-        with pytest.raises(SystemExit) as exited:
-            hook.main()
-        assert exited.value.code == 0
+        try:
+            result = hook.main()
+        except SystemExit as exited:
+            assert exited.code == 0
+        else:
+            assert allow_return and result is None
+        if allow_return:
+            assert turn_witness and all(turn_witness), "empty hook did not complete an empty Relay turn"
     return run
 
 
@@ -2265,14 +2275,32 @@ def test_session_start_lock_budget_claims_emits_and_acks_once(
         monkeypatch.setattr(hook, "record_codex_wake_event", lambda **k: None)
     calls = []
     timeouts = []
+    phase = {
+        "hook_entry_s": -1.0, "hook_exit_s": -1.0, "hook_duration_s": -1.0,
+        "timer_join_s": -1.0, "release_offset_s": -1.0, "release_duration_s": -1.0,
+        "lock_wait_last_s": -1.0, "lock_wait_count": 0,
+        "turn_last_s": -1.0, "turn_timeout_s": -1.0, "turn_count": 0,
+        "ack_last_s": -1.0, "ack_timeout_s": -1.0, "ack_count": 0,
+    }
 
     def request(method, path, body, **kwargs):
         calls.append(path)
         if path == "/relay/turn":
             timeouts.append(kwargs["timeout"])
-        response = http.request(method, path, json=body)
-        assert response.status_code == 200, response.text
-        return response.json()
+        request_started = time.monotonic()
+        try:
+            response = http.request(method, path, json=body)
+            assert response.status_code == 200, response.text
+            return response.json()
+        finally:
+            if path in ("/relay/turn", "/relay/deliveries/ack"):
+                prefix = "turn" if path == "/relay/turn" else "ack"
+                phase[prefix + "_last_s"] = time.monotonic() - request_started
+                timeout = kwargs.get("timeout")
+                phase[prefix + "_timeout_s"] = (
+                    timeout if type(timeout) in (int, float) and 0 <= timeout <= 8 else -1.0
+                )
+                phase[prefix + "_count"] += 1
 
     monkeypatch.setattr(hook, "relay_request", request)
     monkeypatch.setattr(common, "relay_request", request)  # Real ACK helper.
@@ -2283,26 +2311,51 @@ def test_session_start_lock_budget_claims_emits_and_acks_once(
             common.start_hook_deadline(1.4 if contention == "held" else 0.5, clock=clock))
     lock = common._acquire_session_lock(TARGET)
     assert lock is not None
-    release = threading.Timer(0.3, common._release_session_lock, args=(lock,))
-    if contention == "released":
-        acquire = common._acquire_session_lock
-        def start_release_on_wait(*args, **kwargs):
-            if kwargs.get("deadline") is not None and release.ident is None:
-                release.start()
+    original_release = common._release_session_lock
+    def timed_release(held_lock):
+        release_started = time.monotonic()
+        try:
+            return original_release(held_lock)
+        finally:
+            phase["release_offset_s"] = release_started - started
+            phase["release_duration_s"] = time.monotonic() - release_started
+    release = threading.Timer(0.3, timed_release, args=(lock,))
+    acquire = common._acquire_session_lock
+    def timed_lock_wait(*args, **kwargs):
+        if contention == "released" and kwargs.get("deadline") is not None and release.ident is None:
+            release.start()
+        wait_started = time.monotonic()
+        try:
             return acquire(*args, **kwargs)
-        monkeypatch.setattr(common, "_acquire_session_lock", start_release_on_wait)
+        finally:
+            if kwargs.get("deadline") is not None:
+                phase["lock_wait_last_s"] = time.monotonic() - wait_started
+                phase["lock_wait_count"] += 1
+    monkeypatch.setattr(common, "_acquire_session_lock", timed_lock_wait)
     started = time.monotonic()
     try:
         with pytest.raises(SystemExit) as exited:
-            hook.main()
+            hook_started = time.monotonic()
+            phase["hook_entry_s"] = hook_started - started
+            try:
+                hook.main()
+            finally:
+                phase["hook_exit_s"] = time.monotonic() - started
+                phase["hook_duration_s"] = time.monotonic() - hook_started
         assert exited.value.code == 0
     finally:
         if contention == "released":
-            release.join(2)
+            join_started = time.monotonic()
+            try:
+                release.join(2)
+            finally:
+                phase["timer_join_s"] = time.monotonic() - join_started
             assert not release.is_alive()
         else:
             common._release_session_lock(lock)
-    assert time.monotonic() - started < 2
+    assert time.monotonic() - started < 2, (
+        "lock_budget_numeric " + " ".join(f"{key}={value}" for key, value in phase.items())
+    )
     if contention == "held":
         assert time.monotonic() - started >= 0.3  # Actually waited on the held lock.
     emitted = json.loads(capsys.readouterr().out)

@@ -10,9 +10,27 @@ lane: integration
 
 ## Summary
 
+Current work is the user-directed project-scope parity correction, tracked by
+[`agent-workflow:hermes-project-parity`](../../.agent-workflow/tasks/hermes-project-parity.md).
+Normal Hermes sessions must derive their project and actor from their own trusted
+working directory; an explicit fixed-scope override is a separate choice. Local
+Hermes installation and readiness remain incomplete pending parity qualification
+and final result review. Historical fixed-profile qualification below does not
+establish normal CWD behavior; preserve its delivered scope and limits.
+
+The lifecycle compatibility correction and affected 293-case cohort have independent
+acceptance. The complete non-slow census and its retained failures are recorded in
+the parity Work Record; shared setup failure remains separately owned. A fresh clean
+review found an actor A→B→A authority gap; its correction passed 57 isolated
+project-scope cases with zero skips and independent result acceptance.
+The first actual 0.22.4 CWD TUI attempt stopped before model execution because the
+qualification guard blocked its native local gateway. Guard propagation and the
+remaining Desktop/TUI qualification are still open. The accepted public-hook/tool
+proof does not replace that frontend qualification.
+
 PR #324 delivered the reviewed Desktop/TUI integration toward
 production readiness, including scoped opt-in memory and normal-profile lifecycle
-qualification. Current owner Work Record: `.agent-workflow/tasks/hermes-production-slice4.md`.
+qualification. Historical slice-4 Work Record: `.agent-workflow/tasks/hermes-production-slice4.md`.
 The feature remains active for the unfinished platform, installation and recovery
 scope below. The two P1 blockers identified at
 `353e8f83` are resolved in runtime `b96a05e1`; clean independent result review
@@ -270,8 +288,8 @@ without conflict at `ad30f944`. The native package journey passed again in
 104.00s, and affected MCP/plugin/setup/app-run/Relay files passed 273 tests with
 one platform-permission skip. Independent review accepts the four-file code
 composition. Final hosted checks passed and PR #321 merged as `f0ba4647`. The
-full feature remains active; current production-readiness work is owned by
-`.agent-workflow/tasks/hermes-production-slice4.md`. Live rollout requires separate
+full feature remains active; current project-parity work is owned by
+`agent-workflow:hermes-project-parity` (linked above). Live rollout requires separate
 environment approval.
 
 **Slice-3 evidence, 2026-10-19:** [PR #322](https://github.com/rore/Pallium/pull/322)

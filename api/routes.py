@@ -22,7 +22,8 @@ from api.schemas import (
     RelayDeliveryTraceResponse,
     RelayReplyRequest,
     RelaySendRequest,
-    RelaySessionMutationRequest,
+    RelaySessionCloseRequest,
+    RelaySessionCloseIfCurrentRequest,
     RelaySessionWorkRefsResponse,
     RelayWorkRefAttachResponse,
     RelayWorkRefDetachResponse,
@@ -933,8 +934,17 @@ def create_router(
         )
 
     @router.post("/relay/sessions/close", response_model=RelaySessionResponse)
-    async def relay_close_session(request: RelaySessionMutationRequest):
+    async def relay_close_session(request: RelaySessionCloseRequest):
         return await _with_relay_activation(await _relay_call("close_session", lambda: _relay().close_session(**request.model_dump())))
+
+    @router.post("/relay/sessions/close-if-current", response_model=RelaySessionResponse)
+    async def relay_close_session_if_current(request: RelaySessionCloseIfCurrentRequest):
+        return await _with_relay_activation(await _relay_call(
+            "close_session_if_current",
+            lambda: _relay().close_session(
+                **request.model_dump(), require_guarded_lifecycle=True,
+            ),
+        ))
 
     @router.post("/relay/opencode/wake", response_model=RelayOpenCodeWakeResponse)
     async def opencode_wake(request: RelayOpenCodeWakeRequest):

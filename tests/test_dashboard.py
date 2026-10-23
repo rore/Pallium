@@ -747,18 +747,45 @@ class TestDashboardRelayIdentityCollisionBoundaries:
             assert current["container_ref"] == "journey-c"
             assert current["possible_identity_collision"]["endpoint_claimable_delivery_count"] == 1
 
-            moved_claim = client.post("/relay/turn", json={
+            current_claim = client.post("/relay/turn", json={
                 "runtime": "codex", "session_ref": "journey",
                 "container_ref": "journey-c",
-            }).json()["deliveries"][0]
+            })
+            assert current_claim.status_code == 200
+            assert current_claim.json()["deliveries"] == []
+            pending = next(row for row in client.get("/dashboard/api/relay/messages").json()["messages"]
+                           if row["id"] == historical["message_id"])["deliveries"][0]
+            assert pending["state"] == "pending" and pending["attempts"] == 0
+            returned = client.post("/relay/turn", json={
+                "runtime": "codex", "session_ref": "journey", "container_ref": "journey-a",
+                "previous_container_ref": "journey-c",
+                "previous_endpoint_id": moved_session["endpoint_id"],
+                "previous_scope_generation": moved_session["scope_generation"],
+                "max_messages": 1,
+            })
+            assert returned.status_code == 200
+            assert returned.json()["session"]["endpoint_id"] == first["endpoint_id"]
+            moved_claim, = returned.json()["deliveries"]
+            assert moved_claim["delivery_id"] == delivery["id"] == historical["deliveries"][0]["delivery_id"]
+            assert moved_claim["attempts"] == 1
             client.post("/relay/deliveries/ack", json={
                 "delivery_id": moved_claim["delivery_id"],
                 "claim_token": moved_claim["claim_token"],
-                "container_ref": "journey-c",
+                "container_ref": "journey-a",
             }).raise_for_status()
             assert client.get(
                 "/dashboard/api/relay/summary"
             ).json()["possible_identity_collisions"]["group_count"] == 0
+
+            back_to_c = client.post("/relay/turn", json={
+                "runtime": "codex", "session_ref": "journey", "container_ref": "journey-c",
+                "previous_container_ref": "journey-a",
+                "previous_endpoint_id": returned.json()["session"]["endpoint_id"],
+                "previous_scope_generation": returned.json()["session"]["scope_generation"],
+                "max_messages": 1,
+            })
+            assert back_to_c.status_code == 200 and back_to_c.json()["deliveries"] == []
+            assert back_to_c.json()["session"]["endpoint_id"] == first["endpoint_id"]
 
             client.post("/relay/sessions/close", json={
                 "runtime": "codex", "session_ref": "journey",

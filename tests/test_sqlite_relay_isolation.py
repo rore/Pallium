@@ -1075,6 +1075,81 @@ def test_relay_generation_schema_upgrade_preserves_existing_sessions(tmp_path: P
         ).fetchone() == ("kept",)
     reopened.close()
 
+
+@pytest.mark.parametrize("separate_relay", [False, True])
+def test_guarded_lifecycle_migrates_populated_legacy_generation_table_idempotently(
+    tmp_path: Path, separate_relay: bool,
+) -> None:
+    main = tmp_path / "main.db"
+    relay = tmp_path / "relay.db"
+    main_url = f"sqlite:///{main}"
+    relay_url = f"sqlite:///{relay}" if separate_relay else None
+    provider = SQLiteStorageProvider(main_url, relay_database_url=relay_url)
+    sender = provider.relay_turn(runtime="codex", session_ref="sender", container_ref="scope",
+        title="sender", max_chars=1000, max_messages=3, lease_seconds=60, guarded_lifecycle=True)["session"]
+    target = provider.relay_turn(runtime="claude-code", session_ref="target", container_ref="scope",
+        title="target", max_chars=1000, max_messages=3, lease_seconds=60, guarded_lifecycle=True)["session"]
+    provider.relay_refresh_structural_work_refs(runtime="codex", session_ref="sender", container_ref="scope",
+        work_refs=[{"work_ref": "project:generic", "scope_ref": "scope", "local_ref": "branch:main"}])
+    provider.relay_send(message_id="migration-message", sender_runtime="codex", sender_session_ref="sender",
+        recipient=target["endpoint_id"], recipient_runtime="claude-code", recipient_kind="endpoint",
+        recipient_value=target["endpoint_id"], payload="preserve delivery", redacted=False,
+        container_ref="scope", expires_in_seconds=600, in_reply_to=None)
+    delivery = provider.relay_turn(runtime="claude-code", session_ref="target", container_ref="scope",
+        title=None, max_chars=1000, max_messages=3, lease_seconds=60, guarded_lifecycle=True)["deliveries"][0]
+    endpoint_id = sender["endpoint_id"]
+    engine = provider._relay_engine
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            "UPDATE relay_endpoint_generations SET generation=9 WHERE endpoint_id=?", (endpoint_id,)
+        )
+    provider.close()
+
+    with sqlite3.connect(relay if separate_relay else main) as connection:
+        connection.execute("ALTER TABLE relay_endpoint_generations DROP COLUMN guarded_lifecycle")
+        before = {
+            table: connection.execute(f"SELECT * FROM {table} ORDER BY 1").fetchall()
+            for table in ("relay_sessions", "relay_session_work_refs", "relay_messages", "relay_deliveries")
+        }
+        connection.commit()
+
+    reopened = SQLiteStorageProvider(main_url, relay_database_url=relay_url)
+    with reopened._relay_engine.connect() as connection:
+        columns = {row[1] for row in connection.exec_driver_sql("PRAGMA table_info(relay_endpoint_generations)")}
+        assert "guarded_lifecycle" in columns
+        assert connection.exec_driver_sql(
+            "SELECT endpoint_id, generation, guarded_lifecycle FROM relay_endpoint_generations WHERE endpoint_id=?",
+            (endpoint_id,),
+        ).fetchone() == (endpoint_id, 9, 0)
+        connection.exec_driver_sql("INSERT INTO relay_endpoint_generations(endpoint_id, generation) VALUES (?, ?)", ("raw-two-column", 4))
+        assert connection.exec_driver_sql("SELECT guarded_lifecycle FROM relay_endpoint_generations WHERE endpoint_id=?", ("raw-two-column",)).fetchone() == (0,)
+        assert {
+            table: connection.exec_driver_sql(f"SELECT * FROM {table} ORDER BY 1").fetchall()
+            for table in before
+        } == before
+    assert reopened.relay_session_view_by_endpoint(endpoint_id, recent_seconds=86400)["scope_generation"] == 9
+    assert reopened.relay_message_status(message_id="migration-message", container_ref="scope")["deliveries"][0]["state"] == delivery["state"]
+    reopened.close()
+
+    reopened = SQLiteStorageProvider(main_url, relay_database_url=relay_url)
+    assert reopened.relay_session_view_by_endpoint(endpoint_id, recent_seconds=86400)["scope_generation"] == 9
+    reopened.close()
+
+
+def test_relay_maintenance_refuses_missing_guarded_lifecycle_column_without_writes(tmp_path: Path) -> None:
+    main = tmp_path / "main.db"
+    relay = tmp_path / "relay.db"
+    provider = SQLiteStorageProvider(f"sqlite:///{main}", relay_database_url=f"sqlite:///{relay}")
+    provider.close()
+    with sqlite3.connect(relay) as connection:
+        connection.execute("ALTER TABLE relay_endpoint_generations DROP COLUMN guarded_lifecycle")
+        connection.commit()
+    before = relay.read_bytes()
+    with pytest.raises(RuntimeError, match="guarded lifecycle|normal service|upgrade"):
+        SQLiteStorageProvider.open_relay_maintenance(f"sqlite:///{relay}")
+    assert relay.read_bytes() == before
+
+
 def test_actor_bearing_relay_schema_is_rejected_without_migration(tmp_path: Path) -> None:
     main = tmp_path / "main.db"
     relay = tmp_path / "relay.db"
@@ -1086,6 +1161,21 @@ def test_actor_bearing_relay_schema_is_rejected_without_migration(tmp_path: Path
     with pytest.raises(RuntimeError, match="column|schema|current"):
         SQLiteStorageProvider(f"sqlite:///{main}", relay_database_url=f"sqlite:///{relay}")
     assert relay.read_bytes() == before
+
+
+
+def test_guarded_lifecycle_opt_in_persists_across_provider_recreation(tmp_path: Path) -> None:
+    main = tmp_path / "main.db"
+    relay = tmp_path / "relay.db"
+    provider = SQLiteStorageProvider(f"sqlite:///{main}", relay_database_url=f"sqlite:///{relay}")
+    session = provider.relay_turn(runtime="codex", session_ref="kept-opted", container_ref="scope",
+        title=None, max_chars=100, max_messages=1, lease_seconds=60, guarded_lifecycle=True)["session"]
+    endpoint_id = session["endpoint_id"]
+    provider.close()
+    reopened = SQLiteStorageProvider(f"sqlite:///{main}", relay_database_url=f"sqlite:///{relay}")
+    observed = reopened.relay_session_view_by_endpoint(endpoint_id, recent_seconds=86400)
+    assert observed["guarded_lifecycle"] is True and observed["scope_generation"] == 0
+    reopened.close()
 
 def test_relay_association_schema_upgrade_preserves_existing_rows(tmp_path: Path) -> None:
     main = tmp_path / "main.db"

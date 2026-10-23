@@ -81,13 +81,16 @@ def test_desktop_bad_binary_provenance_never_launches(tmp_path, monkeypatch, exp
     assert not home.exists() and not artifacts.exists()
 
 
-def test_desktop_owned_startup_and_ui_protocol_without_native_process(tmp_path, monkeypatch):
+@pytest.mark.parametrize("scope_mode", ["fixed", "cwd"])
+def test_desktop_owned_startup_and_ui_protocol_without_native_process(tmp_path, monkeypatch, scope_mode):
     source, home, artifacts = (tmp_path / name for name in ("source", "home", "artifacts"))
     binary = source / "apps" / "desktop" / "release" / "win-unpacked" / "Hermes.exe"
     binary.parent.mkdir(parents=True)
     binary.write_bytes(b"synthetic non-executable")
     artifacts.mkdir()
+    (home / "scratch").mkdir(parents=True)
     env = {**RUNNER_MARKERS, "RUNNER_TEMP": str(tmp_path), "HERMES_NODE": str(tmp_path / "node.exe"),
+           "USERPROFILE": str(home),
            "HERMES_DESKTOP_EXE_SHA256": hashlib.sha256(binary.read_bytes()).hexdigest(), "NODE_OPTIONS": "terminal-only"}
     app = SimpleNamespace(pid=123, stdout=io.StringIO(), poll=lambda: None,
                           stderr=io.StringIO("DevTools listening on ws://127.0.0.1:43123/devtools/browser/synthetic\n"))
@@ -104,7 +107,8 @@ def test_desktop_owned_startup_and_ui_protocol_without_native_process(tmp_path, 
     # The mocked Windows launch also runs on Linux, which does not define this native flag.
     monkeypatch.setattr("subprocess.CREATE_NO_WINDOW", 0, raising=False)
     tree = SimpleNamespace(error=None, psutil=SimpleNamespace(Process=lambda pid: pid), record=identities.append)
-    console = DesktopConsole(tmp_path / "python.exe", source, home, env, artifacts, threading.Event(), tree)
+    options = {"scope_mode": "cwd"} if scope_mode == "cwd" else {}
+    console = DesktopConsole(tmp_path / "python.exe", source, home, env, artifacts, threading.Event(), tree, **options)
     try:
         console.ready()
         console.submit("hello 漢字 🌍", marker="hello")
@@ -114,7 +118,8 @@ def test_desktop_owned_startup_and_ui_protocol_without_native_process(tmp_path, 
         console.close()
     assert identities == [123, 456]
     assert calls[0][0] == [str(binary), "--remote-debugging-address=127.0.0.1", "--remote-debugging-port=0"]
-    assert calls[1][0][2:] == ["ws://127.0.0.1:43123/devtools/browser/synthetic", str(source)]
+    assert calls[1][0][2:] == ["ws://127.0.0.1:43123/devtools/browser/synthetic", str(source),
+                              scope_mode, str(home / "scratch")]
     assert all("NODE_OPTIONS" not in kwargs["env"] for _, kwargs in calls)
     assert json.loads(cdp.stdin.getvalue().splitlines()[1])["text"] == "hello 漢字 🌍"
     assert (artifacts / "desktop-output.json").is_file()

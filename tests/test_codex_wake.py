@@ -1371,12 +1371,16 @@ def test_schedule_replaces_only_definitively_stale_endpoint_fence(
                 "state": terminal_state,
             }
 
-        def pending_candidate(self, **kwargs):
-            return {
-                "delivery_id": kwargs["delivery_id"],
+        def wake_candidates(self, *, delivery_id=None, include_coalesced=False):
+            assert delivery_id == new["deliveries"][0]["delivery_id"]
+            return [{
+                "delivery_id": delivery_id,
                 "recipient_endpoint_id": endpoint_id,
+                "recipient_runtime": "codex",
+                "recipient_session_ref": "target-session",
+                "container_ref": SCOPE["container_ref"],
                 "state": "pending",
-            }
+            }]
 
     monkeypatch.setattr(codex_wake.time, "sleep", lambda _: None)
     with patch(
@@ -1425,6 +1429,46 @@ def test_schedule_retains_active_claim_fence_without_second_wake() -> None:
         ) is None
     thread.assert_not_called()
     assert registry.snapshot(endpoint_id) == old
+
+
+@pytest.mark.parametrize("change,expected", [
+    ({}, True), ({"delivery_id": "other"}, False),
+    ({"recipient_endpoint_id": "relay-session-" + "b" * 32}, False),
+    ({"recipient_runtime": "claude-code"}, False),
+    ({"recipient_session_ref": "other"}, False),
+    ({"container_ref": "git:example.test/other"}, False),
+    ({"state": "claimed"}, False), ({"state": "delivered"}, False),
+    (None, False),
+])
+def test_codex_notification_guard_requires_exact_live_metadata(monkeypatch, change, expected):
+    delivery = _delivery()
+    item = delivery["deliveries"][0]
+    candidate = None if change is None else {
+        "delivery_id": item["delivery_id"],
+        "recipient_endpoint_id": item["recipient_endpoint_id"],
+        "recipient_runtime": "codex",
+        "recipient_session_ref": "target-session",
+        "container_ref": SCOPE["container_ref"],
+        "state": "pending",
+        **change,
+    }
+    reads = []
+
+    class Relay:
+        def wake_candidates(self, **kwargs):
+            reads.append(kwargs)
+            return [candidate]
+
+    monkeypatch.setattr(codex_wake.time, "sleep", lambda _: None)
+    with patch("app.codex_wake._start_launch", return_value=(None, ("queued", None, 0))) as launch:
+        worker = codex_wake.schedule_codex_relay_wake(
+            delivery, SCOPE, relay_service=Relay(), registry=CodexWakeRegistry(),
+        )
+        if worker is not None:
+            worker.join(timeout=2)
+            assert not worker.is_alive()
+    assert (launch.call_count == 1) is expected
+    assert reads and all(query == {"delivery_id": item["delivery_id"]} for query in reads)
 
 
 def test_queue_writes_once_from_neutral_codex_home(tmp_path) -> None:
@@ -3489,6 +3533,81 @@ def test_ack_rearm_after_scope_transition_uses_live_container_and_historical_del
         stored = route.get(f"/relay/messages/{sent[1]['message_id']}", params=old).json()["deliveries"][0]
         assert stored["recipient_container_ref"] == old["container_ref"]
         assert stored["state"] == "pending"
+
+
+@pytest.mark.parametrize("scenario", ["next-pending", "terminal-second", "moved-target"])
+def test_opencode_ack_forwards_only_next_pending_in_live_recipient_scope(client, monkeypatch, scenario):
+    from app import dependencies
+
+    forwarded = []
+    monkeypatch.setattr(dependencies, "dispatch_relay_wake",
+                        lambda result, scope, **_kwargs: forwarded.append((result, scope)))
+    app = FastAPI()
+    app.include_router(build_router(
+        client.app.state.pallium_service,
+        relay_storage=client.app.state.pallium_service._storage,
+    ))
+    route = TestClient(app)
+    old = {"container_ref": "git:example.test/opencode-old"}
+    new = {"container_ref": "git:example.test/opencode-new"}
+    sender = {"container_ref": "git:example.test/opencode-sender"}
+    assert route.post("/relay/turn", json={"runtime": "codex", "session_ref": "sender", **sender}).status_code == 200
+    registered = route.post("/relay/turn", json={"runtime": "opencode", "session_ref": "target", **old})
+    assert registered.status_code == 200
+    endpoint = registered.json()["session"]["endpoint_id"]
+    sent = []
+    for index in (1, 2):
+        response = route.post("/relay/messages", json={
+            "sender_runtime": "codex", "sender_session_ref": "sender",
+            "recipient": endpoint, "message_id": f"opencode-forward-{scenario}-{index}",
+            "payload": f"OpenCode work {index}", **sender,
+        })
+        assert response.status_code == 200, response.text
+        sent.append(response.json())
+    forwarded.clear()
+    turn = route.post("/relay/turn", json={
+        "runtime": "opencode", "session_ref": "target",
+        "max_messages": 2 if scenario == "terminal-second" else 1, **old,
+    })
+    assert turn.status_code == 200, turn.text
+    claims = turn.json()["deliveries"]
+    assert len(claims) == (2 if scenario == "terminal-second" else 1)
+    if scenario == "terminal-second":
+        second_ack = route.post("/relay/deliveries/ack", json={
+            "delivery_id": claims[1]["delivery_id"], "claim_token": claims[1]["claim_token"], **old,
+        })
+        assert second_ack.status_code == 200, second_ack.text
+    if scenario == "moved-target":
+        moved = route.post("/relay/turn", json={
+            "runtime": "opencode", "session_ref": "target", "max_chars": 1,
+            "max_messages": 1, "previous_container_ref": old["container_ref"],
+            "previous_endpoint_id": endpoint, "previous_scope_generation": 0, **new,
+        })
+        assert moved.status_code == 200, moved.text
+        assert moved.json()["session"]["endpoint_id"] == endpoint
+        assert moved.json()["deliveries"] == []
+    forwarded.clear()
+    ack = route.post("/relay/deliveries/ack", json={
+        "delivery_id": claims[0]["delivery_id"], "claim_token": claims[0]["claim_token"], **old,
+    })
+    assert ack.status_code == 200, ack.text
+    if scenario == "next-pending":
+        assert len(forwarded) == 1
+        wake, scope = forwarded[0]
+        assert scope == old and wake["recipient"] == "opencode:target"
+        assert wake["deliveries"] == [{
+            "delivery_id": sent[1]["deliveries"][0]["delivery_id"],
+            "state": "pending", "recipient_endpoint_id": endpoint,
+            "recipient_runtime": "opencode", "recipient_session_ref": "target",
+            "recipient_container_ref": old["container_ref"],
+        }]
+    else:
+        assert forwarded == []
+        remaining = route.get(f"/relay/messages/{sent[1]['message_id']}", params=old)
+        assert remaining.status_code == 200
+        assert remaining.json()["deliveries"][0]["state"] == (
+            "delivered" if scenario == "terminal-second" else "pending"
+        )
 
 def test_relay_turn_callback_rearms_only_after_success(client) -> None:
     callbacks = []
@@ -5621,25 +5740,26 @@ def test_http_ack_after_validation_serializes_with_native_start_and_releases_fen
 
         monkeypatch.setattr(codex_wake, "_popen", popen)
     else:
-        original_pending = RelayService.pending_candidate
+        original_candidates = RelayService.wake_candidates
         first = True
 
-        def pending_candidate(relay, **kwargs):
+        def wake_candidates(relay, **kwargs):
             nonlocal first
-            candidate = original_pending(relay, **kwargs)
+            candidates = original_candidates(relay, **kwargs)
             if first:
                 expected_delivery_id = kwargs.get("delivery_id")
                 assert isinstance(expected_delivery_id, str) and expected_delivery_id
-                assert isinstance(candidate, dict)
+                assert len(candidates) == 1
+                candidate = candidates[0]
                 assert candidate.get("delivery_id") == expected_delivery_id
                 assert candidate.get("recipient_endpoint_id") == endpoint_id
                 assert candidate.get("state") == "pending"
                 first = False
                 validated.set()
                 assert continue_native.wait(2)
-            return candidate
+            return candidates
 
-        monkeypatch.setattr(RelayService, "pending_candidate", pending_candidate)
+        monkeypatch.setattr(RelayService, "wake_candidates", wake_candidates)
         monkeypatch.setattr(claude_wake, "claude_wake_transport", lambda *args: native_writes.append(args) or "accepted")
 
     target = "app.dependencies.schedule_codex_relay_wake" if runtime == "codex" else "app.dependencies.schedule_claude_relay_wake"

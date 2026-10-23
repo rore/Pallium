@@ -172,15 +172,17 @@ from importlib.metadata import version
 from integrations.hermes.mcp_bridge import RelayMcpBridge
 
 config = json.loads(sys.argv[1])
+dynamic = config.get("scope_mode") == "session"
 bridge = RelayMcpBridge(
     python=config["pallium_python"], repo=config["repo"],
-    base_url=config["base_url"], container_ref=config["container_ref"],
-    actor_ref="bridge-test-actor", visibility="private",
+    base_url=config["base_url"], container_ref=None if dynamic else config["container_ref"],
+    actor_ref=None if dynamic else "bridge-test-actor", visibility="private",
     memory_enabled=config.get("memory_enabled", False),
 )
 try:
     names = sorted(tool["name"] for tool in bridge.catalog)
-    address = json.loads(bridge.call("pallium_relay_address", {}, (config["session"], "turn-real")))
+    scope = {"scope": {"container_ref": config["container_ref"], "actor_ref": "bridge-test-actor"}} if dynamic else {}
+    address = json.loads(bridge.call("pallium_relay_address", {}, (config["session"], "turn-real"), **scope))
     missing = json.loads(bridge.call("pallium_relay_address", {}, None))
     async def refused_missing_metadata():
         return await bridge._call("pallium_relay_address", {}, {})
@@ -245,7 +247,8 @@ def test_probe_timeout_terminates_its_owned_child_group(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("host_kind", ["sdk1", "sdk2"])
 @pytest.mark.parametrize("memory_enabled", [False, True])
-def test_bridge_stdio_call_on_supported_sdk(host_kind, memory_enabled) -> None:
+@pytest.mark.parametrize("scope_mode", ["fixed", "session"])
+def test_bridge_stdio_call_on_supported_sdk(host_kind, memory_enabled, scope_mode) -> None:
     configured_host = os.environ.get("HERMES_BRIDGE_HOST_PYTHON") if host_kind == "sdk2" else None
     if host_kind == "sdk2" and not configured_host:
         pytest.skip("Set HERMES_BRIDGE_HOST_PYTHON to a disposable Hermes SDK2 interpreter")
@@ -267,6 +270,7 @@ def test_bridge_stdio_call_on_supported_sdk(host_kind, memory_enabled) -> None:
         "container_ref": "git:test/hermes-bridge",
         "session": session,
         "memory_enabled": memory_enabled,
+        "scope_mode": scope_mode,
     })
     try:
         completed = _run_bridge_probe(host_python, config, repo)

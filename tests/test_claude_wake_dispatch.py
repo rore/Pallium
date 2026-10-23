@@ -50,6 +50,40 @@ def _wake_result(session_ref: str, delivery_id: str = "delivery-1") -> dict:
         }],
     }
 
+
+@pytest.mark.parametrize("change,expected", [
+    ({}, True), ({"delivery_id": "other"}, False),
+    ({"recipient_endpoint_id": "relay-session-" + "b" * 32}, False),
+    ({"recipient_runtime": "codex"}, False),
+    ({"recipient_session_ref": "other"}, False),
+    ({"container_ref": "git:example/other"}, False),
+    ({"state": "claimed"}, False), ({"state": "delivered"}, False),
+    (None, False),
+])
+def test_claude_notification_guard_requires_exact_live_metadata(change, expected):
+    registry = MagicMock(spec=ClaudeWakeRegistry)
+    candidate = None if change is None else {
+        **_wake_result(PAYLOAD["session_ref"])["deliveries"][0],
+        "container_ref": PAYLOAD["container_ref"],
+        **change,
+    }
+    reads = []
+
+    def wake_candidates(**kwargs):
+        reads.append(kwargs)
+        return [candidate]
+
+    relay = SimpleNamespace(wake_candidates=wake_candidates)
+    worker = schedule_claude_relay_wake(
+        _wake_result(PAYLOAD["session_ref"]),
+        {"container_ref": PAYLOAD["container_ref"]},
+        registry=registry, relay_service=relay,
+    )
+    _join(worker)
+    guard = registry.attempt.call_args.kwargs["still_pending"]
+    assert guard() is expected
+    assert reads == [{"delivery_id": "delivery-1"}]
+
 class TestTransport:
     """Transport tests: typed outcomes, auth frames, and platform failures."""
 
@@ -1113,6 +1147,64 @@ def test_public_turn_busy_stop_idle_lifecycle_is_fail_closed(client) -> None:
     assert registry.attempt(runtime="claude-code", session_ref="session-test", container_ref="wrong", transport=transport).outcome == "deferred"
 
 
+def test_claude_ack_rearm_uses_live_target_metadata_after_project_move(client, monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from app.dependencies import build_router
+
+    app = FastAPI()
+    app.include_router(build_router(
+        client.app.state.pallium_service,
+        relay_storage=client.app.state.pallium_service._storage,
+        claude_wake_registry=ClaudeWakeRegistry(),
+    ))
+    http = TestClient(app)
+    old = {"container_ref": "git:example.test/claude-old"}
+    new = {"container_ref": "git:example.test/claude-new"}
+    sender = {"container_ref": "git:example.test/claude-sender"}
+    scheduled = []
+    monkeypatch.setattr("app.dependencies.schedule_claude_relay_wake",
+                        lambda result, scope, **_kwargs: scheduled.append((result, scope)))
+    assert http.post("/relay/turn", json={"runtime": "codex", "session_ref": "sender", **sender}).status_code == 200
+    registered = http.post("/relay/turn", json={"runtime": "claude-code", "session_ref": "target", **old})
+    assert registered.status_code == 200
+    endpoint = registered.json()["session"]["endpoint_id"]
+    sent = []
+    for message_id in ("claude-move-1", "claude-move-2"):
+        response = http.post("/relay/messages", json={
+            "sender_runtime": "codex", "sender_session_ref": "sender",
+            "recipient": endpoint, "message_id": message_id,
+            "payload": "historical Claude delivery", **sender,
+        })
+        assert response.status_code == 200, response.text
+        sent.append(response.json())
+    scheduled.clear()
+    claim = http.post("/relay/turn", json={
+        "runtime": "claude-code", "session_ref": "target", "max_messages": 1, **old,
+    }).json()["deliveries"][0]
+    moved = http.post("/relay/turn", json={
+        "runtime": "claude-code", "session_ref": "target", "max_chars": 1,
+        "max_messages": 1, "previous_container_ref": old["container_ref"],
+        "previous_endpoint_id": endpoint, "previous_scope_generation": 0, **new,
+    })
+    assert moved.status_code == 200, moved.text
+    assert moved.json()["session"]["endpoint_id"] == endpoint
+    assert moved.json()["deliveries"] == []
+    ack = http.post("/relay/deliveries/ack", json={
+        "delivery_id": claim["delivery_id"], "claim_token": claim["claim_token"], **old,
+    })
+    assert ack.status_code == 200, ack.text
+    assert len(scheduled) == 1
+    wake, live_scope = scheduled[0]
+    assert live_scope == new
+    assert wake["recipient"] == "claude-code:target"
+    assert wake["deliveries"][0]["delivery_id"] == sent[1]["deliveries"][0]["delivery_id"]
+    assert wake["deliveries"][0]["recipient_container_ref"] == new["container_ref"]
+    historical = http.get(f"/relay/messages/{sent[1]['message_id']}", params=old).json()["deliveries"][0]
+    assert historical["recipient_container_ref"] == old["container_ref"]
+    assert historical["state"] == "pending"
+
+
 def test_windows_write_closes_event_after_cancelled_completion(monkeypatch: pytest.MonkeyPatch) -> None:
     import app.claude_wake_transport as transport
 
@@ -1509,10 +1601,15 @@ def test_persisted_claude_d1_d2_d3_actual_hooks(
     transport.assert_called_once()
 
     monkeypatch.setattr(prompt, "resolve_container_ref", lambda *_: "git:other/repo")
+    capsys.readouterr()
     with pytest.raises(SystemExit):
         prompt.main()
+    other_output = capsys.readouterr().out
+    assert "D3" not in other_output
     assert state(sent2) == "delivered"
-    assert state(sent2) == state(sent3) == "delivered"
+    assert state(sent3) == "pending"
+    pending3 = http.get(f"/relay/messages/{sent3['message_id']}", params=scope).json()["deliveries"][0]
+    assert pending3["attempts"] == 0
 
     monkeypatch.setattr(prompt, "resolve_container_ref", lambda *_: scope["container_ref"])
     with pytest.raises(SystemExit):
@@ -1520,6 +1617,11 @@ def test_persisted_claude_d1_d2_d3_actual_hooks(
     output = capsys.readouterr().out
     assert "D2" not in output and "D3" in output
     assert state(sent2) == state(sent3) == "delivered"
+    assert http.get(f"/relay/messages/{sent3['message_id']}", params=scope).json()["deliveries"][0]["attempts"] == 1
+    with pytest.raises(SystemExit):
+        prompt.main()
+    assert "D3" not in capsys.readouterr().out
+    assert state(sent3) == "delivered"
     assert all(status == 200 for _, _, status in relay_calls), relay_calls
     assert all(status == 204 for status in registration_statuses), registration_statuses
     assert real_time.monotonic is real_monotonic
@@ -1797,8 +1899,9 @@ def test_empty_stop_rearms_claude_wake_after_turn_admission(client, monkeypatch,
                 http.close()
 
 
+@pytest.mark.parametrize("relay_admission_clock", ["native", "semantic"], indirect=True)
 def test_post_start_lost_http_intent_reconciles_without_claiming_relay(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, relay_admission_clock,
 ) -> None:
     from types import SimpleNamespace
 
@@ -1806,6 +1909,7 @@ def test_post_start_lost_http_intent_reconciles_without_claiming_relay(
 
     from app.config import AppConfig
     from app.main import create_app
+    from storage import sqlite_queue
     from storage.vector_index import VectorIndexConfig
     from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
     from tests.test_claude_code_integration import _load_claude_hook
@@ -1827,12 +1931,15 @@ def test_post_start_lost_http_intent_reconciles_without_claiming_relay(
     ))
 
     with TestClient(app, client=("127.0.0.1", 50000)) as http:
-        assert http.post("/relay/turn", json={
-            "runtime": "codex", "session_ref": "sender", **scope,
-        }).status_code == 200
-        assert http.post("/relay/turn", json={
-            "runtime": "claude-code", "session_ref": "lost-http", **scope,
-        }).status_code == 200
+        native_queue_time = sqlite_queue.time
+        with relay_admission_clock(app.state.pallium_service._storage):
+            assert http.post("/relay/turn", json={
+                "runtime": "codex", "session_ref": "sender", **scope,
+            }).status_code == 200
+            assert http.post("/relay/turn", json={
+                "runtime": "claude-code", "session_ref": "lost-http", **scope,
+            }).status_code == 200
+        assert sqlite_queue.time is native_queue_time
         common = _load_claude_hook("common", monkeypatch)
         monkeypatch.setenv("CLAUDE_CODE_MESSAGING_SOCKET", PAYLOAD["socket_path"])
         monkeypatch.setenv("CLAUDE_CODE_MESSAGING_TOKEN", PAYLOAD["token"])

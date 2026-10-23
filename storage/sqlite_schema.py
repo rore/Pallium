@@ -700,6 +700,7 @@ class RelayEndpointGenerationRecord(Base):
 
     endpoint_id = Column(String, primary_key=True)
     generation = Column(Integer, nullable=False, default=0)
+    guarded_lifecycle = Column(Integer, nullable=False, default=False, server_default="0")
 
 
 class RelayAliasRecord(Base):
@@ -1149,6 +1150,7 @@ class SQLiteSchemaMixin:
                 ],
             )
             if include_relay:
+                self._ensure_relay_guarded_lifecycle_column(self._engine)
                 self._ensure_relay_delivery_columns(self._engine)
                 self._ensure_relay_trial_column(self._engine)
                 self._ensure_relay_wake_columns(self._engine)
@@ -1199,6 +1201,7 @@ class SQLiteSchemaMixin:
                 ],
             )
             self._ensure_relay_delivery_columns(engine)
+            self._ensure_relay_guarded_lifecycle_column(engine)
             self._ensure_relay_trial_column(engine)
             self._ensure_relay_wake_columns(engine)
             with engine.begin() as connection:
@@ -1206,6 +1209,18 @@ class SQLiteSchemaMixin:
                     if name.startswith("idx_relay_"):
                         connection.execute(text(create_sql))
             self._optimize_query_planner_stats(engine)
+
+    @staticmethod
+    def _ensure_relay_guarded_lifecycle_column(engine) -> None:
+        with engine.begin() as connection:
+            columns = {
+                row[1]
+                for row in connection.execute(text("PRAGMA table_info(relay_endpoint_generations)"))
+            }
+            if "guarded_lifecycle" not in columns:
+                connection.execute(text(
+                    "ALTER TABLE relay_endpoint_generations ADD COLUMN guarded_lifecycle INTEGER NOT NULL DEFAULT 0"
+                ))
 
     @staticmethod
     def _ensure_relay_trial_column(engine) -> None:
