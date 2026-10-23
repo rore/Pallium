@@ -2284,7 +2284,7 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
         "api_mode": "chat_completions", "context_length": 128000, "base_url": provider_url,
     })
     config = {"model": model_config,
-              "agent": {"api_max_retries": 1}, "fallback_providers": [],
+              "agent": {"api_max_retries": 1}, "logging": {"level": "DEBUG"}, "fallback_providers": [],
               "platform_toolsets": {"cli": ["hermes-cli"]}, "updates": {"check": False},
               "model_catalog": {"enabled": False},
               "auxiliary": {"background_review": {"enabled": False}},
