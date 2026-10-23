@@ -41,7 +41,7 @@ Constructor concurrency and failed full-run disposition -> Run the existing exac
 
 **Exceptions:** —
 
-**State:** Ready for review
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Evidence
@@ -115,4 +115,12 @@ Independent nonimplementer /root/relay_gate_plan_review verified exact PR head f
 Result decision: GO for source result review and Ready for review. Normal PR policy requires these Linux full suites and Windows smoke; windows-full is explicitly skipped for this PR by .github/workflows/ci.yml. The focused201 plus separately reviewed2+1 followups remain valid. No additional local full run or human exception is required for source readiness. Elevated-risk independent technical review is satisfied; normal PR review and any required thread resolution still precede an authorized merge.
 
 This current disposition supersedes earlier prospective statements that an unknown installer incident or a further local full run necessarily blocks source release. Those statements and the original full01 NO-GO930/3/2 remain historical evidence, not passing results. CI proves neither the cause nor cure of local WinError5 or the original Linux acquisition delays. Installer incident owner remains @pal-dev1 on feat/codex-skill-activation, with a reviewed failure-only private observation proposal before any separately reserved execution. No protected contract was waived or weakened. No merge, rollout, installed access or feature-completion authority is implied.
+
+## Current CI failure and preparation-only repair plan
+
+The metadata-only successor2bec61c8d05c3e46da1d445b2971933fd159a194 has a new failed required CI39934499092. Linux3.12 stopped at6889 passed,1 failed,40 skipped,2 xfailed: test_settled_relay_write_releases_gate_before_cleanup[close-close-rollback] in tests/test_relay_work_ref_associations_e2e.py line395, while attaching initial item:seed-1 before writer A starts. The control was unheld, with no commit/rollback markers. HTTP refused503/late_begin after1924ms,1922ms in setup_pragma and0ms in factory/connection/BEGIN; no pool_exhausted. Physical cause remains unknown. Python3.13, Windows smoke and governance passed. Raw failed.log SHA2567a7373812db935f5618a59a4ebac1fbd28f68e5b19196f0f9c705ff603eb7db0 is retained at build/pool-ci-2bec61c8. Prior f0cbaaae GO is historical; it does not override this current red gate.
+
+Existing independent /root/relay_gate_plan_review gives NO-GO for current release readiness and GO for this exact bounded test-preparation repair before editing: only the settlement test's _turn and seed HTTP attachments use a temporary sqlite_queue.time namespace with deterministic monotonic; native sleep/waits remain unchanged. Assert exact seeded state through public readback, then restore and assert original module/global clocks before submitting A. Preserve A/B/C execution, event waits, real-clock admission, expected statuses/errors, settlement markers, final readback and all protected tests. Production budgets and late-BEGIN refusal remain unchanged. This repairs an ordinary preparation assumption and claims no underlying timing cure. The existing health fixture is a pattern, not authority.
+
+Next: edit only this existing HTTP E2E preparation within the declared test scope, review the actual diff, run its eight-case settlement node under a reserved slot, and obtain current required CI on the corrected head. No blind job rerun, general retry or timeout increase. Source correctness review of unchanged application4d2ac1cb remains reusable; current readiness is an actionable test-preparation defect. No runtime authority is implied by this plan.
 
