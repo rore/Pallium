@@ -12,6 +12,7 @@ import re
 import subprocess
 import threading
 import tempfile
+import time
 
 
 def prepare_private_control(env: dict, qualification_root: Path):
@@ -386,6 +387,15 @@ class OwnedGateway:
             if _valid_gateway_error(result):
                 with (self.artifacts / 'gateway-error.json').open('x', encoding='utf-8') as stream:
                     json.dump(result, stream, sort_keys=True, indent=2)
+                ensure = result['ensure']
+                if (result['phase'] == 'bootstrap' and ensure['status'] == 'returned'
+                        and ensure['calls'] == 1 and ensure['returns'] == 1
+                        and ensure['state'] == 'draining' and ensure['reason_code'] is None):
+                    # Let the observed native draining teardown progress before owner-tree cleanup.
+                    try:
+                        time.sleep(30)
+                    except BaseException:
+                        pass
             raise AssertionError('native gateway qualification helper failed') from None
         if (type(result) is not dict or set(result) != {
                 'url', 'profile_id', 'instance_id', 'pid', 'start_time', 'hermes_home', 'code_sha'}):

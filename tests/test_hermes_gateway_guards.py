@@ -347,6 +347,69 @@ def test_owned_gateway_rejects_helper_error_receipt_after_recording_helper(tmp_p
     assert tree.recorded == [helper]
 
 
+@pytest.mark.parametrize("phase,status,calls,returns,state,reason,should_wait,interrupt_wait", [
+    ("bootstrap", "returned", 1, 1, "draining", None, True, True),
+    ("bootstrap", "returned", 1, 1, "draining", None, True, False),
+    ("imports", "returned", 1, 1, "draining", None, False, False),
+    ("bootstrap", "none_or_unwind", 1, 0, "draining", None, False, False),
+    ("bootstrap", "returned", 1, 1, "ready", None, False, False),
+    ("bootstrap", "returned", 1, 1, "draining", "authorization", False, False),
+    ("bootstrap", "returned", 2, 2, "draining", None, False, False),
+])
+def test_owned_gateway_error_waits_only_for_exact_draining_receipt(
+        tmp_path, monkeypatch, phase, status, calls, returns, state, reason, should_wait, interrupt_wait):
+    import queue
+    import tests.fixtures.hermes_gateway_driver as gateway
+
+    diagnostic = {
+        "error": "native gateway qualification failed", "phase": phase, "exception_type": "RuntimeError",
+        "frames": [{"file": "ui-tui/scripts/gateway_bootstrap.py", "function": "bootstrap", "line": 79}],
+        "ensure": {"status": status, "calls": calls, "returns": returns,
+                   "state": state, "reason_code": reason},
+    }
+    receiver = object.__new__(OwnedGateway)
+    receiver.replies = queue.Queue()
+    receiver.replies.put(diagnostic)
+    receiver.artifacts = tmp_path
+    waits = []
+    persisted_at_wait = []
+
+    def passive_wait(seconds):
+        waits.append(seconds)
+        receipt = tmp_path / "gateway-error.json"
+        persisted_at_wait.append(receipt.exists() and json.loads(receipt.read_text(encoding="utf-8")) == diagnostic)
+        if interrupt_wait:
+            raise InterruptedError("passive wait interruption must not replace the fatal helper failure")
+
+    monkeypatch.setattr(gateway.time, "sleep", passive_wait)
+    with pytest.raises(AssertionError, match="native gateway qualification helper failed"):
+        receiver.receive()
+    assert waits == ([30] if should_wait else [])
+    assert persisted_at_wait == ([True] if should_wait else [])
+    assert json.loads((tmp_path / "gateway-error.json").read_text(encoding="utf-8")) == diagnostic
+
+
+def test_owned_gateway_success_receipt_does_not_wait(tmp_path, monkeypatch):
+    import queue
+    import tests.fixtures.hermes_gateway_driver as gateway
+
+    receipt = {
+        "url": "ws://127.0.0.1:19341/api/ws", "profile_id": "profile",
+        "instance_id": "instance", "pid": 41, "start_time": 1,
+        "hermes_home": str(tmp_path), "code_sha": "e" * 40,
+    }
+    receiver = object.__new__(OwnedGateway)
+    receiver.replies = queue.Queue()
+    receiver.replies.put(receipt)
+    receiver.artifacts = tmp_path
+    waits = []
+    monkeypatch.setattr(gateway.time, "sleep", lambda seconds: waits.append(seconds))
+
+    assert receiver.receive() == receipt
+    assert waits == []
+    assert not (tmp_path / "gateway-error.json").exists()
+
+
 class _FakeProcess:
     def __init__(self, pid, birth, exe, parents=()):
         self.pid, self.birth, self.executable, self._parents = pid, birth, exe, parents
@@ -693,8 +756,9 @@ else:
         shutil.rmtree(control_root)
 
 
-@pytest.mark.parametrize("spoofed_exception", [False, True])
-def test_real_helper_retains_partial_bootstrap_child_for_final_tree_cleanup(tmp_path, monkeypatch, spoofed_exception):
+@pytest.mark.parametrize("spoofed_exception,draining", [(False, False), (True, False), (False, True)])
+def test_real_helper_retains_partial_bootstrap_child_for_final_tree_cleanup(
+        tmp_path, monkeypatch, spoofed_exception, draining):
     import queue
     import uuid
     from tests.fixtures.hermes_gateway_driver import HELPER
@@ -710,6 +774,14 @@ def test_real_helper_retains_partial_bootstrap_child_for_final_tree_cleanup(tmp_
     native_package.mkdir()
     (native_package / "__init__.py").write_text("", encoding="utf-8")
     witness = tmp_path / "spawned-child.json"
+    drain_marker = tmp_path / "draining-child-alive.marker"
+    child_code = (
+        "import time; from pathlib import Path; time.sleep(.2); "
+        f"Path({str(drain_marker)!r}).write_text('started'); time.sleep(120)"
+        if draining else "import time; time.sleep(120)"
+    )
+    native_state = "draining" if draining else "ready"
+    native_reason = "None" if draining else repr("authorization")
     marker = "qualification-partial-" + uuid.uuid4().hex
     secrets = (
         "synthetic-bootstrap-stdout-must-never-escape",
@@ -725,10 +797,11 @@ def test_real_helper_retains_partial_bootstrap_child_for_final_tree_cleanup(tmp_
         "    def __init__(self,state,reason_code): self.state=state; self.reason_code=reason_code\n"
         "def ensure_gateway_runtime(*args,**kwargs):\n"
         "    options={'start_new_session':True} if os.name!='nt' else {}\n"
-        f"    child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(120)',{marker!r}],**options)\n"
+        f"    child_code={child_code!r}\n"
+        f"    child=subprocess.Popen([sys.executable,'-c',child_code,{marker!r}],**options)\n"
         "    process=psutil.Process(child.pid)\n"
         f"    Path({str(witness)!r}).write_text(json.dumps({{'pid':child.pid,'birthtime':process.create_time(),'exe':process.exe()}}))\n"
-        "    return GatewayDiscovery('ready','authorization')\n"
+        f"    return GatewayDiscovery({native_state!r},{native_reason})\n"
     )
     (native_package / "gateway_runtime.py").write_text(native_runtime, encoding="utf-8")
     (native_package / "decoy.py").write_text(
@@ -778,10 +851,11 @@ def test_real_helper_retains_partial_bootstrap_child_for_final_tree_cleanup(tmp_
         assert saved_diagnostic == diagnostic
         assert diagnostic["error"] == "native gateway qualification failed"
         assert diagnostic["phase"] == "bootstrap"
-        assert diagnostic["exception_type"] == ("Exception" if spoofed_exception else "RuntimeError")
+        assert diagnostic["exception_type"] == ("Exception" if spoofed_exception else "AssertionError" if draining else "RuntimeError")
         assert diagnostic["ensure"] == {
             "status": "returned", "calls": 1, "returns": 1,
-            "state": "ready", "reason_code": "authorization",
+            "state": "draining" if draining else "ready",
+            "reason_code": None if draining else "authorization",
         }
         assert any(frame["file"] == "ui-tui/scripts/gateway_bootstrap.py"
                    for frame in diagnostic["frames"])
@@ -793,6 +867,9 @@ def test_real_helper_retains_partial_bootstrap_child_for_final_tree_cleanup(tmp_
         assert process.create_time() == child["birthtime"]
         assert Path(process.exe()).resolve() == Path(child["exe"]).resolve()
         assert any(parent.pid == proc.pid for parent in process.parents())
+        if draining:
+            assert drain_marker.read_text(encoding="utf-8") == "started"
+            assert process.is_running() and proc.poll() is None
         if os.name != "nt":
             assert os.getsid(process.pid) == process.pid
         assert process.pid not in tree.identities, "periodic polling masked the final-refresh contract"
@@ -1011,8 +1088,9 @@ def test_gateway_helper_profiler_lifecycle_uses_only_extracted_functions(tmp_pat
     "unknown_field", "absolute_path", "traversal", "custom_type", "invalid_line", "too_many_frames",
     "unknown_ensure_field", "invalid_ensure_count", "invalid_ensure_state", "invalid_ensure_status",
 ])
-def test_gateway_helper_error_diagnostic_rejects_malformed_payload_without_persistence(tmp_path, malformation):
+def test_gateway_helper_error_diagnostic_rejects_malformed_payload_without_persistence(tmp_path, monkeypatch, malformation):
     import queue
+    import tests.fixtures.hermes_gateway_driver as gateway
 
     diagnostic = {
         "error": "native gateway qualification failed",
@@ -1020,7 +1098,7 @@ def test_gateway_helper_error_diagnostic_rejects_malformed_payload_without_persi
         "exception_type": "RuntimeError",
         "frames": [{"file": "ui-tui/scripts/gateway_bootstrap.py", "function": "bootstrap", "line": 12}],
         "ensure": {"status": "returned", "calls": 1, "returns": 1,
-                   "state": "inaccessible", "reason_code": "authorization"},
+                   "state": "draining", "reason_code": None},
     }
     if malformation == "unknown_field":
         diagnostic["ticket"] = "must-not-persist"
@@ -1047,8 +1125,11 @@ def test_gateway_helper_error_diagnostic_rejects_malformed_payload_without_persi
     receiver.replies = queue.Queue()
     receiver.replies.put(diagnostic)
     receiver.artifacts = tmp_path
+    waits = []
+    monkeypatch.setattr(gateway.time, "sleep", lambda seconds: waits.append(seconds))
     with pytest.raises(AssertionError, match="native gateway qualification helper failed"):
         receiver.receive()
+    assert waits == []
     assert not (tmp_path / "gateway-error.json").exists()
 
 
