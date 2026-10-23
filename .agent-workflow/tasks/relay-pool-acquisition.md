@@ -41,7 +41,7 @@ Constructor concurrency and failed full-run disposition -> Run the existing exac
 
 **Exceptions:** —
 
-**State:** Blocked or returned to planning
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Current CI enrollment failure and bounded preparation plan
@@ -49,6 +49,8 @@ Constructor concurrency and failed full-run disposition -> Run the existing exac
 CI39943639393 on236e606f38c53f7c682aca3861514273259acd4b failed Python3.13 at tests/test_relay_mcp_tools.py::TestBoundedReceive::test_minimum_budget_keeps_max_identity_delivery_pending:6162 passed,24 skipped,2 xfailed,1 failed in394.52s. Python3.12, Windows smoke and governance passed. Retained build/pool-ci-236e606f/failed.log SHA2568c375a2b6cb1a9f3dc5133fad92afe7467c0575304a855ea756f0b1c3244f5e9. The first /relay/turn enrollment returned503 before sending a message or invoking bounded MCP receive: late_begin2185ms/setup_pragma2182ms. Physical latency cause is unknown; no product timing cure or readiness is claimed.
 
 Existing nonimplementer /root/relay_gate_plan_review accepted this exact ordinary test's preparation boundary before editing. Scope is only its endpoint enrollment and message seeding plus exact public maximum-identity/pending/unclaimed readback, using the existing temporary sqlite_queue.time namespace pattern. Restore and assert native module/global monotonic identity before invoking the actual MCP receive; preserve real receive,256-character bound, has_more/remaining_count and public pending-state assertions. Do not change a shared fixture, global clock, product admission allowance, protected contract or retry policy. This adds one blue ordinary MCP test path to the existing Elevated/Moderate pool task; application source4d2ac1cb and its accepted source review stay unchanged. Review the actual diff, then run TestBoundedReceive once (20 expanded cases expected) under a new finite executor grant and obtain normal corrected-head CI. No blind rerun. Repeated CI failures are being classified by subject vs preparation boundaries rather than being treated as evidence for arbitrary timeout increases.
+
+Plan committed before test editing at d79f7f50. Actual diff reviewed by the same /root/relay_gate_plan_review: source-only GO, no blocking findings; public schema/queries and exact255-character identity/title, payload, recipient, pending/attempts0/absent claim/lease checks accepted. All three original-clock assertions precede the unchanged MCP subject. AST and git diff --check pass. State is Ready to implement pending the exact20-case qualification and current-head CI; no tests have run for this correction. Existing application and earlier result reviews remain reusable for unchanged material; the current failed CI is not waived.
 
 ## Evidence
 

@@ -969,15 +969,41 @@ class TestBoundedReceive:
     async def test_minimum_budget_keeps_max_identity_delivery_pending(
         self, monkeypatch: pytest.MonkeyPatch, asgi_post, asgi_get,
     ):
+        import time
+        from itertools import count
+        from types import SimpleNamespace
+        from storage import sqlite_queue
+
         bind_asgi_post(monkeypatch, asgi_post)
         session = '"' * 255
         monkeypatch.setenv("PALLIUM_THREAD_REF", session)
-        await asgi_post("/relay/turn", {"runtime": _RUNTIME, "session_ref": session, "title": '"' * 255, **_SCOPE})
-        await asgi_post("/relay/turn", {"runtime": "codex", "session_ref": "min-sender", **_SCOPE})
-        sent = await asgi_post("/relay/messages", {
-            "sender_runtime": "codex", "sender_session_ref": "min-sender",
-            "recipient": f"{_RUNTIME}:{session}", "payload": "still visible in queue", **_SCOPE,
-        })
+
+        native_queue_time, native_monotonic = sqlite_queue.time, time.monotonic
+        # Prepare the oversized identity before testing native bounded receive.
+        with monkeypatch.context() as preparation:
+            setup_time = SimpleNamespace(**vars(native_queue_time))
+            setup_time.monotonic = count(step=.001).__next__
+            preparation.setattr(sqlite_queue, "time", setup_time)
+            await asgi_post("/relay/turn", {"runtime": _RUNTIME, "session_ref": session, "title": '"' * 255, **_SCOPE})
+            await asgi_post("/relay/turn", {"runtime": "codex", "session_ref": "min-sender", **_SCOPE})
+            sent = await asgi_post("/relay/messages", {
+                "sender_runtime": "codex", "sender_session_ref": "min-sender",
+                "recipient": f"{_RUNTIME}:{session}", "payload": "still visible in queue", **_SCOPE,
+            })
+            sessions = await asgi_get("/relay/sessions", {"runtime": _RUNTIME, **_SCOPE})
+            assert len(sessions) == 1
+            assert sessions[0]["session_ref"] == sessions[0]["title"] == session
+            prepared = await asgi_get(f"/relay/messages/{sent['message_id']}", _SCOPE)
+            assert prepared["payload"] == "still visible in queue"
+            assert len(prepared["deliveries"]) == 1
+            delivery = prepared["deliveries"][0]
+            assert delivery["recipient_runtime"] == _RUNTIME
+            assert delivery["recipient_session_ref"] == session
+            assert delivery["state"] == "pending" and delivery["attempts"] == 0
+            assert delivery["claimed_at"] is delivery["lease_expires_at"] is None
+        assert sqlite_queue.time is native_queue_time
+        assert sqlite_queue.time.monotonic is native_monotonic
+        assert time.monotonic is native_monotonic
 
         content, _ = await create_server().call_tool("pallium_relay_receive", {"max_chars": 256})
         assert len(content[0].text) <= 256
