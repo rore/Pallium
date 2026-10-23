@@ -525,25 +525,25 @@ def test_claude_hooks_link_prompt_ids_across_takeover_and_out_of_order_stop(
     monkeypatch.setattr(stop_hook, "build_work_trace_metadata", lambda *_a: None)
     stop_text = {
         first_prompt: "assistant output for first prompt with first-source-marker",
-        second_prompt: "assistant output for second prompt with second-source-marker",
+        second_prompt: "successor assistant output with copper-orchid marker",
     }
     monkeypatch.setattr(stop_hook, "read_turn", lambda _path: SimpleNamespace(
         assistant_text=stop_text[current_stop_id[0]], tool_calls=[], has_productive_action=False
     ))
     current_stop_id = [second_prompt]
 
-    def run_prompt(prompt_id: str, text: str) -> None:
+    def run_prompt(prompt_id: str, text: str, session_ref: str = session_id) -> None:
         monkeypatch.setattr(prompt_hook, "read_hook_input", lambda: {
-            "cwd": str(tmp_path), "session_id": session_id, "prompt_id": prompt_id,
+            "cwd": str(tmp_path), "session_id": session_ref, "prompt_id": prompt_id,
             "prompt": text,
         })
         with pytest.raises(SystemExit):
             prompt_hook.main()
 
-    def run_stop(prompt_id: str) -> None:
+    def run_stop(prompt_id: str, session_ref: str = session_id) -> None:
         current_stop_id[0] = prompt_id
         monkeypatch.setattr(stop_hook, "read_hook_input", lambda: {
-            "cwd": str(tmp_path), "session_id": session_id, "prompt_id": prompt_id,
+            "cwd": str(tmp_path), "session_id": session_ref, "prompt_id": prompt_id,
             "transcript_path": str(tmp_path / "transcript.jsonl"),
             "last_assistant_message": stop_text[prompt_id],
         })
@@ -559,11 +559,15 @@ def test_claude_hooks_link_prompt_ids_across_takeover_and_out_of_order_stop(
         "container_ref": container_ref, "alias": "planner", "replace_existing": True,
     })
     assert takeover.status_code == 200, takeover.text
-    run_prompt(second_prompt, "second prompt after external takeover second-source-marker")
+    run_prompt(second_prompt, "successor-only copper-orchid marker", successor)
+    resumed_prompt = "550e8400-e29b-41d4-a716-446655440002"
+    stop_text[resumed_prompt] = "resumed original session output with amber-violin marker"
+    run_prompt(resumed_prompt, "resumed original session with amber-violin marker")
 
     # Stops may arrive out of order; each resolves its own immutable user row.
-    run_stop(second_prompt)
+    run_stop(resumed_prompt)
     run_stop(first_prompt)
+    run_stop(second_prompt, successor)
     response = client.post("/query", json={
         "text": "first-source-marker", "limit": 10, "source_only": True,
         "trigger_origin": "agent_pull", "source_type": "claude-code",
@@ -572,13 +576,21 @@ def test_claude_hooks_link_prompt_ids_across_takeover_and_out_of_order_stop(
     assert response.status_code == 200, response.text
     assert {item["role"] for item in response.json()["results"]} == {"user", "assistant"}
     assert all(item["relay_name"] == "planner" for item in response.json()["results"])
-    other_name = client.post("/query", json={
-        "text": "second-source-marker", "limit": 10, "source_only": True,
+    successor_name = client.post("/query", json={
+        "text": "copper-orchid", "limit": 10, "source_only": True,
         "trigger_origin": "agent_pull", "source_type": "claude-code",
         "relay_name": "planner", "container_ref": container_ref, "visibility": "private",
     })
-    assert other_name.status_code == 200, other_name.text
-    assert other_name.json()["results"] == []
+    assert successor_name.status_code == 200, successor_name.text
+    assert {item["role"] for item in successor_name.json()["results"]} == {"user", "assistant"}
+    assert all(item["relay_name"] == "planner" for item in successor_name.json()["results"])
+    resumed_name = client.post("/query", json={
+        "text": "amber-violin", "limit": 10, "source_only": True,
+        "trigger_origin": "agent_pull", "source_type": "claude-code",
+        "relay_name": "planner", "container_ref": container_ref, "visibility": "private",
+    })
+    assert resumed_name.status_code == 200, resumed_name.text
+    assert resumed_name.json()["results"] == []
 
 
 def test_claude_stop_missing_session_stays_unattributed(monkeypatch: pytest.MonkeyPatch) -> None:
