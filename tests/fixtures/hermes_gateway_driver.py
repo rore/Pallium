@@ -339,7 +339,22 @@ def _valid_gateway_error(result):
 
 
 class OwnedGateway:
-    def __init__(self, python: Path, source: Path, env: dict, artifacts: Path, tree, revision: str):
+    def __init__(self, python: Path, source: Path, env: dict, artifacts: Path, tree, revision: str,
+                 *, python_base: Path, python_base_sha256: str):
+        assert type(python_base_sha256) is str and re.fullmatch(
+            r'[0-9a-fA-F]{64}', python_base_sha256), 'explicit base Python SHA-256 is required'
+        base_path = Path(python_base)
+        assert base_path.is_absolute(), 'pinned base Python path must be absolute'
+        assert base_path.is_file() and not base_path.is_symlink(), 'pinned base Python must be a regular file'
+        current = base_path
+        while current != current.parent:
+            assert not current.is_symlink() and not (hasattr(current, 'is_junction') and current.is_junction()), \
+                'pinned base Python path must not contain an alias'
+            current = current.parent
+        python_base = base_path.resolve(strict=True)
+        assert python_base == base_path, 'pinned base Python path must be canonical'
+        assert hashlib.sha256(python_base.read_bytes()).hexdigest().lower() == python_base_sha256.lower(), \
+            'pinned base Python identity changed'
         self.tree, self.artifacts = tree, artifacts
         self.replies = queue.Queue()
         self.proc = subprocess.Popen([str(python), '-c', HELPER, str(source), revision],
@@ -374,7 +389,9 @@ class OwnedGateway:
         gateway_target(receipt.get('url'))
         assert receipt['hermes_home'] == str(Path(env['HERMES_HOME']).resolve())
         assert receipt['code_sha'] == revision
-        assert Path(owner.exe()).resolve() in {python.resolve(), python.with_name('pythonw.exe').resolve()}
+        assert Path(owner.exe()).resolve() in {
+            python.resolve(), python.with_name('pythonw.exe').resolve(), python_base,
+        }
         assert all(isinstance(receipt.get(key), str) and receipt[key] for key in ('profile_id', 'instance_id'))
         self.save('gateway-before.json')
 

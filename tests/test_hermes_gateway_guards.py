@@ -224,16 +224,21 @@ def test_driver_rejects_unknown_surface_before_runtime_import(tmp_path, monkeypa
     assert imported == []
 
 
-def test_owned_gateway_records_only_live_child_identity_and_redacts_protocols(tmp_path, monkeypatch):
+@pytest.mark.parametrize("owner_variant", ["launcher", "base", "pythonw"])
+def test_owned_gateway_records_only_live_child_identity_and_redacts_protocols(tmp_path, monkeypatch, owner_variant):
     import tests.fixtures.hermes_gateway_driver as gateway
 
     python = tmp_path / "python.exe"
+    base = tmp_path / "base-python.exe"
+    base.write_bytes(b"pinned python base")
+    base_sha256 = hashlib.sha256(base.read_bytes()).hexdigest()
     home = tmp_path / "hermes-home"
     artifacts = tmp_path / "artifacts"
     home.mkdir()
     artifacts.mkdir()
     helper = _FakeProcess(51, 100.0, python)
-    owner = _FakeProcess(52, 101.0, python, parents=[helper])
+    owner_exe = {"launcher": python, "base": base, "pythonw": python.with_name("pythonw.exe")}[owner_variant]
+    owner = _FakeProcess(52, 101.0, owner_exe, parents=[helper])
     processes = {51: helper, 52: owner}
 
     class FakeTree:
@@ -260,11 +265,12 @@ def test_owned_gateway_records_only_live_child_identity_and_redacts_protocols(tm
 
     monkeypatch.setattr(gateway.subprocess, "Popen", FakePopen)
     tree = FakeTree()
-    instance = OwnedGateway(python, tmp_path, {"HERMES_HOME": str(home)}, artifacts, tree, "c" * 40)
+    instance = OwnedGateway(python, tmp_path, {"HERMES_HOME": str(home)}, artifacts, tree, "c" * 40,
+                            python_base=base, python_base_sha256=base_sha256)
     fake_state["gateway"] = instance
     saved = json.loads((artifacts / "gateway-before.json").read_text(encoding="utf-8"))
     assert tree.recorded == [helper, owner]
-    assert instance.owner_identity == (52, 101.0, str(python.resolve()))
+    assert instance.owner_identity == (52, 101.0, str(owner_exe.resolve()))
     assert set(saved) == set(receipt) | {"owner_birthtime", "owner_exe", "helper_identity"}
     assert "protocols" not in saved and "ticket" not in saved
     instance.verify_and_release()
@@ -278,6 +284,8 @@ def test_owned_gateway_rejects_unproven_or_unexpected_owner_before_receipt_save(
     import tests.fixtures.hermes_gateway_driver as gateway
 
     python = tmp_path / "python.exe"
+    base = tmp_path / "base-python.exe"
+    base.write_bytes(b"pinned python base")
     wrong = tmp_path / "other.exe"
     home = tmp_path / "hermes-home"
     artifacts = tmp_path / "artifacts"
@@ -315,15 +323,71 @@ def test_owned_gateway_rejects_unproven_or_unexpected_owner_before_receipt_save(
     monkeypatch.setattr(gateway.subprocess, "Popen", FakePopen)
     tree = FakeTree()
     with pytest.raises(AssertionError):
-        OwnedGateway(python, tmp_path, {"HERMES_HOME": str(home)}, artifacts, tree, "d" * 40)
+        OwnedGateway(python, tmp_path, {"HERMES_HOME": str(home)}, artifacts, tree, "d" * 40,
+                     python_base=base, python_base_sha256=hashlib.sha256(base.read_bytes()).hexdigest())
     assert tree.recorded == ([helper, owner] if bad_owner == "wrong-executable" else [helper])
     assert not (artifacts / "gateway-before.json").exists()
+
+
+@pytest.mark.parametrize("case", ["wrong-path", "wrong-hash", "malformed-hash", "nonstr-hash", "directory", "missing",
+                                  "relative", "parent-traversal", "file-alias", "ancestor-alias", "ancestor-junction"])
+def test_owned_gateway_rejects_unpinned_base_before_spawn(tmp_path, monkeypatch, case):
+    import tests.fixtures.hermes_gateway_driver as gateway
+
+    base = tmp_path / "base-python.exe"
+    base.write_bytes(b"pinned python base")
+    digest = hashlib.sha256(base.read_bytes()).hexdigest()
+    supplied, supplied_digest = base, digest
+    if case == "wrong-path":
+        supplied = tmp_path / "other-python.exe"
+        supplied.write_bytes(b"different python base")
+    elif case == "wrong-hash":
+        supplied_digest = "0" * 64
+    elif case == "malformed-hash":
+        supplied_digest = "bad"
+    elif case == "nonstr-hash":
+        supplied_digest = None
+    elif case == "directory":
+        supplied = tmp_path / "python-dir"
+        supplied.mkdir()
+    elif case == "missing":
+        supplied = tmp_path / "missing-python.exe"
+    elif case == "relative":
+        monkeypatch.chdir(tmp_path)
+        supplied = Path("base-python.exe")
+    elif case == "parent-traversal":
+        (tmp_path / "nested").mkdir()
+        supplied = tmp_path / "nested" / ".." / base.name
+
+    if case in {"file-alias", "ancestor-alias"}:
+        target = base if case == "file-alias" else tmp_path
+        original_is_symlink = Path.is_symlink
+
+        def report_alias(path):
+            return path == target or original_is_symlink(path)
+
+        monkeypatch.setattr(Path, "is_symlink", report_alias)
+
+    if case == "ancestor-junction":
+        original_is_junction = getattr(Path, "is_junction", lambda _path: False)
+        monkeypatch.setattr(Path, "is_junction",
+                            lambda path: path == tmp_path or original_is_junction(path), raising=False)
+
+    def unexpected_spawn(*_args, **_kwargs):
+        pytest.fail("gateway helper spawned before base Python validation")
+
+    monkeypatch.setattr(gateway.subprocess, "Popen", unexpected_spawn)
+    with pytest.raises(AssertionError):
+        OwnedGateway(tmp_path / "venv-python.exe", tmp_path, {}, tmp_path, object(), "f" * 40,
+                     python_base=supplied, python_base_sha256=supplied_digest)
 
 
 def test_owned_gateway_rejects_helper_error_receipt_after_recording_helper(tmp_path, monkeypatch):
     import tests.fixtures.hermes_gateway_driver as gateway
 
     python = tmp_path / "python.exe"
+    base = tmp_path / "base-python.exe"
+    base.write_bytes(b"pinned python base")
     helper = _FakeProcess(71, 300.0, python)
 
     class FakeTree:
@@ -343,7 +407,8 @@ def test_owned_gateway_rejects_helper_error_receipt_after_recording_helper(tmp_p
     monkeypatch.setattr(gateway.subprocess, "Popen", FakePopen)
     tree = FakeTree()
     with pytest.raises(AssertionError, match="native gateway qualification helper failed"):
-        OwnedGateway(python, tmp_path, {"HERMES_HOME": str(tmp_path)}, tmp_path, tree, "e" * 40)
+        OwnedGateway(python, tmp_path, {"HERMES_HOME": str(tmp_path)}, tmp_path, tree, "e" * 40,
+                     python_base=base, python_base_sha256=hashlib.sha256(base.read_bytes()).hexdigest())
     assert tree.recorded == [helper]
 
 

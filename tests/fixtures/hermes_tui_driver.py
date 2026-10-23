@@ -1003,7 +1003,9 @@ def driver_main(spec_path: Path):
             if shared_gateway:
                 from hermes_gateway_driver import OwnedGateway, gateway_target
 
-                gateway = OwnedGateway(python, source, tui_env, spec_path.parent, tree, revision)
+                gateway = OwnedGateway(python, source, tui_env, spec_path.parent, tree, revision,
+                                       python_base=Path(spec["python_base"]),
+                                       python_base_sha256=spec["python_base_sha256"])
                 gateway_url = gateway.receipt["url"]
                 gateway_target(gateway_url)
                 tui_env["PALLIUM_TUI_GATEWAY_WS"] = gateway_url
