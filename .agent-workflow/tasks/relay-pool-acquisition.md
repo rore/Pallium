@@ -41,7 +41,7 @@ Constructor concurrency and failed full-run disposition -> Run the existing exac
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Evidence
@@ -132,7 +132,7 @@ The separately granted exact eight-case node passed normally on d1d727d5f2069791
 
 Fresh external Temp/p-p1 and parent Git128,66 dependency pins plus project0.1.0, three runtime artifacts and exact api/app/core/storage candidate origins were verified before intent; the unchanged runner verified all1884 raw source hashes, clean head and lock before/after. Root63880 creation2026-10-23T10:20:07.3039482Z exited uncapped after10.065s wrapper time, complete streams, empty bounded direct-child snapshot. A supplemental process census was taken after intent when the simultaneous coordinator addendum arrived; it showed only owned root63880 and its child59840. It is supporting after-launch evidence, not a pre-intent census. The original manager's sole-executor release evidence preceded launch. Both grants represented one execution; no retry or chaining occurred and the slot was released immediately at terminal.
 
-## Result review
+## Settlement preparation result review
 
 Agent technical review: /root/relay_gate_plan_review, independent nonimplementer; build/pool-setup-repair-01/result-review.json.
 
@@ -149,4 +149,18 @@ Existing independent /root/relay_gate_plan_review reviewed the exact receipt and
 Before editing, accepted plan: change only this existing cancellation node. Preserve its initial concurrent barrier and negative ownership proof, all HTTP/cancellation/worker-count/closed-storage assertions, native waits and existing budgets. After gathering and finished, require a fresh bounded native _wait_for_operations(1) true before closing storage; await the original finite barrier for cleanup without treating its historical boolean as current state. An immediate zero-time check alone would race the started worker's final cleanup, so retain the existing final one-second allowance. Do not edit the shared helper or production counters. Review the actual diff, then qualify both parameters once under a new finite grant and obtain normal corrected-head CI. No old grant survives the pause; no tests, merge or installed operation are authorized by this source plan.
 
 The actual diff implements only that final drain check and finite-barrier cleanup, with one explanatory comment. Existing /root/relay_gate_plan_review inspected it on plan624cea69 and gives source-only GO for exact two-case qualification followed by normal CI. Initial ownership proof and all other HTTP, cancellation, worker-count and storage assertions remain unchanged. UTF-8 AST parsing and diff hygiene passed; a default-encoding AST command initially failed to decode existing Unicode and was corrected without changing that content. The file's original EOF shape is preserved. No test has run for this correction; current CI remains red and original product-source reviews remain reusable.
+
+## Drain correction qualification
+
+The one newly granted exact cancellation node completed on c640247c998d43d7d6926f9dd4b27323fcd8d484: queued and started both passed normally,2 passed,0 skipped/failures/errors,1.99s. JUnit SHA2569c1b58db3ec9046557a4c0b375429576756c86214bb73cb0b0288ca3b63ad213; recipe SHA256e7bbb4dcffd526a35eb1b04eefc73ebbdb5a770e37705ba83e202e8d8bf20f9c; reviewed test SHA2560d2f3b0c3893f8ccea117028b8461f8759fd5835883dd8626756da3fd693ae13. Evidence: build/pool-drain-repair-01. Application source remains4d2ac1cb; the earlier eight-case preparation correction is unchanged.
+
+Pre-intent matching-test census was empty; fresh external p-p2/non-Git128,66 dependency pins plus project0.1.0, three runtime artifacts and exact package origins passed. The unchanged runner verified clean source/head/lock and all1884 source hashes before/after. Root36396 creation2026-10-23T11:01:16.9085838Z exited uncapped after6.962s, complete streams and empty bounded direct-child snapshot. No observer, retry or chaining; sole executor was released at terminal. Cleanup evidence is limited to the owned root and bounded direct-child snapshot, not every possible descendant.
+
+## Result review
+
+Agent technical review: /root/relay_gate_plan_review, same independent nonimplementer; build/pool-drain-repair-01/result-review.json.
+
+Reviewed revision: c640247c998d43d7d6926f9dd4b27323fcd8d484, exact reviewed drain-test diff and unchanged application4d2ac1cb.
+
+Verification adequacy: GO to publish the correction and run normal whole-change CI. Both exact cases passed normally; reviewed diff, recipe/intent, hashes, pre-intent checks and uncapped cleanup correspond. The earlier dfba4925 CI remains failed until corrected-head CI supplies new evidence. This validates the named cancellation/drain cases without identifying the original physical stall or proving absence of every counter defect. A persistent leak still fails the fresh bounded positive drain assertion. No merge, installation, product timeout/counter change or broader feature-completion claim. Normal selected CI remains the next source-release gate; no additional local test grant is implied.
 
