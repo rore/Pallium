@@ -26,22 +26,24 @@ def _read(client, session):
 
 
 @pytest.mark.parametrize("runtime", ["hermes", "codex", "claude-code", "opencode"])
-def test_guarded_close_then_reenroll_rejects_old_disposal(client, runtime):
-    original = _turn(client, runtime)
-    assert _turn(client, runtime)["scope_generation"] == original["scope_generation"]
-    assert _close(client, original).status_code == 200
-    assert _close(client, original).status_code == 200
-    resumed = _turn(client, runtime)
-    assert resumed["endpoint_id"] == original["endpoint_id"]
-    assert resumed["scope_generation"] == original["scope_generation"] + 1
-    named = client.post("/relay/sessions/name", json={"runtime": runtime, "session_ref": "session",
-        "container_ref": resumed["container_ref"], "alias": "resumed"})
-    assert named.status_code == 200, named.text
-    assert _close(client, original).status_code == 409
-    observed = _read(client, resumed)
-    assert observed["state"] == "recent" and observed["alias"] == "resumed"
-    assert observed["scope_generation"] == resumed["scope_generation"]
-    assert _close(client, resumed).status_code == 200
+@pytest.mark.parametrize("relay_admission_clock", ["native", "semantic"], indirect=True)
+def test_guarded_close_then_reenroll_rejects_old_disposal(client, runtime, relay_admission_clock):
+    with relay_admission_clock(client.app.state.pallium_service._storage):
+        original = _turn(client, runtime)
+        assert _turn(client, runtime)["scope_generation"] == original["scope_generation"]
+        assert _close(client, original).status_code == 200
+        assert _close(client, original).status_code == 200
+        resumed = _turn(client, runtime)
+        assert resumed["endpoint_id"] == original["endpoint_id"]
+        assert resumed["scope_generation"] == original["scope_generation"] + 1
+        named = client.post("/relay/sessions/name", json={"runtime": runtime, "session_ref": "session",
+            "container_ref": resumed["container_ref"], "alias": "resumed"})
+        assert named.status_code == 200, named.text
+        assert _close(client, original).status_code == 409
+        observed = _read(client, resumed)
+        assert observed["state"] == "recent" and observed["alias"] == "resumed"
+        assert observed["scope_generation"] == resumed["scope_generation"]
+        assert _close(client, resumed).status_code == 200
 
 
 def test_guarded_close_rejects_project_aba_and_wrong_endpoint(client):

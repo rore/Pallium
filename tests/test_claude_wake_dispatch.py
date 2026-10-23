@@ -1899,8 +1899,9 @@ def test_empty_stop_rearms_claude_wake_after_turn_admission(client, monkeypatch,
                 http.close()
 
 
+@pytest.mark.parametrize("relay_admission_clock", ["native", "semantic"], indirect=True)
 def test_post_start_lost_http_intent_reconciles_without_claiming_relay(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, relay_admission_clock,
 ) -> None:
     from types import SimpleNamespace
 
@@ -1908,6 +1909,7 @@ def test_post_start_lost_http_intent_reconciles_without_claiming_relay(
 
     from app.config import AppConfig
     from app.main import create_app
+    from storage import sqlite_queue
     from storage.vector_index import VectorIndexConfig
     from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
     from tests.test_claude_code_integration import _load_claude_hook
@@ -1929,12 +1931,15 @@ def test_post_start_lost_http_intent_reconciles_without_claiming_relay(
     ))
 
     with TestClient(app, client=("127.0.0.1", 50000)) as http:
-        assert http.post("/relay/turn", json={
-            "runtime": "codex", "session_ref": "sender", **scope,
-        }).status_code == 200
-        assert http.post("/relay/turn", json={
-            "runtime": "claude-code", "session_ref": "lost-http", **scope,
-        }).status_code == 200
+        native_queue_time = sqlite_queue.time
+        with relay_admission_clock(app.state.pallium_service._storage):
+            assert http.post("/relay/turn", json={
+                "runtime": "codex", "session_ref": "sender", **scope,
+            }).status_code == 200
+            assert http.post("/relay/turn", json={
+                "runtime": "claude-code", "session_ref": "lost-http", **scope,
+            }).status_code == 200
+        assert sqlite_queue.time is native_queue_time
         common = _load_claude_hook("common", monkeypatch)
         monkeypatch.setenv("CLAUDE_CODE_MESSAGING_SOCKET", PAYLOAD["socket_path"])
         monkeypatch.setenv("CLAUDE_CODE_MESSAGING_TOKEN", PAYLOAD["token"])

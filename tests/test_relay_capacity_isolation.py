@@ -677,61 +677,63 @@ def test_exact_codex_turn_uses_one_admission_and_preserves_phase_failures(
 
 
 @pytest.mark.parametrize("runtime", ["codex", "claude-code", "opencode"])
+@pytest.mark.parametrize("relay_admission_clock", ["native", "semantic"], indirect=True)
 def test_ack_release_uses_durable_runtime_when_endpoint_scope_read_fails(
-    client, monkeypatch, runtime,
+    client, monkeypatch, runtime, relay_admission_clock,
 ) -> None:
-    from app import dependencies
-    from core.relay import RelayNotFoundError, RelayService
+    with relay_admission_clock(client.app.state.pallium_service._storage):
+        from app import dependencies
+        from core.relay import RelayNotFoundError, RelayService
 
-    calls = []
-    registry = client.app.state.claude_wake_registry
-    original_claude_release = registry.release_delivery
-    original_codex_release = dependencies.release_codex_relay_wake
+        calls = []
+        registry = client.app.state.claude_wake_registry
+        original_claude_release = registry.release_delivery
+        original_codex_release = dependencies.release_codex_relay_wake
 
-    def claude_release(*args, **kwargs):
-        calls.append("claude-code")
-        return original_claude_release(*args, **kwargs)
+        def claude_release(*args, **kwargs):
+            calls.append("claude-code")
+            return original_claude_release(*args, **kwargs)
 
-    def codex_release(*args, **kwargs):
-        calls.append("codex")
-        return original_codex_release(*args, **kwargs)
+        def codex_release(*args, **kwargs):
+            calls.append("codex")
+            return original_codex_release(*args, **kwargs)
 
-    monkeypatch.setattr(registry, "release_delivery", claude_release)
-    monkeypatch.setattr(dependencies, "release_codex_relay_wake", codex_release)
-    monkeypatch.setattr(dependencies, "schedule_codex_relay_wake", lambda *_, **__: None)
-    monkeypatch.setattr(dependencies, "schedule_claude_relay_wake", lambda *_, **__: None)
-    scope = {"container_ref": "git:example.test/ack-scope-fallback"}
-    for session in ("sender", "target"):
-        response = client.post("/relay/turn", json={"runtime": runtime, "session_ref": session, **scope})
-        assert response.status_code == 200, response.text
-    sent = client.post("/relay/messages", json={
-        "sender_runtime": runtime, "sender_session_ref": "sender",
-        "recipient": f"{runtime}:target", "payload": "scope fallback 東京", **scope,
-    })
-    assert sent.status_code == 200, sent.text
-    claimed = client.post("/relay/turn", json={"runtime": runtime, "session_ref": "target", **scope})
-    assert claimed.status_code == 200, claimed.text
-    delivery, = claimed.json()["deliveries"]
-    original_scope = RelayService.session_scope_by_endpoint
+        monkeypatch.setattr(registry, "release_delivery", claude_release)
+        monkeypatch.setattr(dependencies, "release_codex_relay_wake", codex_release)
+        monkeypatch.setattr(dependencies, "schedule_codex_relay_wake", lambda *_, **__: None)
+        monkeypatch.setattr(dependencies, "schedule_claude_relay_wake", lambda *_, **__: None)
+        scope = {"container_ref": "git:example.test/ack-scope-fallback"}
+        for session in ("sender", "target"):
+            response = client.post("/relay/turn", json={"runtime": runtime, "session_ref": session, **scope})
+            assert response.status_code == 200, response.text
+        sent = client.post("/relay/messages", json={
+            "sender_runtime": runtime, "sender_session_ref": "sender",
+            "recipient": f"{runtime}:target", "payload": "scope fallback 東京", **scope,
+        })
+        assert sent.status_code == 200, sent.text
+        claimed = client.post("/relay/turn", json={"runtime": runtime, "session_ref": "target", **scope})
+        assert claimed.status_code == 200, claimed.text
+        delivery, = claimed.json()["deliveries"]
+        original_scope = RelayService.session_scope_by_endpoint
 
-    def unavailable_scope(*_args, **_kwargs):
-        raise RelayNotFoundError("endpoint scope unavailable")
+        def unavailable_scope(*_args, **_kwargs):
+            raise RelayNotFoundError("endpoint scope unavailable")
 
-    monkeypatch.setattr(RelayService, "session_scope_by_endpoint", unavailable_scope)
-    acknowledged = client.post("/relay/deliveries/ack", json={
-        "delivery_id": delivery["delivery_id"], "claim_token": delivery["claim_token"], **scope,
-    })
-    assert acknowledged.status_code == 200, acknowledged.text
-    assert acknowledged.json()["delivery_id"] == delivery["delivery_id"]
-    assert acknowledged.json()["state"] == "delivered"
-    assert calls == ([] if runtime == "opencode" else [runtime])
-    monkeypatch.setattr(RelayService, "session_scope_by_endpoint", original_scope)
-    readback = client.get(f"/relay/messages/{sent.json()['message_id']}", params=scope)
-    assert readback.status_code == 200, readback.text
-    retained, = readback.json()["deliveries"]
-    assert retained["delivery_id"] == delivery["delivery_id"]
-    assert retained["state"] == "delivered"
-    assert retained["attempts"] == 1
+        monkeypatch.setattr(RelayService, "session_scope_by_endpoint", unavailable_scope)
+        acknowledged = client.post("/relay/deliveries/ack", json={
+            "delivery_id": delivery["delivery_id"], "claim_token": delivery["claim_token"], **scope,
+        })
+        assert acknowledged.status_code == 200, acknowledged.text
+        assert acknowledged.json()["delivery_id"] == delivery["delivery_id"]
+        assert acknowledged.json()["state"] == "delivered"
+        assert calls == ([] if runtime == "opencode" else [runtime])
+        monkeypatch.setattr(RelayService, "session_scope_by_endpoint", original_scope)
+        readback = client.get(f"/relay/messages/{sent.json()['message_id']}", params=scope)
+        assert readback.status_code == 200, readback.text
+        retained, = readback.json()["deliveries"]
+        assert retained["delivery_id"] == delivery["delivery_id"]
+        assert retained["state"] == "delivered"
+        assert retained["attempts"] == 1
 
 
 @pytest.mark.parametrize("outcome", ["slow", "busy"])
@@ -2283,18 +2285,17 @@ def test_operation_tracking_early_failure_drains_before_storage_close(tmp_path, 
 
 @pytest.mark.parametrize("cancel_target", ["queued", "started"])
 def test_summary_cancellation_keeps_diagnostic_workers_owned_until_drain(
-    client, monkeypatch, cancel_target,
+    request, monkeypatch, cancel_target,
 ):
-    from app import codex_readiness
+    from app import main as app_main
 
-    app = client.app
     first, full, release = threading.Event(), threading.Event(), threading.Event()
     finished, closed = threading.Event(), threading.Event()
     lock = threading.Lock()
     started_count = completed_count = 0
-    original_read = codex_readiness.read
+    original_mount = app_main.mount_dashboard
 
-    def held_readiness():
+    def held_summary(operation):
         nonlocal started_count, completed_count
         with lock:
             started_count += 1
@@ -2304,14 +2305,25 @@ def test_summary_cancellation_keeps_diagnostic_workers_owned_until_drain(
         try:
             assert release.wait(10), "summary worker watchdog expired"
             assert not closed.is_set(), "summary accessed closed storage"
-            return original_read()
+            return operation()
         finally:
             with lock:
                 completed_count += 1
                 if completed_count == (2 if cancel_target == "queued" else 3):
                     finished.set()
 
-    monkeypatch.setattr(codex_readiness, "read", held_readiness)
+    def mount_with_worker_entry(*args, **kwargs):
+        original_runner = kwargs["diagnostic_runner"]
+
+        async def diagnostic_runner(operation):
+            # Hold inside the real tracked worker, before the unchanged summary SQL.
+            return await original_runner(lambda: held_summary(operation))
+
+        kwargs["diagnostic_runner"] = diagnostic_runner
+        return original_mount(*args, **kwargs)
+
+    monkeypatch.setattr(app_main, "mount_dashboard", mount_with_worker_entry)
+    app = request.getfixturevalue("client").app
 
     async def exercise():
         queued = asyncio.Event()
@@ -2358,7 +2370,9 @@ def test_summary_cancellation_keeps_diagnostic_workers_owned_until_drain(
                 responses = [result for result in results if isinstance(result, httpx.Response)]
                 assert len(responses) == 2 and all(result.status_code == 200 for result in responses)
                 assert await asyncio.to_thread(finished.wait, 1)
-                assert await asyncio.wait_for(barrier, 1)
+                # The original barrier's deadline may have elapsed during HTTP work.
+                assert await asyncio.to_thread(app.state._wait_for_operations, 1)
+                await asyncio.wait_for(barrier, 1)
                 assert started_count == completed_count == (2 if cancel_target == "queued" else 3)
                 closed.set()
                 app.state.pallium_service._storage.close()
