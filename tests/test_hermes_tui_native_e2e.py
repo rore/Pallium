@@ -2616,6 +2616,10 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
             if not shared_gateway:
                 return
             receipt = json.loads((leg / "gateway-after.json").read_text(encoding="utf-8"))
+            # Readiness verifies ownership without releasing the helper needed by the later canonical client.
+            identity = json.loads((leg / "driver-identity.json").read_text(encoding="utf-8"))
+            validate_canonical_gateway(receipt, identity, home=profile, revision=hermes_revision,
+                python=python, python_base=Path(runtime_versions["python_base"]))
             matching = eventually(lambda: gateway_guard_witness(guard_witness, receipt, guard_runtime),
                                   "owned gateway incarnation emitted no guard witness")
             outcome.setdefault("gateway_guard_witnesses", []).append({"pid": receipt["pid"], "rows": matching})

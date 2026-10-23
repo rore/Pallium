@@ -464,7 +464,8 @@ class OwnedGateway:
                     self.replies.put(None)
                     return
 
-        threading.Thread(target=read, daemon=True).start()
+        self.reader = threading.Thread(target=read, daemon=True)
+        self.reader.start()
         receipt = self.receive()
         assert type(receipt.get('pid')) is int and receipt['pid'] > 0
         owner = tree.psutil.Process(receipt['pid'])
@@ -513,15 +514,24 @@ class OwnedGateway:
                        'owner_exe': self.owner_identity[2], 'helper_identity': self.helper_identity},
                       stream, sort_keys=True, indent=2)
 
-    def verify_and_release(self):
+    def verify(self):
         self.proc.stdin.write('verify\n')
         self.proc.stdin.flush()
         assert self.receive() == self.receipt, 'native TUI changed its gateway owner'
         owner = self.tree.psutil.Process(self.owner_identity[0])
         assert (owner.pid, owner.create_time(), str(Path(owner.exe()).resolve())) == self.owner_identity
         self.save('gateway-after.json')
+
+    def release(self):
         self.proc.stdin.write('close\n')
         self.proc.stdin.flush()
         assert self.proc.wait(timeout=5) == 0, 'native gateway qualification helper did not exit normally'
-        self.proc.stdin.close()
-        self.proc.stdout.close()
+
+    def close_pipes(self):
+        self.reader.join(5)
+        if self.reader.is_alive():
+            raise RuntimeError('native gateway qualification reader remained alive after owned cleanup')
+        try:
+            self.proc.stdin.close()
+        finally:
+            self.proc.stdout.close()

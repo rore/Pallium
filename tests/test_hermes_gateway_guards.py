@@ -441,10 +441,164 @@ def test_owned_gateway_records_only_live_child_identity_and_redacts_protocols(tm
     assert instance.owner_identity == (52, 101.0, str(owner_exe.resolve()))
     assert set(saved) == set(receipt) | {"owner_birthtime", "owner_exe", "helper_identity"}
     assert "protocols" not in saved and "ticket" not in saved
-    instance.verify_and_release()
+    instance.verify()
+    assert instance.proc.stdin.commands == ['verify\n']
+    assert instance.reader.is_alive()
+    assert not instance.proc.stdin.closed and not instance.proc.stdout.closed
     after = json.loads((artifacts / "gateway-after.json").read_text(encoding="utf-8"))
     assert set(after) == set(saved)
     assert after["pid"] == receipt["pid"] and after["owner_birthtime"] == 101.0
+    with pytest.raises(FileExistsError):
+        instance.verify()
+    assert not instance.proc.stdin.closed and not instance.proc.stdout.closed
+    instance.release()
+    instance.close_pipes()
+    assert instance.proc.stdin.commands == ['verify\n', 'verify\n', 'close\n']
+    assert not instance.reader.is_alive()
+    assert instance.proc.stdin.closed and instance.proc.stdout.closed
+
+
+@pytest.mark.parametrize("changed", ["receipt", "owner"])
+def test_owned_gateway_verify_refuses_changed_identity_without_releasing(tmp_path, changed):
+    from io import StringIO
+
+    instance = object.__new__(OwnedGateway)
+    instance.proc = types.SimpleNamespace(stdin=StringIO(), stdout=StringIO())
+    instance.receipt = {"pid": 52, "instance_id": "original"}
+    owner = _FakeProcess(52, 101.0, tmp_path / "python.exe")
+    instance.owner_identity = (52, 101.0, str(owner.executable.resolve()))
+    instance.tree = types.SimpleNamespace(psutil=types.SimpleNamespace(Process=lambda _pid: owner))
+    instance.receive = lambda: {**instance.receipt, "instance_id": "changed"} if changed == "receipt" else instance.receipt
+    instance.save = lambda _name: pytest.fail("changed identity was persisted")
+    if changed == "owner":
+        owner.birth += 1
+    with pytest.raises(AssertionError):
+        instance.verify()
+    assert instance.proc.stdin.getvalue() == "verify\n"
+    assert not instance.proc.stdin.closed and not instance.proc.stdout.closed
+
+
+def test_tui_readiness_verifies_but_retains_gateway_helper():
+    from tests.fixtures.hermes_tui_driver import TuiConsole
+
+    calls = []
+    console = types.SimpleNamespace(text="Ask me anything", wait=lambda *_args, **_kwargs: calls.append("ready"),
+        gateway=types.SimpleNamespace(verify=lambda: calls.append("verify"),
+                                     release=lambda: pytest.fail("readiness released the helper")))
+    TuiConsole.ready(console)
+    assert calls == ["ready", "verify"]
+
+
+@pytest.mark.parametrize("release_fault,tree_fault,reader_stuck", [
+    (None, False, False), ("nonzero", False, False), ("timeout", False, False),
+    ("broken-pipe", False, False), ("broken-pipe", True, False), ("broken-pipe", True, True),
+])
+def test_driver_gateway_cleanup_preserves_order_and_fatal_failures(release_fault, tree_fault, reader_stuck):
+    from tests.fixtures.hermes_tui_driver import _close_driver_resources
+
+    calls = []
+
+    class Pipe:
+        def __init__(self, name):
+            self.name = name
+
+        def write(self, value):
+            assert value == "close\n"
+            calls.append("release-write")
+            if release_fault == "broken-pipe":
+                raise BrokenPipeError("helper input failed")
+
+        def flush(self):
+            calls.append("release-flush")
+
+        def close(self):
+            assert not reader.alive, "pipe closed while its reader was alive"
+            calls.append(self.name + "-close")
+
+    class Reader:
+        alive = True
+
+        def join(self, timeout):
+            assert timeout == 5
+            calls.append("reader-join")
+
+        def is_alive(self):
+            return self.alive
+
+    reader = Reader()
+
+    def wait(timeout):
+        assert timeout == 5
+        calls.append("release-wait")
+        if release_fault == "timeout":
+            raise subprocess.TimeoutExpired("owned-helper", 5)
+        return 1 if release_fault == "nonzero" else 0
+
+    def tree_close(*, include_root):
+        assert include_root is False
+        calls.append("tree-close")
+        reader.alive = reader_stuck
+        if tree_fault:
+            raise RuntimeError("owned tree cleanup failed")
+
+    gateway = object.__new__(OwnedGateway)
+    gateway.proc = types.SimpleNamespace(stdin=Pipe("stdin"), stdout=Pipe("stdout"), wait=wait)
+    gateway.reader = reader
+    tree = types.SimpleNamespace(close=tree_close)
+    console = types.SimpleNamespace(close=lambda: calls.append("console-close"))
+    if reader_stuck:
+        with pytest.raises(RuntimeError, match="reader remained alive after owned cleanup") as error:
+            _close_driver_resources(tree, console, gateway)
+        assert isinstance(error.value.__context__, RuntimeError)
+        assert isinstance(error.value.__context__.__context__, BrokenPipeError)
+        assert "stdin-close" not in calls and "stdout-close" not in calls
+    elif tree_fault:
+        with pytest.raises(RuntimeError, match="owned tree cleanup failed") as error:
+            _close_driver_resources(tree, console, gateway)
+        assert isinstance(error.value.__context__, BrokenPipeError)
+    elif release_fault:
+        expected = {"nonzero": AssertionError, "timeout": subprocess.TimeoutExpired, "broken-pipe": BrokenPipeError}
+        with pytest.raises(expected[release_fault]):
+            _close_driver_resources(tree, console, gateway)
+    else:
+        _close_driver_resources(tree, console, gateway)
+    assert calls.index("release-write") < calls.index("tree-close") < calls.index("reader-join")
+    if not reader_stuck:
+        assert calls[-3:] == ["stdin-close", "stdout-close", "console-close"]
+    assert calls[-1] == "console-close"
+
+
+@pytest.mark.parametrize("has_console,has_gateway", [(True, False), (True, True), (False, False)],
+                         ids=["readiness-failure", "readiness-with-gateway", "canonical-only"])
+def test_driver_without_gateway_cleans_only_own_tree_and_preserves_primary_failure(has_console, has_gateway):
+    from tests.fixtures.hermes_tui_driver import TuiConsole, _close_driver_resources
+
+    calls = []
+    tree = types.SimpleNamespace(close=lambda **kwargs: calls.append(("tree-close", kwargs)))
+    gateway = types.SimpleNamespace(verify=lambda: pytest.fail("failed readiness reached gateway verification"),
+        release=lambda: calls.append("gateway-release"),
+        close_pipes=lambda: calls.append("gateway-close-pipes")) if has_gateway else None
+
+    def readiness_failed(*_args, **_kwargs):
+        raise LookupError("native readiness failed")
+
+    console = types.SimpleNamespace(text="Ask me anything", wait=readiness_failed, gateway=gateway,
+                                   close=lambda: calls.append("console-close")) if has_console else None
+
+    def failed_driver():
+        try:
+            if has_console:
+                TuiConsole.ready(console)
+            raise LookupError("native readiness failed")
+        finally:
+            _close_driver_resources(tree, console, gateway)
+
+    with pytest.raises(LookupError, match="native readiness failed"):
+        failed_driver()
+    assert calls == ((["gateway-release"] if has_gateway else [])
+        + [("tree-close", {"include_root": False})]
+        + (["gateway-close-pipes"] if has_gateway else [])
+        + (["console-close"] if has_console else []))
 
 
 @pytest.mark.parametrize("bad_owner", ["unrelated-parent", "reused-helper-birth", "wrong-executable"])
@@ -664,6 +818,7 @@ class _LineReader:
         self.block_after_first = state is not None
         self.release = threading.Event()
         self.finished = False
+        self.closed = False
 
     def readline(self, _limit=-1):
         if self.lines:
@@ -675,6 +830,7 @@ class _LineReader:
         return ""
 
     def close(self):
+        self.closed = True
         self.release.set()
 
 
@@ -682,11 +838,13 @@ class _InputWriter:
     def __init__(self, state=None, receipt=None):
         self.state, self.receipt = state if state is not None else {}, receipt
         self.commands = []
+        self.closed = False
 
     def write(self, _value):
         self.commands.append(_value)
         if _value == "verify\n":
             self.state["gateway"].replies.put(self.receipt)
+        elif _value == "close\n" and "gateway" in self.state:
             self.state["gateway"].proc.stdout.release.set()
         return None
 
@@ -694,6 +852,7 @@ class _InputWriter:
         return None
 
     def close(self):
+        self.closed = True
         return None
 
 

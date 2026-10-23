@@ -871,7 +871,7 @@ class TuiConsole:
             time.sleep(.1)
         self.wait("ready │", timeout=90)
         if self.gateway is not None:
-            self.gateway.verify_and_release()
+            self.gateway.verify()
 
     def close(self):
         self.proc.cancel_io()
@@ -952,6 +952,33 @@ class LinuxPTY:
         if self.master is not None:
             os.close(self.master)
             self.master = None
+
+
+def _close_driver_resources(tree, console, gateway):
+    """Release our helper, clean our tree, then close readers and the console even on failure."""
+    try:
+        try:
+            if gateway is not None:
+                gateway.release()
+        finally:
+            try:
+                tree.close(include_root=False)
+            finally:
+                if gateway is not None:
+                    gateway.close_pipes()
+    finally:
+        if console is not None:
+            pending_error = sys.exc_info()[0] is not None
+            try:
+                owned_popen = getattr(getattr(console, "proc", None), "process", None)
+                if os.name != "nt" and owned_popen is not None:
+                    try:
+                        owned_popen.wait(timeout=8)
+                    except subprocess.TimeoutExpired:
+                        if not pending_error:
+                            raise
+            finally:
+                console.close()
 
 
 def driver_main(spec_path: Path):
@@ -1218,21 +1245,7 @@ def driver_main(spec_path: Path):
                     ws.close()
                 except Exception:
                     pass
-        try:
-            tree.close(include_root=False)
-        finally:
-            if console is not None:
-                pending_error = sys.exc_info()[0] is not None
-                try:
-                    owned_popen = getattr(getattr(console, "proc", None), "process", None)
-                    if os.name != "nt" and owned_popen is not None:
-                        try:
-                            owned_popen.wait(timeout=8)
-                        except subprocess.TimeoutExpired:
-                            if not pending_error:
-                                raise
-                finally:
-                    console.close()
+        _close_driver_resources(tree, console, gateway)
 
 
 def cleanup_ledger(path: Path):
