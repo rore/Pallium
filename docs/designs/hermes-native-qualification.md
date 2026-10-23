@@ -25,8 +25,9 @@ memory-on and Desktop journeys do not establish the still-unreached Windows
 memory-off canonical late-finalize check. Native detach/resume ordering has
 no accepted proof yet.
 
-The shared-helper lifetime correction still needs a current-source Linux TUI
-journey and Windows qualification; earlier receipts do not exercise that change.
+The shared-helper lifetime correction passed a current-source Linux TUI
+memory-off journey. Both affected Windows TUI cases still need qualification;
+earlier receipts do not exercise that change.
 
 The accepted evidence and retained failures are linked from
 [merged PR #324](https://github.com/rore/Pallium/pull/324),

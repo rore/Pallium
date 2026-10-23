@@ -19,6 +19,13 @@ def test_native_qualification_stays_manual_bounded_and_candidate_scoped():
         "options": ["fixed", "cwd"],
         "default": "fixed",
     }
+    assert inputs["case_selection"] == {
+        "description": "Select all native UI journeys or the CWD TUI pair",
+        "required": True,
+        "type": "choice",
+        "options": ["all", "tui"],
+        "default": "all",
+    }
     assert workflow["permissions"] == {"contents": "read"}
     assert workflow["concurrency"]["cancel-in-progress"] is False
     job = workflow["jobs"]["native"]
@@ -26,6 +33,7 @@ def test_native_qualification_stays_manual_bounded_and_candidate_scoped():
     assert job["permissions"] == {"contents": "read"}
     assert not any("runner." in str(value) for value in job["env"].values())
     assert job["env"]["HERMES_E2E_SCOPE_MODE"] == "${{ inputs.scope_mode }}"
+    assert job["env"]["HERMES_NATIVE_CASE_SELECTION"] == "${{ inputs.case_selection }}"
     assert len(job["steps"][0]["env"]) == 4
     assert all("${{ runner.temp }}" in value for value in job["steps"][0]["env"].values())
     assert job["strategy"]["max-parallel"] == 1 and job["strategy"]["fail-fast"] is True
@@ -39,6 +47,8 @@ def test_native_qualification_stays_manual_bounded_and_candidate_scoped():
     assert not any("${{ inputs." in script or "secrets." in script for script in scripts)
     assert "'^[a-f0-9]{40}$'" in scripts[0] and "'github-hosted'" in scripts[0]
     assert "@('fixed', 'cwd') -cnotcontains $env:HERMES_E2E_SCOPE_MODE" in scripts[0]
+    assert "@('all', 'tui') -cnotcontains $env:HERMES_NATIVE_CASE_SELECTION" in scripts[0]
+    assert "$env:HERMES_NATIVE_CASE_SELECTION -ceq 'tui' -and $env:HERMES_E2E_SCOPE_MODE -cne 'cwd'" in scripts[0]
     assert '"$name=$value"' in scripts[0] and "$env:GITHUB_ENV" in scripts[0]
     native = next(step["run"] for step in job["steps"] if step["name"] == "Run native caller-surface E2E against local stubs")
     assert "$env:PALLIUM_TUI_REPO_REVISION -ne $env:PALLIUM_EXPECTED_REVISION" in native
@@ -49,6 +59,20 @@ def test_native_qualification_stays_manual_bounded_and_candidate_scoped():
     assert "SelectSingleNode('skipped|failure|error')" in native
     assert "provenance.json" in native
     assert "scope_mode=$env:HERMES_E2E_SCOPE_MODE" in native
+    assert "case_selection=$env:HERMES_NATIVE_CASE_SELECTION; required_ui_ids=$requiredUiIds" in native
+    command = "& $env:PALLIUM_E2E_PYTHON -m pytest -m slow -n 0 --basetemp $testBase --junitxml $junitPath"
+    tui_targets = ("'tests/test_hermes_tui_native_e2e.py::test_released_hermes_actual_ui_journey[tui-memory-off]' "
+                   "'tests/test_hermes_tui_native_e2e.py::test_released_hermes_actual_ui_journey[tui-memory-on]'")
+    assert command + " " + tui_targets in native
+    assert command + " tests/test_hermes_tui_native_e2e.py" in native
+    assert native.count(command) == 2 and native.count("::test_released_hermes_actual_ui_journey") == 2
+    assert "if ($LASTEXITCODE) { throw 'Hermes native qualification failed' }" in native
+    assert "$actualUiCases.Count -ne 2" in native
+    assert ".StartsWith('test_released_hermes_actual_ui_journey[', [StringComparison]::Ordinal)" in native
+    assert "$requiredUiIds -cnotcontains $actual.name" in native
+    assert "foreach ($name in $requiredUiIds)" in native
+    assert "Invoke-Expression" not in native and "eval" not in native
+    assert not any(step.get("if") for step in job["steps"][:-1])
     upload = job["steps"][-1]
     assert upload["if"] == "always()" and upload["with"]["retention-days"] == 7
     assert "h4-tests" in upload["with"]["path"]

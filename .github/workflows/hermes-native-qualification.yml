@@ -16,6 +16,14 @@ on:
           - fixed
           - cwd
         default: fixed
+      case_selection:
+        description: Select all native UI journeys or the CWD TUI pair
+        required: true
+        type: choice
+        options:
+          - all
+          - tui
+        default: all
 
 permissions:
   contents: read
@@ -42,6 +50,7 @@ jobs:
       HERMES_EXPECTED_REVISION: ${{ matrix.revision }}
       PALLIUM_EXPECTED_REVISION: ${{ inputs.pallium_revision }}
       HERMES_E2E_SCOPE_MODE: ${{ inputs.scope_mode }}
+      HERMES_NATIVE_CASE_SELECTION: ${{ inputs.case_selection }}
     steps:
       - name: Require disposable hosted Windows and contained write roots
         shell: pwsh
@@ -53,6 +62,8 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           if (@('fixed', 'cwd') -cnotcontains $env:HERMES_E2E_SCOPE_MODE) { throw 'Explicit fixed or cwd qualification mode required' }
+          if (@('all', 'tui') -cnotcontains $env:HERMES_NATIVE_CASE_SELECTION) { throw 'Explicit all or tui case selection required' }
+          if ($env:HERMES_NATIVE_CASE_SELECTION -ceq 'tui' -and $env:HERMES_E2E_SCOPE_MODE -cne 'cwd') { throw 'TUI subset requires cwd scope mode' }
           if ($env:PALLIUM_EXPECTED_REVISION -cnotmatch '^[a-f0-9]{40}$') { throw 'Full immutable Pallium commit required' }
           if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted' -or $env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') { throw 'Disposable hosted Windows x64 runner required' }
           $runnerRoot = [IO.Path]::GetFullPath((Resolve-Path -LiteralPath $env:RUNNER_TEMP).Path).TrimEnd('\')
@@ -214,13 +225,28 @@ jobs:
           $env:HERMES_NODE_SHA256 = (Get-FileHash -LiteralPath $env:HERMES_NODE -Algorithm SHA256).Hash.ToLowerInvariant()
           $sourceRevision = (git -C $env:HERMES_E2E_SOURCE rev-parse HEAD).Trim()
           if ($LASTEXITCODE -or $sourceRevision -ne $env:HERMES_EXPECTED_REVISION) { throw 'Hermes source changed before qualification' }
-          @{ pallium_revision=$env:PALLIUM_TUI_REPO_REVISION; hermes_revision=$sourceRevision; scope_mode=$env:HERMES_E2E_SCOPE_MODE; desktop_sha256=$env:HERMES_DESKTOP_EXE_SHA256; tui_sha256=$env:HERMES_TUI_BUNDLE_SHA256; python_sha256=$env:HERMES_E2E_PYTHON_SHA256; python_base_sha256=$env:HERMES_E2E_BASE_PYTHON_SHA256; node_sha256=$env:HERMES_NODE_SHA256; image_os=$env:ImageOS; image_version=$env:ImageVersion; windows=$PSVersionTable.OS } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $env:HERMES_NATIVE_ARTIFACTS 'provenance.json') -Encoding UTF8
+          $requiredUiIds = @('test_released_hermes_actual_ui_journey[tui-memory-off]', 'test_released_hermes_actual_ui_journey[tui-memory-on]', 'test_released_hermes_actual_ui_journey[desktop-memory-off]', 'test_released_hermes_actual_ui_journey[desktop-memory-on]')
+          if ($env:HERMES_NATIVE_CASE_SELECTION -ceq 'tui') {
+            $requiredUiIds = @('test_released_hermes_actual_ui_journey[tui-memory-off]', 'test_released_hermes_actual_ui_journey[tui-memory-on]')
+          }
+          @{ pallium_revision=$env:PALLIUM_TUI_REPO_REVISION; hermes_revision=$sourceRevision; scope_mode=$env:HERMES_E2E_SCOPE_MODE; case_selection=$env:HERMES_NATIVE_CASE_SELECTION; required_ui_ids=$requiredUiIds; desktop_sha256=$env:HERMES_DESKTOP_EXE_SHA256; tui_sha256=$env:HERMES_TUI_BUNDLE_SHA256; python_sha256=$env:HERMES_E2E_PYTHON_SHA256; python_base_sha256=$env:HERMES_E2E_BASE_PYTHON_SHA256; node_sha256=$env:HERMES_NODE_SHA256; image_os=$env:ImageOS; image_version=$env:ImageVersion; windows=$PSVersionTable.OS } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $env:HERMES_NATIVE_ARTIFACTS 'provenance.json') -Encoding UTF8
           $testBase = Join-Path $env:RUNNER_TEMP 'h4-tests'
           $junitPath = Join-Path $env:HERMES_NATIVE_ARTIFACTS 'native.xml'
-          & $env:PALLIUM_E2E_PYTHON -m pytest -m slow -n 0 --basetemp $testBase --junitxml $junitPath tests/test_hermes_tui_native_e2e.py
+          if ($env:HERMES_NATIVE_CASE_SELECTION -ceq 'tui') {
+            & $env:PALLIUM_E2E_PYTHON -m pytest -m slow -n 0 --basetemp $testBase --junitxml $junitPath 'tests/test_hermes_tui_native_e2e.py::test_released_hermes_actual_ui_journey[tui-memory-off]' 'tests/test_hermes_tui_native_e2e.py::test_released_hermes_actual_ui_journey[tui-memory-on]'
+          } else {
+            & $env:PALLIUM_E2E_PYTHON -m pytest -m slow -n 0 --basetemp $testBase --junitxml $junitPath tests/test_hermes_tui_native_e2e.py
+          }
           if ($LASTEXITCODE) { throw 'Hermes native qualification failed' }
           [xml]$result = Get-Content -LiteralPath (Join-Path $env:HERMES_NATIVE_ARTIFACTS 'native.xml') -Raw
-          foreach ($name in @('test_released_hermes_actual_ui_journey[tui-memory-off]', 'test_released_hermes_actual_ui_journey[tui-memory-on]', 'test_released_hermes_actual_ui_journey[desktop-memory-off]', 'test_released_hermes_actual_ui_journey[desktop-memory-on]')) {
+          if ($env:HERMES_NATIVE_CASE_SELECTION -ceq 'tui') {
+            $actualUiCases = @($result.SelectNodes('//testcase') | Where-Object { ([string]$_.name).StartsWith('test_released_hermes_actual_ui_journey[', [StringComparison]::Ordinal) })
+            if ($actualUiCases.Count -ne 2) { throw 'TUI subset requires exactly two native UI cases' }
+            foreach ($actual in $actualUiCases) {
+              if ($requiredUiIds -cnotcontains $actual.name) { throw "Unexpected native UI case in TUI subset: $($actual.name)" }
+            }
+          }
+          foreach ($name in $requiredUiIds) {
             $case = @($result.SelectNodes('//testcase') | Where-Object { $_.name -eq $name })
             if ($case.Count -ne 1 -or $case[0].SelectSingleNode('skipped|failure|error')) { throw "Required native journey did not pass: $name" }
           }
