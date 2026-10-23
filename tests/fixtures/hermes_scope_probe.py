@@ -264,7 +264,7 @@ def host(args):
                            text=True, encoding="utf-8", timeout=5)
         roots[name] = root
     denied = install_guard(args.work, args.repo, args.sdk1)
-    from gateway.session_context import set_session_vars, clear_session_vars
+    from gateway.session_context import bound_session_key, set_session_vars, clear_session_vars
     from hermes_cli.plugins import get_plugin_manager
     from hermes_cli.middleware import run_tool_execution_middleware
     from tools.registry import registry
@@ -283,9 +283,11 @@ def host(args):
 
     @contextmanager
     def session(name, session_id, surface="desktop", cwd=None):
-        tokens = set_session_vars(platform=surface, session_id=session_id, session_key=session_id,
+        route_key = "native-route:" + session_id
+        tokens = set_session_vars(platform=surface, session_id=session_id, session_key=route_key,
                                   cwd=str(roots[name] if cwd is None else cwd))
         try:
+            assert bound_session_key() == route_key and route_key != session_id
             yield
         finally:
             clear_session_vars(tokens)
@@ -331,6 +333,27 @@ def host(args):
         assert loaded["enabled"] and not loaded["error"] and loaded["tools"] >= 15, loaded
         assert loaded["hooks"] >= 5 and loaded["middleware"] >= 2, loaded
         receipt["registration"] = loaded
+        ambient_name = "HERMES_SESSION_KEY"
+        had_ambient = ambient_name in os.environ
+        previous_ambient = os.environ.get(ambient_name)
+        os.environ[ambient_name] = "ambient-session-key-must-not-authorize"
+        tokens = set_session_vars(platform="tui", session_id="native-unbound-route", session_key="",
+                                  cwd=str(roots["a"]))
+        try:
+            assert bound_session_key() == ""
+            result = manager.invoke_hook("pre_llm_call", session_id="native-unbound-route",
+                turn_id="empty-bound-route", user_message="empty bound route must refuse",
+                conversation_history=[{"role": "user", "content": "empty bound route must refuse"}])
+            assert not result, result
+            tool("pallium_relay_address", {}, "native-unbound-route", "empty-bound-route", error=True)
+            assert rows("a", "native-unbound-route") == []
+        finally:
+            clear_session_vars(tokens)
+            if had_ambient:
+                os.environ[ambient_name] = previous_ambient
+            else:
+                os.environ.pop(ambient_name, None)
+        receipt["checks"].append("empty native route refuses despite ambient session-key environment")
         assert importlib.metadata.version("mcp").startswith("2."), "host requires existing SDK2"
         barrier = threading.Barrier(2)
         def initial(name, surface):
@@ -344,7 +367,8 @@ def host(args):
                 complete(sid, turn, marker)
                 tool("pallium_relay_address", {}, sid, turn, error=True)
                 assert rows(name, sid)[0]["state"] == "recent"
-            return {"name": name, "surface": surface, "marker": marker, "address": address}
+            return {"name": name, "surface": surface, "marker": marker, "address": address,
+                    "route_key": "native-route:" + sid}
         with ThreadPoolExecutor(max_workers=2) as pool:
             futures = [pool.submit(contextvars.copy_context().run, initial, name, surface)
                        for name, surface in (("a", "desktop"), ("b", "tui"))]

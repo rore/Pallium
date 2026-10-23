@@ -134,6 +134,13 @@ The native journey uses the supported `approvals.destructive_slash_confirm: fals
 setting. `/new` still uses normal composer input and requires a different actual
 session ID; the optional confirmation overlay is not covered by these checks.
 
+Automatic project scope additionally requires distinct native route and
+conversation IDs in the public-hook regression. Verify that wake injection uses
+the session-bound route while Relay and History retain the conversation ID.
+Missing bound context must be refused even when a process environment variable
+contains a route. Exercise route changes, reload and stale callbacks without
+discarding pending or uncertain delivery fences.
+
 Record the actual OS/image and source/runtime provenance. Require successful
 driver/source postconditions and normal identity-safe cleanup of both generations.
 Preserve the primary failure through artifact and cleanup errors. Provisional

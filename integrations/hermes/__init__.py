@@ -46,6 +46,11 @@ def _host_id(value):
     return _text(value, 255) and value == value.strip() and value.isprintable()
 
 
+def _native_session_key(value):
+    return (type(value) is str and 0 < len(value) <= 4096
+            and value == value.strip() and value.isprintable())
+
+
 def _incarnation(value):
     return (_text(value, 32) and len(value) == 32 and value.isascii()
             and all(char.isalnum() or char in "-_" for char in value))
@@ -248,6 +253,12 @@ def register(ctx):
         for capability in ("session_cwd", "session_surface"):
             if not callable(getattr(ctx, capability, None)):
                 raise ValueError(f"Unsupported Hermes plugin capability: {capability}; cwd scope requires the public session API")
+        try:
+            from gateway.session_context import bound_session_key
+        except Exception:
+            raise ValueError("Unsupported Hermes plugin capability: bound_session_key; cwd scope requires the task-local native route API") from None
+        if not callable(bound_session_key):
+            raise ValueError("Unsupported Hermes plugin capability: bound_session_key; cwd scope requires the task-local native route API")
     parsed = urlsplit(base if isinstance(base, str) else "")
     if (parsed.scheme != "http" or parsed.hostname not in {"127.0.0.1", "localhost", "::1"}
             or parsed.username or parsed.password or parsed.query or parsed.fragment
@@ -294,12 +305,13 @@ def register(ctx):
             if (not isinstance(value, dict) or value.get("version") != 1
                     or value.get("service_url") != base or value.get("profile") != profile
                     or value.get("session_ref") != session_id
+                    or not _native_session_key(value.get("native_session_key"))
                     or not _text(value.get("container_ref"), 512)
                     or not _host_id(value.get("actor_ref")) or not _text(value.get("cwd"), 32768)
                     or not _incarnation(value.get("authority_incarnation"))
                     or not _text(value.get("endpoint_id"), 128)
                     or type(value.get("scope_generation")) is not int or value["scope_generation"] < 0):
-                raise ValueError("Saved Hermes project scope is invalid; refusing automatic reassignment")
+                raise ValueError("Saved Hermes project scope is invalid or lacks a native route; verify the original endpoint and use a fresh Hermes session; refusing automatic reassignment")
             return value
         if (isinstance(value, dict) and value.get("profile") == profile
                 and value.get("container_ref") == container and value.get("session_ref") == session_id
@@ -312,11 +324,12 @@ def register(ctx):
         if automatic and value is not None:
             if (not isinstance(value, dict) or value.get("profile") != profile
                     or value.get("session_ref") != session_id
+                    or not _native_session_key(value.get("native_session_key"))
                     or not _text(value.get("container_ref"), 512)
                     or not _text(value.get("endpoint_id"), 128) or not _text(value.get("delivery_id"), 64)
                     or not _incarnation(value.get("authority_incarnation"))
                     or not _text(value.get("nonce"), 64)):
-                raise ValueError("Saved Hermes wake scope is invalid; refusing to discard its fence")
+                raise ValueError("Saved Hermes wake scope is invalid or lacks a native route; verify the original delivery before using a fresh Hermes session; refusing to discard its fence")
             return value
         if (isinstance(value, dict) and value.get("profile") == profile
                 and value.get("container_ref") == container and value.get("session_ref") == session_id
@@ -328,7 +341,7 @@ def register(ctx):
     def same_wake(left, right):
         fields = ("profile", "container_ref", "session_ref", "endpoint_id", "delivery_id", "nonce", "turn_id")
         if automatic:
-            fields += ("actor_ref", "scope_generation", "authority_incarnation")
+            fields += ("actor_ref", "scope_generation", "authority_incarnation", "native_session_key")
         return isinstance(left, dict) and isinstance(right, dict) and all(
             left.get(field) == right.get(field) for field in fields
         )
@@ -358,8 +371,9 @@ def register(ctx):
 
     def same_authority(left, right):
         return bool(left and right and _incarnation(left.get("authority_incarnation"))
+                    and _native_session_key(left.get("native_session_key"))
                     and all(left.get(field) == right.get(field) for field in (
-                        "container_ref", "actor_ref", "endpoint_id", "scope_generation", "authority_incarnation")))
+                        "container_ref", "actor_ref", "endpoint_id", "scope_generation", "authority_incarnation", "native_session_key")))
 
     def turn_key(session_id, turn_id):
         return key("turn", session_id + "\0" + turn_id)
@@ -372,14 +386,15 @@ def register(ctx):
                 or value.get("state") not in {"pending", "active", "ended"}):
             raise ValueError("Saved Hermes turn authority is invalid")
         if value["state"] != "ended" and (
-                not _text(value.get("user_digest"), 64)
+                not _native_session_key(value.get("native_session_key"))
+                or not _text(value.get("user_digest"), 64)
                 or not _text(value.get("container_ref"), 512) or not _host_id(value.get("actor_ref"))
                 or not _text(value.get("nonce"), 64)
                 or (value["state"] == "active" and (
                     not _text(value.get("endpoint_id"), 128)
                     or not _incarnation(value.get("authority_incarnation"))
                     or type(value.get("scope_generation")) is not int or value["scope_generation"] < 0))):
-            raise ValueError("Saved Hermes turn authority is invalid")
+            raise ValueError("Saved Hermes turn authority is invalid or lacks a native route; verify the original turn and use a fresh Hermes session")
         return value
 
     def is_ended_turn(session_id, turn_id):
@@ -399,7 +414,7 @@ def register(ctx):
                 or saved_turn(session_id, turn_id) != reservation):
             return False
         stamp = dict(reservation, state="active", **{
-            field: record[field] for field in ("endpoint_id", "scope_generation", "authority_incarnation")})
+            field: record[field] for field in ("endpoint_id", "scope_generation", "authority_incarnation", "native_session_key")})
         # Retain compact authority metadata across reloads; never evict an old turn into new authority.
         state.set(turn_key(session_id, turn_id), stamp)
         turn_bindings[(session_id, turn_id)] = record
@@ -452,8 +467,8 @@ def register(ctx):
                 LOG.warning("Hermes Pallium admission is fenced by an outstanding operation for session %s; "
                             "verify its original project status before recovery", session_id)
                 return None
-            changed = saved and (saved["container_ref"], saved["actor_ref"]) != (
-                candidate["container_ref"], candidate["actor_ref"])
+            changed = saved and (saved["container_ref"], saved["actor_ref"], saved["native_session_key"]) != (
+                candidate["container_ref"], candidate["actor_ref"], candidate["native_session_key"])
             wake = wake_scope(session_id)
             lifecycle = state.get(key("lifecycle", session_id))
             resuming = (saved and isinstance(lifecycle, dict) and lifecycle.get("state") == "closed"
@@ -514,10 +529,10 @@ def register(ctx):
                       "admitted_work_refs": [row["work_ref"] for row in result.get("work_refs", [])
                                              if isinstance(row, dict) and _text(row.get("work_ref"), 128)]
                       if result.get("structural_work_refs_status") == "complete" else []}
-            # Actor-only transitions do not advance Relay's project generation.
+            # Actor and native-route transitions do not advance Relay's project generation.
             record["authority_incarnation"] = (saved["authority_incarnation"] if saved and all(
                 saved[field] == record[field] for field in (
-                    "container_ref", "actor_ref", "endpoint_id", "scope_generation"))
+                    "container_ref", "actor_ref", "endpoint_id", "scope_generation", "native_session_key"))
                 else secrets.token_urlsafe(24))
             with lock:
                 if (not profile_ok() or scope(session_id) != saved
@@ -590,7 +605,8 @@ def register(ctx):
         nonce = secrets.token_urlsafe(18)
         wake = {"profile": profile, "container_ref": container, "session_ref": session_id,
                 **({"actor_ref": record["actor_ref"], "scope_generation": record["scope_generation"],
-                    "authority_incarnation": record["authority_incarnation"]}
+                    "authority_incarnation": record["authority_incarnation"],
+                    "native_session_key": record["native_session_key"]}
                    if automatic else {}),
                 "endpoint_id": record["endpoint_id"], "delivery_id": candidate["delivery_id"],
                 "nonce": nonce, "state": "injection_attempted"}
@@ -605,7 +621,8 @@ def register(ctx):
             if old:
                 clear_wake(session_id, old)
         if profile_ok() and not ctx.inject_message(
-                _marker(wake["delivery_id"], nonce), role="user", session_key=session_id):
+                _marker(wake["delivery_id"], nonce), role="user",
+                session_key=record["native_session_key"] if automatic else session_id):
             with lock:
                 current = wake_scope(session_id)
                 if (profile_ok() and current and same_wake(current, wake)
@@ -706,7 +723,8 @@ def register(ctx):
                 or wake.get("endpoint_id") != record.get("endpoint_id")
                 or (automatic and (not same_authority(record, wake)
                     or candidate["container_ref"] != record["container_ref"]
-                    or candidate["actor_ref"] != record["actor_ref"]))):
+                    or candidate["actor_ref"] != record["actor_ref"]
+                    or candidate["native_session_key"] != record["native_session_key"]))):
             return None
         try:
             if not register_session(session_id, expected=record, candidate=candidate):
@@ -785,21 +803,28 @@ def register(ctx):
                     close_session(session_id=session_id)
                 if ctx.session_surface() not in {"desktop", "tui", "cli", "acp"}:
                     raise ValueError("Pallium cwd scope requires a supported local Hermes session")
+                native_session_key = bound_session_key()
+                if not _native_session_key(native_session_key):
+                    raise ValueError("Pallium cwd scope requires a task-local native session route; start a supported Hermes turn")
                 from .scope import resolve_scope
                 candidate = resolve_scope(ctx.session_cwd(), previous=scope(session_id),
                                           actor_override=topology_signature[4])
+                candidate["native_session_key"] = native_session_key
                 if observed and (candidate["container_ref"] != observed["container_ref"]
-                                 or candidate["actor_ref"] != observed["actor_ref"]):
+                                 or candidate["actor_ref"] != observed["actor_ref"]
+                                 or candidate["native_session_key"] != observed["native_session_key"]):
                     return None
                 frozen = turn_bindings.get((session_id, turn_id))
                 if frozen and (not same_authority(frozen, scope(session_id))
                                or candidate["container_ref"] != frozen["container_ref"]
                                or candidate["actor_ref"] != frozen["actor_ref"]
+                               or candidate["native_session_key"] != frozen["native_session_key"]
                                or (frozen.get("user_digest") is not None and frozen["user_digest"] !=
                                    hashlib.sha256((user_message if isinstance(user_message, str) else "").encode()).hexdigest())):
                     return None
                 reservation = observed or {"version": 1, "state": "pending", "user_digest": digest,
                     "container_ref": candidate["container_ref"], "actor_ref": candidate["actor_ref"],
+                    "native_session_key": candidate["native_session_key"],
                     "nonce": secrets.token_urlsafe(18)}
                 if observed is None:
                     state.set(turn_key(session_id, turn_id), reservation)

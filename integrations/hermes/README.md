@@ -27,9 +27,10 @@ for a comparison with other hosts. This page is the package command reference.
   For a trial, choose a separate profile rather than replacing your everyday one.
 - Select the Hermes virtual environment's Python with **MCP SDK2** and a Pallium
   Python environment with **MCP SDK1**. Setup validates both before mutation.
-- Use a running local Pallium service. Normal setup requires public
-  `session_cwd` and `session_surface` APIs and derives project/actor from the exact
-  session's local cwd. Private visibility is the default and only accepted value.
+- Use a running local Pallium service. Normal setup requires session-owned cwd,
+  surface and bound-route APIs and derives project/actor from the exact session's
+  local cwd. The native injection route is separate from the Relay/History
+  conversation ID. Private visibility is the default and only accepted value.
 - The service must confirm guarded lifecycle enrollment and support conditional
   closure for automatic mode. An older service is refused before capture; the
   plugin never falls back to an unconditional close. Update the service using its
@@ -206,13 +207,16 @@ or live MCP readiness.
 
 <a id="compatibility-and-limits"></a>
 
-Automatic mode requires public session-cwd and session-surface capabilities,
-present in inspected v0.22.3 source. Its complete native Desktop/TUI qualification
-matrix is pending. Existing v0.22.0/v0.22.2 Linux TUI and Windows Desktop/TUI
+Automatic mode requires session-owned cwd, surface and bound-route capabilities.
+Its complete native Desktop/TUI qualification matrix is pending.
+Existing v0.22.0/v0.22.2 Linux TUI and Windows Desktop/TUI
 coverage, with memory off and on, applies to fixed scope only; those releases lack
 the automatic-scope APIs. Admission checks public capabilities rather than an
 exact-version lock. Missing capabilities fail with actionable diagnostics;
 Pallium does not force a host upgrade or silently choose fixed scope.
+
+Fixed-context wake routing on the newer shared Gateway remains unqualified and
+unresolved. The older fixed-scope results do not establish that compatibility.
 
 Windows coverage uses Server 2025/unpacked builds, not Windows 11, MSIX, native
 updater or native Quit qualification. Synthetic responses test integration

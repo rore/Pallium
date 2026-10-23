@@ -62,6 +62,13 @@ if action == "validate" and request.get("scope_mode") == "cwd":
         supported = False
     if not supported:
         fail("hermes_session_cwd_api_required")
+    try:
+        from gateway.session_context import bound_session_key
+        supported = callable(bound_session_key)
+    except Exception:
+        supported = False
+    if not supported:
+        fail("hermes_bound_session_key_api_required")
 digest = hashlib.sha256(original).hexdigest()
 config = raw
 if "plugins" in config and not isinstance(config["plugins"], dict):

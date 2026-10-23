@@ -123,13 +123,16 @@ they do not authorize overwriting an unowned file.
   is missing, admission is refused before History capture; there is no fallback to
   fixed scope or unconditional closure. Update the service through its normal
   installation procedure before using automatic mode.
-- Automatic project scope requires public `session_cwd` and `session_surface`
-  capabilities. Source inspection confirms these APIs in v0.22.3; the complete
-  automatic-mode native Desktop/TUI matrix is still pending. Admission uses
-  capability checks rather than an exact-version allowlist.
+- Automatic project scope requires session-owned cwd, surface and bound-route
+  capabilities. Pallium keeps the native injection route separate from the
+  conversation ID used by Relay and History. Missing capabilities or an unbound
+  route fail closed. The complete automatic-mode native Desktop/TUI matrix is
+  still pending; admission uses capability checks rather than a version allowlist.
 - Existing v0.22.0/v0.22.2 Linux TUI and Windows Desktop/TUI receipts qualify fixed
   scope only. Those releases lack the required automatic-scope APIs; their results
   do not establish automatic-mode project isolation or lifecycle behavior.
+- Fixed-context wake routing on the newer shared Gateway remains unqualified and
+  unresolved; older fixed-scope results do not establish that compatibility.
 - Windows checks used Windows Server 2025 and an unpacked app. They do not cover
   Windows 11, MSIX installation, the native updater or native app Quit. Keep
   Hermes installation and updates on its supported upstream path.

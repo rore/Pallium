@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+import copy
 import contextvars
 import json
 from pathlib import Path
@@ -13,7 +14,7 @@ from urllib.error import HTTPError
 
 import pytest
 
-from tests.test_hermes_relay_plugin import _await, _mcp_tool, plugin_context
+from tests.test_hermes_relay_plugin import _await, _mcp_tool, _observe_request, plugin_context
 
 
 @pytest.fixture
@@ -21,6 +22,7 @@ def project_plugin(plugin_context, monkeypatch):
     module, create, config = plugin_context
     seed = create()
     host_context = contextvars.ContextVar("test_hermes_host_scope")
+    route_context = contextvars.ContextVar("test_hermes_host_route")
     accesses, calls = [], []
 
     def public(name):
@@ -32,6 +34,9 @@ def project_plugin(plugin_context, monkeypatch):
 
     monkeypatch.setattr(type(seed), "session_cwd", public("cwd"), raising=False)
     monkeypatch.setattr(type(seed), "session_surface", public("surface"), raising=False)
+    gateway_session_context = ModuleType("gateway.session_context")
+    gateway_session_context.bound_session_key = lambda: route_context.get(None)
+    monkeypatch.setitem(sys.modules, "gateway.session_context", gateway_session_context)
     settings = config["plugins"]["entries"]["pallium-hermes-relay"]["settings"]
     settings.pop("container_ref")
     settings.update(scope_mode="cwd", mcp_python=sys.executable,
@@ -58,12 +63,18 @@ def project_plugin(plugin_context, monkeypatch):
     ctx = create()
     assert accesses == []  # Capability checks never invoke task-local accessors.
 
-    def pre(cwd, session="session", turn="turn", message="hello", surface="tui", context=None, history=None):
+    default_route = object()
+
+    def pre(cwd, session="session", turn="turn", message="hello", surface="tui", context=None, history=None,
+            route_key=default_route):
+        route = "local:route:" + session if route_key is default_route else route_key
         token = host_context.set((cwd, surface))
+        route_token = route_context.set(route)
         try:
             return (context or ctx).hooks["pre_llm_call"](
                 session_id=session, turn_id=turn, user_message=message, conversation_history=history)
         finally:
+            route_context.reset(route_token)
             host_context.reset(token)
 
     return module, ctx, pre, create, calls, settings
@@ -449,27 +460,184 @@ def test_failed_transition_does_not_publish_and_reload_keeps_uncertainty(client,
 def test_uncertain_wake_stays_in_original_project_across_reload(client, project_plugin, tmp_path, actor_only):
     _module, ctx, pre, create, _calls, _settings = project_plugin
     a, b = _repo(tmp_path, "a"), _repo(tmp_path, "b")
-    assert pre(str(a), turn="a")
+    route_a, route_b = "gateway-route:A", "gateway-route:B"
+    assert pre(str(a), turn="a", route_key=route_a)
     endpoint = _sessions(client, _project("a"))[0]["endpoint_id"]
     assert client.post("/relay/turn", json={"runtime": "codex", "session_ref": "peer", "container_ref": _project("a")}).status_code == 200
     message = client.post("/relay/messages", json={"sender_runtime": "codex", "sender_session_ref": "peer",
                           "recipient": endpoint, "payload": "pending original project", "container_ref": _project("a")})
     assert message.status_code == 200, message.text
     marker = _await(lambda: ctx.injections and ctx.injections[-1][0])
+    assert ctx.injections[-1][1]["session_key"] == route_a
     original_scope = next(value.copy() for key, value in ctx.state.values.items() if key.startswith("session:"))
     if actor_only:
         b = a
         subprocess.run(["git", "-C", str(a), "config", "user.name", "actor-new"],
                        check=True, capture_output=True)
-    assert pre(str(b), turn="b") is None
-    assert pre(str(b), turn="stale-wake", message=marker) is None
+    assert pre(str(b), turn="b", route_key=route_b) is None
+    assert pre(str(b), turn="stale-wake", message=marker, route_key=route_b) is None
     assert _sessions(client, _project("b")) == []
     resumed = create(ctx.state)
-    assert pre(str(b), turn="reload", context=resumed) is None
-    assert pre(str(b), turn="reload-wake", message=marker, context=resumed) is None
+    assert pre(str(b), turn="reload", context=resumed, route_key=route_b) is None
+    assert pre(str(b), turn="reload-wake", message=marker, context=resumed, route_key=route_b) is None
     assert next(value for key, value in ctx.state.values.items() if key.startswith("session:")) == original_scope
     response = client.get("/relay/messages/" + message.json()["message_id"], params={"container_ref": _project("a")})
     assert response.json()["deliveries"][0]["state"] == "pending"
+
+
+@pytest.mark.parametrize("reload", [False, True])
+def test_pending_wake_blocks_route_only_change_in_same_project(client, project_plugin, tmp_path, reload):
+    _module, ctx, pre, create, _calls, _settings = project_plugin
+    root = _repo(tmp_path, "route-only-pending")
+    route_a, route_b = "gateway-route:A", "gateway-route:B"
+    assert pre(str(root), turn="route-a", route_key=route_a)
+    original_session = _sessions(client, _project("route-only-pending"))[0]
+    endpoint = original_session["endpoint_id"]
+    sent = client.post("/relay/turn", json={
+        "runtime": "codex", "session_ref": "peer", "container_ref": _project("route-only-pending")})
+    assert sent.status_code == 200, sent.text
+    payload = "pending route transition"
+    message = client.post("/relay/messages", json={
+        "sender_runtime": "codex", "sender_session_ref": "peer", "recipient": endpoint,
+        "payload": payload, "container_ref": _project("route-only-pending")})
+    assert message.status_code == 200, message.text
+    marker = _await(lambda: ctx.injections and ctx.injections[-1][0])
+    assert ctx.injections[-1][1]["session_key"] == route_a
+    assert isinstance(marker, str) and marker.startswith("[[PALLIUM_RELAY_WAKE:")
+    before_state = copy.deepcopy(ctx.state.values)
+    before_injections = len(ctx.injections)
+    protected_prefixes = ("session:", "wake:", "transition:", "operation:", "lifecycle:")
+    before_protected = {key: value for key, value in before_state.items()
+                        if key.startswith(protected_prefixes)}
+    before_turns = {key: value for key, value in before_state.items() if key.startswith("turn:")}
+
+    owner = create(ctx.state) if reload else ctx
+    assert pre(str(root), turn="route-b", route_key=route_b, context=owner) is None
+    after_state = owner.state.values
+    assert {key: value for key, value in after_state.items()
+            if key.startswith(protected_prefixes)} == before_protected
+    assert all(after_state.get(key) == value for key, value in before_turns.items())
+    added_turns = {key: value for key, value in after_state.items()
+                   if key.startswith("turn:") and key not in before_turns}
+    assert len(added_turns) == 1
+    reserved_turn, = added_turns.values()
+    assert reserved_turn["state"] == "pending"
+    assert reserved_turn["container_ref"] == _project("route-only-pending")
+    assert reserved_turn["native_session_key"] == route_b
+    assert ctx.injections[before_injections:] == []
+    assert _sessions(client, _project("route-only-pending"))[0] == original_session
+    status = client.get("/relay/messages/" + message.json()["message_id"],
+                        params={"container_ref": _project("route-only-pending")})
+    assert status.status_code == 200, status.text
+    assert status.json()["payload"] == payload
+    delivery = status.json()["deliveries"][0]
+    assert (delivery["state"], delivery["attempts"]) == ("pending", 0)
+
+
+@pytest.mark.parametrize("reload", [False, True])
+def test_route_a_b_a_rotates_only_adapter_authority_and_rejects_old_turn(
+    client, project_plugin, tmp_path, reload,
+):
+    _module, ctx, pre, create, _calls, _settings = project_plugin
+    root = _repo(tmp_path, "route-aba")
+    session_id = "hook-id-漢"
+    route_a, route_b = "native-route:A", "native-route:B"
+    marker_a = "route A history café"
+    first = pre(str(root), session=session_id, turn="turn-A", route_key=route_a,
+                message=marker_a, history=[{"role": "user", "content": marker_a}])
+    assert first
+    endpoint_a = _sessions(client, _project("route-aba"), session_id)[0]
+    address_a = json.loads(_mcp_tool(ctx, "pallium_relay_address", {}, session=session_id, turn="turn-A"))
+    actor_a = address_a["scope"]["actor_ref"]
+    source_a = address_a["scope"]["request_source_item_id"]
+    session_record = next(value for key, value in ctx.state.values.items()
+                          if key.startswith("session:") and value.get("session_ref") == session_id)
+    incarnation_a = session_record["authority_incarnation"]
+    assert session_record["native_session_key"] == route_a
+
+    marker_b = "route B history שלום"
+    assert pre(str(root), session=session_id, turn="turn-B", route_key=route_b,
+               message=marker_b, history=[{"role": "user", "content": marker_b}])
+    endpoint_b = _sessions(client, _project("route-aba"), session_id)[0]
+    owner = create(ctx.state) if reload else ctx
+    if reload:
+        assert pre(str(root), session=session_id, turn="turn-B", route_key=route_b,
+                   message=marker_b, history=[{"role": "user", "content": marker_b}], context=owner)
+    assert pre(str(root), session=session_id, turn="turn-A", route_key=route_a, context=owner) is None
+    current_b = json.loads(_mcp_tool(owner, "pallium_relay_address", {}, session=session_id, turn="turn-B"))
+    assert current_b["scope"]["request_source_item_id"]
+    record_b = next(value for key, value in owner.state.values.items()
+                    if key.startswith("session:") and value.get("session_ref") == session_id)
+    assert record_b["native_session_key"] == route_b
+    assert record_b["authority_incarnation"] != incarnation_a
+
+    assert pre(str(root), session=session_id, turn="turn-A2", route_key=route_a, context=owner)
+    endpoint_a2 = _sessions(client, _project("route-aba"), session_id)[0]
+    address_a2 = json.loads(_mcp_tool(owner, "pallium_relay_address", {}, session=session_id, turn="turn-A2"))
+    record_a2 = next(value for key, value in owner.state.values.items()
+                     if key.startswith("session:") and value.get("session_ref") == session_id)
+    assert record_a2["native_session_key"] == route_a
+    assert record_a2["authority_incarnation"] != record_b["authority_incarnation"]
+    assert (endpoint_a["endpoint_id"], endpoint_a["scope_generation"]) == (
+        endpoint_b["endpoint_id"], endpoint_b["scope_generation"])
+    assert (endpoint_a["endpoint_id"], endpoint_a["scope_generation"]) == (
+        endpoint_a2["endpoint_id"], endpoint_a2["scope_generation"])
+    assert current_b["scope"]["actor_ref"] == address_a2["scope"]["actor_ref"] == actor_a
+    old_history = client.get(f"/source/{source_a}/context", params={
+        "container_ref": _project("route-aba"), "query_actor_ref": actor_a,
+        "query_visibility": "private", "before": 0, "after": 0,
+    })
+    assert old_history.status_code == 200, old_history.text
+    assert marker_a in [row["content"] for row in old_history.json()["items"]]
+
+
+@pytest.mark.parametrize("route_key", [None, "", " ", "route\nkey", 7, "r" * 4097],
+                         ids=["missing", "empty", "blank", "control", "non-string", "over-max"])
+def test_missing_or_invalid_bound_route_refuses_without_environment_fallback(
+    client, project_plugin, tmp_path, monkeypatch, route_key,
+):
+    _module, ctx, pre, _create, calls, _settings = project_plugin
+    root = _repo(tmp_path, "invalid-native-route")
+    monkeypatch.setenv("HERMES_SESSION_KEY", "must-not-be-used-as-fallback")
+    assert pre(str(root), turn="invalid-route", route_key=route_key) is None
+    assert _sessions(client, _project("invalid-native-route")) == []
+    assert calls == []
+
+
+def test_maximum_native_route_key_is_accepted_and_recorded(client, project_plugin, tmp_path):
+    _module, ctx, pre, _create, _calls, _settings = project_plugin
+    root = _repo(tmp_path, "maximum-native-route")
+    route_key = "r" * 4096
+    assert pre(str(root), turn="max-route", route_key=route_key)
+    saved = next(value for key, value in ctx.state.values.items()
+                 if key.startswith("session:") and value.get("session_ref") == "session")
+    assert saved["native_session_key"] == route_key
+    assert _sessions(client, _project("maximum-native-route"))[0]["session_ref"] == "session"
+
+
+def test_legacy_saved_scope_without_native_route_refuses_without_overwrite(client, project_plugin, tmp_path, monkeypatch):
+    module, ctx, pre, _create, _calls, _settings = project_plugin
+    root = _repo(tmp_path, "legacy-without-native-route")
+    route_key = "native-route:legacy"
+    assert pre(str(root), turn="before-legacy", route_key=route_key)
+    saved_key = next(key for key, value in ctx.state.values.items()
+                     if key.startswith("session:") and value.get("session_ref") == "session")
+    saved = dict(ctx.state.values[saved_key])
+    saved.pop("native_session_key")
+    ctx.state.values[saved_key] = saved
+    writes = []
+    http = module._json_request
+
+    def observe(base, method, path, **kwargs):
+        if method != "GET":
+            writes.append(path)
+        return http(base, method, path, **kwargs)
+
+    monkeypatch.setattr(module, "_json_request", observe)
+    assert pre(str(root), turn="after-legacy", route_key=route_key) is None
+    assert writes == []
+    assert ctx.state.values[saved_key] == saved
+    assert _sessions(client, _project("legacy-without-native-route"))[0]["state"] == "recent"
 
 
 def test_turn_end_cleans_turn_authority_without_closing_endpoint(client, project_plugin, tmp_path):
@@ -482,10 +650,13 @@ def test_turn_end_cleans_turn_authority_without_closing_endpoint(client, project
     assert pre(str(a), turn="next")
 
 
-@pytest.mark.parametrize("capability", ["session_cwd", "session_surface"])
+@pytest.mark.parametrize("capability", ["session_cwd", "session_surface", "bound_session_key"])
 def test_automatic_mode_refuses_missing_public_api(project_plugin, monkeypatch, capability):
     _module, ctx, _pre, create, calls, _settings = project_plugin
-    monkeypatch.setattr(type(ctx), capability, None)
+    if capability == "bound_session_key":
+        monkeypatch.setattr(sys.modules["gateway.session_context"], capability, None)
+    else:
+        monkeypatch.setattr(type(ctx), capability, None)
     with pytest.raises(ValueError, match=capability):
         create()
     assert calls == []
@@ -552,6 +723,72 @@ def test_pre_inference_capture_provenance_and_completion_dedup(client, project_p
     assert observed[-1][2][0]["source_item_id"] == source
     assert pre(str(a), turn="a", message=message, history=[{"role": "user", "content": message}])
     assert [path for path, _body, _result in observed].count("/item-and-query") == 1
+
+
+def test_distinct_native_route_drives_wake_ack_and_history_through_public_surfaces(
+    client, project_plugin, tmp_path, monkeypatch,
+):
+    module, ctx, pre, _create, _calls, _settings = project_plugin
+    monkeypatch.setattr(module, "POLL_SECONDS", .01)
+    root = _repo(tmp_path, "native-route-e2e")
+    captured = []
+    http = module._json_request
+
+    def observe(base, method, path, **kwargs):
+        result = http(base, method, path, **kwargs)
+        if path == "/items":
+            captured.append((kwargs["body"], result))
+        return result
+
+    monkeypatch.setattr(module, "_json_request", observe)
+    session_id, route_key = "hook-session-漢", "gateway-route:α-session"
+    ordinary = pre(str(root), session=session_id, turn="ordinary", route_key=route_key,
+                   message="ordinary request café")
+    assert ordinary and _sessions(client, _project("native-route-e2e"), session_id)[0]["session_ref"] == session_id
+    ordinary_address = json.loads(_mcp_tool(ctx, "pallium_relay_address", {},
+                                            session=session_id, turn="ordinary"))
+    saved = next(value for key, value in ctx.state.values.items()
+                 if key.startswith("session:") and value.get("session_ref") == session_id)
+    assert saved["native_session_key"] == route_key
+    endpoint = _sessions(client, _project("native-route-e2e"), session_id)[0]["endpoint_id"]
+    assert client.post("/relay/turn", json={
+        "runtime": "codex", "session_ref": "wake-sender", "container_ref": _project("native-route-e2e"),
+    }).status_code == 200
+    sent = client.post("/relay/messages", json={
+        "sender_runtime": "codex", "sender_session_ref": "wake-sender", "recipient": endpoint,
+        "payload": "route-keyed wake payload ✓", "container_ref": _project("native-route-e2e"),
+    })
+    assert sent.status_code == 200, sent.text
+    message = sent.json()
+    _await(lambda: ctx.injections)
+    marker, target = ctx.injections[-1]
+    assert target == {"role": "user", "session_key": route_key}
+
+    wake = pre(str(root), session=session_id, turn="wake-turn", message=marker,
+               route_key=route_key)
+    assert wake and isinstance(wake.get("context"), str)
+    request = {"messages": [{"role": "user", "content": marker + "\n\n" + wake["context"]}]}
+    _observe_request(ctx, request, session=session_id, turn="wake-turn", api_request_id="api-native-route-wake")
+    status = client.get("/relay/messages/" + message["message_id"],
+                        params={"container_ref": _project("native-route-e2e")})
+    assert status.status_code == 200, status.text
+    assert status.json()["deliveries"][0]["state"] == "delivered"
+
+    answer = "route-keyed wake answer ✓"
+    history = [{"role": "user", "content": marker, "message_uid": "wake-user"},
+               {"role": "assistant", "content": answer, "message_uid": "wake-answer"}]
+    ctx.hooks["post_llm_call"](session_id=session_id, turn_id="wake-turn", user_message=marker,
+                               assistant_response=answer, conversation_history=history)
+    source = next(response[0]["source_item_id"] for body, response in captured
+                  if any(row.get("content") == answer and row.get("role") == "assistant" for row in body))
+    history_response = client.get(f"/source/{source}/context", params={
+        "container_ref": _project("native-route-e2e"),
+        "query_actor_ref": ordinary_address["scope"]["actor_ref"],
+        "query_visibility": "private", "before": 0, "after": 0,
+    })
+    assert history_response.status_code == 200, history_response.text
+    assert answer in [row["content"] for row in history_response.json()["items"]]
+    assert _sessions(client, _project("native-route-e2e"), session_id)[0]["session_ref"] == session_id
 
 
 def test_structural_branch_work_is_admitted_and_used_for_capture(client, project_plugin, tmp_path, monkeypatch):
