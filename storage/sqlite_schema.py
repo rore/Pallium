@@ -57,6 +57,12 @@ class SourceItemRecord(Base):
     forgotten_at = Column(DateTime(timezone=True), nullable=True)
     forgotten_by = Column(String, nullable=True)
     forgotten_reason = Column(Text, nullable=True)
+    source_turn_id = Column(String, nullable=True)
+    relay_name = Column(String, nullable=True)
+    # Keep raw SQL writers that predate role attribution compatible.
+    relay_attribution_state = Column(
+        String, nullable=False, default="unknown", server_default="unknown"
+    )
     created_at = Column(DateTime(timezone=True), nullable=False)
 
 
@@ -763,6 +769,9 @@ class SQLiteSchemaMixin:
         "forgotten_at": "ALTER TABLE source_items ADD COLUMN forgotten_at DATETIME",
         "forgotten_by": "ALTER TABLE source_items ADD COLUMN forgotten_by VARCHAR",
         "forgotten_reason": "ALTER TABLE source_items ADD COLUMN forgotten_reason TEXT",
+        "source_turn_id": "ALTER TABLE source_items ADD COLUMN source_turn_id VARCHAR",
+        "relay_name": "ALTER TABLE source_items ADD COLUMN relay_name VARCHAR",
+        "relay_attribution_state": "ALTER TABLE source_items ADD COLUMN relay_attribution_state VARCHAR NOT NULL DEFAULT 'unknown'",
     }
     _MEMORY_OBJECT_MIGRATIONS = {
         "lifecycle": "ALTER TABLE memory_objects ADD COLUMN lifecycle VARCHAR DEFAULT 'active'",
@@ -811,6 +820,11 @@ class SQLiteSchemaMixin:
         ),
     }
     _INDEX_MIGRATIONS = {
+        "uq_source_items_user_turn_snapshot": (
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_source_items_user_turn_snapshot "
+            "ON source_items(source_type, container_ref, thread_ref, source_turn_id) "
+            "WHERE role = 'user' AND source_turn_id IS NOT NULL"
+        ),
         "idx_relay_sessions_global_exact": (
             "CREATE INDEX IF NOT EXISTS idx_relay_sessions_global_exact "
             "ON relay_sessions(runtime, session_ref)"

@@ -2542,6 +2542,34 @@ def _write_session_state_locked(session_id: str, state: dict[str, Any]) -> bool:
                 pass
 
 
+def relay_name_snapshot(response: object) -> tuple[str, str | None]:
+    """Read only the validated active name returned by the current Relay turn."""
+    if not isinstance(response, dict):
+        return "unavailable", None
+    session = response.get("session")
+    if not isinstance(session, dict) or "alias" not in session:
+        return "unavailable", None
+    alias = session.get("alias")
+    if alias is None:
+        return "unnamed", None
+    if not isinstance(alias, str) or re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,31}", alias) is None:
+        return "unavailable", None
+    return "named", alias
+
+
+def source_turn_key(value: object) -> str | None:
+    """Accept Codex's native turn ID only when it is safe and bounded."""
+    if (
+        not isinstance(value, str)
+        or not value
+        or value != value.strip()
+        or len(value) > 512
+        or any(ord(char) < 0x20 or 0x7F <= ord(char) <= 0x9F for char in value)
+    ):
+        return None
+    return value
+
+
 def relay_turn(
     runtime: str,
     session_ref: object,

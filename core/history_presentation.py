@@ -206,6 +206,10 @@ def compact_history(
         hit = {"source_item_id": item["source_item_id"]}
         if item.get("work_refs"):
             hit["work_refs"] = item["work_refs"]
+        if item.get("relay_attribution_state") in {"named", "unnamed", "unavailable", "unknown"}:
+            hit["relay_attribution_state"] = item["relay_attribution_state"]
+            if item.get("relay_attribution_state") == "named" and item.get("relay_name") is not None:
+                hit["relay_name"] = item["relay_name"]
         if guidance:
             hit["replacement_guidance"] = guidance
         hit.update(_history_fields(item))
@@ -262,6 +266,8 @@ def compact_history(
             "total_count": len(hits),
             "result_revision": current_revision,
         }
+        if result.get("incomplete_attribution") is True:
+            payload["incomplete_attribution"] = True
         if search_mode is not None:
             payload["search_mode"] = search_mode
         if requested_work_ref is not None:
@@ -289,6 +295,8 @@ def compact_history(
             payload["requested_work_ref"] = requested_work_ref
         if result.get("decision_reason") is not None:
             payload["decision_reason"] = result["decision_reason"]
+        if result.get("incomplete_attribution") is True:
+            payload["incomplete_attribution"] = True
         if result.get("decision_reason") == "source_only_search" and container_ref:
             if requested_work_ref is not None:
                 payload["empty_result_hint"] = "Copy injected work_ref. If absent, use broad search; never guess. Add query for a question."

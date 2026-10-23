@@ -27,6 +27,9 @@ class SQLiteSearchMixin:
         exact_source_work_query = bool(
             filters and filters.work_refs and target_kind == "source_item"
         )
+        exact_source_filter_query = bool(
+            target_kind == "source_item" and filters and (filters.work_refs or filters.relay_name)
+        )
         structural_work_ref_query = exact_source_work_query and not tokens
         if not tokens and not structural_work_ref_query:
             return IndexSearchResult(hits=[])
@@ -46,6 +49,12 @@ class SQLiteSearchMixin:
                 "SELECT 1 FROM source_item_work_refs swr WHERE swr.source_item_id = target_id "
                 "AND swr.work_ref IN (" + ", ".join(names) + ")) "
             )
+        if filters and filters.relay_name and target_kind == "source_item":
+            work_ref_clause += (
+                "AND EXISTS (SELECT 1 FROM source_items si "
+                "WHERE si.id = target_id AND si.relay_name = :relay_name) "
+            )
+            work_ref_params["relay_name"] = filters.relay_name
 
         select_fts = (
             "SELECT index_entry_id, target_kind, target_id, text_view_name, "
@@ -64,7 +73,7 @@ class SQLiteSearchMixin:
             else "ORDER BY score"
         )
         exact_rows = None
-        if exact_source_work_query:
+        if exact_source_filter_query:
             def exact_pages():
                 with self._session_factory() as session:
                     if structural_work_ref_query:
@@ -125,9 +134,9 @@ class SQLiteSearchMixin:
 
             for row in rows:
                 key = (row.target_kind, row.target_id)
-                if exact_source_work_query and key in seen:
+                if exact_source_filter_query and key in seen:
                     continue
-                if exact_source_work_query:
+                if exact_source_filter_query:
                     seen.add(key)
                 score = -row.score
                 if not structural_work_ref_query and score < LEXICAL_BM25_FLOOR:
@@ -183,7 +192,7 @@ class SQLiteSearchMixin:
                 if len(hits) >= limit:
                     break
 
-            if not exact_source_work_query or len(rows) < page_size:
+            if not exact_source_filter_query or len(rows) < page_size:
                 break
 
         hits.sort(

@@ -574,6 +574,16 @@ async def test_post_non_connection_failures_remain_non_retryable(ctx: PalliumCon
     assert post.call_count == 1
     assert result == {"error": str(error)}
 
+class TestHistorySearchRelayName:
+    @pytest.mark.asyncio
+    async def test_exact_relay_name_is_forwarded(self, ctx: PalliumContext) -> None:
+        response = _mock_response(json_data={"results": []})
+        with patch("httpx.AsyncClient.post", return_value=response) as request:
+            await PalliumMcpClient(ctx).search_history("question", relay_name="planner")
+        assert request.call_args.kwargs["json"]["relay_name"] == "planner"
+        assert request.call_args.kwargs["json"]["source_only"] is True
+
+
 class TestHistoryDiagnostics:
     @pytest.mark.asyncio
     async def test_diagnostic_derives_trusted_requester_and_separate_source_filters(self, ctx: PalliumContext) -> None:

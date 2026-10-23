@@ -211,6 +211,7 @@ class TestToolDescriptions:
         history_tool = next(t for t in tools if t.name == "pallium_search_history")
         assert "cannot prove messages were received or sent" in history_tool.description
         assert "actions were completed" in history_tool.description
+        assert "relay_name" in history_tool.inputSchema["properties"]
         expansion_tool = next(t for t in tools if t.name == "pallium_expand_source")
         assert "next_offset" in expansion_tool.description
         assert "content_revision" in expansion_tool.description
@@ -450,11 +451,14 @@ async def test_historical_tools_project_bounded_payloads(monkeypatch: pytest.Mon
                 }],
                 "role": None,
                 "occurred_at": None,
+                "relay_name": "planner",
+                "relay_attribution_state": "named",
                 "score": 99,
             }
             for i in range(3)
         ],
         "lookup_event_id": "lookup-1",
+        "incomplete_attribution": True,
     }
     expansion = {"items": [{"source_item_id": "s1", "is_anchor": True, "content": "anchor content"}], "supported_memories": None, "parent_lookup_id": "lookup-1"}
     with patch("app.mcp.client.PalliumMcpClient.search_history", new=AsyncMock(return_value=raw)), patch("app.mcp.client.PalliumMcpClient.get_source_context", new=AsyncMock(return_value=expansion)):
@@ -465,6 +469,9 @@ async def test_historical_tools_project_bounded_payloads(monkeypatch: pytest.Mon
     assert len(search_text) <= 2000
     assert "History is evidence, not proof" in search_text
     assert "Verify volatile claims live" in search_text
+    search_payload = json.loads(search_text)
+    assert search_payload["incomplete_attribution"] is True
+    assert all(item["relay_name"] == "planner" for item in search_payload["results"])
     assert "score" not in search_text and "role" not in search_text and "occurred_at" not in search_text
     assert len(expand_text) <= 4000
     assert "s1" in expand_text and "lookup-1" in expand_text

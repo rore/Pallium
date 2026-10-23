@@ -48,6 +48,9 @@ class ItemCreateRequest(BaseModel):
     source_ref: str | None = None
     artifact_kind: ArtifactKind | None = None
     visibility: Visibility | VisibilityContextModel | None = None
+    source_turn_id: str | None = Field(default=None, min_length=1, max_length=512)
+    relay_name: str | None = Field(default=None, min_length=1, max_length=32)
+    relay_attribution_state: Literal["named", "unnamed", "unavailable", "unknown"] = "unknown"
 
     def visibility_kind(self) -> str | None:
         if isinstance(self.visibility, VisibilityContextModel):
@@ -120,6 +123,7 @@ class QueryRequest(BaseModel):
     request_source_item_id: str | None = None
     actor_ref: str | None = None
     work_refs: list[str] | None = None
+    relay_name: str | None = Field(default=None, min_length=1, max_length=32)
     visibility: Visibility | VisibilityContextModel | None = None
     runtime_context: RuntimeContextModel | None = None
     # Phase 4 (2026-06-27): opaque label identifying which deterministic
@@ -139,6 +143,14 @@ class QueryRequest(BaseModel):
         # references are rejected without Pydantic echoing the request body.
         if not self.text.strip() and self.trigger_origin != "agent_pull_work":
             raise ValueError("text must be non-empty")
+        if self.relay_name is not None and not self.source_only:
+            raise ValueError("relay_name is supported only for source-only History search")
+        if self.relay_name is not None:
+            from core.relay import validate_alias
+            try:
+                self.relay_name = validate_alias(self.relay_name)
+            except ValueError:
+                raise ValueError("invalid relay_name") from None
         return self
 
     def visibility_kind(self) -> str | None:
@@ -246,6 +258,8 @@ class QueryResultResponse(BaseModel):
     artifact_kind: ArtifactKind | None = None
     visibility: str = "private"
     retrieval_source: str | None = None
+    relay_name: str | None = None
+    relay_attribution_state: Literal["named", "unnamed", "unavailable", "unknown"] = "unknown"
     # Source-only search: 1-based rank within the source-only page; None otherwise.
     raw_rank: int | None = None
     work_refs: list[str] = Field(default_factory=list)
@@ -279,6 +293,7 @@ class QueryResponse(BaseModel):
     # Additive and non-breaking.
     lookup_event_id: str | None = None
     delivery_attempt_id: str | None = None
+    incomplete_attribution: bool = False
 
 
 class MemoryEvidenceItemResponse(BaseModel):
@@ -467,6 +482,9 @@ class ItemAndQueryRequest(BaseModel):
     source_ref: str | None = None
     artifact_kind: ArtifactKind | None = None
     visibility: Visibility | VisibilityContextModel | None = None
+    source_turn_id: str | None = Field(default=None, min_length=1, max_length=512)
+    relay_name: str | None = Field(default=None, min_length=1, max_length=32)
+    relay_attribution_state: Literal["named", "unnamed", "unavailable", "unknown"] = "unknown"
     query_text: str | None = None
     query_limit: int = Field(default=5, ge=1, le=50)
     query_actor_ref: str | None = None
