@@ -2285,6 +2285,8 @@ def test_operation_tracking_early_failure_drains_before_storage_close(tmp_path, 
 def test_summary_cancellation_keeps_diagnostic_workers_owned_until_drain(
     client, monkeypatch, cancel_target,
 ):
+    import json
+    import time
     from app import codex_readiness
 
     app = client.app
@@ -2293,9 +2295,77 @@ def test_summary_cancellation_keeps_diagnostic_workers_owned_until_drain(
     lock = threading.Lock()
     started_count = completed_count = 0
     original_read = codex_readiness.read
+    observed, phases, diagnostic_errors = [], {}, []
+    overflow = False
+    worker = threading.local()
+    counter_cells = []
+    labels = {"summary-first", "summary-second", "summary-queued"}
+
+    def record(label, phase):
+        nonlocal overflow
+        try:
+            with lock:
+                phases[label] = phase
+                if len(observed) < 64:
+                    observed.append({"task": label, "phase": phase, "at_ns": time.monotonic_ns()})
+                else:
+                    overflow = True
+        except BaseException as error:
+            if len(diagnostic_errors) < 4:
+                diagnostic_errors.append(type(error).__name__)
+
+    def bind_counter(operation):
+        try:
+            code = operation.__code__
+            run_code = next(value for value in create_app.__code__.co_consts
+                            if isinstance(value, type(code)) and value.co_name == "run_operation")
+            expected_code = next(value for value in run_code.co_consts
+                                 if isinstance(value, type(code)) and value.co_name == "tracked_operation")
+            if operation.__module__ != "app.main" or code is not expected_code:
+                raise ValueError("unexpected operation")
+            cells = dict(zip(code.co_freevars, operation.__closure__ or ()))
+            pair = (cells["active_operations"], cells["operations"])
+            if counter_cells and any(a is not b for a, b in zip(counter_cells, pair)):
+                raise ValueError("counter identity mismatch")
+            counter_cells[:] = pair
+        except BaseException as error:
+            if len(diagnostic_errors) < 4:
+                diagnostic_errors.append(type(error).__name__)
+
+    def failure_snapshot(requests, barrier):
+        with lock:
+            snapshot = {
+                "sample_ns": time.monotonic_ns(), "phases": dict(phases),
+                "events": list(observed), "overflow": overflow,
+                "cancel_target": cancel_target,
+                "started": started_count, "completed": completed_count,
+                "flags": {"first": first.is_set(), "full": full.is_set(),
+                          "release": release.is_set(), "finished": finished.is_set(),
+                          "closed": closed.is_set()},
+                "errors": list(diagnostic_errors),
+            }
+        snapshot["tasks"] = [{"name": task.get_name(), "done": task.done(),
+                              "cancelled": task.cancelled()} for task in requests]
+        snapshot["barrier_done"] = barrier is not None and barrier.done()
+        snapshot["active_operations_sample_start_ns"] = time.monotonic_ns()
+        snapshot["application_wide_active_operations"] = "counter_unknown"
+        if len(counter_cells) == 2 and not diagnostic_errors:
+            condition = counter_cells[1].cell_contents
+            if condition.acquire(False):
+                try:
+                    value = counter_cells[0].cell_contents
+                    if type(value) is int:
+                        snapshot["application_wide_active_operations"] = value
+                finally:
+                    condition.release()
+        snapshot["active_operations_sample_end_ns"] = time.monotonic_ns()
+        snapshot["limits"] = "Post-wait_for cancellation; separately timed counter samples; no leak or physical-cause inference"
+        return snapshot
 
     def held_readiness():
         nonlocal started_count, completed_count
+        label = getattr(worker, "label", "unknown")
+        record(label, "readiness_enter")
         with lock:
             started_count += 1
             first.set()
@@ -2304,7 +2374,14 @@ def test_summary_cancellation_keeps_diagnostic_workers_owned_until_drain(
         try:
             assert release.wait(10), "summary worker watchdog expired"
             assert not closed.is_set(), "summary accessed closed storage"
-            return original_read()
+            record(label, "readiness_read_enter")
+            try:
+                result = original_read()
+            except BaseException:
+                record(label, "readiness_read_raised")
+                raise
+            record(label, "readiness_read_returned")
+            return result
         finally:
             with lock:
                 completed_count += 1
@@ -2318,14 +2395,44 @@ def test_summary_cancellation_keeps_diagnostic_workers_owned_until_drain(
         original_dispatch = anyio.to_thread.run_sync
 
         async def observe_dispatch(operation, *args, **kwargs):
-            if asyncio.current_task().get_name() == "summary-queued":
+            label = asyncio.current_task().get_name()
+            if label == "summary-queued":
                 queued.set()
-            return await original_dispatch(operation, *args, **kwargs)
+            if label not in labels:
+                return await original_dispatch(operation, *args, **kwargs)
+            bind_counter(operation)
+            record(label, "dispatch_enter")
+
+            def observed_operation(*call_args, **call_kwargs):
+                previous = getattr(worker, "label", "unknown")
+                worker.label = label
+                record(label, "worker_enter")
+                try:
+                    result = operation(*call_args, **call_kwargs)
+                except BaseException:
+                    record(label, "worker_raised")
+                    raise
+                else:
+                    record(label, "worker_returned")
+                    return result
+                finally:
+                    worker.label = previous
+
+            try:
+                result = await original_dispatch(observed_operation, *args, **kwargs)
+            except asyncio.CancelledError:
+                record(label, "dispatch_cancelled")
+                raise
+            except BaseException:
+                record(label, "dispatch_raised")
+                raise
+            record(label, "dispatch_returned")
+            return result
 
         monkeypatch.setattr(anyio.to_thread, "run_sync", observe_dispatch)
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as http:
-            requests = [asyncio.create_task(http.get("/dashboard/api/relay/summary"))]
+            requests = [asyncio.create_task(http.get("/dashboard/api/relay/summary"), name="summary-first")]
             barrier = None
             try:
                 assert await asyncio.to_thread(first.wait, 1)
@@ -2333,7 +2440,7 @@ def test_summary_cancellation_keeps_diagnostic_workers_owned_until_drain(
                     http.get("/status"), http.get("/debug/queue/health"),
                 ), 2)
                 assert status.status_code == queue.status_code == 200
-                requests.append(asyncio.create_task(http.get("/dashboard/api/relay/summary")))
+                requests.append(asyncio.create_task(http.get("/dashboard/api/relay/summary"), name="summary-second"))
                 assert await asyncio.to_thread(full.wait, 1)
                 requests.append(asyncio.create_task(
                     http.get("/dashboard/api/relay/summary"), name="summary-queued",
@@ -2341,6 +2448,7 @@ def test_summary_cancellation_keeps_diagnostic_workers_owned_until_drain(
                 await asyncio.wait_for(queued.wait(), 1)
                 assert started_count == 2 and not requests[2].done()
                 cancelled = requests[2 if cancel_target == "queued" else 0]
+                record("controller", "intentional_cancel")
                 cancelled.cancel()
                 with pytest.raises(asyncio.CancelledError):
                     await cancelled
@@ -2353,7 +2461,19 @@ def test_summary_cancellation_keeps_diagnostic_workers_owned_until_drain(
                 }), 1)
                 assert turn.status_code == 200
                 release.set()
-                results = await asyncio.wait_for(asyncio.gather(*requests, return_exceptions=True), 2)
+                record("controller", "post_release_gather_start")
+                try:
+                    results = await asyncio.wait_for(asyncio.gather(*requests, return_exceptions=True), 2)
+                except TimeoutError as error:
+                    record("controller", "gather_timeout_after_cancellation")
+                    try:
+                        error.add_note("summary drain receipt: " + json.dumps(failure_snapshot(requests, barrier)))
+                    except BaseException:
+                        try:
+                            error.add_note("summary drain receipt unavailable")
+                        except BaseException:
+                            pass
+                    raise
                 assert sum(isinstance(result, asyncio.CancelledError) for result in results) == 1
                 responses = [result for result in results if isinstance(result, httpx.Response)]
                 assert len(responses) == 2 and all(result.status_code == 200 for result in responses)

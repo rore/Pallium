@@ -23,6 +23,37 @@ def test_ci_cancels_only_the_same_event_and_ref() -> None:
     assert "cancel-in-progress: true" in WORKFLOW
 
 
+def test_initial_send_manual_profile_keeps_qualification_as_default() -> None:
+    assert "default: qualification" in WORKFLOW
+    assert "options: [qualification, initial-send-diagnostic]" in WORKFLOW
+    condition = "github.event_name == 'workflow_dispatch' && inputs.profile == 'initial-send-diagnostic'"
+    diagnostic = _job("initial-send-diagnostic", "select")
+    assert f"if: {condition}" in diagnostic
+    assert f"{condition} && 'initial-send' || 'qualification'" in WORKFLOW
+    normal = "github.event_name != 'workflow_dispatch' || inputs.profile != 'initial-send-diagnostic'"
+    assert f"if: {normal}" in _job("select", "focused")
+    assert f"if: always() && ({normal})" in _job("result")
+    assert "  push:\n    branches: [main]" in WORKFLOW
+    assert "  pull_request:\n    branches: [main]" in WORKFLOW
+
+
+def test_initial_send_profile_has_no_matrix_or_other_case_dispatch() -> None:
+    diagnostic = _job("initial-send-diagnostic", "select")
+    assert "runs-on: ubuntu-24.04" in diagnostic
+    assert 'python-version: "3.13.16"' in diagnostic
+    assert '"20261012.334.1"' in diagnostic
+    assert "timeout-minutes: 10" in diagnostic
+    assert "contents: read" in diagnostic
+    assert "exec python -B -X utf8 scripts/diagnostics/initial_send/run.py" in diagnostic
+    for forbidden in ("matrix:", "always()", "continue-on-error", "Add-MpPreference",
+                      "workflow run", "pytest tests/", "queued-drain", "hook-lock"):
+        assert forbidden not in diagnostic
+    runner = (Path(__file__).parents[1] / "scripts/diagnostics/initial_send/run.py").read_text(encoding="utf-8")
+    assert 'NODE = "tests/test_codex_wake.py::test_exclusive_trial_binding_and_spend_survive_restart_and_later_delivery[True]"' in runner
+    assert runner.count("subprocess.Popen(") == 1
+    assert '"-n", "0"' in runner and "child.wait(timeout=max(0, test_deadline" in runner
+
+
 def test_every_event_reports_selection_and_policy_is_trusted() -> None:
     assert "paths-ignore:" not in WORKFLOW
     assert "  workflow_dispatch:" in WORKFLOW

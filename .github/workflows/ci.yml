@@ -6,16 +6,63 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      profile:
+        description: Qualification by default; initial-send diagnostic requires its scoped grant
+        type: choice
+        default: qualification
+        options: [qualification, initial-send-diagnostic]
   schedule:
     # Nightly full run (incl. the full Windows matrix). Off-peak, off :00.
     - cron: "17 6 * * *"
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && inputs.profile == 'initial-send-diagnostic' && 'initial-send' || 'qualification' }}
   cancel-in-progress: true
 
 jobs:
+  initial-send-diagnostic:
+    name: Initial-send observation (not qualification)
+    if: github.event_name == 'workflow_dispatch' && inputs.profile == 'initial-send-diagnostic'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Require the retained hosted image
+        shell: bash
+        run: test "${ImageVersion:-}" = "20261012.334.1"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13.16"
+      - name: Verify Python and install only retained application wheels
+        shell: bash
+        run: |
+          python -c 'import sys; assert sys.version_info[:3] == (3, 13, 16)'
+          echo '6d4e01b44d6ea5ef5292215891afd0d8ab73dd3351f7e35d7a51b9c6951084a5  scripts/diagnostics/initial_send/requirements.txt' | sha256sum -c -
+          python -m pip install --disable-pip-version-check --only-binary=:all: --no-deps -r scripts/diagnostics/initial_send/requirements.txt
+      - name: Observe the one fixed case with bounded owned-root cleanup
+        timeout-minutes: 3
+        shell: bash
+        env:
+          EXPECTED_MANIFEST_SHA256: 0509e8d88c0a9a5f121487679b344abd24bf7d57155fb81a49d768858d6c7adc
+        run: exec python -B -X utf8 scripts/diagnostics/initial_send/run.py
+      - name: Preserve diagnostic receipts without clearing a failed test
+        if: ${{ !cancelled() }}
+        timeout-minutes: 1
+        uses: actions/upload-artifact@v4
+        with:
+          name: initial-send-observation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/initial-send-proof/
+          if-no-files-found: error
+          retention-days: 7
+
   select:
+    if: github.event_name != 'workflow_dispatch' || inputs.profile != 'initial-send-diagnostic'
     runs-on: ubuntu-latest
     outputs:
       lane: ${{ steps.plan.outputs.lane }}
@@ -288,7 +335,7 @@ jobs:
   result:
     name: CI result
     needs: [select, focused, test, windows-smoke, windows-full, nightly-slow-smoke]
-    if: always()
+    if: always() && (github.event_name != 'workflow_dispatch' || inputs.profile != 'initial-send-diagnostic')
     runs-on: ubuntu-latest
     steps:
       - name: Require every selected lane to succeed
