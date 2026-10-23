@@ -41,7 +41,7 @@ Constructor concurrency and failed full-run disposition -> Run the existing exac
 
 **Exceptions:** —
 
-**State:** Blocked or returned to planning
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Current CI enrollment failure and bounded preparation plan
@@ -203,4 +203,10 @@ Same reviewer accepted the private observer after renaming capture integrity to 
 Actual connect/checkout identities and paired spans prove a new native connection in this observation: native_connect1.327ms, session_connection1.8248ms, BEGIN65.4421ms, whole B84.0846ms with15.625ms measured thread CPU. The historical2295ms connection delay did not reproduce. Profile and event listeners restored, workers settled, no overflow/unmatched/error. This local Windows observation is not hosted-Linux parity or ordinary whole-PR qualification. CPU quantization and blocking/descheduling ambiguity preclude historical causal attribution.
 
 Agent technical review: /root/relay_gate_plan_review, same independent reviewer; build/pool-subject-observation-01/result-review.json. Reviewed revision: c0d85c557e1af7c2e444bb70df66a1c52e1c8aab plus exact hashed private observer. Verification adequacy: accepted measurement package; diagnosis INCONCLUSIVE—STOP. Current PR353 CI remains NO-GO. No further observation, full suite, CI rerun, prepared-B patch or cure claim follows from this result. State remains Blocked or returned to planning; manager owns the next actual source/release disposition and canonical roadmap update. The incident stays open. Retain the original failed receipts, this checkout and private evidence for that concrete purpose; no installed operation or cleanup of referenced worktrees. These bookkeeping commits remain local to avoid triggering another unchanged-subject CI. Trigger1 dropped: these consumer test/admission incidents do not establish an Agent Workflow defect.
+
+## Resource-ready settlement positive control
+
+Manager's subsequent disposition authorizes this independent test correction after the inconclusive observation stopped. Same /root/relay_gate_plan_review explicitly reused its plan GO: only tests/test_relay_work_ref_associations_e2e.py's existing fixture and eight-case test_settled_relay_write_releases_gate_before_cleanup opt-in path change. Prepare B through the real session factory before A, with the same AUTOCOMMIT options; assert native inactivity and retain exact SQLAlchemy Connection/driver identity. Only B consumes the prepared Session once, sequentially; A must use a different native handle. Keep the actual HTTP/core gate/native450ms allowance/BEGIN/409/settlement/readback assertions unchanged. Observe only the exact SQLAlchemy SAWarning about ignored execution options around B's repeated real connection call. Save the original close method and dispose after owned workers settle, including when B never reaches its factory. Other fixture consumers keep their existing path.
+
+This establishes the resource-ready precondition for a positive gate-release control. It does not explain, fix or close the cold/native-connection incident, and the original CI remains red. No application, protected contract, global clock, timeout, API, dependency, runtime or installed configuration changes; existing Elevated/Moderate classification and application4d2ac1cb reviews remain applicable. Next: implement this precise test diff, obtain same-reviewer source GO, then freeze and request one exact eight-case qualification under a new finite grant. No test execution is approved by plan GO. If qualification fails, preserve that receipt and stop; no further fixture adjustment is preapproved. Sender845fe6cd's green head stays unchanged.
 
