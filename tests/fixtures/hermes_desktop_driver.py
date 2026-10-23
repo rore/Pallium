@@ -87,7 +87,7 @@ class DesktopConsole:
     """Drive only the owned renderer's ordinary composer and New session command."""
 
     def __init__(self, python, source, home, env, artifacts, stopped, tree, *, reuse_user_data=False,
-                 previous_spec=None):
+                 previous_spec=None, scope_mode="fixed"):
         self.tree, self.stopped, self.artifacts = tree, stopped, artifacts
         self.replies = queue.Queue()
         self.cdp = None
@@ -95,6 +95,10 @@ class DesktopConsole:
         self.proc = None
         self.paths_checked = False
         require_runner_gate(env, home, artifacts, source)
+        assert type(scope_mode) is str and scope_mode in {"fixed", "cwd"}, "unknown Desktop scope mode"
+        if scope_mode == "cwd":
+            scratch = contained_path(home, home / "scratch")
+            assert scratch.is_dir(), "existing Desktop workspace required"
         self.paths_checked = True
         executable = source / "apps" / "desktop" / "release" / "win-unpacked" / "Hermes.exe"
         contained_path(source, executable)
@@ -141,7 +145,8 @@ class DesktopConsole:
                 pass
         helper = Path(__file__).with_name("hermes_desktop_cdp_driver.cjs")
         self.cdp_log = (artifacts / "desktop-cdp-errors.txt").open("x", encoding="utf-8")
-        self.cdp = subprocess.Popen([env["HERMES_NODE"], str(helper), endpoint, str(source)],
+        self.cdp = subprocess.Popen([env["HERMES_NODE"], str(helper), endpoint, str(source),
+                                     scope_mode, str(home / "scratch")],
                                     cwd=home / "scratch", env=self.child_env, stdin=subprocess.PIPE,
                                     stdout=subprocess.PIPE, stderr=self.cdp_log, text=True, encoding="utf-8",
                                     creationflags=subprocess.CREATE_NO_WINDOW)

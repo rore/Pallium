@@ -82,6 +82,84 @@ console.log(JSON.stringify({accepted: d.validateEndpoint('ws://127.0.0.1:43123/d
     assert result["accepted"] == ENDPOINT
 
 
+def test_cwd_desktop_uses_native_settings_and_visible_new_draft(tmp_path):
+    runner = tmp_path / "runner"
+    workspace = runner / "home" / "scratch"
+    workspace.mkdir(parents=True)
+    (runner / "home" / "not-a-directory").write_text("test", encoding="utf-8")
+    source = r"""
+const d=require(process.argv[1]);
+const path=require('node:path');
+const [runner,home,workspace]=process.argv.slice(2);
+const env={GITHUB_ACTIONS:'true',RUNNER_ENVIRONMENT:'github-hosted',RUNNER_OS:'Windows',
+  RUNNER_ARCH:'X64',HERMES_NATIVE_CI_ISOLATION:'github-hosted-ephemeral-windows',
+  RUNNER_TEMP:runner,USERPROFILE:home};
+async function run(fault) {
+  const events=[]; let dir=null; let url='file:///synthetic/index.html#/sessions';
+  const composer={count:async()=>1,first(){return this},getAttribute:async key=>key==='contenteditable'?'true':null,
+    innerText:async()=>''};
+  const page={url:()=>url,waitForTimeout:async()=>{},reload:async()=>events.push('reload'),
+    evaluate:async(fn,arg)=>{
+      if(!fault.bridge) global.window={hermesDesktop:{settings:{
+        setDefaultProjectDir:async value=>{events.push('set');dir=value;return {dir:fault.setter?'wrong':value}},
+        getDefaultProjectDir:async()=>{events.push('get');return {dir,
+          resolvedCwd:fault.mismatch?'wrong':dir}}}}};
+      else global.window={};
+      return fn(arg);
+    },
+    getByRole:(_,options)=>({isVisible:async()=>options.name==='New project'?
+      !!fault.overview:!fault.allProjects&&!fault.overview&&!fault.noOverview,
+      click:async()=>events.push('overview')}),
+    getByText:()=>({isVisible:async()=>!!fault.allProjects,click:async()=>events.push('overview')}),
+    locator:selector=>selector.includes('composer-rich-input')?composer:{
+      click:async()=>{events.push('new');url='file:///synthetic/index.html#/'},
+      waitFor:async()=>events.push('cwd-rail'),innerText:async()=>fault.rail?'wrong':workspace.split(/[\\/]/).at(-1)},
+    waitForURL:async predicate=>{events.push('route');if(!predicate(new URL(url)))throw Error('bad route')}};
+  const browser={contexts:()=>[{pages:()=>[page]}],close:async()=>{}};
+  let error=null;
+  try {const driver=await d.connectDriver({endpoint:'ws://127.0.0.1:43123/devtools/browser/x',
+    sourceRoot:'.',workspace:fault.invalid?home:(fault.input??workspace),scopeMode:'cwd',env,
+    load:()=>({connectOverCDP:async()=>browser})});
+    await driver.ready(); if(!fault.invalid&&!fault.bridge&&!fault.mismatch) await driver.newSession();
+    await driver.close();
+  } catch(e) {error=e.message}
+  return {events,error};
+}
+(async()=>console.log(JSON.stringify({valid:await run({}),allProjects:await run({allProjects:true}),
+  overview:await run({overview:true}),noOverview:await run({noOverview:true}),
+  invalid:await run({invalid:true}),missing:await run({input:path.join(home,'missing')}),
+  relative:await run({input:'scratch'}),file:await run({input:path.join(home,'not-a-directory')}),
+  traversal:await run({input:workspace+path.sep+'..'+path.sep+'scratch'}),
+  bridge:await run({bridge:true}),setter:await run({setter:true}),
+  mismatch:await run({mismatch:true}),rail:await run({rail:true})})))();
+"""
+    result = run_node(source.replace("process.argv.slice(2)",
+                                     f"{json.dumps([str(runner), str(runner / 'home'), str(workspace)])}"), tmp_path)
+    valid = result["valid"]
+    assert valid["error"] is None
+    assert valid["events"].count("set") == 1 and valid["events"].count("reload") == 1
+    assert valid["events"].count("overview") == valid["events"].count("new") == 2
+    assert valid["events"].index("set") < valid["events"].index("get") < valid["events"].index("reload") \
+        < valid["events"].index("overview") < valid["events"].index("new") \
+        < valid["events"].index("route") < valid["events"].index("cwd-rail")
+    assert result["invalid"]["events"] == []
+    for key in ("invalid", "missing", "relative", "file", "traversal"):
+        assert result[key]["error"] and result[key]["events"] == [], result[key]
+    assert result["allProjects"]["error"] is None
+    assert result["allProjects"]["events"].count("overview") == 2
+    assert result["overview"]["error"] is None
+    assert result["overview"]["events"].count("new") == 2
+    assert "overview" not in result["overview"]["events"]
+    assert result["noOverview"]["error"] == "Desktop project overview is not visible"
+    assert "new" not in result["noOverview"]["events"]
+    assert result["bridge"]["events"] == []
+    assert result["bridge"]["error"]
+    assert result["setter"]["error"] and result["setter"]["events"] == ["set"]
+    assert result["mismatch"]["events"] == ["set", "get"]
+    assert result["mismatch"]["error"]
+    assert result["rail"]["error"] and "cwd-rail" in result["rail"]["events"]
+
+
 def test_ready_waits_for_renderer_page_and_enabled_composer(tmp_path):
     result = run_node(r"""
 const d = require(process.argv[1]);

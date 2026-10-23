@@ -22,7 +22,15 @@ def register(ctx):
 
     def post_llm_call(session_id="", turn_id="", **_context):
         if isinstance(session_id, str) and session_id and isinstance(turn_id, str) and turn_id:
+            row = {"session_id": session_id, "turn_id": turn_id}
+            try:
+                cwd = ctx.session_cwd()
+                if isinstance(cwd, str) and cwd:
+                    row["native_session_cwd"] = cwd
+            except Exception:
+                # CWD journeys require the field; fixed-scope hosts may lack this public API.
+                pass
             with audit.open("a", encoding="utf-8") as stream:
-                stream.write(json.dumps({"session_id": session_id, "turn_id": turn_id}) + "\n")
+                stream.write(json.dumps(row) + "\n")
 
     ctx.register_hook("post_llm_call", post_llm_call)

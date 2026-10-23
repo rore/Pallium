@@ -179,6 +179,27 @@ def test_native_peer_emits_exact_guard_witness_and_keeps_hook_audit_minimal(tmp_
     assert audit == {"session_id": "session-x", "turn_id": "turn-y"}
 
 
+@pytest.mark.parametrize("cwd", ["é 漢字", "", None, 42, RuntimeError("unavailable")])
+def test_native_peer_audits_optional_public_session_cwd(tmp_path, monkeypatch, cwd):
+    from tests.fixtures import hermes_native_peer_plugin as peer
+
+    monkeypatch.setattr(peer, "__file__", str(tmp_path / "peer.py"))
+    monkeypatch.delenv("PALLIUM_TUI_GUARD_WITNESS", raising=False)
+    hooks = {}
+
+    def session_cwd():
+        if isinstance(cwd, Exception):
+            raise cwd
+        return cwd
+
+    peer.register(types.SimpleNamespace(session_cwd=session_cwd,
+                                        register_hook=lambda name, callback: hooks.setdefault(name, callback)))
+    hooks["post_llm_call"](session_id="session-x", turn_id="turn-y")
+    row = json.loads((tmp_path / "audit.jsonl").read_text(encoding="utf-8"))
+    assert row == {"session_id": "session-x", "turn_id": "turn-y", **(
+        {"native_session_cwd": cwd} if isinstance(cwd, str) and cwd else {})}
+
+
 @pytest.mark.parametrize("shared_gateway", [0, 1, "true", None, {}])
 def test_driver_rejects_non_boolean_shared_gateway_before_runtime_import(tmp_path, monkeypatch, shared_gateway):
     from tests.fixtures import hermes_tui_driver as driver
@@ -220,6 +241,29 @@ def test_driver_rejects_unknown_surface_before_runtime_import(tmp_path, monkeypa
 
     monkeypatch.setattr("builtins.__import__", guard_import)
     with pytest.raises(AssertionError, match="unknown native UI surface"):
+        driver.driver_main(spec)
+    assert imported == []
+
+
+@pytest.mark.parametrize("scope_mode", [None, "auto", 1, {}])
+def test_driver_rejects_unknown_scope_mode_before_runtime_import(tmp_path, monkeypatch, scope_mode):
+    from tests.fixtures import hermes_tui_driver as driver
+
+    spec = tmp_path / "driver-spec.json"
+    spec.write_text(json.dumps({"home": str(tmp_path / "home"), "source": str(tmp_path / "source"),
+                                "python": str(tmp_path / "python"), "scope_mode": scope_mode}),
+                    encoding="utf-8")
+    imported = []
+    original_import = __import__
+
+    def guard_import(name, *args, **kwargs):
+        if name == "hermes_desktop_driver":
+            imported.append(name)
+            raise RuntimeError("runtime import must follow spec validation")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.__import__", guard_import)
+    with pytest.raises(AssertionError, match="unknown native scope mode"):
         driver.driver_main(spec)
     assert imported == []
 

@@ -1,6 +1,7 @@
 'use strict'
 
 const path = require('node:path')
+const fs = require('node:fs')
 const { createRequire } = require('node:module')
 const { createInterface } = require('node:readline')
 
@@ -33,6 +34,28 @@ function validateEndpoint(value) {
     throw new Error('Desktop CDP endpoint must be an ephemeral numeric-loopback browser WebSocket')
   }
   return endpoint.href
+}
+
+function validateWorkspace(workspace, env) {
+  if (typeof workspace !== 'string' || !path.isAbsolute(workspace) ||
+      path.normalize(workspace) !== workspace) throw new Error('Desktop workspace must be canonical and absolute')
+  const runner = env.RUNNER_TEMP
+  const home = env.USERPROFILE
+  if (!runner || !home || !path.isAbsolute(runner) || !path.isAbsolute(home)) {
+    throw new Error('Desktop workspace requires owned runner and home')
+  }
+  for (const target of [runner, home, workspace]) {
+    for (let part = target; ; part = path.dirname(part)) {
+      if (fs.lstatSync(part).isSymbolicLink()) throw new Error('Desktop workspace aliases are refused')
+      if (part === path.dirname(part)) break
+    }
+    if (fs.realpathSync.native(target) !== target) throw new Error('Desktop workspace aliases are refused')
+  }
+  if (!fs.statSync(workspace).isDirectory() ||
+      !home.startsWith(runner + path.sep) || !workspace.startsWith(home + path.sep)) {
+    throw new Error('Desktop workspace must be an existing owned directory')
+  }
+  return workspace
 }
 
 function loadChromium(sourceRoot) {
@@ -126,8 +149,11 @@ async function submitPageSnapshot(page) {
   }
 }
 
-async function connectDriver({ endpoint, sourceRoot, env = process.env, load = loadChromium, timeout = 30000 }) {
+async function connectDriver({ endpoint, sourceRoot, workspace, scopeMode = 'fixed',
+  env = process.env, load = loadChromium, timeout = 30000 }) {
   requireRunnerGate(env)
+  if (!['fixed', 'cwd'].includes(scopeMode)) throw new Error('unknown Desktop scope mode')
+  if (scopeMode === 'cwd') validateWorkspace(workspace, env)
   const url = validateEndpoint(endpoint)
   const chromium = load(sourceRoot)
   const browser = await chromium.connectOverCDP(url, { timeout })
@@ -139,6 +165,39 @@ async function connectDriver({ endpoint, sourceRoot, env = process.env, load = l
   }
   try {
     const page = await desktopPage(browser, timeout)
+    async function projectCwd() {
+      const result = await page.evaluate(async () => {
+        const settings = window.hermesDesktop?.settings
+        if (!settings?.getDefaultProjectDir) throw new Error('native Desktop project settings unavailable')
+        return settings.getDefaultProjectDir()
+      })
+      if (result?.dir !== workspace || result?.resolvedCwd !== workspace) {
+        throw new Error('native Desktop project directory mismatch')
+      }
+    }
+    async function enterWorkspace() {
+      if (scopeMode !== 'cwd') return
+      await projectCwd()
+      const overview = page.getByRole('button', {name: 'Show projects', exact: true})
+      if (await overview.isVisible()) await overview.click()
+      else {
+        const allProjects = page.getByText('All projects', {exact: true})
+        if (await allProjects.isVisible()) await allProjects.click()
+        else if (!(await page.getByRole('button', {name: 'New project', exact: true}).isVisible())) {
+          throw new Error('Desktop project overview is not visible')
+        }
+      }
+      await page.locator('[data-tour="sidebar-nav-new-session"]').click()
+      await page.waitForURL(url => url.hash === '#/', {timeout})
+      const composer = await waitForComposerReady()
+      if ((await composer.innerText()).trim()) throw new Error('new workspace composer is not empty')
+      const cwd = page.locator('[data-slot="coding-status-cwd"]')
+      await cwd.waitFor({state: 'visible', timeout})
+      if (!(await cwd.innerText()).trim().endsWith(path.basename(workspace))) {
+        throw new Error('Desktop draft project rail mismatch')
+      }
+      await projectCwd()
+    }
     async function waitForComposerReady() {
       const deadline = Date.now() + timeout
       while (true) {
@@ -165,10 +224,25 @@ async function connectDriver({ endpoint, sourceRoot, env = process.env, load = l
     return {
       async ready() {
         await waitForComposerReady()
+        if (scopeMode === 'cwd') {
+          const result = await page.evaluate(async dir => {
+            const settings = window.hermesDesktop?.settings
+            if (!settings?.setDefaultProjectDir || !settings?.getDefaultProjectDir) {
+              throw new Error('native Desktop project settings unavailable')
+            }
+            return settings.setDefaultProjectDir(dir)
+          }, workspace)
+          if (result?.dir !== workspace) throw new Error('native Desktop project setter mismatch')
+          await projectCwd()
+          await page.reload({waitUntil: 'domcontentloaded', timeout})
+          await waitForComposerReady()
+          await enterWorkspace()
+        }
         return { ready: true }
       },
       async submit(text) {
         if (typeof text !== 'string' || !text) throw new Error('submit text must be non-empty')
+        if (scopeMode === 'cwd') await projectCwd()
         let stage = 'readiness'
         let editorHandle
         let primaryError
@@ -210,6 +284,10 @@ async function connectDriver({ endpoint, sourceRoot, env = process.env, load = l
         return { visible: true }
       },
       async newSession() {
+        if (scopeMode === 'cwd') {
+          await enterWorkspace()
+          return {newSession: true}
+        }
         const current = await waitForComposerReady()
         await current.press('Control+n', {timeout})
         // Route-state barrier, not proof of a transition: when already fresh,
@@ -234,9 +312,9 @@ async function connectDriver({ endpoint, sourceRoot, env = process.env, load = l
   }
 }
 
-async function serveProtocol({ endpoint, sourceRoot, env = process.env, stdin = process.stdin,
+async function serveProtocol({ endpoint, sourceRoot, workspace, scopeMode, env = process.env, stdin = process.stdin,
   stdout = process.stdout, load = loadChromium }) {
-  const driver = await connectDriver({ endpoint, sourceRoot, env, load })
+  const driver = await connectDriver({ endpoint, sourceRoot, workspace, scopeMode, env, load })
   const input = createInterface({ input: stdin, crlfDelay: Infinity })
   try {
     for await (const line of input) {
@@ -266,12 +344,12 @@ async function serveProtocol({ endpoint, sourceRoot, env = process.env, stdin = 
 }
 
 if (require.main === module) {
-  const [endpoint, sourceRoot] = process.argv.slice(2)
+  const [endpoint, sourceRoot, scopeMode, workspace] = process.argv.slice(2)
   if (!endpoint || !sourceRoot) {
     process.stderr.write('usage: hermes_desktop_cdp_driver.cjs <owned-cdp-websocket> <hermes-source-root>\n')
     process.exitCode = 2
   } else {
-    serveProtocol({ endpoint, sourceRoot }).catch(error => {
+    serveProtocol({ endpoint, sourceRoot, scopeMode, workspace }).catch(error => {
       process.stderr.write(`${error.stack || error}\n`)
       process.exitCode = 1
     })

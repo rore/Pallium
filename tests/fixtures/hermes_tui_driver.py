@@ -906,8 +906,10 @@ def driver_main(spec_path: Path):
     spec = json.loads(spec_path.read_text(encoding="utf-8"))
     home, source, python = (Path(spec[key]).resolve() for key in ("home", "source", "python"))
     surface = spec.get("surface", "tui")
+    scope_mode = spec.get("scope_mode", "fixed")
     shared_gateway = spec.get("shared_gateway", False)
     assert surface in {"tui", "desktop"}, "unknown native UI surface"
+    assert type(scope_mode) is str and scope_mode in {"fixed", "cwd"}, "unknown native scope mode"
     assert type(shared_gateway) is bool, "shared_gateway must be a strict boolean"
     from hermes_desktop_driver import DesktopConsole, require_runner_gate
     if os.name == "nt":
@@ -996,7 +998,7 @@ def driver_main(spec_path: Path):
             console = console_class.__new__(console_class)
             console.__init__(python, source, home, dict(os.environ), spec_path.parent, stopped, tree,
                              reuse_user_data=spec.get("reuse_user_data", False),
-                             previous_spec=spec.get("previous_spec"))
+                             previous_spec=spec.get("previous_spec"), scope_mode=scope_mode)
         else:
             tui_env = dict(os.environ)
             tui_env.pop("PALLIUM_TUI_GATEWAY_WS", None)

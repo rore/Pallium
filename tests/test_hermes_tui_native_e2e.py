@@ -342,7 +342,8 @@ def test_cwd_project_seed_uses_local_origin_and_actor(tmp_path):
 def _peer_audit_rows(path):
     rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
     assert all(
-        isinstance(row, dict) and set(row) == {"session_id", "turn_id"}
+        isinstance(row, dict) and set(row) in ({"session_id", "turn_id"},
+                                               {"session_id", "turn_id", "native_session_cwd"})
         and all(isinstance(row[key], str) and row[key] for key in row)
         for row in rows
     ), rows
@@ -351,6 +352,17 @@ def _peer_audit_rows(path):
 
 def _peer_turn_ids(path, session_id):
     return {row["turn_id"] for row in _peer_audit_rows(path) if row["session_id"] == session_id}
+
+
+def _assert_peer_cwd(path, session_id, turn_id, workspace):
+    rows = [row for row in _peer_audit_rows(path)
+            if (row["session_id"], row["turn_id"]) == (session_id, turn_id)]
+    assert rows, "native turn has no completed cwd observation"
+    for row in rows:
+        assert row.get("native_session_cwd"), rows
+        native_cwd = Path(row["native_session_cwd"])
+        assert native_cwd.is_absolute() and native_cwd == native_cwd.resolve(), rows
+        assert native_cwd == workspace.resolve(), rows
 
 
 def pending_candidate_matches(response, delivery_id, endpoint_id):
@@ -1049,6 +1061,33 @@ def test_hermes_peer_audit_records_only_host_turn_ids(tmp_path):
     audit.write_text('{"session_id":"session-1","turn_id":"turn-1","prompt":"private"}\n', encoding="utf-8")
     with pytest.raises(AssertionError):
         _peer_audit_rows(audit)
+
+
+def test_peer_audit_cwd_requires_exact_native_turn_and_canonical_workspace(tmp_path):
+    audit = tmp_path / "audit.jsonl"
+    workspace = tmp_path / "é 漢字" / "scratch"
+    workspace.mkdir(parents=True)
+    good = {"session_id": "session-1", "turn_id": "turn-1", "native_session_cwd": str(workspace)}
+    audit.write_text(json.dumps(good) + "\n", encoding="utf-8")
+    _assert_peer_cwd(audit, "session-1", "turn-1", workspace)
+    for bad in ({"session_id": "session-1", "turn_id": "turn-1"},
+                {**good, "native_session_cwd": ""},
+                {**good, "native_session_cwd": str(workspace.parent)},
+                {**good, "native_session_cwd": str(workspace / "..")},
+                {**good, "native_session_cwd": str(workspace / ".." / "scratch")},
+                {**good, "native_session_cwd": "scratch"},
+                {**good, "native_session_cwd": 42},
+                {**good, "session_id": "session-2"},
+                {**good, "turn_id": "turn-2"}):
+        audit.write_text(json.dumps(bad) + "\n", encoding="utf-8")
+        with pytest.raises(AssertionError):
+            _assert_peer_cwd(audit, "session-1", "turn-1", workspace)
+    audit.write_text((json.dumps(good) + "\n") * 2, encoding="utf-8")
+    _assert_peer_cwd(audit, "session-1", "turn-1", workspace)
+    audit.write_text(json.dumps(good) + "\n" + json.dumps({
+        **good, "native_session_cwd": str(workspace.parent)}) + "\n", encoding="utf-8")
+    with pytest.raises(AssertionError):
+        _assert_peer_cwd(audit, "session-1", "turn-1", workspace)
 
 
 def test_hermes_peer_audit_turns_are_unique_and_session_scoped(tmp_path):
@@ -2376,7 +2415,7 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
         leg_one.mkdir()
         spec = leg_one / "driver-spec.json"
         spec.write_text(json.dumps({"home": str(home), "source": str(source), "python": str(python),
-                                    "surface": surface,
+                                    "surface": surface, "scope_mode": scope_mode,
                                     "shared_gateway": shared_gateway,
                                     "git": str(qualification_git), "git_sha256": qualification_git_sha256,
                                     "bundle_sha256": os.environ["HERMES_TUI_BUNDLE_SHA256"],
@@ -2422,7 +2461,7 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
             leg_two.mkdir()
             next_spec = leg_two / "driver-spec.json"
             next_spec.write_text(json.dumps({"home": str(home), "source": str(source),
-                "python": str(python), "surface": surface,
+                "python": str(python), "surface": surface, "scope_mode": scope_mode,
                 "shared_gateway": shared_gateway,
                 "git": str(qualification_git), "git_sha256": qualification_git_sha256,
                 "bundle_sha256": os.environ["HERMES_TUI_BUNDLE_SHA256"],
@@ -2445,6 +2484,11 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
                 driver.command("wait", text=HISTORY_ANSWER)
                 next_session = provider.completed[HISTORY_PROMPT]["pallium_relay_address"]["session_ref"]
                 assert next_session and next_session != session_id
+            if scope_mode == "cwd" and surface == "desktop":
+                turns = eventually(lambda: peer_audit.exists() and _peer_turn_ids(peer_audit, next_session),
+                                   "new Desktop session had no peer turn")
+                for turn_id in turns:
+                    _assert_peer_cwd(peer_audit, next_session, turn_id, home / "scratch")
             if not memory_enabled:
                 post_restart_queries = [row["body"] for row in forwarded if row["path"] == "/query"]
                 assert post_restart_queries and post_restart_queries[-1]["active_session_ref"] == next_session
@@ -2530,6 +2574,8 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
         original_turn_id = user["metadata"]["hermes_turn_id"]
         eventually(lambda: peer_audit.exists() and original_turn_id in _peer_turn_ids(peer_audit, session_id),
                    "peer hook did not observe the captured native host turn", timeout=15)
+        if scope_mode == "cwd" and surface == "desktop":
+            _assert_peer_cwd(peer_audit, session_id, original_turn_id, home / "scratch")
 
         processes = driver.command("inspect")["processes"]
         (artifacts / "owned-processes.json").write_text(json.dumps(processes, indent=2), encoding="utf-8")
@@ -2721,6 +2767,8 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
             busy_turn_id = busy_user_rows[0]["metadata"]["hermes_turn_id"]
         eventually(lambda: busy_turn_id in _peer_turn_ids(peer_audit, session_id),
                    "ordinary busy turn did not reach the host post-turn audit")
+        if scope_mode == "cwd" and surface == "desktop":
+            _assert_peer_cwd(peer_audit, session_id, busy_turn_id, home / "scratch")
 
         driver.command("wait", text=WAKE_ANSWERS[BUSY_WAKE])
         assert BUSY_WAKE in provider.completed
@@ -2800,6 +2848,12 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
             driver.command("submit", text=HISTORY_PROMPT, marker="native-ui-history")
             driver.command("wait", text=HISTORY_ANSWER)
         history = provider.completed[HISTORY_PROMPT]
+        if scope_mode == "cwd" and surface == "desktop":
+            history_session = history["pallium_relay_address"]["session_ref"]
+            history_turns = eventually(lambda: peer_audit.exists() and _peer_turn_ids(peer_audit, history_session),
+                                       "fresh Desktop session had no peer turn")
+            for turn_id in history_turns:
+                _assert_peer_cwd(peer_audit, history_session, turn_id, home / "scratch")
         anchor_id = next(row["source_item_id"] for row in history["pallium_search_history"]["results"]
                          if PROMPT in json.dumps(row, ensure_ascii=False))
         if scope_mode == "cwd":
