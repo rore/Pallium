@@ -487,14 +487,17 @@ def host(args):
             active = rows("a", "native-a")[0]
             tool("pallium_relay_address", {}, "native-a", "after-reload")
             manager.invoke_hook("on_session_finalize", session_id="native-a")
-            assert rows("a", "native-a")[0]["state"] == "closed"
-            tool("pallium_relay_address", {}, "native-a", "after-reload", error=True)
-            pre("native-a", "resumed", "new ordinary turn after finalize")
+            assert rows("a", "native-a")[0] == active
+            tool("pallium_relay_address", {}, "native-a", "after-reload")
+            manager.invoke_hook("on_session_end", session_id="native-a", turn_id="after-reload")
+            pre("native-a", "resumed", "new ordinary turn after advisory finalize")
             resumed = rows("a", "native-a")[0]
-            assert resumed["state"] == "recent" and resumed["scope_generation"] > active["scope_generation"]
-            manager.invoke_hook("on_session_delete", session_id="native-a")
+            assert resumed["state"] == "recent" and resumed["scope_generation"] == active["scope_generation"]
+            from hermes_cli.profiles import get_active_profile_name
+            manager.invoke_hook("on_session_delete", session_id="native-a", profile=get_active_profile_name(),
+                                reason="delete")
             assert rows("a", "native-a")[0]["state"] == "closed"
-        receipt["checks"].append("actual unload/reload, guarded finalize/delete and fresh incarnation")
+        receipt["checks"].append("actual unload/reload, manually dispatched advisory finalize and qualified delete")
         source_roots = {p.stem for p in args.source.glob("*.py")} | {
             p.name for p in args.source.iterdir() if p.is_dir() and (p / "__init__.py").is_file()}
         imported = {}

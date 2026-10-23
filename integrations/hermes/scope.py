@@ -416,8 +416,6 @@ def resolve_scope(cwd: object, previous: dict | None = None,
         container = pinned
     override = actor_override if isinstance(actor_override, str) else ""
     actor = override.strip() or os.environ.get("PALLIUM_HOOK_ACTOR_REF", "").strip()
-    if not actor and transient:
-        actor = previous.get("actor_ref") or "local"
     if not actor:
         actor = _git(current, ["config", "user.name"], deadline) or "local"
     if (not isinstance(actor, str) or actor != actor.strip() or not 0 < len(actor) <= 255

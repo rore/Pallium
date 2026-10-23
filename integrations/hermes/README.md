@@ -142,9 +142,10 @@ Native finalize is advisory: it does not change Relay binding, wake or close the
 endpoint. Only native delete with reason `delete`, explicit exact profile and
 session IDs, and committed permanent lineage retirement may conditionally close
 the saved endpoint and generation. Archive, prune, sweep, profile repair and
-missing or unknown reasons do not authorize closure. Finalize and soft delete
-can leave endpoint presence and pending messages according to their existing
-expiry. Native detach/resume ordering still needs qualification; the earlier Linux/Windows TUI
+missing or unknown reasons do not authorize closure. Finalize, soft delete or
+deletion without a matching notification can leave endpoint presence and pending
+messages according to their existing expiry. Native detach/resume ordering still
+needs qualification; the earlier Linux/Windows TUI
 journeys do not establish these corrected lifecycle contracts.
 
 ## History and memory
@@ -217,8 +218,9 @@ or live MCP readiness.
 <a id="compatibility-and-limits"></a>
 
 Automatic mode requires session-owned cwd, surface and bound-route capabilities.
-Accepted v0.22.4 CWD qualification covers Linux and Windows TUI with memory off
-and on. Windows Desktop CWD and the complete automatic-mode matrix remain pending.
+Earlier v0.22.4 CWD runs passed Linux and Windows TUI with memory off and on.
+The project, actor and lifecycle safety corrections require refreshed native
+proof; Windows Desktop CWD remains unqualified.
 Admission checks public capabilities rather than a release allowlist;
 v0.22.0/v0.22.2 receipts qualify fixed scope only because those releases lack the
 automatic-scope APIs. Missing capabilities fail with actionable diagnostics;

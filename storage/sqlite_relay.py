@@ -1670,6 +1670,7 @@ class SQLiteRelayMixin:
                 .join(RelayMessageRecord, RelayMessageRecord.id == RelayDeliveryRecord.message_id)
                 .where(
                     RelayDeliveryRecord.recipient_endpoint_id == registered.id,
+                    RelayDeliveryRecord.recipient_container_ref == registered.container_ref,
                     RelayMessageRecord.expires_at > current,
                     or_(
                         RelayDeliveryRecord.state == "pending",
@@ -2540,6 +2541,7 @@ class SQLiteRelayMixin:
                 .join(RelayMessageRecord, RelayMessageRecord.id == RelayDeliveryRecord.message_id)
                 .where(
                     RelayDeliveryRecord.recipient_endpoint_id == session.id,
+                    RelayDeliveryRecord.recipient_container_ref == session.container_ref,
                 )
                 .order_by(RelayMessageRecord.created_at, RelayDeliveryRecord.id)
             )

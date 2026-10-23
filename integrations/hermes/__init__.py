@@ -1297,17 +1297,10 @@ def register(ctx):
                 if observation and observation[0] == turn_id:
                     observed_requests.pop(session_id, None)
 
-    def close_session(session_id="", profile=None, deleted_ids=None, **_context):
-        if not automatic or not profile_ok() or profile is not None and profile != ctx.profile_name:
+    def close_session(session_id=""):
+        if not automatic or not profile_ok() or not _host_id(session_id):
             return
-        identifiers = []
-        if _host_id(session_id):
-            identifiers.append(session_id)
-        if deleted_ids is not None:
-            if not isinstance(deleted_ids, list) or any(not _host_id(value) for value in deleted_ids):
-                return
-            identifiers.extend(value for value in deleted_ids if value not in identifiers)
-        for identifier in identifiers:
+        for identifier in (session_id,):
             record = scope(identifier)
             with session_lock(identifier):
                 if not record or not profile_ok() or scope(identifier) != record:
@@ -1349,6 +1342,26 @@ def register(ctx):
                     sessions.pop(identifier, None)
                     for binding_key in [item for item in turn_bindings if item[0] == identifier]:
                         turn_bindings.pop(binding_key, None)
+
+    def finalize_session(**_context):
+        # Finalize may describe a detach or archive; it does not prove permanent deletion.
+        return None
+
+    def delete_session(session_id="", profile=None, reason=None, **_context):
+        if (not automatic or not profile_ok() or reason != "delete"
+                or profile != ctx.profile_name or not _host_id(session_id)):
+            return
+        if "deleted_ids" in _context:
+            deleted_ids = _context["deleted_ids"]
+            if (not isinstance(deleted_ids, list) or not deleted_ids
+                    or any(not _host_id(value) for value in deleted_ids)
+                    or session_id not in deleted_ids):
+                return
+            identifiers = dict.fromkeys(deleted_ids)
+        else:
+            identifiers = (session_id,)
+        for identifier in identifiers:
+            close_session(session_id=identifier)
 
     def unload():
         stop.set()
@@ -1396,6 +1409,6 @@ def register(ctx):
         )
     ctx.register_hook("on_session_end", serialized(clear_session))
     if automatic:
-        ctx.register_hook("on_session_finalize", close_session)
-        ctx.register_hook("on_session_delete", close_session)
+        ctx.register_hook("on_session_finalize", finalize_session)
+        ctx.register_hook("on_session_delete", delete_session)
     ctx.on_unload(unload)

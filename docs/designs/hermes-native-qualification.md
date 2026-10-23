@@ -62,7 +62,10 @@ normal owned-process cleanup; they provide no Desktop context result.
   with explicit exact profile/session identity after committed permanent lineage
   retirement. Archive, prune, sweep, profile repair and missing/unknown reasons
   are not closure authority. Finalize and soft delete can leave endpoint presence
-  and pending messages according to their existing expiry. Qualify detach/resume
+  and pending messages according to their existing expiry. The pinned canonical
+  Gateway mutation path retires a deleted lineage without emitting this plugin
+  notification; it does not establish conditional-close callback coverage.
+  Qualify detach/resume
   ordering and stale callback behavior on the corrected production source before claiming
   lifecycle coverage.
 - Shared Relay availability failures remain unresolved. Keep failed CI and

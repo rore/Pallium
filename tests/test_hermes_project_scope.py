@@ -348,11 +348,11 @@ def test_active_turn_reload_preserves_authority_but_malformed_stamp_refuses(clie
 
 
 @pytest.mark.parametrize("reload", [False, True])
-def test_finalized_turn_cannot_resume_closed_incarnation(client, project_plugin, tmp_path, reload):
+def test_permanently_deleted_turn_cannot_resume_closed_incarnation(client, project_plugin, tmp_path, reload):
     _module, ctx, pre, create, _calls, _settings = project_plugin
     root = _repo(tmp_path, "a")
     assert pre(str(root), turn="a")
-    ctx.hooks["on_session_finalize"](session_id="session")
+    ctx.hooks["on_session_delete"](session_id="session", profile=ctx.profile_name, reason="delete")
     owner = create(ctx.state) if reload else ctx
     assert pre(str(root), turn="a", context=owner) is None
     assert _sessions(client, _project("a"))[0]["state"] == "closed"
@@ -1232,15 +1232,14 @@ def test_structural_branch_work_is_admitted_and_used_for_capture(client, project
     assert writes[0]["metadata"]["pallium_work_refs"] == [row["work_ref"] for row in refs]
 
 
-@pytest.mark.parametrize("hook", ["on_session_finalize", "on_session_delete"])
-def test_true_disposal_guards_exact_endpoint_and_allows_new_user_resume(client, project_plugin, tmp_path, hook):
+def test_qualified_delete_closes_exact_endpoint_and_rebinds_synthetic_session(client, project_plugin, tmp_path):
     _module, ctx, pre, _create, _calls, _settings = project_plugin
     a = _repo(tmp_path, "a")
     assert pre(str(a), turn="a")
     original = _sessions(client, _project("a"))[0]
-    ctx.hooks[hook](session_id="session", profile="foreign-profile")
+    ctx.hooks["on_session_delete"](session_id="session", profile="foreign-profile", reason="delete")
     assert _sessions(client, _project("a"))[0]["state"] == "recent"
-    ctx.hooks[hook](session_id="session")
+    ctx.hooks["on_session_delete"](session_id="session", profile=ctx.profile_name, reason="delete")
     closed = _sessions(client, _project("a"))[0]
     assert closed["endpoint_id"] == original["endpoint_id"]
     assert closed["state"] == "closed"
@@ -1250,6 +1249,155 @@ def test_true_disposal_guards_exact_endpoint_and_allows_new_user_resume(client, 
     assert resumed["endpoint_id"] == original["endpoint_id"]
     assert resumed["scope_generation"] == original["scope_generation"] + 1
     assert resumed["state"] == "recent"
+
+
+@pytest.mark.parametrize("reload", [False, True])
+def test_finalize_is_advisory_across_resume_and_reload(client, project_plugin, tmp_path, monkeypatch, reload):
+    module, ctx, pre, create, _calls, _settings = project_plugin
+    root = _repo(tmp_path, "finalize-advisory")
+    assert pre(str(root), turn="first")
+    if reload:
+        ctx = create(ctx.state)
+        assert pre(str(root), turn="first", context=ctx)
+    session = _sessions(client, _project("finalize-advisory"))[0]
+    saved = copy.deepcopy(ctx.state.values)
+    closes = []
+    http = module._json_request
+
+    def observe(base, method, path, **kwargs):
+        if path == "/relay/sessions/close-if-current":
+            closes.append(kwargs["body"])
+        return http(base, method, path, **kwargs)
+
+    monkeypatch.setattr(module, "_json_request", observe)
+    ctx.hooks["on_session_finalize"](session_id="session", profile=ctx.profile_name)
+    assert closes == [] and ctx.state.values == saved
+    assert _sessions(client, _project("finalize-advisory"))[0] == session
+    assert "error" not in json.loads(_mcp_tool(ctx, "pallium_relay_address", {}, session="session", turn="first"))
+    ctx.hooks["on_session_end"](session_id="session", turn_id="first")
+    assert pre(str(root), turn="after-archive", context=ctx)
+    resumed = _sessions(client, _project("finalize-advisory"))[0]
+    assert (resumed["endpoint_id"], resumed["scope_generation"]) == (
+        session["endpoint_id"], session["scope_generation"])
+    ctx.hooks["on_session_finalize"](session_id="session", profile=ctx.profile_name)
+    assert closes == [] and _sessions(client, _project("finalize-advisory"))[0] == resumed
+
+
+def test_finalize_preserves_pending_wake_and_reloaded_authority(client, project_plugin, tmp_path, monkeypatch):
+    module, ctx, pre, create, _calls, _settings = project_plugin
+    monkeypatch.setattr(module, "POLL_SECONDS", .01)
+    root = _repo(tmp_path, "finalize-wake")
+    assert pre(str(root), turn="seed")
+    session = _sessions(client, _project("finalize-wake"))[0]
+    assert client.post("/relay/turn", json={
+        "runtime": "codex", "session_ref": "peer", "container_ref": _project("finalize-wake")}).status_code == 200
+    sent = client.post("/relay/messages", json={
+        "sender_runtime": "codex", "sender_session_ref": "peer", "recipient": session["endpoint_id"],
+        "payload": "pending across advisory finalize", "container_ref": _project("finalize-wake")})
+    assert sent.status_code == 200, sent.text
+    marker = _await(lambda: ctx.injections and ctx.injections[-1][0])
+    saved = copy.deepcopy(ctx.state.values)
+    closes = []
+    http = module._json_request
+
+    def observe(base, method, path, **kwargs):
+        if path == "/relay/sessions/close-if-current":
+            closes.append(kwargs["body"])
+        return http(base, method, path, **kwargs)
+
+    monkeypatch.setattr(module, "_json_request", observe)
+    ctx.hooks["on_session_finalize"](session_id="session")
+    assert ctx.state.values == saved and closes == []
+    owner = create(ctx.state)
+    reloaded = copy.deepcopy(owner.state.values)
+    owner.hooks["on_session_finalize"](session_id="session", profile=owner.profile_name)
+    assert owner.state.values == reloaded and closes == []
+    assert _sessions(client, _project("finalize-wake"))[0] == session
+    wake = pre(str(root), turn="wake", message=marker, context=owner)
+    assert wake and "pending across advisory finalize" in wake["context"]
+    request = {"messages": [{"role": "user", "content": marker + "\n\n" + wake["context"]}]}
+    _observe_request(owner, request, session="session", turn="wake", api_request_id="api-finalize-wake")
+    delivery = client.get("/relay/messages/" + sent.json()["message_id"],
+                          params={"container_ref": _project("finalize-wake")}).json()["deliveries"][0]
+    assert delivery["state"] == "delivered"
+
+
+@pytest.mark.parametrize("event", [
+    {}, {"profile": "foreign", "reason": "delete"}, {"reason": "delete"},
+    {"profile": 7, "reason": "delete"},
+    {"profile": "own"},
+    *({"profile": "own", "reason": reason} for reason in
+      ("archive", "prune", "sweep", "profile_repair", "unknown", None)),
+    {"profile": "own", "reason": "delete", "session_id": ""},
+    {"profile": "own", "reason": "delete", "session_id": " bad"},
+    {"profile": "own", "reason": "delete", "session_id": "x" * 256},
+    {"profile": "own", "reason": "delete", "session_id": 7},
+    {"profile": "own", "reason": "delete", "deleted_ids": []},
+    {"profile": "own", "reason": "delete", "deleted_ids": None},
+    {"profile": "own", "reason": "delete", "deleted_ids": "one"},
+    {"profile": "own", "reason": "delete", "deleted_ids": ["one", ""]},
+    {"profile": "own", "reason": "delete", "deleted_ids": ["one", "missing\n"]},
+    {"profile": "own", "reason": "delete", "deleted_ids": ["one", "x" * 256]},
+    {"profile": "own", "reason": "delete", "deleted_ids": ["two"]},
+], ids=lambda value: str(value))
+def test_unqualified_delete_refuses_whole_event_before_close(client, project_plugin, tmp_path, monkeypatch, event):
+    module, ctx, pre, _create, _calls, _settings = project_plugin
+    one, two = _repo(tmp_path, "one"), _repo(tmp_path, "two")
+    assert pre(str(one), session="one", turn="seed")
+    assert pre(str(two), session="two", turn="seed")
+    before = (_sessions(client, _project("one"), "one"), _sessions(client, _project("two"), "two"))
+    saved = copy.deepcopy(ctx.state.values)
+    closes = []
+    http = module._json_request
+
+    def observe(base, method, path, **kwargs):
+        if path == "/relay/sessions/close-if-current":
+            closes.append(kwargs["body"])
+        return http(base, method, path, **kwargs)
+
+    monkeypatch.setattr(module, "_json_request", observe)
+    fields = {"session_id": "one", **event}
+    if fields.get("profile") == "own":
+        fields["profile"] = ctx.profile_name
+    ctx.hooks["on_session_delete"](**fields)
+    assert closes == [] and ctx.state.values == saved
+    assert (_sessions(client, _project("one"), "one"),
+            _sessions(client, _project("two"), "two")) == before
+
+
+def test_qualified_delete_list_closes_exact_sessions_once(client, project_plugin, tmp_path, monkeypatch):
+    module, ctx, pre, _create, _calls, _settings = project_plugin
+    for name in ("one", "two", "unrelated"):
+        assert pre(str(_repo(tmp_path, name)), session=name, turn="seed")
+    unrelated = _sessions(client, _project("unrelated"), "unrelated")[0]
+    closes = []
+    http = module._json_request
+
+    def observe(base, method, path, **kwargs):
+        if path == "/relay/sessions/close-if-current":
+            closes.append(kwargs["body"])
+        return http(base, method, path, **kwargs)
+
+    monkeypatch.setattr(module, "_json_request", observe)
+    event = {"session_id": "one", "deleted_ids": ["one", "two", "one"],
+             "profile": ctx.profile_name, "reason": "delete"}
+    ctx.hooks["on_session_delete"](**event)
+    assert [row["session_ref"] for row in closes] == ["one", "two"]
+    assert all({"expected_endpoint_id", "expected_scope_generation"} <= set(row) for row in closes)
+    assert _sessions(client, _project("one"), "one")[0]["state"] == "closed"
+    assert _sessions(client, _project("two"), "two")[0]["state"] == "closed"
+    assert _sessions(client, _project("unrelated"), "unrelated")[0] == unrelated
+    ctx.hooks["on_session_delete"](**event)
+    assert [row["session_ref"] for row in closes] == ["one", "two"]
+
+
+@pytest.mark.parametrize("native_id", ["session-שלום", "s" * 255])
+def test_qualified_delete_accepts_native_id_boundaries(client, project_plugin, tmp_path, native_id):
+    _module, ctx, pre, _create, _calls, _settings = project_plugin
+    root = _repo(tmp_path, "boundary")
+    assert pre(str(root), session=native_id, turn="seed")
+    ctx.hooks["on_session_delete"](session_id=native_id, profile=ctx.profile_name, reason="delete")
+    assert _sessions(client, _project("boundary"), native_id)[0]["state"] == "closed"
 
 
 def test_bulk_delete_is_profile_scoped_and_uncertain_close_survives_reload(client, project_plugin, tmp_path, monkeypatch):
@@ -1268,7 +1416,8 @@ def test_bulk_delete_is_profile_scoped_and_uncertain_close_survives_reload(clien
         return http(base, method, path, **kwargs)
 
     monkeypatch.setattr(module, "_json_request", fail_close)
-    ctx.hooks["on_session_delete"](session_id="one", deleted_ids=["one", "two"], profile=ctx.profile_name)
+    ctx.hooks["on_session_delete"](session_id="one", deleted_ids=["one", "two"],
+                                   profile=ctx.profile_name, reason="delete")
     assert len(attempts) == 2
     assert all({"expected_endpoint_id", "expected_scope_generation"} <= set(row) for row in attempts)
     assert _sessions(client, _project("a"), "one")[0]["state"] == "recent"
@@ -1319,7 +1468,7 @@ def test_missing_conditional_close_route_keeps_reload_fence_without_legacy_fallb
         return http(base, method, path, **kwargs)
 
     monkeypatch.setattr(module, "_json_request", old_service)
-    ctx.hooks["on_session_finalize"](session_id="session")
+    ctx.hooks["on_session_delete"](session_id="session", profile=ctx.profile_name, reason="delete")
     assert attempts == ["/relay/sessions/close-if-current"]
     assert _sessions(client, _project("missing-close-route"))[0]["state"] == "recent"
     reloaded = create(ctx.state)
@@ -1352,7 +1501,8 @@ def test_close_callback_started_during_transition_cannot_close_successor(client,
     with ThreadPoolExecutor(max_workers=1) as pool:
         transition = pool.submit(pre, str(b), turn="b")
         assert entered.wait(5)
-        closing = threading.Thread(name="close-callback", target=ctx.hooks["on_session_finalize"], kwargs={"session_id": "session"})
+        closing = threading.Thread(name="close-callback", target=ctx.hooks["on_session_delete"],
+                                   kwargs={"session_id": "session", "profile": ctx.profile_name, "reason": "delete"})
         closing.start()
         try:
             assert snapshot.wait(5)
@@ -1435,7 +1585,7 @@ def test_unsafe_origin_never_registers_or_logs_secret(client, project_plugin, tm
     assert secret not in caplog.text
 
 
-def test_finalize_after_reload_defers_until_inflight_operation_finishes(client, project_plugin, tmp_path, monkeypatch):
+def test_delete_after_reload_defers_until_inflight_operation_finishes(client, project_plugin, tmp_path, monkeypatch):
     module, ctx, pre, create, _calls, _settings = project_plugin
     a = _repo(tmp_path, "a")
     assert pre(str(a), turn="a")
@@ -1464,7 +1614,8 @@ def test_finalize_after_reload_defers_until_inflight_operation_finishes(client, 
         assert entered.wait(5)
         reloaded = create(ctx.state)
         try:
-            reloaded.hooks["on_session_finalize"](session_id="session")
+            reloaded.hooks["on_session_delete"](session_id="session", profile=ctx.profile_name,
+                                                reason="delete")
             assert closes == []
             assert _sessions(client, _project("a"))[0]["state"] == "recent"
         finally:

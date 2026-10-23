@@ -80,8 +80,9 @@ Turn completion releases only that turn's admitted wake. Native session finalize
 is advisory and does not close the Relay endpoint or trigger a wake. Only an
 explicit permanent session deletion can close its saved exact endpoint and
 generation after lineage retirement is committed. Other lifecycle notifications
-do not authorize closure. Finalize or soft delete can leave presence and pending
-messages according to their existing expiry. Current native Desktop/TUI
+do not authorize closure. Finalize, soft delete or deletion without a matching
+notification can leave presence and pending messages according to their existing
+expiry. Current native Desktop/TUI
 lifecycle qualification is still pending.
 
 Changing project or actor retires earlier turn authority, including after a
@@ -134,9 +135,10 @@ they do not authorize overwriting an unowned file.
 - Automatic project scope requires session-owned cwd, surface and bound-route
   capabilities. Pallium keeps the native injection route separate from the
   conversation ID used by Relay and History. Missing capabilities or an unbound
-  route fail closed. Accepted v0.22.4 CWD qualification covers Linux and Windows
-  TUI with memory off and on. Windows Desktop CWD and the complete automatic-mode
-  matrix remain pending. Admission uses capability checks rather than a release
+  route fail closed. Earlier v0.22.4 CWD runs passed Linux and Windows TUI with
+  memory off and on. The project, actor and lifecycle safety corrections require
+  refreshed native proof; Windows Desktop CWD remains unqualified.
+  Admission uses capability checks rather than a release
   allowlist.
 - Existing v0.22.0/v0.22.2 Linux TUI and Windows Desktop/TUI receipts qualify fixed
   scope only. Those releases lack the required automatic-scope APIs; their results
