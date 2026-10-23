@@ -135,8 +135,8 @@ trace for uncertain outcomes rather than resending blindly.
 `on_session_end` completes a host turn; it does not mean conversation deletion.
 Native finalize/delete callbacks use the saved project, endpoint and generation
 to close that exact Relay incarnation. Unconfirmed closure remains fenced rather
-than granting fresh authority. Public-host and Linux TUI CWD lifecycle checks
-pass; Windows Desktop/TUI CWD qualification remains pending.
+than granting fresh authority. Public-host and Linux/Windows TUI CWD lifecycle
+checks pass; Windows Desktop CWD qualification remains pending.
 
 ## History and memory
 
@@ -208,8 +208,8 @@ or live MCP readiness.
 <a id="compatibility-and-limits"></a>
 
 Automatic mode requires session-owned cwd, surface and bound-route capabilities.
-Accepted v0.22.4 CWD qualification covers Linux TUI with memory off and on.
-Windows Desktop/TUI CWD and the complete automatic-mode matrix remain pending.
+Accepted v0.22.4 CWD qualification covers Linux and Windows TUI with memory off
+and on. Windows Desktop CWD and the complete automatic-mode matrix remain pending.
 Admission checks public capabilities rather than a release allowlist;
 v0.22.0/v0.22.2 receipts qualify fixed scope only because those releases lack the
 automatic-scope APIs. Missing capabilities fail with actionable diagnostics;

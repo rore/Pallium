@@ -243,7 +243,7 @@ delivery enters context and which recovery paths are supported.
 | [Claude Code](claude-code-integration.md#delivery-and-recovery) | Exact-session wake on qualified Windows and installed Linux UDS paths; Linux coverage used Ubuntu 24.04. | Pending messages can arrive on the next normal turn when wake is unavailable. macOS active wake is not qualified. |
 | [Codex](codex-integration.md#delivery-and-recovery) | Exact-session wake for loaded Windows/Linux tasks. Supported Windows Desktop also uses authenticated retained MCP for unloaded tasks. | Working, unknown or disconnected tasks stay pending; normal hook turns provide fallback. Linux requires trusted hooks; macOS active wake is not qualified. No alternate native submission follows an attempted or uncertain wake. |
 | [OpenCode](../integrations/opencode/README.md#delivery-and-recovery) | V1 is passive. Opt-in V2 adds native queued wake; combined coverage is isolated Windows OpenCode 2.0.24. | V1 delivers on normal turns. V2 claim-lease recovery can leave work for a later normal turn; unverified admission is not silently resubmitted. Other V2 releases/platforms and global installation are unqualified. |
-| [Hermes Desktop/TUI](hermes-integration.md#delivery-and-recovery) | Native plugin wake with current session CWD and complete-context admission. Linux TUI CWD is validated on v0.22.4. | Windows CWD qualification is pending. Busy sessions and outages leave deliveries pending; controlled relaunch is covered. Uncertain claim/ACK stays fenced. See the guide for other platform and recovery limits. |
+| [Hermes Desktop/TUI](hermes-integration.md#delivery-and-recovery) | Native plugin wake with current session CWD and complete-context admission. Linux and Windows TUI CWD are validated on v0.22.4. | Windows Desktop CWD qualification is pending. Busy sessions and outages leave deliveries pending; controlled relaunch is covered. Uncertain claim/ACK stays fenced. See the guide for other platform and recovery limits. |
 
 Use each guide for setup, trust requirements and recovery instructions. Current
 planning remains in the [wake roadmap](../roadmap/features/add-wake-first-relay-delivery.md);
@@ -365,8 +365,8 @@ transition contract. Transient non-Git cwd retains the prior pin. Missing or
 ambiguous session scope fails closed; polling uses saved records rather than a
 background process cwd. Pending or uncertain wake ownership remains fenced in
 its original project. An intentional fixed-scope compatibility installation does
-not follow cwd. Linux TUI CWD qualification covers v0.22.4; Windows Desktop/TUI
-CWD remains pending. See the Hermes guide for the tested scope and limits.
+not follow cwd. Linux and Windows TUI CWD qualification covers v0.22.4; Windows
+Desktop CWD remains pending. See the Hermes guide for the tested scope and limits.
 
 Integrations that use conditional disposal opt in during registration. For these
 endpoints, reopening advances the scope generation even when the legacy close

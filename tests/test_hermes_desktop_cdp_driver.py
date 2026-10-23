@@ -96,9 +96,25 @@ const env={GITHUB_ACTIONS:'true',RUNNER_ENVIRONMENT:'github-hosted',RUNNER_OS:'W
   RUNNER_TEMP:runner,USERPROFILE:home};
 async function run(fault) {
   const events=[]; let dir=null; let url='file:///synthetic/index.html#/sessions';
+  let polls=0, exited=false;
+  const loaded=()=>polls>=(fault.delay??0);
+  const filtersVisible=()=>{
+    if(fault.ambiguous) throw Error('ambiguous Filters');
+    return loaded()&&!fault.noOverview&&!fault.stuckExit&&(exited||fault.overview);
+  };
+  const sidebar={
+    getByRole:(_,options)=>options.name==='Filters'?{
+      isVisible:async()=>filtersVisible(),waitFor:async()=>{
+        if(!filtersVisible())throw Error('Filters not ready');events.push('filters-ready');}
+    }:{isVisible:async()=>loaded()&&!fault.allProjects&&!fault.overview&&!fault.noOverview,
+      click:async()=>{events.push('overview');exited=true;}},
+    getByText:()=>({isVisible:async()=>loaded()&&!!fault.allProjects,
+      click:async()=>{events.push('overview');exited=true;}}),
+    locator:selector=>page.locator(selector)
+  };
   const composer={count:async()=>1,first(){return this},getAttribute:async key=>key==='contenteditable'?'true':null,
     innerText:async()=>''};
-  const page={url:()=>url,waitForTimeout:async()=>{},reload:async()=>events.push('reload'),
+  const page={url:()=>url,waitForTimeout:async()=>{polls++;events.push('poll');},reload:async()=>events.push('reload'),
     evaluate:async(fn,arg)=>{
       if(!fault.bridge) global.window={hermesDesktop:{settings:{
         setDefaultProjectDir:async value=>{events.push('set');dir=value;return {dir:fault.setter?'wrong':value}},
@@ -107,11 +123,8 @@ async function run(fault) {
       else global.window={};
       return fn(arg);
     },
-    getByRole:(_,options)=>({isVisible:async()=>options.name==='New project'?
-      !!fault.overview:!fault.allProjects&&!fault.overview&&!fault.noOverview,
-      click:async()=>events.push('overview')}),
-    getByText:()=>({isVisible:async()=>!!fault.allProjects,click:async()=>events.push('overview')}),
-    locator:selector=>selector.includes('composer-rich-input')?composer:{
+    locator:selector=>selector==='[data-tour="sessions-sidebar"]'?sidebar:
+      selector.includes('composer-rich-input')?composer:{
       click:async()=>{events.push('new');url='file:///synthetic/index.html#/'},
       waitFor:async()=>events.push('cwd-rail'),innerText:async()=>fault.rail?'wrong':workspace.split(/[\\/]/).at(-1)},
     waitForURL:async predicate=>{events.push('route');if(!predicate(new URL(url)))throw Error('bad route')}};
@@ -119,6 +132,7 @@ async function run(fault) {
   let error=null;
   try {const driver=await d.connectDriver({endpoint:'ws://127.0.0.1:43123/devtools/browser/x',
     sourceRoot:'.',workspace:fault.invalid?home:(fault.input??workspace),scopeMode:'cwd',env,
+    timeout:fault.noOverview?0:30000,
     load:()=>({connectOverCDP:async()=>browser})});
     await driver.ready(); if(!fault.invalid&&!fault.bridge&&!fault.mismatch) await driver.newSession();
     await driver.close();
@@ -127,6 +141,8 @@ async function run(fault) {
 }
 (async()=>console.log(JSON.stringify({valid:await run({}),allProjects:await run({allProjects:true}),
   overview:await run({overview:true}),noOverview:await run({noOverview:true}),
+  delayedFlat:await run({overview:true,delay:2}),delayedExit:await run({delay:2}),
+  ambiguous:await run({ambiguous:true}),stuckExit:await run({stuckExit:true}),
   invalid:await run({invalid:true}),missing:await run({input:path.join(home,'missing')}),
   relative:await run({input:'scratch'}),file:await run({input:path.join(home,'not-a-directory')}),
   traversal:await run({input:workspace+path.sep+'..'+path.sep+'scratch'}),
@@ -138,7 +154,8 @@ async function run(fault) {
     valid = result["valid"]
     assert valid["error"] is None
     assert valid["events"].count("set") == 1 and valid["events"].count("reload") == 1
-    assert valid["events"].count("overview") == valid["events"].count("new") == 2
+    assert valid["events"].count("overview") == 1
+    assert valid["events"].count("new") == 2
     assert valid["events"].index("set") < valid["events"].index("get") < valid["events"].index("reload") \
         < valid["events"].index("overview") < valid["events"].index("new") \
         < valid["events"].index("route") < valid["events"].index("cwd-rail")
@@ -146,12 +163,21 @@ async function run(fault) {
     for key in ("invalid", "missing", "relative", "file", "traversal"):
         assert result[key]["error"] and result[key]["events"] == [], result[key]
     assert result["allProjects"]["error"] is None
-    assert result["allProjects"]["events"].count("overview") == 2
+    assert result["allProjects"]["events"].count("overview") == 1
     assert result["overview"]["error"] is None
     assert result["overview"]["events"].count("new") == 2
     assert "overview" not in result["overview"]["events"]
+    for key in ("delayedFlat", "delayedExit"):
+        assert result[key]["error"] is None
+        assert result[key]["events"].count("poll") == 2
+        assert result[key]["events"].index("filters-ready") < result[key]["events"].index("new")
     assert result["noOverview"]["error"] == "Desktop project overview is not visible"
     assert "new" not in result["noOverview"]["events"]
+    assert result["ambiguous"]["error"] == "ambiguous Filters"
+    assert "new" not in result["ambiguous"]["events"]
+    assert result["stuckExit"]["error"] == "Filters not ready"
+    assert result["stuckExit"]["events"].count("overview") == 1
+    assert "new" not in result["stuckExit"]["events"]
     assert result["bridge"]["events"] == []
     assert result["bridge"]["error"]
     assert result["setter"]["error"] and result["setter"]["events"] == ["set"]

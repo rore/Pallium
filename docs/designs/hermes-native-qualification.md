@@ -12,7 +12,8 @@ coverage boundaries. User setup belongs in the
 |---|---|
 | Linux TUI | v0.22.0/v0.22.2 fixed-scope receipts; accepted v0.22.4 CWD journeys with memory off/on at exact source `4d04303818b61bf3aa09278af48356315515965b` |
 | Public host | Accepted v0.22.4 CWD/API regression through public host and HTTP surfaces; not frontend qualification |
-| Windows Desktop and TUI | v0.22.0/v0.22.2 fixed-scope receipts only. v0.22.4 automatic CWD remains unqualified on Windows; Server 2025/unpacked limits still apply |
+| Windows TUI | v0.22.0/v0.22.2 fixed-scope receipts; accepted v0.22.4 CWD journeys with memory off/on on Windows Server 2025 |
+| Windows Desktop | v0.22.0/v0.22.2 fixed-scope receipts. v0.22.4 CWD remains unqualified: both Desktop cases stopped at project-overview readiness before inference on the Server 2025/unpacked build |
 | Relay | Full 16,000-code-point Unicode delivery under default hook spill, reply and no-reply turns, busy delivery, endpoint outage and controlled host/MCP relaunch |
 | History and memory | Distinct-session capture/search/expansion, opt-in write/recall/correct/supersede/forget, privacy and preserved profile data |
 | Package lifecycle | Install, repeat setup/update, status and removal; unchanged unrelated configuration, plugins and databases |
@@ -27,13 +28,20 @@ not setup instructions. Reuse evidence only for unchanged surfaces. A later
 service exception-path fix needs its own fault tests, not a claim that an earlier
 UI journey injected that fault.
 
+The independently reviewed Windows attempt 1 in run `39913055476` used Pallium
+`e3f1c06c79a1e65f3d3f80d02c582236d81f2a12` and Hermes
+`4d04303818b61bf3aa09278af48356315515965b`. Its TUI CWD memory-off and
+memory-on journeys passed with no skips and normal cleanup. Both Desktop CWD
+journeys failed the project-overview readiness check before inference, with
+normal owned-process cleanup; they provide no Desktop context result.
+
 ## Boundaries
 
 - Runtime admission checks public capabilities, not a hard release allowlist.
   A compatible API check does not establish behavior on every future release.
 - Current v0.22.4 evidence is bounded to the tested source, public-host surface
-  and Linux TUI. It does not establish Windows CWD or a complete cross-platform
-  automatic-mode matrix.
+  and Linux/Windows TUI. It does not establish Windows Desktop CWD or a complete
+  cross-platform automatic-mode matrix.
 - Windows Server/unpacked evidence does not qualify Windows 11, MSIX installation,
   the native updater, native app Quit or automatic standalone MCP reconnection.
 - Synthetic providers prove configuration, transport and tool dispatch, not model

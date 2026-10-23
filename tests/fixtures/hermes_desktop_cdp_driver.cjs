@@ -178,16 +178,20 @@ async function connectDriver({ endpoint, sourceRoot, workspace, scopeMode = 'fix
     async function enterWorkspace() {
       if (scopeMode !== 'cwd') return
       await projectCwd()
-      const overview = page.getByRole('button', {name: 'Show projects', exact: true})
-      if (await overview.isVisible()) await overview.click()
-      else {
-        const allProjects = page.getByText('All projects', {exact: true})
-        if (await allProjects.isVisible()) await allProjects.click()
-        else if (!(await page.getByRole('button', {name: 'New project', exact: true}).isVisible())) {
-          throw new Error('Desktop project overview is not visible')
-        }
+      const sidebar = page.locator('[data-tour="sessions-sidebar"]')
+      // shortcut: This owned profile never selects Home; normalize Home before qualifying imported profiles.
+      const filters = sidebar.getByRole('button', {name: 'Filters', exact: true})
+      const deadline = Date.now() + timeout
+      while (!(await filters.isVisible())) {
+        const overview = sidebar.getByRole('button', {name: 'Show projects', exact: true})
+        const allProjects = sidebar.getByText('All projects', {exact: true})
+        if (await overview.isVisible()) { await overview.click(); break }
+        if (await allProjects.isVisible()) { await allProjects.click(); break }
+        if (Date.now() >= deadline) throw new Error('Desktop project overview is not visible')
+        await page.waitForTimeout(50)
       }
-      await page.locator('[data-tour="sidebar-nav-new-session"]').click()
+      await filters.waitFor({state: 'visible', timeout})
+      await sidebar.locator('[data-tour="sidebar-nav-new-session"]').click()
       await page.waitForURL(url => url.hash === '#/', {timeout})
       const composer = await waitForComposerReady()
       if ((await composer.innerText()).trim()) throw new Error('new workspace composer is not empty')
