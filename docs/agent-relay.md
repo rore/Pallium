@@ -355,16 +355,16 @@ its existing `409 recipient session is unreachable` result.
 
 ## Project scope transitions
 
-Claude Code and Codex keep the same Relay endpoint when a session deliberately moves to another Git project. The hooks persist and retry an exact source/destination intent, while the server accepts the move only for the supplied endpoint and scope generation. A confirmed move preserves the alias, manual work references, and pending or claimed deliveries. Historical delivery records keep their original container snapshots; follow-up wake routing resolves the endpoint's current container.
+Claude Code and Codex keep the same Relay endpoint when a session deliberately moves to another Git project. The hooks persist and retry an exact source/destination intent, while the server accepts the move only for the supplied endpoint and scope generation. A confirmed move preserves the alias, manual work references, and pending or claimed deliveries.
+
+An unclaimed delivery or expired claim stays parked in its recipient project snapshot: a turn in the new project cannot newly claim it, and its state and attempt count stay unchanged until a return to the original project or expiry. A receipt already issued in the original project can still be acknowledged there under its normal validity rules. Authorized sends from another container remain supported; `container_ref` selects context, not authentication. Historical delivery records keep their original container snapshots. Payload-free wake metadata can still notify the endpoint in its current project, including an empty wake, but conveys no access to the parked payload.
 
 A stale, missing, closed, unreachable, or occupied transition fails without moving either endpoint. Pallium never searches globally for a source session or takes over a destination. OpenCode remains pinned to one project for the life of its current session.
 
 Hermes normal cwd mode derives project and actor from its exact session's local
 cwd and admits recognized Git project changes through the same endpoint/generation
-transition contract. Pending deliveries remain bound to their recorded recipient
-project, so the new project cannot claim the old project's queue; the old project
-can claim on return before expiry. Authorized cross-container sends remain
-supported. Transient valid non-Git cwd retains the prior project while actor
+transition contract. Its pending deliveries follow the recipient-project parking
+rule above. Transient valid non-Git cwd retains the prior project while actor
 identity follows the current cwd's Git identity or `local`, subject to explicit
 profile and environment overrides. Missing or ambiguous session scope fails
 closed; polling uses saved records rather than a

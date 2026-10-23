@@ -1674,8 +1674,15 @@ def test_native_finalize_race_provider_uses_trusted_address_discovery():
     provider = ScriptedProvider(scope_mode="cwd")
     tools = [{"function": {"name": name}} for name in ("tool_search", "tool_describe", "tool_call")]
     first = {"tools": tools, "messages": [{"role": "user", "content": "native-finalize-race: initial"}]}
+    with pytest.raises(AssertionError, match="missing its Pallium scope orientation"):
+        provider.respond(first)
+    suffix = "\n\n[Pallium scope — " + json.dumps({**SCOPE, "thread_ref": "synthetic-session",
+        "actor_ref": "native-ui-actor", "agent_ref": "hermes", "visibility": "private",
+        "request_source_item_id": "synthetic-source"}) + "]\n" + SCOPE_GUIDANCE \
+        + "Optional memory tools are disabled in this profile."
+    first["messages"][0]["content"] += suffix
     assert provider.respond(first) == ("Native finalize race turn complete.", None)
-    third = {"tools": tools, "messages": [{"role": "user", "content": "native-finalize-race: post-release"}]}
+    third = {"tools": tools, "messages": [{"role": "user", "content": "native-finalize-race: post-release" + suffix}]}
     assert provider.respond(third)[1] == ("tool_search", {"queries": ["pallium_relay_address"], "limit": 5})
 
 
@@ -3029,17 +3036,7 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
         if memory_enabled:
             assert query["active_session_ref"] != memory_session_id, "History stayed in the preceding memory session"
         assert not server_errors, server_errors
-        if provider_kind == "openai-api":
-            assert provider_http_requests, "built-in provider made no chat-completions request"
-            assert all(row["path"] == "/v1/chat/completions" and row["model"] == "pallium-local"
-                       and row["auth_matched"] for row in provider_http_requests), provider_http_requests
-            assert "api_key" not in config["model"] and "base_url" not in config["model"]
         assert not egress.exists() or not egress.read_text(encoding="utf-8").strip(), "unexpected child egress attempt"
-        secrets = {peer_delivery[key] for key in ("receipt", "claim_token")}
-        secrets.update(delivery[key] for row in forwarded if row["path"] == "/relay/turn"
-                       for delivery in row["response"].get("deliveries", []) for key in ("receipt", "claim_token")
-                       if delivery.get(key))
-        assert not any(secret in json.dumps(provider.requests) for secret in secrets), "private Relay receipt reached provider"
         if native_finalize_gate is not None:
             # The canonical extra session is deliberately outside the rendered UI assertions above.
             created = driver.command("canonical_create", timeout=15)
@@ -3160,6 +3157,16 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
         assert not (profile / "plugins" / "pallium-hermes-relay").exists()
         assert not (profile / "skills" / "pallium-memory").exists()
         assert not server_errors, server_errors
+        if provider_kind == "openai-api":
+            assert provider_http_requests, "built-in provider made no chat-completions request"
+            assert all(row["path"] == "/v1/chat/completions" and row["model"] == "pallium-local"
+                       and row["auth_matched"] for row in provider_http_requests), provider_http_requests
+            assert "api_key" not in config["model"] and "base_url" not in config["model"]
+        secrets = {peer_delivery[key] for key in ("receipt", "claim_token")}
+        secrets.update(delivery[key] for row in forwarded if row["path"] == "/relay/turn"
+                       for delivery in row["response"].get("deliveries", []) for key in ("receipt", "claim_token")
+                       if delivery.get(key))
+        assert not any(secret in json.dumps(provider.requests) for secret in secrets), "private Relay receipt reached provider"
         assert not egress.exists() or not egress.read_text(encoding="utf-8").strip(), "package lifecycle attempted egress"
         outcome.update(journey_assertions="passed", original_session_id=session_id, history_session_id=query["active_session_ref"],
                        history_anchor_id=anchor_id)

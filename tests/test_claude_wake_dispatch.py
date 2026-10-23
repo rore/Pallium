@@ -1601,10 +1601,15 @@ def test_persisted_claude_d1_d2_d3_actual_hooks(
     transport.assert_called_once()
 
     monkeypatch.setattr(prompt, "resolve_container_ref", lambda *_: "git:other/repo")
+    capsys.readouterr()
     with pytest.raises(SystemExit):
         prompt.main()
+    other_output = capsys.readouterr().out
+    assert "D3" not in other_output
     assert state(sent2) == "delivered"
-    assert state(sent2) == state(sent3) == "delivered"
+    assert state(sent3) == "pending"
+    pending3 = http.get(f"/relay/messages/{sent3['message_id']}", params=scope).json()["deliveries"][0]
+    assert pending3["attempts"] == 0
 
     monkeypatch.setattr(prompt, "resolve_container_ref", lambda *_: scope["container_ref"])
     with pytest.raises(SystemExit):
@@ -1612,6 +1617,11 @@ def test_persisted_claude_d1_d2_d3_actual_hooks(
     output = capsys.readouterr().out
     assert "D2" not in output and "D3" in output
     assert state(sent2) == state(sent3) == "delivered"
+    assert http.get(f"/relay/messages/{sent3['message_id']}", params=scope).json()["deliveries"][0]["attempts"] == 1
+    with pytest.raises(SystemExit):
+        prompt.main()
+    assert "D3" not in capsys.readouterr().out
+    assert state(sent3) == "delivered"
     assert all(status == 200 for _, _, status in relay_calls), relay_calls
     assert all(status == 204 for status in registration_statuses), registration_statuses
     assert real_time.monotonic is real_monotonic
