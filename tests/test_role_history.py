@@ -233,9 +233,13 @@ def test_additional_adapters_inherit_the_existing_immutable_turn_snapshot(client
     result = _search(
         client, "planner", query=f"{source_type} assistant turn marker", source_type=source_type,
     )
-    assert {item["source_item_id"] for item in result["results"]} == {assistant_id}
-    assert result["results"][0]["relay_name"] == "planner"
-    assert client.app.state.pallium_service._storage.get_source_item(user_id).relay_name == "planner"
+    hits = {item["source_item_id"]: item for item in result["results"]}
+    assert set(hits) == {user_id, assistant_id}
+    assert hits[user_id]["role"] == "user"
+    assert hits[user_id]["relay_name"] == "planner"
+    assert hits[assistant_id]["role"] == "assistant"
+    assert hits[assistant_id]["relay_name"] == "planner"
+    assert hits[assistant_id]["relay_attribution_state"] == "named"
 
 
 def test_role_source_id_retries_reject_key_snapshot_scope_and_forgotten_conflicts(client):
@@ -311,7 +315,14 @@ def test_assistant_requires_exact_unforgotten_user_snapshot(client):
     )
     recovered = client.post("/items", json=[assistant])
     assert recovered.status_code == 200, recovered.text
-    assert recovered.json()[0]["relay_name"] == "planner"
+    assistant_id = recovered.json()[0]["source_item_id"]
+    history = _search(
+        client, "planner", query="delayed assistant output", source_type="opencode",
+    )
+    assert [item["source_item_id"] for item in history["results"]] == [assistant_id]
+    assert history["results"][0]["role"] == "assistant"
+    assert history["results"][0]["relay_name"] == "planner"
+    assert history["results"][0]["relay_attribution_state"] == "named"
 
     forgotten = client.post("/source/forget", json={
         "source_item_id": user_id, "reason": "user requested removal",
