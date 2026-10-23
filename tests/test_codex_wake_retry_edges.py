@@ -696,6 +696,7 @@ def test_expired_claim_survives_repeated_lost_notifications_and_scope_move(
         "payload": "later-payload-東京", **sender_scope,
     })
     assert response.status_code == 200, response.text
+    backlog = response.json()["deliveries"][0]
     if moved:
         session = claim.json()["session"]
         response = http.post("/relay/turn", json={
@@ -707,6 +708,7 @@ def test_expired_claim_survives_repeated_lost_notifications_and_scope_move(
         })
         assert response.status_code == 200, response.text
         assert response.json()["deliveries"] == []
+        moved_session = response.json()["session"]
         monkeypatch.setitem(SCOPE, "container_ref", "git:example.test/expired-move-東京")
 
     restarted = CodexWakeRegistry(relay_service=relay)
@@ -728,16 +730,58 @@ def test_expired_claim_survives_repeated_lost_notifications_and_scope_move(
         assert registry.begin_native_attempt(stale) is None
     events = []
     run_hook = _hook_runner(http, monkeypatch, "notLoaded", events, tmp_path)
-    desktop.on_owner = lambda request: run_hook(request["params"]["arguments"]["prompt"])
+    desktop.on_owner = lambda request: run_hook(
+        request["params"]["arguments"]["prompt"], allow_return=moved,
+    )
     now[0] += timedelta(seconds=60)
     recover(journey)
     assert len(desktop.owners) == 5
-    assert [event[0] for event in events] == ["emit", "ack"]
-    assert "private-payload-東京" in events[0][2] and "later-payload-東京" in events[0][2]
+    if moved:
+        assert not any(event[0] == "ack" or event[0] == "emit" and (
+            "private-payload-東京" in event[2] or "later-payload-東京" in event[2]
+        ) for event in events)
+        for message_id, attempts in (("retained-journey", 1), ("expired-claim-backlog", 0)):
+            result = http.get(f"/relay/messages/{message_id}", params=sender_scope)
+            assert result.status_code == 200, result.text
+            delivery, = result.json()["deliveries"]
+            assert delivery["state"] == "pending" and delivery["attempts"] == attempts
+        hook = sys.modules["relay_test_retained_session_start"]
+        returned = hook.relay_turn(
+            "codex", TARGET, sender_scope["container_ref"], max_chars=1,
+            request=hook.relay_request,
+        )
+        assert returned is not None and returned["deliveries"] == []
+        assert returned["session"]["endpoint_id"] == first["recipient_endpoint_id"]
+        assert returned["session"]["scope_generation"] == moved_session["scope_generation"] + 1
+        monkeypatch.setitem(SCOPE, "container_ref", sender_scope["container_ref"])
+        events.clear()
+        run_hook()
+        assert [event[0] for event in events] == ["emit", "ack"]
+        assert first["delivery_id"] in events[0][2]
+        assert backlog["delivery_id"] in events[0][2]
+        assert events[0][2].count("private-payload-東京") == 1
+        assert events[0][2].count("later-payload-東京") == 1
+    else:
+        assert [event[0] for event in events] == ["emit", "ack"]
+        assert "private-payload-東京" in events[0][2] and "later-payload-東京" in events[0][2]
     for message_id in ("retained-journey", "expired-claim-backlog"):
         result = http.get(f"/relay/messages/{message_id}", params=sender_scope)
         assert result.status_code == 200, result.text
-        assert result.json()["deliveries"][0]["state"] == "delivered"
+        delivery, = result.json()["deliveries"]
+        assert delivery["state"] == "delivered"
+        assert delivery["attempts"] == (2 if message_id == "retained-journey" else 1)
+    if moved:
+        events.clear()
+        run_hook(allow_return=True)
+        assert not any(event[0] == "ack" or event[0] == "emit" and (
+            "private-payload-東京" in event[2] or "later-payload-東京" in event[2]
+        ) for event in events)
+        for message_id in ("retained-journey", "expired-claim-backlog"):
+            result = http.get(f"/relay/messages/{message_id}", params=sender_scope)
+            assert result.status_code == 200, result.text
+            delivery, = result.json()["deliveries"]
+            assert delivery["state"] == "delivered"
+            assert delivery["attempts"] == (2 if message_id == "retained-journey" else 1)
     assert restarted.reservations() == ()
     capsys.readouterr()
 
