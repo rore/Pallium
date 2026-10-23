@@ -191,7 +191,7 @@ async function run(fault) {
         assert draft["error"] is None and "cwd-rail" not in draft["events"]
         assert draft["events"].count("set") == draft["events"].count("reload") == 1
         assert draft["events"].count("get") >= 2
-        assert draft["events"].count("new") == 2 and draft["events"].count("route") == 1
+        assert draft["events"].count("new") == 2 and draft["events"].count("route") == 2
         assert draft["events"].index("set") < draft["events"].index("get") \
             < draft["events"].index("reload") < draft["events"].index("new") \
             < draft["events"].index("route")
