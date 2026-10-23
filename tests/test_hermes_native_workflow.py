@@ -10,19 +10,27 @@ def test_native_qualification_stays_manual_bounded_and_candidate_scoped():
                               ".github/workflows/hermes-native-qualification.yml").read_text(encoding="utf-8"))
     triggers = workflow.get("on", workflow.get(True))
     assert set(triggers) == {"workflow_dispatch"}
-    assert triggers["workflow_dispatch"]["inputs"]["pallium_revision"]["required"] is True
+    inputs = triggers["workflow_dispatch"]["inputs"]
+    assert inputs["pallium_revision"]["required"] is True
+    assert inputs["scope_mode"] == {
+        "description": "Select fixed compatibility scope or automatic CWD scope",
+        "required": True,
+        "type": "choice",
+        "options": ["fixed", "cwd"],
+        "default": "fixed",
+    }
     assert workflow["permissions"] == {"contents": "read"}
     assert workflow["concurrency"]["cancel-in-progress"] is False
     job = workflow["jobs"]["native"]
     assert job["runs-on"] == "windows-latest" and job["timeout-minutes"] == 60
     assert job["permissions"] == {"contents": "read"}
     assert not any("runner." in str(value) for value in job["env"].values())
+    assert job["env"]["HERMES_E2E_SCOPE_MODE"] == "${{ inputs.scope_mode }}"
     assert len(job["steps"][0]["env"]) == 4
     assert all("${{ runner.temp }}" in value for value in job["steps"][0]["env"].values())
     assert job["strategy"]["max-parallel"] == 1 and job["strategy"]["fail-fast"] is True
-    assert {row["revision"] for row in job["strategy"]["matrix"]["include"]} == {
-        "e06df9c2eae6901f4c88f464e0ae6e753c0428b8", "d923a5eb487a17c0a68801bba9ef0f56c81040a8"}
-    assert len(job["strategy"]["matrix"]["include"]) == 2
+    expected_matrix = "${{ fromJSON(inputs.scope_mode == 'cwd' && '[{\"release\":\"v0.22.4\",\"revision\":\"4d04303818b61bf3aa09278af48356315515965b\"}]' || '[{\"release\":\"v0.22.0\",\"revision\":\"e06df9c2eae6901f4c88f464e0ae6e753c0428b8\"},{\"release\":\"v0.22.2\",\"revision\":\"d923a5eb487a17c0a68801bba9ef0f56c81040a8\"}]') }}"
+    assert job["strategy"]["matrix"]["include"] == expected_matrix
     checkout = next(step for step in job["steps"] if step.get("uses", "").startswith("actions/checkout@"))
     assert checkout["with"]["ref"] == "${{ inputs.pallium_revision }}"
     assert checkout["with"]["persist-credentials"] is False
@@ -30,6 +38,7 @@ def test_native_qualification_stays_manual_bounded_and_candidate_scoped():
     assert all(script.lstrip().startswith("$ErrorActionPreference = 'Stop'") for script in scripts)
     assert not any("${{ inputs." in script or "secrets." in script for script in scripts)
     assert "'^[a-f0-9]{40}$'" in scripts[0] and "'github-hosted'" in scripts[0]
+    assert "@('fixed', 'cwd') -cnotcontains $env:HERMES_E2E_SCOPE_MODE" in scripts[0]
     assert '"$name=$value"' in scripts[0] and "$env:GITHUB_ENV" in scripts[0]
     native = next(step["run"] for step in job["steps"] if step["name"] == "Run native caller-surface E2E against local stubs")
     assert "$env:PALLIUM_TUI_REPO_REVISION -ne $env:PALLIUM_EXPECTED_REVISION" in native
@@ -39,6 +48,7 @@ def test_native_qualification_stays_manual_bounded_and_candidate_scoped():
             assert f"test_released_hermes_actual_ui_journey[{surface}-memory-{mode}]" in native
     assert "SelectSingleNode('skipped|failure|error')" in native
     assert "provenance.json" in native
+    assert "scope_mode=$env:HERMES_E2E_SCOPE_MODE" in native
     upload = job["steps"][-1]
     assert upload["if"] == "always()" and upload["with"]["retention-days"] == 7
     assert "h4-tests" in upload["with"]["path"]
