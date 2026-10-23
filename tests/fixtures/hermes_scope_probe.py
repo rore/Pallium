@@ -12,11 +12,13 @@ import os
 from pathlib import Path
 import shutil
 import signal
+import socket
+import stat
 import subprocess
 import sys
 import threading
 import time
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 from urllib.request import Request, urlopen
 
 if __package__:
@@ -236,6 +238,23 @@ def signal_owned(record, sig):
 def host(args):
     boundary = require_linux_qualification()
     require_contained_paths(args.source, args.work, args.repo, args.sdk1, Path(sys.executable))
+    guard_path = Path(os.environ["PALLIUM_TUI_GUARD_PATH"])
+    guard_sha = os.environ["PALLIUM_TUI_GUARD_SHA256"]
+    require_contained_paths(guard_path)
+    assert guard_path.is_absolute() and guard_path.resolve() == guard_path
+    assert stat.S_ISREG(guard_path.lstat().st_mode) and not guard_path.is_symlink()
+    assert len(guard_sha) == 64 and all(char in "0123456789abcdef" for char in guard_sha)
+    assert hashlib.sha256(guard_path.read_bytes()).hexdigest() == guard_sha
+    loaded_guard = sys.modules.get("sitecustomize")
+    assert loaded_guard is not None and Path(loaded_guard.__file__).resolve() == guard_path
+    assert socket.socket.connect is loaded_guard._connect
+    service = urlsplit(args.base)
+    assert service.scheme == "http" and service.hostname == "127.0.0.1" and type(service.port) is int
+    assert 1 <= service.port <= 65535
+    assert loaded_guard._ALLOWED == {("127.0.0.1", service.port)}
+    assert loaded_guard._CONTROL_PATHS == set()
+    guard_witness = {"path": str(guard_path), "sha256": guard_sha, "socket_guard_active": True,
+                     "allowed_endpoints": [["127.0.0.1", service.port]], "allowed_control_paths": []}
     source_receipt = verify_manifest(args.source, args.source_manifest, git_blobs=True)
     artifact_receipt = verify_manifest(args.repo, args.artifact_manifest, git_blobs=False)
     assert not (args.source / ".env").exists()
@@ -278,6 +297,7 @@ def host(args):
     checkpoint()
     receipt = {"qualification_run": boundary["run_id"], "source": source_receipt,
                "artifact": artifact_receipt, "mcp_version": importlib.metadata.version("mcp"),
+               "socket_guard": guard_witness,
                "claim": "native public hooks/tools to stdio MCP and HTTP; no frontend or wake admission",
                "checks": [], "tools": [], "http": []}
 

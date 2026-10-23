@@ -100,6 +100,19 @@ def test_actual_public_hermes_hooks_tools_and_scope_lifecycle(tmp_path):
         listener.bind(("127.0.0.1", 0))
         port = listener.getsockname()[1]
     base = f"http://127.0.0.1:{port}"
+    guard_names = ("PALLIUM_TUI_GUARD_PATH", "PALLIUM_TUI_GUARD_SHA256")
+    assert all(os.environ.get(name) for name in guard_names), "explicit copied-runtime guard identity is required"
+    host_env.update({name: os.environ[name] for name in guard_names})
+    host_env.update({
+        "PALLIUM_TUI_ALLOWED_ENDPOINTS": json.dumps([["127.0.0.1", port]]),
+        "PALLIUM_TUI_ALLOWED_CONTROL_PATHS": "[]",
+        "PALLIUM_TUI_EGRESS_LOG": str(host_work / "socket-egress.jsonl"),
+        "PALLIUM_TUI_IPC_LOG": str(host_work / "socket-ipc.jsonl"),
+    })
+    expected_guard = {
+        "path": host_env["PALLIUM_TUI_GUARD_PATH"], "sha256": host_env["PALLIUM_TUI_GUARD_SHA256"],
+        "socket_guard_active": True, "allowed_endpoints": [["127.0.0.1", port]], "allowed_control_paths": [],
+    }
     service_process = host_process = None
     host_identity = None
     controller = process_identity(os.getpid())
@@ -186,6 +199,15 @@ def test_actual_public_hermes_hooks_tools_and_scope_lifecycle(tmp_path):
                 denials = directory / "guard-denials.jsonl"
                 assert not denials.exists() or not denials.read_text(), "native audit denied an operation; inspect private receipt"
         finally:
-            for log in logs:
-                log.close()
-            assert libc.prctl(36, old_subreaper.value, 0, 0, 0) == 0
+            try:
+                guard_receipt = host_work / "host-receipt.json"
+                assert guard_receipt.is_file(), "loaded copied-runtime guard witness is missing"
+                assert json.loads(guard_receipt.read_text(encoding="utf-8"))["socket_guard"] == expected_guard
+            finally:
+                try:
+                    egress = host_work / "socket-egress.jsonl"
+                    assert not egress.exists() or not egress.read_text(), "copied-runtime guard denied egress; inspect private receipt"
+                finally:
+                    for log in logs:
+                        log.close()
+                    assert libc.prctl(36, old_subreaper.value, 0, 0, 0) == 0
