@@ -41,7 +41,7 @@ Constructor concurrency and failed full-run disposition -> Run the existing exac
 
 **Exceptions:** —
 
-**State:** Blocked
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Evidence
@@ -101,4 +101,18 @@ Independent /root/rename_observer_review accepted both focused receipts and thei
 ## Draft publication
 
 Manager explicitly directed publication for review while retaining failed qualification. Draft PR353: https://github.com/rore/Pallium/pull/353, published at44e9ff76fcec696df845469ebba1f6faf2301522 against verified current main2768022ebf8b302d09a9955da38f3fc5d61504a4. The PR states focused201 plus exact2+1 passes and full01 NO-GO930/3/2, preserves the installer blocker and requests no merge or rollout. Fresh static boundary/Redline/workflow checks passed; no additional application tests were run for publication. State remains Blocked. Installer investigation/repair is separately owned by this same agent; no installed checkout access is authorized, and no source work is held behind unrelated remote test runs.
+
+## Result review
+
+Agent technical review: /root/relay_gate_plan_review.
+
+Reviewed revision: f0cbaaae0b20e118ab6b785cf44eedd8610bdfa4.
+
+Verification adequacy: GO; current required whole-change CI and the independently accepted focused followups satisfy source-readiness policy, with the failed local Windows receipt and unexplained installer incident retained below.
+
+Independent nonimplementer /root/relay_gate_plan_review verified exact PR head f0cbaaae0b20e118ab6b785cf44eedd8610bdfa4 and automatic CI39931212628: Linux3.12 and3.13 full suites, Windows smoke, CI result, Redline and Agent Workflow all succeeded. Each Linux JUnit contains8128 cases with zero failures/errors, including the protected busy-wake contract, no-hook recovery, public installer lifecycle and all13 new pool HTTP cases. Evidence: build/pool-ci-f0cbaaae/{run.json,pr.json} and retained JUnit artifacts. Application content is unchanged from reviewed4d2ac1cb; later commits change this Work Record only.
+
+Result decision: GO for source result review and Ready for review. Normal PR policy requires these Linux full suites and Windows smoke; windows-full is explicitly skipped for this PR by .github/workflows/ci.yml. The focused201 plus separately reviewed2+1 followups remain valid. No additional local full run or human exception is required for source readiness. Elevated-risk independent technical review is satisfied; normal PR review and any required thread resolution still precede an authorized merge.
+
+This current disposition supersedes earlier prospective statements that an unknown installer incident or a further local full run necessarily blocks source release. Those statements and the original full01 NO-GO930/3/2 remain historical evidence, not passing results. CI proves neither the cause nor cure of local WinError5 or the original Linux acquisition delays. Installer incident owner remains @pal-dev1 on feat/codex-skill-activation, with a reviewed failure-only private observation proposal before any separately reserved execution. No protected contract was waived or weakened. No merge, rollout, installed access or feature-completion authority is implied.
 
