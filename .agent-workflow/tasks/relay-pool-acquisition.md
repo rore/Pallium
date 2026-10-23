@@ -41,7 +41,7 @@ Constructor concurrency and failed full-run disposition -> Run the existing exac
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Blocked or returned to planning
 <!-- agent-workflow:end -->
 
 ## Current CI enrollment failure and bounded preparation plan
@@ -211,4 +211,10 @@ Manager's subsequent disposition authorizes this independent test correction aft
 This establishes the resource-ready precondition for a positive gate-release control. It does not explain, fix or close the cold/native-connection incident, and the original CI remains red. No application, protected contract, global clock, timeout, API, dependency, runtime or installed configuration changes; existing Elevated/Moderate classification and application4d2ac1cb reviews remain applicable. Next: implement this precise test diff, obtain same-reviewer source GO, then freeze and request one exact eight-case qualification under a new finite grant. No test execution is approved by plan GO. If qualification fails, preserve that receipt and stop; no further fixture adjustment is preapproved. Sender845fe6cd's green head stays unchanged.
 
 Plan committed at98b0bdf5 before the source edit. Same /root/relay_gate_plan_review inspected the actual opt-in fixture and eight-case diff and gives source GO with no blocking findings. Exact native Session/Connection ownership, one-time sequential transfer, A's separate handle, narrowly matched SAWarning and saved-original cleanup after worker settlement are preserved. The additional closed-Connection assertion strengthens cleanup coverage. Other fixture consumers retain the old path. AST/diff checks and whole-change workflow pass; deterministic Redline remains Gray/Elevated with unchanged application boundary evidence reused. Whole-change selector still requires normal full CI; local proposal is only the exact eight-case node, with previous reliable unchanged evidence retained. No tests, publication, new diagnostic or installed actions occurred in this phase.
+
+## Qualification receipt and MISSEDSTOP hold
+
+Manager granted the exact eight-case run at eae5b55bbf0eda404407ff08d53b80ffd0280f4e/recipe20769bcba253711171e79f2c23fbe318ac51595d4a2a8c9de0697f67732128be. After exec session46671 launched, a NEW HOLD superseded the owned-test-process CIM postcheck. A saved-file-only read found preflight files written12:29:31.659Z and12:29:36.019Z, with no intent/running/result yet. The subsequent Ctrl+C attempt returned an already-completed result; the stop did not take effect before the held operation. Root37452 creation2026-10-23T12:30:26.4456452Z; result finalized12:30:36.9977645Z. The unchanged wrapper executed its held CIM postcheck and recorded an empty direct-child snapshot. This is MISSEDSTOP, not retrospective approval or accepted cleanup evidence. Exact HOLD receipt/interrupt/postcheck timestamps were not recorded; known ordering and tool/file/process times are retained without inventing them in build/pool-ready-connection-01/hold-disposition.json. No repeat or substitute process inspection, kill, service action, publication or CI followed.
+
+Retained JUnit reports8 unique normal passes,0 failures/errors/skips/duplicates,4.22s; SHA256fa829fd420dc580857586d89dda3edc9d6d5a62a740271a9804e3b5ca80b6db9. The automated exit0 and root/stream/source/runtime records are preserved separately from unresolved held-operation/cleanup acceptance. Manager explicitly permits artifact-only assessment by the same reviewer; that technical review is pending. State Blocked or returned to planning; publication held pending manager reconciliation and the parent's outstanding approval question. No further execution or process inspection is authorized. The original failed CI/cold-connection incident remains open and unknown; sender845fe6cd remains unchanged and green.
 
