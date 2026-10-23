@@ -144,9 +144,8 @@ session IDs, and committed permanent lineage retirement may conditionally close
 the saved endpoint and generation. Archive, prune, sweep, profile repair and
 missing or unknown reasons do not authorize closure. Finalize, soft delete or
 deletion without a matching notification can leave endpoint presence and pending
-messages according to their existing expiry. Native detach/resume ordering still
-needs qualification; the earlier Linux/Windows TUI
-journeys do not establish these corrected lifecycle contracts.
+messages according to their existing expiry. Current lifecycle coverage is in
+the native validation reference below.
 
 ## History and memory
 
@@ -218,16 +217,13 @@ or live MCP readiness.
 <a id="compatibility-and-limits"></a>
 
 Automatic mode requires session-owned cwd, surface and bound-route capabilities.
-Earlier v0.22.4 CWD runs passed Linux and Windows TUI with memory off and on.
-The project, actor and lifecycle safety corrections require refreshed native
-proof; Windows Desktop CWD remains unqualified.
 Admission checks public capabilities rather than a release allowlist;
-v0.22.0/v0.22.2 receipts qualify fixed scope only because those releases lack the
-automatic-scope APIs. Missing capabilities fail with actionable diagnostics;
+older hosts without automatic-scope APIs can use intentional fixed-scope
+compatibility setup. Missing capabilities fail with actionable diagnostics;
 Pallium does not force a host upgrade or silently choose fixed scope.
 
 Fixed-context wake routing on the newer shared Gateway remains unqualified and
-unresolved. The older fixed-scope results do not establish that compatibility.
+unresolved.
 
 Windows coverage uses Server 2025/unpacked builds, not Windows 11, MSIX, native
 updater or native Quit qualification. Synthetic responses test integration

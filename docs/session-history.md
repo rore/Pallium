@@ -133,10 +133,11 @@ An explicit setup opt-in adds source forgetting and the optional derived-memory
 tool catalog. Separately, service-selected recall can enter bounded,
 lower-authority context during normal user capture even with memory tools off.
 Semantic packages default to disabled. History diagnostics remain unavailable;
-automatic standalone MCP reconnection remains unqualified. Automatic scope requires public
-session-cwd/session-surface APIs, present in inspected v0.22.3 source; the complete
-native Desktop/TUI matrix is pending. Older v0.22.0/v0.22.2 native receipts apply
-to fixed scope only. See the guide for capture bounds, compatibility and provenance.
+automatic standalone MCP reconnection remains unqualified. Automatic scope
+requires public session-owned cwd and surface APIs. Older hosts without them
+can use intentional fixed-scope compatibility setup. The Hermes guide above
+describes capture bounds and compatibility; see
+[native coverage](designs/hermes-native-qualification.md) for qualification.
 
 - broad topic search across accessible earlier sessions with `pallium_search_history`
 - exact-reference search with `pallium_search_history_by_work_ref`

@@ -15,6 +15,7 @@ import queue
 import re
 import shutil
 import socket
+import socketserver
 import struct
 import subprocess
 import sys
@@ -391,15 +392,74 @@ def pending_candidate_matches(response, delivery_id, endpoint_id):
 
 
 def _new_proxy_retirement_state():
-    return {"lock": threading.Lock(), "scope": None, "confirmed": False, "cancellations": []}
+    return {"lock": threading.Lock(), "records": [], "cancellations": []}
 
 
-def _mark_proxy_scope_retiring(retirement, scope):
+def _mark_proxy_scope_retiring(retirement, scope, *, controller, identities, endpoint):
     assert set(scope) == {"runtime", "session_ref", "container_ref"}
+    assert all(isinstance(value, str) and value for value in scope.values())
+    generation = tuple(controller)
+    owned = sorted(tuple(row) for row in identities)
+    assert len(generation) == 3 and generation in owned and owned
+    assert all(len(row) == 3 and type(row[0]) is int and row[0] > 0
+               and type(row[1]) in (int, float) and row[1] > 0
+               and isinstance(row[2], str) and row[2] for row in owned)
+    assert all(endpoint.get(key) == value for key, value in scope.items())
+    assert isinstance(endpoint.get("endpoint_id"), str) and endpoint["endpoint_id"].startswith("relay-session-")
+    assert type(endpoint.get("scope_generation")) is int and endpoint["scope_generation"] >= 0
     with retirement["lock"]:
-        assert retirement["scope"] is None, "only the original session may be retired"
-        retirement["scope"] = dict(scope)
-        retirement["confirmed"] = False
+        assert not any(row["scope"] == scope
+                       or row["endpoint"]["endpoint_id"] == endpoint["endpoint_id"]
+                       for row in retirement["records"]), "ambiguous reused retirement scope/controller/endpoint"
+        assert all(row["identities"] == owned for row in retirement["records"]
+                   if row["controller"] == generation), "reused controller has inconsistent owned generation"
+        record = {"scope": dict(scope), "controller": generation, "identities": owned,
+                  "endpoint": dict(endpoint), "confirmed": False}
+        retirement["records"].append(record)
+        return record
+
+
+def _confirm_proxy_scope_retired(retirement, record, *, cleanup, dead_identities, endpoint):
+    assert cleanup["driver_returncode"] == 0 and not cleanup["forced"] \
+        and not cleanup["recovered"] and not cleanup["alive"], cleanup
+    assert dead_identities["alive"] == []
+    assert sorted(tuple(row) for row in dead_identities["identities"]) == record["identities"]
+    assert all(endpoint.get(key) == record["endpoint"].get(key)
+               for key in ("runtime", "session_ref", "container_ref", "endpoint_id", "scope_generation"))
+    with retirement["lock"]:
+        assert any(row is record for row in retirement["records"]) and not record["confirmed"]
+        record["confirmed"] = True
+
+
+def _finish_native_proxy_handlers(endpoints, timeout=5):
+    """Stop admission, then bound completion of the servers' existing handler threads."""
+    deadline = time.monotonic() + timeout
+    errors = []
+
+    def shutdown():
+        try:
+            for server, _thread in endpoints:
+                server.shutdown()
+        except BaseException as exc:
+            errors.append(exc)
+
+    stopper = threading.Thread(target=shutdown, daemon=True)
+    stopper.start()
+    stopper.join(max(0, deadline - time.monotonic()))
+    assert not stopper.is_alive(), "proxy admission shutdown exceeded completion deadline"
+    assert not errors, errors
+    for server, thread in endpoints:
+        thread.join(max(0, deadline - time.monotonic()))
+        assert not thread.is_alive(), "proxy serve loop exceeded completion deadline"
+        # ThreadingMixIn stores accepted non-daemon handlers in its existing _Threads list.
+        handlers = server._threads
+        if not isinstance(handlers, list):
+            assert (handlers is socketserver.ThreadingMixIn._threads
+                    and type(handlers) is socketserver._NoThreads), "unsupported proxy handler tracking type"
+            handlers = ()
+        for handler in tuple(handlers):
+            handler.join(max(0, deadline - time.monotonic()))
+            assert not handler.is_alive(), "proxy response handler exceeded completion deadline"
 
 
 def _proxy_cancel_scope(path):
@@ -436,15 +496,17 @@ def _record_retired_read_disconnect(retirement, diagnostic, exc, forwarded):
                for row in forwarded):
         return False
     with retirement["lock"]:
-        retiring = retirement.get("scope")
-        if not retiring or scope != retiring:
+        records = [row for row in retirement["records"] if row["scope"] == scope]
+        if len(records) != 1:
             return False
+        record = records[0]
         retirement["cancellations"].append({
             **diagnostic,
             "exception_type": type(exc).__name__,
             "error": repr(exc),
             "classification": "retired_read_response_disconnect",
-            "retirement_scope": dict(retiring),
+            "retirement_scope": dict(record["scope"]),
+            "retirement_controller": record["controller"],
             "upstream_complete": True,
         })
     return True
@@ -453,15 +515,22 @@ def _record_retired_read_disconnect(retirement, diagnostic, exc, forwarded):
 def _proxy_response_audit(retirement, server_errors):
     with retirement["lock"]:
         cancellations = [dict(row) for row in retirement["cancellations"]]
-        confirmed = bool(retirement["confirmed"])
+        records = [{**row, "scope": dict(row["scope"]), "endpoint": dict(row["endpoint"])}
+                   for row in retirement["records"]]
+        confirmed = bool(records) and all(row["confirmed"] for row in records)
+        unconfirmed = [row for row in cancellations if not any(
+            record["scope"] == row["retirement_scope"]
+            and record["controller"] == row["retirement_controller"] and record["confirmed"]
+            for record in records)]
     issues = []
-    if cancellations and not confirmed:
-        issues.append("retired-read disconnect was not followed by confirmed cleanup and relaunch")
+    if unconfirmed:
+        issues.append("retired-read disconnect was not followed by confirmed cleanup")
     if server_errors:
         issues.append(f"{len(server_errors)} fatal proxy server error(s) remain")
     return {
         "passed": not issues,
         "retirement_confirmed": confirmed,
+        "retirements": records,
         "cancellation_count": len(cancellations),
         "fatal_server_error_count": len(server_errors),
         "cancellations": cancellations,
@@ -708,6 +777,13 @@ def _message_delivery_state(client, message):
     return response.json()["deliveries"][0]
 
 
+def _proxy_retirement_control(scope, serial=1, endpoint=None):
+    # Classifier controls supply explicit synthetic generations, never native ownership proof.
+    controller = (serial, float(serial), "synthetic-controller")
+    return {"controller": controller, "identities": [controller], "endpoint": endpoint or {
+        **scope, "endpoint_id": f"relay-session-control-{serial}", "scope_generation": 0}}
+
+
 def test_native_proxy_retired_read_disconnect_preserves_and_recovers_pending_delivery(client):
     receiver_ref = "native-proxy-retired-read"
     receiver, message = _create_pending_relay_delivery(
@@ -755,9 +831,10 @@ def test_native_proxy_retired_read_disconnect_preserves_and_recovers_pending_del
     try:
         assert upstream_complete.wait(5), "upstream candidate response did not complete with HTTP 200"
         assert any(row["path"] == request_path and row["status"] == 200 for row in forwarded)
-        _mark_proxy_scope_retiring(retirement, {
+        scope = {
             "runtime": "hermes", "session_ref": receiver_ref, "container_ref": SCOPE["container_ref"],
-        })
+        }
+        record = _mark_proxy_scope_retiring(retirement, scope, **_proxy_retirement_control(scope, endpoint=receiver))
         release_headers.set()
         assert headers_sent.wait(5), "proxy did not reach the completed-200 response-write barrier"
         request_thread.join(timeout=5)
@@ -782,8 +859,9 @@ def test_native_proxy_retired_read_disconnect_preserves_and_recovers_pending_del
         status, candidate = _proxy_public_get(server, request_path)
         assert status == 200
         assert pending_candidate_matches(candidate, before["delivery_id"], receiver["endpoint_id"])
-        with retirement["lock"]:
-            retirement["confirmed"] = True
+        _confirm_proxy_scope_retired(retirement, record,
+            cleanup={"driver_returncode": 0, "forced": False, "recovered": [], "alive": []},
+            dead_identities={"alive": [], "identities": record["identities"]}, endpoint=receiver)
         assert _proxy_response_audit(retirement, server_errors)["passed"]
     finally:
         release_headers.set()
@@ -795,6 +873,199 @@ def test_native_proxy_retired_read_disconnect_preserves_and_recovers_pending_del
     assert not thread.is_alive(), "loopback API proxy did not stop"
 
 
+@pytest.mark.parametrize("has_primary", [False, True])
+def test_native_proxy_completion_timeout_fallback_closes_before_handler_release(client, has_primary):
+    receiver_ref = "native-proxy-blocked-completion"
+    _create_pending_relay_delivery(client, receiver_ref, "native-proxy-blocked-sender", "pending 🌍")
+    retirement = _new_proxy_retirement_state()
+    entered, release_body, fallback_closed, finished = (threading.Event() for _ in range(4))
+    requests, request_errors, result = [], [], []
+    outcome = {}
+    primary = RuntimeError("original journey failure") if has_primary else None
+
+    def body_barrier(_diagnostic, _raw):
+        entered.set()
+        assert release_body.wait(5), "timeout control did not release its owned handler"
+
+    server, thread = _start_api_proxy(client, [], [], retirement, body_write_barrier=body_barrier)
+
+    def abort():
+        try:
+            requests.append(_abort_loopback_response(server, _pending_candidate_path(receiver_ref)))
+        except BaseException as exc:
+            request_errors.append(exc)
+
+    def fallback():
+        def stop_endpoint():
+            try:
+                _finish_native_proxy_handlers(((server, thread),), timeout=1)
+            finally:
+                socketserver.TCPServer.server_close(server)
+                fallback_closed.set()
+        result.append(_run_finalization_step(primary, outcome, "server_shutdown_error", stop_endpoint))
+        finished.set()
+
+    requester = threading.Thread(target=abort, daemon=True)
+    closer = threading.Thread(target=fallback, daemon=True)
+    handlers = ()
+    requester.start()
+    try:
+        assert entered.wait(5)
+        requester.join(5)
+        assert not requester.is_alive() and not request_errors, request_errors
+        assert int(requests[0].split()[1]) == 200
+        handlers = tuple(server._threads)
+        assert handlers and any(handler.is_alive() for handler in handlers)
+        closer.start()
+        assert fallback_closed.wait(3) and finished.wait(1), "fallback repeated an unbounded handler join"
+        closer.join(1)
+        assert not closer.is_alive() and not release_body.is_set()
+        assert any(handler.is_alive() for handler in handlers), "control handler was released or forcibly cleaned"
+        error_field = "secondary_server_shutdown_error" if has_primary else "server_shutdown_error"
+        assert "proxy response handler exceeded completion deadline" in outcome[error_field]
+        if has_primary:
+            assert result[0][1] is primary and result[0][2] is False
+            assert any("server_shutdown_error" in note for note in primary.__notes__)
+        else:
+            assert isinstance(result[0][1], AssertionError) and result[0][2] is True
+    finally:
+        release_body.set()
+        requester.join(5)
+        if closer.ident is not None:
+            closer.join(5)
+        server.shutdown()
+        socketserver.TCPServer.server_close(server)
+        thread.join(5)
+        for handler in handlers:
+            handler.join(5)
+    assert not thread.is_alive() and all(not handler.is_alive() for handler in handlers)
+
+
+def test_native_proxy_completion_fence_rejects_unknown_handler_tracking(client):
+    retirement = _new_proxy_retirement_state()
+    server, thread = _start_api_proxy(client, [], [], retirement)
+    tracking = server._threads
+    try:
+        server._threads = object()
+        with pytest.raises(AssertionError, match="unsupported proxy handler tracking type"):
+            _finish_native_proxy_handlers(((server, thread),))
+    finally:
+        server._threads = tracking
+        server.shutdown()
+        server.server_close()
+        thread.join(5)
+    assert not thread.is_alive()
+
+
+@pytest.mark.parametrize("second_case", ["confirmed", "unconfirmed", "foreign", "early"])
+def test_native_proxy_two_retirements_bind_cleanup_and_drain_before_audit(client, second_case):
+    retirement = _new_proxy_retirement_state()
+    forwarded, server_errors = [], []
+    rows = []
+    for serial in (1, 2, 3):
+        ref = f"native-retirement-{serial}"
+        endpoint, message = _create_pending_relay_delivery(
+            client, ref, f"native-retirement-sender-{serial}", f"pending é 漢字 🌍 {serial}")
+        scope = {"runtime": "hermes", "session_ref": ref, "container_ref": SCOPE["container_ref"]}
+        rows.append((scope, endpoint, message, _message_delivery_state(client, message)))
+
+    def reset_and_drain(scope):
+        body_entered, release_body, audit_finished = (threading.Event() for _ in range(3))
+        request_result, request_errors, drain_errors = [], [], []
+
+        def body_barrier(_diagnostic, _raw):
+            body_entered.set()
+            assert release_body.wait(5), "late body barrier was not released"
+
+        server, thread = _start_api_proxy(
+            client, forwarded, server_errors, retirement, body_write_barrier=body_barrier)
+
+        def abort():
+            try:
+                request_result.append(_abort_loopback_response(server, _pending_candidate_path(scope["session_ref"])))
+            except BaseException as exc:
+                request_errors.append(exc)
+
+        def drain():
+            try:
+                _finish_native_proxy_handlers(((server, thread),))
+                _proxy_response_audit(retirement, server_errors)
+                audit_finished.set()
+            except BaseException as exc:
+                drain_errors.append(exc)
+
+        requester = threading.Thread(target=abort, daemon=True)
+        finisher = threading.Thread(target=drain, daemon=True)
+        requester.start()
+        try:
+            assert body_entered.wait(5)
+            requester.join(5)
+            assert not requester.is_alive() and not request_errors, request_errors
+            assert int(request_result[0].split()[1]) == 200
+            finisher.start()
+            thread.join(3)
+            assert not thread.is_alive(), "serve loop did not stop admission"
+            assert not audit_finished.is_set() and finisher.is_alive(), "audit raced the blocked response"
+            release_body.set()
+            finisher.join(5)
+            assert not finisher.is_alive() and not drain_errors, drain_errors
+            assert audit_finished.is_set()
+        finally:
+            release_body.set()
+            requester.join(5)
+            if finisher.ident is not None:
+                finisher.join(5)
+            server.shutdown()
+            server.server_close()
+            thread.join(5)
+
+    cleanup = {"driver_returncode": 0, "forced": False, "recovered": [], "alive": []}
+    first_scope, first_endpoint, _message, _before = rows[0]
+    first = _mark_proxy_scope_retiring(retirement, first_scope,
+        **_proxy_retirement_control(first_scope, endpoint=first_endpoint))
+    reset_and_drain(first_scope)
+    assert len(retirement["cancellations"]) == 1 and not server_errors
+    _confirm_proxy_scope_retired(retirement, first, cleanup=cleanup,
+        dead_identities={"alive": [], "identities": first["identities"]}, endpoint=first_endpoint)
+    second_scope, second_endpoint, _message, _before = rows[1]
+    # Distinct native sessions may belong to the same original UI/Gateway generation.
+    second_inputs = _proxy_retirement_control(second_scope, endpoint=second_endpoint)
+    second = None
+    if second_case != "early":
+        second = _mark_proxy_scope_retiring(retirement, second_scope, **second_inputs)
+    reset_and_drain(rows[2][0] if second_case == "foreign" else second_scope)
+    if second_case == "early":
+        assert server_errors and len(retirement["cancellations"]) == 1
+        early_error = dict(server_errors[0])
+        second = _mark_proxy_scope_retiring(retirement, second_scope, **second_inputs)
+    if second_case != "unconfirmed":
+        _confirm_proxy_scope_retired(retirement, second, cleanup=cleanup,
+            dead_identities={"alive": [], "identities": second["identities"]}, endpoint=second_endpoint)
+    audit = _proxy_response_audit(retirement, server_errors)
+    assert audit["passed"] is (second_case == "confirmed")
+    assert first["confirmed"] is True
+    assert len(audit["retirements"]) == 2
+    assert audit["cancellation_count"] == (2 if second_case in {"confirmed", "unconfirmed"} else 1)
+    if second_case == "unconfirmed":
+        assert not second["confirmed"] and "not followed by confirmed cleanup" in audit["issues"][0]
+    if second_case in {"foreign", "early"}:
+        assert audit["fatal_server_error_count"] == 1
+    if second_case == "early":
+        assert server_errors[0] == early_error, "later close retroactively changed an active reset"
+    with pytest.raises(AssertionError, match="ambiguous reused"):
+        _mark_proxy_scope_retiring(retirement, second_scope,
+            **_proxy_retirement_control(second_scope, serial=99, endpoint=second_endpoint))
+    third_scope, third_endpoint, _message, _before = rows[2]
+    with pytest.raises(AssertionError, match="inconsistent owned generation"):
+        _mark_proxy_scope_retiring(retirement, third_scope,
+            **{**_proxy_retirement_control(third_scope, endpoint=third_endpoint),
+               "identities": [first["controller"], (99, 99.0, "foreign-owned-generation")]})
+    for _scope, _endpoint, message, before in rows:
+        after = _message_delivery_state(client, message)
+        assert after["state"] == "pending" and after["attempts"] == 0
+        assert after["delivery_id"] == before["delivery_id"]
+
+
 @pytest.mark.parametrize("request_case", [
     "active", "foreign", "wrong_method", "wrong_path", "upstream_non_200", "mutation",
 ])
@@ -804,9 +1075,10 @@ def test_native_proxy_unproven_read_disconnect_remains_fatal(client, request_cas
         client, receiver_ref, "native-proxy-fatal-sender", "fatal control payload")
     retirement = _new_proxy_retirement_state()
     if request_case != "active":
-        _mark_proxy_scope_retiring(retirement, {
+        scope = {
             "runtime": "hermes", "session_ref": receiver_ref, "container_ref": SCOPE["container_ref"],
-        })
+        }
+        _mark_proxy_scope_retiring(retirement, scope, **_proxy_retirement_control(scope, endpoint=receiver))
     forwarded = []
     server_errors = []
     request_session = "foreign-native-proxy-session" if request_case == "foreign" else receiver_ref
@@ -908,7 +1180,7 @@ def test_native_proxy_disconnect_classifier_rejects_other_request_shapes(field, 
     }
     forwarded = [{"request": {"request_id": "request-1"}, "status": 200}]
     negative = _new_proxy_retirement_state()
-    _mark_proxy_scope_retiring(negative, scope)
+    _mark_proxy_scope_retiring(negative, scope, **_proxy_retirement_control(scope))
     assert not _record_retired_read_disconnect(
         negative, {**valid_diagnostic, field: value}, ConnectionResetError("reset"), forwarded)
     assert not _record_retired_read_disconnect(
@@ -918,13 +1190,13 @@ def test_native_proxy_disconnect_classifier_rejects_other_request_shapes(field, 
     assert not negative["cancellations"]
 
     unsupported = _new_proxy_retirement_state()
-    _mark_proxy_scope_retiring(unsupported, scope)
+    _mark_proxy_scope_retiring(unsupported, scope, **_proxy_retirement_control(scope))
     assert not _record_retired_read_disconnect(
         unsupported, valid_diagnostic, OSError("unsupported disconnect"), forwarded)
     assert not unsupported["cancellations"]
 
     positive = _new_proxy_retirement_state()
-    _mark_proxy_scope_retiring(positive, scope)
+    _mark_proxy_scope_retiring(positive, scope, **_proxy_retirement_control(scope))
     assert _record_retired_read_disconnect(
         positive, valid_diagnostic, ConnectionResetError("reset"), forwarded)
     assert len(positive["cancellations"]) == 1
@@ -1005,7 +1277,7 @@ def test_native_proxy_finalization_does_not_mask_active_primary_exception(tmp_pa
 def test_native_proxy_response_audit_requires_confirmation_and_writes_late_failure(tmp_path):
     scope = {"runtime": "hermes", "session_ref": "audit-session", "container_ref": SCOPE["container_ref"]}
     retirement = _new_proxy_retirement_state()
-    _mark_proxy_scope_retiring(retirement, scope)
+    record = _mark_proxy_scope_retiring(retirement, scope, **_proxy_retirement_control(scope))
     diagnostic = {
         "request_id": "audit-request", "endpoint_role": "api", "method": "GET",
         "path": _pending_candidate_path(scope["session_ref"]), "response_status": 200,
@@ -1022,8 +1294,24 @@ def test_native_proxy_response_audit_requires_confirmation_and_writes_late_failu
     assert unconfirmed_result["status"] == "failed"
     assert unconfirmed_result["proxy_response_audit"]["retirement_confirmed"] is False
 
-    with retirement["lock"]:
-        retirement["confirmed"] = True
+    cleanup = {"driver_returncode": 0, "forced": False, "recovered": [], "alive": []}
+    dead = {"alive": [], "identities": record["identities"]}
+    for field, value in (("driver_returncode", 1), ("forced", True), ("recovered", [1]), ("alive", [1])):
+        with pytest.raises(AssertionError):
+            _confirm_proxy_scope_retired(retirement, record, cleanup={**cleanup, field: value},
+                dead_identities=dead, endpoint=record["endpoint"])
+    for dead_control in ({**dead, "alive": [1]}, {**dead, "identities": [(2, 2.0, "other-controller")]}):
+        with pytest.raises(AssertionError):
+            _confirm_proxy_scope_retired(retirement, record, cleanup=cleanup,
+                dead_identities=dead_control, endpoint=record["endpoint"])
+    for field, value in (("endpoint_id", "relay-session-other"), ("scope_generation", 1),
+                         ("session_ref", "other-session"), ("container_ref", "other-container")):
+        with pytest.raises(AssertionError):
+            _confirm_proxy_scope_retired(retirement, record, cleanup=cleanup,
+                dead_identities=dead, endpoint={**record["endpoint"], field: value})
+    assert record["confirmed"] is False
+    _confirm_proxy_scope_retired(retirement, record,
+        cleanup=cleanup, dead_identities=dead, endpoint=record["endpoint"])
     clean = tmp_path / "confirmed"
     clean.mkdir()
     audit = _finalize_proxy_response_audit(clean, {"status": "passed"}, retirement, [])
@@ -1967,7 +2255,7 @@ print(json.dumps({'alive':alive}))
                             env=env, capture_output=True, text=True, timeout=15, check=True)
     evidence = json.loads(result.stdout)
     assert evidence["alive"] == [], "first-leg owned process identity survived close"
-    return evidence
+    return {**evidence, "identities": sorted(identities)}
 
 
 @pytest.mark.parametrize("alive", [[], [123]])
@@ -1989,7 +2277,42 @@ def test_native_restart_verifies_exact_dead_identities_with_owned_runtime(monkey
         with pytest.raises(AssertionError, match="identity survived"):
             verify_closed_identities("hermes-sdk2.exe", identities, env)
     else:
-        assert verify_closed_identities("hermes-sdk2.exe", identities, env) == {"alive": []}
+        assert verify_closed_identities("hermes-sdk2.exe", identities, env) == {
+            "alive": [], "identities": sorted(identities)}
+
+
+def _native_proxy_retirement_endpoint(client, address):
+    scope = {"runtime": address["runtime"], "session_ref": address["session_ref"],
+             "container_ref": SCOPE["container_ref"]}
+    assert scope["runtime"] == "hermes"
+    response = client.get("/relay/sessions", params={**scope, "include_inactive": True})
+    assert response.status_code == 200, response.text
+    rows = response.json()
+    assert len(rows) == 1 and rows[0]["endpoint_id"] == address["exact_selector"], rows
+    assert all(rows[0].get(key) == value for key, value in scope.items()), rows
+    return scope, rows[0]
+
+
+def _native_proxy_retirement_snapshot(client, driver, address):
+    scope, endpoint = _native_proxy_retirement_endpoint(client, address)
+    processes = driver.command("inspect")["processes"]
+    identities = {(row["pid"], row["birthtime"], str(Path(row["exe"]).resolve())) for row in processes}
+    identity = json.loads((driver.artifacts / "driver-identity.json").read_text(encoding="utf-8"))
+    controller = (identity["pid"], identity["birthtime"], str(Path(identity["exe"]).resolve()))
+    assert controller in identities
+    gateway = driver.artifacts / "gateway-before.json"
+    gateway_identities = None
+    if gateway.exists():
+        receipt = json.loads(gateway.read_text(encoding="utf-8"))
+        assert tuple(receipt["helper_identity"]) in identities
+        assert (receipt["pid"], receipt["owner_birthtime"],
+                str(Path(receipt["owner_exe"]).resolve())) in identities
+        gateway_identities = {"helper": receipt["helper_identity"],
+            "owner": [receipt["pid"], receipt["owner_birthtime"], str(Path(receipt["owner_exe"]).resolve())]}
+    (driver.artifacts / "retiring-owned-processes.json").write_text(
+        json.dumps({"controller": controller, "identities": sorted(identities),
+                    "gateway": gateway_identities}, indent=2), encoding="utf-8")
+    return scope, {"controller": controller, "identities": identities, "endpoint": endpoint}
 
 
 class NativeDriver:
@@ -2534,6 +2857,7 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
     seed_models_dev_cache(profile)
     driver = None
     canonical_driver = None
+    canonical_retirement_address = None
     outcome = {"release": release, "runtimes": runtime_versions, "pallium_revision": revision,
                "surface": surface, "scope_mode": scope_mode,
                "qualification_git": {"path": str(qualification_git), "sha256": qualification_git_sha256},
@@ -2637,10 +2961,11 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
                 assert not {"OPENAI_API_KEY", "OPENAI_BASE_URL"} & set(bridge_row["env"]), bridge_row
             old_ids = {(row["pid"], row["birthtime"], str(Path(row["exe"]).resolve()))
                        for row in first_processes}
-            _mark_proxy_scope_retiring(retirement, {
-                "runtime": "hermes", "session_ref": session_id,
-                "container_ref": SCOPE["container_ref"],
-            })
+            retiring_scope, retiring_inputs = _native_proxy_retirement_snapshot(
+                client, driver, original["pallium_relay_address"])
+            old_ids.update(retiring_inputs["identities"])
+            retiring_inputs["identities"] = old_ids
+            first_retirement = _mark_proxy_scope_retiring(retirement, retiring_scope, **retiring_inputs)
             driver.close()
             driver = None
             close_report = json.loads((leg_one / "cleanup.json").read_text(encoding="utf-8"))
@@ -2648,6 +2973,9 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
                 and not close_report["recovered"] and not close_report["alive"], close_report
             outcome["restart_leg_one_cleanup"] = close_report
             outcome["restart_dead_before_relaunch"] = verify_closed_identities(python, old_ids, env)
+            _scope, closed_endpoint = _native_proxy_retirement_endpoint(client, original["pallium_relay_address"])
+            _confirm_proxy_scope_retired(retirement, first_retirement, cleanup=close_report,
+                dead_identities=outcome["restart_dead_before_relaunch"], endpoint=closed_endpoint)
             leg_two = artifacts / "leg-2"
             leg_two.mkdir()
             next_spec = leg_two / "driver-spec.json"
@@ -2708,8 +3036,6 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
                 assert ("--memory-enabled" in bridge_args) is memory_enabled
             outcome["restart_leg_two_processes"] = next_processes
             outcome["restart_generations"] = {"first": sorted(old_ids), "second": sorted(new_ids)}
-            with retirement["lock"]:
-                retirement["confirmed"] = True
             return next_session
 
         driver.command("submit", text=PROMPT, marker="native-ui-origin")
@@ -3179,17 +3505,40 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
             assert continued["terminal"]["outcome"] == "completed"
             address = provider.completed["native-finalize-race: post-release"]["pallium_relay_address"]
             assert_native_finalize_address(address, race_session, held["endpoint"]["endpoint_id"])
+            canonical_retirement_address = dict(address)
             outcome["canonical_shared_gateway_plugin_late_finalize_ordering"] = "passed"
             canonical_driver.close()
             assert canonical_driver.proc.returncode == 0, "canonical client did not exit normally"
             outcome["canonical_client_cleanup"] = "passed"
             canonical_driver = None
+        final_scope, final_inputs = _native_proxy_retirement_snapshot(
+            client, driver, history["pallium_relay_address"])
+        final_retirements = [_mark_proxy_scope_retiring(retirement, final_scope, **final_inputs)]
+        if memory_enabled:
+            memory_address = provider.completed[MEMORY_SESSION_PROMPT]["pallium_relay_address"]
+            assert memory_address["session_ref"] == memory_session_id
+            assert memory_address["session_ref"] != final_scope["session_ref"]
+            memory_scope, memory_endpoint = _native_proxy_retirement_endpoint(client, memory_address)
+            final_retirements.append(_mark_proxy_scope_retiring(retirement, memory_scope,
+                **{**final_inputs, "endpoint": memory_endpoint}))
+        if canonical_retirement_address is not None:
+            canonical_scope, canonical_endpoint = _native_proxy_retirement_endpoint(client, canonical_retirement_address)
+            final_retirements.append(_mark_proxy_scope_retiring(retirement, canonical_scope,
+                **{**final_inputs, "endpoint": canonical_endpoint}))
         closed = driver
         driver.close()
         driver = None
         outcome.update(owned_process_cleanup="passed", driver_returncode=closed.proc.returncode,
                        driver_outcome="passed" if closed.proc.returncode == 0 else "failed")
         assert closed.proc.returncode == 0, "native driver failed before profile lifecycle"
+        final_cleanup = json.loads((closed.artifacts / "cleanup.json").read_text(encoding="utf-8"))
+        final_dead = verify_closed_identities(python, final_inputs["identities"], env)
+        outcome["final_dead_identities"] = final_dead
+        for record in final_retirements:
+            public_address = {**record["scope"], "exact_selector": record["endpoint"]["endpoint_id"]}
+            _scope, closed_endpoint = _native_proxy_retirement_endpoint(client, public_address)
+            _confirm_proxy_scope_retired(retirement, record, cleanup=final_cleanup,
+                dead_identities=final_dead, endpoint=closed_endpoint)
         databases = profile_database_snapshot(profile)
         assert databases, "actual Hermes UI persisted no database"
         outcome["profile_database_hashes"] = databases
@@ -3222,6 +3571,7 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
         assert "pallium" not in current_config.get("mcp_servers", {})
         assert not (profile / "plugins" / "pallium-hermes-relay").exists()
         assert not (profile / "skills" / "pallium-memory").exists()
+        _finish_native_proxy_handlers(((api_server, api_server_thread), (provider_server, provider_server_thread)))
         assert not server_errors, server_errors
         if provider_kind == "openai-api":
             assert provider_http_requests, "built-in provider made no chat-completions request"
@@ -3299,10 +3649,11 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
         for server, thread in ((api_server, api_server_thread),
                                (provider_server, provider_server_thread)):
             def stop_endpoint(server=server, thread=thread):
-                server.shutdown()
-                server.server_close()
-                thread.join(timeout=5)
-                assert not thread.is_alive(), "native test endpoint thread did not stop"
+                try:
+                    _finish_native_proxy_handlers(((server, thread),))
+                finally:
+                    # The tracked fence is finite; ThreadingMixIn.server_close would join again without a deadline.
+                    socketserver.TCPServer.server_close(server)
             _, primary_exception, _ = _run_finalization_step(
                 primary_exception, outcome, "server_shutdown_error", stop_endpoint)
 

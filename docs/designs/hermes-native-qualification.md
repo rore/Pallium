@@ -12,22 +12,21 @@ coverage boundaries. User setup belongs in the
 |---|---|
 | Linux TUI | v0.22.0/v0.22.2 fixed-scope receipts; accepted v0.22.4 CWD journeys with memory off/on on the corrected Pallium source at exact Hermes source `4d04303818b61bf3aa09278af48356315515965b` |
 | Public host | Accepted v0.22.4 CWD/API regression on the corrected Pallium source through public host and HTTP surfaces; not frontend qualification |
-| Windows TUI | v0.22.0/v0.22.2 fixed-scope receipts; corrected-source v0.22.4 CWD memory-on journey accepted on Windows Server 2025. Memory-off remains incomplete: its additional canonical late-finalize check failed ownership validation before client creation |
+| Windows TUI | v0.22.0/v0.22.2 fixed-scope receipts; v0.22.4 CWD memory-on journey accepted on Windows Server 2025. Memory-off passed its canonical late-finalize component; its final proxy/privacy journey remains incomplete |
 | Windows Desktop | v0.22.0/v0.22.2 fixed-scope receipts; corrected-source v0.22.4 CWD journeys with memory off/on accepted on the bounded Server 2025/unpacked build |
 | Relay | Full 16,000-code-point Unicode delivery under default hook spill, reply and no-reply turns, busy delivery, endpoint outage and controlled host/MCP relaunch |
 | History and memory | Distinct-session capture/search/expansion, opt-in write/recall/correct/supersede/forget, privacy and preserved profile data |
 | Package lifecycle | Install, repeat setup/update, status and removal; unchanged unrelated configuration, plugins and databases |
 | Caller boundaries | Trusted identity/generation, stale and ambiguous admission, middleware vetoes, payload limits, concurrent callbacks, 24-hour presence and optional-vector fault handling |
 
-Earlier native receipts predate the project/actor and lifecycle safety
-corrections. The corrected-source Linux journeys and accepted Windows TUI
-memory-on and Desktop journeys do not establish the still-unreached Windows
-memory-off canonical late-finalize check. Native detach/resume ordering has
-no accepted proof yet.
-
-The shared-helper lifetime correction passed a current-source Linux TUI
-memory-off journey. Both affected Windows TUI cases still need qualification;
-earlier receipts do not exercise that change.
+A passed component does not qualify a failed journey. Windows TUI memory-off
+remains incomplete after a proxy response-write reset; its final provider-secret,
+egress and journey assertions were not reached. The shared-helper lifetime
+correction has accepted Linux memory-off and Windows memory-on journey evidence.
+The subsequent per-controller proxy-retirement and bounded handler-drain
+correction still needs current-source focused and actual TUI proof. Earlier
+Desktop journeys retain their exact source provenance; they did not execute
+these new proxy checks.
 
 The accepted evidence and retained failures are linked from
 [merged PR #324](https://github.com/rore/Pallium/pull/324),
@@ -43,9 +42,9 @@ UI journey injected that fault.
 
 - Runtime admission checks public capabilities, not a hard release allowlist.
   A compatible API check does not establish behavior on every future release.
-- Current v0.22.4 evidence is bounded to the tested source, public-host surface
-  and Linux/Windows TUI. It does not establish Windows Desktop CWD or a complete
-  cross-platform automatic-mode matrix.
+- Current v0.22.4 evidence is bounded to the tested source, public-host surface,
+  Linux TUI and Windows Server 2025/unpacked TUI/Desktop. It does not establish
+  the incomplete Windows TUI memory-off full journey or every platform.
 - Windows Server/unpacked evidence does not qualify Windows 11, MSIX installation,
   the native updater, native app Quit or automatic standalone MCP reconnection.
 - Synthetic providers prove configuration, transport and tool dispatch, not model
@@ -63,9 +62,9 @@ UI journey injected that fault.
   and pending messages according to their existing expiry. The pinned canonical
   Gateway mutation path retires a deleted lineage without emitting this plugin
   notification; it does not establish conditional-close callback coverage.
-  Qualify detach/resume
-  ordering and stale callback behavior on the corrected production source before claiming
-  lifecycle coverage.
+  Bounded native detach/resume evidence verifies that a late advisory finalize
+  cannot close, rebind or wake its successor. It does not discharge the incomplete
+  full TUI memory-off journey or qualify unobserved host changes.
 - Shared Relay availability failures remain unresolved. Keep failed CI and
   unreached assertions visible; later passing evidence does not prove a cause or
   cure. A source or safety finding affecting Hermes still needs investigation.
@@ -78,6 +77,15 @@ identify the affected contracts, run the missing caller regressions, and refresh
 only materially affected host evidence. Keep exact source/runtime hashes and
 independent review references with the result. Do not combine partial or skipped
 cases into a complete matrix or count helper tests as actual UI coverage.
+
+The manual [Windows workflow](../../.github/workflows/hermes-native-qualification.yml)
+takes an immutable `pallium_revision` and `scope_mode` (`fixed` or `cwd`).
+`case_selection` defaults to `all`, preserving the full UI selection. The explicit
+`tui` choice is allowed only with `cwd` and runs both exact TUI memory-off/on cases;
+its provenance records those two required IDs and rejects missing, duplicate or
+skipped results. This is TUI-pair evidence, not a new Desktop run. Reuse Desktop
+receipts only after reviewing unchanged source and cleanup behavior. Keep the
+existing isolated runtime and source checks for either selection.
 
 ## Missing-route regression probes
 

@@ -82,8 +82,8 @@ explicit permanent session deletion can close its saved exact endpoint and
 generation after lineage retirement is committed. Other lifecycle notifications
 do not authorize closure. Finalize, soft delete or deletion without a matching
 notification can leave presence and pending messages according to their existing
-expiry. Current native Desktop/TUI
-lifecycle qualification is still pending.
+expiry. Current lifecycle coverage is listed in the contributor validation
+reference below.
 
 Changing project or actor retires earlier turn authority, including after a
 plugin reload. Invalid saved authority is refused without clearing pending
@@ -135,16 +135,13 @@ they do not authorize overwriting an unowned file.
 - Automatic project scope requires session-owned cwd, surface and bound-route
   capabilities. Pallium keeps the native injection route separate from the
   conversation ID used by Relay and History. Missing capabilities or an unbound
-  route fail closed. Earlier v0.22.4 CWD runs passed Linux and Windows TUI with
-  memory off and on. The project, actor and lifecycle safety corrections require
-  refreshed native proof; Windows Desktop CWD remains unqualified.
-  Admission uses capability checks rather than a release
+  route fail closed. Admission uses capability checks rather than a release
   allowlist.
-- Existing v0.22.0/v0.22.2 Linux TUI and Windows Desktop/TUI receipts qualify fixed
-  scope only. Those releases lack the required automatic-scope APIs; their results
-  do not establish automatic-mode project isolation or lifecycle behavior.
+- Older hosts without these APIs can use intentional fixed-scope compatibility
+  setup; fixed scope does not establish automatic-mode project isolation or
+  lifecycle behavior.
 - Fixed-context wake routing on the newer shared Gateway remains unqualified and
-  unresolved; older fixed-scope results do not establish that compatibility.
+  unresolved.
 - Windows checks used Windows Server 2025 and an unpacked app. They do not cover
   Windows 11, MSIX installation, the native updater or native app Quit. Keep
   Hermes installation and updates on its supported upstream path.
