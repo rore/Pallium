@@ -41,7 +41,7 @@ Constructor concurrency and failed full-run disposition -> Run the existing exac
 
 **Exceptions:** —
 
-**State:** Ready for review
+**State:** Blocked or returned to planning
 <!-- agent-workflow:end -->
 
 ## Current CI enrollment failure and bounded preparation plan
@@ -183,4 +183,10 @@ Agent technical review: /root/relay_gate_plan_review, same independent nonimplem
 Reviewed revision: e72db20f72c71b93cced9bf926c84072056d091a, exact bounded-receive preparation diff and unchanged application4d2ac1cb.
 
 Verification adequacy: GO to publish the reviewed correction and obtain normal whole-change CI. Exact20-case census, recipe/intent, pre-intent grant/isolation, runtime/source identities and uncapped cleanup correspond. This qualifies preparation and unchanged receive assertions; it does not identify a physical stall or override any older red run. State Ready for review with corrected-head CI pending. No merge, installed operation, protected behavior change or whole-feature completion is claimed. Keep this checkout and evidence for the outstanding review/CI gates and safe eventual cleanup; manager owns roadmap reconciliation.
+
+## Subject admission failure and reassessment
+
+Corrected head09955553cc2762f0da367b64fdf7f4b8170a3d83 CI39947658312 is terminal failed: Python3.12, Windows smoke and governance passed; Python3.13 failed test_settled_relay_write_releases_gate_before_cleanup[reset-None-rollback] at tests/test_relay_work_ref_associations_e2e.py420. This is writer B in the subject, after successful preparation/readback and writer A's held settled cleanup with native_active=False and rollback_returned=True. B returned503 instead of expected409; setup_deadline2296ms/session_connection2295ms.6359 passed,26 skipped,2 xfailed,1 failed in338.31s. Retained completed-job log build/pool-ci-09955553/python313.log SHA256845c157d9837ff6bd71707ccfc02e7b78790202edc132dd73553d1115ada8ffb. No pool_exhausted was reported; physical delay remains unknown.
+
+State returned to planning. Same /root/relay_gate_plan_review confirms source acquires the local writer gate before session/connection setup, so B progressed past that gate and then hit the unchanged native admission deadline. The expected409 also requires downstream acquisition success, beyond gate-release ordering. Do not extend preparation clock substitution into this subject, accept503 instead409, increase budgets or blindly rerun. Reviewer is evaluating a bounded real-connection-prepared gate control versus a single specific subphase question; no new test, diagnostic or source correction is authorized by this record. Manager notified of the subject distinction and repeated-failure reassessment. Publication of this bookkeeping alone is deferred to avoid triggering another whole-change CI with unchanged subject; PR description must disclose the current red gate. Keep all prior receipts and the exact accepted20-case preparation result.
 
