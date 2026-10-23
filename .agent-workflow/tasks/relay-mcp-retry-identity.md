@@ -42,7 +42,7 @@ Canonical source: `roadmap/features/add-wake-first-relay-delivery.md`, sender re
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Checkpoint: api-review
@@ -103,7 +103,7 @@ Frozen recipe92b6a26a0046223c8bb9e1ae622b229c3ab6db6f97ff9900cdcafe2590a50ada re
 
 No send timestamp is invented. Existing received-turn authority, frozen recipe/intent and preflight establish the sequence; the later acceptance confirms it without retroactively changing that recipe.
 
-## Result review
+## Integrated full result review
 
 Agent technical review: sender_evidence_review, same independent native reviewer, acceptance relayed by manager chat01a16320-c588-72b0-a098-cb3d137b1e75 in this resumed task.
 
@@ -122,3 +122,15 @@ CI39943233525 on b5998d866d3b5407587a2a022764024c82774c94 failed Python3.12 at t
 Existing sender_evidence_review, relayed by manager01a16320-c588-72b0-a098-cb3d137b1e75, accepted the smaller preparation-only correction: pre-create the isolated session directory and exact utf8.lock containing one byte before hook.main. Reuse the existing session-directory preparation pattern in this file. Keep native lock acquisition/release, actual relay_turn, mocked transport and all UTF-8, exact scope, footer, length, ACK and skip-memory assertions intact. The earlier proposal to mock relay_turn is not used. Native lock-setup refusal remains independently covered by tests/test_hook_common_parity.py::test_session_lock_failure_reports_actual_boundary_without_changing_wait (eight expanded phase/runtime cases) and tests/test_claude_code_hooks/test_session_pin.py::TestPinAndGet::test_lock_setup_exhaustion_refuses_pin_before_native_acquisition. No product clock, timeout, retry, protected contract or API behavior changes. This adds one blue ordinary test path to the existing High-risk API task; its risk and remaining human/API gates stay unchanged. Review the actual diff, then propose the changed exact UTF-8 node plus the existing eight-case lock-boundary node under one new finite executor grant. No duplicate full run. If setup still fails, retain evidence and reassess before changing the boundary. Current readiness is blocked by failed CI; earlier accepted results remain historical evidence.
 
 Plan committed before editing at f9f7d62e. Same sender_evidence_review reviewed the actual three-line diff and supplied source GO through the manager: isolated utf8.lock matches the exact session ID, native locking/Relay/UTF-8/ACK/skip-memory remain intact, no clock/timeout/function mock changed. Accepted focused proposal is the changed UTF-8 node plus two runtimes times four existing lock-failure phases: nine cases, no new full suite. AST and diff checks pass; fresh whole-change workflow is advisory solely for the existing api-review checkpoint. State Ready to implement pending exact focused grant/result and normal corrected-head CI. No source readiness or CI success is claimed yet.
+
+## Native-lock preparation qualification
+
+The exact nine cases passed normally on285c214be7bb2aae2a146db0a1c7e93b378eab36:9 passed,0 failures/errors/skips/duplicates,0.84s. Evidence build/sender-utf8-preparation-01; recipe SHA256cce112b0d64bcdc41a4c4097d22d708dbd006f39a229708615505b2d12ded23b; JUnit SHA256b211c5fe93bedbae9129ae5a65677fef1509500a24e30c4e71ba348fb050c67f. Manager's new exact sole grant preceded intent and is recorded in concurrency-preflight.json/preflight.json; the frozen recipe's earlier PENDING value was not rewritten. Fresh external non-Git p-r3, empty matching-process census, exact candidate package origins,66 dependency pins plus project0.1.0, three runtime artifacts, unchanged729runner and all1883 source hashes verified. Root48248 creation2026-10-23T11:41:20.6662337Z exited uncapped at11:41:26.7079518Z;6.043s wrapper, complete streams, clean unchanged head/source/lock and empty bounded direct-child snapshot. Terminal and lease release reported; no subsequent test or held lease. Process observations do not prove universal/reparented cleanup. No full run, observer or retry was added. Earlier CI39943233525 remains failed and physical setup latency remains unknown.
+
+## Result review
+
+Agent technical review: same independent sender_evidence_review, exact nine-case acceptance relayed in manager chat01a16320-c588-72b0-a098-cb3d137b1e75 after terminal release.
+
+Reviewed revision: 285c214be7bb2aae2a146db0a1c7e93b378eab36, three-line native-lock preparation and exact nine-case recipe/JUnit/preflight/result above.
+
+Verification adequacy: accepted all nine unique normal outcomes, native Relay/UTF-8/ACK/skip-memory preservation, real lock-boundary coverage, source/runtime/runner/lock correspondence and uncapped cleanup. GO to publish the correction for normal corrected-head CI; no duplicate full run. Reuse the earlier accepted264 focused and8071 full evidence for unchanged sender application/API behavior. Current readiness is Ready for review with required CI, api-review and separate High-risk human result review still open. No previous red is waived and no merge or live environment action is authorized here. Keep this checkout/evidence for these remaining gates and eventual safe cleanup; manager owns roadmap and human-review coordination.
