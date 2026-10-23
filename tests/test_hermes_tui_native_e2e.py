@@ -28,9 +28,15 @@ import pytest
 import yaml
 
 from tests.fixtures.hermes_desktop_driver import RUNNER_MARKERS, require_runner_gate
-from tests.fixtures.hermes_gateway_driver import gateway_guard_witness, install_copied_runtime_guard, prepare_private_control
+from tests.fixtures.hermes_gateway_driver import (
+    gateway_guard_witness,
+    install_copied_runtime_guard,
+    prepare_private_control,
+    validate_canonical_gateway,
+)
 
 from tests.fixtures.hermes_tui_driver import (
+    RELEASES,
     assert_isolated_env,
     canonical_authority_ready,
     canonical_completed_detach,
@@ -368,6 +374,14 @@ def _assert_peer_cwd(path, session_id, turn_id, workspace):
         native_cwd = Path(row["native_session_cwd"])
         assert native_cwd.is_absolute() and native_cwd == native_cwd.resolve(), rows
         assert native_cwd == workspace.resolve(), rows
+
+
+def _assert_all_peer_cwds(path, required_pairs, workspace):
+    pairs = {(row["session_id"], row["turn_id"]) for row in _peer_audit_rows(path)}
+    assert required_pairs and required_pairs <= pairs, "completed native turns lack cwd observations"
+    for session_id, turn_id in pairs:
+        _assert_peer_cwd(path, session_id, turn_id, workspace)
+    return len(pairs)
 
 
 def pending_candidate_matches(response, delivery_id, endpoint_id):
@@ -1093,6 +1107,27 @@ def test_peer_audit_cwd_requires_exact_native_turn_and_canonical_workspace(tmp_p
         **good, "native_session_cwd": str(workspace.parent)}) + "\n", encoding="utf-8")
     with pytest.raises(AssertionError):
         _assert_peer_cwd(audit, "session-1", "turn-1", workspace)
+
+
+def test_all_peer_cwds_require_completed_pairs_and_validate_extra_turns(tmp_path):
+    audit = tmp_path / "audit.jsonl"
+    workspace = tmp_path / "é 漢字"
+    workspace.mkdir()
+    rows = [{"session_id": session, "turn_id": turn, "native_session_cwd": str(workspace)}
+            for session, turn in (("original", "first"), ("original", "wake"), ("resumed", "memory"))]
+    required = {("original", "first"), ("resumed", "memory")}
+    audit.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+    assert _assert_all_peer_cwds(audit, required, workspace) == 3
+    for missing in (set(), {("resumed", "absent")}):
+        with pytest.raises(AssertionError):
+            _assert_all_peer_cwds(audit, missing, workspace)
+    audit.write_text("", encoding="utf-8")
+    with pytest.raises(AssertionError):
+        _assert_all_peer_cwds(audit, required, workspace)
+    rows[1]["native_session_cwd"] = str(workspace.parent)
+    audit.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+    with pytest.raises(AssertionError):
+        _assert_all_peer_cwds(audit, required, workspace)
 
 
 def test_hermes_peer_audit_turns_are_unique_and_session_scoped(tmp_path):
@@ -2385,6 +2420,7 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
     assert revision == os.environ["PALLIUM_TUI_REPO_REVISION"], "Pallium source freeze changed"
     assert not subprocess.check_output(["git", "-C", str(root), "status", "--porcelain"], text=True).strip()
     release = verify_source(source, os.environ["HERMES_TUI_BUNDLE_SHA256"], git=qualification_git)
+    hermes_revision = next(value for value, version in RELEASES.items() if version == release)
     if scope_mode == "cwd":
         assert release == "0.22.4", (
             "automatic CWD qualification requires exact Hermes source commit "
@@ -2497,6 +2533,7 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
     unrelated.write_text("Preserve this note é 漢字 🌍", encoding="utf-8")
     seed_models_dev_cache(profile)
     driver = None
+    canonical_driver = None
     outcome = {"release": release, "runtimes": runtime_versions, "pallium_revision": revision,
                "surface": surface, "scope_mode": scope_mode,
                "qualification_git": {"path": str(qualification_git), "sha256": qualification_git_sha256},
@@ -3039,7 +3076,28 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
         assert not egress.exists() or not egress.read_text(encoding="utf-8").strip(), "unexpected child egress attempt"
         if native_finalize_gate is not None:
             # The canonical extra session is deliberately outside the rendered UI assertions above.
-            created = driver.command("canonical_create", timeout=15)
+            canonical_leg = driver.artifacts
+            gateway_receipt = json.loads((canonical_leg / "gateway-before.json").read_text(encoding="utf-8"))
+            ui_identity = json.loads((canonical_leg / "driver-identity.json").read_text(encoding="utf-8"))
+            assert driver.proc.poll() is None and ui_identity["launcher_pid"] == driver.proc.pid
+            assert ui_identity["parent_pid"] == os.getpid(), "original UI is not owned by this caller"
+            target = validate_canonical_gateway(gateway_receipt, ui_identity, home=profile,
+                revision=hermes_revision, python=python, python_base=Path(runtime_versions["python_base"]))
+            canonical_env = dict(env)
+            allowed = json.loads(canonical_env["PALLIUM_TUI_ALLOWED_ENDPOINTS"])
+            if list(target) not in allowed:
+                allowed.append(list(target))
+            canonical_env["PALLIUM_TUI_ALLOWED_ENDPOINTS"] = json.dumps(allowed)
+            canonical_artifacts = canonical_leg / "canonical-client"
+            canonical_artifacts.mkdir()
+            canonical_spec = canonical_artifacts / "driver-spec.json"
+            canonical_fields = json.loads((canonical_leg / "driver-spec.json").read_text(encoding="utf-8"))
+            canonical_fields.update(canonical_only=True, canonical_gateway=gateway_receipt,
+                canonical_ui_driver=ui_identity, parent_pid=os.getpid())
+            canonical_spec.write_text(json.dumps(canonical_fields), encoding="utf-8")
+            canonical_driver = NativeDriver(python, canonical_spec, canonical_env)
+            assert canonical_driver.read(30) == {"ready": True}
+            created = canonical_driver.command("canonical_create", timeout=15)
             race_session = created["session_id"]
             assert race_session != session_id and created["terminal"]["outcome"] == "completed"
             assert created["terminal"]["ref"]["session_id"] == race_session
@@ -3082,7 +3140,7 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
             close_path = "/relay/sessions/close-if-current"
             close_count = sum(row["path"] == close_path for row in forwarded)
             (native_finalize_gate / "target").write_text(race_session, encoding="utf-8")
-            driver.command("canonical_detach", session_id=race_session)
+            canonical_driver.command("canonical_detach", session_id=race_session)
             eventually(lambda: (native_finalize_gate / "entered").is_file(),
                        "native finalize hook did not enter the exact gate", timeout=3)
             assert (native_finalize_gate / "entered").read_text(encoding="utf-8") == race_session
@@ -3093,7 +3151,7 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
                 "conditional close ran before the qualification gate")
             assert not (native_finalize_gate / "completed").exists()
             assert not (native_finalize_gate / "timed_out").exists()
-            resumed = driver.command("canonical_resume", session_id=race_session, timeout=7)
+            resumed = canonical_driver.command("canonical_resume", session_id=race_session, timeout=7)
             assert resumed["session_id"] == race_session and resumed["terminal"]["outcome"] == "completed"
             assert resumed["terminal"]["ref"]["session_id"] == race_session
             held = race_snapshot()
@@ -3105,7 +3163,7 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
                        "old native finalize callback did not complete", timeout=2)
             assert (native_finalize_gate / "completed").read_text(encoding="utf-8") == race_session
             assert not (native_finalize_gate / "timed_out").exists(), "native finalize gate auto-released"
-            detached = driver.command("canonical_detach_complete", session_id=race_session, timeout=14)
+            detached = canonical_driver.command("canonical_detach_complete", session_id=race_session, timeout=14)
             assert detached["session_id"] == race_session
             assert detached["detached"]["session_id"] == race_session
             assert detached["detached"]["detached"] is True
@@ -3113,11 +3171,15 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
             assert race_snapshot() == held, "old finalize changed B's binding, wake, or endpoint"
             assert sum(row["path"] == close_path for row in forwarded) == close_count, (
                 "old finalize attempted conditional close after B resumed")
-            continued = driver.command("canonical_finish", session_id=race_session, timeout=12)
+            continued = canonical_driver.command("canonical_finish", session_id=race_session, timeout=12)
             assert continued["terminal"]["outcome"] == "completed"
             address = provider.completed["native-finalize-race: post-release"]["pallium_relay_address"]
             assert_native_finalize_address(address, race_session, held["endpoint"]["endpoint_id"])
             outcome["canonical_shared_gateway_plugin_late_finalize_ordering"] = "passed"
+            canonical_driver.close()
+            assert canonical_driver.proc.returncode == 0, "canonical client did not exit normally"
+            outcome["canonical_client_cleanup"] = "passed"
+            canonical_driver = None
         closed = driver
         driver.close()
         driver = None
@@ -3168,6 +3230,21 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
                        if delivery.get(key))
         assert not any(secret in json.dumps(provider.requests) for secret in secrets), "private Relay receipt reached provider"
         assert not egress.exists() or not egress.read_text(encoding="utf-8").strip(), "package lifecycle attempted egress"
+        if scope_mode == "cwd" and surface == "desktop":
+            completed_users = [item for row in forwarded if row["path"] == "/items"
+                and isinstance(row["body"], list) for item in row["body"]
+                if item.get("role") == "user" and item.get("source_type") == "hermes"]
+            assert completed_users, "Desktop completed no captured native turns"
+            required_pairs = {(session_id, original_turn_id), (session_id, busy_turn_id)}
+            for item in completed_users:
+                native_session, native_turn = item.get("thread_ref"), item.get("metadata", {}).get("hermes_turn_id")
+                assert isinstance(native_session, str) and native_session
+                assert isinstance(native_turn, str) and native_turn
+                assert item.get("container_ref") == SCOPE["container_ref"]
+                assert item.get("actor_ref") == "native-ui-actor"
+                required_pairs.add((native_session, native_turn))
+            outcome["native_cwd_completed_pairs"] = _assert_all_peer_cwds(
+                peer_audit, required_pairs, home / "scratch")
         outcome.update(journey_assertions="passed", original_session_id=session_id, history_session_id=query["active_session_ref"],
                        history_anchor_id=anchor_id)
     except BaseException as exc:
@@ -3179,6 +3256,14 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
         provider.release_busy.set()
         if native_finalize_gate is not None:
             (native_finalize_gate / "release").write_text("cleanup", encoding="utf-8")
+
+        def close_canonical_driver():
+            if canonical_driver is not None:
+                canonical_driver.close()
+                assert canonical_driver.proc.returncode == 0, "canonical client failed during cleanup"
+                outcome["canonical_client_cleanup"] = "passed"
+        _, primary_exception, _ = _run_finalization_step(
+            primary_exception, outcome, "canonical_client_cleanup_error", close_canonical_driver)
 
         def close_owned_driver():
             if driver is not None:

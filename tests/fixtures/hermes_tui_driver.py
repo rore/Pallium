@@ -961,9 +961,19 @@ def driver_main(spec_path: Path):
     surface = spec.get("surface", "tui")
     scope_mode = spec.get("scope_mode", "fixed")
     shared_gateway = spec.get("shared_gateway", False)
+    canonical_only = spec.get("canonical_only", False)
     assert surface in {"tui", "desktop"}, "unknown native UI surface"
     assert type(scope_mode) is str and scope_mode in {"fixed", "cwd"}, "unknown native scope mode"
     assert type(shared_gateway) is bool, "shared_gateway must be a strict boolean"
+    assert type(canonical_only) is bool, "canonical_only must be a strict boolean"
+    if canonical_only:
+        assert surface == "tui" and scope_mode == "cwd" and shared_gateway, (
+            "canonical-only mode requires the shared cwd TUI gateway")
+        assert type(spec.get("canonical_gateway")) is dict and type(spec.get("canonical_ui_driver")) is dict, (
+            "canonical-only mode requires original gateway and UI identities")
+    else:
+        assert not ({"canonical_gateway", "canonical_ui_driver"} & spec.keys()), (
+            "ordinary driver cannot accept canonical-only identities")
     from hermes_desktop_driver import DesktopConsole, require_runner_gate
     if os.name == "nt":
         require_runner_gate(dict(os.environ), home, source, spec_path.parent)
@@ -998,6 +1008,16 @@ def driver_main(spec_path: Path):
     if shared_gateway:
         assert surface == "tui" and release == "0.22.4", "shared native gateway requires the released 0.22.4 TUI"
     revision = next(revision for revision, version in RELEASES.items() if version == release)
+    canonical_receipt = None
+    if canonical_only:
+        from hermes_gateway_driver import validate_canonical_gateway
+
+        assert os.name == "nt", "canonical-only mode is scoped to Windows qualification"
+        canonical_receipt = spec["canonical_gateway"]
+        canonical_home = Path(os.environ["HERMES_HOME"]).resolve()
+        target = validate_canonical_gateway(canonical_receipt, spec["canonical_ui_driver"],
+            home=canonical_home, revision=revision, python=python, python_base=Path(spec["python_base"]))
+        assert sitecustomize._allowed(target), "canonical gateway was not granted before guard import"
     import psutil
     import queue
 
@@ -1051,12 +1071,19 @@ def driver_main(spec_path: Path):
         from websockets.sync.client import connect
 
         deadline = deadline or time.monotonic() + 5
-        receipt = gateway.receipt
+        receipt = canonical_receipt if canonical_only else gateway.receipt
+        if canonical_only:
+            from hermes_gateway_driver import verify_canonical_gateway_identity
+
+            validate_canonical_gateway(receipt, spec["canonical_ui_driver"],
+                home=canonical_home, revision=revision, python=python, python_base=Path(spec["python_base"]))
+            verify_canonical_gateway_identity(receipt, home=canonical_home,
+                timeout=min(2, max(.1, deadline - time.monotonic())))
         grant = query_gateway_control(Path(os.environ["HERMES_HOME"]), "session-ticket", params={
             "profile_id": receipt["profile_id"], "instance_id": receipt["instance_id"],
             "purpose": "interactive"}, timeout=min(2, max(.1, deadline - time.monotonic())))
         assert isinstance(grant, dict) and isinstance(grant.get("ticket"), str), grant
-        ws = connect(gateway.receipt["url"], subprotocols=[
+        ws = connect(receipt["url"], subprotocols=[
             "hermes-gateway-v1", "hermes-gateway-ticket." + grant["ticket"]],
             open_timeout=min(2, max(.1, deadline - time.monotonic())),
             close_timeout=1)
@@ -1076,7 +1103,9 @@ def driver_main(spec_path: Path):
     try:
         console_class = DesktopConsole if surface == "desktop" else TuiConsole
         # Retain a partial Desktop constructor so failed startup logs can still be closed and saved.
-        if surface == "desktop":
+        if canonical_only:
+            pass  # The original UI driver alone owns its gateway and helper.
+        elif surface == "desktop":
             console = console_class.__new__(console_class)
             console.__init__(python, source, home, dict(os.environ), spec_path.parent, stopped, tree,
                              reuse_user_data=spec.get("reuse_user_data", False),
@@ -1095,7 +1124,8 @@ def driver_main(spec_path: Path):
                 tui_env["PALLIUM_TUI_GATEWAY_WS"] = gateway_url
             console = console_class(python, source, home, tui_env, spec_path.parent, stopped, tree,
                                     gateway=gateway)
-        console.ready()
+        if console is not None:
+            console.ready()
         print(json.dumps({"ready": True}), flush=True)
         while not stopped.is_set():
             try:
@@ -1103,6 +1133,8 @@ def driver_main(spec_path: Path):
             except queue.Empty:
                 continue
             op = command["op"]
+            assert not canonical_only or op not in {"submit", "wait", "new", "inspect"}, (
+                "canonical-only driver cannot perform UI operations")
             if op == "submit":
                 console.submit(command["text"], marker=command["marker"])
             elif op == "wait":
@@ -1113,7 +1145,7 @@ def driver_main(spec_path: Path):
                 print(json.dumps({"processes": console.tree.snapshot()}), flush=True)
                 continue
             elif op == "canonical_create":
-                assert gateway is not None and not canonical
+                assert (gateway is not None or canonical_only) and not canonical
                 ws = canonical_socket()
                 canonical["a"] = ws
                 created = canonical_rpc(ws, "session.create", {"source": "tui", "cwd": str(home / "scratch")})

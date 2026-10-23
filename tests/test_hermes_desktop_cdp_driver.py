@@ -126,7 +126,8 @@ async function run(fault) {
     locator:selector=>selector==='[data-tour="sessions-sidebar"]'?sidebar:
       selector.includes('composer-rich-input')?composer:{
       click:async()=>{events.push('new');url='file:///synthetic/index.html#/'},
-      waitFor:async()=>events.push('cwd-rail'),innerText:async()=>fault.rail?'wrong':workspace.split(/[\\/]/).at(-1)},
+      count:async()=>fault.absentRail?0:1,isVisible:async()=>!fault.hiddenRail,
+      innerText:async()=>{events.push('cwd-rail');return fault.rail?'wrong':workspace.split(/[\\/]/).at(-1)}},
     waitForURL:async predicate=>{events.push('route');if(!predicate(new URL(url)))throw Error('bad route')}};
   const browser={contexts:()=>[{pages:()=>[page]}],close:async()=>{}};
   let error=null;
@@ -147,7 +148,8 @@ async function run(fault) {
   relative:await run({input:'scratch'}),file:await run({input:path.join(home,'not-a-directory')}),
   traversal:await run({input:workspace+path.sep+'..'+path.sep+'scratch'}),
   bridge:await run({bridge:true}),setter:await run({setter:true}),
-  mismatch:await run({mismatch:true}),rail:await run({rail:true})})))();
+  mismatch:await run({mismatch:true}),rail:await run({rail:true}),
+  absentRail:await run({absentRail:true}),hiddenRail:await run({hiddenRail:true,rail:true})})))();
 """
     result = run_node(source.replace("process.argv.slice(2)",
                                      f"{json.dumps([str(runner), str(runner / 'home'), str(workspace)])}"), tmp_path)
@@ -184,6 +186,15 @@ async function run(fault) {
     assert result["mismatch"]["events"] == ["set", "get"]
     assert result["mismatch"]["error"]
     assert result["rail"]["error"] and "cwd-rail" in result["rail"]["events"]
+    for key in ("absentRail", "hiddenRail"):
+        draft = result[key]
+        assert draft["error"] is None and "cwd-rail" not in draft["events"]
+        assert draft["events"].count("set") == draft["events"].count("reload") == 1
+        assert draft["events"].count("get") >= 2
+        assert draft["events"].count("new") == 2 and draft["events"].count("route") == 1
+        assert draft["events"].index("set") < draft["events"].index("get") \
+            < draft["events"].index("reload") < draft["events"].index("new") \
+            < draft["events"].index("route")
 
 
 def test_ready_waits_for_renderer_page_and_enabled_composer(tmp_path):

@@ -22,6 +22,8 @@ from tests.fixtures.hermes_gateway_driver import (
     gateway_guard_witness,
     gateway_target,
     install_copied_runtime_guard,
+    validate_canonical_gateway,
+    verify_canonical_gateway_identity,
 )
 from tests.fixtures.hermes_tui_driver import node_preload_source, python_guard_source
 
@@ -45,6 +47,128 @@ def test_gateway_target_accepts_only_literal_native_endpoint(value, expected):
 def test_gateway_target_rejects_aliases_and_url_variants(value):
     with pytest.raises(AssertionError, match="unexpected native gateway endpoint"):
         gateway_target(value)
+
+
+@pytest.fixture
+def canonical_gateway_receipt(tmp_path, monkeypatch):
+    python, base, home = tmp_path / "python.exe", tmp_path / "base.exe", tmp_path / "home" / ".hermes"
+    ui = _FakeProcess(50, 90.0, base)
+    helper = _FakeProcess(51, 100.0, python, parents=[ui])
+    owner = _FakeProcess(52, 101.0, base, parents=[helper, ui])
+    listener = types.SimpleNamespace(family=socket.AF_INET, type=socket.SOCK_STREAM, status="LISTEN",
+                                     laddr=types.SimpleNamespace(ip="127.0.0.1", port=48123))
+    owner.net_connections = lambda **_kwargs: [listener]
+    processes = {50: ui, 51: helper, 52: owner}
+    monkeypatch.setitem(sys.modules, "psutil", types.SimpleNamespace(
+        Process=lambda pid: processes[pid], CONN_LISTEN="LISTEN"))
+    identity = {"pid": 50, "birthtime": 90.0, "exe": str(base.resolve()),
+                "launcher_pid": 50, "launcher_birthtime": 90.0, "launcher_exe": str(base.resolve()),
+                "parent_pid": 49, "parent_birthtime": 80.0, "parent_exe": str(base.resolve())}
+    receipt = {"url": "ws://127.0.0.1:48123/api/ws", "profile_id": "profile-a", "instance_id": "instance-a",
+               "pid": 52, "start_time": 101, "hermes_home": str(home.resolve()), "code_sha": "c" * 40,
+               "owner_birthtime": 101.0, "owner_exe": str(base.resolve()),
+               "helper_identity": [51, 100.0, str(python.resolve())]}
+    return receipt, identity, dict(home=home, revision="c" * 40, python=python, python_base=base), processes, listener
+
+
+def test_canonical_gateway_accepts_only_original_ui_owned_listener(canonical_gateway_receipt):
+    receipt, identity, options, _processes, _listener = canonical_gateway_receipt
+    assert validate_canonical_gateway(receipt, identity, **options) == ("127.0.0.1", 48123)
+
+
+def test_canonical_gateway_uses_native_profile_home_not_ui_home(canonical_gateway_receipt):
+    receipt, identity, options, _processes, _listener = canonical_gateway_receipt
+    assert validate_canonical_gateway(receipt, identity, **options) == ("127.0.0.1", 48123)
+    with pytest.raises(AssertionError, match="canonical gateway home changed"):
+        validate_canonical_gateway(receipt, identity, **{**options, "home": options["home"].parent})
+
+
+@pytest.mark.parametrize("field,value", [
+    ("url", "ws://localhost:48123/api/ws"), ("url", "ws://192.0.2.1:48123/api/ws"),
+    ("url", "ws://127.0.0.1:0/api/ws"), ("url", "ws://127.0.0.1:48124/api/ws"),
+    ("url", "ws://127.0.0.1:48123/api/ws?ticket=x"), ("url", 42),
+    ("profile_id", ""), ("instance_id", "\nprivate"), ("hermes_home", "/other"),
+    ("code_sha", "d" * 40), ("pid", True), ("start_time", True),
+    ("owner_birthtime", 102.0), ("owner_birthtime", float("nan")),
+    ("owner_exe", "/other/python"), ("helper_identity", [51, 99.0, "/other/python"]),
+])
+def test_canonical_gateway_rejects_untrusted_receipts(canonical_gateway_receipt, field, value):
+    receipt, identity, options, _processes, _listener = canonical_gateway_receipt
+    receipt[field] = value
+    with pytest.raises(AssertionError):
+        validate_canonical_gateway(receipt, identity, **options)
+
+
+@pytest.mark.parametrize("failure", ["ui-birth", "ui-exe", "launcher-birth", "ui-launcher",
+                                     "helper-ancestry", "owner-ancestry", "listener"])
+def test_canonical_gateway_requires_live_exact_original_ancestry(canonical_gateway_receipt, failure):
+    receipt, identity, options, processes, listener = canonical_gateway_receipt
+    if failure == "ui-birth":
+        processes[50].birth += 1
+    elif failure == "ui-exe":
+        processes[50].executable = options["python"].with_name("unrelated.exe")
+    elif failure == "launcher-birth":
+        identity["launcher_birthtime"] += 1
+    elif failure == "ui-launcher":
+        identity.update(launcher_pid=51, launcher_birthtime=100.0,
+                        launcher_exe=str(options["python"].resolve()))
+    elif failure == "helper-ancestry":
+        processes[51]._parents = []
+    elif failure == "owner-ancestry":
+        processes[52]._parents = [processes[50]]
+    else:
+        listener.status = "ESTABLISHED"
+    with pytest.raises(AssertionError):
+        validate_canonical_gateway(receipt, identity, **options)
+
+
+@pytest.mark.parametrize("changed", [None, "profile", "instance", "url", "home", "revision", "pid", "start", "bool-pid"])
+def test_canonical_gateway_checks_native_identity_before_ticket(canonical_gateway_receipt, monkeypatch, changed):
+    receipt, _identity, options, _processes, _listener = canonical_gateway_receipt
+    native = {key: receipt[key] for key in ("pid", "start_time", "hermes_home", "code_sha")}
+    endpoint = types.SimpleNamespace(control_home=str(options["home"].resolve()), profile_id="profile-a",
+                                      instance_id="instance-a", api_origin="http://127.0.0.1:48123")
+    if changed in {"profile", "instance", "url", "home"}:
+        setattr(endpoint, {"profile": "profile_id", "instance": "instance_id", "url": "api_origin",
+                           "home": "control_home"}[changed], "different")
+    elif changed == "bool-pid":
+        native["pid"] = True
+    elif changed:
+        native[{"revision": "code_sha", "pid": "pid", "start": "start_time"}[changed]] = "different"
+    calls = []
+    monkeypatch.setitem(sys.modules, "hermes_cli.gateway_runtime_discovery", types.SimpleNamespace(
+        query_identify=lambda home, timeout: (calls.append((home, timeout)) or native)))
+    monkeypatch.setitem(sys.modules, "hermes_cli.gateway_runtime", types.SimpleNamespace(
+        _endpoint=lambda *_args: types.SimpleNamespace(state="ready", endpoint=endpoint)))
+    monkeypatch.setitem(sys.modules, "gateway.status", types.SimpleNamespace(get_process_start_time=lambda _pid: 101))
+    if changed:
+        with pytest.raises(AssertionError):
+            verify_canonical_gateway_identity(receipt, home=options["home"].resolve(), timeout=2)
+    else:
+        verify_canonical_gateway_identity(receipt, home=options["home"].resolve(), timeout=2)
+    assert calls == [(options["home"].resolve(), 2)]
+
+
+@pytest.mark.parametrize("fields", [
+    {"canonical_only": 1}, {"canonical_gateway": {}}, {"canonical_ui_driver": {}},
+    {"canonical_only": True, "shared_gateway": True, "scope_mode": "cwd"},
+])
+def test_driver_refuses_invalid_canonical_spec_before_runtime_import(tmp_path, monkeypatch, fields):
+    from tests.fixtures import hermes_tui_driver as driver
+
+    spec = tmp_path / "driver-spec.json"
+    spec.write_text(json.dumps({"home": str(tmp_path / "home"), "source": str(tmp_path / "source"),
+                                "python": str(tmp_path / "python"), **fields}), encoding="utf-8")
+    original_import = __import__
+
+    def guarded(name, *args, **kwargs):
+        if name == "hermes_desktop_driver":
+            raise RuntimeError("invalid spec reached runtime import")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.__import__", guarded)
+    with pytest.raises(AssertionError):
+        driver.driver_main(spec)
 
 
 def _mock_installer_environment(tmp_path, monkeypatch, *, prefix_outside=False, base_same=False, active=False):
@@ -621,6 +745,134 @@ def _private_env(tmp_path: Path, node: Path, python: Path, gateway_port: int = 1
         for key in ("PALLIUM_LINUX_QUALIFICATION_ROOT", "PALLIUM_LINUX_QUALIFICATION_MANIFEST"):
             env[key] = os.environ[key]
     return env
+
+
+def test_canonical_client_guard_grants_only_exact_owned_sibling_listener(tmp_path):
+    import psutil
+    import queue
+
+    node, python = _runtime_paths(tmp_path)
+    parent_env = dict(os.environ)
+    env = _private_env(tmp_path, node, python, gateway_port=1)
+    # Three real disposable processes model original UI -> helper -> listener owner.
+    worker = r'''
+import base64, json, os, socket, subprocess, sys
+role, encoded = sys.argv[1:]
+if role == 'owner':
+    with socket.socket() as listener:
+        listener.bind(('127.0.0.1', 0))
+        listener.listen(2)
+        print(json.dumps({'owner_pid': os.getpid(), 'port': listener.getsockname()[1],
+                          'base': sys._base_executable}), flush=True)
+        sys.stdin.readline()
+else:
+    child = subprocess.Popen([sys.executable, '-I', '-S', '-u', '-c',
+        base64.b64decode(encoded).decode(), 'helper' if role == 'ui' else 'owner', encoded],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+    try:
+        row = json.loads(child.stdout.readline())
+        row[role + '_pid'] = os.getpid()
+        print(json.dumps(row), flush=True)
+        sys.stdin.readline()
+    finally:
+        try:
+            child.communicate('close\n', timeout=5)
+        except subprocess.TimeoutExpired:
+            child.kill()
+            child.communicate(timeout=5)
+            raise
+        assert child.returncode == 0, 'owned child required abnormal cleanup'
+'''
+    encoded = base64.b64encode(worker.encode()).decode()
+    proc = subprocess.Popen([str(python), "-I", "-S", "-u", "-c", worker, "ui", encoded],
+                            env=env, cwd=tmp_path, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, text=True)
+    reader = None
+    owned = []
+    try:
+        replies = queue.Queue()
+        reader = threading.Thread(target=lambda: replies.put(proc.stdout.readline()), daemon=True)
+        reader.start()
+        row = json.loads(replies.get(timeout=10))
+        ui, helper, owner = (psutil.Process(row[key]) for key in ("ui_pid", "helper_pid", "owner_pid"))
+        owned = [helper, owner]
+        identity = {"pid": ui.pid, "birthtime": ui.create_time(), "exe": str(Path(ui.exe()).resolve()),
+                    "launcher_pid": proc.pid, "launcher_birthtime": psutil.Process(proc.pid).create_time(),
+                    "launcher_exe": str(Path(psutil.Process(proc.pid).exe()).resolve()),
+                    "parent_pid": os.getpid(), "parent_birthtime": psutil.Process().create_time(),
+                    "parent_exe": psutil.Process().exe()}
+        receipt = {"url": f"ws://127.0.0.1:{row['port']}/api/ws", "profile_id": "owned-profile",
+                   "instance_id": "owned-instance", "pid": owner.pid, "start_time": 1,
+                   "hermes_home": str(tmp_path.resolve()), "code_sha": "c" * 40,
+                   "owner_birthtime": owner.create_time(), "owner_exe": str(Path(owner.exe()).resolve()),
+                   "helper_identity": [helper.pid, helper.create_time(), str(Path(helper.exe()).resolve())]}
+        target = validate_canonical_gateway(receipt, identity, home=tmp_path, revision="c" * 40,
+                                             python=python, python_base=Path(row["base"]))
+        previous = json.loads(env["PALLIUM_TUI_ALLOWED_ENDPOINTS"])
+        guard = tmp_path / "sitecustomize.py"
+        guard.write_bytes(python_guard_source().encode())
+        digest = hashlib.sha256(guard.read_bytes()).hexdigest()
+        env["PYTHONPATH"] = str(tmp_path)
+        script = r'''
+import hashlib, json, os, socket, sys
+from pathlib import Path
+path, expected, port, mode = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4]
+assert 'sitecustomize' in sys.modules, 'guard did not load during interpreter startup'
+import sitecustomize as guard
+assert Path(guard.__file__).resolve() == Path(path).resolve()
+assert hashlib.sha256(open(path, 'rb').read()).hexdigest() == expected
+assert socket.socket.connect is guard._connect
+assert socket.socket.connect_ex is guard._connect_ex
+assert socket.getaddrinfo is guard._getaddrinfo
+def refused(address):
+    try: socket.create_connection(address, timeout=2)
+    except PermissionError: return
+    raise AssertionError('ungranted socket destination was accepted')
+if mode == 'cached':
+    refused(('127.0.0.1', port))
+    original = json.loads(os.environ['PALLIUM_TUI_ALLOWED_ENDPOINTS'])
+    os.environ['PALLIUM_TUI_ALLOWED_ENDPOINTS'] = json.dumps(original + [['127.0.0.1', port]])
+    refused(('127.0.0.1', port))
+    counts = {'cached_refusals': 2}
+else:
+    assert mode == 'fresh'
+    with socket.create_connection(('127.0.0.1', port), timeout=2): pass
+    with socket.socket() as other:
+        other.bind(('127.0.0.1', 0))
+        for address in [('127.0.0.1', other.getsockname()[1]), ('192.0.2.1', 443), ('example.invalid', 443)]:
+            refused(address)
+    counts = {'positive': 1, 'negative': 3}
+assert hashlib.sha256(open(path, 'rb').read()).hexdigest() == expected
+print(json.dumps({'guard_sha256': expected, 'hooks_active': True, **counts}))
+'''
+        original_env = dict(env)
+        cached = subprocess.run([str(python), "-B", "-c", script, str(guard), digest, str(target[1]), "cached"],
+                                env=original_env, cwd=tmp_path, capture_output=True, text=True, timeout=15)
+        assert cached.returncode == 0, cached.stderr
+        assert json.loads(cached.stdout) == {"guard_sha256": digest, "hooks_active": True, "cached_refusals": 2}
+        assert json.loads(env["PALLIUM_TUI_ALLOWED_ENDPOINTS"]) == previous
+        env["PALLIUM_TUI_ALLOWED_ENDPOINTS"] = json.dumps(previous + [list(target)])
+        assert json.loads(env["PALLIUM_TUI_ALLOWED_ENDPOINTS"]) == previous + [list(target)]
+        result = subprocess.run([str(python), "-B", "-c", script, str(guard), digest, str(target[1]), "fresh"],
+                                env=env, cwd=tmp_path, capture_output=True, text=True, timeout=15)
+        assert result.returncode == 0, result.stderr
+        assert json.loads(result.stdout) == {"guard_sha256": digest, "hooks_active": True, "positive": 1, "negative": 3}
+        assert guard.read_bytes() == python_guard_source().encode()
+        assert owner.is_running() and helper.is_running() and ui.is_running(), "canonical client adopted sibling ownership"
+    finally:
+        try:
+            proc.communicate("close\n", timeout=15)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.communicate(timeout=5)
+            raise
+        finally:
+            if reader is not None:
+                reader.join(5)
+                assert not reader.is_alive(), "owned gateway receipt reader remained alive"
+    assert proc.returncode == 0
+    assert all(not process.is_running() for process in owned), "owned helper or listener survived normal shutdown"
+    assert dict(os.environ) == parent_env
 
 
 def test_python_guard_allows_only_numeric_loopback_ephemeral_resolution(tmp_path):

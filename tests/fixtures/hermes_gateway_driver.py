@@ -259,6 +259,94 @@ def gateway_target(value):
     return '127.0.0.1', int(match[1])
 
 
+def validate_canonical_gateway(receipt, ui_driver_identity, *, home, revision, python, python_base):
+    """Validate a sibling client's grant without adopting the original driver's processes."""
+    import math
+    import psutil
+    import socket
+
+    assert type(receipt) is dict and set(receipt) == {
+        'url', 'profile_id', 'instance_id', 'pid', 'start_time', 'hermes_home', 'code_sha',
+        'owner_birthtime', 'owner_exe', 'helper_identity'}, 'invalid canonical gateway receipt'
+    assert type(ui_driver_identity) is dict and set(ui_driver_identity) == {
+        'pid', 'birthtime', 'exe', 'launcher_pid', 'launcher_birthtime', 'launcher_exe',
+        'parent_pid', 'parent_birthtime', 'parent_exe'}, 'invalid original UI driver identity'
+    assert type(receipt['url']) is str, 'invalid canonical gateway URL'
+    target = gateway_target(receipt['url'])
+    assert receipt['hermes_home'] == str(Path(home).resolve()), 'canonical gateway home changed'
+    assert type(revision) is str and re.fullmatch(r'[0-9a-f]{40}', revision)
+    assert receipt['code_sha'] == revision, 'canonical gateway revision changed'
+    for key in ('profile_id', 'instance_id'):
+        value = receipt[key]
+        assert type(value) is str and value and value == value.strip() and not any(
+            ord(char) < 32 for char in value), 'invalid canonical gateway ' + key
+    assert type(receipt['start_time']) is int and receipt['start_time'] > 0
+    allowed = {str(Path(python).resolve()), str(Path(python).with_name('pythonw.exe').resolve()),
+               str(Path(python_base).resolve())}
+
+    def identity(pid, birth, exe):
+        assert type(pid) is int and pid > 0, 'invalid canonical process PID'
+        assert type(birth) in (int, float) and math.isfinite(birth) and birth > 0, (
+            'invalid canonical process birthtime')
+        assert type(exe) is str and str(Path(exe).resolve()) == exe and exe in allowed, (
+            'unexpected canonical process executable')
+        return pid, birth, exe
+
+    ui = identity(ui_driver_identity['pid'], ui_driver_identity['birthtime'], ui_driver_identity['exe'])
+    for prefix in ('launcher_', 'parent_'):
+        assert type(ui_driver_identity[prefix + 'pid']) is int and ui_driver_identity[prefix + 'pid'] > 0
+        birth = ui_driver_identity[prefix + 'birthtime']
+        assert type(birth) in (int, float) and math.isfinite(birth) and birth > 0
+        assert type(ui_driver_identity[prefix + 'exe']) is str and ui_driver_identity[prefix + 'exe']
+    helper = receipt['helper_identity']
+    assert type(helper) in (list, tuple) and len(helper) == 3, 'invalid gateway helper identity'
+    helper = identity(*helper)
+    owner = identity(receipt['pid'], receipt['owner_birthtime'], receipt['owner_exe'])
+    assert len({ui[0], helper[0], owner[0]}) == 3, 'canonical process identities overlap'
+
+    def current(process):
+        return process.pid, process.create_time(), str(Path(process.exe()).resolve())
+
+    ui_process, helper_process, owner_process = (psutil.Process(row[0]) for row in (ui, helper, owner))
+    assert current(ui_process) == ui and current(helper_process) == helper and current(owner_process) == owner, (
+        'canonical process identity changed')
+    launcher = identity(ui_driver_identity['launcher_pid'], ui_driver_identity['launcher_birthtime'],
+                        ui_driver_identity['launcher_exe'])
+    assert current(psutil.Process(launcher[0])) == launcher, 'original UI launcher identity changed'
+    assert launcher == ui or launcher in [current(process) for process in ui_process.parents()], (
+        'original UI is not owned by its retained launcher')
+    assert ui in [current(process) for process in helper_process.parents()], 'gateway helper is not owned by original UI'
+    assert helper in [current(process) for process in owner_process.parents()], 'gateway owner is not owned by helper'
+    assert any(connection.family == socket.AF_INET and connection.type == socket.SOCK_STREAM
+               and connection.status == psutil.CONN_LISTEN
+               and (connection.laddr.ip, connection.laddr.port) == target
+               for connection in owner_process.net_connections(kind='tcp')), 'gateway owner does not own exact listener'
+    return target
+
+
+def verify_canonical_gateway_identity(receipt, *, home, timeout):
+    """Bind an already-owned receipt to current native private-control discovery."""
+    from hermes_cli.gateway_runtime_discovery import query_identify
+    from hermes_cli.gateway_runtime import _endpoint
+    from gateway.status import get_process_start_time
+
+    identity = query_identify(home, timeout=timeout)
+    assert type(identity) is dict and type(identity.get('pid')) is int and type(identity.get('start_time')) is int, (
+        'invalid canonical gateway native identity')
+    discovery = _endpoint(identity, home, home)
+    assert discovery.state == 'ready' and discovery.endpoint is not None, 'canonical gateway is not ready'
+    endpoint = discovery.endpoint
+    assert endpoint.control_home == str(home), 'canonical gateway control home changed'
+    keys = ('pid', 'start_time', 'hermes_home', 'code_sha')
+    assert {key: identity[key] for key in keys} == {key: receipt[key] for key in keys}, (
+        'canonical gateway native identity changed')
+    assert get_process_start_time(receipt['pid']) == receipt['start_time'], 'canonical gateway start time changed'
+    assert (endpoint.profile_id, endpoint.instance_id,
+            endpoint.api_origin.replace('http://', 'ws://', 1) + '/api/ws') == (
+                receipt['profile_id'], receipt['instance_id'], receipt['url']), (
+                    'canonical gateway native endpoint changed')
+
+
 def gateway_guard_witness(path: Path, receipt: dict, guard: dict):
     if not path.exists():
         return []

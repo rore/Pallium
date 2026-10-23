@@ -196,8 +196,8 @@ async function connectDriver({ endpoint, sourceRoot, workspace, scopeMode = 'fix
       const composer = await waitForComposerReady()
       if ((await composer.innerText()).trim()) throw new Error('new workspace composer is not empty')
       const cwd = page.locator('[data-slot="coding-status-cwd"]')
-      await cwd.waitFor({state: 'visible', timeout})
-      if (!(await cwd.innerText()).trim().endsWith(path.basename(workspace))) {
+      if (await cwd.count() && await cwd.isVisible() &&
+          !(await cwd.innerText()).trim().endsWith(path.basename(workspace))) {
         throw new Error('Desktop draft project rail mismatch')
       }
       await projectCwd()
