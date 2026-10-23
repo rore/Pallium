@@ -38,6 +38,12 @@ HERMES_HISTORY_TOOLS = frozenset({
     "pallium_search_history_by_work_ref",
     "pallium_expand_source",
 })
+HERMES_MEMORY_TOOLS = frozenset({
+    "pallium_query", "pallium_expand", "pallium_ingest", "pallium_remember",
+    "pallium_correct", "pallium_supersede", "pallium_forget",
+    "pallium_forget_source", "pallium_record_outcome", "pallium_flag_memory",
+    "pallium_rate_memory", "pallium_expand_source",
+})
 HERMES_TOOLS = HERMES_RELAY_TOOLS | HERMES_HISTORY_TOOLS
 _META_KEY = "pallium_hermes"
 _MAX_ID_CHARS = 255
@@ -100,22 +106,27 @@ def _validate_arguments(
     arguments: Mapping[str, Any],
     context: PalliumContext,
     identity: HermesMcpIdentity,
+    *,
+    memory_enabled: bool = False,
 ) -> None:
     fixed_fields = [
         ("container_ref", context.container_ref),
         ("agent_ref", "hermes"),
-        ("thread_ref", identity.session_id),
         ("visibility", context.visibility),
     ]
+    if tool_name != "pallium_forget_source":
+        fixed_fields.append(("thread_ref", identity.session_id))
     if tool_name not in HERMES_HISTORY_TOOLS:
         fixed_fields.append(("actor_ref", context.actor_ref))
+    if tool_name == "pallium_flag_memory":
+        fixed_fields.append(("source_ref", context.actor_ref))
     for key, expected in fixed_fields:
         if key in arguments and arguments[key] is not None and arguments[key] != expected:
             raise ValueError(f"conflicting Hermes {key}")
 
     if tool_name in HERMES_HISTORY_TOOLS and arguments.get("request_source_item_id") is not None:
         raise ValueError("request_source_item_id is unavailable for Hermes History")
-    if tool_name == "pallium_expand_source" and arguments.get("include_supported_memories"):
+    if tool_name == "pallium_expand_source" and arguments.get("include_supported_memories") and not memory_enabled:
         raise ValueError("derived-memory expansion is not qualified for Hermes")
 
     identity_pairs = (
@@ -146,7 +157,7 @@ def _validate_arguments(
             raise ValueError("reply receipt conflicts with admitted metadata")
 
 
-def make_tool_adapter(context: PalliumContext) -> Callable[..., Any]:
+def make_tool_adapter(context: PalliumContext, *, memory_enabled: bool = False) -> Callable[..., Any]:
     """Build a per-request identity guard for the dedicated Hermes tool catalog."""
     try:
         from mcp.server.fastmcp.exceptions import ToolError
@@ -154,7 +165,8 @@ def make_tool_adapter(context: PalliumContext) -> Callable[..., Any]:
         from mcp.server.fastmcp import ToolError
 
     def adapt(tool_name: str, handler: Callable[..., Any], get_context: Callable[[], Any]):
-        if tool_name not in HERMES_TOOLS:
+        allowed_tools = HERMES_TOOLS | (HERMES_MEMORY_TOOLS if memory_enabled else frozenset())
+        if tool_name not in allowed_tools:
             return None
 
         @wraps(handler)
@@ -163,7 +175,7 @@ def make_tool_adapter(context: PalliumContext) -> Callable[..., Any]:
                 request_context = get_context().request_context
                 identity = _read_identity(request_context.meta, tool_name)
                 bound = inspect.signature(handler).bind_partial(*args, **kwargs)
-                _validate_arguments(tool_name, bound.arguments, context, identity)
+                _validate_arguments(tool_name, bound.arguments, context, identity, memory_enabled=memory_enabled)
                 if tool_name == "pallium_relay_reply":
                     bound.arguments["receipt"] = identity.reply_receipt
             except (TypeError, ValueError) as exc:
@@ -181,6 +193,7 @@ def make_tool_adapter(context: PalliumContext) -> Callable[..., Any]:
 
 def create_hermes_server(
     *, base_url: str, container_ref: str, actor_ref: str, visibility: str = "private",
+    memory_enabled: bool = False,
 ):
     """Create a stdio server with Relay/History tools and fixed profile scope."""
     if not isinstance(base_url, str) or not base_url.strip() or base_url != base_url.strip():
@@ -203,6 +216,8 @@ def create_hermes_server(
         raise ValueError("--actor-ref must be printable, exact-trimmed, and at most 255 characters")
     if visibility != "private":
         raise ValueError("--visibility must be private")
+    if type(memory_enabled) is not bool:
+        raise ValueError("--memory-enabled must be a boolean")
     fixed_container = validate_explicit_container_ref(container_ref)
     context = PalliumContext(
         base_url=base_url.rstrip("/"),
@@ -211,7 +226,7 @@ def create_hermes_server(
         agent_ref="hermes",
         visibility=visibility,
     )
-    return create_server(tool_adapter=make_tool_adapter(context))
+    return create_server(tool_adapter=make_tool_adapter(context, memory_enabled=memory_enabled))
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -220,12 +235,14 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--container-ref", required=True)
     parser.add_argument("--actor-ref", required=True)
     parser.add_argument("--visibility", choices=("private",), default="private")
+    parser.add_argument("--memory-enabled", action="store_true", help="Expose the opt-in memory catalog")
     args = parser.parse_args(argv)
     server = create_hermes_server(
         base_url=args.base_url,
         container_ref=args.container_ref,
         actor_ref=args.actor_ref,
         visibility=args.visibility,
+        memory_enabled=args.memory_enabled,
     )
     server.run(transport="stdio")
 

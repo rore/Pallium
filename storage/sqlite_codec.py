@@ -91,6 +91,7 @@ class SQLiteCodecMixin:
             # (retrieval, dashboard, MCP) can honor it. Previously
             # dropped, causing tombstoned rows to be returned as active.
             is_soft_deleted=bool(getattr(record, "is_soft_deleted", 0)),
+            origin=getattr(record, "origin", None),
         )
 
     @staticmethod

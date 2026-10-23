@@ -1522,11 +1522,48 @@ def test_http_send_rejects_malformed_or_out_of_budget_busy(http_wake, monkeypatc
     assert len(requests) == 1
     assert desktop.owners == [] and registry.reservations() == ()
 
-def test_failed_spend_has_zero_owner_calls(http_wake, monkeypatch):
-    _, _, registry, _, desktop, send, _ = http_wake
+def test_failed_spend_has_zero_owner_calls(http_wake, monkeypatch, force_refusal=False):
+    http, _, registry, _, desktop, send, workers = http_wake
+    attempts = _observe_transition_attempts(
+        http_wake, monkeypatch, "release", force_refusal=force_refusal,
+    )
     monkeypatch.setattr(registry, "begin_native_attempt", lambda *a: None)
-    send()
+    delivery = send()
+    assert all(not worker.is_alive() for worker in workers)
+    assert len(attempts) == 1
+    assert not force_refusal or attempts[0].get("forced") is True
+    expected = attempts[0]["reservations"]
+    assert len(expected) == 1
+    assert expected[0].delivery_id == delivery["delivery_id"]
+    assert expected[0].recipient_endpoint_id == delivery["recipient_endpoint_id"]
+    assert expected[0].session_ref == TARGET and expected[0].container_ref == SCOPE["container_ref"]
+    assert expected[0].generation > 0 and expected[0].outcome == "prepared"
+    assert expected[0].correlated_claim_attempts is None and expected[0].retry_not_before is None
+    assert desktop.owners == []
+    if _single_typed_transition_refusal(attempts):
+        assert registry.reservations() == expected
+        response = http.get("/relay/messages/retained-journey", params=SCOPE)
+        assert response.status_code == 200, response.text
+        pending = response.json()["deliveries"][0]
+        assert pending["delivery_id"] == delivery["delivery_id"]
+        assert pending["state"] == "pending" and pending["attempts"] == 0
+        recover(http_wake)
+        assert len(attempts) == 2 and "error_type" not in attempts[1]
+        assert attempts[1]["reservations"] == expected
+        assert attempts[1].get("result") == expected
+    else:
+        assert "error_type" not in attempts[0] and attempts[0].get("result") == expected
+    assert all(not worker.is_alive() for worker in workers)
     assert desktop.owners == [] and registry.reservations() == ()
+    response = http.get("/relay/messages/retained-journey", params=SCOPE)
+    assert response.status_code == 200, response.text
+    pending = response.json()["deliveries"][0]
+    assert pending["delivery_id"] == delivery["delivery_id"]
+    assert pending["state"] == "pending" and pending["attempts"] == 0
+
+
+def test_failed_spend_release_refusal_recovers_without_owner(http_wake, monkeypatch):
+    test_failed_spend_has_zero_owner_calls(http_wake, monkeypatch, force_refusal=True)
 
 def test_owner_response_allows_hook_claim_ack_before_return(http_wake):
     http, _, registry, _, desktop, send, _ = http_wake
@@ -2760,6 +2797,240 @@ async def test_accepted_mcp_worker_recovers_pending_http_wake_after_service_repl
         original._drop()
         if replacement is not None:
             replacement._drop()
+    capsys.readouterr()
+
+
+@pytest.mark.asyncio
+async def test_accepted_mcp_worker_recovers_pending_http_wake_after_idle_retirement(
+    client, monkeypatch, tmp_path, http_wake, capsys,
+):
+    from app.mcp import codex_desktop_bridge as lifecycle
+
+    http, relay, registry, template, _, send, wake_workers = http_wake
+    monkeypatch.setattr(bridge, "native_available", lambda: True)
+    monkeypatch.setattr(bridge, "retained_directory", lambda **_kwargs: tmp_path)
+    monkeypatch.setenv("PALLIUM_HOME", str(tmp_path))
+    monkeypatch.setenv("PALLIUM_AGENT_REF", "codex")
+    monkeypatch.setenv("CODEX_APP_TOOLS_PIPE_PATH", r"\\.\pipe\desktop-private")
+    monkeypatch.setenv("PALLIUM_BASE_URL", "http://localhost:19836")
+    monkeypatch.setenv("PALLIUM_CONTAINER_REF", SCOPE["container_ref"])
+    service = bridge.RetainedService(template.directory)
+    service.w, service.sid, service.current = template.w, template.sid, template.current
+    registry.retained_service = service
+    client.app.state.codex_wake_registry.retained_service = service
+    epoch = service.epoch
+    clients, workers, actual_calls, registrations = [], [], [], []
+    enrolled = [threading.Event() for _ in range(4)]
+    acquiring = [threading.Event() for _ in range(4)]
+    release_acquisition = [threading.Event() for _ in range(4)]
+    original_worker, native_client = lifecycle.InventoryWorker, bridge.NativeInventoryClient
+
+    class Worker(original_worker):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            workers.append(self)
+
+    class Handle(Peer):
+        closes = 0
+
+        def close(self):
+            if self.handle is not None:
+                self.closes += 1
+                self.handle = None
+                super().close()
+
+    class SourceIO:
+        unresolved = False
+        closes = 0
+
+        def __init__(self, source):
+            self.source = source
+            self.closed = threading.Event()
+
+        def close(self):
+            self.closes += 1
+            assert service.source is self.source
+            service._drop()
+            self.source.close()
+            service.source = None
+            self.closed.set()
+
+    class Native:
+        retire = native_client.retire
+        retired_service_exited = native_client.retired_service_exited
+        dispose = native_client.dispose
+
+        def __init__(self, _path, stop, *, retained, previous_manifest=None):
+            assert retained and previous_manifest is None
+            assert service.source is None, "old source channel was not settled"
+            self.index, self.stop, self.w = len(clients), stop, service.w
+            assert self.index < len(enrolled), "recovery created an extra candidate"
+            if self.index:
+                acquiring[self.index].set()
+                assert release_acquisition[self.index].wait(5), "test did not release fresh acquisition"
+            self.manifest = {"epoch": epoch, "pid": 30, "creation": "030"}
+            self.peer, self.source = Handle(self.w, 30), Handle(self.w, 42)
+            self.owner_handle, self.source_handle = self.peer, self.source
+            self.server_source = Handle(self.w, 42)
+            service.source = self.server_source
+            self.io = self.source_io = SourceIO(self.server_source)
+            self.unresolved, self.continuity, self.sequence = False, None, 0
+            self.idle_entered, self.release_idle = threading.Event(), threading.Event()
+            self.fail_idle = self.registered = False
+            clients.append(self)
+
+        def bootstrap_unchanged(self):
+            return service.epoch == self.manifest["epoch"] and not service.stop_event.is_set()
+
+        def service_current(self):
+            assert self.peer is not None and self.peer.handle is not None
+            return self.bootstrap_unchanged()
+
+        def _exchange(self, verb, metadata=None):
+            assert self.io is not None and not self.source_handle.closed
+            self.sequence += 1
+            request = {"version": 1, "verb": verb, "epoch": epoch, "sequence": self.sequence}
+            if verb == "register":
+                request.update(metadata, endpoint=os.environ["CODEX_APP_TOOLS_PIPE_PATH"],
+                               continuity=self.continuity)
+            result = service._process(request, self.server_source, self.sequence - 1, float("inf"))
+            response = native_client._public(result)
+            if "continuity" in result:
+                response["continuity"] = result["continuity"]
+            return response
+
+        def ready(self):
+            if self.registered:
+                self.idle_entered.set()
+                assert self.release_idle.wait(5), "test did not release idle readiness"
+                if self.fail_idle:
+                    raise bridge.ShadowUnavailable("deadline")
+                if self.stop.is_set():
+                    return {"status": "unavailable", "reason": "stopped"}
+            return self._exchange("ready")
+
+        def register(self, metadata):
+            registrations.append((self.index, dict(metadata), self.continuity))
+            result = self._exchange("register", dict(metadata))
+            assert result["status"] == "registered"
+            self.continuity = result["continuity"]
+            self.registered = True
+            enrolled[self.index].set()
+            return result
+
+    monkeypatch.setattr(lifecycle, "InventoryWorker", Worker)
+    monkeypatch.setattr(bridge, "NativeInventoryClient", Native)
+
+    class Client:
+        def __init__(self, _ctx):
+            pass
+
+        async def relay_status(self, *args, **kwargs):
+            actual_calls.append((args, kwargs))
+            return {"payload": "", "deliveries": [], "payload_offset": 0,
+                    "payload_total_chars": 0, "content_truncated": False, "next_offset": None}
+
+    monkeypatch.setattr(mcp_server, "PalliumMcpClient", Client)
+    server = mcp_server.create_server(
+        lifespan=mcp_server._codex_retained_lifespan, codex_retained=True)
+    events, desktops = [], []
+    hook = _hook_runner(http, monkeypatch, "notLoaded", events, tmp_path)
+    journey = http, relay, registry, service, None, send, wake_workers
+
+    async def exercise(session):
+        try:
+            result = await session.call_tool("pallium_relay_status", {"message_id": "pending"},
+                meta={"threadId": TARGET, "turnId": "accepted"})
+            assert not result.isError and len(actual_calls) == 1
+            assert await asyncio.to_thread(clients[0].idle_entered.wait, 3)
+            proof = clients[0].continuity
+            for cycle in range(3):
+                retired = clients[cycle]
+                desktop = service.custody
+                assert desktop is not None and service.enrollment_diagnostics()["accepted"]
+                desktops.append(desktop)
+                # Fail the already-entered idle observation, after real caller admission.
+                retired.fail_idle = True
+                retired.release_idle.set()
+                assert await asyncio.to_thread(retired.source_io.closed.wait, 3)
+                assert service.custody is None and service.retained_registration is None
+                assert desktop.closed
+                message_id, payload = f"retained-idle-{cycle}", f"private-payload-東京-שלום-{cycle}"
+                response = http.post("/relay/messages", json={
+                    "sender_runtime": "claude-code", "sender_session_ref": "sender",
+                    "recipient": f"codex:{TARGET}", "message_id": message_id, "payload": payload, **SCOPE})
+                assert response.status_code == 200, response.text
+                delivery_id = response.json()["deliveries"][0]["delivery_id"]
+                recover(journey)
+                pending, = http.get(f"/relay/messages/{message_id}", params=SCOPE).json()["deliveries"]
+                assert pending["delivery_id"] == delivery_id
+                assert pending["state"] == "pending" and pending["attempts"] == 0
+                assert len(desktop.owners) == (0 if cycle == 0 else 1)
+                assert [event[0] for event in events] == ["emit", "ack"] * cycle
+                assert service.custody is None and service.retained_registration is None
+
+                assert await asyncio.to_thread(acquiring[cycle + 1].wait, 3), "idle source did not reacquire"
+                release_acquisition[cycle + 1].set()
+                assert await asyncio.to_thread(enrolled[cycle + 1].wait, 3), "idle source did not reenroll"
+                successor = clients[cycle + 1]
+                assert await asyncio.to_thread(successor.idle_entered.wait, 3)
+                assert len(clients) == cycle + 2 and len(actual_calls) == 1
+                assert service.epoch == epoch and successor.continuity == proof
+                assert retired.io is retired.source is retired.peer is None
+                assert retired.source_io.closes == retired.source_handle.closes == 1
+                assert retired.owner_handle.closes == retired.server_source.closes == 1
+                assert desktop.closed and not retired.unresolved
+                assert client.get("/status").json()["relay_wake"]["native_enrollment"]["state"] == "registered"
+
+                desktop = service.custody
+                assert desktop is not None
+                completed = threading.Event()
+
+                def on_owner(request):
+                    try:
+                        return hook(request["params"]["arguments"]["prompt"])
+                    finally:
+                        completed.set()
+
+                desktop.on_owner = on_owner
+                recover(journey, hook_completed=completed)
+                delivered, = http.get(f"/relay/messages/{message_id}", params=SCOPE).json()["deliveries"]
+                assert delivered["delivery_id"] == delivery_id
+                assert delivered["state"] == "delivered" and delivered["attempts"] == 1
+                assert [event[0] for event in events] == ["emit", "ack"] * (cycle + 1)
+                assert payload in events[-2][2]
+                assert payload in json.loads(capsys.readouterr().out)["hookSpecificOutput"]["additionalContext"]
+                assert len(desktop.owners) == 1
+                assert desktop.owners[0]["params"]["threadId"] == TARGET
+                assert desktop.owners[0]["params"]["turnId"] == "accepted"
+                recover(journey)
+                assert len(desktop.owners) == 1 and len(events) == 2 * (cycle + 1)
+                assert registry.reservations() == () and len(actual_calls) == 1
+            assert registrations == [(index, {"thread_ref": TARGET, "turn_ref": "accepted"},
+                                      None if index == 0 else proof) for index in range(4)]
+        finally:
+            for worker in workers:
+                worker.stop_event.set()
+            for native in clients:
+                native.release_idle.set()
+            for release in release_acquisition:
+                release.set()
+            for worker in workers:
+                await asyncio.to_thread(worker._thread.join, 3)
+                assert not worker._thread.is_alive(), "retained source worker did not settle"
+
+    try:
+        await _serve_protocol(server, exercise)
+    finally:
+        for worker in wake_workers:
+            await asyncio.to_thread(worker.join, 5)
+            assert not worker.is_alive(), "HTTP wake worker did not settle"
+        service._drop()
+    assert service.custody is None and not service.unresolved
+    assert all(native.io is native.source is native.peer is None for native in clients)
+    assert all(native.source_io.closes == native.source_handle.closes == native.owner_handle.closes == 1
+               for native in clients)
+    assert all(desktop.closed for desktop in desktops)
     capsys.readouterr()
 
 

@@ -1,6 +1,7 @@
 # First · Relay Reliability
 - add-wake-first-relay-delivery
 - fix-opencode-plugin-reliability
+- add-relay-retention-and-lifecycle-hardening
 
 # Parallel · Session History
 - investigate-history-navigation-and-on-demand-compression
@@ -20,6 +21,7 @@
 - fix-roadmap-and-evidence-status-drift
 
 # P2 · Work Continuity
+- add-persistent-role-history
 - idea-cross-context-work-continuity
 
 # P3 · Shared Knowledge
@@ -30,7 +32,6 @@
 - add-cross-container-bounded-memory
 
 # Paused
-- add-relay-retention-and-lifecycle-hardening
 - idea-authenticated-principal-for-mutation-authz
 - investigate-thread-level-interest-and-threadless-aggregation
 - milestone-shaped-memory-contract

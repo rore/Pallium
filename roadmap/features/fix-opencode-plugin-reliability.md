@@ -60,6 +60,43 @@ re-resolve them before implementing remaining work.
 | OC-7 directory ownership | Independently reviewed, qualified and merged in [PR297](https://github.com/rore/Pallium/pull/297), merge `178fea16e36946ffed68fb4bdd93da76056d5f73`. Installed deployment remains separate. |
 | OC-8 deletion authority | Native reachability/qualification question remains open; do not promote the mock concern to a confirmed native defect. |
 
+### Current qualification boundary (2026-10-22)
+
+[PR #340](https://github.com/rore/Pallium/pull/340) remains draft and unqualified
+at published `9188720f4f15e3ac918105c6c0efb5392c37927e`. Automatic CI
+[39695623972](https://github.com/rore/Pallium/actions/runs/39695623972) and
+governance passed, but complete manual
+[39695648270](https://github.com/rore/Pallium/actions/runs/39695648270) failed
+all four platform/version profiles. All eight changed cases passed once in their
+normal selections; those rows cannot qualify failed profiles, and no passing
+complete Windows profile is established for this contribution.
+
+A local-only OpenCode clock-origin fixture correction at `7d2340d` (record
+`9efe1da`) received independent RED-one/GREEN-two review. It proves the bounded
+fixture mechanism, not the historical hosted failure's exclusive cause, product
+repair or complete qualification; it is not published or full-qualified.
+Shared availability remains unresolved. OC-1, OC-4, OC-6 and OC-8 remain open.
+
+The serial-full proposal was rejected because its estimated five-to-nine-hour
+cost and cross-test topology remained uncertain. The explicit test-mechanics
+replan retains the actual mandatory local full run and PR checks; broader Windows
+reliability and separate PR #325 qualification remain open.
+
+The one corrected-source local full run at `79040c4e` failed after 2,421 passes,
+one failure, three skips and one xfail. In
+`test_codex_wake::test_relay_transport_timing_is_bounded_and_dashboard_projected[unavailable-30000]`,
+the second `record_wake_event` returned false before later assertions. The
+missing branch/exception evidence supports no fix or historical-cause claim.
+Record-only repair `9c135ecc` received independent GO and checker exit zero; it
+does not qualify application behavior, and the original prelaunch checker exit
+two remains preserved. Next: resolve the failed mandatory qualification's
+evidence-supported disposition before any new execution or supported fix is
+proposed. The clean owner checkout/private environment remain retained with no
+execution running. Evidence: `build/pr340-test-mechanics-full-20261022` and the
+prior `build/opencode-lease-clock-origin-20261022/qualification-reassessment.md`.
+No test, internal concurrency, mandatory check or time limit is weakened; this
+roadmap amendment authorizes no application execution, diagnostics or CI edits.
+
 PR302's accepted result and evidence are recorded in
 [OpenCode disposal reliability](../../.agent-workflow/tasks/opencode-disposal-reliability.md).
 Its package, full Python and isolated native results supersede the pending

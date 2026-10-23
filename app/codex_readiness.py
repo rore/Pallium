@@ -247,7 +247,7 @@ def _write(value: dict[str, Any], home: Path | None = None) -> None:
             os.close(fd)
         try:
             os.unlink(temporary)
-        except FileNotFoundError:
+        except OSError:
             pass
 
 
