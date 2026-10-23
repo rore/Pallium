@@ -41,7 +41,7 @@ Constructor concurrency and failed full-run disposition -> Run the existing exac
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Evidence
@@ -102,7 +102,7 @@ Independent /root/rename_observer_review accepted both focused receipts and thei
 
 Manager explicitly directed publication for review while retaining failed qualification. Draft PR353: https://github.com/rore/Pallium/pull/353, published at44e9ff76fcec696df845469ebba1f6faf2301522 against verified current main2768022ebf8b302d09a9955da38f3fc5d61504a4. The PR states focused201 plus exact2+1 passes and full01 NO-GO930/3/2, preserves the installer blocker and requests no merge or rollout. Fresh static boundary/Redline/workflow checks passed; no additional application tests were run for publication. State remains Blocked. Installer investigation/repair is separately owned by this same agent; no installed checkout access is authorized, and no source work is held behind unrelated remote test runs.
 
-## Result review
+## Historical source result review
 
 Agent technical review: /root/relay_gate_plan_review.
 
@@ -125,4 +125,18 @@ Existing independent /root/relay_gate_plan_review gives NO-GO for current releas
 Next: edit only this existing HTTP E2E preparation within the declared test scope, review the actual diff, run its eight-case settlement node under a reserved slot, and obtain current required CI on the corrected head. No blind job rerun, general retry or timeout increase. Source correctness review of unchanged application4d2ac1cb remains reusable; current readiness is an actionable test-preparation defect. No runtime authority is implied by this plan.
 
 Implementation of that plan changes only the existing settlement node: a copied time namespace replaces monotonic during real HTTP setup and exact seed readback, then context restoration and original-clock identity assertions precede A. Existing nonimplementer /root/relay_gate_plan_review reviewed the actual diff on47764a3f and gives source-only GO for the exact eight cases, then normal CI. No subject assertion, native wait/sleep, application code, protected contract or unrelated test changed. Tests have not yet run; current CI remains red pending corrected-head evidence. Original application reviews remain reusable.
+
+## Corrected preparation qualification
+
+The separately granted exact eight-case node passed normally on d1d727d5f2069791d93f74e1efe1ac35b9adc0bb:8 passed,0 skipped/errors/failures,4.81s. JUnit SHA2565b141e0906de207fb1b5a455202de12657e7beccd88e707830805a0b71040230; recipe SHA25660c1d7bbc51fd309e9c9f6a3890d4c1417f4b4f92b12d54c7574fcae776d834f; reviewed test SHA256214ef64c02a1737bb86c64cdcbef30e3ad43828fd234d2cda6298baf39377507. Evidence: build/pool-setup-repair-01. Application code remains unchanged from4d2ac1cb.
+
+Fresh external Temp/p-p1 and parent Git128,66 dependency pins plus project0.1.0, three runtime artifacts and exact api/app/core/storage candidate origins were verified before intent; the unchanged runner verified all1884 raw source hashes, clean head and lock before/after. Root63880 creation2026-10-23T10:20:07.3039482Z exited uncapped after10.065s wrapper time, complete streams, empty bounded direct-child snapshot. A supplemental process census was taken after intent when the simultaneous coordinator addendum arrived; it showed only owned root63880 and its child59840. It is supporting after-launch evidence, not a pre-intent census. The original manager's sole-executor release evidence preceded launch. Both grants represented one execution; no retry or chaining occurred and the slot was released immediately at terminal.
+
+## Result review
+
+Agent technical review: /root/relay_gate_plan_review, independent nonimplementer; build/pool-setup-repair-01/result-review.json.
+
+Reviewed revision: d1d727d5f2069791d93f74e1efe1ac35b9adc0bb, with reviewed preparation patch and unchanged application4d2ac1cb.
+
+Verification adequacy: GO to publish the reviewed preparation correction and obtain normal whole-change CI. All8 expanded cases passed normally; recipe/intent/test/lock/runner/JUnit and cleanup match. The concurrency-census timing limitation is retained accurately. Current remote2bec61c8 CI remains red until the corrected head is published and selected CI passes. No final merge, historical stall cure, installer cure or live rollout is claimed. Prior full01 and CI failures remain unchanged evidence. Normal CI and any actual review findings remain the next release gates; no further local test slot is authorized here.
 
