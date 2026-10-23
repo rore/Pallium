@@ -3,9 +3,9 @@ from __future__ import annotations
 import pytest
 
 
-def _ingest(client, *, source_id: str, role: str, thread: str, turn: str, name: str | None, state: str = "named", content: str = "shared planning marker"):
+def _ingest(client, *, source_id: str, role: str, thread: str, turn: str, name: str | None, state: str = "named", content: str = "shared planning marker", source_type: str = "codex"):
     payload = {
-        "source_type": "codex",
+        "source_type": source_type,
         "source_id": source_id,
         "content_type": "text/plain",
         "content": content,
@@ -23,13 +23,13 @@ def _ingest(client, *, source_id: str, role: str, thread: str, turn: str, name: 
     return response.json()[0]["source_item_id"]
 
 
-def _search(client, name: str, *, query: str = "shared planning marker", limit: int = 10):
+def _search(client, name: str, *, query: str = "shared planning marker", limit: int = 10, source_type: str = "codex"):
     response = client.post("/query", json={
         "text": query,
         "limit": limit,
         "source_only": True,
         "trigger_origin": "agent_pull",
-        "source_type": "codex",
+        "source_type": source_type,
         "relay_name": name,
         "container_ref": "project:role-history",
         "visibility": "private",
@@ -38,13 +38,13 @@ def _search(client, name: str, *, query: str = "shared planning marker", limit: 
     return response.json()
 
 
-def _search_debug(client, name: str, *, query: str = "shared planning marker", limit: int = 10):
+def _search_debug(client, name: str, *, query: str = "shared planning marker", limit: int = 10, source_type: str = "codex"):
     response = client.post("/query/debug", json={
         "text": query,
         "limit": limit,
         "source_only": True,
         "trigger_origin": "agent_pull",
-        "source_type": "codex",
+        "source_type": source_type,
         "relay_name": name,
         "container_ref": "project:role-history",
         "visibility": "private",
@@ -79,6 +79,46 @@ def test_relay_name_history_keeps_turn_start_name_across_sessions(client):
     assert _search(client, "taken-over-name")["results"] == []
 
 
+def test_claude_prompt_turn_snapshot_inherits_name_and_keeps_stop_captures_distinct(client):
+    prompt_id = "550e8400-e29b-41d4-a716-446655440000"
+    user_id = _ingest(
+        client, source_type="claude-code", source_id="claude-user-first", role="user",
+        thread="claude-session", turn=prompt_id, name="planner",
+    )
+    retry_id = _ingest(
+        client, source_type="claude-code", source_id="claude-user-retry", role="user",
+        thread="claude-session", turn=prompt_id, name="planner",
+    )
+    assert retry_id == user_id
+
+    first_stop = _ingest(
+        client, source_type="claude-code", source_id="claude-stop-one", role="assistant",
+        thread="claude-session", turn=prompt_id, name="different-name", state="unavailable",
+        content="shared planning marker first response",
+    )
+    second_stop = _ingest(
+        client, source_type="claude-code", source_id="claude-stop-retry", role="assistant",
+        thread="claude-session", turn=prompt_id, name=None, state="unavailable",
+        content="shared planning marker repeated Stop response",
+    )
+    assert first_stop != second_stop
+
+    hits = _search(client, "planner", source_type="claude-code")["results"]
+    by_id = {item["source_item_id"]: item for item in hits}
+    assert {user_id, first_stop, second_stop} <= by_id.keys()
+    assert by_id[first_stop]["relay_name"] == by_id[second_stop]["relay_name"] == "planner"
+
+    conflict = client.post("/items", json=[{
+        "source_type": "claude-code", "source_id": "claude-user-conflict",
+        "content_type": "text/plain", "content": "conflicting retry",
+        "artifact_kind": "message", "role": "user",
+        "container_ref": "project:role-history", "thread_ref": "claude-session",
+        "visibility": "private", "source_turn_id": prompt_id,
+        "relay_name": "other-name", "relay_attribution_state": "named",
+    }])
+    assert conflict.status_code == 409, conflict.text
+
+
 def test_relay_name_filter_runs_before_candidate_limit_and_reports_unavailable_coverage(client):
     for index in range(8):
         _ingest(
@@ -106,10 +146,12 @@ def test_relay_name_filter_runs_before_candidate_limit_and_reports_unavailable_c
     assert debug_result["incomplete_attribution"] is True
 
 
-def test_forgotten_turn_is_excluded_from_results_and_attribution_coverage(client):
+@pytest.mark.parametrize("source_type", ("codex", "claude-code"))
+def test_forgotten_turn_is_excluded_from_results_and_attribution_coverage(client, source_type):
     source_id = _ingest(
         client, source_id="forgotten-user", role="user", thread="forgotten-session",
-        turn="forgotten-turn", name="planner",
+        turn=("550e8400-e29b-41d4-a716-446655440003" if source_type == "claude-code" else "forgotten-turn"),
+        name="planner", source_type=source_type,
     )
     forgotten = client.post("/source/forget", json={
         "source_item_id": source_id,
@@ -118,9 +160,31 @@ def test_forgotten_turn_is_excluded_from_results_and_attribution_coverage(client
     assert forgotten.status_code == 200, forgotten.text
     assert forgotten.json()["forgotten"] is True
 
-    result = _search(client, "planner")
+    result = _search(client, "planner", source_type=source_type)
     assert result["results"] == []
     assert result["incomplete_attribution"] is False
+
+
+def test_claude_stop_without_correlating_prompt_id_stays_unavailable(client):
+    _ingest(
+        client, source_type="claude-code", source_id="claude-compacted-user", role="user",
+        thread="claude-compacted-session", turn="550e8400-e29b-41d4-a716-446655440002",
+        name="planner",
+    )
+    response = client.post("/items", json=[{
+        "source_type": "claude-code", "source_id": "claude-compacted-stop-no-key",
+        "content_type": "text/plain", "content": "assistant output after compact resumed",
+        "artifact_kind": "message", "role": "assistant",
+        "container_ref": "project:role-history", "thread_ref": "claude-compacted-session",
+        "visibility": "private",
+    }])
+    assert response.status_code == 200, response.text
+    result = _search(
+        client, "planner", query="assistant output after compact resumed",
+        source_type="claude-code",
+    )
+    assert result["results"] == []
+    assert result["incomplete_attribution"] is True
 
 
 def test_repeated_codex_user_snapshot_reuses_only_same_attribution(client):

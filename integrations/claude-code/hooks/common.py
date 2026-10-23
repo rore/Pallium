@@ -734,6 +734,33 @@ def read_hook_input() -> dict:
         return {}
 
 
+def source_turn_key(value: object) -> str | None:
+    """Accept Claude's documented prompt UUID only in canonical UUID form."""
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = uuid.UUID(value)
+    except (AttributeError, TypeError, ValueError):
+        return None
+    canonical = str(parsed)
+    return canonical if value.lower() == canonical else None
+
+
+def relay_name_snapshot(response: object) -> tuple[str, str | None]:
+    """Read only the validated Relay name returned by the current turn."""
+    if not isinstance(response, dict):
+        return "unavailable", None
+    session = response.get("session")
+    if not isinstance(session, dict) or "alias" not in session:
+        return "unavailable", None
+    alias = session.get("alias")
+    if alias is None:
+        return "unnamed", None
+    if not isinstance(alias, str) or re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,31}", alias) is None:
+        return "unavailable", None
+    return "named", alias
+
+
 def emit_utf8(text: str, *, stream=None) -> bool:
     """Write and flush one UTF-8 line before callers perform side effects."""
     if remaining_safe_time() <= 0:

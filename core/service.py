@@ -445,10 +445,10 @@ class PalliumService:
                     self._vector_embedder.save_vector_index()
             return self._build_ingest_result(existing_source_item)
 
-        # Relay attribution is accepted only on the Codex host's user snapshot.
+        # Relay attribution is accepted only on a supported host's user snapshot.
         # Assistant submissions cannot choose or overwrite the historical name;
         # they can only correlate to the immutable same-scope user row.
-        if source_type == "codex" and role in {"user", "assistant"}:
+        if source_type in {"codex", "claude-code"} and role in {"user", "assistant"}:
             requested_relay_name = relay_name
             requested_relay_state = relay_attribution_state
             key_is_valid = (
@@ -622,7 +622,7 @@ class PalliumService:
             )
             if (
                 snapshot_unique_error
-                and source_type == "codex"
+                and source_type in {"codex", "claude-code"}
                 and role == "user"
                 and source_turn_id is not None
             ):

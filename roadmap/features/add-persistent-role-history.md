@@ -68,7 +68,28 @@ Keep decisions local to this feature, without another registry or memory store:
   malformed native keys stay unavailable. User-start retries reuse only an equal
   snapshot and reject conflicting state/name; assistant outputs remain distinct,
   and Stop retries may duplicate because the hook exposes no stable per-output key.
-  Claude remains open: its supported hook payload has no proven shared turn key.
+- Claude Code's official hook payload exposes common UUID `prompt_id` on
+  UserPromptSubmit and Stop. Use it as the scoped `source_turn_id` when present
+  and valid; missing or invalid keys stay unavailable. The official docs warn the
+  transcript can lag at Stop and provide `last_assistant_message`; transcript-
+  derived assistant text or work-trace metadata must not be attached to the
+  current prompt key unless its association is proven. The docs do not state a
+  host version floor or retry/compaction persistence guarantee.
+- OpenCode V1 exposes native `messageID` on `chat.message` (optional in the V1
+  plugin type; the persisted user message also has its native ID), and persisted
+  assistant messages carry `parentID`. V2 prompt admission exposes `messageID`;
+  its context hook exposes ordered native message IDs and the current adapter
+  selects assistant messages after the latest user boundary. These provide a
+  candidate exact source-turn key from the user message ID, with assistant
+  linkage through the native parent/boundary. V1 obtains the validated alias
+  from its existing `/relay/turn` call at `chat.message`; V2 currently captures
+  the user before its `/relay/turn` call in the later context hook, so start-time
+  alias capture needs sequencing work that preserves delivery claim and ACK
+  behavior. Neither plugin version yet sends role snapshots or source-turn keys,
+  and host payload behavior still requires qualification.
+- Hermes remains in scope; its integration owner must confirm and implement its
+  native pre/post turn linkage and coordinate shared `source_type` support before
+  the feature can claim complete cross-tool coverage.
 - Select the smallest durable source-attribution extension and exact MCP/search
   surface. Old rows remain unknown. Incomplete coverage may describe only unknown
   or unavailable rows in the caller's otherwise-eligible scope; it cannot infer
@@ -125,12 +146,23 @@ historical backfill, and changes to delivery reliability unrelated to this contr
 3. Missing identity, conflicting holder, unavailable capture, unsupported host,
    empty results and partial coverage have honest, actionable outcomes. Scoped
    search and expansion cannot expose unauthorized containers or deleted content.
-4. Public-surface E2E coverage covers Codex user-start capture, delayed Stop
-   inheritance, takeover-safe whole-turn naming, equivalent retries, conflicting
-   snapshots, exact-name filtering before limits, visibility, forgetting and
-   explicit legacy/unavailable coverage. Assistant Stop retry duplication remains
-   a documented host limitation. Claude support stays open until a stable shared
-   source key is proven through its public hook surface.
+4. Public-surface E2E coverage covers the complete required matrix:
+   - Codex UserPromptSubmit/Stop with native `turn_id` and takeover before delayed Stop.
+   - Claude UserPromptSubmit/Stop with `prompt_id`; keyed Stop uses only
+     `last_assistant_message`; missing current assistant text may use transcript fallback only without the prompt key, so it remains uncorrelated.
+   - OpenCode V1 `chat.message`/`session.idle` linked by user `messageID` and
+     assistant `parentID`; OpenCode V2 prompt/context/idle linked by native user
+     message ID and the exact latest-user boundary. V2 start-time alias capture
+     must preserve the existing delivery claim and ACK ordering.
+   - Hermes pre/post hooks linked only by the native key confirmed by its owner.
+   Each adapter exercises same-turn retry, delayed assistant capture after takeover,
+   out-of-order/overlapping turns where the host supports them, missing-key
+   unavailability, exact-name search, visibility and forgetting. No adapter may
+   infer by current ownership, FIFO, or a shared session slot. Distinct assistant
+   outputs remain distinct; duplicate retry behavior follows each host's native
+   per-output identity. Fixtures prove adapter contracts only; real-host payload
+   qualification is separately recorded. Exact filtering stays before limits and
+   legacy unknown coverage remains explicit.
 5. Run the companion's real successor exercise: durable correction -> updated
    guidance -> replacement follows it without a reminder -> finds its source by Relay name.
    Record supported hosts and limits; distinguish qualification from later natural

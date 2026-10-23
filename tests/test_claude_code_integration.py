@@ -415,9 +415,11 @@ def test_claude_prompt_scope_uses_host_session_and_never_fabricates_unknown(
 ) -> None:
     hook = _load_claude_hook("user_prompt_submit", monkeypatch)
     requests: list[dict] = []
-    payload = {"cwd": ".", "session_id": "claude:task:1", "prompt": "Resume the prior implementation work now."}
+    prompt_id = "550e8400-e29b-41d4-a716-446655440000"
+    payload = {"cwd": ".", "session_id": "claude:task:1", "prompt_id": prompt_id, "prompt": "Resume the prior implementation work now."}
     monkeypatch.setattr(hook, "read_hook_input", lambda: payload)
     monkeypatch.setattr(hook, "check_dedup", lambda _prompt, _session: False)
+    monkeypatch.setattr(hook, "relay_turn", lambda *_args, **_kwargs: {"session": {"alias": "planner"}, "deliveries": []})
     monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: "git:example/repo")
     monkeypatch.setattr(hook, "derive_actor_ref", lambda *_: "local")
     monkeypatch.setattr(
@@ -434,6 +436,9 @@ def test_claude_prompt_scope_uses_host_session_and_never_fabricates_unknown(
     with pytest.raises(SystemExit):
         hook.main()
     assert requests[-1]["thread_ref"] == "claude:task:1"
+    assert requests[-1]["source_turn_id"] == prompt_id
+    assert requests[-1]["relay_name"] == "planner"
+    assert requests[-1]["relay_attribution_state"] == "named"
     assert requests[-1]["metadata"] == {
         "pallium_work_refs": ["git-branch:feature/demo"]
     }
@@ -447,7 +452,133 @@ def test_claude_prompt_scope_uses_host_session_and_never_fabricates_unknown(
     with pytest.raises(SystemExit):
         hook.main()
     assert requests[-1]["thread_ref"] is None
+    assert requests[-1]["source_turn_id"] is None
+    assert requests[-1]["relay_name"] is None
+    assert requests[-1]["relay_attribution_state"] == "unavailable"
     assert capsys.readouterr().out == ""
+
+
+def test_claude_prompt_turn_key_and_relay_snapshot_fail_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    common = _load_claude_hook("common", monkeypatch)
+    key = "550e8400-e29b-41d4-a716-446655440000"
+    assert common.source_turn_key(key) == key
+    assert common.source_turn_key(key.upper()) == key
+    assert common.source_turn_key("not-a-uuid") is None
+    assert common.source_turn_key(" " + key) is None
+    assert common.source_turn_key(None) is None
+
+    assert common.relay_name_snapshot({"session": {"alias": "planner"}}) == ("named", "planner")
+    assert common.relay_name_snapshot({"session": {"alias": None}}) == ("unnamed", None)
+    assert common.relay_name_snapshot({"session": {}}) == ("unavailable", None)
+
+
+def test_claude_hooks_link_prompt_ids_across_takeover_and_out_of_order_stop(
+    client, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    prompt_hook = _load_claude_hook("user_prompt_submit", monkeypatch)
+    stop_hook = _load_claude_hook("stop", monkeypatch)
+    container_ref = "project:claude-role-history"
+    session_id = "claude-role-session-a"
+    successor = "claude-role-session-b"
+    first_prompt = "550e8400-e29b-41d4-a716-446655440000"
+    second_prompt = "550e8400-e29b-41d4-a716-446655440001"
+    assert client.post("/relay/turn", json={
+        "runtime": "claude-code", "session_ref": session_id, "container_ref": container_ref,
+    }).status_code == 200
+    assert client.post("/relay/sessions/name", json={
+        "runtime": "claude-code", "session_ref": session_id,
+        "container_ref": container_ref, "alias": "planner",
+    }).status_code == 200
+
+    def current_relay_turn(runtime, session_ref, scope, **_kwargs):
+        response = client.post("/relay/turn", json={
+            "runtime": runtime, "session_ref": session_ref, "container_ref": scope,
+        })
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    def ingest(method, path, body, **_kwargs):
+        response = client.post(path, json=body)
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    for hook in (prompt_hook, stop_hook):
+        monkeypatch.setattr(hook, "start_hook_deadline", lambda *_a, **_k: None)
+        monkeypatch.setattr(hook, "resolve_container_ref", lambda *_a, **_k: container_ref)
+        monkeypatch.setattr(hook, "derive_actor_ref", lambda *_a, **_k: "claude-actor")
+        monkeypatch.setattr(hook, "register_claude_wake", lambda *_a, **_k: None)
+        monkeypatch.setattr(hook, "relay_turn", current_relay_turn)
+        monkeypatch.setattr(hook, "format_injection", lambda *_a, **_k: "scope")
+        monkeypatch.setattr(hook, "pallium_request", ingest)
+        monkeypatch.setattr(hook, "work_ref_warning", lambda *_a, **_k: "")
+    monkeypatch.setattr(prompt_hook, "get_pending_relay_close_batch", lambda *_a: ([], 0))
+    monkeypatch.setattr(prompt_hook, "complete_relay_closes", lambda *_a: None)
+    monkeypatch.setattr(prompt_hook, "check_dedup", lambda *_a: False)
+    monkeypatch.setattr(prompt_hook, "discover_work_refs", lambda *_a: None)
+    monkeypatch.setattr(prompt_hook, "injected_work_ref", lambda *_a: None)
+    monkeypatch.setattr(prompt_hook, "structural_work_refs_payload", lambda *_a: [])
+    monkeypatch.setattr(prompt_hook, "confirmed_registry_work_refs", lambda *_a: [])
+    monkeypatch.setattr(prompt_hook, "build_work_refs_metadata", lambda *_a, **_k: {})
+    monkeypatch.setattr(prompt_hook, "emit_utf8", lambda *_a, **_k: True)
+    monkeypatch.setattr(stop_hook, "fetch_confirmed_work_refs", lambda *_a: ([], "complete"))
+    monkeypatch.setattr(stop_hook, "build_work_refs_metadata", lambda *_a, **_k: {})
+    monkeypatch.setattr(stop_hook, "build_work_trace_metadata", lambda *_a: None)
+    stop_text = {
+        first_prompt: "assistant output for first prompt with first-source-marker",
+        second_prompt: "assistant output for second prompt with second-source-marker",
+    }
+    monkeypatch.setattr(stop_hook, "read_turn", lambda _path: SimpleNamespace(
+        assistant_text=stop_text[current_stop_id[0]], tool_calls=[], has_productive_action=False
+    ))
+    current_stop_id = [second_prompt]
+
+    def run_prompt(prompt_id: str, text: str) -> None:
+        monkeypatch.setattr(prompt_hook, "read_hook_input", lambda: {
+            "cwd": str(tmp_path), "session_id": session_id, "prompt_id": prompt_id,
+            "prompt": text,
+        })
+        with pytest.raises(SystemExit):
+            prompt_hook.main()
+
+    def run_stop(prompt_id: str) -> None:
+        current_stop_id[0] = prompt_id
+        monkeypatch.setattr(stop_hook, "read_hook_input", lambda: {
+            "cwd": str(tmp_path), "session_id": session_id, "prompt_id": prompt_id,
+            "transcript_path": str(tmp_path / "transcript.jsonl"),
+            "last_assistant_message": stop_text[prompt_id],
+        })
+        with pytest.raises(SystemExit):
+            stop_hook.main()
+
+    run_prompt(first_prompt, "first submitted prompt from named session first-source-marker")
+    assert client.post("/relay/turn", json={
+        "runtime": "claude-code", "session_ref": successor, "container_ref": container_ref,
+    }).status_code == 200
+    takeover = client.post("/relay/sessions/name", json={
+        "runtime": "claude-code", "session_ref": successor,
+        "container_ref": container_ref, "alias": "planner", "replace_existing": True,
+    })
+    assert takeover.status_code == 200, takeover.text
+    run_prompt(second_prompt, "second prompt after external takeover second-source-marker")
+
+    # Stops may arrive out of order; each resolves its own immutable user row.
+    run_stop(second_prompt)
+    run_stop(first_prompt)
+    response = client.post("/query", json={
+        "text": "first-source-marker", "limit": 10, "source_only": True,
+        "trigger_origin": "agent_pull", "source_type": "claude-code",
+        "relay_name": "planner", "container_ref": container_ref, "visibility": "private",
+    })
+    assert response.status_code == 200, response.text
+    assert {item["role"] for item in response.json()["results"]} == {"user", "assistant"}
+    assert all(item["relay_name"] == "planner" for item in response.json()["results"])
+    other_name = client.post("/query", json={
+        "text": "second-source-marker", "limit": 10, "source_only": True,
+        "trigger_origin": "agent_pull", "source_type": "claude-code",
+        "relay_name": "planner", "container_ref": container_ref, "visibility": "private",
+    })
+    assert other_name.status_code == 200, other_name.text
+    assert other_name.json()["results"] == []
 
 
 def test_claude_stop_missing_session_stays_unattributed(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -473,6 +604,106 @@ def test_claude_stop_missing_session_stays_unattributed(monkeypatch: pytest.Monk
     assert calls[0][0]["metadata"]["pallium_work_refs"] == [
         "git-branch:feature/demo"
     ]
+
+
+@pytest.mark.parametrize(
+    ("prompt_id", "expected_key"),
+    [
+        ("550e8400-e29b-41d4-a716-446655440000", "550e8400-e29b-41d4-a716-446655440000"),
+        ("invalid", None),
+        (None, None),
+    ],
+)
+def test_claude_stop_attaches_only_a_valid_native_prompt_id(
+    monkeypatch: pytest.MonkeyPatch, prompt_id: str | None, expected_key: str | None,
+) -> None:
+    stop = _load_claude_hook("stop", monkeypatch)
+    calls: list[list[dict]] = []
+    monkeypatch.setattr(stop, "read_hook_input", lambda: {
+        "cwd": ".", "session_id": "claude-session", "prompt_id": prompt_id,
+        "transcript_path": "turn.jsonl",
+        **({"last_assistant_message": "Current assistant response."} if expected_key else {}),
+    })
+    monkeypatch.setattr(stop, "start_hook_deadline", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(stop, "read_turn", lambda _path: SimpleNamespace(
+        assistant_text="A completed assistant response.", tool_calls=[], has_productive_action=False
+    ))
+    monkeypatch.setattr(stop, "relay_turn", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(stop, "register_claude_wake", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(stop, "build_work_trace_metadata", lambda _turn: None)
+    monkeypatch.setattr(stop, "fetch_confirmed_work_refs", lambda *_args: ([], "complete"))
+    monkeypatch.setattr(stop, "build_work_refs_metadata", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(stop, "work_ref_warning", lambda _metadata: "")
+    monkeypatch.setattr(stop, "resolve_container_ref", lambda *_args: "git:example/repo")
+    monkeypatch.setattr(stop, "derive_actor_ref", lambda *_args: "local")
+    monkeypatch.setattr(stop, "pallium_request", lambda _method, _path, body: calls.append(body))
+
+    with pytest.raises(SystemExit):
+        stop.main()
+    assert calls[0][0].get("source_turn_id") == expected_key
+    assert calls[0][0]["source_id"].startswith("cc-")
+
+
+def test_claude_keyed_stop_uses_current_payload_not_stale_transcript(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stop = _load_claude_hook("stop", monkeypatch)
+    calls: list[list[dict]] = []
+    prompt_id = "550e8400-e29b-41d4-a716-446655440000"
+    monkeypatch.setattr(stop, "read_hook_input", lambda: {
+        "cwd": ".", "session_id": "claude-session", "prompt_id": prompt_id,
+        "transcript_path": "turn.jsonl", "last_assistant_message": "Current answer for this prompt.",
+    })
+    monkeypatch.setattr(stop, "start_hook_deadline", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(stop, "read_turn", lambda _path: SimpleNamespace(
+        assistant_text="Stale answer from the prior prompt.", tool_calls=[{"tool": "Write"}], has_productive_action=True
+    ))
+    monkeypatch.setattr(stop, "relay_turn", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(stop, "register_claude_wake", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(stop, "build_work_trace_metadata", lambda _turn: {"files_modified": ["stale.txt"]})
+    monkeypatch.setattr(stop, "fetch_confirmed_work_refs", lambda *_args: ([], "complete"))
+    monkeypatch.setattr(stop, "build_work_refs_metadata", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(stop, "work_ref_warning", lambda _metadata: "")
+    monkeypatch.setattr(stop, "resolve_container_ref", lambda *_args: "git:example/repo")
+    monkeypatch.setattr(stop, "derive_actor_ref", lambda *_args: "local")
+    monkeypatch.setattr(stop, "pallium_request", lambda _method, _path, body: calls.append(body))
+
+    with pytest.raises(SystemExit):
+        stop.main()
+    item = calls[0][0]
+    assert item["content"] == "Current answer for this prompt."
+    assert item["source_turn_id"] == prompt_id
+    assert "agent_work_trace_turn" not in item.get("metadata", {})
+
+
+def test_claude_stop_without_current_message_keeps_transcript_unattributed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stop = _load_claude_hook("stop", monkeypatch)
+    calls: list[list[dict]] = []
+    monkeypatch.setattr(stop, "read_hook_input", lambda: {
+        "cwd": ".", "session_id": "claude-session",
+        "prompt_id": "550e8400-e29b-41d4-a716-446655440000", "transcript_path": "turn.jsonl",
+    })
+    monkeypatch.setattr(stop, "start_hook_deadline", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(stop, "read_turn", lambda _path: SimpleNamespace(
+        assistant_text="Stale answer from the prior prompt.", tool_calls=[], has_productive_action=False
+    ))
+    monkeypatch.setattr(stop, "relay_turn", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(stop, "register_claude_wake", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(stop, "build_work_trace_metadata", lambda _turn: None)
+    monkeypatch.setattr(stop, "fetch_confirmed_work_refs", lambda *_args: ([], "complete"))
+    monkeypatch.setattr(stop, "build_work_refs_metadata", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(stop, "work_ref_warning", lambda _metadata: "")
+    monkeypatch.setattr(stop, "resolve_container_ref", lambda *_args: "git:example/repo")
+    monkeypatch.setattr(stop, "derive_actor_ref", lambda *_args: "local")
+    monkeypatch.setattr(stop, "pallium_request", lambda _method, _path, body: calls.append(body))
+
+    with pytest.raises(SystemExit):
+        stop.main()
+    assert len(calls) == 1
+    assert calls[0][0]["content"] == "Stale answer from the prior prompt."
+    assert "source_turn_id" not in calls[0][0]
 
 
 @pytest.mark.parametrize("failure", ("missing", "invalid_cwd", "close"))

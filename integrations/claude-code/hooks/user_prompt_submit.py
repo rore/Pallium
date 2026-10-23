@@ -34,7 +34,9 @@ from common import (
     injected_work_ref,
     work_ref_warning,
     register_claude_wake,
+    relay_name_snapshot,
     start_hook_deadline,
+    source_turn_key,
 )
 
 _IDE_TAG_RE = re.compile(
@@ -83,6 +85,7 @@ def main() -> None:
         deliveries = []
         rendered_deliveries = []
         relay_output = ""
+        relay_response = None
         confirmed_refs = []
         work_refs_status = None
         relay_scope = format_injection(
@@ -141,6 +144,9 @@ def main() -> None:
                 "actor_ref": actor_ref,
                 "visibility": "private",
                 "artifact_kind": "message",
+                "source_turn_id": source_turn_key(payload.get("prompt_id")),
+                "relay_name": relay_name_snapshot(relay_response)[1],
+                "relay_attribution_state": relay_name_snapshot(relay_response)[0],
                 "query_text": query_text,
                 "query_limit": 5,
                 "query_actor_ref": actor_ref,
