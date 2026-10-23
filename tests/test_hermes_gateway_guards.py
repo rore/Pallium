@@ -748,10 +748,11 @@ def _private_env(tmp_path: Path, node: Path, python: Path, gateway_port: int = 1
 
 
 def test_canonical_client_guard_grants_only_exact_owned_sibling_listener(tmp_path):
-    import psutil
     import queue
 
     node, python = _runtime_paths(tmp_path)
+    import psutil
+
     parent_env = dict(os.environ)
     env = _private_env(tmp_path, node, python, gateway_port=1)
     # Three real disposable processes model original UI -> helper -> listener owner.
@@ -873,6 +874,22 @@ print(json.dumps({'guard_sha256': expected, 'hooks_active': True, **counts}))
     assert proc.returncode == 0
     assert all(not process.is_running() for process in owned), "owned helper or listener survived normal shutdown"
     assert dict(os.environ) == parent_env
+
+
+def test_canonical_guard_checks_runtime_before_optional_dependency(tmp_path, monkeypatch):
+    import builtins
+
+    monkeypatch.delenv("HERMES_NODE", raising=False)
+    monkeypatch.delenv("HERMES_E2E_PYTHON", raising=False)
+    original_import = builtins.__import__
+
+    def guarded_import(name, *args, **kwargs):
+        assert name != "psutil", "optional dependency imported before qualification gate"
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+    with pytest.raises(pytest.skip.Exception, match="explicit HERMES_NODE and HERMES_E2E_PYTHON"):
+        test_canonical_client_guard_grants_only_exact_owned_sibling_listener(tmp_path)
 
 
 def test_python_guard_allows_only_numeric_loopback_ephemeral_resolution(tmp_path):
