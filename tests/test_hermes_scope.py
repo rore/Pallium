@@ -37,6 +37,36 @@ def git(cwd, *args):
                           capture_output=True, text=True, encoding="utf-8").stdout.strip()
 
 
+def private_git_home(tmp_path, monkeypatch, name=""):
+    home = tmp_path / "private-git-home"
+    home.mkdir()
+    config = home / ".gitconfig"
+    config.write_text(f"[user]\n name = {name}\n" if name else "", encoding="utf-8")
+    for key in tuple(os.environ):
+        if key.upper().startswith("GIT_"):
+            monkeypatch.delenv(key)
+    for key, value in {"HOME": str(home), "USERPROFILE": str(home),
+                       "XDG_CONFIG_HOME": str(home / "xdg"),
+                       "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": str(config)}.items():
+        monkeypatch.setenv(key, value)
+    native_run = subprocess.run
+
+    def run(*args, **kwargs):
+        return native_run(*args, **{**kwargs, "env": {**(kwargs.get("env") or os.environ),
+                            "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": str(config)}})
+
+    isolated = SimpleNamespace(**vars(subprocess))
+    isolated.run = run
+    monkeypatch.setattr(scope, "subprocess", isolated)
+    reference = SimpleNamespace(**vars(subprocess))
+    reference.run = lambda *args, **kwargs: run(*args, **{"encoding": "utf-8", **kwargs})
+    monkeypatch.setattr(common, "subprocess", reference)
+    monkeypatch.setattr(sys.modules[__name__], "git", lambda cwd, *args: run(
+        ["git", *args], cwd=cwd, check=True, capture_output=True, text=True,
+        encoding="utf-8").stdout.strip())
+    return config
+
+
 def repo(path, remote=None, branch="feat/scope-שלום"):
     path.mkdir()
     git(path, "init", "-b", "main")
@@ -81,6 +111,7 @@ def test_worktree_same_origin_and_actor_config_change(tmp_path):
 
 
 def test_project_transition_and_transient_non_git_pin(tmp_path, monkeypatch):
+    private_git_home(tmp_path, monkeypatch)
     first = repo(tmp_path / "first", "https://github.com/team/first.git")
     second = repo(tmp_path / "second", "https://github.com/team/second.git")
     git(second, "config", "user.name", "Second")
@@ -88,13 +119,54 @@ def test_project_transition_and_transient_non_git_pin(tmp_path, monkeypatch):
     transient.mkdir()
     a = scope.resolve_scope(str(first))
     pinned = scope.resolve_scope(str(transient), a)
-    assert pinned == {**a, "cwd": str(transient), "work_refs": []}
+    assert pinned == {**a, "cwd": str(transient), "actor_ref": "local", "work_refs": []}
     b = scope.resolve_scope(str(second), pinned)
     assert b["container_ref"] != a["container_ref"]
     assert b["actor_ref"] == "Second"
     monkeypatch.setenv("PALLIUM_HOOK_ACTOR_REF", "Environment")
     assert scope.resolve_scope(str(second), b)["actor_ref"] == "Environment"
     assert scope.resolve_scope(str(second), b, "Profile")["actor_ref"] == "Profile"
+
+
+def test_transient_actor_follows_reference_caller_under_private_git_home(tmp_path, monkeypatch):
+    private_config = private_git_home(tmp_path, monkeypatch, "Global Bob")
+    monkeypatch.delenv("PALLIUM_HOOK_ACTOR_REF", raising=False)
+    cache = tmp_path / "codex-session-cache"
+    cache.mkdir()
+    monkeypatch.setattr(common, "SESSIONS_DIR", cache)
+    first = repo(tmp_path / "first", "https://example.test/team/first.git")
+    git(first, "config", "user.name", "Alice")
+    second = repo(tmp_path / "second", "https://example.test/team/second.git")
+    git(second, "config", "user.name", "Carol")
+    transient = tmp_path / "temporary"
+    transient.mkdir()
+    sid = "private-parity-session"
+    previous = None
+    for index, (cwd, actor) in enumerate(((first, "Alice"), (transient, "Global Bob"),
+                                          (second, "Carol"), (first, "Alice"))):
+        expected_container = common.resolve_container_ref(str(cwd), sid, True, False)
+        expected_actor = common.derive_actor_ref(str(cwd), sid, expected_container)
+        actual = scope.resolve_scope(str(cwd), previous)
+        assert actual["container_ref"] == expected_container
+        assert actual["actor_ref"] == expected_actor == actor
+        if index in (0, 2, 3):
+            assert common.pin_container(sid, actual["container_ref"])
+        previous = actual
+    private_config.write_text("", encoding="utf-8")
+    expected_container = common.resolve_container_ref(str(transient), sid, True, False)
+    expected_actor = common.derive_actor_ref(str(transient), sid, expected_container)
+    local = scope.resolve_scope(str(transient), previous)
+    assert local["container_ref"] == expected_container == previous["container_ref"]
+    assert local["actor_ref"] == expected_actor == "local"
+    monkeypatch.setenv("PALLIUM_HOOK_ACTOR_REF", "Environment")
+    assert scope.resolve_scope(str(transient), previous)["actor_ref"] == "Environment"
+    assert scope.resolve_scope(str(transient), previous, "Profile")["actor_ref"] == "Profile"
+    assert scope.resolve_scope(str(transient), previous, "   ")["actor_ref"] == "Environment"
+    monkeypatch.delenv("PALLIUM_HOOK_ACTOR_REF")
+    assert scope.resolve_scope(str(transient), previous, "   ")["actor_ref"] == "local"
+    monkeypatch.setenv("PALLIUM_HOOK_ACTOR_REF", "unsafe\nactor")
+    with pytest.raises(ValueError, match="actor identity"):
+        scope.resolve_scope(str(transient), previous)
 
 
 def test_non_git_path_matches_reference_and_local_actor(tmp_path, monkeypatch):

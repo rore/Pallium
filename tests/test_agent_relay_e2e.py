@@ -13,6 +13,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
+from threading import Barrier
 
 import pytest
 from fastapi import FastAPI
@@ -1224,6 +1225,148 @@ def test_concurrent_claim_lease_recovery_stale_token_and_expiry(client, relay_st
     assert expired.status_code == 200
     assert expired.json()["deliveries"][0]["state"] == "expired"
     assert _turn(client, "codex", "target")["deliveries"] == []
+
+
+@pytest.mark.parametrize("old_claimed", [False, True], ids=["pending", "expired-claim"])
+def test_moved_endpoint_claims_only_current_recipient_snapshot(
+    client, relay_storage, monkeypatch, old_claimed,
+):
+    a, b, third = ("git:example.test/team/" + name for name in ("a", "b", "third"))
+
+    def turn(container, **fields):
+        response = client.post("/relay/turn", json={
+            "runtime": "codex", "session_ref": "moving", "container_ref": container, **fields})
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    def send(sender_container, sender, marker):
+        response = client.post("/relay/messages", json={
+            "sender_runtime": "claude-code", "sender_session_ref": sender,
+            "recipient": endpoint, "payload": marker, "container_ref": sender_container})
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    def move(container, previous):
+        return turn(container, previous_container_ref=previous["container_ref"],
+                    previous_endpoint_id=previous["endpoint_id"],
+                    previous_scope_generation=previous["scope_generation"], max_messages=1)
+
+    for container, sender in ((a, "sender-a"), (b, "sender-b"), (third, "sender-third")):
+        assert client.post("/relay/turn", json={
+            "runtime": "claude-code", "session_ref": sender,
+            "container_ref": container}).status_code == 200
+    initial = turn(a)["session"]
+    endpoint = initial["endpoint_id"]
+    old = send(a, "sender-a", "old A")
+    old_id = old["deliveries"][0]["delivery_id"]
+    historical_receipt = None
+    if old_claimed:
+        historical = send(a, "sender-a", "ack A after move")
+        first_claims = turn(a, max_messages=0)["deliveries"]
+        assert [row["message_id"] for row in first_claims] == [old["message_id"], historical["message_id"]]
+        assert first_claims[0]["delivery_id"] == old_id and first_claims[0]["attempts"] == 1
+        historical_receipt = first_claims[1]
+    before = client.get("/relay/messages/" + old["message_id"], params={"container_ref": a}).json()["deliveries"][0]
+    moved = move(b, initial)
+    assert moved["session"]["endpoint_id"] == endpoint
+    assert moved["deliveries"] == [] and moved["remaining_count"] == 0 and moved["has_more"] is False
+    if historical_receipt:
+        # The issued A receipt remains valid in its historical scope before lease expiry.
+        assert _ack(client, historical_receipt, container_ref=a).status_code == 200
+
+    from storage import sqlite_relay
+    native_now = sqlite_relay._now
+    if old_claimed:
+        future = datetime.now(timezone.utc) + timedelta(minutes=2)
+        monkeypatch.setattr(sqlite_relay, "_now", lambda value=None: native_now(value) if value else future)
+    candidate = client.get("/relay/pending-candidate", params={
+        "runtime": "codex", "session_ref": "moving", "container_ref": b})
+    assert candidate.status_code == 200 and candidate.json() is None, candidate.text
+    relay = RelayService(relay_storage)
+    # The public pending-candidate route has no exact-ID parameter; cover that
+    # read through the same service facade and exact claims through HTTP below.
+    assert relay.pending_candidate(runtime="codex", session_ref="moving",
+                                   container_ref=b, delivery_id=old_id) is None
+    exact = turn(b, max_messages=1, wake_delivery_id=old_id)
+    assert exact["deliveries"] == [] and exact["remaining_count"] == 0
+    broad = turn(b, max_messages=1)
+    assert broad["deliveries"] == [] and broad["remaining_count"] == 0 and broad["has_more"] is False
+    unchanged = client.get("/relay/messages/" + old["message_id"], params={"container_ref": a}).json()["deliveries"][0]
+    assert (unchanged["state"], unchanged["attempts"]) == (before["state"], before["attempts"])
+    assert unchanged["claim_token"] == before["claim_token"]
+
+    newer = send(b, "sender-b", "new B")
+    assert client.get("/relay/pending-candidate", params={
+        "runtime": "codex", "session_ref": "moving", "container_ref": b}).json()["delivery_id"] == newer["deliveries"][0]["delivery_id"]
+    b_claim = turn(b, max_messages=1)["deliveries"]
+    assert [row["message_id"] for row in b_claim] == [newer["message_id"]]
+    assert _ack(client, b_claim[0], container_ref=b).status_code == 200
+    # Sender scope and recipient snapshot differ: admission follows the recipient.
+    cross = send(third, "sender-third", "third to B")
+    cross_claim = turn(b, max_messages=1)["deliveries"]
+    assert [row["message_id"] for row in cross_claim] == [cross["message_id"]]
+    assert _ack(client, cross_claim[0], container_ref=b).status_code == 200
+    returned = move(a, moved["session"])
+    assert [row["message_id"] for row in returned["deliveries"]] == [old["message_id"]]
+    assert returned["deliveries"][0]["attempts"] == (2 if old_claimed else 1)
+    assert _ack(client, returned["deliveries"][0], container_ref=a).status_code == 200
+    assert _ack(client, returned["deliveries"][0], container_ref=a).status_code == 200
+    back_to_b = move(b, returned["session"])
+    assert back_to_b["deliveries"] == []
+    assert move(a, back_to_b["session"])["deliveries"] == []
+
+
+def test_concurrent_project_move_and_nonregistering_claim_never_take_old_snapshot(client):
+    a, b = "git:example.test/team/race-a", "git:example.test/team/race-b"
+    assert client.post("/relay/turn", json={
+        "runtime": "claude-code", "session_ref": "race-sender", "container_ref": a}).status_code == 200
+    initial = client.post("/relay/turn", json={
+        "runtime": "codex", "session_ref": "race-target", "container_ref": a}).json()["session"]
+    old = client.post("/relay/messages", json={
+        "sender_runtime": "claude-code", "sender_session_ref": "race-sender",
+        "recipient": initial["endpoint_id"], "payload": "A snapshot",
+        "container_ref": a})
+    assert old.status_code == 200, old.text
+    gate = Barrier(2)
+
+    def move():
+        gate.wait()
+        return client.post("/relay/turn", json={
+            "runtime": "codex", "session_ref": "race-target", "container_ref": b,
+            "previous_container_ref": a, "previous_endpoint_id": initial["endpoint_id"],
+            "previous_scope_generation": initial["scope_generation"], "max_messages": 1})
+
+    def read_and_claim():
+        gate.wait()
+        candidate = client.get("/relay/pending-candidate", params={
+            "runtime": "codex", "session_ref": "race-target", "container_ref": b})
+        claim = client.post("/relay/turn", json={
+            "runtime": "codex", "session_ref": "race-target", "container_ref": b,
+            "register_session": False, "max_messages": 1})
+        return candidate, claim
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        moved_future = pool.submit(move)
+        reads_future = pool.submit(read_and_claim)
+        moved = moved_future.result(timeout=5)
+        candidate, claim = reads_future.result(timeout=5)
+    assert moved.status_code == candidate.status_code == claim.status_code == 200
+    assert moved.json()["deliveries"] == [] and moved.json()["remaining_count"] == 0
+    assert candidate.json() is None
+    assert claim.json()["deliveries"] == [] and claim.json()["remaining_count"] == 0
+    assert client.get("/relay/pending-candidate", params={
+        "runtime": "codex", "session_ref": "race-target", "container_ref": b}).json() is None
+    original = client.get("/relay/messages/" + old.json()["message_id"],
+                          params={"container_ref": a}).json()["deliveries"][0]
+    assert original["state"] == "pending" and original["attempts"] == 0
+    returned = client.post("/relay/turn", json={
+        "runtime": "codex", "session_ref": "race-target", "container_ref": a,
+        "previous_container_ref": b, "previous_endpoint_id": initial["endpoint_id"],
+        "previous_scope_generation": moved.json()["session"]["scope_generation"],
+        "max_messages": 1})
+    assert returned.status_code == 200, returned.text
+    assert [row["message_id"] for row in returned.json()["deliveries"]] == [old.json()["message_id"]]
+    assert returned.json()["deliveries"][0]["attempts"] == 1
 
 
 def test_dormant_hidden_default_exact_addressable_and_reactivated(client, relay_storage):

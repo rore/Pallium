@@ -4,7 +4,9 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 import copy
 import contextvars
+import importlib
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -427,6 +429,149 @@ def test_transient_non_git_pins_project_but_invalid_cwd_never_binds(client, proj
         assert "error" in json.loads(_mcp_tool(ctx, "pallium_relay_address", {}, session="session", turn=f"bad{index}"))
     assert pre(str(root), turn="remote", surface="telegram") is None
     assert len(_sessions(client, _project("a"))) == 1
+
+
+def test_transient_actor_change_keeps_project_but_separates_private_turns(
+    client, project_plugin, tmp_path, monkeypatch,
+):
+    module, ctx, pre, _create, _calls, _settings = project_plugin
+    private_home = tmp_path / "private-home"
+    private_home.mkdir()
+    (private_home / ".gitconfig").write_text("[user]\n name = Global Bob\n", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(private_home))
+    monkeypatch.setenv("USERPROFILE", str(private_home))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(private_home / "xdg"))
+    monkeypatch.delenv("PALLIUM_HOOK_ACTOR_REF", raising=False)
+    for key in tuple(os.environ):
+        if key.upper().startswith("GIT_"):
+            monkeypatch.delenv(key)
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(private_home / ".gitconfig"))
+    packaged_scope = importlib.import_module(module.__name__ + ".scope")
+    isolated_git = ModuleType("isolated_git")
+    isolated_git.run = lambda *args, **kwargs: subprocess.run(*args, **{
+        **kwargs, "env": {**kwargs["env"], "GIT_CONFIG_NOSYSTEM": "1",
+                         "GIT_CONFIG_GLOBAL": str(private_home / ".gitconfig")}})
+    monkeypatch.setattr(packaged_scope, "subprocess", isolated_git)
+    project = _repo(tmp_path, "transient-actor", actor="Alice")
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    writes = []
+    original_http = module._json_request
+
+    def observe(base, method, path, **kwargs):
+        if path in {"/item-and-query", "/items"}:
+            writes.append((path, kwargs.get("body")))
+        return original_http(base, method, path, **kwargs)
+
+    monkeypatch.setattr(module, "_json_request", observe)
+    private_text = "Alice private context café"
+    assert pre(str(project), turn="alice", message=private_text,
+               history=[{"role": "user", "content": private_text}])
+    first = json.loads(_mcp_tool(ctx, "pallium_relay_address", {}, session="session", turn="alice"))
+    assert first["scope"]["actor_ref"] == "Alice"
+    private_memory = "opal lantern belongs to Alice alone"
+    remembered = client.post("/memory/remember", json={
+        "container_ref": first["scope"]["container_ref"], "actor_ref": first["scope"]["actor_ref"],
+        "thread_ref": "session", "agent_ref": "hermes", "visibility": "private",
+        "evidence": [first["scope"]["request_source_item_id"]],
+        "text": private_memory, "type": "decision"})
+    assert remembered.status_code == 200, remembered.text
+    memory_id = remembered.json()["memory_object_id"]
+
+    def memory_hits(actor):
+        response = client.post("/query", json={
+            "container_ref": _project("transient-actor"), "actor_ref": actor,
+            "visibility": "private", "text": "opal lantern", "limit": 20,
+            "thread_ref": "later-session", "active_session_ref": "later-session"})
+        assert response.status_code == 200, response.text
+        return [row.get("memory_object_id") for row in response.json()["results"]]
+
+    assert memory_id in memory_hits("Alice")
+    session = _sessions(client, _project("transient-actor"))[0]
+    bob = pre(str(scratch), turn="bob", message="Bob asks about another task",
+              history=[{"role": "user", "content": "Bob asks about another task"}])
+    assert bob and private_text not in json.dumps(bob, ensure_ascii=False)
+    current = json.loads(_mcp_tool(ctx, "pallium_relay_address", {}, session="session", turn="bob"))
+    assert current["scope"]["container_ref"] == _project("transient-actor")
+    assert current["scope"]["actor_ref"] == "Global Bob"
+    assert current["scope"]["request_source_item_id"] != first["scope"]["request_source_item_id"]
+    assert memory_id not in memory_hits("Global Bob")
+    private_history = client.get("/source/" + first["scope"]["request_source_item_id"] + "/context", params={
+        "container_ref": _project("transient-actor"), "query_actor_ref": "Global Bob",
+        "query_visibility": "private", "before": 0, "after": 0,
+        "include_supported_memories": True})
+    assert private_history.status_code == 404 or (
+        private_history.status_code == 200
+        and private_text not in private_history.text and memory_id not in private_history.text)
+    assert (_sessions(client, _project("transient-actor"))[0]["endpoint_id"],
+            _sessions(client, _project("transient-actor"))[0]["scope_generation"]) == (
+                session["endpoint_id"], session["scope_generation"])
+    assert writes[-1][0] == "/item-and-query" and writes[-1][1]["actor_ref"] == "Global Bob"
+    before = len(writes)
+    assert pre(str(project), turn="alice", message=private_text) is None
+    ctx.hooks["post_llm_call"](session_id="session", turn_id="alice", user_message=private_text,
+                               assistant_response="stale answer", conversation_history=[
+                                   {"role": "user", "content": private_text, "message_uid": "old-user"},
+                                   {"role": "assistant", "content": "stale answer", "message_uid": "old-answer"}])
+    assert len(writes) == before
+    old = client.get("/source/" + first["scope"]["request_source_item_id"] + "/context", params={
+        "container_ref": _project("transient-actor"), "query_actor_ref": "Alice",
+        "query_visibility": "private", "before": 0, "after": 1,
+        "include_supported_memories": True})
+    assert old.status_code == 200 and "stale answer" not in old.text
+    assert pre(str(project), turn="alice-return", message="Alice returns")
+    returned = json.loads(_mcp_tool(ctx, "pallium_relay_address", {}, session="session", turn="alice-return"))
+    assert returned["scope"]["actor_ref"] == "Alice"
+    assert returned["scope"]["container_ref"] == first["scope"]["container_ref"]
+    assert memory_id in memory_hits("Alice")
+
+
+def test_moved_project_poll_does_not_take_old_recipient_snapshot(client, project_plugin, tmp_path, monkeypatch):
+    module, ctx, pre, _create, _calls, _settings = project_plugin
+    monkeypatch.setattr(module, "POLL_SECONDS", .01)
+    a, b = _repo(tmp_path, "snapshot-a"), _repo(tmp_path, "snapshot-b")
+    original_http = module._json_request
+    reads = []
+
+    def observe(base, method, path, **kwargs):
+        query = kwargs.get("query") or {}
+        if method == "GET" and path == "/relay/pending-candidate" and query.get("session_ref") == "session":
+            reads.append(query["container_ref"])
+            if query["container_ref"] == _project("snapshot-a") and not returned_to_a[0]:
+                return None  # Hold the old project's poll until after the visible project move.
+        return original_http(base, method, path, **kwargs)
+
+    returned_to_a = [False]
+    monkeypatch.setattr(module, "_json_request", observe)
+    assert pre(str(a), turn="a")
+    endpoint = _sessions(client, _project("snapshot-a"))[0]["endpoint_id"]
+    assert client.post("/relay/turn", json={
+        "runtime": "codex", "session_ref": "peer", "container_ref": _project("snapshot-a")}).status_code == 200
+    old = client.post("/relay/messages", json={
+        "sender_runtime": "codex", "sender_session_ref": "peer", "recipient": endpoint,
+        "payload": "old project only", "container_ref": _project("snapshot-a")})
+    assert old.status_code == 200, old.text
+    assert pre(str(b), turn="b")
+    _await(lambda: reads.count(_project("snapshot-b")) >= 2)
+    assert ctx.injections == []
+    delivery = client.get("/relay/messages/" + old.json()["message_id"],
+                          params={"container_ref": _project("snapshot-a")}).json()["deliveries"][0]
+    assert (delivery["state"], delivery["attempts"], delivery["claim_token"]) == ("pending", 0, None)
+    returned_to_a[0] = True
+    assert pre(str(a), turn="a-return")
+    _await(lambda: len(ctx.injections) == 1)
+    marker, target = ctx.injections[0]
+    assert marker.startswith("[[PALLIUM_RELAY_WAKE:")
+    assert target["session_key"] == "local:route:session"
+    wake = pre(str(a), turn="wake", message=marker)
+    assert wake and "old project only" in wake["context"]
+    request = {"messages": [{"role": "user", "content": marker + "\n\n" + wake["context"]}]}
+    _observe_request(ctx, request, session="session", turn="wake", api_request_id="api-snapshot-wake")
+    delivered = client.get("/relay/messages/" + old.json()["message_id"],
+                           params={"container_ref": _project("snapshot-a")}).json()["deliveries"][0]
+    assert delivered["state"] == "delivered" and delivered["attempts"] == 1
+    assert len(ctx.injections) == 1
 
 
 @pytest.mark.parametrize("lost_response", [False, True])

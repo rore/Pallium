@@ -65,9 +65,14 @@ to its checkout. Pass them explicitly when your environments differ.
 Normal setup records `scope_mode: cwd`; container and actor flags are unnecessary.
 Git origin, root commit or local path supplies the initial project; actor identity
 comes from project Git identity or `local`, subject to an explicit actor override.
-Recognized Git project changes require exact Relay transition admission. Transient
-non-Git cwd changes retain the prior project/actor. Invalid or unavailable session
-cwd is refused, never replaced with a process cwd or another session's directory.
+Recognized Git project changes require exact Relay transition admission. Pending
+deliveries stay bound to their recorded recipient project; a new project cannot
+claim the old project's queue, while the old project can claim on return before
+expiry. Authorized cross-project sends remain supported. A transient valid
+non-Git cwd retains the prior project, while actor identity follows the current
+cwd's Git identity or `local` unless an explicit profile or environment override
+applies. Invalid or unavailable session cwd is refused, never replaced with a
+process cwd or another session's directory.
 
 For an intentional fixed-scope compatibility installation, add both
 `--container-ref git:example.test/team/project` and `--actor-ref developer`.
@@ -133,10 +138,14 @@ state stays fenced. Serialization is local to one plugin process. Use status and
 trace for uncertain outcomes rather than resending blindly.
 
 `on_session_end` completes a host turn; it does not mean conversation deletion.
-Native finalize/delete callbacks use the saved project, endpoint and generation
-to close that exact Relay incarnation. Unconfirmed closure remains fenced rather
-than granting fresh authority. Public-host and Linux/Windows TUI CWD lifecycle
-checks pass; Windows Desktop CWD qualification remains pending.
+Native finalize is advisory: it does not change Relay binding, wake or close the
+endpoint. Only native delete with reason `delete`, explicit exact profile and
+session IDs, and committed permanent lineage retirement may conditionally close
+the saved endpoint and generation. Archive, prune, sweep, profile repair and
+missing or unknown reasons do not authorize closure. Finalize and soft delete
+can leave endpoint presence and pending messages according to their existing
+expiry. Native detach/resume ordering still needs qualification; the earlier Linux/Windows TUI
+journeys do not establish these corrected lifecycle contracts.
 
 ## History and memory
 

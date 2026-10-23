@@ -361,8 +361,13 @@ A stale, missing, closed, unreachable, or occupied transition fails without movi
 
 Hermes normal cwd mode derives project and actor from its exact session's local
 cwd and admits recognized Git project changes through the same endpoint/generation
-transition contract. Transient non-Git cwd retains the prior pin. Missing or
-ambiguous session scope fails closed; polling uses saved records rather than a
+transition contract. Pending deliveries remain bound to their recorded recipient
+project, so the new project cannot claim the old project's queue; the old project
+can claim on return before expiry. Authorized cross-container sends remain
+supported. Transient valid non-Git cwd retains the prior project while actor
+identity follows the current cwd's Git identity or `local`, subject to explicit
+profile and environment overrides. Missing or ambiguous session scope fails
+closed; polling uses saved records rather than a
 background process cwd. Pending or uncertain wake ownership remains fenced in
 its original project. An intentional fixed-scope compatibility installation does
 not follow cwd. Linux and Windows TUI CWD qualification covers v0.22.4; Windows

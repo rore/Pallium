@@ -35,8 +35,13 @@ Pallium checkout at a stable path because the bridge uses absolute paths.
 Normal setup derives each session's private project and actor from that session's
 local working directory. Independent sessions in one profile can use different
 projects. A recognized Git project change moves the session only after exact
-Relay admission; temporary non-Git directory changes retain the previous project.
-Missing, stale, remote or ambiguous cwd fails closed. The plugin never substitutes
+Relay admission; the new project cannot claim pending deliveries recorded for
+the old project, which can claim them on return before expiry. Authorized
+cross-container sends remain supported. A temporary valid non-Git directory
+retains the previous project while the actor follows the current directory's Git
+identity or `local`, unless an
+explicit profile or environment override applies. Missing, stale, remote or
+ambiguous cwd fails closed. The plugin never substitutes
 its background process's directory. An intentional fixed-scope compatibility
 override is available in the package guide; it is never an automatic fallback.
 
@@ -72,9 +77,12 @@ fenced rather than being silently replayed. Wake serialization is local to
 one plugin process, not shared across independent processes using one profile.
 
 Turn completion releases only that turn's admitted wake. Native session finalize
-and delete callbacks close the saved exact endpoint and generation; an uncertain
-close remains fenced. These lifecycle paths still require current native
-Desktop/TUI qualification.
+is advisory and does not close the Relay endpoint or trigger a wake. Only an
+explicit permanent session deletion can close its saved exact endpoint and
+generation after lineage retirement is committed. Other lifecycle notifications
+do not authorize closure. Finalize or soft delete can leave presence and pending
+messages according to their existing expiry. Current native Desktop/TUI
+lifecycle qualification is still pending.
 
 Changing project or actor retires earlier turn authority, including after a
 plugin reload. Invalid saved authority is refused without clearing pending

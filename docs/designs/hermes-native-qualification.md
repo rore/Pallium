@@ -19,6 +19,12 @@ coverage boundaries. User setup belongs in the
 | Package lifecycle | Install, repeat setup/update, status and removal; unchanged unrelated configuration, plugins and databases |
 | Caller boundaries | Trusted identity/generation, stale and ambiguous admission, middleware vetoes, payload limits, concurrent callbacks, 24-hour presence and optional-vector fault handling |
 
+These accepted journeys predate the pending project/actor and lifecycle safety
+corrections. Materially affected Linux and Windows TUI behavior must be
+requalified before those receipts can support the corrected contracts. In
+particular, native detach/resume ordering has no accepted proof yet; Windows
+Desktop CWD remains unqualified.
+
 The accepted evidence and retained failures are linked from
 [merged PR #324](https://github.com/rore/Pallium/pull/324) and its
 [implementation](../../.agent-workflow/tasks/hermes-production-slice4.md) and
@@ -48,6 +54,17 @@ normal owned-process cleanup; they provide no Desktop context result.
   quality, every provider/memory combination or arbitrary competing middleware.
 - Controlled owned-process relaunch is different from automatic recovery after
   uncertain enqueue, claim or ACK. Preserve uncertainty fences and inspect status.
+- Pinned source `4d04303818b61bf3aa09278af48356315515965b` can emit finalize
+  before checking a new lease owner; lifecycle notifications carry no event
+  generation or route. Native finalize is therefore advisory and must not change
+  Relay binding, wake or close an endpoint. Conditional close is permitted only
+  for native delete reason `delete`
+  with explicit exact profile/session identity after committed permanent lineage
+  retirement. Archive, prune, sweep, profile repair and missing/unknown reasons
+  are not closure authority. Finalize and soft delete can leave endpoint presence
+  and pending messages according to their existing expiry. Qualify detach/resume
+  ordering and stale callback behavior on the corrected production source before claiming
+  lifecycle coverage.
 - Shared Relay availability failures remain unresolved. Keep failed CI and
   unreached assertions visible; later passing evidence does not prove a cause or
   cure. A source or safety finding affecting Hermes still needs investigation.
