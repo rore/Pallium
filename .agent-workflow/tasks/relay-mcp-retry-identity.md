@@ -42,7 +42,7 @@ Canonical source: `roadmap/features/add-wake-first-relay-delivery.md`, sender re
 
 **Exceptions:** —
 
-**State:** Ready for review
+**State:** Blocked or returned to planning
 <!-- agent-workflow:end -->
 
 ## Checkpoint: api-review
@@ -114,3 +114,9 @@ Verification adequacy: accepted integrated focused and required full results; ze
 ## Draft publication
 
 Draft PR354 https://github.com/rore/Pallium/pull/354 created at121d83920de33f20be968368e61f49e3f96d778c against main2768022e and attached to this task. It publishes the reviewed source with accepted264 focused and8071 full results, preserves the older failed full and unknown installer cause, and clearly leaves normal CI/API checkpoint/separate High human result review open. Publication descendants update only this Work Record; application/test correspondence to1f5ec4db is unchanged. No merge, API label, installed access or live rollout occurred. Manager owns roadmap linkage and final acceptance coordination.
+
+## Current CI failure and bounded fixture plan
+
+CI39943233525 on b5998d866d3b5407587a2a022764024c82774c94 failed Python3.12 at tests/test_agent_relay_hooks.py::test_claude_relay_uses_utf8_and_skips_memory_after_a_claim:3263 passed,22 skipped,1 xfailed,1 failed in405.50s. Python3.13, Windows smoke and governance passed. Retained build/sender-ci-b5998d86/failed.log SHA256 f549981a10db26cb1579dccd48a56b74530bc5ffb2b5c87f1985e2c6640c25f7. The captured session_state_write_failed phase=pre_attempt_deadline occurs before the native session-lock attempt; relay_turn returns None before the test's mocked HTTP delivery, then the hook takes the memory path. No claimed delivery reached the UTF-8/ACK subject. Physical latency cause remains unknown; unchanged hook source does not establish unrelatedness.
+
+Existing sender_evidence_review, relayed by manager01a16320-c588-72b0-a098-cb3d137b1e75, accepted the smaller preparation-only correction: pre-create the isolated session directory and exact utf8.lock containing one byte before hook.main. Reuse the existing session-directory preparation pattern in this file. Keep native lock acquisition/release, actual relay_turn, mocked transport and all UTF-8, exact scope, footer, length, ACK and skip-memory assertions intact. The earlier proposal to mock relay_turn is not used. Native lock-setup refusal remains independently covered by tests/test_hook_common_parity.py::test_session_lock_failure_reports_actual_boundary_without_changing_wait (eight expanded phase/runtime cases) and tests/test_claude_code_hooks/test_session_pin.py::TestPinAndGet::test_lock_setup_exhaustion_refuses_pin_before_native_acquisition. No product clock, timeout, retry, protected contract or API behavior changes. This adds one blue ordinary test path to the existing High-risk API task; its risk and remaining human/API gates stay unchanged. Review the actual diff, then propose the changed exact UTF-8 node plus the existing eight-case lock-boundary node under one new finite executor grant. No duplicate full run. If setup still fails, retain evidence and reassess before changing the boundary. Current readiness is blocked by failed CI; earlier accepted results remain historical evidence.
