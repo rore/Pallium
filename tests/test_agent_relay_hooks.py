@@ -2347,6 +2347,9 @@ def test_claude_relay_uses_utf8_and_skips_memory_after_a_claim(monkeypatch):
     from io import BytesIO
 
     hook = _load("claude_utf8", "integrations/claude-code/hooks/user_prompt_submit.py")
+    session_dir = hook.relay_turn.__globals__["SESSIONS_DIR"]
+    session_dir.mkdir(parents=True, exist_ok=True)
+    (session_dir / "utf8.lock").write_bytes(b"0")
     monkeypatch.setattr(hook, "read_hook_input", lambda: {"cwd": ".", "session_id": "utf8", "prompt": "a sufficiently long prompt that must not query memory"})
     monkeypatch.setattr(hook, "check_dedup", lambda *_: False)
     monkeypatch.setattr(hook, "get_pending_relay_close_batch", lambda *_: ([], 0))
