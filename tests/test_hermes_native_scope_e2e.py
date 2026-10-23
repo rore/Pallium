@@ -68,6 +68,82 @@ def _stop_owned(records, processes, refresh):
     return {"signals": actions, "remaining": remaining_owned(records), "errors": errors}
 
 
+def test_native_metadata_git_audit_exact_source_only(tmp_path):
+    if os.environ.get("PALLIUM_HERMES_SCOPE_PROBE") != "1":
+        pytest.skip("explicit offline native scope qualification is not enabled")
+    require_linux_qualification()
+    source = Path(os.environ["HERMES_E2E_SOURCE"]).resolve()
+    sdk1 = Path(os.environ["PALLIUM_HERMES_SCOPE_SDK1"])
+    repo = Path(__file__).resolve().parents[1]
+    manifest = Path(os.environ["PALLIUM_HERMES_SCOPE_SOURCE_MANIFEST"])
+    require_contained_paths(source, sdk1, repo, manifest, tmp_path)
+    verify_manifest(source, manifest, git_blobs=True)
+    probe = r'''
+import json, subprocess, sys
+from pathlib import Path
+from tests.fixtures.hermes_scope_probe import install_guard
+work, source, repo, sdk1 = map(Path, sys.argv[1:5])
+queries = [
+    (["git", "branch", "--show-current"], "version_branch"),
+    (["git", "log", "-1", "--format=%ct", "HEAD"], "version_commit_date"),
+    (["git", "--no-optional-locks", "status", "--porcelain", "-uno"], "version_status"),
+    (["git", "tag", "--merged", "HEAD", "--list", "v[0-9]*"], "version_tags"),
+]
+observed = []
+granted = sys.argv[5] == "granted"
+denied = install_guard(work, repo, sdk1, native_source=source if granted else None,
+                       allowed_queries=observed)
+if granted:
+    for command, label in queries:
+        result = subprocess.run(command, cwd=source, capture_output=True, timeout=3)
+        assert result.returncode == 0
+    assert observed == [{"query": label, "cwd": "native_source"} for _, label in queries]
+    # The pre-existing private local-Git permissions remain available.
+    subprocess.run(["git", "init", "-q"], cwd=work, capture_output=True, check=True, timeout=3)
+    subprocess.run(["git", "config", "user.name", "qualification"], cwd=work,
+                   capture_output=True, check=True, timeout=3)
+negatives = [(command, cwd) for command, _ in queries
+             for cwd in (work, source.parent, source / "hermes_cli", source.parent / "wrong-sibling")]
+negatives += [(command + ["--extra"], source) for command, _ in queries]
+negatives += [(["git", "branch", "--delete", "qualification"], source),
+              (["git", "tag", "--delete", "qualification"], source),
+              (["git", "log", "-2", "--format=%ct", "HEAD"], source),
+              (["git", "fetch"], work), ("git", source), (b"git", source)]
+if not granted:
+    negatives += [(command, source) for command, _ in queries]
+for command, cwd in negatives:
+    try:
+        subprocess.run(command, cwd=cwd, capture_output=True, timeout=3)
+    except (PermissionError, TypeError):
+        pass
+    else:
+        raise AssertionError("audit permitted a negative control")
+try:
+    (work.parent / "outside-write").write_text("refused", encoding="utf-8")
+except PermissionError:
+    pass
+else:
+    raise AssertionError("audit permitted an outside-work write")
+assert not (work.parent / "outside-write").exists()
+assert observed == ([{"query": label, "cwd": "native_source"} for _, label in queries] if granted else [])
+assert denied
+print(json.dumps({"queries": observed, "refused": len(negatives) + 1}))
+'''
+    for mode in ("granted", "default"):
+        work = tmp_path / mode
+        env = isolated_env(work, os.environ)
+        env["PYTHONPATH"] = str(repo)
+        result = subprocess.run([str(sdk1), "-B", "-c", probe, str(work), str(source),
+                                 str(repo), str(sdk1), mode], cwd=work, env=env,
+                                capture_output=True, text=True, timeout=20)
+        (work / "probe.stdout").write_text(result.stdout, encoding="utf-8")
+        (work / "probe.stderr").write_text(result.stderr, encoding="utf-8")
+        assert result.returncode == 0, "native audit subprocess control failed; inspect private capture"
+        proof = json.loads(result.stdout)
+        assert proof["refused"] == (27 if mode == "granted" else 31)
+        assert len(proof["queries"]) == (4 if mode == "granted" else 0)
+
+
 def test_actual_public_hermes_hooks_tools_and_scope_lifecycle(tmp_path):
     if os.environ.get("PALLIUM_HERMES_SCOPE_PROBE") != "1":
         pytest.skip("explicit offline native scope qualification is not enabled")

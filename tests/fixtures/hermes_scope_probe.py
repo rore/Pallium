@@ -76,7 +76,16 @@ def isolated_env(work: Path, inherited: dict[str, str]) -> dict[str, str]:
     return env
 
 
-def install_guard(work: Path, repo: Path, sdk1: Path) -> list:
+NATIVE_METADATA_QUERIES = {
+    ("git", "branch", "--show-current"): "version_branch",
+    ("git", "log", "-1", "--format=%ct", "HEAD"): "version_commit_date",
+    ("git", "--no-optional-locks", "status", "--porcelain", "-uno"): "version_status",
+    ("git", "tag", "--merged", "HEAD", "--list", "v[0-9]*"): "version_tags",
+}
+
+
+def install_guard(work: Path, repo: Path, sdk1: Path, *, native_source: Path | None = None,
+                  allowed_queries: list | None = None) -> list:
     """Namespace blocks egress; audit further restricts writes and child commands."""
     denied = []
     def record(event, detail=None):
@@ -113,13 +122,20 @@ def install_guard(work: Path, repo: Path, sdk1: Path) -> list:
             command, cwd = args[1], args[2]
             require(isinstance(command, (list, tuple)) and command, event, "shell child")
             executable = Path(command[0])
+            query = (NATIVE_METADATA_QUERIES.get(tuple(command))
+                     if all(type(part) is str for part in command) else None)
+            native_query = (query is not None and args[0] == "git"
+                            and native_source is not None and cwd is not None
+                            and Path(cwd).resolve() == native_source)
             local_git = (executable.name == "git" and len(command) > 1
                          and command[1] in {"init", "config", "commit", "remote", "checkout", "rev-parse", "describe", "status", "rev-list"})
             mcp = (executable == sdk1 and command[1:4] == ["-m", "app.mcp.hermes", "--base-url"]
                    and Path(cwd).resolve() == repo)
-            if not (local_git or mcp):
+            if not (local_git or mcp or native_query):
                 record(event, executable.name)
                 raise PermissionError("unreviewed qualification child")
+            if native_query and allowed_queries is not None:
+                allowed_queries.append({"query": query, "cwd": "native_source"})
             if local_git:
                 require(cwd and (Path(cwd).resolve().is_relative_to(work)
                                  or command[1] in {"rev-parse", "describe", "status", "rev-list"}), event, cwd)
@@ -282,7 +298,9 @@ def host(args):
             subprocess.run(["git", *command], cwd=root, check=True, capture_output=True,
                            text=True, encoding="utf-8", timeout=5)
         roots[name] = root
-    denied = install_guard(args.work, args.repo, args.sdk1)
+    allowed_queries = []
+    denied = install_guard(args.work, args.repo, args.sdk1, native_source=args.source.resolve(),
+                           allowed_queries=allowed_queries)
     from gateway.session_context import bound_session_key, set_session_vars, clear_session_vars
     from hermes_cli.plugins import get_plugin_manager
     from hermes_cli.middleware import run_tool_execution_middleware
@@ -512,6 +530,7 @@ def host(args):
                               "bridge_threads": [t.name for t in threading.enumerate()
                                                  if t.name.startswith("pallium-hermes")]}
         receipt["denied_actions"] = denied
+        receipt["allowed_native_metadata_queries"] = allowed_queries
         receipt["passed"] = bool(receipt.get("passed") and not remaining and not unload_error
                                  and not receipt["cleanup"]["bridge_threads"])
         (args.work / "host-receipt.json").write_text(json.dumps(receipt, indent=2, ensure_ascii=False), encoding="utf-8")
