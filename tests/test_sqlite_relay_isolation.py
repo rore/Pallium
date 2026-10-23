@@ -6,7 +6,7 @@ import sqlite3
 import threading
 import time
 import traceback
-from contextlib import closing
+from contextlib import ExitStack, closing
 from datetime import datetime, timezone
 from pathlib import Path
 from queue import Empty, Queue
@@ -14,6 +14,8 @@ from queue import Empty, Queue
 import pytest
 from sqlalchemy import event, text
 from sqlalchemy.engine import Connection, Engine
+from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
+from sqlalchemy.pool import SingletonThreadPool
 
 from core.errors import ImmediateTransactionBusyError
 from storage.sqlite import SQLiteStorageProvider
@@ -24,6 +26,143 @@ def _dispose(*stores):
         store._engine.dispose()
         if store._relay_engine is not store._engine:
             store._relay_engine.dispose()
+
+
+@pytest.mark.parametrize("database_url", [
+    "sqlite://", "sqlite:///:memory:",
+])
+def test_memory_database_keeps_one_native_pool(database_url):
+    provider = SQLiteStorageProvider(database_url)
+    disposed = []
+    event.listen(provider._engine, "engine_disposed", lambda engine: disposed.append(engine))
+    try:
+        assert provider._engine is provider._relay_engine
+        assert provider._session_factory is provider._relay_session_factory
+        assert isinstance(provider._engine.pool, SingletonThreadPool)
+        provider.relay_turn(runtime="hermes", session_ref="café漢", container_ref="c",
+                            title=None, max_chars=1000, max_messages=3, lease_seconds=60)
+        with provider._engine.connect() as connection:
+            assert connection.exec_driver_sql("SELECT session_ref FROM relay_sessions").scalar() == "café漢"
+    finally:
+        provider.close()
+    assert disposed == [provider._engine]
+
+
+def test_uri_memory_engine_keeps_native_pool(tmp_path):
+    url = f"sqlite:///file:{(tmp_path / 'memory').as_posix()}?mode=memory&cache=shared&uri=true"
+    engine = SQLiteStorageProvider._create_engine(url, relay=True)
+    try:
+        assert isinstance(engine.pool, SingletonThreadPool)
+        with engine.begin() as connection:
+            connection.exec_driver_sql("CREATE TABLE probe (value TEXT)")
+            connection.exec_driver_sql("INSERT INTO probe VALUES ('café漢')")
+        with engine.connect() as connection:
+            assert connection.exec_driver_sql("SELECT value FROM probe").scalar() == "café漢"
+        assert not (tmp_path / "memory").exists()
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.parametrize("split", [False, True])
+def test_file_pool_ownership_and_reclaim_preserve_database_identity(tmp_path, monkeypatch, split):
+    main = f"sqlite:///{tmp_path / 'main.db'}"
+    relay = f"sqlite:///{tmp_path / 'relay.db'}" if split else main
+    provider = SQLiteStorageProvider(main, relay_database_url=relay)
+    disposed, reclaimed = [], []
+    for engine in (provider._engine, provider._relay_engine):
+        event.listen(engine, "engine_disposed", lambda engine: disposed.append(engine))
+    try:
+        assert provider._engine is not provider._relay_engine
+        assert str(provider._relay_engine.url) == relay
+        assert provider._engine.pool.timeout() == 30
+        assert provider._relay_engine.pool.timeout() == 0
+        def reclaim(engine):
+            reclaimed.append(engine)
+            return {"freelist_before": 0, "freelist_after": 0, "reclaimed_pages": 0, "checkpoint_busy": 0}
+        monkeypatch.setattr(provider, "_reclaim_engine_free_pages", reclaim)
+        result = provider.reclaim_free_pages()
+        assert reclaimed == [provider._engine] + ([provider._relay_engine] if split else [])
+        assert ("relay_reclaimed_pages" in result) is split
+    finally:
+        provider.close()
+    assert disposed == [provider._engine, provider._relay_engine]
+
+
+def test_maintenance_pool_refusal_preserves_native_cause_and_recovers(tmp_path):
+    url = f"sqlite:///{tmp_path / 'maintenance.db'}"
+    SQLiteStorageProvider(url).close()
+    provider = SQLiteStorageProvider.open_relay_maintenance(url)
+    disposed = []
+    event.listen(provider._engine, "engine_disposed", lambda engine: disposed.append(engine))
+    try:
+        assert provider._engine is provider._relay_engine
+        assert provider._relay_engine.pool.timeout() == 0
+        with ExitStack() as handles:
+            for _ in range(15):
+                handles.enter_context(provider._relay_engine.connect())
+            with pytest.raises(ImmediateTransactionBusyError) as refusal:
+                provider._relay_engine.connect()
+            assert refusal.value.acquisition_stage == "pool_exhausted"
+            assert isinstance(refusal.value.__cause__, SQLAlchemyTimeoutError)
+            assert refusal.value.__cause__.code == "3o7r"
+            assert provider._relay_engine.pool.checkedout() == 15
+        with provider._relay_engine.connect() as connection:
+            assert connection.exec_driver_sql("SELECT 1").scalar() == 1
+        assert provider._relay_engine.pool.checkedout() == 0
+    finally:
+        provider.close()
+    assert disposed == [provider._engine]
+
+
+@pytest.mark.parametrize("failure_stage", ["create", "pragmas", "schema"])
+def test_failed_relay_construction_disposes_every_owned_engine(tmp_path, monkeypatch, failure_stage):
+    created, disposed = [], []
+    native_create = SQLiteStorageProvider._create_engine
+    native_pragmas = SQLiteStorageProvider._initialize_sqlite_pragmas
+    failure = RuntimeError("Relay initialization failed")
+
+    def create(cls, url, **options):
+        if options.get("relay") and failure_stage == "create":
+            raise failure
+        engine = native_create(url, **options)
+        created.append(engine)
+        event.listen(engine, "engine_disposed", lambda engine: disposed.append(engine))
+        return engine
+
+    def pragmas(self, engine):
+        if engine is not self._engine and failure_stage == "pragmas":
+            raise failure
+        native_pragmas(self, engine)
+
+    def schema(self, engine):
+        raise failure
+
+    monkeypatch.setattr(SQLiteStorageProvider, "_create_engine", classmethod(create))
+    monkeypatch.setattr(SQLiteStorageProvider, "_initialize_sqlite_pragmas", pragmas)
+    if failure_stage == "schema":
+        monkeypatch.setattr(SQLiteStorageProvider, "_initialize_relay_schema", schema)
+    with pytest.raises(RuntimeError) as caught:
+        SQLiteStorageProvider(f"sqlite:///{tmp_path / 'main.db'}",
+                              relay_database_url=f"sqlite:///{tmp_path / 'relay.db'}")
+    assert caught.value is failure
+    assert len(created) == (1 if failure_stage == "create" else 2)
+    assert disposed == created
+
+
+def test_other_native_timeout_is_propagated_unchanged(tmp_path, monkeypatch):
+    provider = SQLiteStorageProvider(f"sqlite:///{tmp_path / 'other-timeout.db'}")
+    failure = SQLAlchemyTimeoutError("unrelated", code="other")
+    try:
+        provider._relay_engine.pool.dispose()
+        def fail():
+            raise failure
+        monkeypatch.setattr(provider._relay_engine.pool, "_creator", fail)
+        with pytest.raises(SQLAlchemyTimeoutError) as caught:
+            provider._relay_engine.connect()
+        assert caught.value is failure
+        assert provider._relay_engine.pool.checkedout() == 0
+    finally:
+        provider.close()
 
 
 @pytest.mark.parametrize("outcome", ["success", "schema_refusal", "sqlite_error"])
