@@ -672,11 +672,29 @@ def test_model_cwd_and_stale_marker_never_grant_authority(client, project_plugin
 
 def test_inflight_tool_keeps_exact_project_until_completed(client, project_plugin, tmp_path, monkeypatch):
     module, ctx, pre, _create, _calls, _settings = project_plugin
+    monkeypatch.setattr(module, "POLL_SECONDS", .01)
+    monkeypatch.setattr(module, "POLL_SECONDS", .01)
     a, b = _repo(tmp_path, "a"), _repo(tmp_path, "b")
     assert pre(str(a), turn="a")
+    assert pre(str(b), session="second-session", turn="second-seed")
+    second_endpoint = _sessions(client, _project("b"), "second-session")[0]["endpoint_id"]
     bridge_type = sys.modules[module.__name__ + ".mcp_bridge"].RelayMcpBridge
     original = bridge_type.call
     entered, release = threading.Event(), threading.Event()
+    second_candidate_reads = []
+    original_http = module._json_request
+
+    def observe_candidate(base, method, path, **kwargs):
+        result = original_http(base, method, path, **kwargs)
+        query = kwargs.get("query") or {}
+        if (method == "GET" and path == "/relay/pending-candidate"
+                and query == {"runtime": "hermes", "session_ref": "second-session",
+                              "container_ref": _project("b")}
+                and isinstance(result, dict) and result.get("state") == "pending"):
+            second_candidate_reads.append(result)
+        return result
+
+    monkeypatch.setattr(module, "_json_request", observe_candidate)
 
     def delayed(self, *args, **kwargs):
         entered.set()
@@ -690,12 +708,267 @@ def test_inflight_tool_keeps_exact_project_until_completed(client, project_plugi
         transition = pool.submit(pre, str(b), turn="b")
         try:
             assert not transition.done()
+            peer = client.post("/relay/turn", json={
+                "runtime": "codex", "session_ref": "poll-peer", "container_ref": _project("b")})
+            assert peer.status_code == 200, peer.text
+            second_message = client.post("/relay/messages", json={
+                "sender_runtime": "codex", "sender_session_ref": "poll-peer", "recipient": second_endpoint,
+                "payload": "independent session poll ✓", "container_ref": _project("b")})
+            assert second_message.status_code == 200, second_message.text
+            _await(lambda: len(second_candidate_reads) >= 2)
+            _await(lambda: ctx.injections)
+            assert all(row == {"state": "pending", "recipient_endpoint_id": second_endpoint,
+                               "delivery_id": second_message.json()["deliveries"][0]["delivery_id"]}
+                       for row in second_candidate_reads)
+            assert len(ctx.injections) == 1
+            marker, target = ctx.injections[0]
+            assert target == {"role": "user", "session_key": "local:route:second-session"}
+            assert second_message.json()["payload"] not in marker
+            observed = client.get("/relay/messages/" + second_message.json()["message_id"],
+                                  params={"container_ref": _project("b")})
+            assert observed.status_code == 200, observed.text
+            delivery = observed.json()["deliveries"][0]
+            assert (delivery["state"], delivery["attempts"], delivery["claim_token"]) == ("pending", 0, None)
         finally:
             release.set()
         assert json.loads(tool.result(timeout=5))["scope"]["container_ref"] == _project("a")
         assert transition.result(timeout=5)
     assert _sessions(client, _project("a")) == []
     assert _sessions(client, _project("b"))[0]["scope_generation"] == 1
+
+
+@pytest.mark.parametrize("gate_kind", ["provider", "external_tool"], ids=["provider", "unknown-tool"])
+def test_provider_and_unknown_tool_continuations_do_not_block_delivery_polling(
+    client, project_plugin, tmp_path, monkeypatch, gate_kind,
+):
+    module, ctx, pre, _create, _calls, _settings = project_plugin
+    monkeypatch.setattr(module, "POLL_SECONDS", .01)
+    root = _repo(tmp_path, "unlocked-continuation-" + gate_kind)
+    session_id, route_key = "session", "gateway-route:busy"
+    assert pre(str(root), turn="seed", route_key=route_key, message="register before the gate")
+    address = json.loads(_mcp_tool(ctx, "pallium_relay_address", {}, session=session_id, turn="seed"))
+    endpoint = _sessions(client, _project("unlocked-continuation-" + gate_kind), session_id)[0]["endpoint_id"]
+    ctx.hooks["on_session_end"](session_id=session_id, turn_id="seed")
+    assert pre(str(root), turn="held", route_key=route_key, message="hold ordinary work")
+
+    original_http = module._json_request
+    positive_reads, ack_bodies, history_writes = [], [], []
+    continuation_args = []
+    observed_lock = threading.Lock()
+    positive_ready, entered, release = threading.Event(), threading.Event(), threading.Event()
+    continuation_result = object()
+
+    def observed_http(base, method, path, **kwargs):
+        result = original_http(base, method, path, **kwargs)
+        query = kwargs.get("query") or {}
+        with observed_lock:
+            if (method == "GET" and path == "/relay/pending-candidate"
+                    and query == {"runtime": "hermes", "session_ref": session_id,
+                                  "container_ref": _project("unlocked-continuation-" + gate_kind)}
+                    and isinstance(result, dict) and result.get("state") == "pending"):
+                positive_reads.append(result)
+                if len(positive_reads) >= 2:
+                    positive_ready.set()
+            if method == "POST" and path == "/relay/deliveries/ack":
+                ack_bodies.append(dict(kwargs["body"]))
+            if method == "POST" and path == "/items":
+                history_writes.append((kwargs.get("body"), result))
+        return result
+
+    monkeypatch.setattr(module, "_json_request", observed_http)
+    request = {"messages": [{"role": "user", "content": "ordinary provider request"}]}
+
+    def blocked(actual):
+        continuation_args.append(actual)
+        entered.set()
+        if not release.wait(5):
+            raise TimeoutError("test did not release the in-flight continuation")
+        return continuation_result
+
+    def invoke_gate():
+        if gate_kind == "provider":
+            staged = ctx.middleware["llm_request"](
+                request=request, session_id=session_id, turn_id="held", api_request_id="api-held")
+            actual = staged["request"] if staged else request
+            return ctx.middleware["llm_execution"](
+                actual, blocked, session_id=session_id, turn_id="held", api_request_id="api-held")
+        external_args = {"ordinary": True}
+        expected_args.append(external_args)
+        return ctx.middleware["tool_execution"](
+            tool_name="user_plugin_external_tool", args=external_args, next_call=blocked,
+            session_id=session_id, turn_id="held")
+
+    expected_args = []
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        gate = pool.submit(invoke_gate)
+        try:
+            assert entered.wait(3), "continuation did not reach its deterministic gate"
+            peer = client.post("/relay/turn", json={
+                "runtime": "codex", "session_ref": "busy-peer",
+                "container_ref": _project("unlocked-continuation-" + gate_kind),
+            })
+            assert peer.status_code == 200, peer.text
+            sent = client.post("/relay/messages", json={
+                "sender_runtime": "codex", "sender_session_ref": "busy-peer", "recipient": endpoint,
+                "payload": "queued while external work is held ✓",
+                "container_ref": _project("unlocked-continuation-" + gate_kind),
+            })
+            assert sent.status_code == 200, sent.text
+            message = sent.json()
+            delivery_id = message["deliveries"][0]["delivery_id"]
+            assert positive_ready.wait(3), "same-session candidate polling stopped behind the continuation"
+            assert len(positive_reads) >= 2
+            assert all(row == {"delivery_id": delivery_id, "recipient_endpoint_id": endpoint,
+                               "state": "pending"} for row in positive_reads)
+            current = client.get("/relay/messages/" + message["message_id"],
+                                 params={"container_ref": _project("unlocked-continuation-" + gate_kind)})
+            assert current.status_code == 200, current.text
+            delivery = current.json()["deliveries"][0]
+            assert (delivery["state"], delivery["attempts"], delivery["claim_token"]) == ("pending", 0, None)
+            assert not ack_bodies
+            _await(lambda: ctx.injections)
+            assert len(ctx.injections) == 1
+            marker, target = ctx.injections[0]
+            assert target == {"role": "user", "session_key": route_key}
+            assert message["payload"] not in marker
+        finally:
+            release.set()
+        assert gate.result(timeout=5) is continuation_result
+    assert len(continuation_args) == 1
+    if gate_kind == "provider":
+        assert continuation_args[0] is request
+    else:
+        assert len(expected_args) == 1 and continuation_args[0] is expected_args[0]
+
+    ctx.hooks["on_session_end"](session_id=session_id, turn_id="held")
+    wake = pre(str(root), turn="wake", route_key=route_key, message=marker)
+    assert wake and isinstance(wake.get("context"), str)
+    wake_request = {"messages": [{"role": "user", "content": marker + "\n\n" + wake["context"]}]}
+    _observe_request(ctx, wake_request, session=session_id, turn="wake", api_request_id="api-wake")
+    assert len(ack_bodies) == 1 and ack_bodies[0]["delivery_id"] == delivery_id
+    delivered = client.get("/relay/messages/" + message["message_id"],
+                           params={"container_ref": _project("unlocked-continuation-" + gate_kind)})
+    assert delivered.status_code == 200 and delivered.json()["deliveries"][0]["state"] == "delivered"
+
+    answer = "ordinary wake completed ✓ " + gate_kind
+    rows = [{"role": "user", "content": marker, "message_uid": "busy-wake-user"},
+            {"role": "assistant", "content": answer, "message_uid": "busy-wake-answer"}]
+    ctx.hooks["post_llm_call"](session_id=session_id, turn_id="wake", user_message=marker,
+                               assistant_response=answer, conversation_history=rows)
+    assert history_writes
+    stored = next(item for body, response in history_writes for item in response
+                  if item.get("role") == "assistant" and item.get("content") == answer)
+    history = client.get(f"/source/{stored['source_item_id']}/context", params={
+        "container_ref": _project("unlocked-continuation-" + gate_kind),
+        "query_actor_ref": address["scope"]["actor_ref"], "query_visibility": "private",
+        "before": 1, "after": 0,
+    })
+    assert history.status_code == 200, history.text
+    assert answer in [item["content"] for item in history.json()["items"]]
+    ctx.hooks["on_session_end"](session_id=session_id, turn_id="wake")
+    assert _sessions(client, _project("unlocked-continuation-" + gate_kind), session_id)[0]["state"] == "recent"
+
+
+@pytest.mark.parametrize("outcome", ["return", "raise"], ids=["return", "provider-error"])
+def test_late_provider_continuation_preserves_result_but_cannot_capture_after_project_change(
+    client, project_plugin, tmp_path, monkeypatch, outcome,
+):
+    module, ctx, pre, _create, _calls, _settings = project_plugin
+    a, b = _repo(tmp_path, "late-provider-a"), _repo(tmp_path, "late-provider-b")
+    session_id, route_a, route_b = "session", "gateway-route:A", "gateway-route:B"
+    old_message = "late provider history must stay in A"
+    assert pre(str(a), turn="old", route_key=route_a, message=old_message,
+               history=[{"role": "user", "content": old_message}])
+    old_address = json.loads(_mcp_tool(ctx, "pallium_relay_address", {}, session=session_id, turn="old"))
+    old_source = old_address["scope"]["request_source_item_id"]
+    old_actor = old_address["scope"]["actor_ref"]
+    original_http = module._json_request
+    history_writes = []
+    module_lock = threading.Lock()
+
+    def observe(base, method, path, **kwargs):
+        result = original_http(base, method, path, **kwargs)
+        if method == "POST" and path == "/items":
+            with module_lock:
+                history_writes.append((kwargs.get("body"), result))
+        return result
+
+    monkeypatch.setattr(module, "_json_request", observe)
+    request = {"messages": [{"role": "user", "content": old_message}]}
+    entered, release = threading.Event(), threading.Event()
+    continuation_args = []
+    provider_result = object()
+    provider_error = RuntimeError("provider failure sentinel")
+
+    def continuation(actual):
+        continuation_args.append(actual)
+        entered.set()
+        if not release.wait(5):
+            raise TimeoutError("test did not release the provider continuation")
+        if outcome == "raise":
+            raise provider_error
+        return provider_result
+
+    def invoke_provider():
+        staged = ctx.middleware["llm_request"](
+            request=request, session_id=session_id, turn_id="old", api_request_id="api-old")
+        actual = staged["request"] if staged else request
+        try:
+            value = ctx.middleware["llm_execution"](
+                actual, continuation, session_id=session_id, turn_id="old", api_request_id="api-old")
+            return "return", value
+        except RuntimeError as error:
+            return "raise", error
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        provider = pool.submit(invoke_provider)
+        transition = None
+        transition_before_release = False
+        try:
+            assert entered.wait(3), "provider continuation did not reach its gate"
+            transition = pool.submit(pre, str(b), turn="new", route_key=route_b,
+                                     message="new project turn")
+            try:
+                transition_result = transition.result(timeout=3)
+                transition_before_release = True
+            except TimeoutError:
+                transition_result = None
+        finally:
+            release.set()
+        provider_outcome, observed = provider.result(timeout=5)
+        assert len(continuation_args) == 1 and continuation_args[0] is request
+        assert transition is not None
+        if not transition_before_release:
+            transition_result = transition.result(timeout=5)
+        assert transition_before_release and transition_result
+
+    if outcome == "return":
+        assert provider_outcome == "return" and observed is provider_result
+        late_rows = [{"role": "user", "content": old_message, "message_uid": "late-user"},
+                     {"role": "assistant", "content": "late answer must not enter History",
+                      "message_uid": "late-answer"}]
+        ctx.hooks["post_llm_call"](session_id=session_id, turn_id="old", user_message=old_message,
+                                   assistant_response=late_rows[-1]["content"], conversation_history=late_rows)
+    else:
+        assert provider_outcome == "raise" and observed is provider_error
+
+    ctx.hooks["on_session_end"](session_id=session_id, turn_id="old")
+    assert history_writes == []
+    old_history = client.get(f"/source/{old_source}/context", params={
+        "container_ref": _project("late-provider-a"), "query_actor_ref": old_actor,
+        "query_visibility": "private", "before": 0, "after": 1,
+    })
+    assert old_history.status_code == 200, old_history.text
+    old_contents = [item["content"] for item in old_history.json()["items"]]
+    assert old_message in old_contents
+    assert "late answer must not enter History" not in old_contents
+    current = json.loads(_mcp_tool(ctx, "pallium_relay_address", {}, session=session_id, turn="new"))
+    assert current["scope"]["container_ref"] == _project("late-provider-b")
+    saved = next(value for key, value in ctx.state.values.items()
+                 if key.startswith("session:") and value.get("session_ref") == session_id)
+    assert saved["native_session_key"] == route_b
+    assert _sessions(client, _project("late-provider-b"), session_id)[0]["state"] == "recent"
 
 
 def test_pre_inference_capture_provenance_and_completion_dedup(client, project_plugin, tmp_path, monkeypatch):

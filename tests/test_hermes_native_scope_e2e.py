@@ -163,7 +163,8 @@ def test_actual_public_hermes_hooks_tools_and_scope_lifecycle(tmp_path):
         assert receipt["source"] == source_identity and receipt["artifact"] == artifact_identity
         assert receipt["qualification_run"] == boundary["run_id"]
         assert {row["surface"] for row in receipt["initial_contexts"]} == {"desktop", "tui"}
-        assert len(receipt["checks"]) == 5
+        assert len(receipt["checks"]) == 6
+        assert "empty native route refuses despite ambient session-key environment" in receipt["checks"]
         assert not receipt["cleanup"]["remaining"] and not receipt["cleanup"]["bridge_threads"]
         assert receipt["denied_actions"] == []
         experiment_passed = True

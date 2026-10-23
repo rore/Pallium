@@ -638,8 +638,13 @@ def register(ctx):
                 if stop.is_set() or not profile_ok():
                     return
                 try:
-                    with session_lock(session_id):
+                    guard = session_lock(session_id)
+                    if not guard.acquire(blocking=False):
+                        continue
+                    try:
                         poll_session(session_id, record)
+                    finally:
+                        guard.release()
                 except Exception:
                     LOG.debug("Hermes Relay metadata poll deferred for %s", session_id, exc_info=True)
 
@@ -885,18 +890,18 @@ def register(ctx):
                 return None
         return {"request": updated}
 
-    def llm_execution(request, next_call, session_id="", turn_id="", api_request_id="", **_context):
+    def llm_execution_allowed(request, session_id, turn_id, api_request_id):
         if stop.is_set():
-            return None
+            return False
         with lock:
             claim = claims.get(session_id) if isinstance(session_id, str) else None
             view = turn_contexts.get((session_id, turn_id)) if _host_id(session_id) and _host_id(turn_id) else None
             contexts = [item["rendered"] for item in (*claims.values(), *turn_contexts.values())]
             if isinstance(session_id, str) and is_ended_turn(session_id, turn_id):
-                return None
+                return False
         owns_context = _has_claimed_context(request, contexts)
         if not profile_ok():
-            return None if owns_context else next_call(request)
+            return not owns_context
         if view is not None:
             user_text = _current_user_text(request)
             with lock:
@@ -904,19 +909,28 @@ def register(ctx):
                          and user_text is not None and view["rendered"] in user_text
                          and _marker(*view["wake"]) in user_text)
             if not valid:
-                return None if owns_context else next_call(request)
-            return next_call(request)
+                return not owns_context
+            return True
         if claim is None:
-            return None if owns_context else next_call(request)
+            return not owns_context
         if (not _text(session_id, 255) or not _text(turn_id, 255)
                 or claim["turn_id"] != turn_id or not isinstance(request, dict)):
-            return None if owns_context else next_call(request)
+            return not owns_context
         user_text = _current_user_text(request)
         marker = _marker(claim["wake"]["delivery_id"], claim["wake"]["nonce"])
         if user_text is None or marker not in user_text or claim["rendered"] not in user_text:
-            return None if owns_context else next_call(request)
+            return not owns_context
         admit_context(request, session_id, turn_id, api_request_id)
-        return next_call(request)
+        return True
+
+    def llm_execution(request, next_call, session_id="", turn_id="", api_request_id="", **_context):
+        if automatic and _host_id(session_id):
+            with session_lock(session_id):
+                allowed = llm_execution_allowed(request, session_id, turn_id, api_request_id)
+        else:
+            allowed = llm_execution_allowed(request, session_id, turn_id, api_request_id)
+        # Provider work must not block metadata polling or lifecycle callbacks.
+        return next_call(request) if allowed else None
 
     def admit_context(request, session_id, turn_id, api_request_id):
         if (not profile_ok() or not _host_id(session_id) or not _host_id(turn_id)
@@ -1075,6 +1089,9 @@ def register(ctx):
         token = reply_identity.set((session_id, turn_id) if (
             _host_id(session_id) and _host_id(turn_id)) else None)
         try:
+            if automatic and _host_id(session_id):
+                with session_lock(session_id):
+                    return next_call(args)
             return next_call(args)
         finally:
             reply_identity.reset(token)
@@ -1356,8 +1373,8 @@ def register(ctx):
     ctx.register_hook("pre_llm_call", pre_llm_call)
     ctx.register_hook("post_llm_call", serialized(post_llm_call))
     ctx.register_middleware("llm_request", serialized(llm_request))
-    ctx.register_middleware("llm_execution", serialized(llm_execution))
-    ctx.register_middleware("tool_execution", serialized(tool_execution))
+    ctx.register_middleware("llm_execution", llm_execution)
+    ctx.register_middleware("tool_execution", tool_execution)
     if bridge:
         for tool in bridge.catalog:
             ctx.register_tool(
