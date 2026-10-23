@@ -514,6 +514,56 @@ def _private_env(tmp_path: Path, node: Path, python: Path, gateway_port: int = 1
     return env
 
 
+def test_python_guard_allows_only_numeric_loopback_ephemeral_resolution(tmp_path):
+    node, python = _runtime_paths(tmp_path)
+    env = _private_env(tmp_path, node, python, gateway_port=1)
+    script = python_guard_source() + r'''
+import json, socket
+
+resolved = socket.getaddrinfo("127.0.0.1", 0, type=socket.SOCK_STREAM)
+assert resolved and all(row[4][1] == 0 for row in resolved)
+family, kind, proto, _, address = resolved[0]
+listener = socket.socket(family, kind, proto)
+listener.bind(address)
+listener.listen(1)
+port = listener.getsockname()[1]
+assert type(port) is int and port not in (0, 1)
+
+class Host(str): pass
+class Port(int): pass
+
+for host, requested_port in (
+        ("192.0.2.1", 0), ("example.invalid", 0), ("例.invalid", 0), ("localhost", 0), ("127.0.0.1", "0"),
+        ("127.0.0.1", False), ("127.0.0.1", 2), (Host("127.0.0.1"), 0),
+        ("127.0.0.1", Port(0))):
+    try:
+        socket.getaddrinfo(host, requested_port, type=socket.SOCK_STREAM)
+    except PermissionError:
+        pass
+    else:
+        raise AssertionError("nonliteral ephemeral resolver request was allowed")
+
+for method in ("connect", "connect_ex"):
+    client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        getattr(client, method)(("127.0.0.1", port))
+    except PermissionError:
+        pass
+    else:
+        raise AssertionError("unallowlisted ephemeral connect was allowed")
+    finally:
+        client.close()
+listener.close()
+print(json.dumps({"ephemeral_port": port, "resolver_denials": 9, "connect_denials": 2}))
+'''
+    result = subprocess.run([str(python), "-I", "-S", "-c", script], env=env, cwd=tmp_path,
+                            capture_output=True, text=True, timeout=15)
+    assert result.returncode == 0, result.stderr
+    observed = json.loads(result.stdout)
+    assert observed["ephemeral_port"] != 1
+    assert observed["resolver_denials"] == 9 and observed["connect_denials"] == 2
+
+
 def test_node_preload_allows_one_native_websocket_and_blocks_url_protocol_and_other_network(tmp_path):
     node, python = _runtime_paths(tmp_path)
     preload = tmp_path / "preload.cjs"

@@ -179,6 +179,8 @@ def _connect_ex(self, address):
     _deny(address, self)
     return _orig_connect_ex(self, address)
 def _getaddrinfo(host, port, *args, **kwargs):
+    if type(host) is str and host == "127.0.0.1" and type(port) is int and port == 0:
+        return _orig_getaddrinfo(host, port, *args, **kwargs)
     _deny((host, port))
     return _orig_getaddrinfo(host, port, *args, **kwargs)
 def _socketpair(*args, **kwargs):
