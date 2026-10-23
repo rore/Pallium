@@ -41,7 +41,7 @@ Constructor concurrency and failed full-run disposition -> Run the existing exac
 
 **Exceptions:** —
 
-**State:** Ready for review
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Evidence
@@ -139,4 +139,12 @@ Agent technical review: /root/relay_gate_plan_review, independent nonimplementer
 Reviewed revision: d1d727d5f2069791d93f74e1efe1ac35b9adc0bb, with reviewed preparation patch and unchanged application4d2ac1cb.
 
 Verification adequacy: GO to publish the reviewed preparation correction and obtain normal whole-change CI. All8 expanded cases passed normally; recipe/intent/test/lock/runner/JUnit and cleanup match. The concurrency-census timing limitation is retained accurately. Current remote2bec61c8 CI remains red until the corrected head is published and selected CI passes. No final merge, historical stall cure, installer cure or live rollout is claimed. Prior full01 and CI failures remain unchanged evidence. Normal CI and any actual review findings remain the next release gates; no further local test slot is authorized here.
+
+## Resume and drain-oracle repair plan
+
+After the user-performed restart and manager-verified native response, resumed this same clean checkout at dfba4925f967efe5aff88a22a5955d2d6a04190e. Live PR353 is open at that exact head/base2768022e. Corrected-head CI39939013069 failed Python3.12 at test_summary_cancellation_keeps_diagnostic_workers_owned_until_drain[queued], tests/test_relay_capacity_isolation.py:2361;5988 passed,1 failed,24 skipped,2 xfailed. Python3.13, Windows smoke and governance passed. Retained failed.log SHA2569e569c7bd807cecb286f0677ce2ba91a9fdea66669512da6cb94e5ed42c934b1 at build/pool-ci-dfba4925. This is distinct from the qualified eight-case settlement preparation correction; neither old green nor local passes override current red CI.
+
+Existing independent /root/relay_gate_plan_review reviewed the exact receipt and source before pause and resumes the same review ownership. Decision: current CI NO-GO; GO for this bounded test-only correction. The old barrier starts _wait_for_operations(2) before the negative waiting check, HTTP turn, worker release and request gathering. Its false result describes that earlier deadline, not current drain state. Conversely, finished alone does not prove the outer tracked operation released ownership. Product counter handling appears balanced on inspection; neither a leak nor physical stall cause is established, and unchanged source does not rule out interaction with pool policy.
+
+Before editing, accepted plan: change only this existing cancellation node. Preserve its initial concurrent barrier and negative ownership proof, all HTTP/cancellation/worker-count/closed-storage assertions, native waits and existing budgets. After gathering and finished, require a fresh bounded native _wait_for_operations(1) true before closing storage; await the original finite barrier for cleanup without treating its historical boolean as current state. An immediate zero-time check alone would race the started worker's final cleanup, so retain the existing final one-second allowance. Do not edit the shared helper or production counters. Review the actual diff, then qualify both parameters once under a new finite grant and obtain normal corrected-head CI. No old grant survives the pause; no tests, merge or installed operation are authorized by this source plan.
 
