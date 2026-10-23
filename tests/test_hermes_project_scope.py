@@ -857,7 +857,7 @@ def test_provider_and_unknown_tool_continuations_do_not_block_delivery_polling(
     ctx.hooks["post_llm_call"](session_id=session_id, turn_id="wake", user_message=marker,
                                assistant_response=answer, conversation_history=rows)
     assert history_writes
-    stored = next(item for body, response in history_writes for item in response
+    stored = next(response[index] for body, response in history_writes for index, item in enumerate(body)
                   if item.get("role") == "assistant" and item.get("content") == answer)
     history = client.get(f"/source/{stored['source_item_id']}/context", params={
         "container_ref": _project("unlocked-continuation-" + gate_kind),
