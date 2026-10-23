@@ -41,7 +41,7 @@ Constructor concurrency and failed full-run disposition -> Run the existing exac
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Current CI enrollment failure and bounded preparation plan
@@ -164,11 +164,23 @@ The one newly granted exact cancellation node completed on c640247c998d43d7d6926
 
 Pre-intent matching-test census was empty; fresh external p-p2/non-Git128,66 dependency pins plus project0.1.0, three runtime artifacts and exact package origins passed. The unchanged runner verified clean source/head/lock and all1884 source hashes before/after. Root36396 creation2026-10-23T11:01:16.9085838Z exited uncapped after6.962s, complete streams and empty bounded direct-child snapshot. No observer, retry or chaining; sole executor was released at terminal. Cleanup evidence is limited to the owned root and bounded direct-child snapshot, not every possible descendant.
 
-## Result review
+## Drain correction result review
 
 Agent technical review: /root/relay_gate_plan_review, same independent nonimplementer; build/pool-drain-repair-01/result-review.json.
 
 Reviewed revision: c640247c998d43d7d6926f9dd4b27323fcd8d484, exact reviewed drain-test diff and unchanged application4d2ac1cb.
 
 Verification adequacy: GO to publish the correction and run normal whole-change CI. Both exact cases passed normally; reviewed diff, recipe/intent, hashes, pre-intent checks and uncapped cleanup correspond. The earlier dfba4925 CI remains failed until corrected-head CI supplies new evidence. This validates the named cancellation/drain cases without identifying the original physical stall or proving absence of every counter defect. A persistent leak still fails the fresh bounded positive drain assertion. No merge, installation, product timeout/counter change or broader feature-completion claim. Normal selected CI remains the next source-release gate; no additional local test grant is implied.
+
+## Bounded-receive correction qualification
+
+Exact TestBoundedReceive qualification on e72db20f72c71b93cced9bf926c84072056d091a passed all20 unique cases normally,0 failures/errors/skips,3.31s. Manager granted this exact sole run before intent: reviewed recipe04ade566774d9abe49c7ba97b6ff63747572bbc41b314e01b2db4450e1b8c6a9, unchanged729runner,120000ms cap, fresh external non-Git p-p3, no full/chaining/observer/retry. Frozen recipe's preparation-time PENDING field remains unchanged; actual received grant is recorded in concurrency-preflight.json and preflight.json before intent. Empty matching-process census, three unchanged runtime artifacts,66 dependency pins plus project0.1.0, exact candidate package origins and all1884 source hashes verified. Root40596 creation2026-10-23T11:36:31.6872939Z exited uncapped at11:36:40.1838854Z;8.498s wrapper, complete streams, unchanged clean head/source/lock and empty bounded direct-child snapshot. Lease released immediately; no new local run implied. JUnit SHA2567d14a57730e0ce5370a1793f4ca0488421d8165d296f674b4d37d5a00ec3803e, evidence build/pool-bounded-repair-01. Earlier failed CI39943639393 remains red; physical delay remains unexplained.
+
+## Result review
+
+Agent technical review: /root/relay_gate_plan_review, same independent nonimplementer; build/pool-bounded-repair-01/result-review.json.
+
+Reviewed revision: e72db20f72c71b93cced9bf926c84072056d091a, exact bounded-receive preparation diff and unchanged application4d2ac1cb.
+
+Verification adequacy: GO to publish the reviewed correction and obtain normal whole-change CI. Exact20-case census, recipe/intent, pre-intent grant/isolation, runtime/source identities and uncapped cleanup correspond. This qualifies preparation and unchanged receive assertions; it does not identify a physical stall or override any older red run. State Ready for review with corrected-head CI pending. No merge, installed operation, protected behavior change or whole-feature completion is claimed. Keep this checkout and evidence for the outstanding review/CI gates and safe eventual cleanup; manager owns roadmap reconciliation.
 
