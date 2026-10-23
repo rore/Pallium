@@ -45,7 +45,7 @@
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -68,7 +68,27 @@ New standalone scope helper reproduces existing derivation/discovery rather than
 
 ## Result review
 
-Implementation and bounded source/native reviews are recorded below. The selected full lane and final whole-result acceptance remain pending; no production-ready or installed-Hermes claim is made.
+Agent technical review: /root/hermes_wake_metadata_fresh_review, clean-context non-implementer; connected source, exact focused/retained composition and independent native run39973012884 acceptance, with inspected receipts and source correspondence recorded below. Final documentation-only reconciliation uses the same reviewer; no application, test, dependency or workflow changes follow the qualified revision.
+
+Reviewed revision: 48ac298ee26083f2a002cfc2a558418c28617e70, plus its final documentation-only successor.
+
+Verification adequacy: Scoped project/actor/Relay/History/memory/setup contracts have caller-surface regressions, composed 24-case proxy controls, accepted isolated public/Linux journeys and complete current Windows TUI memory-off/on proof, including canonical late-finalize ordering and final privacy/source/owned cleanup. Exact earlier Desktop product evidence is retained by explicit source correspondence; this is not a new Desktop guard execution, four-case native run or universal platform/provider claim. Python 3.13 full lane, Windows smoke and governance passed on 48ac; aggregate ordinary CI remains RED at the independently classified unchanged diagnostic readiness precondition. Its unreached assertions, unknown cause and reliability ownership remain explicit. No retest loop, protected assertion or check/protection change is used to conceal it.
+
+Human result review: Pending separate personal High result review before merge. No live installation, service operation or merge is authorized. Earlier incomplete attempts remain historical evidence; neither a successful component nor a later run retroactively qualifies them.
+
+Final independent prose review accepted the two-path documentation-only reconciliation: coverage and record match the accepted 48ac receipts, preserve source-reuse limits and RED evidence, and contain no private working settings or new production-ready/merge/rollout claim. Static public audit checked 11 files, 86 local links and 22 anchors with zero failures. Whole-change selector remains full; existing 48ac application/test/dependency/workflow evidence is reused because this successor changes only this record and the contributor validation page. Local workflow check has zero blocking failures and existing advisories; diff check passes. No native or application test repeat is required by these prose changes.
+
+### Final scoped qualification
+
+Win35 ran once under its exact finite grant on immutable 48ac: 17 unique affected cases passed with zero skips/failures/errors, 15.099s suite and 20.635946s uncapped wrapper. JUnit abecf123e87d2fb1c6d2002e7e6d331b563aeeaac66b3fec7dde5b6964b4c7a6, result cf29697f7840ca9290adbdaca3d11e80917a8a5022d76ada1dbc18546460ebf8 and stdout 66a6c8912e1749e06ba61d2573ac5368bef4cf2d49dc4932ee4ecc74976045cb match the independently accepted source/HEAD/lock/clean/root/stream and specifically approved exact-parent postconditions. The seven exact unchanged win33 PASS identities are disjoint, yielding 24 unique controls, not a fresh 24-case execution. Slot released as f8891a62. Reuse accepted WSL34 only for unchanged normal retirement/close/dead-identity/drain behavior; its zero-cancellation result did not execute the new snapshot interleaving. No repeated Linux journey was needed.
+
+One separately granted native dispatch used exact 48ac/cwd/tui after fresh all-page inventory (22 prior terminal runs, zero active/candidate), remote branch/main/workflow/safety/registration checks and exclusive intent. Actual run [39973012884](https://github.com/rore/Pallium/actions/runs/39973012884), attempt 1, created 2026-10-23T14:50:05Z, is terminal SUCCESS: exactly two UI cases, memory-off 84.649s and memory-on 126.410s, zero skips/failures/errors, 212.52s aggregate. Both completed final journey/provider-secret/egress/source/driver-zero/owned-cleanup assertions with null capture error, three individually confirmed retirements and zero proxy cancellations/fatal errors. Memory-off completed the canonical late-finalize component and canonical-client cleanup before those final assertions. Memory-on's History and memory records share their exact final controller generation. Native observer 93232 is terminal zero; no rerun, active experiment or unused grant remains.
+
+Artifact 12510248485 was downloaded once to build/hermes-project-parity/native-48ac-evidence (5,838,028 bytes). JUnit a8856c77acced709fb2dc29f12d8e063b79d449e50ae2449b685e56d194fd644, provenance b7c165146a53d819f1e7abd222a84d25fc72f37ffeead2d41045e88b9631f2a9, successful log 24362eb6dea98289ffae1f51eb3855646ed2582d7769e38eec4fe076f49fd6d4, numbered off result 085b43aefb402234818c3299b8717abe696e8b7604e76a36629a756130f610a8 and on result dd875d8aded858cb23bdffc8aaf6e7fb70e89c965abb36e0273fa153934ae688 are retained; exclude pytest current aliases. Provenance is exact 48ac/Hermes4d04303818b61bf3aa09278af48356315515965b/CWD/TUI, Server 2025 image win25-vs2026/20261021.278.1 and TUI b53149cd0f8be098d845fc060c310d4a6e77aa1fbd9a4db7c056f90006e44e77. Compiled Desktop 311743a4888c2e213e0bd6a126d6f6bb7c6e6c89cb50b2912b363ff4d1268fb1 is build provenance, not a new Desktop execution. The single pytest warning is the upstream Starlette/httpx deprecation; no dependency change follows. Earlier bda Desktop product journeys remain exact source-corresponding evidence; new shared proxy guards executed on TUI, not a newly qualified Desktop or four-case matrix. All earlier RED receipts remain unchanged; this success proves neither their physical cause nor cure.
+
+Ordinary 48ac CI 39972018099 remains RED: Python 3.13 passed 8,437 tests/108 ordinary skips/two xfails in 543.55s; Windows smoke and governance passed. Python 3.12 failed one queued-summary test after 6,364 passes/39 skips/two xfails in 460.24s. Independent review identified the first readiness-callback barrier timeout, before status/queue, queued cancellation, ownership/drain or storage-close assertions. Earlier SQL work exists; worker startup, physical cause, ownership leak or harmlessness cannot be inferred. Connected sources are unchanged from green b6d; no concrete Hermes-specific safety finding invalidated the native run. Failed log fc3b831a1ed7531d0b186ebbbe7e02f481602725e66ef09708e2c2e75a5a063a and passed-lane log 3c22f9b1ca6532a1f2ce20c638bbfd6e1c41d40edcbb70a8b2d928c673d7bddf remain retained. Reliability owner and manager received 387ae87f and ca7e7d3a; no generic repair/retry or check/protection change is included.
+
+Trigger 2 dropped: the temporal-ordering review corrections were consumer test-harness implementation defects, not an upstream Agent Workflow instruction defect. Prior runtime/environment feedback disposition remains unchanged. The parity worktree and stopped isolated distro remain necessary for exact receipts and possible approved rollout preparation; they are not promoted into everyday use.
 
 ### Review corrections after checkpoint 2c049640
 
