@@ -22,7 +22,7 @@ concurrency:
 
 jobs:
   initial-send-diagnostic:
-    name: Initial-send observation (not qualification)
+    name: Initial-send observation (vector dependencies absent; not full-CI reproduction)
     if: github.event_name == 'workflow_dispatch' && inputs.profile == 'initial-send-diagnostic'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -43,13 +43,13 @@ jobs:
         shell: bash
         run: |
           python -c 'import sys; assert sys.version_info[:3] == (3, 13, 16)'
-          echo '6d4e01b44d6ea5ef5292215891afd0d8ab73dd3351f7e35d7a51b9c6951084a5  scripts/diagnostics/initial_send/requirements.txt' | sha256sum -c -
+          echo 'c56551175c1fb8af270645a777de82c709e1bd15b02009fa596032b288de81db  scripts/diagnostics/initial_send/requirements.txt' | sha256sum -c -
           python -m pip install --disable-pip-version-check --only-binary=:all: --no-deps -r scripts/diagnostics/initial_send/requirements.txt
       - name: Observe the one fixed case with bounded owned-root cleanup
         timeout-minutes: 3
         shell: bash
         env:
-          EXPECTED_MANIFEST_SHA256: 0509e8d88c0a9a5f121487679b344abd24bf7d57155fb81a49d768858d6c7adc
+          EXPECTED_MANIFEST_SHA256: 20e0296f535abd5eb1517f6bd7e7582ef97e9c3f5b5ad781ee39fb11d01c8fcd
         run: exec python -B -X utf8 scripts/diagnostics/initial_send/run.py
       - name: Preserve diagnostic receipts without clearing a failed test
         if: ${{ !cancelled() }}

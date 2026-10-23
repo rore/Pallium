@@ -52,6 +52,32 @@ def test_initial_send_profile_has_no_matrix_or_other_case_dispatch() -> None:
     assert 'NODE = "tests/test_codex_wake.py::test_exclusive_trial_binding_and_spend_survive_restart_and_later_delivery[True]"' in runner
     assert runner.count("subprocess.Popen(") == 1
     assert '"-n", "0"' in runner and "child.wait(timeout=max(0, test_deadline" in runner
+    assert "vector dependencies absent; not full-CI reproduction" in diagnostic
+    bundle = Path(__file__).parents[1] / "scripts/diagnostics/initial_send"
+    manifest = json.loads((bundle / "manifest.json").read_text(encoding="utf-8"))
+    profile = manifest["profile"]
+    pins = set(profile["dependencies"])
+    omitted = {pin.split("==", 1)[0] for pin in profile["omitted_dependencies"]}
+    assert omitted == {
+        "usearch", "numkong", "numpy", "tqdm", "onnxruntime", "flatbuffers",
+        "protobuf", "tokenizers", "huggingface-hub", "filelock", "fsspec",
+        "hf-xet", "httpx2", "httpcore2", "truststore",
+    }
+    assert len(pins) == 53 and len(profile["omitted_dependencies"]) == 15
+    assert not omitted & {pin.split("==", 1)[0] for pin in pins}
+    assert set((bundle / "requirements.txt").read_text().splitlines()) == pins - {"pallium==0.1.0"}
+    assert {"sqlalchemy==2.1.6", "anyio==4.15.1", "fastapi==0.161.1", "httpx==0.28.1",
+            "starlette==1.9.0", "mcp==1.30.0", "pytest==8.4.2", "packaging==26.3"} <= pins
+    assert profile["environment"] == "vector-dependencies-absent"
+    assert profile["vector_index_enabled"] is False
+    assert manifest["execution_status"] == "AUTHORIZED_API_ONLY"
+    for source in ("tests/conftest.py", "pyproject.toml", "app/dependencies.py",
+                   "storage/vector_index.py", "providers/embedding/onnx_provider.py"):
+        assert source in manifest["source_lf_sha256"]
+    assert 'for pin in profile["omitted_dependencies"]' in runner
+    assert 'except importlib.metadata.PackageNotFoundError:' in runner
+    for admission in (runner, (bundle / "boundary_observer.py").read_text(encoding="utf-8")):
+        assert '!= "AUTHORIZED_API_ONLY"' in admission
 
 
 def test_every_event_reports_selection_and_policy_is_trusted() -> None:

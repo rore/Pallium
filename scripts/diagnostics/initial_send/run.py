@@ -42,6 +42,8 @@ def preflight(output):
         raise ValueError("Manifest correspondence failed")
     profile = manifest["profile"]
     if (manifest["execution_status"] != "AUTHORIZED_API_ONLY" or profile["node"] != NODE
+            or profile["environment"] != "vector-dependencies-absent"
+            or profile["vector_index_enabled"] is not False
             or sys.version_info[:3] != (3, 13, 16) or sys.platform != "linux"
             or os.environ.get("ImageVersion") != "20261012.334.1"):
         raise ValueError("Fixed hosted runtime/profile mismatch")
@@ -51,6 +53,13 @@ def preflight(output):
     for name, expected in manifest["bundle_lf_sha256"].items():
         if digest(BUNDLE / name) != expected:
             raise ValueError("Bundle correspondence failed: " + name)
+    for pin in profile["omitted_dependencies"]:
+        name = pin.split("==", 1)[0]
+        try:
+            importlib.metadata.version(name)
+        except importlib.metadata.PackageNotFoundError:
+            continue
+        raise ValueError("Vector distribution metadata must be absent: " + name)
     versions = {}
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
     if project["version"] != "0.1.0":
@@ -64,6 +73,9 @@ def preflight(output):
     write(output / "preflight.json", {"node": NODE, "github_sha": os.environ.get("GITHUB_SHA"),
                                      "source_pin": manifest["source_pin"], "versions": versions,
                                      "image_version": profile["image_version"],
+                                     "environment": profile["environment"],
+                                     "omitted_distribution_metadata": profile["omitted_dependencies"],
+                                     "fidelity": "Changed environment; not full-CI reproduction",
                                      "limits": "Application pins, not an OS/build-tool freeze"})
 
 
@@ -92,6 +104,7 @@ def main():
     output = Path(os.environ["RUNNER_TEMP"]) / "initial-send-proof"
     output.mkdir(exist_ok=False)
     receipt = {"node": NODE, "owned_root_exited": None, "spawn_attempted": False,
+               "environment": "vector-dependencies-absent; not full-CI reproduction",
                "scope": "One exact case, no retry; no universal descendant clearance",
                "limits": "Signals, OS scheduling and hosted cancellation prevent exact resource-stop guarantees"}
     child = None
@@ -158,7 +171,7 @@ def main():
                          and not observation["unmatched"] and not observation["errors"]
                          and "session_connection" in observation["labels_seen"])
                 receipt["capture_integrity"] = bool(valid)
-                receipt["diagnosis"] = "INCONCLUSIVE: original delay did not reproduce"
+                receipt["diagnosis"] = "INCONCLUSIVE: altered vector-disabled environment; not full-CI reproduction"
                 if not valid:
                     exit_code = 2
             receipt["exit_code"] = exit_code
