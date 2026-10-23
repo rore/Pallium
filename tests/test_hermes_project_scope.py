@@ -16,7 +16,7 @@ from urllib.error import HTTPError
 
 import pytest
 
-from tests.test_hermes_relay_plugin import _await, _mcp_tool, _observe_request, plugin_context
+from tests.test_hermes_relay_plugin import _await, _execute_request, _mcp_tool, _observe_request, plugin_context
 
 
 @pytest.fixture
@@ -565,9 +565,20 @@ def test_moved_project_poll_does_not_take_old_recipient_snapshot(client, project
     assert marker.startswith("[[PALLIUM_RELAY_WAKE:")
     assert target["session_key"] == "local:route:session"
     wake = pre(str(a), turn="wake", message=marker)
-    assert wake and "old project only" in wake["context"]
+    assert wake and wake["context"].startswith("[[PALLIUM_RELAY_CONTEXT:")
     request = {"messages": [{"role": "user", "content": marker + "\n\n" + wake["context"]}]}
-    _observe_request(ctx, request, session="session", turn="wake", api_request_id="api-snapshot-wake")
+    observed = []
+
+    def provider(actual):
+        content = actual["messages"][0]["content"]
+        assert marker in content and "[Untrusted Pallium Relay delivery;" in content
+        assert "old project only" in content
+        observed.append(content)
+        return "provider observed scoped wake"
+
+    assert _execute_request(ctx, request, provider, session_id="session", turn_id="wake",
+                            api_request_id="api-snapshot-wake") == "provider observed scoped wake"
+    assert len(observed) == 1
     delivered = client.get("/relay/messages/" + old.json()["message_id"],
                            params={"container_ref": _project("snapshot-a")}).json()["deliveries"][0]
     assert delivered["state"] == "delivered" and delivered["attempts"] == 1
@@ -1314,12 +1325,24 @@ def test_finalize_preserves_pending_wake_and_reloaded_authority(client, project_
     assert owner.state.values == reloaded and closes == []
     assert _sessions(client, _project("finalize-wake"))[0] == session
     wake = pre(str(root), turn="wake", message=marker, context=owner)
-    assert wake and "pending across advisory finalize" in wake["context"]
+    assert wake and wake["context"].startswith("[[PALLIUM_RELAY_CONTEXT:")
     request = {"messages": [{"role": "user", "content": marker + "\n\n" + wake["context"]}]}
-    _observe_request(owner, request, session="session", turn="wake", api_request_id="api-finalize-wake")
+    observed = []
+
+    def provider(actual):
+        content = actual["messages"][0]["content"]
+        assert marker in content and "[Untrusted Pallium Relay delivery;" in content
+        assert "pending across advisory finalize" in content
+        observed.append(content)
+        return "provider observed resumed wake"
+
+    assert _execute_request(owner, request, provider, session_id="session", turn_id="wake",
+                            api_request_id="api-finalize-wake") == "provider observed resumed wake"
+    assert len(observed) == 1
     delivery = client.get("/relay/messages/" + sent.json()["message_id"],
                           params={"container_ref": _project("finalize-wake")}).json()["deliveries"][0]
-    assert delivery["state"] == "delivered"
+    assert delivery["state"] == "delivered" and delivery["attempts"] == 1
+    assert len(ctx.injections) == 1
 
 
 @pytest.mark.parametrize("event", [

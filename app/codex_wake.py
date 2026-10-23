@@ -555,17 +555,15 @@ def schedule_codex_relay_wake(
     def still_pending() -> bool:
         if relay_service is None:
             return True
-        candidate = relay_service.pending_candidate(
-            runtime="codex",
-            session_ref=session_ref,
-            container_ref=container_ref,
-            delivery_id=delivery_id,
-        )
-        return (
+        return any(
             isinstance(candidate, dict)
             and candidate.get("delivery_id") == delivery_id
             and candidate.get("recipient_endpoint_id") == endpoint_id
+            and candidate.get("recipient_runtime") == "codex"
+            and candidate.get("recipient_session_ref") == session_ref
+            and candidate.get("container_ref") == container_ref
             and candidate.get("state") == "pending"
+            for candidate in relay_service.wake_candidates(delivery_id=delivery_id)
         )
 
     wake_key = (id(registry), session_ref, container_ref)
