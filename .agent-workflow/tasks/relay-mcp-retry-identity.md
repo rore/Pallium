@@ -42,7 +42,7 @@ Canonical source: `roadmap/features/add-wake-first-relay-delivery.md`, sender re
 
 **Exceptions:** —
 
-**State:** Blocked
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Checkpoint: api-review
@@ -73,7 +73,7 @@ Application-test slot was allocated after PR325's first cohort and released imme
 - The ONE required full run FAILED: 6,320 passed, six skipped, two xfailed, one setup error in 435.04 seconds. Exact node: tests/test_relay_wake_health.py::test_reservation_authority_bound_is_observed_without_weakening_validation[0-/dashboard/api/relay/summary]. At tests/test_relay_wake_health.py:165 the world fixture's registry.initialize(old_owner_drained=True) returned False; the captured warning is codex_wake_initialization_failed error_type=ImmediateTransactionBusyError. This slice changes no wake-health/core/storage paths. Physical cause and baseline status are unproven; neither flakiness nor a relationship to earlier incidents is asserted.
 - Full receipt: pytest exit 2 / runner exit 2, uncapped, owned root 78292 exit verified at 2026-10-21T08:49:07.4589711Z, both streams complete, direct-child snapshot empty, same clean head and source/lock hashes. stdout SHA256 4aebe35d30799b3735d3947f81ce460d3a03649547117c6f4ec5d4504c0ec4a6; JUnit 18bd4d7f07169eb5dbd6aa2d8e508a1a3746b54ce1e0aad913c73a84db64ddb7; stderr empty. Raw recipe, intent, runner, logs, XML and result are retained under build/retry-identity/full-prepared/. Parent notified immediately of slot release. No retry, new diagnostic, scope expansion, CI/publication or installed qualification has run.
 
-## Result review
+## Historical result review
 
 Agent technical review: /root/sender_api_plan_review independently verified the final diff, 353 unique passing focused/affected nodes with no unresolved failed node, six JUnit hashes, runtime ledger and cleaned runner before giving full EXECUTION GO. Reviewed revision: 3dc1021829a32933f8043b95b196b2f7b8cc91b0. Verification adequacy: focused contract coverage passed; required full qualification failed as recorded above. The actual failed-full receipt and limited classification were supplied for independent read-only review; that review is pending. No final readiness claim is made.
 
@@ -86,3 +86,27 @@ Base revision a2726453323a363b0656ddf3d87a2d4b0d86937e; branch fix/relay-mcp-ret
 2026-10-23 manager assigned completion to @pal-dev1 after existing source/evidence review. Original clean0fb119bb88b26996b347a22273d92bd25cc3b27b and its evidence remain untouched at build/relay-mcp-retry-identity. New isolated branch feat/relay-mcp-retry-identity at build/relay-mcp-retry-identity-20261023 preserves all eight original commits and merges verified GitHub/current origin/main2768022ebf8b302d09a9955da38f3fc5d61504a4 without conflicts: integration437094ef32c8e16bc2f25548b7fb52b16048c299. Net diff against current main remains exactly the five declared source/test/docs/record files. Server and both focused test blobs are identical to tested3dc10218; docs preserve both current-main and retained sender guidance.
 
 The earlier failed wake-health fixture and registry/recovery source are unchanged, while current-main storage now releases the local writer gate after confirmed settlement, before reset/close cleanup. That base change neither proves the old setup failure cured nor qualifies this integrated candidate. Selector still requires the full non-slow lane. Preserve original353 focused/affected evidence as historical correspondence; proposed current-base validation is both affected MCP files followed by one required full, under reserved executor authority. A separately qualified failure-only installer observer may accompany that genuinely required full instead of adding a diagnostic-only full run. No tests, publication, API label, merge or installed operation occurred during this integration. State remains Blocked pending current-base verification, independent result review, API checkpoint and the separate High-risk human result review.
+
+## Integrated verification and restart recovery
+
+The integrated candidate1f5ec4db27047e10ab0f0ec6e610d1c15b7c719d completed both separately granted checks before the user pause. Exact affected MCP files:264 normal passes,0 failures/errors/skips,46.83s; JUnit SHA256c4fd9e256a223338e9e210078ce3c1d530c7559bcd056fd62ad277c7bac65c05. Required full non-slow suite:8071 passed,37 skipped,2 xfailed,0 failures/errors,583.58s; JUnit SHA256106f48120c984e6a9b000242f6e15e74f15ae5c15218c1ddf434a6b08341084e. Evidence: build/sender-current-main-focused-01 and build/sender-current-main-full-01. The older6320-pass failed full receipt remains failed; this later result neither rewrites it nor identifies its physical cause.
+
+Both runs used the unchanged qualified CPython3.13.14/SQLite3.53.1/SQLAlchemy2.0.48 runtime,66 dependency pins plus project0.1.0, matching runtime artifacts/lock and exact candidate package origins. Fresh external p-r1/p-r2 parents returned Git128 and matching-test process censuses were empty before intent. The full runner verified1883 tracked source hashes plus the qualified private observer. Root46284 creation2026-10-23T10:29:44.8267270Z exited uncapped, complete streams, empty bounded direct-child snapshot and clean unchanged source/head/lock; wrapper623.064s. These snapshots do not establish universal or reparented-descendant cleanup. No rename-failure capture occurred, so the original installer cause remains unknown.
+
+The full had already terminated before the user pause's controlled-stop attempt; no process was killed. The immutable pause checkpoint accurately preserves the execution result separately from interrupted pending acceptance. After the user restart and verified recovery, the same sender_evidence_review accepted both preserved results via manager chat01a16320-c588-72b0-a098-cb3d137b1e75. No rerun occurred, and no old queued grant was reused.
+
+### Original full-specific authority
+
+Frozen recipe92b6a26a0046223c8bb9e1ae622b229c3ab6db6f97ff9900cdcafe2590a50ada retains its preparation-time executor_authorization=PENDING; it was not rewritten after execution. The actual full-specific grant was received in this chat from manager01a16320-c588-72b0-a098-cb3d137b1e75 after focused264 acceptance and Claude lease release, before the root creation above. Its exact received instruction includes:
+
+> Grant sole executor for ONE required sender integrated full at candidate1f5ec4db27047e10ab0f0ec6e610d1c15b7c719d: reviewed recipe92b6a26a0046223c8bb9e1ae622b229c3ab6db6f97ff9900cdcafe2590a50ada, tests/ -x -q configured4workers/not-slow,1200s owned cap, fresh non-Git Temp/p-r2, pinned729runner/B91runtime, qualified first-failure-only rename observer234fc5146f7a5e34f9548a6f6323baaef20c7db959f73cc2e2aa87248471f7cf.
+
+No send timestamp is invented. Existing received-turn authority, frozen recipe/intent and preflight establish the sequence; the later acceptance confirms it without retroactively changing that recipe.
+
+## Result review
+
+Agent technical review: sender_evidence_review, same independent native reviewer, acceptance relayed by manager chat01a16320-c588-72b0-a098-cb3d137b1e75 in this resumed task.
+
+Reviewed revision: 1f5ec4db27047e10ab0f0ec6e610d1c15b7c719d, with exact affected264-pass and full8071-pass receipts, recipe92b6a26a, runtime/source identities and preserved execution authority.
+
+Verification adequacy: accepted integrated focused and required full results; zero failures/errors in both, expected full platform skips/xfails retained. Application/test blobs remain those independently reviewed before integration. This is ready for a concrete draft PR and normal CI, not merged or released. The API checkpoint and separate High-risk human result review remain explicit final acceptance gates; no API label or human result approval is fabricated. Existing source-publication authority supersedes the earlier preparation-only phase restriction. Manager retains canonical roadmap ownership; report the PR/contribution and remaining reliability work there. Retain both original and integrated checkouts/evidence until delivery and safe cleanup disposition. Trigger dropped: the private observer API-binding mistake and local command encoding failure were harness/environment issues, not Agent Workflow defects.
