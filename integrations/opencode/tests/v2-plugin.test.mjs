@@ -3,14 +3,13 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { createHash } from "node:crypto";
 const profile = mkdtempSync(path.join(tmpdir(), "pallium-caller-"));
 const previousEnv = Object.fromEntries(["HOME", "USERPROFILE", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "PALLIUM_HOOK_ACTOR_REF"].map((key) => [key, process.env[key]]));
 for (const key of Object.keys(previousEnv)) process.env[key] = key === "PALLIUM_HOOK_ACTOR_REF" ? "fixture-actor" : profile;
 after(() => { for (const [key, value] of Object.entries(previousEnv)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; } rmSync(profile, { recursive: true, force: true }); });
 const { default: v1 } = await import("../.opencode/plugins/pallium.mjs");
 const { default: v2 } = await import("../server.js");
-const { deriveContainerRef, getPinnedContainer, pinContainer, removeSessionPin } = await import("../.opencode/plugins/pallium-common.mjs");
+const { deriveContainerRef, getPinnedContainer, ocNativeMessageSourceId, pinContainer, removeSessionPin } = await import("../.opencode/plugins/pallium-common.mjs");
 
 const sessionID = "ses_abc123";
 const deliveryID = "relay-delivery-" + "a".repeat(32);
@@ -19,7 +18,7 @@ const nativeID = "msg_relaywake123";
 const location = "/tmp/pallium-v2-exact";
 const container = deriveContainerRef(location);
 const relaySession = { runtime: "opencode", session_ref: sessionID, container_ref: container,
-  endpoint_id: endpointID, scope_generation: 0, state: "recent", destination_health: "active" };
+  endpoint_id: endpointID, scope_generation: 0, alias: "planner", state: "recent", destination_health: "active" };
 const delivery = { delivery_id: deliveryID, claim_token: "claim-token", message_id: "relay-message-test",
   sender_runtime: "codex", sender_session_ref: "sender", payload: "שלום wake payload",
   created_at: "2026-10-07T00:00:00Z", attempts: 1 };
@@ -193,7 +192,7 @@ test("assistant completion and compaction ingest only sessions owned by this dir
     assert.ok(ownedReads > 0);
     assert.equal(contextReads, ownedReads);
     assert.equal(ingested.length, ownedWrites);
-    assert.equal(ownedWrites, 1);
+    assert.equal(ownedWrites, 0, "an assistant without a captured native user source is not attributed or ingested");
     await hooks.compaction({ sessionID: "ses_foreign" });
     await hooks.compaction({ sessionID: "ses_failed" });
     assert.equal(contextReads, ownedReads);
@@ -279,6 +278,25 @@ async function callerFixture(options = {}) {
   };
   const dispose = await v2.setup(ctx);
   await pause();
+  if (options.roleHistory || history.some((message) => message?.type === "assistant")) {
+    const startId = options.roleStartId || "msg_role_source";
+    const startText = "role source prompt";
+    let userIndex = history.findIndex((message) => message?.type === "user" && /^msg_[A-Za-z0-9_-]+$/.test(message.id));
+    if (userIndex < 0) {
+      history.unshift({ type: "user", id: startId, text: startText });
+      userIndex = 0;
+    }
+    if (userIndex > 0 && history[userIndex - 1]?.type !== "idle") {
+      history.splice(userIndex, 0, { type: "idle", id: "msg_role_prior_idle" });
+      userIndex++;
+    }
+    if (history.at(-1)?.type !== "idle") history.push({ type: "idle", id: "msg_role_idle" });
+    const sessionForRole = options.roleSessionID || sessionID;
+    for (const user of history.filter((message) => message?.type === "user" && /^msg_[A-Za-z0-9_-]+$/.test(message.id))) {
+      await hooks.prompt({ sessionID: sessionForRole, messageID: user.id,
+        prompt: { text: user.text || startText } });
+    }
+  }
   return {
     calls, native, hooks, history, retired, dispose, listed: () => listed, eventRetired: () => eventRetired,
     emit: async (event) => { events.push(event); eventReady?.(); await pause(); },
@@ -420,6 +438,89 @@ const completedAssistant = (id = "msg_answer", text = "שלום answer 😀") =>
 });
 const captureCalls = (f) => f.calls.filter((call) => call.path === "/items");
 const captureReceipt = [{ source_item_id: "source-capture" }];
+const sourceUser = (id, text = "question") => ({ type: "user", id, text });
+
+test("V2 freezes each prompt name and links delayed distinct outputs only inside its idle-delimited source segment", async () => {
+  let alias = "planner-a";
+  const history = [];
+  const f = await callerFixture({ history, response: async (route) => {
+    if (route === "/relay/turn") return { session: { ...relaySession, alias }, deliveries: [] };
+    if (route === "/items") return captureReceipt;
+  } });
+  try {
+    history.push(sourceUser("msg_turn_a", "first question"));
+    await f.hooks.prompt({ sessionID, messageID: "msg_turn_a", prompt: { text: "first question" } });
+    alias = "planner-b";
+    history.push(completedAssistant("msg_answer_a1", "first answer"),
+      completedAssistant("msg_answer_a2", "second answer"), { type: "idle", id: "msg_idle_a" },
+      sourceUser("msg_turn_b", "second question"));
+    await f.hooks.prompt({ sessionID, messageID: "msg_turn_b", prompt: { text: "second question" } });
+    history.push(completedAssistant("msg_answer_b", "later answer"), { type: "idle", id: "msg_idle_b" });
+    await f.hooks.compaction({ sessionID });
+    const records = new Map(captureCalls(f).map((call) => [call.body[0].source_id, call.body[0]]));
+    for (const id of ["msg_answer_a1", "msg_answer_a2"]) {
+      const record = records.get(ocNativeMessageSourceId("assistant", sessionID, id));
+      assert.equal(record.source_turn_id, "msg_turn_a");
+      assert.equal(record.relay_name, "planner-a");
+      assert.equal(record.relay_attribution_state, "named");
+    }
+    const later = records.get(ocNativeMessageSourceId("assistant", sessionID, "msg_answer_b"));
+    assert.equal(later.source_turn_id, "msg_turn_b");
+    assert.equal(later.relay_name, "planner-b");
+    assert.equal(records.size, 3);
+  } finally { await f.close(); }
+});
+
+test("V2 leaves steered multi-user and incomplete post-compaction segments unassociated", async () => {
+  const history = [];
+  const f = await callerFixture({ history, response: async (route) => {
+    if (route === "/relay/turn") return { session: { ...relaySession, alias: "planner" }, deliveries: [] };
+    if (route === "/items") return captureReceipt;
+  } });
+  try {
+    history.push(sourceUser("msg_steer_a", "first"));
+    await f.hooks.prompt({ sessionID, messageID: "msg_steer_a", prompt: { text: "first" } });
+    history.push(sourceUser("msg_steer_b", "steered"));
+    await f.hooks.prompt({ sessionID, messageID: "msg_steer_b", prompt: { text: "steered" } });
+    history.push(completedAssistant("msg_ambiguous", "ambiguous"), { type: "idle", id: "msg_steer_idle" });
+    await f.hooks.compaction({ sessionID });
+    assert.equal(captureCalls(f).length, 0);
+    history.splice(0, history.length, sourceUser("msg_after_compaction", "resumed"),
+      completedAssistant("msg_unbounded", "unbounded"));
+    await f.hooks.prompt({ sessionID, messageID: "msg_after_compaction", prompt: { text: "resumed" } });
+    await f.hooks.compaction({ sessionID });
+    assert.equal(captureCalls(f).length, 0);
+  } finally { await f.close(); }
+});
+
+test("V2 retries Relay delivery from context without relabeling a failed source-time snapshot", async () => {
+  let attempts = 0;
+  const history = [sourceUser("msg_failed_snapshot", "question"), completedAssistant("msg_failed_answer", "answer"),
+    { type: "idle", id: "msg_failed_idle" }];
+  const f = await callerFixture({ history, response: async (route) => {
+    if (route === "/relay/turn") {
+      attempts++;
+      return attempts === 1 ? null : { session: { ...relaySession, alias: "takeover" }, deliveries: [delivery] };
+    }
+    if (route === "/relay/deliveries/ack") return { delivery_id: deliveryID, state: "delivered", already_delivered: false };
+    if (route === "/items") return captureReceipt;
+  } });
+  try {
+    await f.hooks.prompt({ sessionID, messageID: "msg_failed_snapshot", prompt: { text: "question" } });
+    const userCapture = f.calls.find((call) => call.path === "/item-and-query").body;
+    assert.equal(userCapture.source_turn_id, "msg_failed_snapshot");
+    assert.equal(userCapture.relay_attribution_state, "unavailable");
+    const user = { id: "msg_failed_snapshot", role: "user", content: [{ type: "text", text: "question" }] };
+    await f.hooks.context({ sessionID, messages: [user] });
+    assert.equal(attempts, 2);
+    assert.match(user.content.at(-1).text, /שלום wake payload/);
+    await f.hooks.compaction({ sessionID });
+    const assistant = captureCalls(f)[0].body[0];
+    assert.equal(assistant.source_turn_id, "msg_failed_snapshot");
+    assert.equal(assistant.relay_name, null);
+    assert.equal(assistant.relay_attribution_state, "unavailable");
+  } finally { await f.close(); }
+});
 
 test("assistant capture reserves one identity across completion, failure and compaction callbacks", async () => {
   const gate = barrier();
@@ -474,16 +575,14 @@ for (const fault of ["precommit", "committed response lost", "malformed", "empty
 test("assistant capture identity survives reload and separates actor, container, session and native IDs", async () => {
   const sources = [];
   const capture = async (id = sessionID, native = "msg_answer") => {
-    const f = await callerFixture({ history: [completedAssistant(native)], fetch: async (route) => {
+    const f = await callerFixture({ roleSessionID: id, history: [completedAssistant(native)], fetch: async (route) => {
       if (route === "/items") return jsonResponse(captureReceipt);
     } });
     try {
       await f.hooks.compaction({ sessionID: id });
       const payload = captureCalls(f)[0].body[0];
       sources.push(payload.source_id);
-      assert.equal(payload.source_id, "oc-assistant-" + createHash("sha256").update(JSON.stringify([
-        "opencode-assistant/v1", payload.agent_ref, payload.actor_ref, payload.container_ref, id, native,
-      ])).digest("hex"));
+      assert.equal(payload.source_id, ocNativeMessageSourceId("assistant", id, native));
       assert.equal(payload.content, "שלום answer 😀");
     } finally { await f.close(); }
   };
@@ -499,7 +598,7 @@ test("assistant capture identity survives reload and separates actor, container,
     pinContainer(sessionID, "path:other:123", undefined, "fixture-actor");
     await capture();
     assert.equal(sources[0], sources[1]);
-    assert.equal(new Set(sources).size, 5);
+    assert.equal(new Set(sources).size, 3);
   } finally { process.env.PALLIUM_HOOK_ACTOR_REF = "fixture-actor"; removeSessionPin(sessionID); removeSessionPin("ses_other_capture"); }
 });
 
@@ -514,7 +613,9 @@ test("different assistant identities can capture while another identity is in fl
   const first = f.hooks.compaction({ sessionID });
   try {
     await gate.entered;
-    history.splice(0, history.length, completedAssistant("msg_next", "next"));
+    history.splice(0, history.length, { type: "user", id: "msg_next_user", text: "next question" },
+      completedAssistant("msg_next", "next"), { type: "idle", id: "msg_next_idle" });
+    await f.hooks.prompt({ sessionID, messageID: "msg_next_user", prompt: { text: "next question" } });
     await f.hooks.compaction({ sessionID });
     assert.equal(captureCalls(f).length, 2);
     assert.notEqual(captureCalls(f)[0].body[0].source_id, captureCalls(f)[1].body[0].source_id);
@@ -532,17 +633,18 @@ for (const invalid of [undefined, "", "not-native", "msg_", 1]) {
 
 for (const completed of [undefined, null, "1", NaN, Infinity]) {
   test(`assistant capture requires finite completion on every selected assistant: ${String(completed)}`, async () => {
-    const history = [completedAssistant("msg_step"), completedAssistant()];
-    history[0].time.completed = completed;
+    const earlier = completedAssistant("msg_step");
+    const history = [earlier, completedAssistant()];
+    earlier.time.completed = completed;
     const f = await callerFixture({ history, fetch: async (route) => {
       if (route === "/items") return jsonResponse(captureReceipt);
     } });
     try {
       await f.hooks.compaction({ sessionID });
       assert.equal(captureCalls(f).length, 0);
-      history[0].time.completed = 0;
+      earlier.time.completed = 1;
       await f.hooks.compaction({ sessionID });
-      assert.equal(captureCalls(f).length, 1, "eligibility failure does not reserve the identity");
+      assert.equal(captureCalls(f).length, 2, "each valid native assistant output keeps its own source identity");
     } finally { await f.close(); }
   });
 }
@@ -563,21 +665,25 @@ for (const text of ["", "   ", "😀".repeat(10000), "😀".repeat(10000) + "x"]
 
 test("assistant capture keeps latest-user multi-step text and work trace while skipping tool-only", async () => {
   const tool = { type: "tool", name: "read", state: { status: "completed", input: { filePath: "/tmp/fixture.txt" }, content: [{ type: "text", text: "read result" }] } };
-  const history = [{ ...completedAssistant("invalid", "previous turn"), time: {} }, { type: "user", id: "msg_question", text: "question" },
-    { ...completedAssistant("msg_tool", ""), content: [tool] }];
+  const history = [{ ...completedAssistant("invalid", "previous turn"), time: {} }, { type: "idle", id: "msg_prior_idle" },
+    { type: "user", id: "msg_question", text: "question" }, { ...completedAssistant("msg_tool", ""), content: [tool] }];
   const f = await callerFixture({ history, fetch: async (route) => {
     if (route === "/items") return jsonResponse(captureReceipt);
   } });
   try {
     await f.hooks.compaction({ sessionID });
     assert.equal(captureCalls(f).length, 0);
-    history.push(completedAssistant("msg_middle", "first"), completedAssistant("msg_final", "last 😀"));
+    history.splice(history.length - 1, 0, completedAssistant("msg_middle", "first"), completedAssistant("msg_final", "last 😀"));
     await f.hooks.compaction({ sessionID });
-    const item = captureCalls(f)[0].body[0];
-    assert.equal(item.content, "first\nlast 😀");
-    assert.deepEqual(item.metadata.agent_work_trace_turn.files_read, ["/tmp/fixture.txt"]);
+    assert.equal(captureCalls(f).length, 2);
+    const first = captureCalls(f).find((call) => call.body[0].source_id === ocNativeMessageSourceId("assistant", sessionID, "msg_middle")).body[0];
+    const last = captureCalls(f).find((call) => call.body[0].source_id === ocNativeMessageSourceId("assistant", sessionID, "msg_final")).body[0];
+    assert.equal(first.content, "first");
+    assert.equal(last.content, "last 😀");
+    assert.deepEqual(first.metadata.agent_work_trace_turn.files_read, ["/tmp/fixture.txt"]);
+    assert.deepEqual(last.metadata.agent_work_trace_turn.files_read, ["/tmp/fixture.txt"]);
     await f.hooks.compaction({ sessionID });
-    assert.equal(captureCalls(f).length, 1);
+    assert.equal(captureCalls(f).length, 2);
   } finally { await f.close(); }
 });
 
@@ -588,12 +694,14 @@ test("assistant capture ignores no assistant and unfinished latest without older
   } });
   try {
     await f.hooks.compaction({ sessionID });
-    history.push(completedAssistant("msg_old"), { ...completedAssistant(), time: {} });
+    history.push(sourceUser("msg_incomplete_source", "question"), completedAssistant("msg_old"),
+      { ...completedAssistant(), time: {} }, { type: "idle", id: "msg_incomplete_idle" });
+    await f.hooks.prompt({ sessionID, messageID: "msg_incomplete_source", prompt: { text: "question" } });
     await f.hooks.compaction({ sessionID });
     assert.equal(captureCalls(f).length, 0);
-    history.at(-1).time.completed = 2;
+    history.at(-2).time.completed = 2;
     await f.hooks.compaction({ sessionID });
-    assert.equal(captureCalls(f).length, 1);
+    assert.equal(captureCalls(f).length, 2);
   } finally { await f.close(); }
 });
 
@@ -614,16 +722,17 @@ test("assistant history move is revalidated before writing", async () => {
 });
 
 test("assistant capture requires valid IDs on earlier selected steps too", async () => {
-  const history = [completedAssistant("invalid"), completedAssistant()];
+  const earlier = completedAssistant("invalid");
+  const history = [earlier, completedAssistant()];
   const f = await callerFixture({ history, fetch: async (route) => {
     if (route === "/items") return jsonResponse(captureReceipt);
   } });
   try {
     await f.hooks.compaction({ sessionID });
     assert.equal(captureCalls(f).length, 0);
-    history[0].id = "msg_step";
+    earlier.id = "msg_step";
     await f.hooks.compaction({ sessionID });
-    assert.equal(captureCalls(f).length, 1);
+    assert.equal(captureCalls(f).length, 2);
   } finally { await f.close(); }
 });
 
@@ -669,7 +778,8 @@ for (const retire of ["delete", "rebind"]) {
   test(`assistant ${retire} releases the captured reservation without clearing a successor`, async () => {
     const firstGate = barrier(), successorGate = barrier();
     let generation = 0, attempts = 0;
-    const f = await callerFixture({ history: [completedAssistant()], fetch: async (route) => {
+    const history = [completedAssistant()];
+    const f = await callerFixture({ history, fetch: async (route) => {
       if (route !== "/items") return;
       const gate = ++attempts === 1 ? firstGate : successorGate;
       // The transport resolves on abort, but its underlying body may finish late.
@@ -682,10 +792,18 @@ for (const retire of ["delete", "rebind"]) {
     let successor;
     try {
       await firstGate.entered;
-      if (retire === "delete") await f.emit({ type: "session.deleted", data: { sessionID } });
-      else {
+      if (retire === "delete") {
+        await f.emit({ type: "session.deleted", data: { sessionID } });
+        firstGate.release();
+        await first;
+        await f.hooks.compaction({ sessionID });
+        assert.equal(captureCalls(f).length, 1, "a deleted session has no surviving source snapshot for a successor capture");
+        return;
+      } else {
         generation = 1;
-        await f.hooks.context({ sessionID, messages: [natural("msg_rebind")] });
+        history.splice(0, history.length, sourceUser("msg_rebind", "new turn"),
+          completedAssistant("msg_rebound_answer", "successor"), { type: "idle", id: "msg_rebound_idle" });
+        await f.hooks.prompt({ sessionID, messageID: "msg_rebind", prompt: { text: "new turn" } });
       }
       successor = f.hooks.compaction({ sessionID });
       await successorGate.entered;
@@ -706,7 +824,7 @@ test("fresh owned assistant completion captures once while foreign and failed lo
   const captured = barrier();
   const reads = [];
   const history = [{ type: "assistant", id: "msg_first_answer", time: { completed: 1 }, content: [{ type: "text", text: "first owned answer" }] }];
-  const f = await callerFixture({ history, get: async ({ sessionID: requested }) => {
+  const f = await callerFixture({ roleSessionID: id, history, get: async ({ sessionID: requested }) => {
     if (requested === "ses_failed_completion") throw new Error("native lookup failed");
     return { location: { directory: requested === "ses_foreign_completion" ? "/tmp/foreign" : location } };
   }, context: async ({ sessionID: requested }) => { reads.push(requested); return { data: history }; },
@@ -751,26 +869,30 @@ test("fresh assistant ownership lookup cannot read context after disposal", asyn
 });
 
 for (const deleted of [false, true]) {
-  test(`fresh assistant ownership lookup ${deleted ? "rejects deletion and recreation" : "accepts benign concurrent creation"}`, async () => {
+  test(`assistant ownership lookup ${deleted ? "rejects deletion and recreation" : "survives session creation"} with a source snapshot`, async () => {
     const id = deleted ? "ses_initial_replaced" : "ses_initial_created";
     const gate = barrier();
     const history = [{ type: "assistant", id: "msg_initial_answer", time: { completed: 1 }, content: [{ type: "text", text: "current answer" }] }];
-    let lookups = 0, reads = 0;
-    const f = await callerFixture({ history, get: async ({ sessionID: requested }) => {
-      if (requested === id && ++lookups === 1) await gate.wait();
+    let lookups = 0, reads = 0, blockLookup = false;
+    const f = await callerFixture({ history, roleSessionID: id, get: async ({ sessionID: requested }) => {
+      if (requested === id && blockLookup && ++lookups === 1) await gate.wait();
       return { location: { directory: location } };
     }, context: async () => { reads++; return { data: history }; } });
+    blockLookup = true;
     const running = f.hooks.compaction({ sessionID: id });
     try {
       await gate.entered;
       if (deleted) await f.emit({ type: "session.deleted", data: { sessionID: id } });
       await f.emit({ type: "session.created", data: { sessionID: id } });
-      assert.ok(lookups > 1, "the public creation event creates successor state during the lookup");
+      assert.ok(lookups > 1, "ownership is rechecked after the session event races with lookup");
       gate.release();
       await running;
       assert.equal(reads, deleted ? 0 : 1);
       assert.equal(f.calls.filter((call) => call.path === "/items").length, deleted ? 0 : 1);
       if (deleted) {
+        history.splice(0, history.length, sourceUser("msg_recreated_source", "question"),
+          completedAssistant("msg_recreated_answer"), { type: "idle", id: "msg_recreated_idle" });
+        await f.hooks.prompt({ sessionID: id, messageID: "msg_recreated_source", prompt: { text: "question" } });
         await f.hooks.compaction({ sessionID: id });
         assert.equal(reads, 1);
         assert.equal(f.calls.filter((call) => call.path === "/items").length, 1);
@@ -785,7 +907,7 @@ for (const existing of [false, true]) {
     const gate = barrier();
     const history = [{ type: "assistant", id: "msg_unrelated_retirement", time: { completed: 1 }, content: [{ type: "text", text: "captured answer" }] }];
     let block = false, reads = 0;
-    const f = await callerFixture({ history, get: async ({ sessionID: requested }) => {
+    const f = await callerFixture({ history, roleSessionID: id, get: async ({ sessionID: requested }) => {
       if (block && requested === id) await gate.wait();
       return { location: { directory: location } };
     }, context: async () => { reads++; return { data: history }; } });
@@ -843,7 +965,9 @@ for (const sameSession of [true, false]) test(`${sameSession ? "same-session" : 
   const previousClear = globalThis.clearInterval;
   const hooks = {};
   const calls = [];
-  let nextEvent, reads = 0, ownedLocationReads = 0;
+  let nextEvent, reads = 0, queueDeletion = false, deletionQueued = false, deletionDelivered = false;
+  let resolveDeletionHandled, deletionHandledResolved = false;
+  const deletionHandled = new Promise((resolve) => { resolveDeletionHandled = resolve; });
   let dispose;
   globalThis.setInterval = () => ({ unref() {} });
   globalThis.clearInterval = () => {};
@@ -860,25 +984,30 @@ for (const sameSession of [true, false]) test(`${sameSession ? "same-session" : 
       get: async ({ sessionID: requested }) => {
         assert.equal(requested, id, "only the fresh completion performs this lookup");
         return { location: { get directory() {
-        if (ownedLocationReads) return location; // Later capture checks are separate from the initial probe.
-        ownedLocationReads++;
-        assert.equal(ownedLocationReads, 1, "queue this deletion only once");
-        assert.equal(typeof nextEvent, "function", "the public subscriber already awaits its next event");
-        // Resolve the supported event iterator after owned's final current check.
-        // Its consumer retires the absent entry in the next microtask, before
-        // ingestAssistant resumes from the successfully resolved owned promise.
-        nextEvent({ value: { type: "session.deleted", data: { sessionID: retiredId } }, done: false });
+        if (queueDeletion && !deletionQueued) {
+          deletionQueued = true;
+          deletionDelivered = true;
+          assert.equal(typeof nextEvent, "function", "the public subscriber already awaits its next event");
+          // Resolve the supported event iterator after owned's final current check.
+          // Its consumer retires the absent entry in the next microtask, before
+          // ingestAssistant resumes from the successfully resolved owned promise.
+          nextEvent({ value: { type: "session.deleted", data: { sessionID: retiredId } }, done: false });
+        }
         return location;
       } } };
       },
       context: async () => {
         reads++;
-        return { data: [{ type: "assistant", id: "msg_overtaken_answer", time: { completed: 1 }, content: [{ type: "text", text: "retired answer" }] }] };
+        return { data: history };
       },
     },
     event: { subscribe: ({ signal }) => ({
       [Symbol.asyncIterator]() { return this; },
       next() {
+        if (deletionDelivered && !deletionHandledResolved) {
+          deletionHandledResolved = true;
+          resolveDeletionHandled();
+        }
         if (signal.aborted) return Promise.resolve({ done: true });
         return new Promise((resolve) => {
           nextEvent = resolve;
@@ -887,18 +1016,24 @@ for (const sameSession of [true, false]) test(`${sameSession ? "same-session" : 
       },
     }) },
   };
+  const history = [sourceUser("msg_overtaken_source", "question"),
+    { type: "assistant", id: "msg_overtaken_answer", time: { completed: 1 }, content: [{ type: "text", text: "retired answer" }] },
+    { type: "idle", id: "msg_overtaken_idle" }];
   try {
     removeSessionPin(id);
     dispose = await v2.setup(ctx);
+    await hooks.prompt({ sessionID: id, messageID: "msg_overtaken_source", prompt: { text: "question" } });
+    queueDeletion = true;
     await hooks.compaction({ sessionID: id });
     assert.equal(reads, sameSession ? 0 : 1);
     assert.equal(calls.filter((call) => call.path === "/items").length, sameSession ? 0 : 1);
     await deletion.entered;
     deletion.release();
-    assert.equal(ownedLocationReads, 1, "the supported location read succeeds before deletion");
+    await deletionHandled;
+    assert.equal(deletionQueued, true, "the supported location read succeeds before deletion");
     assert.equal(calls.filter((call) => call.path === "/relay/sessions/close" && call.body.session_ref === retiredId).length, 1,
       "the public deletion callback retired the absent entry and issued its close");
-    assert.equal(getPinnedContainer(id), null);
+    assert.equal(getPinnedContainer(id), sameSession ? null : container);
     await dispose();
     assert.equal(calls.filter((call) => call.body.operation === "detach").length, 0,
       "the retired callback must not recreate state with a remote endpoint");

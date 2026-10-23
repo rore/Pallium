@@ -218,6 +218,148 @@ def test_repeated_codex_user_snapshot_reuses_only_same_attribution(client):
     assert api_conflict.status_code == 409, api_conflict.text
 
 
+@pytest.mark.parametrize("source_type", ("opencode", "hermes"))
+def test_additional_adapters_inherit_the_existing_immutable_turn_snapshot(client, source_type):
+    user_id = _ingest(
+        client, source_type=source_type, source_id=f"{source_type}-user", role="user",
+        thread=f"{source_type}-session", turn=f"{source_type}-native-turn", name="planner",
+    )
+    assistant_id = _ingest(
+        client, source_type=source_type, source_id=f"{source_type}-assistant", role="assistant",
+        thread=f"{source_type}-session", turn=f"{source_type}-native-turn", name="ignored-name",
+        state="unavailable", content=f"{source_type} assistant turn marker",
+    )
+
+    result = _search(
+        client, "planner", query=f"{source_type} assistant turn marker", source_type=source_type,
+    )
+    assert {item["source_item_id"] for item in result["results"]} == {assistant_id}
+    assert result["results"][0]["relay_name"] == "planner"
+    assert client.app.state.pallium_service._storage.get_source_item(user_id).relay_name == "planner"
+
+
+def test_role_source_id_retries_reject_key_snapshot_scope_and_forgotten_conflicts(client):
+    source_id = _ingest(
+        client, source_id="role-source-id", role="user", thread="source-id-session",
+        turn="source-id-turn", name="planner",
+    )
+    base = {
+        "source_type": "codex", "source_id": "role-source-id", "content_type": "text/plain",
+        "content": "same source item", "artifact_kind": "message", "role": "user",
+        "container_ref": "project:role-history", "thread_ref": "source-id-session",
+        "visibility": "private",
+    }
+    conflicting_retries = (
+        {**base, "source_turn_id": "different-turn", "relay_name": "planner", "relay_attribution_state": "named"},
+        {**base, "source_turn_id": "source-id-turn", "relay_name": "different-name", "relay_attribution_state": "named"},
+        {**base, "source_turn_id": "source-id-turn", "relay_name": "planner", "relay_attribution_state": "named", "thread_ref": "other-session"},
+        {**base, "source_turn_id": None, "relay_attribution_state": "unavailable"},
+    )
+    for payload in conflicting_retries:
+        response = client.post("/items", json=[payload])
+        assert response.status_code == 409, response.text
+
+    forgotten = client.post("/source/forget", json={
+        "source_item_id": source_id, "reason": "user requested removal",
+    })
+    assert forgotten.status_code == 200, forgotten.text
+    response = client.post("/items", json=[{
+        **base, "source_turn_id": "source-id-turn", "relay_name": "planner",
+        "relay_attribution_state": "named",
+    }])
+    assert response.status_code == 409, response.text
+
+
+def test_forgotten_assistant_source_id_retry_fails_closed(client):
+    _ingest(
+        client, source_id="forgotten-assistant-user", role="user", thread="forgotten-assistant-session",
+        turn="forgotten-assistant-turn", name="planner",
+    )
+    assistant_id = _ingest(
+        client, source_id="forgotten-assistant-row", role="assistant", thread="forgotten-assistant-session",
+        turn="forgotten-assistant-turn", name=None, state="unavailable", content="assistant output",
+    )
+    forgotten = client.post("/source/forget", json={
+        "source_item_id": assistant_id, "reason": "user requested removal",
+    })
+    assert forgotten.status_code == 200, forgotten.text
+
+    retry = client.post("/items", json=[{
+        "source_type": "codex", "source_id": "forgotten-assistant-row",
+        "content_type": "text/plain", "content": "assistant output",
+        "artifact_kind": "message", "role": "assistant",
+        "container_ref": "project:role-history", "thread_ref": "forgotten-assistant-session",
+        "visibility": "private", "source_turn_id": "forgotten-assistant-turn",
+    }])
+    assert retry.status_code == 409, retry.text
+
+
+def test_assistant_requires_exact_unforgotten_user_snapshot(client):
+    assistant = {
+        "source_type": "opencode", "source_id": "orphan-assistant",
+        "content_type": "text/plain", "content": "delayed assistant output",
+        "artifact_kind": "message", "role": "assistant",
+        "container_ref": "project:role-history", "thread_ref": "orphan-session",
+        "visibility": "private", "source_turn_id": "orphan-native-user",
+    }
+    response = client.post("/items", json=[assistant])
+    assert response.status_code == 409, response.text
+
+    user_id = _ingest(
+        client, source_type="opencode", source_id="orphan-user", role="user",
+        thread="orphan-session", turn="orphan-native-user", name="planner",
+    )
+    recovered = client.post("/items", json=[assistant])
+    assert recovered.status_code == 200, recovered.text
+    assert recovered.json()[0]["relay_name"] == "planner"
+
+    forgotten = client.post("/source/forget", json={
+        "source_item_id": user_id, "reason": "user requested removal",
+    })
+    assert forgotten.status_code == 200, forgotten.text
+    second_assistant = {
+        **assistant, "source_id": "assistant-after-forgotten-user",
+        "content": "another delayed assistant output",
+    }
+    after_forget = client.post("/items", json=[second_assistant])
+    assert after_forget.status_code == 409, after_forget.text
+
+
+def test_integrity_error_source_id_recovery_checks_role_snapshot_conflict(client, monkeypatch):
+    from dataclasses import replace
+    from uuid import uuid4
+
+    service = client.app.state.pallium_service
+    storage = service._storage
+    original_create = storage.create_source_item_with_packages
+    inserted: list[str] = []
+
+    def insert_conflicting_source_id(source_item, package_names, *, skip_packages=None):
+        competing = replace(
+            source_item,
+            id=uuid4().hex,
+            source_turn_id="other-turn",
+            relay_name="other-name",
+            relay_attribution_state="named",
+        )
+        original_create(competing, package_names, skip_packages=skip_packages)
+        inserted.append(competing.id)
+        return original_create(source_item, package_names, skip_packages=skip_packages)
+
+    monkeypatch.setattr(storage, "create_source_item_with_packages", insert_conflicting_source_id)
+    response = client.post("/items", json=[{
+        "source_type": "opencode", "source_id": "integrity-collision",
+        "content_type": "text/plain", "content": "integrity collision marker",
+        "artifact_kind": "message", "role": "user",
+        "container_ref": "project:role-history", "thread_ref": "integrity-session",
+        "visibility": "private", "source_turn_id": "requested-turn",
+        "relay_name": "planner", "relay_attribution_state": "named",
+    }])
+
+    assert inserted
+    assert response.status_code == 409, response.text
+
+
 @pytest.mark.parametrize(
     ("competing_name", "expected_status"),
     [("fixed-name", 200), ("different-name", 409)],

@@ -47,7 +47,39 @@ from core.text import normalize_for_index as _normalize_for_index
 from core.work_ref import _normalize_work_ref, _normalize_work_refs
 
 _WORK_REFS_METADATA_KEY = "pallium_work_refs"
+_ROLE_HISTORY_SOURCE_TYPES = frozenset({"codex", "claude-code", "opencode", "hermes"})
 _ANY_CONTAINER = object()
+
+
+def _validate_role_source_dedupe(
+    existing: SourceItem,
+    *,
+    role_history_source: bool,
+    role: str | None,
+    container_ref: str | None,
+    thread_ref: str | None,
+    source_turn_id: str | None,
+    relay_name: str | None,
+    relay_attribution_state: str,
+) -> None:
+    """Reject source-ID retries that disagree with immutable role attribution."""
+    if not role_history_source:
+        return
+    if (
+        existing.forgotten_at is not None
+        or existing.role != role
+        or existing.container_ref != container_ref
+        or existing.thread_ref != thread_ref
+        or existing.source_turn_id != source_turn_id
+    ):
+        raise SourceTurnSnapshotConflictError("conflicting source item identity")
+    # Rows without a usable turn key retain their legacy/unknown meaning. A
+    # keyed request is never allowed to relabel one of those rows.
+    if source_turn_id is not None and (
+        existing.relay_name != relay_name
+        or existing.relay_attribution_state != relay_attribution_state
+    ):
+        raise SourceTurnSnapshotConflictError("conflicting source turn snapshot")
 
 def _sanitize_work_ref_metadata(metadata: dict | None) -> dict | None:
     """Keep safe work refs and bounded diagnostics without changing selection."""
@@ -437,18 +469,12 @@ class PalliumService:
         relay_attribution_state: str = "unknown",
     ) -> IngestResult:
         container_ref = canonicalize_container_ref(container_ref)
-        existing_source_item = self._storage.find_source_item(source_type=source_type, source_id=source_id)
-        if existing_source_item is not None:
-            vector_entry = self._vector_embedder.build_source_item_vector_entry(existing_source_item)
-            if vector_entry is not None and existing_source_item.processing_status != "pending":
-                if self._vector_embedder.embed_and_persist_vector_entry(vector_entry):
-                    self._vector_embedder.save_vector_index()
-            return self._build_ingest_result(existing_source_item)
-
         # Relay attribution is accepted only on a supported host's user snapshot.
         # Assistant submissions cannot choose or overwrite the historical name;
         # they can only correlate to the immutable same-scope user row.
-        if source_type in {"codex", "claude-code"} and role in {"user", "assistant"}:
+        role_history_source = source_type in _ROLE_HISTORY_SOURCE_TYPES and role in {"user", "assistant"}
+        prior_turn_snapshot = None
+        if role_history_source:
             requested_relay_name = relay_name
             requested_relay_state = relay_attribution_state
             key_is_valid = (
@@ -480,40 +506,71 @@ class PalliumService:
                 # Equivalent retries reuse the immutable first snapshot. A
                 # changed state/name is a source conflict and fails closed.
                 try:
-                    prior = self._storage.find_source_turn_snapshot(
+                    prior_turn_snapshot = self._storage.find_source_turn_snapshot(
                         source_type, container_ref, thread_ref, source_turn_id
                     )
                 except ValueError as exc:
                     raise SourceTurnSnapshotConflictError(
                         "conflicting source turn snapshot"
                     ) from exc
-                if prior is not None:
-                    if prior.forgotten_at is not None:
+                if prior_turn_snapshot is not None:
+                    if prior_turn_snapshot.forgotten_at is not None:
                         raise SourceTurnSnapshotConflictError(
                             "source turn snapshot has been forgotten"
                         )
                     if (
-                        prior.relay_name != relay_name
-                        or prior.relay_attribution_state != relay_attribution_state
+                        prior_turn_snapshot.relay_name != relay_name
+                        or prior_turn_snapshot.relay_attribution_state != relay_attribution_state
                     ):
                         raise SourceTurnSnapshotConflictError(
                             "conflicting source turn snapshot"
                         )
-                    return self._build_ingest_result(prior)
             elif role == "assistant" and key_is_valid:
                 try:
-                    prior = self._storage.find_source_turn_snapshot(
+                    prior_turn_snapshot = self._storage.find_source_turn_snapshot(
                         source_type, container_ref, thread_ref, source_turn_id
                     )
-                except ValueError:
-                    prior = None
-                if prior is not None and prior.forgotten_at is None:
-                    relay_name = prior.relay_name
-                    relay_attribution_state = prior.relay_attribution_state
+                except ValueError as exc:
+                    raise SourceTurnSnapshotConflictError(
+                        "conflicting source turn snapshot"
+                    ) from exc
+                if prior_turn_snapshot is not None:
+                    if prior_turn_snapshot.forgotten_at is not None:
+                        raise SourceTurnSnapshotConflictError(
+                            "source turn snapshot has been forgotten"
+                        )
+                    relay_name = prior_turn_snapshot.relay_name
+                    relay_attribution_state = prior_turn_snapshot.relay_attribution_state
+                else:
+                    raise SourceTurnSnapshotConflictError(
+                        "source turn snapshot is unavailable"
+                    )
         else:
             source_turn_id = None
             relay_name = None
             relay_attribution_state = "unknown"
+
+        existing_source_item = self._storage.find_source_item(source_type=source_type, source_id=source_id)
+        if existing_source_item is not None:
+            _validate_role_source_dedupe(
+                existing_source_item,
+                role_history_source=role_history_source,
+                role=role,
+                container_ref=container_ref,
+                thread_ref=thread_ref,
+                source_turn_id=source_turn_id,
+                relay_name=relay_name,
+                relay_attribution_state=relay_attribution_state,
+            )
+            vector_entry = self._vector_embedder.build_source_item_vector_entry(existing_source_item)
+            if vector_entry is not None and existing_source_item.processing_status != "pending":
+                if self._vector_embedder.embed_and_persist_vector_entry(vector_entry):
+                    self._vector_embedder.save_vector_index()
+            return self._build_ingest_result(existing_source_item)
+        # Equivalent start retries may use a fresh source ID, but the existing
+        # user row remains the single immutable representative of this turn.
+        if role_history_source and role == "user" and prior_turn_snapshot is not None:
+            return self._build_ingest_result(prior_turn_snapshot)
 
         requested_package = use_case or self._default_use_case
         if use_case is not None and requested_package not in self._configured_use_cases:
@@ -610,6 +667,16 @@ class PalliumService:
         except IntegrityError as integrity_error:
             existing = self._storage.find_source_item(source_type=source_type, source_id=source_id)
             if existing is not None:
+                _validate_role_source_dedupe(
+                    existing,
+                    role_history_source=role_history_source,
+                    role=role,
+                    container_ref=container_ref,
+                    thread_ref=thread_ref,
+                    source_turn_id=source_turn_id,
+                    relay_name=relay_name,
+                    relay_attribution_state=relay_attribution_state,
+                )
                 return self._build_ingest_result(existing)
             # Two equivalent user-start retries can pass the optimistic
             # snapshot lookup before either insert commits. Recover only the
@@ -622,7 +689,7 @@ class PalliumService:
             )
             if (
                 snapshot_unique_error
-                and source_type in {"codex", "claude-code"}
+                and role_history_source
                 and role == "user"
                 and source_turn_id is not None
             ):

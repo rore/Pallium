@@ -144,6 +144,7 @@ export default async ({ client, directory, worktree } = {}) => {
   const pendingRelay = new Map(); // sessionID -> claimed delivery context
   const orientedSessions = new Set(); // sessionID
   const ingestedBySession = new Map(); // sessionID -> Set(dedupKey)
+  const roleTurnSnapshots = new Map(); // sessionID -> Map(native user message ID -> immutable start snapshot)
   const retryCounters = new Map(); // `${sessionID}::${tool}::${target}` -> count
 
   function purgeSession(sessionId) {
@@ -152,6 +153,7 @@ export default async ({ client, directory, worktree } = {}) => {
     pendingRelay.delete(sessionId);
     orientedSessions.delete(sessionId);
     ingestedBySession.delete(sessionId);
+    roleTurnSnapshots.delete(sessionId);
     const prefix = `${sessionId}::`;
     for (const k of retryCounters.keys()) {
       if (k.startsWith(prefix)) retryCounters.delete(k);
@@ -235,9 +237,13 @@ export default async ({ client, directory, worktree } = {}) => {
       // (and/or experimental.session.compacting) fires more than once for the
       // same turn.
       let lastAssistantId = null;
+      let lastAssistantMessage = null;
       for (const m of messages) {
         const role = m && m.info ? m.info.role : (m ? m.role : undefined);
-        if (role === "assistant") lastAssistantId = (m.info && m.info.id) || m.id || lastAssistantId;
+        if (role === "assistant") {
+          lastAssistantMessage = m;
+          lastAssistantId = (m.info && m.info.id) || m.id || lastAssistantId;
+        }
       }
 
       const turn = pallium.extractAssistantTurn(messages);
@@ -263,7 +269,7 @@ export default async ({ client, directory, worktree } = {}) => {
 
       const item = {
         source_type: pallium.SOURCE_TYPE,
-        source_id: pallium.ocSourceId(),
+        source_id: pallium.ocNativeMessageSourceId("assistant", sessionId, lastAssistantId) || pallium.ocSourceId(),
         content_type: "text/plain",
         content,
         role: "assistant",
@@ -274,6 +280,9 @@ export default async ({ client, directory, worktree } = {}) => {
         visibility: "private",
         artifact_kind: "message",
       };
+      const assistantInfo = lastAssistantMessage?.info || lastAssistantMessage || {};
+      const sourceTurnId = pallium.nativeTurnId(assistantInfo.parentID || assistantInfo.parentId);
+      if (sourceTurnId) item.source_turn_id = sourceTurnId;
       const workTrace = pallium.buildWorkTraceMetadata(turn);
       const workRefsResponse = await pallium.relayRequest("GET", "/relay/sessions/work-refs", { runtime: "opencode", session_ref: sessionId, container_ref: containerRef }, 500);
       const confirmedRefs = confirmedRegistryWorkRefs(workRefsResponse);
@@ -431,6 +440,24 @@ export default async ({ client, directory, worktree } = {}) => {
         const message = (output && output.message) || (input && input.message) || {};
         const parts = (output && output.parts) || [];
         const sessionId = resolveSessionId(output) || resolveSessionId(input) || message.sessionID || "unknown";
+        const nativeMessageId = pallium.nativeTurnId(message.id);
+        let turnRecord = null;
+        if (nativeMessageId) {
+          let turns = roleTurnSnapshots.get(sessionId);
+          if (!turns) roleTurnSnapshots.set(sessionId, turns = new Map());
+          turnRecord = turns.get(nativeMessageId);
+          if (turnRecord?.captured) return;
+          if (!turnRecord) {
+            turnRecord = {
+              started: false,
+              startPromise: null,
+              response: null,
+              snapshot: { relay_name: null, relay_attribution_state: "unavailable" },
+              captured: false,
+            };
+            turns.set(nativeMessageId, turnRecord);
+          }
+        }
 
         const containerRef = pallium.resolveContainerRef(cwd, sessionId);
         pallium.pinContainer(sessionId, containerRef, undefined);
@@ -440,18 +467,45 @@ export default async ({ client, directory, worktree } = {}) => {
 
         let confirmedRefs = [];
         let workRefsStatus = "unavailable";
+        let relayResponse = turnRecord?.response || null;
+        let shouldQueueRelay = false;
         // Claim on the user turn, but acknowledge only after messages.transform
         // has attached the context to the actual model-bound history.
-        if (output && output.message && typeof output.message === "object" && !pendingRelay.has(sessionId)) {
-          const relayResponse = await pallium.relayRequest("POST", "/relay/turn", {
+        if (turnRecord && !turnRecord.started) {
+          turnRecord.started = true;
+          if (output && output.message && typeof output.message === "object" && !pendingRelay.has(sessionId)) {
+            turnRecord.startPromise = pallium.relayRequest("POST", "/relay/turn", {
+              runtime: "opencode",
+              session_ref: sessionId,
+              container_ref: containerRef,
+              max_chars: RELAY_TURN_BUDGET,
+              structural_work_refs: structuralWorkRefsPayload(containerRef, discovery, cwd),
+            }, pallium.HTTP_TIMEOUT_MS).then((response) => {
+              turnRecord.response = response;
+              turnRecord.snapshot = pallium.relayNameSnapshot(response, sessionId, containerRef);
+              return response;
+            });
+            relayResponse = await turnRecord.startPromise;
+            shouldQueueRelay = true;
+          }
+        } else if (turnRecord?.startPromise) {
+          relayResponse = await turnRecord.startPromise;
+        } else if (!turnRecord && output && output.message && typeof output.message === "object" && !pendingRelay.has(sessionId)) {
+          relayResponse = await pallium.relayRequest("POST", "/relay/turn", {
             runtime: "opencode",
             session_ref: sessionId,
             container_ref: containerRef,
             max_chars: RELAY_TURN_BUDGET,
             structural_work_refs: structuralWorkRefsPayload(containerRef, discovery, cwd),
           }, pallium.HTTP_TIMEOUT_MS);
+          shouldQueueRelay = true;
+        }
+        if (relayResponse) {
           confirmedRefs = confirmedRegistryWorkRefs(relayResponse);
           workRefsStatus = ["complete", "unavailable"].includes(relayResponse?.structural_work_refs_status) ? relayResponse.structural_work_refs_status : "unavailable";
+        }
+        let relayDeliveriesPending = (pendingRelay.get(sessionId)?.deliveries?.length || 0) > 0;
+        if (shouldQueueRelay) {
           const deliveries = (relayResponse && relayResponse.deliveries) || [];
           const remainingCount = relayResponse?.has_more === true && Number.isInteger(relayResponse.remaining_count)
             ? relayResponse.remaining_count : 0;
@@ -466,12 +520,12 @@ export default async ({ client, directory, worktree } = {}) => {
             deliveries: renderedDeliveries,
             containerRef,
           });
-          if (renderedDeliveries.length) return;
+          relayDeliveriesPending = renderedDeliveries.length > 0;
         }
         const promptRaw = pallium.extractTextFromParts(parts);
         if (!promptRaw || promptRaw.length < MIN_PROMPT_LEN) return;
         if (promptRaw.startsWith("/")) return;
-        if (pallium.checkDedup(promptRaw, sessionId)) return;
+        if (!nativeMessageId && pallium.checkDedup(promptRaw, sessionId)) return;
 
         const content = pallium.stripIdeContext(promptRaw);
         if (!content) return;
@@ -480,9 +534,14 @@ export default async ({ client, directory, worktree } = {}) => {
 
         const workRefsMetadata = buildWorkRefsMetadata(cwd, input && input.metadata && input.metadata.pallium_work_refs, discovery, confirmedRefs, workRefsStatus);
         let warning = workRefWarning(workRefsMetadata);
-        const resp = await pallium.palliumRequest("POST", "/item-and-query", {
+        const sourceTurnFields = nativeMessageId ? {
+          source_turn_id: nativeMessageId,
+          relay_name: turnRecord.snapshot.relay_name,
+          relay_attribution_state: turnRecord.snapshot.relay_attribution_state,
+        } : {};
+        const userSource = {
           source_type: pallium.SOURCE_TYPE,
-          source_id: pallium.ocSourceId(),
+          source_id: pallium.ocNativeMessageSourceId("user", sessionId, nativeMessageId) || pallium.ocSourceId(),
           content_type: "text/plain",
           content,
           role: "user",
@@ -492,13 +551,24 @@ export default async ({ client, directory, worktree } = {}) => {
           actor_ref: actorRef,
           visibility: "private",
           artifact_kind: "message",
+          ...sourceTurnFields,
+          metadata: workRefsMetadata,
+        };
+        if (relayDeliveriesPending && nativeMessageId) {
+          const saved = await pallium.palliumRequest("POST", "/items", [userSource]);
+          if (Array.isArray(saved) && saved.length === 1 && turnRecord) turnRecord.captured = true;
+          return;
+        }
+        if (relayDeliveriesPending) return;
+        const resp = await pallium.palliumRequest("POST", "/item-and-query", {
+          ...userSource,
           query_text: queryText,
           query_limit: 5,
           query_actor_ref: actorRef,
           query_trigger_origin: "user_prompt_submit",
-          metadata: workRefsMetadata,
         });
         if (!resp) { if (warning) enqueueInjection(sessionId, warning); return; }
+        if (turnRecord) turnRecord.captured = true;
         warning = Object.prototype.hasOwnProperty.call(resp, "work_ref_metadata") ? workRefWarning(resp.work_ref_metadata) : warning;
         const output_text = pallium.formatInjection(resp.injectable_blocks || [], containerRef, Math.max(0, USER_PROMPT_BUDGET - [...warning].length - (warning ? 2 : 0)), sessionId, actorRef, pallium.AGENT_REF, "private", resp.source_item_id, pendingRelay.has(sessionId) ? null : currentWorkRef);
         if (output_text || warning) enqueueInjection(sessionId, [output_text, warning].filter(Boolean).join("\n\n"));
