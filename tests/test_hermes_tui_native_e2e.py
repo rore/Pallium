@@ -482,7 +482,7 @@ def _proxy_cancel_scope(path):
     return scope
 
 
-def _record_retired_read_disconnect(retirement, diagnostic, exc, forwarded):
+def _record_retired_read_disconnect(retirement, diagnostic, exc, forwarded, *, retirement_snapshot):
     if type(exc) not in {BrokenPipeError, ConnectionResetError, ConnectionAbortedError}:
         return False
     if (diagnostic.get("endpoint_role") != "api" or diagnostic.get("method") != "GET"
@@ -496,7 +496,8 @@ def _record_retired_read_disconnect(retirement, diagnostic, exc, forwarded):
                for row in forwarded):
         return False
     with retirement["lock"]:
-        records = [row for row in retirement["records"] if row["scope"] == scope]
+        records = [row for row in retirement_snapshot if row["scope"] == scope
+                   and any(current is row for current in retirement["records"])]
         if len(records) != 1:
             return False
         record = records[0]
@@ -627,6 +628,8 @@ def _make_native_http_handler(*, client, provider, provider_kind, forwarded, ser
             pass
 
         def send(self, status, body, content_type="application/json"):
+            with retirement["lock"]:
+                self.retirement_snapshot = tuple(retirement["records"])
             self.request_diagnostic["phase"] = "response_encode"
             raw = body if isinstance(body, bytes) else json.dumps(body, ensure_ascii=False).encode()
             self.request_diagnostic.update(phase="response_write", response_status=status)
@@ -641,6 +644,7 @@ def _make_native_http_handler(*, client, provider, provider_kind, forwarded, ser
             self.wfile.write(raw)
 
         def handle_request(self):
+            self.retirement_snapshot = ()
             self.request_diagnostic = {
                 "request_id": uuid.uuid4().hex, "endpoint_role": self.server.endpoint_role,
                 "method": self.command, "path": self.path, "client_address": list(self.client_address),
@@ -698,7 +702,8 @@ def _make_native_http_handler(*, client, provider, provider_kind, forwarded, ser
                             "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}})
             except BaseException as exc:
                 diagnostic = self.request_diagnostic.copy()
-                if _record_retired_read_disconnect(retirement, diagnostic, exc, forwarded):
+                if _record_retired_read_disconnect(retirement, diagnostic, exc, forwarded,
+                                                  retirement_snapshot=self.retirement_snapshot):
                     return
                 server_errors.append({**diagnostic, "exception_type": type(exc).__name__, "error": repr(exc)})
                 if diagnostic["phase"] != "response_write":
@@ -871,6 +876,78 @@ def test_native_proxy_retired_read_disconnect_preserves_and_recovers_pending_del
         server.server_close()
         thread.join(timeout=5)
     assert not thread.is_alive(), "loopback API proxy did not stop"
+
+
+def test_native_proxy_intent_added_while_disconnect_classifier_paused_stays_fatal(client, monkeypatch):
+    receiver_ref = "native-proxy-late-retirement-intent"
+    receiver, message = _create_pending_relay_delivery(
+        client, receiver_ref, "native-proxy-late-intent-sender", "pending é 漢字 🌍")
+    before = _message_delivery_state(client, message)
+    retirement = _new_proxy_retirement_state()
+    forwarded, server_errors, snapshots, request_errors = [], [], [], []
+    headers_sent, release_body, classifier_paused, resume_classifier = (threading.Event() for _ in range(4))
+    classify = _record_retired_read_disconnect
+    request_path = _pending_candidate_path(receiver_ref)
+
+    def pause_classifier(actual_retirement, diagnostic, exc, actual_forwarded, *, retirement_snapshot):
+        assert actual_retirement is retirement and actual_forwarded is forwarded
+        assert diagnostic["path"] == request_path and diagnostic["phase"] == "response_write"
+        assert type(exc) in {BrokenPipeError, ConnectionResetError, ConnectionAbortedError}
+        snapshots.append(retirement_snapshot)
+        classifier_paused.set()
+        assert resume_classifier.wait(5), "test did not resume its paused disconnect classifier"
+        return classify(actual_retirement, diagnostic, exc, actual_forwarded,
+                        retirement_snapshot=retirement_snapshot)
+
+    monkeypatch.setattr(sys.modules[__name__], "_record_retired_read_disconnect", pause_classifier)
+
+    def body_barrier(_diagnostic, _raw):
+        headers_sent.set()
+        assert release_body.wait(5), "test did not release its response-body barrier"
+
+    server, thread = _start_api_proxy(
+        client, forwarded, server_errors, retirement, body_write_barrier=body_barrier)
+
+    def abort():
+        try:
+            assert int(_abort_loopback_response(server, request_path).split()[1]) == 200
+        except BaseException as exc:
+            request_errors.append(exc)
+
+    requester = threading.Thread(target=abort, daemon=True)
+    requester.start()
+    try:
+        assert headers_sent.wait(5)
+        requester.join(5)
+        assert not requester.is_alive() and not request_errors, request_errors
+        release_body.set()
+        assert classifier_paused.wait(5), "real response reset did not reach the classifier"
+        assert snapshots == [()] and not retirement["records"]
+        scope = {"runtime": "hermes", "session_ref": receiver_ref, "container_ref": SCOPE["container_ref"]}
+        record = _mark_proxy_scope_retiring(retirement, scope, **_proxy_retirement_control(scope, endpoint=receiver))
+        _confirm_proxy_scope_retired(retirement, record,
+            cleanup={"driver_returncode": 0, "forced": False, "recovered": [], "alive": []},
+            dead_identities={"alive": [], "identities": record["identities"]}, endpoint=receiver)
+        resume_classifier.set()
+        _finish_native_proxy_handlers(((server, thread),))
+        assert record["confirmed"] and snapshots == [()]
+        assert not retirement["cancellations"] and len(server_errors) == 1
+        assert server_errors[0]["path"] == request_path
+        assert server_errors[0]["response_status"] == 200
+        assert not _proxy_response_audit(retirement, server_errors)["passed"]
+        assert all("retirement_snapshot" not in row["request"] for row in forwarded)
+        after = _message_delivery_state(client, message)
+        assert after["delivery_id"] == before["delivery_id"]
+        assert after["state"] == "pending" and after["attempts"] == before["attempts"] == 0
+    finally:
+        release_body.set()
+        resume_classifier.set()
+        requester.join(5)
+        try:
+            _finish_native_proxy_handlers(((server, thread),))
+        finally:
+            socketserver.TCPServer.server_close(server)
+    assert not thread.is_alive()
 
 
 @pytest.mark.parametrize("has_primary", [False, True])
@@ -1182,23 +1259,33 @@ def test_native_proxy_disconnect_classifier_rejects_other_request_shapes(field, 
     negative = _new_proxy_retirement_state()
     _mark_proxy_scope_retiring(negative, scope, **_proxy_retirement_control(scope))
     assert not _record_retired_read_disconnect(
-        negative, {**valid_diagnostic, field: value}, ConnectionResetError("reset"), forwarded)
+        negative, {**valid_diagnostic, field: value}, ConnectionResetError("reset"), forwarded,
+        retirement_snapshot=tuple(negative["records"]))
     assert not _record_retired_read_disconnect(
-        negative, {**valid_diagnostic, "phase": "forward"}, ConnectionResetError("reset"), forwarded)
+        negative, {**valid_diagnostic, "phase": "forward"}, ConnectionResetError("reset"), forwarded,
+        retirement_snapshot=tuple(negative["records"]))
     assert not _record_retired_read_disconnect(
-        negative, {**valid_diagnostic, "phase": "response_encode"}, ConnectionResetError("reset"), forwarded)
+        negative, {**valid_diagnostic, "phase": "response_encode"}, ConnectionResetError("reset"), forwarded,
+        retirement_snapshot=tuple(negative["records"]))
     assert not negative["cancellations"]
 
     unsupported = _new_proxy_retirement_state()
     _mark_proxy_scope_retiring(unsupported, scope, **_proxy_retirement_control(scope))
     assert not _record_retired_read_disconnect(
-        unsupported, valid_diagnostic, OSError("unsupported disconnect"), forwarded)
+        unsupported, valid_diagnostic, OSError("unsupported disconnect"), forwarded,
+        retirement_snapshot=tuple(unsupported["records"]))
     assert not unsupported["cancellations"]
 
     positive = _new_proxy_retirement_state()
     _mark_proxy_scope_retiring(positive, scope, **_proxy_retirement_control(scope))
+    assert not _record_retired_read_disconnect(
+        positive, valid_diagnostic, ConnectionResetError("reset"), forwarded, retirement_snapshot=())
+    assert not _record_retired_read_disconnect(
+        positive, valid_diagnostic, ConnectionResetError("reset"), forwarded,
+        retirement_snapshot=tuple(dict(row) for row in positive["records"]))
     assert _record_retired_read_disconnect(
-        positive, valid_diagnostic, ConnectionResetError("reset"), forwarded)
+        positive, valid_diagnostic, ConnectionResetError("reset"), forwarded,
+        retirement_snapshot=tuple(positive["records"]))
     assert len(positive["cancellations"]) == 1
 
 
@@ -1285,7 +1372,8 @@ def test_native_proxy_response_audit_requires_confirmation_and_writes_late_failu
     }
     forwarded = [{"request": {"request_id": "audit-request"}, "status": 200}]
     assert _record_retired_read_disconnect(
-        retirement, diagnostic, ConnectionResetError("reset"), forwarded)
+        retirement, diagnostic, ConnectionResetError("reset"), forwarded,
+        retirement_snapshot=tuple(retirement["records"]))
     unconfirmed = tmp_path / "unconfirmed"
     unconfirmed.mkdir()
     with pytest.raises(AssertionError, match="not followed by confirmed cleanup"):

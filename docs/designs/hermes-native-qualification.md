@@ -23,10 +23,11 @@ A passed component does not qualify a failed journey. Windows TUI memory-off
 remains incomplete after a proxy response-write reset; its final provider-secret,
 egress and journey assertions were not reached. The shared-helper lifetime
 correction has accepted Linux memory-off and Windows memory-on journey evidence.
-The subsequent per-controller proxy-retirement and bounded handler-drain
-correction still needs current-source focused and actual TUI proof. Earlier
-Desktop journeys retain their exact source provenance; they did not execute
-these new proxy checks.
+The per-controller proxy-retirement and bounded handler-drain correction passed
+focused controls and an actual Linux memory-off journey. A further pre-write
+eligibility snapshot still needs its ordering regression; Windows memory-off
+full-journey proof remains incomplete. Earlier Desktop journeys retain their
+exact source provenance; they did not execute these new proxy checks.
 
 The accepted evidence and retained failures are linked from
 [merged PR #324](https://github.com/rore/Pallium/pull/324),
