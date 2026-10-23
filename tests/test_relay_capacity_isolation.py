@@ -2358,7 +2358,9 @@ def test_summary_cancellation_keeps_diagnostic_workers_owned_until_drain(
                 responses = [result for result in results if isinstance(result, httpx.Response)]
                 assert len(responses) == 2 and all(result.status_code == 200 for result in responses)
                 assert await asyncio.to_thread(finished.wait, 1)
-                assert await asyncio.wait_for(barrier, 1)
+                # The earlier timed waiter may have expired while requests were held.
+                assert await asyncio.to_thread(app.state._wait_for_operations, 1)
+                await asyncio.wait_for(barrier, 1)
                 assert started_count == completed_count == (2 if cancel_target == "queued" else 3)
                 closed.set()
                 app.state.pallium_service._storage.close()

@@ -139,7 +139,14 @@ class SQLiteQueueMixin:
         if self._relay_writer_lock.locked():
             raise ImmediateTransactionBusyError("correctness writer is active")
         session = self._relay_session_factory()
-        conn = session.connection(execution_options={"isolation_level": "AUTOCOMMIT"})
+        try:
+            conn = session.connection(execution_options={"isolation_level": "AUTOCOMMIT"})
+        except BaseException:
+            try:
+                session.close()
+            except BaseException:
+                pass  # Preserve the acquisition failure if cleanup also fails.
+            raise
         try:
             conn.execute(text("PRAGMA busy_timeout=25"))
             conn.execute(text("BEGIN DEFERRED"))
@@ -189,6 +196,7 @@ class SQLiteQueueMixin:
         if busy_backoff_seconds is None:
             busy_backoff_seconds = self._IMMEDIATE_BACKOFF_SECONDS
         first_deadline_stage = None
+        last_busy_stage = None
         phase_elapsed_ns = {}
 
         def busy_error(stage):
@@ -215,7 +223,7 @@ class SQLiteQueueMixin:
 
         for attempt in range(attempts):
             if acquisition_deadline is not None and time.monotonic() >= acquisition_deadline:
-                raise busy_error(first_deadline_stage or "pre_attempt_deadline")
+                raise busy_error(first_deadline_stage or last_busy_stage or "pre_attempt_deadline")
             session = acquire_phase("session_factory", session_factory)
             try:
                 conn = acquire_phase(
@@ -249,10 +257,11 @@ class SQLiteQueueMixin:
                 if not isinstance(exc, Exception) or not is_transient_error(exc):
                     raise
                 stage = getattr(exc, "acquisition_stage", None)
+                last_busy_stage = "pool_exhausted" if stage == "pool_exhausted" else None
                 if stage in ("setup_deadline", "late_begin") and first_deadline_stage is None:
                     first_deadline_stage = stage
                 if attempt == attempts - 1:
-                    raise busy_error(first_deadline_stage or "retry_exhausted") from exc
+                    raise busy_error(first_deadline_stage or last_busy_stage or "retry_exhausted") from exc
                 original = getattr(exc, "orig", exc)
                 backoff = (busy_backoff_seconds
                            if isinstance(original, sqlite3.OperationalError)
@@ -261,7 +270,7 @@ class SQLiteQueueMixin:
                 if backoff:
                     pause = backoff * (attempt + 1)
                     if acquisition_deadline is not None and time.monotonic() + pause > acquisition_deadline:
-                        raise busy_error(first_deadline_stage or "backoff_no_fit") from exc
+                        raise busy_error(first_deadline_stage or last_busy_stage or "backoff_no_fit") from exc
                     time.sleep(pause)
         assert session is not None and conn is not None
         settled = False

@@ -17,7 +17,7 @@ class ImmediateTransactionBusyError(RuntimeError):
 
     ACQUISITION_STAGES = frozenset({
         "local_gate", "pre_attempt_deadline", "setup_deadline", "late_begin",
-        "retry_exhausted", "backoff_no_fit",
+        "retry_exhausted", "backoff_no_fit", "pool_exhausted",
     })
 
     def __init__(self, *args, acquisition_stage=None, acquisition_phase_ms=None):

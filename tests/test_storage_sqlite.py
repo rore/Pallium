@@ -228,8 +228,8 @@ def test_diagnostic_status_index_repairs_populated_reopen_idempotently(test_db_u
 
     create_engine = SQLiteStorageProvider._create_engine
 
-    def observed_engine(cls, database_url):
-        engine = create_engine(database_url)
+    def observed_engine(cls, database_url, **options):
+        engine = create_engine(database_url, **options)
         event.listen(engine, "connect", install_authorizer)
         return engine
 

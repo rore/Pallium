@@ -192,6 +192,86 @@ class TestImmediateTransactionRetry:
         finally:
             storage.close()
 
+    @pytest.mark.parametrize("after_pool", ["pool", "success", "locked", "unrelated"])
+    def test_pool_refusal_retry_preserves_only_the_terminal_cause(self, storage, after_pool):
+        sessions = [MagicMock(), MagicMock(), MagicMock()]
+        pool_error = ImmediateTransactionBusyError("pool full", acquisition_stage="pool_exhausted")
+        unrelated = RuntimeError("connection failed")
+        sessions[0].connection.side_effect = pool_error
+        for session in sessions[1:]:
+            if after_pool == "pool":
+                session.connection.side_effect = pool_error
+            elif after_pool == "locked":
+                session.connection.side_effect = _make_sa_operational_error("database is locked")
+            elif after_pool == "unrelated":
+                session.connection.side_effect = unrelated
+        storage._relay_session_factory = MagicMock(side_effect=sessions)
+        body = MagicMock()
+        with patch("storage.sqlite_queue.time.sleep"):
+            if after_pool == "success":
+                with storage._begin_relay_immediate():
+                    body()
+                body.assert_called_once()
+                sessions[1].flush.assert_called_once()
+                used = 2
+            else:
+                error_type = RuntimeError if after_pool == "unrelated" else ImmediateTransactionBusyError
+                with pytest.raises(error_type) as caught:
+                    with storage._begin_relay_immediate():
+                        body()
+                body.assert_not_called()
+                if after_pool == "unrelated":
+                    assert caught.value is unrelated
+                else:
+                    assert caught.value.acquisition_stage == (
+                        "pool_exhausted" if after_pool == "pool" else "retry_exhausted"
+                    )
+                used = 2 if after_pool == "unrelated" else 3
+        for session in sessions[:used]:
+            session.close.assert_called_once()
+        for session in sessions[used:]:
+            session.close.assert_not_called()
+        assert not storage._relay_writer_lock.locked()
+        assert storage._RELAY_IMMEDIATE_ACQUISITION_SECONDS == 0.45
+
+    def test_pool_refusal_that_cannot_retry_keeps_its_stage(self, storage, monkeypatch):
+        from storage import sqlite_queue
+        session = MagicMock()
+        session.connection.side_effect = ImmediateTransactionBusyError(
+            "pool full", acquisition_stage="pool_exhausted",
+        )
+        storage._relay_session_factory = MagicMock(return_value=session)
+        monkeypatch.setattr(sqlite_queue, "time", SimpleNamespace(
+            **{**vars(sqlite_queue.time), "monotonic": MagicMock(side_effect=[0, 0.44])},
+        ))
+        with pytest.raises(ImmediateTransactionBusyError) as caught:
+            with storage._begin_immediate_for(
+                storage._relay_session_factory, acquisition_deadline=0.45,
+            ):
+                pytest.fail("refused acquisition entered transaction body")
+        assert caught.value.acquisition_stage == "pool_exhausted"
+        session.close.assert_called_once()
+
+    @pytest.mark.parametrize("failure", [
+        ImmediateTransactionBusyError("pool full", acquisition_stage="pool_exhausted"),
+        RuntimeError("connection failed"), KeyboardInterrupt("interrupted"),
+    ])
+    @pytest.mark.parametrize("close_failure", [False, True])
+    def test_low_priority_connection_failure_closes_session_without_sql(self, storage, failure, close_failure):
+        session = MagicMock()
+        session.connection.side_effect = failure
+        if close_failure:
+            session.close.side_effect = RuntimeError("cleanup failed")
+        storage._relay_session_factory = lambda: session
+        with pytest.raises(type(failure)) as caught:
+            with storage._begin_low_priority_relay_write():
+                pytest.fail("failed acquisition entered body")
+        assert caught.value is failure
+        session.close.assert_called_once()
+        session.execute.assert_not_called()
+        session.flush.assert_not_called()
+        assert not storage._relay_writer_lock.locked()
+
     @pytest.mark.parametrize("failure", [None, "body", "flush", "flush_interrupt", "commit", "commit_interrupt", "rollback", "rollback_interrupt", "close_interrupt"])
     def test_terminal_settlement_releases_before_cleanup_only_when_confirmed(self, storage, failure):
         session, connection = MagicMock(), MagicMock()

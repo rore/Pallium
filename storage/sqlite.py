@@ -14,9 +14,10 @@ from typing import Any, Callable, TypeVar
 from sqlalchemy import and_, create_engine, event, func, or_, select, text, update
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session, aliased, sessionmaker
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, TimeoutError as SQLAlchemyTimeoutError
+from sqlalchemy.pool import QueuePool
 
-from core.errors import HistoryDiagnosticConflictError, HistoryDiagnosticCorruptError, SupersessionConflictError, is_transient_error
+from core.errors import HistoryDiagnosticConflictError, HistoryDiagnosticCorruptError, ImmediateTransactionBusyError, SupersessionConflictError, is_transient_error
 from core.contracts import ProcessResult
 from core.models import EvidenceReference, IndexEntry, MemoryFeedback, MemoryFlag, MemoryObject, MemoryTargetScope, Relation, SourceItem, utc_now
 from core.turn_inference import ThreadStats
@@ -108,6 +109,18 @@ def _source_item_enabled_for_package(package_name: str):
     )
 
 
+class _RelayQueuePool(QueuePool):
+    def connect(self):
+        try:
+            return super().connect()
+        except SQLAlchemyTimeoutError as error:
+            if error.code != "3o7r":
+                raise
+            raise ImmediateTransactionBusyError(
+                "Relay connection pool exhausted", acquisition_stage="pool_exhausted",
+            ) from error
+
+
 class SQLiteStorageProvider(
     SQLiteRelayMixin,
     SQLiteSearchMixin,
@@ -150,13 +163,23 @@ class SQLiteStorageProvider(
                 raise
             self._relay_engine = self._engine
             self._relay_session_factory = self._session_factory
-            if separate_relay:
-                self._relay_engine = self._create_engine(relay_database_url)
-                self._relay_session_factory = sessionmaker(
-                    self._relay_engine, expire_on_commit=False, class_=Session
-                )
-                self._initialize_sqlite_pragmas(self._relay_engine)
-                self._initialize_relay_schema(self._relay_engine)
+            if separate_relay or (
+                self._engine.dialect.name == "sqlite" and isinstance(self._engine.pool, QueuePool)
+            ):
+                try:
+                    # A separate pool preserves main callers even when the file is shared.
+                    self._relay_engine = self._create_engine(
+                        relay_database_url if separate_relay else database_url, relay=True,
+                    )
+                    self._relay_session_factory = sessionmaker(
+                        self._relay_engine, expire_on_commit=False, class_=Session
+                    )
+                    if separate_relay:
+                        self._initialize_sqlite_pragmas(self._relay_engine)
+                        self._initialize_relay_schema(self._relay_engine)
+                except BaseException:
+                    self.close()
+                    raise
 
     @contextmanager
     def _relay_pair_initialization_lock(self, database_url: str):
@@ -234,9 +257,14 @@ class SQLiteStorageProvider(
             raise RuntimeError(f"cannot inspect existing Relay database: {path}") from exc
 
     @classmethod
-    def _create_engine(cls, database_url: str):
+    def _create_engine(cls, database_url: str, *, relay: bool = False):
         connect_args = {"check_same_thread": False} if database_url.startswith("sqlite") else {}
-        engine = create_engine(database_url, future=True, connect_args=connect_args)
+        options = {}
+        url = make_url(database_url)
+        if (relay and url.get_backend_name() == "sqlite"
+                and issubclass(url.get_dialect().get_pool_class(url), QueuePool)):
+            options = {"poolclass": _RelayQueuePool, "pool_timeout": 0}
+        engine = create_engine(database_url, future=True, connect_args=connect_args, **options)
         cls._register_sqlite_connect_hooks(engine)
         return engine
 
@@ -256,7 +284,7 @@ class SQLiteStorageProvider(
         cls._validate_relay_schema(relay_database_url, require_tables=True)
         instance = cls.__new__(cls)
         instance._relay_writer_lock = threading.Lock()
-        engine = cls._create_engine(relay_database_url)
+        engine = cls._create_engine(relay_database_url, relay=True)
         factory = sessionmaker(engine, expire_on_commit=False, class_=Session)
         instance._engine = instance._relay_engine = engine
         instance._session_factory = instance._relay_session_factory = factory
@@ -264,9 +292,11 @@ class SQLiteStorageProvider(
 
     def close(self) -> None:
         """Release both SQLite engine pools owned by this provider."""
-        self._engine.dispose()
-        if self._relay_engine is not self._engine:
-            self._relay_engine.dispose()
+        try:
+            self._engine.dispose()
+        finally:
+            if self._relay_engine is not self._engine:
+                self._relay_engine.dispose()
 
     @staticmethod
     def _register_sqlite_connect_hooks(engine) -> None:
@@ -370,7 +400,7 @@ class SQLiteStorageProvider(
         cycle (cheap when the freelist is empty).
         """
         result = self._reclaim_engine_free_pages(self._engine)
-        if self._relay_engine is not self._engine:
+        if not self._same_sqlite_file(str(self._engine.url), str(self._relay_engine.url)):
             relay = self._reclaim_engine_free_pages(self._relay_engine)
             result["relay_reclaimed_pages"] = relay["reclaimed_pages"]
             result["relay_checkpoint_busy"] = relay["checkpoint_busy"]

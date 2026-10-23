@@ -340,6 +340,18 @@ There is no delayed or scheduled Relay product.
 A busy or temporarily unavailable recipient keeps the delivery pending. Claims
 that are interrupted become eligible again after their lease expires.
 
+When a file-based Relay connection pool is full, database admission fails fast
+and the HTTP caller receives retryable `503 relay_busy` with `Retry-After: 1`.
+Relay retains its finite pool capacity and existing 0.45-second write-acquisition
+allowance. Ordinary database callers retain their existing pool policy. Even
+when both roles use the same SQLite file, Relay owns a separate pool; in-memory
+databases keep their native shared pool behavior.
+
+Zero pool wait bounds waiting for a free pooled handle. It does not impose a
+hard end-to-end deadline on native connection creation, connect hooks or process
+scheduling. Warm-pool exhaustion E2E tests require refusal within two seconds;
+this is a controlled test envelope, not a universal latency guarantee.
+
 Offline operator repair may mark an explicitly classified duplicate `suppressed`. Suppressed deliveries are terminal audit records: they are visible in Relay inspection but are never claimed, woken, acknowledged, or counted as expiry failures.
 
 Recent sessions appear in recipient discovery by default. A session becomes
