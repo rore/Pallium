@@ -126,8 +126,10 @@ they do not authorize overwriting an unowned file.
 - Automatic project scope requires session-owned cwd, surface and bound-route
   capabilities. Pallium keeps the native injection route separate from the
   conversation ID used by Relay and History. Missing capabilities or an unbound
-  route fail closed. The complete automatic-mode native Desktop/TUI matrix is
-  still pending; admission uses capability checks rather than a version allowlist.
+  route fail closed. Accepted v0.22.4 CWD qualification covers Linux TUI with
+  memory off and on. Windows Desktop/TUI CWD and the complete automatic-mode
+  matrix remain pending. Admission uses capability checks rather than a release
+  allowlist.
 - Existing v0.22.0/v0.22.2 Linux TUI and Windows Desktop/TUI receipts qualify fixed
   scope only. Those releases lack the required automatic-scope APIs; their results
   do not establish automatic-mode project isolation or lifecycle behavior.
