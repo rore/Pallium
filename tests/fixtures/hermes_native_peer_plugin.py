@@ -4,6 +4,7 @@ import hashlib
 import os
 import socket
 import sys
+import time
 from pathlib import Path
 
 
@@ -34,3 +35,26 @@ def register(ctx):
                 stream.write(json.dumps(row) + "\n")
 
     ctx.register_hook("post_llm_call", post_llm_call)
+
+    def on_session_finalize(session_id="", **_context):
+        gate = os.environ.get("PALLIUM_TUI_FINALIZE_GATE")
+        if not gate or not isinstance(session_id, str) or not session_id:
+            return
+        gate = Path(gate)
+        if not gate.is_dir():
+            return
+        target = gate / "target"
+        if not target.is_file() or target.read_text(encoding="utf-8") != session_id:
+            return
+        (gate / "entered").write_text(session_id, encoding="utf-8")
+        deadline = time.monotonic() + 8
+        while time.monotonic() < deadline:
+            if (gate / "release").is_file():
+                (gate / "completed").write_text(session_id, encoding="utf-8")
+                return
+            time.sleep(.02)
+        (gate / "timed_out").write_text(session_id, encoding="utf-8")
+        raise TimeoutError("exact native finalize gate expired without explicit release")
+
+    if os.environ.get("PALLIUM_TUI_FINALIZE_GATE"):
+        ctx.register_hook("on_session_finalize", on_session_finalize)

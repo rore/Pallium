@@ -21,6 +21,59 @@ RELEASES = {
 SYNTHETIC_OPENAI_API_KEY = "pallium-hermes-synthetic-openai-key"
 
 
+def canonical_rpc(ws, method, params, *, timeout=3):
+    """One bounded canonical request; notifications never substitute for its exact reply."""
+    import uuid
+
+    request_id = uuid.uuid4().hex
+    ws.send(json.dumps({"jsonrpc": "2.0", "id": request_id, "method": method, "params": params}))
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        frame = json.loads(ws.recv(timeout=max(.01, deadline - time.monotonic())))
+        if frame.get("id") is None:
+            continue
+        assert frame["id"] == request_id, (method, frame)
+        assert "error" not in frame, (method, frame)
+        assert isinstance(frame.get("result"), dict), (method, frame)
+        return frame["result"]
+    raise TimeoutError(f"canonical {method} response timed out")
+
+
+def canonical_authority_ready(ws, deadline):
+    while time.monotonic() < deadline:
+        frame = json.loads(ws.recv(timeout=max(.01, deadline - time.monotonic())))
+        if frame.get("method") == "event" and frame.get("params", {}).get("type") == "gateway.ready":
+            assert frame["params"]["payload"].get("session_authority") is True, frame
+            return
+    raise TimeoutError("ticketed canonical socket did not report session authority")
+
+
+def canonical_same_session(result, session_id):
+    assert isinstance(result, dict) and result.get("session_id") == session_id, result
+    return result
+
+
+def canonical_completed_detach(result, session_id, elapsed):
+    canonical_same_session(result, session_id)
+    assert result.get("detached") is True, result
+    # The pinned gateway's 10s finalize timeout leaves its worker running.
+    assert type(elapsed) in (int, float) and 0 <= elapsed < 9.0, elapsed
+    return elapsed
+
+
+def canonical_terminal_receipt(ws, session_id, admission_id, deadline):
+    while time.monotonic() < deadline:
+        receipt = canonical_rpc(ws, "prompt.receipt", {"session_id": session_id,
+            "admission_id": admission_id}, timeout=min(1, max(.1, deadline - time.monotonic())))
+        assert receipt.get("admission_id") == admission_id, receipt
+        if receipt.get("status") == "terminal":
+            assert receipt.get("outcome") == "completed", receipt
+            assert receipt.get("ref", {}).get("session_id") == session_id, receipt
+            return receipt
+        time.sleep(.04)
+    raise TimeoutError("canonical prompt did not reach successful terminal receipt")
+
+
 def synthetic_openai_environment(base_url: str) -> dict[str, str]:
     parsed = urlsplit(base_url)
     assert (parsed.scheme == "http" and parsed.hostname == "127.0.0.1" and parsed.port
@@ -991,6 +1044,35 @@ def driver_main(spec_path: Path):
     owned_python = Path(sys._base_executable if os.name == "nt" else sys.executable)
     tree = OwnedTree(os.getpid(), owned_python, ledger=spec_path.parent / "owned-processes-ledger.json")
     console, gateway = None, None
+    canonical = {}
+
+    def canonical_socket(*, deadline=None):
+        from gateway.control_socket import query_gateway_control
+        from websockets.sync.client import connect
+
+        deadline = deadline or time.monotonic() + 5
+        receipt = gateway.receipt
+        grant = query_gateway_control(Path(os.environ["HERMES_HOME"]), "session-ticket", params={
+            "profile_id": receipt["profile_id"], "instance_id": receipt["instance_id"],
+            "purpose": "interactive"}, timeout=min(2, max(.1, deadline - time.monotonic())))
+        assert isinstance(grant, dict) and isinstance(grant.get("ticket"), str), grant
+        ws = connect(gateway.receipt["url"], subprotocols=[
+            "hermes-gateway-v1", "hermes-gateway-ticket." + grant["ticket"]],
+            open_timeout=min(2, max(.1, deadline - time.monotonic())),
+            close_timeout=1)
+        canonical_authority_ready(ws, deadline)
+        return ws
+
+    def canonical_turn(ws, session_id, text, *, deadline=None):
+        import uuid
+
+        deadline = deadline or time.monotonic() + 5
+        admission = canonical_rpc(ws, "prompt.submit", {"session_id": session_id,
+            "submission_id": uuid.uuid4().hex, "text": text},
+            timeout=min(2, max(.1, deadline - time.monotonic())))
+        admission_id = admission.get("admission_id")
+        assert isinstance(admission_id, str) and admission_id, admission
+        return canonical_terminal_receipt(ws, session_id, admission_id, deadline)
     try:
         console_class = DesktopConsole if surface == "desktop" else TuiConsole
         # Retain a partial Desktop constructor so failed startup logs can still be closed and saved.
@@ -1030,6 +1112,66 @@ def driver_main(spec_path: Path):
             elif op == "inspect":
                 print(json.dumps({"processes": console.tree.snapshot()}), flush=True)
                 continue
+            elif op == "canonical_create":
+                assert gateway is not None and not canonical
+                ws = canonical_socket()
+                canonical["a"] = ws
+                created = canonical_rpc(ws, "session.create", {"source": "tui", "cwd": str(home / "scratch")})
+                session_id, subscription_id = created["session_id"], created["subscription_id"]
+                assert isinstance(session_id, str) and session_id
+                assert isinstance(subscription_id, str) and subscription_id
+                canonical.update(session_id=session_id, a_subscription=subscription_id)
+                terminal = canonical_turn(ws, session_id, "native-finalize-race: initial")
+                print(json.dumps({"session_id": session_id, "subscription_id": subscription_id,
+                    "terminal": terminal}), flush=True)
+                continue
+            elif op == "canonical_detach":
+                assert canonical["session_id"] == command["session_id"]
+                assert "detach_thread" not in canonical
+                def detached():
+                    try:
+                        started = time.monotonic()
+                        canonical["detach_result"] = canonical_rpc(canonical["a"], "session.detach", {
+                            "session_id": canonical["session_id"],
+                            "subscription_id": canonical["a_subscription"], "end_reason": "tui_close"}, timeout=12)
+                        canonical["detach_elapsed"] = time.monotonic() - started
+                    except BaseException as exc:
+                        canonical["detach_error"] = repr(exc)
+                canonical["detach_thread"] = threading.Thread(target=detached, daemon=True)
+                canonical["detach_thread"].start()
+            elif op == "canonical_resume":
+                assert canonical["session_id"] == command["session_id"]
+                resume_deadline = time.monotonic() + 6
+                ws = canonical_socket(deadline=resume_deadline)
+                canonical["b"] = ws
+                resumed = canonical_rpc(ws, "session.resume", {"session_id": canonical["session_id"]},
+                    timeout=min(2, max(.1, resume_deadline - time.monotonic())))
+                canonical_same_session(resumed, canonical["session_id"])
+                assert resumed["subscription_id"]
+                canonical["b_subscription"] = resumed["subscription_id"]
+                terminal = canonical_turn(ws, canonical["session_id"], "native-finalize-race: resumed",
+                    deadline=resume_deadline)
+                print(json.dumps({"session_id": resumed["session_id"],
+                    "subscription_id": resumed["subscription_id"], "terminal": terminal}), flush=True)
+                continue
+            elif op == "canonical_detach_complete":
+                assert canonical["session_id"] == command["session_id"]
+                canonical["detach_thread"].join(12)
+                assert not canonical["detach_thread"].is_alive(), "old detach callback remained blocked"
+                assert "detach_error" not in canonical, canonical.get("detach_error")
+                elapsed = canonical_completed_detach(canonical["detach_result"],
+                    canonical["session_id"], canonical["detach_elapsed"])
+                canonical["detach_completed"] = True
+                print(json.dumps({"session_id": canonical["session_id"],
+                    "detached": canonical["detach_result"], "elapsed": elapsed}), flush=True)
+                continue
+            elif op == "canonical_finish":
+                assert canonical["session_id"] == command["session_id"]
+                assert canonical.get("detach_completed") is True
+                terminal = canonical_turn(canonical["b"], canonical["session_id"],
+                    "native-finalize-race: post-release")
+                print(json.dumps({"session_id": canonical["session_id"], "terminal": terminal}), flush=True)
+                continue
             elif op == "close":
                 stopped.set()
                 break
@@ -1038,6 +1180,12 @@ def driver_main(spec_path: Path):
             print(json.dumps({"ok": op}), flush=True)
     finally:
         stopped.set()
+        for ws in (canonical.get("a"), canonical.get("b")):
+            if ws is not None:
+                try:
+                    ws.close()
+                except Exception:
+                    pass
         try:
             tree.close(include_root=False)
         finally:
