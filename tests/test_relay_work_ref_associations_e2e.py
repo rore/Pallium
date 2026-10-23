@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from sqlalchemy import event, select, text, update
+from sqlalchemy.exc import SAWarning
 
 from core.relay import RelayService
 from core.work_ref import readable_work_ref
@@ -277,12 +278,23 @@ def relay_settlement_control(client, monkeypatch):
     factory, attach = store._relay_session_factory, store.relay_attach_work_ref
     local = threading.local()
     control = SimpleNamespace(
-        mode="close", cleanup_error=None, hold_b=False,
+        mode="close", cleanup_error=None, hold_b=False, prepared_b=None,
         held=threading.Event(), release=threading.Event(),
         b_active=threading.Event(), release_b=threading.Event(),
         begins=[], failures=[], closes=[], commit_returned=False, rollback_returned=False,
         pool=ThreadPoolExecutor(max_workers=2),
     )
+
+    def prepare_b():
+        assert control.prepared_b is None
+        session = factory()
+        prepared = SimpleNamespace(session=session, close=session.close, used=False)
+        control.prepared_b = prepared
+        prepared.connection = session.connection(execution_options={"isolation_level": "AUTOCOMMIT"})
+        prepared.driver = prepared.connection.connection.driver_connection
+        assert prepared.driver.in_transaction is False
+
+    control.prepare_b = prepare_b
 
     def pause(connection):
         control.native_active = connection.connection.driver_connection.in_transaction
@@ -290,14 +302,27 @@ def relay_settlement_control(client, monkeypatch):
         assert control.release.wait(5), "transaction control was not released"
 
     def session_factory():
-        session = factory()
         role = getattr(local, "role", None)
+        prepared = control.prepared_b if role == "B" else None
+        if prepared is not None:
+            assert not prepared.used, "B reused its prepared Session"
+            prepared.used = True
+            session = prepared.session
+        else:
+            session = factory()
         if role is None:
             return session
         connection, close = session.connection, session.close
 
         def observed_connection(*args, **kwargs):
-            conn = connection(*args, **kwargs)
+            if prepared is not None:
+                with pytest.warns(SAWarning, match=r"^Connection is already established for the given bind; execution_options ignored$"):
+                    conn = connection(*args, **kwargs)
+                assert conn is prepared.connection
+                assert conn.connection.driver_connection is prepared.driver
+                assert prepared.driver.in_transaction is False
+            else:
+                conn = connection(*args, **kwargs)
             execute = conn.execute
 
             def observed_execute(statement, *args, **kwargs):
@@ -335,6 +360,8 @@ def relay_settlement_control(client, monkeypatch):
             monkeypatch.setattr(conn, "execute", observed_execute)
             if role == "A":
                 control.connection = conn
+                if control.prepared_b is not None:
+                    assert conn.connection.driver_connection is not control.prepared_b.driver
             return conn
 
         def observed_close(*args, **kwargs):
@@ -373,6 +400,8 @@ def relay_settlement_control(client, monkeypatch):
         for worker in tuple(control.pool._threads):
             worker.join(5)
             assert not worker.is_alive(), "owned HTTP worker did not settle"
+        if control.prepared_b is not None:
+            control.prepared_b.close()
 
 
 def _association_pairs(client, session="worker"):
@@ -410,6 +439,8 @@ def test_settled_relay_write_releases_gate_before_cleanup(
     if settlement == "commit":
         expected.add((scope, "item:A", "explicit"))
 
+    # Measure gate release with a real, ready B connection; cold admission is separate.
+    control.prepare_b()
     first = control.pool.submit(_attach, client, {"scope_ref": scope, "local_ref": "item:A"})
     assert control.held.wait(5), "writer A did not enter settled cleanup"
     assert not first.done() and control.native_active is False
@@ -419,6 +450,7 @@ def test_settled_relay_write_releases_gate_before_cleanup(
     response = second.result(timeout=3)
     assert response.status_code == 409, response.text
     assert response.json()["detail"]["code"] == "association_limit"
+    assert control.prepared_b.used and control.prepared_b.connection.closed
     assert control.begins == ["A", "B"]
     assert _association_pairs(client) == expected
     assert not first.done(), "A cleanup was not held during B admission"
