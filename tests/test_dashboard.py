@@ -766,7 +766,7 @@ class TestDashboardRelayIdentityCollisionBoundaries:
             assert returned.status_code == 200
             assert returned.json()["session"]["endpoint_id"] == first["endpoint_id"]
             moved_claim, = returned.json()["deliveries"]
-            assert moved_claim["delivery_id"] == delivery["delivery_id"]
+            assert moved_claim["delivery_id"] == delivery["id"] == historical["deliveries"][0]["delivery_id"]
             assert moved_claim["attempts"] == 1
             client.post("/relay/deliveries/ack", json={
                 "delivery_id": moved_claim["delivery_id"],

@@ -243,7 +243,7 @@ def test_due_retry_reads_moved_scope_and_hook_acks_same_delivery(
     events = []
     monkeypatch.setitem(SCOPE, "container_ref", moved_scope["container_ref"])
     run_hook = _hook_runner(http, monkeypatch, "idle", events, tmp_path)
-    run_hook()
+    run_hook(allow_return=True)
     assert not any(event[0] == "ack" or event[0] == "emit" and "private-payload-東京" in event[2]
                    for event in events)
     pending = http.get("/relay/messages/retained-journey", params={"container_ref": original_scope})
@@ -270,7 +270,7 @@ def test_due_retry_reads_moved_scope_and_hook_acks_same_delivery(
     assert current.json()["deliveries"][0]["state"] == "delivered"
     assert current.json()["deliveries"][0]["attempts"] == 1
     events.clear()
-    run_hook()
+    run_hook(allow_return=True)
     assert not any(event[0] == "ack" or event[0] == "emit" and "private-payload-東京" in event[2]
                    for event in events)
 

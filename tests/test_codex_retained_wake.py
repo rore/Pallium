@@ -1706,6 +1706,7 @@ def test_default_setup_and_http_transport_isolation(monkeypatch):
 
 
 def _hook_runner(http, monkeypatch, state, events, tmp_path):
+    turn_witness = []
     script = "user_prompt_submit" if state == "idle" else "session_start"
     # Restore the previous alias (including absence) for existing hook state isolation.
     monkeypatch.setitem(sys.modules, "codex_common", sys.modules.get("codex_common"))
@@ -1724,7 +1725,10 @@ def _hook_runner(http, monkeypatch, state, events, tmp_path):
     def relay(method, path, body, **kwargs):
         response = http.request(method, path, json=body)
         assert response.status_code == 200, response.text
-        return response.json()
+        result = response.json()
+        if (method, path) == ("POST", "/relay/turn"):
+            turn_witness.append(result.get("deliveries") == [])
+        return result
     monkeypatch.setattr(hook, "relay_request", relay)
     original_emit = hook.emit_context
     def emit(text, event):
@@ -1740,12 +1744,18 @@ def _hook_runner(http, monkeypatch, state, events, tmp_path):
         events.append(("ack",))
         return deliveries
     monkeypatch.setattr(hook, "acknowledge_relay", ack)
-    def run(prompt="natural resume"):
+    def run(prompt="natural resume", *, allow_return=False):
+        turn_witness.clear()
         monkeypatch.setattr(hook, "read_hook_input", lambda: {
             "cwd": ".", "session_id": TARGET, "source": "resume", "prompt": prompt})
-        with pytest.raises(SystemExit) as exited:
-            hook.main()
-        assert exited.value.code == 0
+        try:
+            result = hook.main()
+        except SystemExit as exited:
+            assert exited.code == 0
+        else:
+            assert allow_return and result is None
+        if allow_return:
+            assert turn_witness and all(turn_witness), "empty hook did not complete an empty Relay turn"
     return run
 
 
