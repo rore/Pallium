@@ -1,5 +1,6 @@
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+from itertools import count
 import threading
 from types import SimpleNamespace
 
@@ -384,16 +385,28 @@ def _association_pairs(client, session="worker"):
     ("close", None), ("reset", None), ("close", "close"), ("reset", "reset"),
 ])
 def test_settled_relay_write_releases_gate_before_cleanup(
-    client, relay_settlement_control, settlement, cleanup, error,
+    client, relay_settlement_control, settlement, cleanup, error, monkeypatch,
 ):
+    from storage import sqlite_queue
+
     control = relay_settlement_control
     control.mode, control.cleanup_error = cleanup, error
     scope = "scope:gate-cleanup"
-    _turn(client)
     seeds = [f"item:seed-{index}" for index in range(2 if settlement == "commit" else 3)]
-    for value in seeds:
-        assert _attach(client, {"scope_ref": scope, "local_ref": value}).status_code == 200
     expected = {(scope, value, "explicit") for value in seeds}
+    native_time = sqlite_queue.time
+    native_monotonic = native_time.monotonic
+    setup_time = SimpleNamespace(**vars(native_time))
+    setup_time.monotonic = count(step=.001).__next__
+    # Prepare real rows before measuring settlement admission with the native clock.
+    with monkeypatch.context() as setup_clock:
+        setup_clock.setattr(sqlite_queue, "time", setup_time)
+        _turn(client)
+        for value in seeds:
+            assert _attach(client, {"scope_ref": scope, "local_ref": value}).status_code == 200
+        assert _association_pairs(client) == expected
+    assert sqlite_queue.time is native_time
+    assert native_time.monotonic is native_monotonic
     if settlement == "commit":
         expected.add((scope, "item:A", "explicit"))
 

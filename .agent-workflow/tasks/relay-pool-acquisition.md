@@ -124,3 +124,5 @@ Existing independent /root/relay_gate_plan_review gives NO-GO for current releas
 
 Next: edit only this existing HTTP E2E preparation within the declared test scope, review the actual diff, run its eight-case settlement node under a reserved slot, and obtain current required CI on the corrected head. No blind job rerun, general retry or timeout increase. Source correctness review of unchanged application4d2ac1cb remains reusable; current readiness is an actionable test-preparation defect. No runtime authority is implied by this plan.
 
+Implementation of that plan changes only the existing settlement node: a copied time namespace replaces monotonic during real HTTP setup and exact seed readback, then context restoration and original-clock identity assertions precede A. Existing nonimplementer /root/relay_gate_plan_review reviewed the actual diff on47764a3f and gives source-only GO for the exact eight cases, then normal CI. No subject assertion, native wait/sleep, application code, protected contract or unrelated test changed. Tests have not yet run; current CI remains red pending corrected-head evidence. Original application reviews remain reusable.
+
