@@ -20,13 +20,15 @@
 **Plan review:** Agent technical review: independent shared-core owner 01a0801d-f091-7e80-81f5-c104713fd5e7, turn 01a16e96-4886-7511-a839-48e13be60b4f, returned technical GO for the source-only composition plan on 2026-10-24. Input reviews retained in role-history.md and hermes-role-attribution.md at their exact source commits. Combined result review remains required.
 **Approvals:** Approved by user 2026-10-23T12:40:18.783467+00:00: "I approve, but they also gave you the mandate to review and approve all of this." This is the human delegation reported by parent, not personal human inspection of this composition. Actual exact source-only plan disposition: Dot/parent chat 01a15fcd-b512-70d8-81fb-265c0dbac00f, 2026-10-24, as detailed below. No new behavior or environment authority inferred.
 **Exceptions:** —
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
 2026-10-24: Invoked Agent Workflow and Redline before code edits. Whole-change documentation exemption does not apply. New isolated checkout created at exact f24; primary dirty checkout untouched. Shared source owner confirmed its own editing window clear and accepted bounded independent result review. Await composition-plan acceptance before merge. No product edits or tests yet.
 
 ## Recovery
+2026-10-25 continuation: parent explicitly admitted only the reviewed eleven test-file deltas from fd14a77d19713e878105a537de0dfee9735dc88e to 74b02df77330fa1f621615643606b56813bfbee9 after SAME full-result GO on run 40140181275 (result receipt SHA256 DE190C0A2E9C2F5F0035124C9635442968DEF8B96AEF541328A26D47DD6DA64F). Parent reports all four profiles, 47 affected and 33 control cases normal once, no failures/errors/missing/duplicates. This is incoming qualification, not composed qualification. Exact clean pre-application base f05ae248c9d4c3a2082348264c8b197b27e77f3f is verified; its only differences from tested 7329 are two Work Records. Hermes production blob 50fcf548810bde5f5bdf88281f67940861ea89a2 remains pinned. Applicability remains non-exempt High/Moderate under the existing task. Apply ten test patches and only the new conftest guard delta from 5f7dae6d89e94fd881bbdbe372e344ba45fbada6; retain all current roles/Hermes/Claude changes and fixture spacing. Dry application checks passed. No whole branch/file transplant or incoming Work Record import. Then obtain independent actual composed-diff review and ordinary governance before one authorized integration full run; no local duplicate focused run, native/model/credential/service/installed change or main merge. Historical red runs and frozen evidence remain unchanged.
+
 Branch feat/roles-hermes-composition-20261024; latest tested source HEAD 7329a60686d7c056249749e38b3db5128b69aacc, tree 94239cedae866a88dca5632cb421d45ba615ba98. The affected Hermes 22-case cohort and OpenCode non-model roster passed independent review. Full integration qualification remains blocked on the incoming reviewed test delta and a new exact-head full run; native-role behavior is not qualified. Retain this checkout for integration and the dependent draft PR; no cleanup is due.
 
 ## Delegated approval provenance
