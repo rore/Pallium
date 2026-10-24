@@ -244,7 +244,7 @@ delivery enters context and which recovery paths are supported.
 | [Claude Code](claude-code-integration.md#delivery-and-recovery) | Exact-session wake on qualified Windows and installed Linux UDS paths; Linux coverage used Ubuntu 24.04. | Pending messages can arrive on the next normal turn when wake is unavailable. macOS active wake is not qualified. |
 | [Codex](codex-integration.md#delivery-and-recovery) | Exact-session wake for loaded Windows/Linux tasks. Supported Windows Desktop also uses authenticated retained MCP for unloaded tasks. | Working, unknown or disconnected tasks stay pending; normal hook turns provide fallback. Linux requires trusted hooks; macOS active wake is not qualified. No alternate native submission follows an attempted or uncertain wake. |
 | [OpenCode](../integrations/opencode/README.md#delivery-and-recovery) | V1 is passive. Opt-in V2 adds native queued wake; combined coverage is isolated Windows OpenCode 2.0.24. | V1 delivers on normal turns. V2 claim-lease recovery can leave work for a later normal turn; unverified admission is not silently resubmitted. Other V2 releases/platforms and global installation are unqualified. |
-| [Hermes Desktop/TUI](hermes-integration.md#delivery-and-recovery) | Native plugin wake with complete-context admission. Coverage includes Linux TUI and Windows Desktop/TUI on v0.22.0/v0.22.2. | Busy turns, outages and controlled relaunch are covered. Automatic standalone MCP reconnection, ordinary-turn fallback and uncertain claim/ACK recovery are not guaranteed; uncertain state stays fenced. Windows coverage is Server 2025/unpacked, not Windows 11/MSIX/updater/native Quit. |
+| [Hermes Desktop/TUI](hermes-integration.md#delivery-and-recovery) | Native plugin wake with current session CWD and complete-context admission. | Busy sessions and outages leave deliveries pending; controlled relaunch is covered. Uncertain claim/ACK stays fenced. See the guide for platform and qualification limits. |
 
 Use each guide for setup, trust requirements and recovery instructions. Current
 planning remains in the [wake roadmap](../roadmap/features/add-wake-first-relay-delivery.md);
@@ -356,9 +356,28 @@ its existing `409 recipient session is unreachable` result.
 
 ## Project scope transitions
 
-Claude Code and Codex keep the same Relay endpoint when a session deliberately moves to another Git project. The hooks persist and retry an exact source/destination intent, while the server accepts the move only for the supplied endpoint and scope generation. A confirmed move preserves the alias, manual work references, and pending or claimed deliveries. Historical delivery records keep their original container snapshots; follow-up wake routing resolves the endpoint's current container.
+Claude Code and Codex keep the same Relay endpoint when a session deliberately moves to another Git project. The hooks persist and retry an exact source/destination intent, while the server accepts the move only for the supplied endpoint and scope generation. A confirmed move preserves the alias, manual work references, and pending or claimed deliveries.
+
+An unclaimed delivery or expired claim stays parked in its recipient project snapshot: a turn in the new project cannot newly claim it, and its state and attempt count stay unchanged until a return to the original project or expiry. A receipt already issued in the original project can still be acknowledged there under its normal validity rules. Authorized sends from another container remain supported; `container_ref` selects context, not authentication. Historical delivery records keep their original container snapshots. Payload-free wake metadata can still notify the endpoint in its current project, including an empty wake, but conveys no access to the parked payload.
 
 A stale, missing, closed, unreachable, or occupied transition fails without moving either endpoint. Pallium never searches globally for a source session or takes over a destination. OpenCode remains pinned to one project for the life of its current session.
+
+Hermes normal cwd mode derives project and actor from its exact session's local
+cwd and admits recognized Git project changes through the same endpoint/generation
+transition contract. Its pending deliveries follow the recipient-project parking
+rule above. Transient valid non-Git cwd retains the prior project while actor
+identity follows the current cwd's Git identity or `local`, subject to explicit
+profile and environment overrides. Missing or ambiguous session scope fails
+closed; polling uses saved records rather than a
+background process cwd. Pending or uncertain wake ownership remains fenced in
+its original project. An intentional fixed-scope compatibility installation does
+not follow cwd. See the Hermes guide for the tested scope and limits.
+
+Integrations that use conditional disposal opt in during registration. For these
+endpoints, reopening advances the scope generation even when the legacy close
+route was used, so a delayed callback cannot close a successor. Ordinary endpoints
+keep their established reopen behavior. See the [HTTP API](http-api.md#relay) for
+the enrollment and conditional-close contract.
 
 ## Limits and scope
 

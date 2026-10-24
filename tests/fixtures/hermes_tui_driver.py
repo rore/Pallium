@@ -15,9 +15,63 @@ from urllib.parse import urlsplit
 RELEASES = {
     "e06df9c2eae6901f4c88f464e0ae6e753c0428b8": "0.22.0",
     "d923a5eb487a17c0a68801bba9ef0f56c81040a8": "0.22.2",
+    "4d04303818b61bf3aa09278af48356315515965b": "0.22.4",
 }
 
 SYNTHETIC_OPENAI_API_KEY = "pallium-hermes-synthetic-openai-key"
+
+
+def canonical_rpc(ws, method, params, *, timeout=3):
+    """One bounded canonical request; notifications never substitute for its exact reply."""
+    import uuid
+
+    request_id = uuid.uuid4().hex
+    ws.send(json.dumps({"jsonrpc": "2.0", "id": request_id, "method": method, "params": params}))
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        frame = json.loads(ws.recv(timeout=max(.01, deadline - time.monotonic())))
+        if frame.get("id") is None:
+            continue
+        assert frame["id"] == request_id, (method, frame)
+        assert "error" not in frame, (method, frame)
+        assert isinstance(frame.get("result"), dict), (method, frame)
+        return frame["result"]
+    raise TimeoutError(f"canonical {method} response timed out")
+
+
+def canonical_authority_ready(ws, deadline):
+    while time.monotonic() < deadline:
+        frame = json.loads(ws.recv(timeout=max(.01, deadline - time.monotonic())))
+        if frame.get("method") == "event" and frame.get("params", {}).get("type") == "gateway.ready":
+            assert frame["params"]["payload"].get("session_authority") is True, frame
+            return
+    raise TimeoutError("ticketed canonical socket did not report session authority")
+
+
+def canonical_same_session(result, session_id):
+    assert isinstance(result, dict) and result.get("session_id") == session_id, result
+    return result
+
+
+def canonical_completed_detach(result, session_id, elapsed):
+    canonical_same_session(result, session_id)
+    assert result.get("detached") is True, result
+    # The pinned gateway's 10s finalize timeout leaves its worker running.
+    assert type(elapsed) in (int, float) and 0 <= elapsed < 9.0, elapsed
+    return elapsed
+
+
+def canonical_terminal_receipt(ws, session_id, admission_id, deadline):
+    while time.monotonic() < deadline:
+        receipt = canonical_rpc(ws, "prompt.receipt", {"session_id": session_id,
+            "admission_id": admission_id}, timeout=min(1, max(.1, deadline - time.monotonic())))
+        assert receipt.get("admission_id") == admission_id, receipt
+        if receipt.get("status") == "terminal":
+            assert receipt.get("outcome") == "completed", receipt
+            assert receipt.get("ref", {}).get("session_id") == session_id, receipt
+            return receipt
+        time.sleep(.04)
+    raise TimeoutError("canonical prompt did not reach successful terminal receipt")
 
 
 def synthetic_openai_environment(base_url: str) -> dict[str, str]:
@@ -106,10 +160,36 @@ def classify_bridge_connections(bridge: dict, service_endpoint: tuple[str, int],
 
 
 def python_guard_source() -> str:
-    return '''import json, os, socket, threading
+    return '''import json, os, socket, stat, threading
+from pathlib import Path
 
-_ALLOWED = {tuple(x) for x in json.loads(os.environ.get("PALLIUM_TUI_ALLOWED_ENDPOINTS", "[]"))}
-assert _ALLOWED and all(host == "127.0.0.1" and type(port) is int and 0 < port < 65536 for host, port in _ALLOWED)
+def _configuration():
+    try:
+        raw = json.loads(os.environ["PALLIUM_TUI_ALLOWED_ENDPOINTS"])
+        if not isinstance(raw, list) or not raw:
+            raise ValueError()
+        allowed = set()
+        for row in raw:
+            if (not isinstance(row, list) or len(row) != 2 or row[0] != "127.0.0.1"
+                    or type(row[1]) is not int or not 1 <= row[1] <= 65535):
+                raise ValueError()
+            allowed.add((row[0], row[1]))
+        control_raw = json.loads(os.environ.get("PALLIUM_TUI_ALLOWED_CONTROL_PATHS", "[]"))
+        if not isinstance(control_raw, list) or (control_raw and os.name == "nt"):
+            raise ValueError()
+        controls = set()
+        for raw_path in control_raw:
+            if not isinstance(raw_path, str) or not raw_path or not Path(raw_path).is_absolute():
+                raise ValueError()
+            path = Path(raw_path)
+            if str(path.resolve(strict=False)) != raw_path:
+                raise ValueError()
+            controls.add(raw_path)
+        return allowed, controls
+    except BaseException:
+        os._exit(78)
+
+_ALLOWED, _CONTROL_PATHS = _configuration()
 _LOG = os.environ.get("PALLIUM_TUI_EGRESS_LOG")
 _IPC_LOG = os.environ.get("PALLIUM_TUI_IPC_LOG")
 _ipc = threading.local()
@@ -118,8 +198,24 @@ def _record(path, row):
         with open(path, "a", encoding="utf-8") as f: f.write(json.dumps(row) + "\\n")
 def _allowed(address):
     return isinstance(address, tuple) and len(address) >= 2 and (str(address[0]), int(address[1])) in _ALLOWED
-def _deny(address):
-    if getattr(_ipc, "active", False) and address[0] in ("127.0.0.1", "::1"):
+def _allowed_control(sock, address):
+    if not (sock is not None and sock.family == getattr(socket, "AF_UNIX", None)
+            and sock.type == socket.SOCK_STREAM and isinstance(address, str) and address in _CONTROL_PATHS):
+        return False
+    try:
+        path = Path(address)
+        parent, node = path.parent.lstat(), path.lstat()
+        return (str(path.resolve(strict=True)) == address
+                and stat.S_ISDIR(parent.st_mode) and parent.st_uid == os.getuid()
+                and stat.S_IMODE(parent.st_mode) == 0o700
+                and stat.S_ISSOCK(node.st_mode) and node.st_uid == os.getuid()
+                and stat.S_IMODE(node.st_mode) == 0o600)
+    except (OSError, RuntimeError):
+        return False
+def _deny(address, sock=None):
+    if _allowed_control(sock, address): return
+    if (getattr(_ipc, "active", False) and isinstance(address, tuple) and address
+            and address[0] in ("127.0.0.1", "::1")):
         _record(_IPC_LOG, {"kind": "stdlib_socketpair", "address": repr(address)})
         return
     if not _allowed(address):
@@ -129,13 +225,15 @@ _orig_connect, _orig_connect_ex = socket.socket.connect, socket.socket.connect_e
 _orig_getaddrinfo, _orig_socketpair = socket.getaddrinfo, socket.socketpair
 def _connect(self, address):
     if self.type & socket.SOCK_DGRAM: return _sendto(self, address)
-    _deny(address)
+    _deny(address, self)
     return _orig_connect(self, address)
 def _connect_ex(self, address):
     if self.type & socket.SOCK_DGRAM: return _sendto(self, address)
-    _deny(address)
+    _deny(address, self)
     return _orig_connect_ex(self, address)
 def _getaddrinfo(host, port, *args, **kwargs):
+    if type(host) is str and host == "127.0.0.1" and type(port) is int and port == 0:
+        return _orig_getaddrinfo(host, port, *args, **kwargs)
     _deny((host, port))
     return _orig_getaddrinfo(host, port, *args, **kwargs)
 def _socketpair(*args, **kwargs):
@@ -156,11 +254,11 @@ if os.name == "nt":
     _original_iocp_connect = IocpProactor.connect
     async def _async_sock_connect(self, sock, address):
         if sock.type & socket.SOCK_DGRAM: return _sendto(sock, address)
-        _deny(address)
+        _deny(address, sock)
         return await _original_sock_connect(self, sock, address)
     def _iocp_connect(self, sock, address):
         if sock.type & socket.SOCK_DGRAM: return _sendto(sock, address)
-        _deny(address)
+        _deny(address, sock)
         return _original_iocp_connect(self, sock, address)
     BaseProactorEventLoop.sock_connect = _async_sock_connect
     IocpProactor.connect = _iocp_connect
@@ -174,8 +272,41 @@ function deny(kind, target) {
   if (log) fs.appendFileSync(log, JSON.stringify({kind, target: String(target)}) + "\\n");
   throw new Error("Hermes TUI qualification blocked Node network access");
 }
+const rawGateway = process.env.PALLIUM_TUI_GATEWAY_WS;
+let gateway = null, gatewayPort = null;
+if (rawGateway !== undefined) {
+  const match = /^ws:\\/\\/127\\.0\\.0\\.1:([1-9][0-9]{0,4})\\/api\\/ws$/.exec(rawGateway);
+  if (!match || match[0] !== rawGateway || Number(match[1]) > 65535) process.exit(78);
+  gateway = rawGateway;
+  gatewayPort = Number(match[1]);
+}
 const net = require("node:net");
-net.Socket.prototype.connect = function(...args) { return deny("socket", args[0]); };
+const originalConnect = net.Socket.prototype.connect;
+function exactGatewayConnect(args) {
+  if (args.length === 1 && Array.isArray(args[0])) args = args[0];
+  if (args.length && typeof args[args.length - 1] === "function") args = args.slice(0, -1);
+  if (args.length < 1 || args.length > 2) return false;
+  const first = args[0];
+  let host, port;
+  if (first && typeof first === "object" && !Array.isArray(first)) {
+    if (first.path !== undefined || first.socketPath !== undefined || first.lookup !== undefined
+        || (first.localAddress !== undefined && first.localAddress !== null) || first.localPort !== undefined
+        || (first.family !== undefined && first.family !== 4)
+        || (first.host !== undefined && first.hostname !== undefined && first.host !== first.hostname)) return false;
+    host = first.host === undefined ? first.hostname : first.host;
+    port = first.port;
+  } else if (typeof first === "number" && typeof args[1] === "string") {
+    port = first;
+    host = args[1];
+  } else {
+    return false;
+  }
+  return !!gateway && host === "127.0.0.1" && (port === gatewayPort || port === String(gatewayPort));
+}
+net.Socket.prototype.connect = function(...args) {
+  if (!exactGatewayConnect(args)) return deny("socket", args[0]);
+  return originalConnect.apply(this, args);
+};
 net.Server.prototype.listen = function(...args) { return deny("listen", args[0]); };
 const tls = require("node:tls");
 tls.connect = (...args) => deny("tls", args[0]);
@@ -187,7 +318,21 @@ for (const name of ["node:http", "node:https"]) {
   mod.get = (...args) => deny(name, args[0]);
 }
 globalThis.fetch = async (...args) => deny("fetch", args[0]);
-globalThis.WebSocket = class { constructor(url) { return deny("WebSocket", url); } };
+const OriginalWebSocket = globalThis.WebSocket;
+if (typeof OriginalWebSocket === "function") {
+  globalThis.WebSocket = class extends OriginalWebSocket {
+    constructor(url, protocols) {
+      const ticket = Array.isArray(protocols) && protocols.length === 2
+        && protocols[0] === "hermes-gateway-v1" && typeof protocols[1] === "string"
+        ? /^hermes-gateway-ticket\\.[A-Za-z0-9_-]{1,4096}$/.exec(protocols[1]) : null;
+      if (!gateway || typeof url !== "string" || url !== gateway || !ticket || ticket[0] !== protocols[1])
+        return deny("WebSocket", url);
+      super(url, protocols);
+    }
+  };
+} else {
+  globalThis.WebSocket = class { constructor(url) { return deny("WebSocket", url); } };
+}
 require("node:http2").connect = (...args) => deny("http2", args[0]);
 for (const name of ["node:dns", "node:dns/promises"]) {
   const dns = require(name);
@@ -307,11 +452,11 @@ def assert_isolated_env(env: dict[str, str], home: Path, *, openai_base_url: str
                    for key in env), "credential or host-attachment variable passed to Hermes"
 
 
-def verify_source(source: Path, expected_entry_sha256: str) -> str:
-    """Accept only the two reviewed releases, a clean checkout, and the supplied bundle digest."""
+def verify_source(source: Path, expected_entry_sha256: str, *, git: Path | str | None = None) -> str:
+    """Accept only reviewed releases, a clean checkout, and the supplied bundle digest."""
     source = source.resolve()
     assert not (source / ".env").exists(), "Hermes project .env must be absent; ignored files can contain credentials"
-    git = os.environ.get("PALLIUM_TUI_GIT", "git")
+    git = str(Path(git).resolve()) if git is not None else os.environ.get("PALLIUM_TUI_GIT", "git")
     revision = subprocess.run([git, "-C", str(source), "rev-parse", "HEAD"], check=True,
                               capture_output=True, text=True, timeout=10).stdout.strip()
     assert revision in RELEASES, f"unqualified Hermes revision: {revision}"
@@ -606,12 +751,13 @@ class OwnedTree:
 
 class TuiConsole:
     def __init__(self, python: Path, source: Path, home: Path, env: dict[str, str], artifacts: Path,
-                 stopped: threading.Event, tree: OwnedTree):
+                 stopped: threading.Event, tree: OwnedTree, gateway=None):
         self.parts = []
         self._init_screen_observer()
         self.read_error = None
         self.artifacts = artifacts
         self.stopped = stopped
+        self.gateway = gateway
         preflight = (
             "import pathlib,runpy,sys,socket,sitecustomize;"
             "assert socket.socket.connect is sitecustomize._connect;"
@@ -724,6 +870,8 @@ class TuiConsole:
             assert not self.stopped.is_set() and time.monotonic() < deadline and self.proc.isalive(), self.text[-3000:]
             time.sleep(.1)
         self.wait("ready │", timeout=90)
+        if self.gateway is not None:
+            self.gateway.verify()
 
     def close(self):
         self.proc.cancel_io()
@@ -806,10 +954,53 @@ class LinuxPTY:
             self.master = None
 
 
+def _close_driver_resources(tree, console, gateway):
+    """Release our helper, clean our tree, then close readers and the console even on failure."""
+    try:
+        try:
+            if gateway is not None:
+                gateway.release()
+        finally:
+            try:
+                tree.close(include_root=False)
+            finally:
+                if gateway is not None:
+                    gateway.close_pipes()
+    finally:
+        if console is not None:
+            pending_error = sys.exc_info()[0] is not None
+            try:
+                owned_popen = getattr(getattr(console, "proc", None), "process", None)
+                if os.name != "nt" and owned_popen is not None:
+                    try:
+                        owned_popen.wait(timeout=8)
+                    except subprocess.TimeoutExpired:
+                        if not pending_error:
+                            raise
+            finally:
+                console.close()
+
+
 def driver_main(spec_path: Path):
     """The explicit disposable 3.14 interpreter alone starts the real UI."""
     spec = json.loads(spec_path.read_text(encoding="utf-8"))
     home, source, python = (Path(spec[key]).resolve() for key in ("home", "source", "python"))
+    surface = spec.get("surface", "tui")
+    scope_mode = spec.get("scope_mode", "fixed")
+    shared_gateway = spec.get("shared_gateway", False)
+    canonical_only = spec.get("canonical_only", False)
+    assert surface in {"tui", "desktop"}, "unknown native UI surface"
+    assert type(scope_mode) is str and scope_mode in {"fixed", "cwd"}, "unknown native scope mode"
+    assert type(shared_gateway) is bool, "shared_gateway must be a strict boolean"
+    assert type(canonical_only) is bool, "canonical_only must be a strict boolean"
+    if canonical_only:
+        assert surface == "tui" and scope_mode == "cwd" and shared_gateway, (
+            "canonical-only mode requires the shared cwd TUI gateway")
+        assert type(spec.get("canonical_gateway")) is dict and type(spec.get("canonical_ui_driver")) is dict, (
+            "canonical-only mode requires original gateway and UI identities")
+    else:
+        assert not ({"canonical_gateway", "canonical_ui_driver"} & spec.keys()), (
+            "ordinary driver cannot accept canonical-only identities")
     from hermes_desktop_driver import DesktopConsole, require_runner_gate
     if os.name == "nt":
         require_runner_gate(dict(os.environ), home, source, spec_path.parent)
@@ -825,9 +1016,35 @@ def driver_main(spec_path: Path):
     assert_isolated_env(dict(os.environ), home)
     import socket
     import sitecustomize
-    assert Path(sitecustomize.__file__).resolve() == Path(os.environ["PYTHONPATH"].split(os.pathsep)[-1]) / "sitecustomize.py"
+    guard_path = os.environ.get("PALLIUM_TUI_GUARD_PATH")
+    guard_sha256 = os.environ.get("PALLIUM_TUI_GUARD_SHA256")
+    assert (guard_path is None) == (guard_sha256 is None), "installed guard witness is incomplete"
+    assert not shared_gateway or guard_path is not None, "shared gateway requires the copied-runtime guard"
+    if guard_path is None:
+        assert Path(sitecustomize.__file__).resolve() == Path(os.environ["PYTHONPATH"].split(os.pathsep)[-1]) / "sitecustomize.py"
+    else:
+        installed_guard = Path(guard_path).resolve()
+        assert installed_guard == Path(sitecustomize.__file__).resolve()
+        assert re.fullmatch(r"[0-9a-fA-F]{64}", guard_sha256)
+        assert hashlib.sha256(installed_guard.read_bytes()).hexdigest() == guard_sha256.lower()
     assert socket.socket.connect is sitecustomize._connect
-    verify_source(source, spec["bundle_sha256"])
+    git = Path(spec["git"]).resolve()
+    assert git.is_file() and hashlib.sha256(git.read_bytes()).hexdigest() == spec["git_sha256"].lower(), (
+        "qualification Git executable changed")
+    release = verify_source(source, spec["bundle_sha256"], git=git)
+    if shared_gateway:
+        assert surface == "tui" and release == "0.22.4", "shared native gateway requires the released 0.22.4 TUI"
+    revision = next(revision for revision, version in RELEASES.items() if version == release)
+    canonical_receipt = None
+    if canonical_only:
+        from hermes_gateway_driver import validate_canonical_gateway
+
+        assert os.name == "nt", "canonical-only mode is scoped to Windows qualification"
+        canonical_receipt = spec["canonical_gateway"]
+        canonical_home = Path(os.environ["HERMES_HOME"]).resolve()
+        target = validate_canonical_gateway(canonical_receipt, spec["canonical_ui_driver"],
+            home=canonical_home, revision=revision, python=python, python_base=Path(spec["python_base"]))
+        assert sitecustomize._allowed(target), "canonical gateway was not granted before guard import"
     import psutil
     import queue
 
@@ -873,20 +1090,69 @@ def driver_main(spec_path: Path):
     # Own the entire driver subtree before any ConPTY constructor or spawn can fail.
     owned_python = Path(sys._base_executable if os.name == "nt" else sys.executable)
     tree = OwnedTree(os.getpid(), owned_python, ledger=spec_path.parent / "owned-processes-ledger.json")
-    console = None
+    console, gateway = None, None
+    canonical = {}
+
+    def canonical_socket(*, deadline=None):
+        from gateway.control_socket import query_gateway_control
+        from websockets.sync.client import connect
+
+        deadline = deadline or time.monotonic() + 5
+        receipt = canonical_receipt if canonical_only else gateway.receipt
+        if canonical_only:
+            from hermes_gateway_driver import verify_canonical_gateway_identity
+
+            validate_canonical_gateway(receipt, spec["canonical_ui_driver"],
+                home=canonical_home, revision=revision, python=python, python_base=Path(spec["python_base"]))
+            verify_canonical_gateway_identity(receipt, home=canonical_home,
+                timeout=min(2, max(.1, deadline - time.monotonic())))
+        grant = query_gateway_control(Path(os.environ["HERMES_HOME"]), "session-ticket", params={
+            "profile_id": receipt["profile_id"], "instance_id": receipt["instance_id"],
+            "purpose": "interactive"}, timeout=min(2, max(.1, deadline - time.monotonic())))
+        assert isinstance(grant, dict) and isinstance(grant.get("ticket"), str), grant
+        ws = connect(receipt["url"], subprotocols=[
+            "hermes-gateway-v1", "hermes-gateway-ticket." + grant["ticket"]],
+            open_timeout=min(2, max(.1, deadline - time.monotonic())),
+            close_timeout=1)
+        canonical_authority_ready(ws, deadline)
+        return ws
+
+    def canonical_turn(ws, session_id, text, *, deadline=None):
+        import uuid
+
+        deadline = deadline or time.monotonic() + 5
+        admission = canonical_rpc(ws, "prompt.submit", {"session_id": session_id,
+            "submission_id": uuid.uuid4().hex, "text": text},
+            timeout=min(2, max(.1, deadline - time.monotonic())))
+        admission_id = admission.get("admission_id")
+        assert isinstance(admission_id, str) and admission_id, admission
+        return canonical_terminal_receipt(ws, session_id, admission_id, deadline)
     try:
-        surface = spec.get("surface", "tui")
-        assert surface in {"tui", "desktop"}, "unknown native UI surface"
         console_class = DesktopConsole if surface == "desktop" else TuiConsole
         # Retain a partial Desktop constructor so failed startup logs can still be closed and saved.
-        if surface == "desktop":
+        if canonical_only:
+            pass  # The original UI driver alone owns its gateway and helper.
+        elif surface == "desktop":
             console = console_class.__new__(console_class)
             console.__init__(python, source, home, dict(os.environ), spec_path.parent, stopped, tree,
                              reuse_user_data=spec.get("reuse_user_data", False),
-                             previous_spec=spec.get("previous_spec"))
+                             previous_spec=spec.get("previous_spec"), scope_mode=scope_mode)
         else:
-            console = console_class(python, source, home, dict(os.environ), spec_path.parent, stopped, tree)
-        console.ready()
+            tui_env = dict(os.environ)
+            tui_env.pop("PALLIUM_TUI_GATEWAY_WS", None)
+            if shared_gateway:
+                from hermes_gateway_driver import OwnedGateway, gateway_target
+
+                gateway = OwnedGateway(python, source, tui_env, spec_path.parent, tree, revision,
+                                       python_base=Path(spec["python_base"]),
+                                       python_base_sha256=spec["python_base_sha256"])
+                gateway_url = gateway.receipt["url"]
+                gateway_target(gateway_url)
+                tui_env["PALLIUM_TUI_GATEWAY_WS"] = gateway_url
+            console = console_class(python, source, home, tui_env, spec_path.parent, stopped, tree,
+                                    gateway=gateway)
+        if console is not None:
+            console.ready()
         print(json.dumps({"ready": True}), flush=True)
         while not stopped.is_set():
             try:
@@ -894,6 +1160,8 @@ def driver_main(spec_path: Path):
             except queue.Empty:
                 continue
             op = command["op"]
+            assert not canonical_only or op not in {"submit", "wait", "new", "inspect"}, (
+                "canonical-only driver cannot perform UI operations")
             if op == "submit":
                 console.submit(command["text"], marker=command["marker"])
             elif op == "wait":
@@ -903,6 +1171,66 @@ def driver_main(spec_path: Path):
             elif op == "inspect":
                 print(json.dumps({"processes": console.tree.snapshot()}), flush=True)
                 continue
+            elif op == "canonical_create":
+                assert (gateway is not None or canonical_only) and not canonical
+                ws = canonical_socket()
+                canonical["a"] = ws
+                created = canonical_rpc(ws, "session.create", {"source": "tui", "cwd": str(home / "scratch")})
+                session_id, subscription_id = created["session_id"], created["subscription_id"]
+                assert isinstance(session_id, str) and session_id
+                assert isinstance(subscription_id, str) and subscription_id
+                canonical.update(session_id=session_id, a_subscription=subscription_id)
+                terminal = canonical_turn(ws, session_id, "native-finalize-race: initial")
+                print(json.dumps({"session_id": session_id, "subscription_id": subscription_id,
+                    "terminal": terminal}), flush=True)
+                continue
+            elif op == "canonical_detach":
+                assert canonical["session_id"] == command["session_id"]
+                assert "detach_thread" not in canonical
+                def detached():
+                    try:
+                        started = time.monotonic()
+                        canonical["detach_result"] = canonical_rpc(canonical["a"], "session.detach", {
+                            "session_id": canonical["session_id"],
+                            "subscription_id": canonical["a_subscription"], "end_reason": "tui_close"}, timeout=12)
+                        canonical["detach_elapsed"] = time.monotonic() - started
+                    except BaseException as exc:
+                        canonical["detach_error"] = repr(exc)
+                canonical["detach_thread"] = threading.Thread(target=detached, daemon=True)
+                canonical["detach_thread"].start()
+            elif op == "canonical_resume":
+                assert canonical["session_id"] == command["session_id"]
+                resume_deadline = time.monotonic() + 6
+                ws = canonical_socket(deadline=resume_deadline)
+                canonical["b"] = ws
+                resumed = canonical_rpc(ws, "session.resume", {"session_id": canonical["session_id"]},
+                    timeout=min(2, max(.1, resume_deadline - time.monotonic())))
+                canonical_same_session(resumed, canonical["session_id"])
+                assert resumed["subscription_id"]
+                canonical["b_subscription"] = resumed["subscription_id"]
+                terminal = canonical_turn(ws, canonical["session_id"], "native-finalize-race: resumed",
+                    deadline=resume_deadline)
+                print(json.dumps({"session_id": resumed["session_id"],
+                    "subscription_id": resumed["subscription_id"], "terminal": terminal}), flush=True)
+                continue
+            elif op == "canonical_detach_complete":
+                assert canonical["session_id"] == command["session_id"]
+                canonical["detach_thread"].join(12)
+                assert not canonical["detach_thread"].is_alive(), "old detach callback remained blocked"
+                assert "detach_error" not in canonical, canonical.get("detach_error")
+                elapsed = canonical_completed_detach(canonical["detach_result"],
+                    canonical["session_id"], canonical["detach_elapsed"])
+                canonical["detach_completed"] = True
+                print(json.dumps({"session_id": canonical["session_id"],
+                    "detached": canonical["detach_result"], "elapsed": elapsed}), flush=True)
+                continue
+            elif op == "canonical_finish":
+                assert canonical["session_id"] == command["session_id"]
+                assert canonical.get("detach_completed") is True
+                terminal = canonical_turn(canonical["b"], canonical["session_id"],
+                    "native-finalize-race: post-release")
+                print(json.dumps({"session_id": canonical["session_id"], "terminal": terminal}), flush=True)
+                continue
             elif op == "close":
                 stopped.set()
                 break
@@ -911,21 +1239,13 @@ def driver_main(spec_path: Path):
             print(json.dumps({"ok": op}), flush=True)
     finally:
         stopped.set()
-        try:
-            tree.close(include_root=False)
-        finally:
-            if console is not None:
-                pending_error = sys.exc_info()[0] is not None
+        for ws in (canonical.get("a"), canonical.get("b")):
+            if ws is not None:
                 try:
-                    owned_popen = getattr(getattr(console, "proc", None), "process", None)
-                    if os.name != "nt" and owned_popen is not None:
-                        try:
-                            owned_popen.wait(timeout=8)
-                        except subprocess.TimeoutExpired:
-                            if not pending_error:
-                                raise
-                finally:
-                    console.close()
+                    ws.close()
+                except Exception:
+                    pass
+        _close_driver_resources(tree, console, gateway)
 
 
 def cleanup_ledger(path: Path):

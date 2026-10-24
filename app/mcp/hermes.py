@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import argparse
 import inspect
+import json
 from collections.abc import Mapping
+from dataclasses import replace
 from functools import wraps
 from typing import Any, Callable
 from urllib.parse import urlsplit
@@ -49,6 +51,23 @@ _META_KEY = "pallium_hermes"
 _MAX_ID_CHARS = 255
 _MAX_RECEIPT_CHARS = 64
 _MAX_DELIVERY_ID_CHARS = 64
+_RELAY_MUTATIONS = frozenset({
+    "pallium_relay_send", "pallium_relay_reply", "pallium_relay_name",
+    "pallium_relay_attach_work_ref", "pallium_relay_detach_work_ref",
+})
+_RELAY_ERROR_FIELDS = frozenset({
+    "error", "status_code", "detail", "min_max_chars", "error_kind", "retryable", "action",
+})
+
+
+def _refused_request():
+    from mcp.types import CallToolResult, TextContent
+
+    text = "Pallium MCP refused the request"
+    return CallToolResult(
+        isError=True, content=[TextContent(type="text", text=text)], structuredContent={"result": text},
+        _meta={"pallium_hermes": {"operation_uncertain": False}},
+    )
 
 
 def _as_mapping(value: object) -> dict[str, Any] | None:
@@ -76,11 +95,14 @@ def _read_identity(meta: object, tool_name: str) -> HermesMcpIdentity:
     identity = _as_mapping(nested)
     if identity is None or not {"session_id", "turn_id"} <= set(identity):
         raise ValueError("missing Hermes session/turn metadata")
-    if not set(identity) <= {"session_id", "turn_id", "reply"}:
+    if not set(identity) <= {"session_id", "turn_id", "reply", "scope", "request_source_item_id"}:
         raise ValueError("unexpected Hermes metadata field")
     session_id, turn_id = identity["session_id"], identity["turn_id"]
     if not _valid_identity(session_id) or not _valid_identity(turn_id):
         raise ValueError("invalid Hermes session/turn metadata")
+    source_id = identity.get("request_source_item_id")
+    if source_id is not None and not _valid_identity(source_id):
+        raise ValueError("invalid Hermes current request source metadata")
     for key, value in (("session_id", session_id), ("turn_id", turn_id)):
         if key in values and values[key] != value:
             raise ValueError(f"conflicting Hermes {key} metadata")
@@ -99,6 +121,23 @@ def _read_identity(meta: object, tool_name: str) -> HermesMcpIdentity:
     if reply_value is not None:
         raise ValueError("reply metadata is only valid for pallium_relay_reply")
     return HermesMcpIdentity(session_id, turn_id)
+
+
+def _request_scope(meta: object, context: PalliumContext) -> PalliumContext:
+    values = _as_mapping(meta)
+    nested = _as_mapping(values.get(_META_KEY)) if values is not None else None
+    supplied = nested.get("scope") if nested is not None else None
+    if context.container_ref is not None:
+        if supplied is not None:
+            raise ValueError("fixed Hermes transport does not accept request scope")
+        return context
+    scope = _as_mapping(supplied)
+    if scope is None or set(scope) != {"container_ref", "actor_ref"}:
+        raise ValueError("missing or invalid trusted Hermes request scope")
+    container = scope["container_ref"]
+    if not _valid_identity(container, max_chars=512) or not _valid_identity(scope["actor_ref"]):
+        raise ValueError("invalid trusted Hermes request scope")
+    return replace(context, container_ref=validate_explicit_container_ref(container), actor_ref=scope["actor_ref"])
 
 
 def _validate_arguments(
@@ -174,17 +213,34 @@ def make_tool_adapter(context: PalliumContext, *, memory_enabled: bool = False) 
             try:
                 request_context = get_context().request_context
                 identity = _read_identity(request_context.meta, tool_name)
+                request_scope = _request_scope(request_context.meta, context)
                 bound = inspect.signature(handler).bind_partial(*args, **kwargs)
-                _validate_arguments(tool_name, bound.arguments, context, identity, memory_enabled=memory_enabled)
+                _validate_arguments(tool_name, bound.arguments, request_scope, identity, memory_enabled=memory_enabled)
+                if tool_name in {"pallium_search_history", "pallium_search_history_by_work_ref"}:
+                    nested = _as_mapping(_as_mapping(request_context.meta).get(_META_KEY))
+                    if nested.get("request_source_item_id") is not None:
+                        bound.arguments["request_source_item_id"] = nested["request_source_item_id"]
                 if tool_name == "pallium_relay_reply":
                     bound.arguments["receipt"] = identity.reply_receipt
-            except (TypeError, ValueError) as exc:
-                raise ToolError(str(exc)) from None
             except Exception:
-                raise ToolError("invalid Hermes MCP request context") from None
-            with bind_hermes_request(HermesMcpRequest(context, identity)):
-                result = handler(*bound.args, **bound.kwargs)
-                return await result if inspect.isawaitable(result) else result
+                return _refused_request()
+            with bind_hermes_request(HermesMcpRequest(request_scope, identity)):
+                try:
+                    result = handler(*bound.args, **bound.kwargs)
+                    return await result if inspect.isawaitable(result) else result
+                except ToolError as exc:
+                    if tool_name in _RELAY_MUTATIONS:
+                        try:
+                            error = json.loads(str(exc))
+                        except (TypeError, ValueError):
+                            error = None
+                        # Only the Relay HTTP adapter's known refusals establish a definite outcome.
+                        if (isinstance(error, dict) and set(error) <= _RELAY_ERROR_FIELDS
+                                and isinstance(error.get("error"), str) and error["error"]
+                                and type(error.get("status_code")) is int
+                                and error["status_code"] in {404, 409, 422}):
+                            return _refused_request()
+                    raise
 
         return guarded
 
@@ -192,10 +248,10 @@ def make_tool_adapter(context: PalliumContext, *, memory_enabled: bool = False) 
 
 
 def create_hermes_server(
-    *, base_url: str, container_ref: str, actor_ref: str, visibility: str = "private",
+    *, base_url: str, container_ref: str | None = None, actor_ref: str | None = None, visibility: str = "private",
     memory_enabled: bool = False,
 ):
-    """Create a stdio server with Relay/History tools and fixed profile scope."""
+    """Create a dedicated transport with host-owned immutable scope per request."""
     if not isinstance(base_url, str) or not base_url.strip() or base_url != base_url.strip():
         raise ValueError("--base-url is required")
     parsed = urlsplit(base_url)
@@ -212,13 +268,15 @@ def create_hermes_server(
         or parsed.query or parsed.fragment or parsed.path not in {"", "/"}
     ):
         raise ValueError("--base-url must be an uncredentialed loopback HTTP origin")
-    if not _valid_identity(actor_ref):
+    if container_ref is not None and not _valid_identity(actor_ref):
         raise ValueError("--actor-ref must be printable, exact-trimmed, and at most 255 characters")
+    if container_ref is None and actor_ref is not None:
+        raise ValueError("session-scoped Hermes transport receives actor identity per request")
     if visibility != "private":
         raise ValueError("--visibility must be private")
     if type(memory_enabled) is not bool:
         raise ValueError("--memory-enabled must be a boolean")
-    fixed_container = validate_explicit_container_ref(container_ref)
+    fixed_container = validate_explicit_container_ref(container_ref) if container_ref is not None else None
     context = PalliumContext(
         base_url=base_url.rstrip("/"),
         container_ref=fixed_container,
@@ -232,8 +290,8 @@ def create_hermes_server(
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Run Pallium's profile-scoped Hermes MCP server over stdio.")
     parser.add_argument("--base-url", required=True)
-    parser.add_argument("--container-ref", required=True)
-    parser.add_argument("--actor-ref", required=True)
+    parser.add_argument("--container-ref", help="Explicit fixed-scope compatibility transport")
+    parser.add_argument("--actor-ref", help="Actor for explicit fixed-scope transport")
     parser.add_argument("--visibility", choices=("private",), default="private")
     parser.add_argument("--memory-enabled", action="store_true", help="Expose the opt-in memory catalog")
     args = parser.parse_args(argv)

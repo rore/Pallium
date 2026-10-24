@@ -16,7 +16,10 @@ from types import ModuleType
 from unittest.mock import patch
 import uuid
 
-from hermes_linux_guard import require_contained_paths, require_linux_qualification
+if __package__:
+    from .hermes_linux_guard import require_contained_paths, require_linux_qualification
+else:
+    from hermes_linux_guard import require_contained_paths, require_linux_qualification
 
 
 REVISION = "4d04303818b61bf3aa09278af48356315515965b"

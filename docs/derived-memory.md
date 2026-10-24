@@ -15,9 +15,12 @@ Read [How Pallium Works](how-it-works.md) for the product-level architecture and
 
 The [Hermes integration](hermes-integration.md) can expose an optional
 derived-memory tool catalog when explicitly enabled during setup. Enabling
-shared semantic packages alone does not enable that catalog, and the tools do
-not promise automatic memory injection. The catalog is disabled by default;
-see the guide for private scope and setup limits.
+shared semantic packages alone does not enable that catalog. Separately, supported
+Hermes user capture in normal cwd mode requests service-selected recall and injects returned blocks
+as bounded, lower-authority reference context, even with memory tools disabled.
+The tool catalog and semantic packages are disabled by default; provider-backed
+processing requires an explicit provider and model. See the guide for session
+project scope and compatibility limits.
 
 ## What Goes In
 

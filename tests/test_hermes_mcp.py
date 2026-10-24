@@ -63,6 +63,83 @@ def _identity(session_id: str, turn_id: str = "turn-1", **extra: object) -> dict
     return {"pallium_hermes": {"session_id": session_id, "turn_id": turn_id, **extra}}
 
 
+def test_session_scoped_stdio_keeps_concurrent_projects_and_actors_isolated(client):
+    projects = [("git:test/alpha", "actor-alpha"), ("git:test/beta", "actor-beta")]
+    endpoints = []
+    source_ids = []
+    for index, (container, actor) in enumerate(projects):
+        response = client.post("/relay/turn", json={"runtime": "hermes", "session_ref": f"dynamic-{index}",
+                                                  "container_ref": container})
+        assert response.status_code == 200, response.text
+        endpoints.append(response.json()["session"]["endpoint_id"])
+        response = client.post("/items", json=[{
+            "source_type": "hermes", "source_id": f"dynamic-source-{index}", "content_type": "text/plain",
+            "content": "dynamic project history marker", "role": "user", "artifact_kind": "message",
+            "container_ref": container, "thread_ref": f"prior-{index}", "actor_ref": actor,
+            "agent_ref": "hermes", "visibility": "private",
+        }])
+        assert response.status_code == 200, response.text
+        source_ids.append(response.json()[0]["source_item_id"])
+    handler = type("DynamicRelayHandler", (_RelayHandler,), {"client": client, "calls": [], "lock": threading.Lock()})
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    worker = threading.Thread(target=server.serve_forever, daemon=True)
+    worker.start()
+    repo = str(Path(__file__).resolve().parents[1])
+
+    async def exercise():
+        params = StdioServerParameters(command=os.sys.executable, cwd=repo, env={
+            **os.environ, "PYTHONPATH": repo, "PALLIUM_CONTAINER_REF": "git:test/ambient-wrong",
+            "PALLIUM_ACTOR_REF": "ambient-wrong",
+        }, args=["-m", "app.mcp.hermes", "--base-url", f"http://127.0.0.1:{server.server_port}",
+                 "--memory-enabled"])
+        async with stdio_client(params) as (read, write):
+            async with ClientSession(read, write) as transport:
+                await transport.initialize()
+
+                async def lookup(index):
+                    container, actor = projects[index]
+                    meta = _identity(f"dynamic-{index}", scope={"container_ref": container, "actor_ref": actor})
+                    address = await transport.call_tool("pallium_relay_address", {}, meta=meta)
+                    assert not address.isError
+                    data = json.loads(address.content[0].text)
+                    assert data["exact_selector"] == endpoints[index]
+                    remembered = await transport.call_tool("pallium_remember", {
+                        "text": f"dynamic private note {index}", "type": "note",
+                    }, meta=meta)
+                    assert not remembered.isError, remembered
+                    assert "memory_object_id" in json.loads(remembered.content[0].text)
+                    history = await transport.call_tool("pallium_search_history", {
+                        "query": "dynamic project history marker",
+                    }, meta=meta)
+                    assert not history.isError, history
+                    assert {row["source_item_id"] for row in json.loads(history.content[0].text)["results"]} == {source_ids[index]}
+
+                await asyncio.gather(lookup(0), lookup(1))
+                before = len(handler.calls)
+                for extra in [{}, {"scope": {}}, {"scope": {"container_ref": projects[0][0], "actor_ref": " "}},
+                              {"scope": {"container_ref": "/raw/path", "actor_ref": "actor"}}]:
+                    refused = await transport.call_tool("pallium_relay_address", {}, meta=_identity("dynamic-0", **extra))
+                    assert refused.isError
+                meta = _identity("dynamic-0", scope={"container_ref": projects[0][0], "actor_ref": projects[0][1]})
+                for name, args in [("pallium_relay_address", {"container_ref": projects[1][0]}),
+                                   ("pallium_remember", {"text": "forged", "type": "note", "actor_ref": projects[1][1]})]:
+                    refused = await transport.call_tool(name, args, meta=meta)
+                    assert refused.isError
+                assert len(handler.calls) == before
+                valid = await transport.call_tool("pallium_relay_address", {}, meta=meta)
+                assert not valid.isError
+    try:
+        asyncio.run(exercise())
+    finally:
+        server.shutdown()
+        server.server_close()
+        worker.join(timeout=5)
+    remembers = [payload for path, payload in handler.calls if path == "/memory/remember"]
+    assert {(p["container_ref"], p["actor_ref"], p["thread_ref"]) for p in remembers} == {
+        (container, actor, f"dynamic-{i}") for i, (container, actor) in enumerate(projects)
+    }
+
+
 async def _exercise_stdio(base_url: str, *, peer_endpoint: str, reply_delivery: dict) -> dict:
     repo = str(Path(__file__).resolve().parents[1])
     env = os.environ.copy()

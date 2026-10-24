@@ -2896,10 +2896,16 @@ class RetainedService(InventoryService):
                     self._check_custody()
                     # A natural hook may have claimed the delivery after the state read.
                     if registry._relay is not None:
-                        candidate = registry._relay.pending_candidate(runtime="codex",
-                            session_ref=reservation.session_ref, container_ref=reservation.container_ref,
-                            delivery_id=reservation.delivery_id)
-                        if not isinstance(candidate, dict) or candidate.get("recipient_endpoint_id") != reservation.recipient_endpoint_id:
+                        if not any(
+                            isinstance(candidate, dict)
+                            and candidate.get("delivery_id") == reservation.delivery_id
+                            and candidate.get("recipient_endpoint_id") == reservation.recipient_endpoint_id
+                            and candidate.get("recipient_runtime") == "codex"
+                            and candidate.get("recipient_session_ref") == reservation.session_ref
+                            and candidate.get("container_ref") == reservation.container_ref
+                            and candidate.get("state") == "pending"
+                            for candidate in registry._relay.wake_candidates(delivery_id=reservation.delivery_id)
+                        ):
                             return None
                     # Best-effort check/send: Desktop has no atomic idle-only submission.
                     if registry.begin_native_attempt(reservation) is None:

@@ -10,15 +10,30 @@ coverage boundaries. User setup belongs in the
 
 | Surface | Coverage |
 |---|---|
-| Linux TUI | Hermes v0.22.0/v0.22.2, built-in-provider memory-off and custom-provider memory-on journeys |
-| Windows Desktop and TUI | Both releases, both interfaces, memory off/on; Windows Server 2025 with unpacked apps |
+| Linux TUI | v0.22.0/v0.22.2 fixed-scope receipts; accepted v0.22.4 CWD journeys with memory off/on on the corrected Pallium source at exact Hermes source `4d04303818b61bf3aa09278af48356315515965b` |
+| Public host | Accepted v0.22.4 CWD/API regression on the corrected Pallium source through public host and HTTP surfaces; not frontend qualification |
+| Windows TUI | v0.22.0/v0.22.2 fixed-scope receipts; complete v0.22.4 CWD memory-off/on journeys on Windows Server 2025, including canonical late-finalize ordering and final privacy/cleanup checks |
+| Windows Desktop | v0.22.0/v0.22.2 fixed-scope receipts; corrected-source v0.22.4 CWD journeys with memory off/on accepted on the bounded Server 2025/unpacked build |
 | Relay | Full 16,000-code-point Unicode delivery under default hook spill, reply and no-reply turns, busy delivery, endpoint outage and controlled host/MCP relaunch |
 | History and memory | Distinct-session capture/search/expansion, opt-in write/recall/correct/supersede/forget, privacy and preserved profile data |
 | Package lifecycle | Install, repeat setup/update, status and removal; unchanged unrelated configuration, plugins and databases |
 | Caller boundaries | Trusted identity/generation, stale and ambiguous admission, middleware vetoes, payload limits, concurrent callbacks, 24-hour presence and optional-vector fault handling |
 
+The complete [Windows TUI pair](https://github.com/rore/Pallium/actions/runs/39973012884)
+uses Pallium `48ac298ee26083f2a002cfc2a558418c28617e70` and the pinned Hermes source
+above. Both cases passed with zero skips, final provider-secret/egress checks,
+individually confirmed controller/session retirements and bounded handler drain.
+Memory-off also completed canonical detach/resume ordering. Focused regression
+evidence covers 24 distinct cases: 17 affected cases plus seven unchanged passes.
+Linux memory-off covers the unchanged normal retirement/cleanup paths. Retained
+Desktop journeys keep their exact source provenance; they did not execute the
+new proxy checks or form part of a new four-case run. Earlier failed attempts
+remain in the Work Record; this pass does not establish their cause or cure.
+
 The accepted evidence and retained failures are linked from
-[merged PR #324](https://github.com/rore/Pallium/pull/324) and its
+[merged PR #324](https://github.com/rore/Pallium/pull/324),
+[current PR #352](https://github.com/rore/Pallium/pull/352), and the
+[project-parity record](../../.agent-workflow/tasks/hermes-project-parity.md),
 [implementation](../../.agent-workflow/tasks/hermes-production-slice4.md) and
 [native runner](../../.agent-workflow/tasks/hermes-native-qualification.md) records.
 These records preserve exact revisions, receipts and failed attempts; they are
@@ -30,13 +45,30 @@ UI journey injected that fault.
 
 - Runtime admission checks public capabilities, not a hard release allowlist.
   A compatible API check does not establish behavior on every future release.
+- Current v0.22.4 evidence is bounded to the tested source, public-host surface,
+  Linux TUI and Windows Server 2025/unpacked TUI/Desktop. It does not establish
+  behavior on every release or platform.
 - Windows Server/unpacked evidence does not qualify Windows 11, MSIX installation,
   the native updater, native app Quit or automatic standalone MCP reconnection.
 - Synthetic providers prove configuration, transport and tool dispatch, not model
   quality, every provider/memory combination or arbitrary competing middleware.
 - Controlled owned-process relaunch is different from automatic recovery after
   uncertain enqueue, claim or ACK. Preserve uncertainty fences and inspect status.
-- Shared Relay availability failures remain unresolved. Keep failed CI and
+- Pinned source `4d04303818b61bf3aa09278af48356315515965b` can emit finalize
+  before checking a new lease owner; lifecycle notifications carry no event
+  generation or route. Native finalize is therefore advisory and must not change
+  Relay binding, wake or close an endpoint. Conditional close is permitted only
+  for native delete reason `delete`
+  with explicit exact profile/session identity after committed permanent lineage
+  retirement. Archive, prune, sweep, profile repair and missing/unknown reasons
+  are not closure authority. Finalize and soft delete can leave endpoint presence
+  and pending messages according to their existing expiry. The pinned canonical
+  Gateway mutation path retires a deleted lineage without emitting this plugin
+  notification; it does not establish conditional-close callback coverage.
+  Bounded native detach/resume evidence verifies that a late advisory finalize
+  cannot close, rebind or wake its successor. It does not qualify permanent-delete
+  callback delivery or unobserved host changes.
+- Shared registration, acquisition and diagnostic-start failures remain unresolved. Keep failed CI and
   unreached assertions visible; later passing evidence does not prove a cause or
   cure. A source or safety finding affecting Hermes still needs investigation.
 
@@ -48,6 +80,15 @@ identify the affected contracts, run the missing caller regressions, and refresh
 only materially affected host evidence. Keep exact source/runtime hashes and
 independent review references with the result. Do not combine partial or skipped
 cases into a complete matrix or count helper tests as actual UI coverage.
+
+The manual [Windows workflow](../../.github/workflows/hermes-native-qualification.yml)
+takes an immutable `pallium_revision` and `scope_mode` (`fixed` or `cwd`).
+`case_selection` defaults to `all`, preserving the full UI selection. The explicit
+`tui` choice is allowed only with `cwd` and runs both exact TUI memory-off/on cases;
+its provenance records those two required IDs and rejects missing, duplicate or
+skipped results. This is TUI-pair evidence, not a new Desktop run. Reuse Desktop
+receipts only after reviewing unchanged source and cleanup behavior. Keep the
+existing isolated runtime and source checks for either selection.
 
 ## Missing-route regression probes
 
@@ -133,6 +174,13 @@ release/interface/memory case, verify:
 The native journey uses the supported `approvals.destructive_slash_confirm: false`
 setting. `/new` still uses normal composer input and requires a different actual
 session ID; the optional confirmation overlay is not covered by these checks.
+
+Automatic project scope additionally requires distinct native route and
+conversation IDs in the public-hook regression. Verify that wake injection uses
+the session-bound route while Relay and History retain the conversation ID.
+Missing bound context must be refused even when a process environment variable
+contains a route. Exercise route changes, reload and stale callbacks without
+discarding pending or uncertain delivery fences.
 
 Record the actual OS/image and source/runtime provenance. Require successful
 driver/source postconditions and normal identity-safe cleanup of both generations.

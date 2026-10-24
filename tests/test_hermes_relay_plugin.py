@@ -189,6 +189,7 @@ def plugin_context(client, monkeypatch):
         "plugins": {"enabled": ["user-plugin", "pallium-hermes-relay"], "entries": {
             "user-plugin": {"settings": {"keep": "value"}},
             "pallium-hermes-relay": {"allow_gateway_injection": True, "settings": {
+                "scope_mode": "fixed",
                 "service_url": "http://127.0.0.1:29999", **SCOPE,
             }},
         }},
@@ -927,56 +928,60 @@ def test_provider_failure_after_host_context_observation_keeps_admission(client,
 
 
 @pytest.mark.parametrize("failure", ["before-ack", "lost-ack-response", "admission-persistence"])
-def test_ack_failure_can_retry_and_duplicate_observation_is_idempotent(client, plugin_context, monkeypatch, failure):
-    module, create, _ = plugin_context
-    ctx, marker, message = _plugin_wake(client, create)
-    context = ctx.hooks["pre_llm_call"](
-        session_id="ses_שלום", turn_id="wake", user_message=marker,
-    )["context"]
-    request = {"messages": [{"role": "user", "content": marker + "\n\n" + context}]}
-    original = module._json_request
-    set_state = ctx.state.set
-    ack_calls = []
-    fail = True
+@pytest.mark.parametrize("relay_admission_clock", ["native", "semantic"], indirect=True)
+def test_ack_failure_can_retry_and_duplicate_observation_is_idempotent(
+    client, plugin_context, monkeypatch, failure, relay_admission_clock,
+):
+    with relay_admission_clock(client.app.state.pallium_service._storage):
+        module, create, _ = plugin_context
+        ctx, marker, message = _plugin_wake(client, create)
+        context = ctx.hooks["pre_llm_call"](
+            session_id="ses_שלום", turn_id="wake", user_message=marker,
+        )["context"]
+        request = {"messages": [{"role": "user", "content": marker + "\n\n" + context}]}
+        original = module._json_request
+        set_state = ctx.state.set
+        ack_calls = []
+        fail = True
 
-    def fail_ack(base, method, path, **kwargs):
-        nonlocal fail
-        if path == "/relay/deliveries/ack":
-            ack_calls.append(path)
-            if fail and failure == "before-ack":
-                raise OSError("ack unavailable")
-        result = original(base, method, path, **kwargs)
-        if path == "/relay/deliveries/ack" and fail and failure == "lost-ack-response":
-            raise OSError("ack response lost")
-        return result
+        def fail_ack(base, method, path, **kwargs):
+            nonlocal fail
+            if path == "/relay/deliveries/ack":
+                ack_calls.append(path)
+                if fail and failure == "before-ack":
+                    raise OSError("ack unavailable")
+            result = original(base, method, path, **kwargs)
+            if path == "/relay/deliveries/ack" and fail and failure == "lost-ack-response":
+                raise OSError("ack response lost")
+            return result
 
-    def fail_admission(key, value):
-        if fail and failure == "admission-persistence" and key.startswith("wake:") and value.get("state") == "admitted":
-            raise OSError("admission persistence failed")
-        set_state(key, value)
+        def fail_admission(key, value):
+            if fail and failure == "admission-persistence" and key.startswith("wake:") and value.get("state") == "admitted":
+                raise OSError("admission persistence failed")
+            set_state(key, value)
 
-    monkeypatch.setattr(module, "_json_request", fail_ack)
-    monkeypatch.setattr(ctx.state, "set", fail_admission)
-    if failure == "admission-persistence":
-        with pytest.raises(OSError, match="admission persistence failed"):
+        monkeypatch.setattr(module, "_json_request", fail_ack)
+        monkeypatch.setattr(ctx.state, "set", fail_admission)
+        if failure == "admission-persistence":
+            with pytest.raises(OSError, match="admission persistence failed"):
+                _observe_request(ctx, request)
+        else:
             _observe_request(ctx, request)
-    else:
-        _observe_request(ctx, request)
-    assert status(client, message)["deliveries"][0]["state"] == ("claimed" if failure == "before-ack" else "delivered")
-    assert "refused" in _plugin_reply(ctx, {
-        "delivery_id": message["deliveries"][0]["delivery_id"], "payload": "not admitted",
-    }, session_id="ses_שלום", turn_id="wake")
-    fail = False
-    _observe_request(ctx, request, api_request_id="api-retry-2")
-    _observe_request(ctx, request, api_request_id="api-retry-2")
-    assert ack_calls == ["/relay/deliveries/ack", "/relay/deliveries/ack"]
-    assert status(client, message)["deliveries"][0]["state"] == "delivered"
-    with pytest.raises(OSError, match="provider failed"):
-        _execute_request(ctx,
-            request, lambda _actual: (_ for _ in ()).throw(OSError("provider failed")),
-            session_id="ses_שלום", turn_id="wake", **HOST_EXECUTION,
-        )
-    assert status(client, message)["deliveries"][0]["state"] == "delivered"
+        assert status(client, message)["deliveries"][0]["state"] == ("claimed" if failure == "before-ack" else "delivered")
+        assert "refused" in _plugin_reply(ctx, {
+            "delivery_id": message["deliveries"][0]["delivery_id"], "payload": "not admitted",
+        }, session_id="ses_שלום", turn_id="wake")
+        fail = False
+        _observe_request(ctx, request, api_request_id="api-retry-2")
+        _observe_request(ctx, request, api_request_id="api-retry-2")
+        assert ack_calls == ["/relay/deliveries/ack", "/relay/deliveries/ack"]
+        assert status(client, message)["deliveries"][0]["state"] == "delivered"
+        with pytest.raises(OSError, match="provider failed"):
+            _execute_request(ctx,
+                request, lambda _actual: (_ for _ in ()).throw(OSError("provider failed")),
+                session_id="ses_שלום", turn_id="wake", **HOST_EXECUTION,
+            )
+        assert status(client, message)["deliveries"][0]["state"] == "delivered"
 
 
 def test_plugin_accepts_coexisting_plugins_and_provider_configuration(plugin_context):

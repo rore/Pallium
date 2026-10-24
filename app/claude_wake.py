@@ -151,17 +151,15 @@ def schedule_claude_relay_wake(
     def still_pending() -> bool:
         if relay_service is None:
             return True
-        candidate = relay_service.pending_candidate(
-            runtime="claude-code",
-            session_ref=session_ref,
-            container_ref=container_ref,
-            delivery_id=delivery_id,
-        )
-        return (
+        return any(
             isinstance(candidate, dict)
             and candidate.get("delivery_id") == delivery_id
             and candidate.get("recipient_endpoint_id") == endpoint_id
+            and candidate.get("recipient_runtime") == "claude-code"
+            and candidate.get("recipient_session_ref") == session_ref
+            and candidate.get("container_ref") == container_ref
             and candidate.get("state") == "pending"
+            for candidate in relay_service.wake_candidates(delivery_id=delivery_id)
         )
 
     def run() -> None:
@@ -266,15 +264,22 @@ def recover_claude_relay_wakes(
 ) -> None:
     """Schedule only idle capabilities; unresolved reservations stay fenced."""
     recover_claude_registration_intents(registry, relay_service)
-    for candidate in registry.recovery_candidates():
-        if candidate["state"] == "wake_inflight":
-            continue
+    registrations = [candidate for candidate in registry.recovery_candidates()
+                     if candidate["state"] != "wake_inflight"]
+    if not registrations:
+        return
+    try:
+        wake_candidates = relay_service.wake_candidates()
+    except Exception:
+        return
+    for candidate in registrations:
         try:
-            status = relay_service.pending_candidate(
-                runtime="claude-code",
-                session_ref=candidate["session_ref"],
-                container_ref=candidate["container_ref"],
-            )
+            status = next((row for row in wake_candidates
+                if isinstance(row, dict)
+                and row.get("recipient_runtime") == "claude-code"
+                and row.get("recipient_session_ref") == candidate["session_ref"]
+                and row.get("container_ref") == candidate["container_ref"]
+                and row.get("state") == "pending"), None)
         except Exception:
             continue
         if not isinstance(status, dict) or status.get("state") != "pending":
