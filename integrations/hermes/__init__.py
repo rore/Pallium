@@ -245,6 +245,7 @@ def _host_capabilities(ctx):
 
 
 def register(ctx):
+    from .turn_capture import attribution_fields, relay_snapshot, user_source_id
     profile, state = _host_capabilities(ctx)
     base, container = ctx.get_config("service_url", ""), ctx.get_config("container_ref", None)
     topology_signature = _require_pallium_config("pallium-hermes-relay", base, container)
@@ -406,10 +407,37 @@ def register(ctx):
         except ValueError:
             return True
 
+    def fixed_capture(session_id, turn_id, text, record=None, snapshot=None):
+        """Durable passive capture identity; never usable as Relay/MCP authority."""
+        slot = key("capture-turn", session_id + "\0" + turn_id)
+        value = state.get(slot)
+        digest = hashlib.sha256(text.encode()).hexdigest()
+        current = scope(session_id)
+        if value is not None:
+            if (not isinstance(value, dict) or type(value.get("version")) is not int
+                    or value.get("version") != 1 or value.get("state") != "active"
+                    or value.get("profile") != profile or value.get("session_ref") != session_id
+                    or value.get("turn_id") != turn_id or value.get("container_ref") != container
+                    or value.get("actor_ref") != topology_signature[4]
+                    or not current or value.get("endpoint_id") != current["endpoint_id"]
+                    or value.get("user_digest") != digest):
+                raise ValueError("Saved Hermes capture turn is ended or invalid")
+            return value
+        if record is None:
+            return None
+        if not profile_ok() or current != record:
+            raise ValueError("Hermes capture scope changed before freezing")
+        value = {"version": 1, "state": "active", **record, "actor_ref": topology_signature[4],
+                 "turn_id": turn_id, "user_digest": digest,
+                 "capture": {"source_turn_id": user_source_id(profile, container, session_id, turn_id),
+                             "snapshot": list(snapshot)}}
+        state.set(slot, value)
+        return value
+
     def publish_turn(session_id, turn_id, record, reservation):
         if (not profile_ok() or is_ended_turn(session_id, turn_id)
                 or scope(session_id) != {k: v for k, v in record.items()
-                if k not in {"user_digest", "request_source_item_id", "recall_context"}}
+                if k not in {"user_digest", "request_source_item_id", "recall_context", "capture"}}
                 or state.get(key("lifecycle", session_id)) is not None
                 or saved_turn(session_id, turn_id) != reservation):
             return False
@@ -543,7 +571,7 @@ def register(ctx):
                 if resuming:
                     state.set(key("lifecycle", session_id), None)
                 sessions[session_id] = record
-            return record
+            return record, relay_snapshot(session)
 
     def register_session(session_id, expected=None, candidate=None):
         if automatic:
@@ -589,7 +617,7 @@ def register(ctx):
                 return None
             state.set(key("session", session_id), record)
             sessions[session_id] = record
-        return record
+        return record, relay_snapshot(session)
 
     def poll_session(session_id, record):
         if not profile_ok() or automatic and state.get(key("lifecycle", session_id)) is not None:
@@ -667,9 +695,23 @@ def register(ctx):
             return None
         if wake is None or text != _marker(wake["delivery_id"], wake["nonce"]):
             try:
-                record = register_session(session_id, candidate=candidate)
-                if record:
+                if not automatic and not text.startswith("[[PALLIUM_RELAY_"):
+                    with lock:
+                        fixed_capture(session_id, turn_id, text)
+                registration = register_session(session_id, candidate=candidate)
+                if registration:
+                    record, snapshot = registration
                     if automatic:
+                        # Freeze passive provenance before capture HTTP, not active authority.
+                        if reservation["state"] == "pending" and "capture" not in reservation:
+                            with lock:
+                                if (saved_turn(session_id, turn_id) != reservation or not profile_ok()
+                                        or scope(session_id) != record or is_ended_turn(session_id, turn_id)):
+                                    return None
+                                reservation = dict(reservation, capture={
+                                    "source_turn_id": user_source_id(profile, container, session_id, turn_id),
+                                    "snapshot": list(snapshot)})
+                                state.set(turn_key(session_id, turn_id), reservation)
                         frozen = turn_bindings.get((session_id, turn_id))
                         if frozen is None:
                             from .turn_capture import capture_user
@@ -688,7 +730,8 @@ def register(ctx):
                                     session_id=session_id, turn_id=turn_id,
                                     scope={**record, "work_refs": record.get("admitted_work_refs", [])},
                                     user_message=user_message,
-                                    conversation_history=_context.get("conversation_history"))
+                                    conversation_history=_context.get("conversation_history"),
+                                    capture=reservation.get("capture"))
                             finally:
                                 if capture_operation is not None:
                                     finish_operation(session_id, capture_operation)
@@ -697,9 +740,13 @@ def register(ctx):
                                 return None
                             frozen = {**record, "user_digest": hashlib.sha256(text.encode()).hexdigest(),
                                       "request_source_item_id": captured["source_item_id"] if captured else None,
-                                      "recall_context": captured["context"] if captured else ""}
+                                      "recall_context": captured["context"] if captured else "",
+                                      "capture": reservation.get("capture")}
                             if not publish_turn(session_id, turn_id, frozen, reservation):
                                 return None
+                    elif not text.startswith("[[PALLIUM_RELAY_"):
+                        with lock:
+                            fixed_capture(session_id, turn_id, text, record, snapshot)
                     ensure_poller()
                     if bridge:
                         orientation = {
@@ -789,10 +836,11 @@ def register(ctx):
         return {"context": _placeholder(wake["delivery_id"], wake["nonce"])}
 
     def pre_llm_call(session_id="", turn_id="", user_message="", **_context):
-        if not automatic:
-            return pre_llm_call_bound(session_id, turn_id, user_message, **_context)
         if not profile_ok() or not _host_id(session_id) or not _host_id(turn_id):
             return None
+        if not automatic:
+            with session_lock(session_id):
+                return pre_llm_call_bound(session_id, turn_id, user_message, **_context)
         with session_lock(session_id):
             try:
                 if is_ended_turn(session_id, turn_id):
@@ -1195,6 +1243,14 @@ def register(ctx):
                 and (not isinstance(user_message, str) or frozen["user_digest"] !=
                      hashlib.sha256(user_message.encode()).hexdigest())):
             return
+        if not automatic:
+            try:
+                with lock:
+                    if not isinstance(user_message, str):
+                        return
+                    frozen = fixed_capture(session_id, turn_id, user_message)
+            except (TypeError, ValueError):
+                frozen = None  # Passive attribution never gates legacy fixed-mode History.
         container = frozen["container_ref"] if automatic else topology_signature[1]
         # Only this callback's current pair; never backfill prior or injected context.
         user_index = next((i for i in range(len(conversation_history) - 1, -1, -1)
@@ -1244,11 +1300,13 @@ def register(ctx):
         synthetic = user_message.startswith("[[PALLIUM_RELAY_WAKE:")
         if synthetic and (not wake or user_message != _marker(wake["delivery_id"], wake["nonce"])):
             return
+        attribution = (attribution_fields(frozen.get("capture"),
+                         user_source_id(profile, container, session_id, turn_id))
+                       if frozen and not synthetic else {})
         rows = []
         for row in ((assistant,) if synthetic else (user, assistant)):
             uid = row.get("message_uid")
             if automatic and row["role"] == "user":
-                from .turn_capture import user_source_id
                 source_id = user_source_id(profile, container, session_id, turn_id)
             else:
                 source_id = hashlib.sha256((container + "\0" + session_id + "\0" + uid).encode()).hexdigest()
@@ -1257,6 +1315,8 @@ def register(ctx):
                 "content": row["content"], "role": row["role"], "artifact_kind": "message",
                 "container_ref": container, "thread_ref": session_id, "agent_ref": RUNTIME,
                 "actor_ref": frozen["actor_ref"] if automatic else topology_signature[4], "visibility": "private",
+                **(attribution if row["role"] == "user" else
+                   {"source_turn_id": attribution["source_turn_id"]} if attribution else {}),
                 "metadata": {**metadata, **({"hermes_message_uid": uid} if _host_id(uid) else {}),
                              "capture_origin": "relay_wake" if synthetic else "user_turn"},
             })
@@ -1275,6 +1335,8 @@ def register(ctx):
         if not profile_ok() or not _host_id(session_id) or not _host_id(turn_id):
             return
         with lock:
+            if not automatic:
+                state.set(key("capture-turn", session_id + "\0" + turn_id), {"version": 1, "state": "ended"})
             if automatic:
                 # Separate from publication so an in-flight reload cannot overwrite completion.
                 state.set(key("ended-turn", session_id + "\0" + turn_id), True)
@@ -1373,7 +1435,7 @@ def register(ctx):
             thread.join(timeout=HTTP_TIMEOUT_SECONDS + 0.5)
 
     def serialized(callback):
-        if not automatic:
+        if not automatic and callback not in (post_llm_call, clear_session):
             return callback
 
         def invoke(*args, session_id="", **kwargs):
