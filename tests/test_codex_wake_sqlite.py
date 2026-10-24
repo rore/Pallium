@@ -138,9 +138,14 @@ def test_exact_claim_omits_projection_while_delivery_reads_fresh_endpoint_once(
     def observe_router(service, **kwargs):
         original_view = kwargs["relay_service"].session_view_by_endpoint
         def view(endpoint_id):
-            result = original_view(endpoint_id)
-            views.append(result)
-            return result
+            # Measure the endpoint read, excluding separate authority fallback reads.
+            event.listen(storage._relay_engine, "before_cursor_execute", observe_sql)
+            try:
+                result = original_view(endpoint_id)
+                views.append(result)
+                return result
+            finally:
+                event.remove(storage._relay_engine, "before_cursor_execute", observe_sql)
         monkeypatch.setattr(kwargs["relay_service"], "session_view_by_endpoint", view)
         original_admission = kwargs["relay_turn_admission_callback"]
         def admission(request, result, captured):
@@ -156,13 +161,9 @@ def test_exact_claim_omits_projection_while_delivery_reads_fresh_endpoint_once(
         def project(row):
             if "recipient_endpoint_id" not in row:
                 return projector(row)
-            event.listen(storage._relay_engine, "before_cursor_execute", observe_sql)
-            try:
-                result = projector(row)
-                projected.append(result)
-                return result
-            finally:
-                event.remove(storage._relay_engine, "before_cursor_execute", observe_sql)
+            result = projector(row)
+            projected.append(result)
+            return result
         kwargs["relay_activation_callback"] = project
         return original_router(service, **kwargs)
 
