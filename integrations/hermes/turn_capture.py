@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 
 MAX_TEXT = 20_000
 CONTEXT_BUDGET = 2400
@@ -21,6 +22,36 @@ def user_source_id(profile, container, session, turn):
     """Identify an observed turn, independently of its text or later durable UID."""
     encoded = json.dumps([profile, container, session, turn, "user"], ensure_ascii=False)
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def relay_snapshot(session):
+    """Snapshot only an already validated turn response, never current ownership."""
+    if "alias" not in session:
+        return ("unavailable", None)
+    name = session["alias"]
+    if name is None:
+        return ("unnamed", None)
+    if isinstance(name, str) and re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,31}", name):
+        return ("named", name)
+    return ("unavailable", None)
+
+
+def attribution_fields(capture, source_id):
+    """Reject malformed/foreign saved capture metadata without reconstructing it."""
+    if not isinstance(capture, dict) or capture.get("source_turn_id") != source_id:
+        return {}
+    snapshot = capture.get("snapshot")
+    if not isinstance(snapshot, (list, tuple)) or len(snapshot) != 2:
+        return {}
+    state, name = snapshot
+    if not isinstance(state, str):
+        return {}
+    if state == "named":
+        if not isinstance(name, str) or not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,31}", name):
+            return {}
+    elif state not in {"unnamed", "unavailable"} or name is not None:
+        return {}
+    return {"source_turn_id": source_id, "relay_name": name, "relay_attribution_state": state}
 
 
 def _recall(response, scope):
@@ -63,7 +94,7 @@ def _recall(response, scope):
 
 
 def capture_user(http, *, base, profile, session_id, turn_id, scope, user_message,
-                 conversation_history=None):
+                 conversation_history=None, capture=None):
     """Return confirmed capture provenance; never retry an uncertain write."""
     if (not isinstance(scope, dict)
             or not all(_identifier(value) for value in
@@ -95,7 +126,8 @@ def capture_user(http, *, base, profile, session_id, turn_id, scope, user_messag
             "actor_ref": scope["actor_ref"], "agent_ref": "hermes", "visibility": "private",
             "query_text": user_message[:500], "query_limit": 5,
             "query_actor_ref": scope["actor_ref"], "query_trigger_origin": "user_prompt_submit",
-            "metadata": metadata, "work_refs": list(work_refs)}
+            "metadata": metadata, "work_refs": list(work_refs),
+            **attribution_fields(capture, source_id)}
     try:
         response = http(base, "POST", "/item-and-query", body=body)
         if not isinstance(response, dict) or not _identifier(response.get("source_item_id")):
