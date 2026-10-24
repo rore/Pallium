@@ -570,6 +570,8 @@ def test_codex_exact_wake_real_http_response_delay_is_bounded_and_traceable(
     from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
 
     cleanup = ExitStack()
+    request.addfinalizer(cleanup.close)
+    retained_resources = []
     storage_closed = threading.Event()
     original_storage = app_main.build_storage_provider
 
@@ -578,8 +580,8 @@ def test_codex_exact_wake_real_http_response_delay_is_bounded_and_traceable(
         original_close = storage.close
 
         def close():
-            storage_closed.set()
             original_close()
+            storage_closed.set()
 
         monkeypatch.setattr(storage, "close", close)
         cleanup.callback(storage.close)
@@ -605,7 +607,8 @@ def test_codex_exact_wake_real_http_response_delay_is_bounded_and_traceable(
         def redirect_request(self, *_args, **_kwargs):
             return None
 
-    monkeypatch.setattr(hook._common, "_build_opener", lambda *handlers: urllib.request.build_opener(
+    original_build_opener = hook._common._build_opener
+    monkeypatch.setattr(hook._common, "_build_opener", lambda *handlers: original_build_opener(
         urllib.request.ProxyHandler({}), NoRedirectHandler(), *handlers,
     ))
     import scripts.live_funnel_smoke as live_funnel_smoke
@@ -649,16 +652,21 @@ def test_codex_exact_wake_real_http_response_delay_is_bounded_and_traceable(
             attempt(proxy_server.server_close)
         if server_thread is not None:
             attempt(lambda: server_thread.join(timeout=2))
-        if upstream_client is not None:
-            attempt(upstream_client.close)
         for handler in proxy_handlers:
             attempt(lambda handler=handler: handler.join(timeout=3))
         handlers_drained = all(not handler.is_alive() for handler in proxy_handlers)
+        if handlers_drained and upstream_client is not None:
+            attempt(upstream_client.close)
         attempt(lambda: upstream_server.__exit__())
         upstream_thread_drained = upstream_server._thread is None or not upstream_server._thread.is_alive()
+        proxy_thread_drained = server_thread is None or not server_thread.is_alive()
         storage_closed_by_lifespan = storage_closed.is_set()
-        attempt(cleanup.close)
-        if server_thread is not None and server_thread.is_alive():
+        if handlers_drained and upstream_thread_drained and proxy_thread_drained:
+            attempt(cleanup.close)
+        else:
+            # Retain resources rather than dispose underneath an unsettled owner.
+            retained_resources.extend((cleanup.pop_all(), upstream_client, upstream_server))
+        if not proxy_thread_drained:
             errors.append(AssertionError("proxy server thread did not stop"))
         if not handlers_drained:
             errors.append(AssertionError("proxy request handlers did not drain"))
