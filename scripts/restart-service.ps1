@@ -42,14 +42,73 @@ function Get-ReadinessProbeTimeoutSeconds(
     return [int][Math]::Min($MaximumSeconds, $remaining)
 }
 
-function Stop-ProcessTree([int]$ProcessId, [switch]$Strict) {
-    $failed = $false
+function Get-PreparationWaitMilliseconds([switch]$Cleanup) {
+    $remaining = $preparationBudgetSeconds * 1000 - $preparationTimer.Elapsed.TotalMilliseconds
+    if (-not $Cleanup) { $remaining -= $preparationReserveSeconds * 1000 }
+    if ($remaining -le 0) { return 0 }
+    return [int][Math]::Floor([Math]::Min([int]::MaxValue, $remaining))
+}
+
+function Invoke-PreparationProcess([hashtable]$ProcessArguments, [string]$Name) {
+    $child = $null
+    $settled = $false
+    $exitCode = $null
+    $primaryFailure = $null
+    $cleanupFailures = @()
     try {
-        taskkill /F /T /PID $ProcessId 2>$null | Out-Null
-        $failed = $LASTEXITCODE -ne 0
+        if ((Get-PreparationWaitMilliseconds) -le 0) { throw 'shared preparation work budget elapsed' }
+        $child = Start-Process @ProcessArguments -WindowStyle Hidden -PassThru
+        if ($null -eq $child) { throw 'process start returned no owned handle' }
+        $waitMilliseconds = Get-PreparationWaitMilliseconds
+        if ($waitMilliseconds -le 0 -or -not $child.WaitForExit($waitMilliseconds)) {
+            throw 'shared preparation work budget elapsed before child exit'
+        }
+        $settled = $true
+        $exitCode = $child.ExitCode
     } catch {
-        $failed = $true
+        $primaryFailure = $_.Exception.Message
+    } finally {
+        if ($null -ne $child) {
+            if (-not $settled) {
+                try {
+                    $child.Refresh()
+                    $settled = $child.HasExited
+                } catch {
+                    $cleanupFailures += "owned root inspection failed: $($_.Exception.Message)"
+                }
+                if (-not $settled) {
+                    try {
+                        # The returned handle authorizes this root only, not descendant settlement.
+                        [void]$child.Kill()
+                        $waitMilliseconds = Get-PreparationWaitMilliseconds -Cleanup
+                        $settled = $child.WaitForExit($waitMilliseconds)
+                        if (-not $settled) { throw 'owned root exit remains unconfirmed' }
+                    } catch {
+                        $cleanupFailures += "owned root cleanup failed: $($_.Exception.Message)"
+                    }
+                }
+            }
+            try { [void]$child.Dispose() } catch {
+                $cleanupFailures += "owned handle disposal failed: $($_.Exception.Message)"
+            }
+        }
     }
+    if ($primaryFailure -or $cleanupFailures.Count) {
+        throw ("{0}: {1}" -f $Name, ((@($primaryFailure) + $cleanupFailures | Where-Object { $_ }) -join '; '))
+    }
+    return $exitCode
+}
+
+function Stop-ProcessTree([int]$ProcessId, [switch]$Strict) {
+    try {
+        $exitCode = Invoke-PreparationProcess @{
+            FilePath = 'taskkill.exe'
+            ArgumentList = @('/F', '/T', '/PID', [string]$ProcessId)
+        } "taskkill for PID $ProcessId"
+    } catch {
+        Stop-WithError "taskkill could not settle for PID ${ProcessId}: $($_.Exception.Message)"
+    }
+    $failed = $exitCode -ne 0
     if ($failed) {
         if ($Strict) { Stop-WithError "taskkill failed for PID $ProcessId" }
         Write-Host "    taskkill reported a partial failure for PID $ProcessId; continuing cleanup verification..."
@@ -161,25 +220,28 @@ if (-not $portText) {
 if (-not [int]::TryParse($portText, [ref]$Port) -or $Port -lt 1 -or $Port -gt 65535) {
     Stop-WithError "Could not resolve a valid installed service port (1..65535) from $vbsPath"
 }
+$preparationBudgetSeconds = $ReadinessTimeoutSeconds
+$preparationReserveSeconds = [Math]::Min(2.0, $preparationBudgetSeconds / 4.0)
+$preparationTimer = [Diagnostics.Stopwatch]::StartNew()
 try {
     $preflightArgs = @{
         FilePath = $pythonPath
         ArgumentList = '-c "import app.run, app.main"'
-        WindowStyle = "Hidden"
-        Wait = $true
-        PassThru = $true
     }
     if ($workingDir) {
         $preflightArgs.WorkingDirectory = $workingDir
     }
-    $preflight = Start-Process @preflightArgs
+    $preflightExitCode = Invoke-PreparationProcess $preflightArgs "Installed service import preflight"
 } catch {
     Stop-WithError "Installed service import preflight could not run: $($_.Exception.Message)"
 }
-if ($preflight.ExitCode -ne 0) {
-    Stop-WithError "Installed service import preflight failed with exit code $($preflight.ExitCode); the running service was not stopped."
+if ($preflightExitCode -ne 0) {
+    Stop-WithError "Installed service import preflight failed with exit code $($preflightExitCode); the running service was not stopped."
 }
 
+if ((Get-PreparationWaitMilliseconds) -le 2000) {
+    Stop-WithError "Preparation work budget cannot fit settlement before stopping Pallium; the running service was not stopped."
+}
 Write-Host "Stopping Pallium..."
 Stop-ScheduledTask -TaskName $TaskName -ErrorAction $(if ($StopOnly) { "Stop" } else { "SilentlyContinue" })
 
@@ -254,6 +316,9 @@ foreach ($p in $serviceProcs) {
     Stop-ProcessTree $p.ProcessId -Strict:$StopOnly
 }
 
+if ((Get-PreparationWaitMilliseconds) -le 2000) {
+    Stop-WithError "Preparation work budget cannot fit the two-second settlement wait; service remains stopped."
+}
 Start-Sleep -Seconds 2
 
 $remainingPids = @(Get-ListenerPids $Port -Strict:$StopOnly)
@@ -300,14 +365,17 @@ Write-Host "Initializing and verifying Codex wake state..."
 try {
     $wakeInitArgs = $preflightArgs.Clone()
     $wakeInitArgs.ArgumentList = ('-m app.run service initialize-wakes --home "{0}"' -f $ServiceHome)
-    $wakeInit = Start-Process @wakeInitArgs
+    $wakeInitExitCode = Invoke-PreparationProcess $wakeInitArgs "Wake initialization"
 } catch {
     Stop-WithError "Wake initialization could not run: $($_.Exception.Message)"
 }
-if ($wakeInit.ExitCode -ne 0) {
-    Stop-WithError "Wake initialization failed with exit code $($wakeInit.ExitCode); service remains stopped."
+if ($wakeInitExitCode -ne 0) {
+    Stop-WithError "Wake initialization failed with exit code $($wakeInitExitCode); service remains stopped."
 }
 
+if ((Get-PreparationWaitMilliseconds) -le 0) {
+    Stop-WithError "Preparation work budget elapsed before starting Pallium; service remains stopped."
+}
 Write-Host "Starting Pallium..."
 try {
     Start-ScheduledTask -TaskName $TaskName -ErrorAction Stop

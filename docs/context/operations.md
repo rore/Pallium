@@ -356,6 +356,16 @@ status remain capped at two seconds, and every request is clipped to the one
 overall readiness deadline. The default readiness budget is three minutes; an explicit
 `-ReadinessTimeoutSeconds` value keeps its exact finite deadline.
 
+Before task launch, wrapper-owned preflight, initialization and taskkill children
+share a separate preparation allowance of the same configured duration, including
+a small cleanup reserve. Preparation does not consume the readiness allowance.
+A preparation allowance too short to cover the retained two-second stop-settlement
+delay is rejected before stopping the service. A timed-out or unsettled child fails
+closed: preflight failure never stops the running service, and uncertain initialization never starts a replacement. Only
+the returned child handle is cleanup authority; root termination does not prove
+descendant settlement. Synchronous Windows and process-control calls are not
+covered by a universal wall-clock guarantee.
+
 Generated Windows VBS launchers keep the service hidden, wait for its termination,
 and return its exit status to the script host. Fatal supervisor recovery exhaustion
 is a failure; requested shutdown is successful. Existing launchers are not rewritten

@@ -49,17 +49,86 @@ function Get-ScheduledTask {
     }
 }
 
+$script:PreparationMilliseconds = 0.0
+$script:OwnedChildCount = 0
+function Advance-PreparationTestClock([double]$Milliseconds) {
+    if ($env:RW010_PREPARATION_CLOCK -eq '1') { $script:PreparationMilliseconds += $Milliseconds }
+}
+function New-PreparationTestTimer {
+    $timer = [pscustomobject]@{}
+    $timer | Add-Member ScriptProperty Elapsed { [TimeSpan]::FromMilliseconds($script:PreparationMilliseconds) }
+    return $timer
+}
+
 function Start-Process {
     param($FilePath, $ArgumentList, $WorkingDirectory, $WindowStyle, [switch]$Wait, [switch]$PassThru)
+    if ($Wait -or -not $PassThru -or $WindowStyle -ne 'Hidden') { throw 'owned child start must be hidden, retained and nonblocking' }
     Log-Call "Start-Process:$FilePath"
-    if ($ArgumentList -match 'service initialize-wakes') { Log-Call "Initialize-Wakes" }
-    if ($PSBoundParameters.ContainsKey("WorkingDirectory")) {
+    $role = if ($FilePath -eq 'taskkill.exe') { 'taskkill' } elseif ($ArgumentList -match 'service initialize-wakes') { 'init' } else { 'preflight' }
+    if ($role -eq 'init') { Log-Call 'Initialize-Wakes' }
+    if ($role -eq 'taskkill') {
+        $script:TaskkillCalls++
+        Log-Call ('taskkill ' + ($ArgumentList -join ' '))
+    } elseif ($PSBoundParameters.ContainsKey('WorkingDirectory')) {
         Log-Call "PreflightWorkingDirectory:$WorkingDirectory"
     } else {
-        Log-Call "PreflightWorkingDirectory:<omitted>"
+        Log-Call 'PreflightWorkingDirectory:<omitted>'
     }
-    $exitCode = if (($env:RW010_SCENARIO -eq "preflight_failure") -or (($env:RW010_SCENARIO -eq "wake_import_failure") -and ($ArgumentList -match 'service initialize-wakes'))) { 7 } else { 0 }
-    [pscustomobject]@{ ExitCode = $exitCode }
+    if ($env:RW010_PROCESS_FAULT -eq "${role}:spawn") { throw 'simulated spawn failure' }
+    if ($env:RW010_PROCESS_FAULT -eq "${role}:null") { return $null }
+    $exitCode = if (($role -eq 'preflight' -and $env:RW010_SCENARIO -eq 'preflight_failure') -or ($role -eq 'init' -and $env:RW010_SCENARIO -eq 'wake_import_failure')) { 7 } else { 0 }
+    if ($role -eq 'taskkill' -and $script:TaskkillCalls -eq 1 -and $env:RW010_SCENARIO -in @('partial_taskkill', 'nonzero_taskkill')) { $exitCode = 1 }
+    $script:OwnedChildCount++
+    $process = [pscustomobject]@{ Id = (9300 + $script:OwnedChildCount); Role = $role; HasExited = $false; Code = $exitCode; Killed = $false }
+    $process | Add-Member ScriptProperty ExitCode {
+        Log-Call "ExitCode:$($this.Role)"
+        if (-not $this.HasExited) { throw 'exit code read before confirmed exit' }
+        return $this.Code
+    }
+    $process | Add-Member ScriptMethod WaitForExit {
+        param([int]$Milliseconds)
+        Log-Call "Wait:$($this.Role):$Milliseconds"
+        if ($this.Killed) {
+            if ($env:RW010_PROCESS_FAULT -eq "$($this.Role):cleanup_wait_error") { throw 'simulated cleanup wait failure' }
+            if ($env:RW010_PROCESS_FAULT -eq "$($this.Role):cleanup_timeout") {
+                Advance-PreparationTestClock $Milliseconds
+                return $false
+            }
+            $this.HasExited = $true
+            return $true
+        }
+        if ($env:RW010_PROCESS_FAULT -eq "$($this.Role):wait_error") {
+            Advance-PreparationTestClock 100
+            throw 'simulated wait failure'
+        }
+        if ($env:RW010_PROCESS_FAULT -in @("$($this.Role):timeout", "$($this.Role):kill_error", "$($this.Role):cleanup_timeout", "$($this.Role):cleanup_wait_error", "$($this.Role):refresh_error", "$($this.Role):exited_on_refresh")) {
+            Advance-PreparationTestClock $Milliseconds
+            return $false
+        }
+        if ($env:RW010_SCENARIO -eq 'prep_cumulative' -and $this.Role -in @('preflight', 'taskkill')) { Advance-PreparationTestClock 600 }
+        if ($env:RW010_SCENARIO -eq 'prep_near_limit_ready' -and $this.Role -eq 'preflight') { Advance-PreparationTestClock 175000 }
+        $this.HasExited = $true
+        return $true
+    }
+    $process | Add-Member ScriptMethod Refresh {
+        Log-Call "Refresh:$($this.Role)"
+        if ($env:RW010_PROCESS_FAULT -eq "$($this.Role):refresh_error") { throw 'simulated refresh failure' }
+        if ($env:RW010_PROCESS_FAULT -eq "$($this.Role):exited_on_refresh") { $this.HasExited = $true }
+    }
+    $process | Add-Member ScriptMethod Kill {
+        Log-Call "Kill:$($this.Role):$($this.Id)"
+        if ($env:RW010_PROCESS_FAULT -eq "$($this.Role):kill_error") { throw 'simulated root kill failure' }
+        $this.Killed = $true
+    }
+    $process | Add-Member ScriptMethod Dispose {
+        Log-Call "Dispose:$($this.Role)"
+        if ($env:RW010_SCENARIO -eq 'prep_expired_before_stop' -and $this.Role -eq 'preflight') { Advance-PreparationTestClock 3000 }
+        if ($env:RW010_SCENARIO -eq 'prep_sleep_exact_boundary' -and $this.Role -eq 'preflight') { Advance-PreparationTestClock 1000 }
+        if ($env:RW010_SCENARIO -eq 'prep_sleep_just_fits' -and $this.Role -eq 'preflight') { Advance-PreparationTestClock 998 }
+        if ($env:RW010_SCENARIO -eq 'prep_expired_before_start' -and $this.Role -eq 'init') { Advance-PreparationTestClock 1000 }
+        if ($env:RW010_PROCESS_FAULT -eq "$($this.Role):dispose_error") { throw 'simulated disposal failure' }
+    }
+    return $process
 }
 
 function Stop-ScheduledTask {
@@ -79,21 +148,6 @@ function Stop-Process {
 }
 
 $script:TaskkillCalls = 0
-function taskkill {
-    param([Parameter(ValueFromRemainingArguments = $true)]$Arguments)
-    $script:TaskkillCalls++
-    Log-Call ("taskkill " + ($Arguments -join " "))
-    if ($env:RW010_SCENARIO -eq "partial_taskkill" -and $script:TaskkillCalls -eq 1) {
-        $global:LASTEXITCODE = 1
-        throw "simulated child-exit race"
-    }
-    if ($env:RW010_SCENARIO -eq "nonzero_taskkill" -and $script:TaskkillCalls -eq 1) {
-        $global:LASTEXITCODE = 1
-        return
-    }
-    $global:LASTEXITCODE = 0
-}
-
 $script:NetTcpCalls = 0
 function Get-NetTCPConnection {
     param($LocalPort, $State, $ErrorAction)
@@ -122,6 +176,7 @@ function Get-NetTCPConnection {
 function Get-Process {
     param($Id, $ErrorAction)
     if ($env:RW016_PID -and $Id -eq [int]$env:RW016_PID) {
+        if ($env:RW010_SCENARIO -eq 'prep_expired_before_taskkill') { Advance-PreparationTestClock 3000 }
         return [pscustomobject]@{ Id = $Id }
     }
     return $null
@@ -130,6 +185,8 @@ function Get-Process {
 function Get-CimInstance {
     param($ClassName, $Filter, $ErrorAction)
     Log-Call "Get-CimInstance:$Filter"
+    if ($env:RW010_SCENARIO -eq 'prep_expired_before_init' -and -not $Filter) { Advance-PreparationTestClock 1000 }
+    if ($env:RW010_SCENARIO -eq 'prep_expired_before_sleep' -and $Filter -like '*app.run service run*') { Advance-PreparationTestClock 1000 }
     if ($env:RW010_SCENARIO -eq "enumeration_failure" -and -not $Filter) {
         throw "simulated process enumeration failure"
     }
@@ -163,6 +220,7 @@ function Get-CimInstance {
 
 function Start-Sleep {
     param($Seconds, $Milliseconds)
+    if ($Seconds -eq 2) { Advance-PreparationTestClock 2000 }
     if ($null -ne $Milliseconds) { Log-Call "Sleep:$Milliseconds" }
     else { Log-Call "Sleep:$($Seconds * 1000)" }
 }
@@ -245,8 +303,10 @@ def _run_restart(
     working_directory: Path | None = None,
     service_home: Path | None = None,
     pid_file_value: int | None = None,
-    readiness_timeout_seconds: float = 2.0,
+    readiness_timeout_seconds: float | str = 4.0,
     stop_only: bool = False,
+    process_fault: str = "",
+    preparation_clock: bool = False,
 ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
     shell = shutil.which("pwsh") or shutil.which("powershell")
     assert shell is not None, "PowerShell is required on Windows"
@@ -256,6 +316,13 @@ def _run_restart(
     service_home = service_home or tmp_path / "service-home"
     vbs = tmp_path / "launcher.vbs"
     harness.write_text(HARNESS, encoding="utf-8")
+    script = RESTART_SCRIPT
+    if preparation_clock:
+        source = RESTART_SCRIPT.read_text(encoding="utf-8")
+        constructor = "$preparationTimer = [Diagnostics.Stopwatch]::StartNew()"
+        assert source.count(constructor) == 1
+        script = tmp_path / "restart-preparation-clock.ps1"
+        script.write_text(source.replace(constructor, "$preparationTimer = New-PreparationTestTimer"), encoding="utf-8")
     if pid_file_value is not None:
         (service_home / "run").mkdir(parents=True, exist_ok=True)
         (service_home / "run" / "pallium.pid").write_text(str(pid_file_value))
@@ -321,7 +388,7 @@ def _run_restart(
         HOME=str(tmp_path / "home"),
         APPDATA=str(tmp_path / "profile" / "AppData" / "Roaming"),
         RW010_SCENARIO=scenario,
-        RW010_SCRIPT=str(RESTART_SCRIPT),
+        RW010_SCRIPT=str(script),
         RW010_PYTHON=str(sys.executable),
         RW010_NATIVE_PYTHON=str(sys._base_executable),
         RW010_SERVICE_HOME=str(service_home),
@@ -335,6 +402,8 @@ def _run_restart(
         RW016_PID="" if pid_file_value is None else str(pid_file_value),
         RW010_READINESS_TIMEOUT_SECONDS=str(readiness_timeout_seconds),
         RW010_STOP_ONLY="1" if stop_only else "0",
+        RW010_PROCESS_FAULT=process_fault,
+        RW010_PREPARATION_CLOCK="1" if preparation_clock else "0",
     )
     result = subprocess.run(
         [shell, "-NoLogo", "-NoProfile", "-NonInteractive", "-File", str(harness)],
@@ -389,6 +458,8 @@ def test_stop_only_does_not_import_wakes(tmp_path: Path) -> None:
     result, calls = _run_restart(tmp_path, "success", stop_only=True)
     assert result.returncode == 0, _output(result)
     assert "Initialize-Wakes" not in calls
+    assert f"Start-Process:{sys.executable}" in calls
+    assert calls.count("Dispose:preflight") == 1
 
 
 def test_preflight_failure_never_stops_the_healthy_service(tmp_path: Path) -> None:
@@ -652,16 +723,16 @@ def test_terminal_readiness_exhausts_exact_budget_without_success(
     last_endpoint: str,
 ) -> None:
     result, calls = _run_restart(
-        tmp_path, scenario, readiness_timeout_seconds=2.1,
+        tmp_path, scenario, readiness_timeout_seconds=4.1,
     )
 
     output = _assert_failure(result)
-    assert "failed the 2.1-second readiness budget" in output
+    assert "failed the 4.1-second readiness budget" in output
     assert last_check in output
     assert calls.count(last_endpoint) >= 1
     if scenario == "terminal_queue":
         assert all(
-            int(call.rsplit(":", 1)[1]) <= 2
+            int(call.rsplit(":", 1)[1]) <= 4
             for call in calls
             if call.startswith("Timeout:/debug/queue/health:")
         )
@@ -690,3 +761,161 @@ def test_stop_only_rejects_quoted_codex_queue_survivor(tmp_path: Path) -> None:
     output = _assert_failure(result)
     assert "Managed Pallium process(es) survived stop: 7373" in output
     assert "Start-ScheduledTask" not in calls
+
+@pytest.mark.parametrize("role", ["preflight", "init", "taskkill"])
+@pytest.mark.parametrize("fault", ["spawn", "null", "timeout", "wait_error", "kill_error", "cleanup_timeout", "cleanup_wait_error", "refresh_error", "exited_on_refresh", "dispose_error"])
+def test_owned_preparation_child_failure_is_fatal_and_disposes_once(tmp_path, role, fault):
+    result, calls = _run_restart(
+        tmp_path, "success", pid_file_value=5151,
+        process_fault=f"{role}:{fault}", preparation_clock=True,
+    )
+    output = _assert_failure(result)
+    assert "Start-ScheduledTask" not in calls
+    assert ("Stop-ScheduledTask" in calls) is (role != "preflight")
+    assert calls.count(f"Dispose:{role}") == (0 if fault in {"spawn", "null"} else 1)
+    if fault == "dispose_error":
+        assert f"ExitCode:{role}" in calls
+    else:
+        assert f"ExitCode:{role}" not in calls
+    waits = [int(call.rsplit(":", 1)[1]) for call in calls if call.startswith(f"Wait:{role}:")]
+    assert all(0 <= value <= 2_147_483_647 for value in waits)
+    work_wait = 1000 if role == "init" else 3000
+    if fault in {"spawn", "null"}:
+        message = "simulated spawn failure" if fault == "spawn" else "process start returned no owned handle"
+        assert waits == [] and message in output
+        assert not any(call.startswith(f"Kill:{role}:") for call in calls)
+    elif fault == "dispose_error":
+        assert waits == [work_wait] and "simulated disposal failure" in output
+        assert not any(call.startswith(f"Kill:{role}:") for call in calls)
+    elif fault == "exited_on_refresh":
+        assert waits == [work_wait]
+        assert "shared preparation work budget elapsed" in output
+        assert f"Refresh:{role}" in calls
+        assert not any(call.startswith(f"Kill:{role}:") for call in calls)
+    else:
+        assert waits[0] == work_wait
+        assert any(call.startswith(f"Kill:{role}:93") for call in calls)
+        if fault == "wait_error":
+            cleanup_wait = 1900 if role == "init" else 3900
+            assert waits == [work_wait, cleanup_wait] and "simulated wait failure" in output
+        elif fault == "kill_error":
+            assert waits == [work_wait]
+            assert "shared preparation work budget elapsed" in output and "simulated root kill failure" in output
+        else:
+            assert waits == [work_wait, 1000]
+            assert "shared preparation work budget elapsed" in output
+            if fault == "cleanup_timeout":
+                assert "owned root exit remains unconfirmed" in output
+            elif fault == "cleanup_wait_error":
+                assert "simulated cleanup wait failure" in output
+            elif fault == "refresh_error":
+                assert "simulated refresh failure" in output
+
+
+def test_preparation_children_share_one_budget_including_cleanup(tmp_path):
+    result, calls = _run_restart(
+        tmp_path, "prep_cumulative", pid_file_value=5151,
+        process_fault="init:timeout", preparation_clock=True, readiness_timeout_seconds=6,
+    )
+    _assert_failure(result)
+    assert [call for call in calls if call.startswith("Wait:")] == [
+        "Wait:preflight:4500", "Wait:taskkill:3900", "Wait:init:1300", "Wait:init:1500",
+    ]
+    assert "Start-ScheduledTask" not in calls
+    assert all(calls.count(f"Dispose:{role}") == 1 for role in ("preflight", "taskkill", "init"))
+
+
+@pytest.mark.parametrize("phase", ["stop", "start"])
+def test_expired_preparation_is_checked_before_service_mutation(tmp_path, phase):
+    result, calls = _run_restart(tmp_path, f"prep_expired_before_{phase}", preparation_clock=True)
+    expected = "before stopping" if phase == "stop" else "before starting"
+    assert expected in _assert_failure(result)
+    assert ("Stop-ScheduledTask" in calls) is (phase == "start")
+    assert "Start-ScheduledTask" not in calls
+
+
+def test_preparation_does_not_consume_separate_readiness_allowance(tmp_path):
+    result, calls = _run_restart(tmp_path, "prep_near_limit_ready", readiness_timeout_seconds=180, preparation_clock=True)
+    assert result.returncode == 0, _output(result)
+    assert "Wait:preflight:178000" in calls and "Wait:init:1000" in calls
+    assert "Timeout:/debug/queue/health:10" in calls
+    assert calls.index("Initialize-Wakes") < calls.index("Start-ScheduledTask") < calls.index("URI:http://127.0.0.1:21987/health")
+
+
+def test_large_finite_preparation_wait_is_clamped_before_int_conversion(tmp_path):
+    result, calls = _run_restart(tmp_path, "success", readiness_timeout_seconds=1e300, preparation_clock=True)
+    assert result.returncode == 0, _output(result)
+    assert [call for call in calls if call.startswith("Wait:")] == [
+        "Wait:preflight:2147483647", "Wait:init:2147483647",
+    ]
+
+@pytest.mark.parametrize("fault", ["timeout", "cleanup_timeout"])
+def test_stop_only_taskkill_timeout_and_uncertain_cleanup_remain_fatal(tmp_path, fault):
+    result, calls = _run_restart(
+        tmp_path, "success", pid_file_value=5151, stop_only=True,
+        process_fault=f"taskkill:{fault}", preparation_clock=True,
+    )
+    output = _assert_failure(result)
+    assert "taskkill could not settle for PID 5151" in output
+    assert calls.count("Dispose:taskkill") == 1
+    assert "Stop-ScheduledTask" in calls and "Start-ScheduledTask" not in calls
+    assert "Initialize-Wakes" not in calls and "Pallium stopped." not in output
+    if fault == "cleanup_timeout":
+        assert "owned root exit remains unconfirmed" in output
+
+
+@pytest.mark.parametrize("role", ["taskkill", "init"])
+def test_expired_preparation_does_not_launch_the_next_child(tmp_path, role):
+    result, calls = _run_restart(
+        tmp_path, f"prep_expired_before_{role}", pid_file_value=5151, preparation_clock=True,
+    )
+    assert "shared preparation work budget elapsed" in _assert_failure(result)
+    assert "Stop-ScheduledTask" in calls and "Start-ScheduledTask" not in calls
+    if role == "taskkill":
+        assert "Start-Process:taskkill.exe" not in calls
+    else:
+        assert calls.count("Dispose:taskkill") == 1
+    assert "Initialize-Wakes" not in calls
+
+
+@pytest.mark.parametrize("budget", [0, "NaN", "Infinity", "-Infinity"])
+def test_invalid_preparation_budget_never_launches_or_stops(tmp_path, budget):
+    result, calls = _run_restart(tmp_path, "success", readiness_timeout_seconds=budget)
+    assert "must be a finite value of at least 1" in _assert_failure(result)
+    assert not any(call.startswith("Start-Process:") for call in calls)
+    assert "Stop-ScheduledTask" not in calls and "Start-ScheduledTask" not in calls
+
+@pytest.mark.parametrize("stop_only", [False, True])
+@pytest.mark.parametrize("budget", [1, 2, 2.1])
+def test_low_preparation_budget_preserves_running_service(tmp_path, stop_only, budget):
+    result, calls = _run_restart(
+        tmp_path, "success", readiness_timeout_seconds=budget,
+        preparation_clock=True, stop_only=stop_only,
+    )
+    assert "cannot fit settlement before stopping" in _assert_failure(result)
+    assert calls.count("Dispose:preflight") == 1
+    assert "Stop-ScheduledTask" not in calls and "Start-ScheduledTask" not in calls
+    assert "Sleep:2000" not in calls and "Initialize-Wakes" not in calls
+
+
+@pytest.mark.parametrize("scenario,should_stop", [
+    ("prep_sleep_exact_boundary", False), ("prep_sleep_just_fits", True),
+])
+def test_fixed_settlement_requires_strictly_more_than_two_seconds(tmp_path, scenario, should_stop):
+    result, calls = _run_restart(tmp_path, scenario, preparation_clock=True)
+    assert ("Stop-ScheduledTask" in calls) is should_stop
+    if should_stop:
+        assert result.returncode == 0, _output(result)
+        assert calls.count("Sleep:2000") == 1
+        init_wait, = [int(call.rsplit(":", 1)[1]) for call in calls if call.startswith("Wait:init:")]
+        assert 0 < init_wait <= 2
+    else:
+        assert "cannot fit settlement before stopping" in _assert_failure(result)
+        assert "Sleep:2000" not in calls and "Start-ScheduledTask" not in calls
+
+
+def test_preparation_expiring_after_stop_does_not_begin_fixed_sleep(tmp_path):
+    result, calls = _run_restart(tmp_path, "prep_expired_before_sleep", preparation_clock=True)
+    assert "cannot fit the two-second settlement wait" in _assert_failure(result)
+    assert "Stop-ScheduledTask" in calls and "Start-ScheduledTask" not in calls
+    assert "Sleep:2000" not in calls and "Initialize-Wakes" not in calls
