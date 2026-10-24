@@ -413,3 +413,72 @@ def test_public_hook_rejects_unhashable_identity_before_lock(role_plugin, field,
         conversation_history=[{"role": "user", "content": TEXT, "message_uid": "invalid-user"},
                               {"role": "assistant", "content": TEXT + " answer", "message_uid": "invalid-answer"}])
     assert len(data["calls"]) == count
+
+
+def _reject_accepted_turn_response(client, data, monkeypatch, field, value):
+    _name(client, data, "planner")
+    before = copy.deepcopy(data["ctx"].state.values)
+    snapshots = {key: row for key, row in before.items() if isinstance(row, dict) and "capture" in row}
+    authorities = {key: row for key, row in before.items() if key.startswith("session:")}
+    http = data["module"]._json_request
+    responses = []
+
+    def malformed_response(base, method, path, **kwargs):
+        result = http(base, method, path, **kwargs)
+        if method == "POST" and path == "/relay/turn":
+            result["session"]["alias"] = "forged-role"
+            if field == "session":
+                result["session"] = value
+            elif field == "missing:session":
+                result.pop("session")
+            elif field.startswith("missing:"):
+                result["session"].pop(field.split(":", 1)[1], None)
+            else:
+                result["session"][field] = value
+            responses.append(copy.deepcopy(result))
+        return result
+
+    monkeypatch.setattr(data["module"], "_json_request", malformed_response)
+    assert data["pre"]("refused-response") is None
+    assert len(responses) == 1  # Direct ordinary POST response, never cached GET.
+    saved = data["ctx"].state.values
+    assert {key: row for key, row in saved.items() if isinstance(row, dict) and "capture" in row} == snapshots
+    assert {key: row for key, row in saved.items() if key.startswith("session:")} == authorities
+    assert not [row for row in data["attempts"] if row[0:2] == ("POST", "/item-and-query")]
+    if data["mode"] == "cwd":
+        assert any(key.startswith("transition:") and row is not None for key, row in saved.items())
+        assert data["pre"]("refused-response") is None
+        assert len(responses) == 1  # Pending/uncertain admission cannot repair the old turn.
+    attempts = len(_attempts(data))
+    _post(data, "refused-response")
+    rows = _search(client, data)["results"]
+    if data["mode"] == "fixed":
+        assert len(_attempts(data)) == attempts + 1
+        _unkeyed_legacy_pair(data, "refused-response")
+        assert len(rows) == 2 and {row["role"] for row in rows} == {"user", "assistant"}
+        assert all(row["relay_name"] is None and row["relay_attribution_state"] == "unavailable" for row in rows)
+    else:
+        assert len(_attempts(data)) == attempts and rows == []
+    assert _search(client, data, "forged-role")["results"] == []
+    assert _search(client, data, "planner")["results"] == []
+
+
+@pytest.mark.parametrize("field,value", [
+    ("runtime", "codex"), ("session_ref", "foreign-session"),
+    ("container_ref", "git:example.test/team/foreign"),
+    ("missing:endpoint_id", None), ("endpoint_id", ""),
+    ("state", "closed"), ("destination_health", "unreachable"),
+    ("missing:session", None), ("session", None), ("session", []),
+])
+def test_direct_turn_response_identity_fault_never_freezes_role(client, role_plugin, monkeypatch, field, value):
+    _reject_accepted_turn_response(client, role_plugin, monkeypatch, field, value)
+
+
+@pytest.mark.parametrize("role_plugin", ["cwd"], indirect=True)
+@pytest.mark.parametrize("field,value", [
+    ("missing:guarded_lifecycle", None), ("guarded_lifecycle", False),
+    ("missing:scope_generation", None), ("scope_generation", True),
+    ("scope_generation", -1), ("scope_generation", 1.5),
+])
+def test_direct_automatic_turn_response_requires_guarded_generation(client, role_plugin, monkeypatch, field, value):
+    _reject_accepted_turn_response(client, role_plugin, monkeypatch, field, value)
