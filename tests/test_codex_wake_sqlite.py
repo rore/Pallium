@@ -1082,6 +1082,8 @@ def test_http_exact_claim_uses_fresh_authority_and_committed_generation(
         claimed, = response.json()["deliveries"]
         assert claimed["delivery_id"] == reservation.delivery_id
         assert claimed["attempts"] == 1
+        assert response.json()["session"]["activation"] is None
+        assert claimed["activation"] is None
         assert registry.snapshot(reservation.recipient_endpoint_id) == before
         acknowledged = http.post("/relay/deliveries/ack", json={
             "delivery_id": claimed["delivery_id"], "claim_token": claimed["claim_token"], **SCOPE,
@@ -1092,8 +1094,8 @@ def test_http_exact_claim_uses_fresh_authority_and_committed_generation(
         retained, = readback.json()["deliveries"]
         assert retained["delivery_id"] == reservation.delivery_id
         assert retained["state"] == "delivered" and retained["attempts"] == 1
-    # One preclaim read and one fresh post-admission view shared by default projections.
-    assert len(reads) == 2, reads
+    # Exact claims retain the mandatory preclaim read without optional projection reads.
+    assert len(reads) == 1, reads
 
 
 @pytest.mark.parametrize("authority", [
@@ -1163,16 +1165,25 @@ def test_http_response_projection_uses_fresh_authority_and_distinct_health(
         claimed, = response.json()["deliveries"]
         assert claimed["delivery_id"] == reservation.delivery_id and claimed["attempts"] == 1
         assert claimed["recipient_container_ref"] == SCOPE["container_ref"]
-        session_availability = response.json()["session"]["activation"]["availability"]
-        delivery_availability = claimed["activation"]["availability"]
-        expected = "attempt_inflight" if authority == "reserved" else "unknown"
-        assert session_availability == ("attempt_inflight" if authority == "scope_unavailable" else expected)
-        assert delivery_availability == ("unreachable" if authority == "health" else expected)
+        assert response.json()["session"]["activation"] is None
+        assert claimed["activation"] is None
+        sessions = http.get("/relay/sessions", params={
+            "runtime": "codex", "session_ref": "target", **SCOPE,
+        })
+        assert sessions.status_code == 200, sessions.text
+        current_session, = sessions.json()
+        assert current_session["endpoint_id"] == reservation.recipient_endpoint_id
         readback = http.get(f"/relay/messages/{claimed['message_id']}", params=SCOPE)
         assert readback.status_code == 200, readback.text
         retained, = readback.json()["deliveries"]
         assert retained["delivery_id"] == reservation.delivery_id
         assert retained["state"] == "claimed" and retained["attempts"] == 1
+        expected = "attempt_inflight" if authority == "reserved" else "unknown"
+        # Fresh session reads see updated health; the old claim-time row did not.
+        session_expected = ("unreachable" if authority == "health" else
+                            "attempt_inflight" if authority == "scope_unavailable" else expected)
+        assert current_session["activation"]["availability"] == session_expected
+        assert retained["activation"]["availability"] == ("unreachable" if authority == "health" else expected)
 
 
 @pytest.mark.parametrize("callback_mode", ["custom", "delegate", "raises", "none"])
