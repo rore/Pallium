@@ -19,11 +19,11 @@ import re
 import secrets
 import subprocess
 import sys
-import threading
 import time
 
 
 GENERATION_ENV = "PALLIUM_WINDOWS_GENERATION"
+ADMISSION_ENV = "PALLIUM_WINDOWS_ADMISSION_DEADLINE"
 MANAGED_MARKER = "' Pallium cooperative launcher v1"
 _STILL_ACTIVE = 259
 _NATIVE = None
@@ -38,11 +38,15 @@ class FailedBeforeLaunch(Unknown):
 
 
 class Deadline:
-    def __init__(self, seconds, *, clock=time.monotonic):
+    def __init__(self, seconds, *, clock=time.perf_counter, absolute=None):
         if not math.isfinite(seconds) or seconds <= 0:
             raise ValueError("operation budget must be finite and positive")
         self.clock = clock
         self.end = clock() + seconds
+        if absolute is not None:
+            if not math.isfinite(absolute):
+                raise ValueError("absolute deadline must be finite")
+            self.end = min(self.end, absolute)
 
     def remaining(self):
         remaining = self.end - self.clock()
@@ -51,25 +55,12 @@ class Deadline:
         return remaining
 
     def read(self, operation):
-        # Timed-out reads may finish later; callers must never admit a later launch.
-        done = threading.Event()
-        result = []
-
-        def read():
-            try:
-                result.append((True, operation()))
-            except BaseException as exc:
-                result.append((False, exc))
-            finally:
-                done.set()
-
-        threading.Thread(target=read, daemon=True).start()
-        if not done.wait(self.remaining()):
-            raise Unknown("metadata read timed out; no replacement permitted")
+        # Observations are synchronous: the OS/filesystem may return late.
+        # This is an admission deadline, not an opaque cancellation watchdog.
         self.remaining()
-        if not result[0][0]:
-            raise result[0][1]
-        return result[0][1]
+        result = operation()
+        self.remaining()
+        return result
 
 
 def _json(path):
@@ -268,7 +259,9 @@ class WindowsAPI:
             handle = self.check(self.k.CreateMutexW(ctypes.byref(security), False, name))
         acquired = False
         try:
-            result = self.k.WaitForSingleObject(handle, max(1, math.ceil(seconds * 1000)))
+            # Recompute after native creation, which itself may have returned late.
+            available = seconds() if callable(seconds) else seconds
+            result = self.k.WaitForSingleObject(handle, max(1, math.ceil(available * 1000)))
             if result == 0x80:
                 self.k.ReleaseMutex(handle)
                 raise Unknown("abandoned lifecycle mutex")
@@ -392,6 +385,8 @@ class WindowsAPI:
         inherited, attributes, null_input = [], [], None
         attribute_buffer = None
         attributes_initialized = False
+        process = None
+        cleanup_errors = []
         try:
             if stdout is not None:
                 import msvcrt
@@ -428,18 +423,34 @@ class WindowsAPI:
                                            ctypes.cast(ctypes.byref(extended), ctypes.POINTER(_Startup)), ctypes.byref(info))
             if not created:
                 raise FailedBeforeLaunch(str(ctypes.WinError(ctypes.get_last_error())))
+            # Creation is committed before cleanup: no cleanup exception may hide it.
+            process = Process(self, info.process, info.pid)
+            process.thread = info.thread
         finally:
             if attributes_initialized:
-                self.k.DeleteProcThreadAttributeList(attribute_buffer)
+                try:
+                    self.k.DeleteProcThreadAttributeList(attribute_buffer)
+                except BaseException as exc:
+                    cleanup_errors.append((attribute_buffer, exc))
             for handle in inherited:
-                self.close(handle)
+                try:
+                    self.close(handle)
+                except BaseException as exc:
+                    cleanup_errors.append((handle, exc))
             if null_input is not None:
-                null_input.close()
-        process = Process(self, info.process, info.pid)
-        process.thread = info.thread
+                try:
+                    null_input.close()
+                except BaseException as exc:
+                    cleanup_errors.append((null_input, exc))
+            if process is not None:
+                process.cleanup_errors = cleanup_errors
+            elif cleanup_errors:
+                raise Unknown("creation failed and native cleanup is uncertain")
         return process
 
     def resume(self, process):
+        if process.cleanup_errors:
+            raise Unknown("suspended creation retained after cleanup failure; no resume")
         if self.k.ResumeThread(process.thread) == 0xFFFFFFFF:
             raise Unknown("could not resume contained process")
         self.close(process.thread)
@@ -451,6 +462,7 @@ class Process:
         self.api, self.handle, self.pid = api, handle, pid
         self.returncode = None
         self.thread = None
+        self.cleanup_errors = []
 
     def poll(self):
         self.returncode = self.api.exit_code(self.handle)
@@ -482,13 +494,45 @@ class StopChannel:
         with self.api.mutex(self.description + "-spawn", 1):
             if stop():
                 raise Unknown("generation admission is closed")
+            self.check_admission()
             # Inherited Job membership is established by Windows before child code runs.
             process = self.api.spawn(command, **kwargs)
             attempts.append(process)
             if stop():
                 raise Unknown("stop raced suspended launch; process retained without resume")
+            self.check_admission()
             self.api.resume(process)
             return process
+
+    @staticmethod
+    def check_admission():
+        absolute = os.environ.get(ADMISSION_ENV)
+        if absolute is not None and (not math.isfinite(float(absolute)) or time.perf_counter() >= float(absolute)):
+            raise Unknown("transaction admission expired; suspended roots retained")
+
+    def publish_ready(self, nonce, run_dir):
+        # Reuse the API's existing launch-token read path after supervisor startup.
+        if self.requested():
+            return
+        token = _json(run_dir / "api_token")
+        if token.get("nonce") != nonce or type(token.get("pid")) is not int:
+            raise Unknown("API startup token does not match this attempt")
+        process = self.api.process(token["pid"])
+        job = None
+        try:
+            job = self.api.job(self.description)
+            if not self.api.in_job(process, job) or self.api.exit_code(process) is not None:
+                raise Unknown("ready API is not a live member of this generation")
+            path = run_dir / "windows-generation.json"
+            record = _json(path)
+            if record.get("description") != self.description or record.get("outcome") != "running":
+                raise Unknown("generation changed during API startup")
+            record["api_ready"] = {"nonce": nonce, "identity": self.api.identity(process, token["pid"])}
+            _write(path, record)
+        finally:
+            self.api.close(process)
+            if job is not None:
+                self.api.close(job)
 
     def close(self):
         self.api.close(self.event)
@@ -515,37 +559,66 @@ def _config_identity(home, manifest):
         path = home / "config" / name
         digest.update(path.read_bytes() if path.exists() else b"<absent>")
     digest.update(json.dumps({key: value for key, value in os.environ.items()
-                              if key.startswith("PALLIUM_") and key != GENERATION_ENV}, sort_keys=True).encode())
+                              if key.startswith("PALLIUM_") and key not in {GENERATION_ENV, ADMISSION_ENV}}, sort_keys=True).encode())
     return digest.hexdigest()
 
 
-def _existing_store(home):
+def _apply_existing_home(home):
     from app.cli.service import _apply_home_env
-    from app.config import AppConfig
-    from app.codex_wake_lifecycle import _paths, _marker_present
     os.environ["PALLIUM_HOME"] = str(home)
     _apply_home_env(home)
+
+
+def _existing_store(home):
+    from app.config import AppConfig
+    from app.codex_wake_lifecycle import _paths, _marker_present
     paths = _paths(AppConfig.from_env())
     if paths is not None and (not all(path.is_file() for path in paths[:2]) or not _marker_present(paths[1])):
         raise Unknown("existing live pair and wake authority required; setup/import/restore is separate")
 
 
+def _task_arguments(manifest):
+    return '"' + manifest["vbs"] + '" "$(Arg0)"'
+
+
+def launcher_text(manifest):
+    return (MANAGED_MARKER + "\n"
+            'Set WshShell = CreateObject("WScript.Shell")\n'
+            f'WshShell.CurrentDirectory = "{manifest["cwd"]}"\n'
+            f'command = """{manifest["python"]}"" -m app.windows_service observe --home ""{manifest["home"]}"""\n'
+            'If WScript.Arguments.Count = 1 Then\n'
+            '  If WScript.Arguments(0) <> "$(Arg0)" Then command = command & " --deadline " & WScript.Arguments(0)\n'
+            'End If\n'
+            'WScript.Quit WshShell.Run(command, 0, True)\n')
+
+
 def _manifest(home):
     value = _json(home / "run" / "windows-launch.json")
-    if value.get("version") != 1 or value.get("home") != str(home) or not 1 <= value.get("port", 0) <= 65535:
+    port = value.get("port")
+    if (value.get("version") != 1 or value.get("home") != str(home)
+            or type(port) is not int or not 1 <= port <= 65535):
         raise Unknown("unsupported managed launcher metadata")
-    if value.get("python") != sys.executable or value.get("cwd") != str(Path.cwd()):
-        raise Unknown("interpreter or working directory differs from managed launcher")
+    for key in ("python", "cwd", "vbs"):
+        if not isinstance(value.get(key), str) or not Path(value[key]).is_absolute():
+            raise Unknown("managed launcher paths must be absolute")
+    if (not Path(value["python"]).is_file() or not Path(value["cwd"]).is_dir()
+            or Path(value["vbs"]).read_text(encoding="utf-16") != launcher_text(value)):
+        raise Unknown("installed interpreter/cwd/launcher identity differs")
     return value
 
 
-def observe(home, *, api=None):
+def observe(home, *, api=None, absolute_deadline=None):
     api = api or native()
+    admission = Deadline(180, absolute=absolute_deadline) if absolute_deadline is not None else None
     api.private_home(home)
     manifest = _manifest(home)
+    _apply_existing_home(home)
     _existing_store(home)
     config = _config_identity(home, manifest)
     with api.mutex(_names(home, "owner"), 1):
+        _existing_store(home)
+        if _config_identity(home, manifest) != config:
+            raise Unknown("configuration changed before generation ownership")
         previous = home / "run" / "windows-generation.json"
         if previous.exists():
             raise Unknown("a previous generation requires controller-verified settlement")
@@ -558,22 +631,51 @@ def observe(home, *, api=None):
         launcher, launcher_identity, ancestors, ancestry = api.launcher()
         handles = {}
         unknown = False
+        task = _task_info(Deadline(180))
+        _validate_task(manifest, task)
+        if len(task["instances"]) != 1:
+            raise Unknown("observer is not bound to one registered task instance")
         record = {"version": 1, "generation": generation, "description": description,
                   "config": config, "manifest": manifest,
                   "observer": api.identity(observer, os.getpid()),
-                  "launcher": launcher_identity, "ancestry": ancestry, "outcome": "running"}
+                  "launcher": launcher_identity, "ancestry": ancestry,
+                  "task_instance": task["instances"][0], "outcome": "running"}
         if Path(record["launcher"]["image"]).name.casefold() != "wscript.exe":
             raise Unknown("managed observer must have the actual WScript launcher as parent")
         try:
             _write(previous, record)
             environment = {**os.environ, GENERATION_ENV: description}
+            if admission is not None:
+                environment[ADMISSION_ENV] = format(admission.end, ".17g")
+            else:
+                environment.pop(ADMISSION_ENV, None)
             command = [manifest["python"], "-m", "app.run", "service", "run", "--home", str(home), "--port", str(manifest["port"])]
-            process = api.spawn(command, cwd=manifest["cwd"], env=environment, job=job)
-            handles[process.pid] = process.handle
-            record["supervisor"] = api.identity(process.handle, process.pid)
-            _write(previous, record)
-            api.contain(job, process)
-            api.resume(process)
+            with api.mutex(description + "-spawn", 1):
+                if api.signaled(event):
+                    raise Unknown("stop closed admission before initial creation")
+                if admission is not None:
+                    admission.remaining()
+                process = api.spawn(command, cwd=manifest["cwd"], env=environment, job=job)
+                handles[process.pid] = process.handle
+            try:
+                record["supervisor"] = api.identity(process.handle, process.pid)
+                _write(previous, record)
+                with api.mutex(description + "-spawn", 1):
+                    api.contain(job, process)
+                    if api.signaled(event):
+                        raise Unknown("stop raced suspended initial launch")
+                    if admission is not None:
+                        admission.remaining()
+                    api.resume(process)
+            except (Unknown, OSError, ValueError):
+                # A partial creation stays suspended in observer custody, never retried.
+                unknown = True
+                try:
+                    with api.mutex(description + "-spawn", 1):
+                        api.signal(event)
+                except Unknown:
+                    # Keep custody even when stop signaling cannot be established.
+                    pass
             while True:
                 notification = api.notification(port)
                 while notification is not None:
@@ -592,7 +694,7 @@ def observe(home, *, api=None):
                     with api.mutex(description + "-spawn", 1):
                         api.signal(event)
                 total, active = api.accounting(job)
-                if active == 0:
+                if active == 0 and all(api.exit_code(handle) is not None for handle in handles.values()):
                     break
                 time.sleep(0.02)
             results = {str(pid): api.exit_code(handle) for pid, handle in handles.items()}
@@ -607,34 +709,94 @@ def observe(home, *, api=None):
                 api.close(handle)
 
 
+_TASK_QUERY = (
+    "[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); "
+    "$s=New-Object -ComObject Schedule.Service; $s.Connect(); "
+    "$t=$s.GetFolder('\\').GetTask('Pallium'); $a=$t.Definition.Actions; "
+    "$instances=@($t.GetInstances(0)|ForEach-Object {[string]$_.InstanceGuid}); "
+    "[pscustomobject]@{path=[string]$t.Path;name=[string]$t.Name;"
+    "state=[int]$t.State;action_count=[int]$a.Count;action=[string]$a.Item(1).Path;"
+    "arguments=[string]$a.Item(1).Arguments;cwd=[string]$a.Item(1).WorkingDirectory;"
+    "retry=[int]$t.Definition.Settings.RestartCount;instances=$instances}|ConvertTo-Json -Compress"
+)
+
+
 def _task_info(deadline):
     result = subprocess.run(
-        ["powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
-         "[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); "
-         "$t=Get-ScheduledTask -TaskName Pallium -ErrorAction Stop; "
-         "[pscustomobject]@{state=[string]$t.State;action=$t.Actions[0].Execute;arguments=$t.Actions[0].Arguments;"
-         "retry=$t.Settings.RestartCount}|ConvertTo-Json -Compress"],
+        ["powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", _TASK_QUERY],
         capture_output=True, text=True, encoding="utf-8", timeout=deadline.remaining(), creationflags=0x08000000,
     )
     deadline.remaining()
     if result.returncode != 0:
-        raise Unknown("cannot verify registered managed task")
-    return json.loads(result.stdout)
+        raise Unknown("cannot verify exact registered managed task")
+    task = json.loads(result.stdout)
+    if (task.get("path") != "\\Pallium" or task.get("name") != "Pallium"
+            or task.get("action_count") != 1 or not isinstance(task.get("instances"), list)):
+        raise Unknown("registered task path/action/instance identity is ambiguous")
+    return task
+
+
+def _validate_task(manifest, task):
+    if (task.get("path") != "\\Pallium" or task.get("name") != "Pallium"
+            or task.get("action_count") != 1
+            or Path(task.get("action", "")).name.casefold() != "wscript.exe"
+            or task.get("arguments") != _task_arguments(manifest)
+            or task.get("cwd") != manifest["cwd"] or task.get("retry") != 0
+            or not isinstance(task.get("instances"), list) or len(task["instances"]) > 1):
+        raise Unknown("legacy or mismatched exact task; separately approved installation required")
 
 
 def _task_state(manifest, deadline):
     task = _task_info(deadline)
-    if (Path(task.get("action", "")).name.casefold() != "wscript.exe"
-            or task.get("arguments", "").strip('"') != manifest["vbs"] or task.get("retry") != 0):
-        raise Unknown("legacy or mismatched task; separately approved installation required")
-    return task["state"]
+    _validate_task(manifest, task)
+    if task["state"] in {1, 3} and task["instances"]:
+        raise Unknown("task state contradicts retained running instance")
+    return {1: "Disabled", 3: "Ready", 4: "Running"}.get(task["state"], "Unknown")
+
+
+def _start_task(manifest, deadline):
+    # Run the SAME registered task and return its exact instance, never bypass it.
+    expected = json.dumps({"arguments": _task_arguments(manifest), "cwd": manifest["cwd"]})
+    script = (
+        "[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); "
+        "if(-not [Diagnostics.Stopwatch]::IsHighResolution) {throw 'QPC clock required'}; "
+        "$s=New-Object -ComObject Schedule.Service; $s.Connect(); "
+        "$t=$s.GetFolder('\\').GetTask('Pallium'); $a=$t.Definition.Actions; "
+        "$e=$env:PALLIUM_CONTROL_EXPECTED|ConvertFrom-Json; "
+        "if($t.Path -cne '\\Pallium' -or $a.Count -ne 1 -or "
+        "[IO.Path]::GetFileName($a.Item(1).Path) -ine 'wscript.exe' -or "
+        "$a.Item(1).Arguments -cne $e.arguments -or $a.Item(1).WorkingDirectory -cne $e.cwd -or "
+        "$t.Definition.Settings.RestartCount -ne 0 -or $t.GetInstances(0).Count -ne 0) {throw 'task identity/settlement changed'}; "
+        "if(([Diagnostics.Stopwatch]::GetTimestamp()/[double][Diagnostics.Stopwatch]::Frequency) -ge [double]::Parse($env:PALLIUM_CONTROL_DEADLINE,[Globalization.CultureInfo]::InvariantCulture)) {throw 'admission expired'}; "
+        "$r=$t.Run([object[]]@($env:PALLIUM_CONTROL_DEADLINE)); "
+        "[pscustomobject]@{path=[string]$r.Path;instance=[string]$r.InstanceGuid}|ConvertTo-Json -Compress"
+    )
+    deadline.remaining()
+    result = subprocess.run(
+        ["powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
+        env={**os.environ, "PALLIUM_CONTROL_EXPECTED": expected,
+             "PALLIUM_CONTROL_DEADLINE": format(deadline.end, ".17g")},
+        capture_output=True, text=True, encoding="utf-8", creationflags=0x08000000,
+    )
+    # No subprocess timeout/kill for a mutating Scheduler call: retain its outcome.
+    # It may return late. The observer independently gates application resume.
+    result_value = json.loads(result.stdout) if result.returncode == 0 else None
+    if (not isinstance(result_value, dict) or result_value.get("path") != "\\Pallium"
+            or not result_value.get("instance")):
+        raise Unknown("registered task start outcome unknown; no restoration")
+    deadline.remaining()
+    return result_value["instance"]
 
 
 def _registered_home(deadline):
     task = _task_info(deadline)
-    if Path(task.get("action", "")).name.casefold() != "wscript.exe" or task.get("retry") != 0:
+    if (task.get("path") != "\\Pallium" or task.get("action_count") != 1
+            or Path(task.get("action", "")).name.casefold() != "wscript.exe" or task.get("retry") != 0):
         raise Unknown("existing task is not a newly managed cooperative launcher")
-    vbs = Path(task["arguments"].strip('"'))
+    match = re.fullmatch(r'"([^"\r\n]+)" "\$\(Arg0\)"', task.get("arguments", ""))
+    if match is None:
+        raise Unknown("unsupported task action arguments")
+    vbs = Path(match[1])
     text = deadline.read(lambda: vbs.read_text(encoding="utf-16"))
     match = re.search(r'--home\s+""([^"\r\n]+)""', text)
     if not text.startswith(MANAGED_MARKER) or not match:
@@ -646,25 +808,32 @@ def _pin(home, record, manifest, deadline, api):
     generation = record.get("generation", "")
     if (record.get("version") != 1 or record.get("manifest") != manifest
             or re.fullmatch("[0-9a-f]{32}", generation) is None
-            or record.get("description") != _names(home, generation)):
+            or record.get("description") != _names(home, generation)
+            or not isinstance(record.get("task_instance"), str) or not record["task_instance"]):
         raise Unknown("generation launch identity mismatch")
     handles = []
     try:
         for name in ("observer", "launcher"):
             identity = record[name]
-            handle = deadline.read(lambda: api.process(identity["pid"]))
+            deadline.remaining()
+            handle = api.process(identity["pid"])
             handles.append(handle)
+            deadline.remaining()
             if deadline.read(lambda: api.identity(handle, identity["pid"])) != identity:
                 raise Unknown("process identity changed")
-        handles.append(deadline.read(lambda: api.job(record["description"])))
+        deadline.remaining()
+        handles.append(api.job(record["description"]))
+        deadline.remaining()
         ancestry = record.get("ancestry")
         if (not isinstance(ancestry, list) or not 2 <= len(ancestry) <= 16
                 or ancestry[0] != record["observer"] or ancestry[-1] != record["launcher"]
                 or len({item["pid"] for item in ancestry}) != len(ancestry)):
             raise Unknown("launcher ancestry receipt is incomplete")
         for identity in ancestry[1:-1]:
-            handle = deadline.read(lambda: api.process(identity["pid"]))
+            deadline.remaining()
+            handle = api.process(identity["pid"])
             handles.append(handle)
+            deadline.remaining()
             if deadline.read(lambda: api.identity(handle, identity["pid"])) != identity:
                 raise Unknown("launcher redirector identity changed")
         return handles
@@ -680,7 +849,7 @@ def _settle(home, record, manifest, deadline, api, *, pinned=None):
         if record.get("outcome") == "running":
             channel = StopChannel(record["description"], api=api)
             try:
-                with api.mutex(record["description"] + "-spawn", deadline.remaining()):
+                with api.mutex(record["description"] + "-spawn", deadline.remaining):
                     api.signal(channel.event)
             finally:
                 channel.close()
@@ -689,7 +858,7 @@ def _settle(home, record, manifest, deadline, api, *, pinned=None):
             if not api.signaled(handle, deadline.remaining()):
                 raise Unknown("observer/launcher still running; no replacement")
         terminal = deadline.read(lambda: _json(home / "run" / "windows-generation.json"))
-        identity_keys = ("version", "generation", "description", "config", "manifest", "observer", "launcher", "ancestry", "supervisor")
+        identity_keys = ("version", "generation", "description", "config", "manifest", "observer", "launcher", "ancestry", "supervisor", "task_instance")
         if any(terminal.get(key) != record.get(key) for key in identity_keys):
             raise Unknown("terminal receipt identity conflict")
         if terminal.get("empty") is not True or terminal.get("outcome") not in {"clean", "failed"}:
@@ -714,88 +883,124 @@ def _settle(home, record, manifest, deadline, api, *, pinned=None):
                 api.close(handle)
 
 
-def control(home, action, *, timeout=180, api=None, ready=None):
-    deadline = Deadline(timeout)
-    api = api or deadline.read(native)
+def _owned_ready(home, record, manifest, deadline, api, handles, ready):
+    current = deadline.read(lambda: _json(home / "run" / "windows-generation.json"))
+    for key in ("generation", "description", "config", "manifest", "observer", "launcher", "supervisor"):
+        if current.get(key) != record.get(key):
+            raise Unknown("generation changed during readiness")
+    proof = current.get("api_ready")
+    if not isinstance(proof, dict):
+        return False
+    identity = proof["identity"]
+    deadline.remaining()
+    api_handle = api.process(identity["pid"])
+    supervisor = None
+    stop_event = None
+    try:
+        deadline.remaining()
+        supervisor = api.process(record["supervisor"]["pid"])
+        stop_event = api.event(record["description"] + "-stop")
+        deadline.remaining()
+        def valid():
+            token = _json(home / "run" / "api_token")
+            return (token.get("nonce") == proof.get("nonce") and token.get("pid") == identity["pid"]
+                    and api.identity(api_handle, identity["pid"]) == identity
+                    and api.identity(supervisor, record["supervisor"]["pid"]) == record["supervisor"]
+                    and api.in_job(api_handle, handles[2]) and api.in_job(supervisor, handles[2])
+                    and api.exit_code(api_handle) is None and api.exit_code(supervisor) is None
+                    and api.exit_code(handles[0]) is None and not api.signaled(stop_event))
+        if not deadline.read(valid):
+            raise Unknown("API nonce/process ownership does not match this generation")
+        result = deadline.read(lambda: ready(manifest["port"], deadline.remaining()))
+        if not deadline.read(valid):
+            raise Unknown("API ownership changed during health probes")
+        return result
+    finally:
+        api.close(api_handle)
+        if supervisor is not None:
+            api.close(supervisor)
+        if stop_event is not None:
+            api.close(stop_event)
+
+
+def control(home, action, *, timeout=180, api=None, ready=None, absolute_deadline=None):
+    deadline = Deadline(timeout, absolute=absolute_deadline)
+    api = api or native()
+    deadline.remaining()
     home = home if home is not None else _registered_home(deadline)
     home = deadline.read(lambda: home.resolve())
     deadline.read(lambda: api.private_home(home))
     manifest = deadline.read(lambda: _manifest(home))
+    _apply_existing_home(home)
     deadline.read(lambda: _existing_store(home))
     config = deadline.read(lambda: _config_identity(home, manifest))
     path = home / "run" / "windows-generation.json"
-    with api.mutex(_names(home), deadline.remaining()):
+    with api.mutex(_names(home), deadline.remaining):
+        deadline.read(lambda: _existing_store(home))
+        if deadline.read(lambda: _config_identity(home, manifest)) != config:
+            raise Unknown("configuration changed before controller ownership")
         _task_state(manifest, deadline)
         try:
             record = deadline.read(lambda: _json(path))
         except FileNotFoundError:
-            # Only explicit installation can perform the first launch. Missing custody
-            # during ordinary control can also mean observer loss; it is never absence proof.
-            raise Unknown("no owned generation receipt; initial setup/manual recovery is separate") from None
+            raise Unknown("no retained generation custody; manual setup/recovery is separate") from None
         if record.get("config") != config:
             raise Unknown("effective service configuration changed; no stop/replacement")
-        old_failed = record.get("outcome") == "failed"
-        if action == "start" and record.get("outcome") == "running":
-            pinned = _pin(home, record, manifest, deadline, api)
-            try:
-                if (api.exit_code(pinned[0]) is None and ready is not None
-                        and deadline.read(lambda: ready(manifest["port"], deadline.remaining()))):
+        task = _task_info(deadline)
+        _validate_task(manifest, task)
+        if task["instances"] and task["instances"] != [record.get("task_instance")]:
+            raise Unknown("registered running instance differs from generation custody")
+        old_pins = _pin(home, record, manifest, deadline, api)
+        retained_failed = []
+        try:
+            if action == "start" and record.get("outcome") == "running":
+                if ready is not None and _owned_ready(home, record, manifest, deadline, api, old_pins, ready):
                     return "already running"
                 raise Unknown("existing generation running/unready; no replacement")
-            finally:
-                for handle in pinned:
-                    api.close(handle)
-        _settle(home, record, manifest, deadline, api)
-        if action == "stop":
-            return "stopped"
-        if action not in {"start", "restart"}:
-            raise ValueError("unsupported lifecycle action")
-        # Only positively settled records are removed, immediately before the next launch.
-        # No later controller treats a missing receipt as permission to start.
-        deadline.read(path.unlink)
-        launch = ["wscript.exe", manifest["vbs"]]
-        for attempt in range(2):
+            settled = _settle(home, record, manifest, deadline, api, pinned=old_pins)
+            if action == "stop":
+                return "stopped; later independent start after custody loss requires manual recovery"
+            if action not in {"start", "restart"}:
+                raise ValueError("unsupported lifecycle action")
+            # Custody is retained through the continuous settlement/replacement transaction.
             deadline.remaining()
-            try:
-                process = api.spawn(launch, cwd=manifest["cwd"], env=os.environ.copy())
-            except FailedBeforeLaunch:
-                if attempt:
-                    raise
-                continue
-            pinned = None
-            try:
-                deadline.remaining()
-                api.resume(process)
-                while True:
-                    deadline.remaining()
-                    try:
-                        current = deadline.read(lambda: _json(path))
-                    except FileNotFoundError:
-                        current = None
-                    if current is not None and current.get("config") != config:
-                        raise Unknown("new generation configuration mismatch")
-                    if current is not None and pinned is None:
-                        pinned = _pin(home, current, manifest, deadline, api)
-                    if current is not None and ready is not None and deadline.read(lambda: ready(manifest["port"], deadline.remaining())):
-                        if (current.get("outcome") == "running" and process.poll() is None
-                                and api.exit_code(pinned[0]) is None):
-                            return "recovered" if attempt or old_failed else "started"
-                    if process.poll() is not None:
-                        if current is None:
-                            raise Unknown("launcher exited without custody/terminal receipt")
-                        _settle(home, current, manifest, deadline, api, pinned=pinned)
-                        if attempt:
-                            raise Unknown("one restoration attempt exhausted")
-                        deadline.read(path.unlink)
-                        break
-                    time.sleep(min(0.05, deadline.remaining()))
-            finally:
-                api.close(process.handle)
-                if getattr(process, "thread", None) is not None:
-                    api.close(process.thread)
-                if pinned is not None:
-                    for handle in pinned:
-                        api.close(handle)
+            path.unlink()
+            old_failed = settled.get("outcome") == "failed"
+            for attempt in range(2):
+                instance = _start_task(manifest, deadline)
+                pinned = None
+                try:
+                    while True:
+                        deadline.remaining()
+                        try:
+                            current = deadline.read(lambda: _json(path))
+                        except FileNotFoundError:
+                            current = None
+                        if current is not None:
+                            if current.get("config") != config or current.get("task_instance") != instance:
+                                raise Unknown("new generation task/configuration identity mismatch")
+                            if pinned is None:
+                                pinned = _pin(home, current, manifest, deadline, api)
+                            if current.get("outcome") == "running" and ready is not None and _owned_ready(home, current, manifest, deadline, api, pinned, ready):
+                                return "recovered" if attempt or old_failed else "started"
+                            if api.exit_code(pinned[0]) is not None:
+                                terminal = _settle(home, current, manifest, deadline, api, pinned=pinned)
+                                if attempt or terminal.get("outcome") != "failed":
+                                    raise Unknown("restoration unavailable or exhausted")
+                                deadline.remaining()
+                                path.unlink()
+                                # Keep failed NEW custody through restoration admission too.
+                                retained_failed.extend(pinned)
+                                pinned = None
+                                break
+                        time.sleep(min(0.05, deadline.remaining()))
+                finally:
+                    if pinned is not None:
+                        for handle in pinned:
+                            api.close(handle)
+        finally:
+            for handle in old_pins + retained_failed:
+                api.close(handle)
     raise Unknown("service did not start")
 
 
@@ -804,18 +1009,21 @@ def main(args=None):
     parser.add_argument("action", choices=("observe", "start", "stop", "restart"))
     parser.add_argument("--home")
     parser.add_argument("--timeout", type=float, default=180)
+    parser.add_argument("--deadline", type=float)
     parsed = parser.parse_args(args)
     try:
         home = Path(parsed.home) if parsed.home else None
         if parsed.action == "observe":
             if home is None:
                 raise Unknown("observer requires an explicit home")
-            return observe(home)
-        from app.cli.service import _service_ready
-        print(control(home, parsed.action, timeout=parsed.timeout, ready=_service_ready))
+            return observe(home, absolute_deadline=parsed.deadline)
+        from app.cli.service import _managed_ready
+        print(control(home, parsed.action, timeout=parsed.timeout, ready=_managed_ready, absolute_deadline=parsed.deadline))
         return 0
     except (Unknown, OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as exc:
         print(f"Windows lifecycle UNKNOWN/refused: {exc}", file=sys.stderr)
+        if home is not None:
+            print(f"Pallium log: {home / 'logs' / 'pallium.log'}", file=sys.stderr)
         return 1
 
 

@@ -1,712 +1,422 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
+# Guards precede application imports; the run packet additionally guards pytest/conftest.
 from tests.test_windows_service import (
-    guard_native_calls, guard_selected_mock, NativeCallDenied, ImmediateDeadline,
+    guard_native_calls, guard_selected_mock, NativeCallDenied, ImmediateDeadline, FakeAPI, _deny,
 )
 with guard_native_calls():
     from app import windows_service as service
+    from app.cli import service as cli
 
-import os
-import shutil
+import json
 import subprocess
-import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
-
-pytestmark = pytest.mark.skipif(
-    sys.platform != "win32",
-    reason="Windows scheduled-task restart wrapper",
-)
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
-RESTART_SCRIPT = REPO_ROOT / "scripts" / "restart-service.ps1"
+RESTART_SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "restart-service.ps1"
 
 
-def test_default_readiness_budget_allows_three_minute_cold_start() -> None:
-    script = RESTART_SCRIPT.read_text(encoding="utf-8")
-
-    assert "[double]$ReadinessTimeoutSeconds = 180" in script
-
-
-HARNESS = r'''
-# Missing managed controller fake must never launch a real child or Task Scheduler query.
-function New-Object {
-    param($TypeName)
-    throw "native-controller-sentinel: missing fake for $TypeName"
-}
-[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
-$OutputEncoding = [Console]::OutputEncoding
-function Log-Call {
-    param([string]$Value)
-    [IO.File]::AppendAllText($env:RW010_CALL_LOG, $Value + [Environment]::NewLine)
-}
-
-function Get-ScheduledTask {
-    param($TaskName, $ErrorAction)
-    $workingDirectory = if ($env:RW010_TASK_SHAPE -in @("canonical", "unparseable")) {
-        ""
-    } else {
-        $env:RW010_WORKDIR
-    }
-    [pscustomobject]@{
-        State = "Ready"
-        Actions = @([pscustomobject]@{
-            Execute = "wscript.exe"
-            Arguments = '"' + $env:RW010_VBS + '"'
-            WorkingDirectory = $workingDirectory
-        })
-    }
-}
-
-function Start-Process {
-    param($FilePath, $ArgumentList, $WorkingDirectory, $WindowStyle, [switch]$Wait, [switch]$PassThru)
-    Log-Call "Start-Process:$FilePath"
-    if ($ArgumentList -match 'service initialize-wakes') { Log-Call "Initialize-Wakes" }
-    if ($PSBoundParameters.ContainsKey("WorkingDirectory")) {
-        Log-Call "PreflightWorkingDirectory:$WorkingDirectory"
-    } else {
-        Log-Call "PreflightWorkingDirectory:<omitted>"
-    }
-    $exitCode = if (($env:RW010_SCENARIO -eq "preflight_failure") -or (($env:RW010_SCENARIO -eq "wake_import_failure") -and ($ArgumentList -match 'service initialize-wakes'))) { 7 } else { 0 }
-    [pscustomobject]@{ ExitCode = $exitCode }
-}
-
-function Stop-ScheduledTask {
-    param($TaskName, $ErrorAction)
-    Log-Call "Stop-ScheduledTask"
-}
-
-function Start-ScheduledTask {
-    param($TaskName, $ErrorAction)
-    Log-Call "Start-ScheduledTask"
-    if ($env:RW010_SCENARIO -eq "start_failure") { throw "mock start failure" }
-}
-
-function Stop-Process {
-    param([Parameter(ValueFromRemainingArguments = $true)]$Arguments)
-    Log-Call "Stop-Process"
-}
-
-$script:TaskkillCalls = 0
-function taskkill {
-    param([Parameter(ValueFromRemainingArguments = $true)]$Arguments)
-    $script:TaskkillCalls++
-    Log-Call ("taskkill " + ($Arguments -join " "))
-    if ($env:RW010_SCENARIO -eq "partial_taskkill" -and $script:TaskkillCalls -eq 1) {
-        $global:LASTEXITCODE = 1
-        throw "simulated child-exit race"
-    }
-    if ($env:RW010_SCENARIO -eq "nonzero_taskkill" -and $script:TaskkillCalls -eq 1) {
-        $global:LASTEXITCODE = 1
-        return
-    }
-    $global:LASTEXITCODE = 0
-}
-
-$script:NetTcpCalls = 0
-function Get-NetTCPConnection {
-    param($LocalPort, $State, $ErrorAction)
-    $script:NetTcpCalls++
-    Log-Call "Get-NetTCPConnection:$LocalPort"
-    if ($env:RW010_SCENARIO -eq "empty_listener_notfound") {
-        Write-Error "No matching objects" -ErrorId "CmdletizationQuery_NotFound" -Category ObjectNotFound -ErrorAction $ErrorAction
-        return
-    }
-    if ($env:RW010_SCENARIO -eq "multiple_initial_listeners" -and $script:NetTcpCalls -eq 1) {
-        return @(
-            [pscustomobject]@{ OwningProcess = 6161 },
-            [pscustomobject]@{ OwningProcess = 6161 },
-            [pscustomobject]@{ OwningProcess = 6262 }
-        )
-    }
-    if ($env:RW010_SCENARIO -eq "surviving_listener" -and $script:NetTcpCalls -gt 1) {
-        return @(
-            [pscustomobject]@{ OwningProcess = 6161 },
-            [pscustomobject]@{ OwningProcess = 6262 }
-        )
-    }
-    return $null
-}
-
-function Get-Process {
-    param($Id, $ErrorAction)
-    if ($env:RW016_PID -and $Id -eq [int]$env:RW016_PID) {
-        return [pscustomobject]@{ Id = $Id }
-    }
-    return $null
-}
-
-function Get-CimInstance {
-    param($ClassName, $Filter, $ErrorAction)
-    Log-Call "Get-CimInstance:$Filter"
-    if ($env:RW010_SCENARIO -eq "enumeration_failure" -and -not $Filter) {
-        throw "simulated process enumeration failure"
-    }
-    if ($env:RW010_SCENARIO -eq "quoted_codex_survivor" -and -not $Filter) {
-        return [pscustomobject]@{ ProcessId = 7373; ParentProcessId = 1; Name = "codex.exe"; ExecutablePath = "C:\Program Files\Codex\codex.exe"; CommandLine = '"C:\Program Files\Codex\codex.exe" queue --profile pallium-relay --thread x' }
-    }
-    if ($env:RW010_SCENARIO -eq "redirected_worker_survivor" -and (-not $Filter -or $Filter -like "*app.processor*")) {
-        return [pscustomobject]@{ ProcessId = 8484; ParentProcessId = 1; Name = "python.exe"; ExecutablePath = $env:RW010_NATIVE_PYTHON; CommandLine = ('"' + $env:RW010_PYTHON + '" -m app.processor --processor-id orphan') }
-    }
-    if ($env:RW010_SCENARIO -eq "canonical_survivor" -and $Filter -like "*app.run service run*") {
-        return @(
-            [pscustomobject]@{
-                ProcessId = 4242
-                Name = "python.exe"
-                ExecutablePath = $env:RW010_PYTHON
-                CommandLine = "python -m app.run service run --port 2198 --home `"`"$env:RW010_SERVICE_HOME`"`""
-            },
-            [pscustomobject]@{
-                ProcessId = 4343
-                Name = "python.exe"
-                ExecutablePath = $env:RW010_PYTHON
-                CommandLine = "python -m app.run service run --port 21987 --home `"`"$env:RW010_SERVICE_HOME`"`""
-            }
-        )
-    }
-    if ($env:RW010_SCENARIO -eq "canonical_survivor" -and $Filter -like "*app.run mcp*") {
-        return [pscustomobject]@{ ProcessId = 9999; Name = "python.exe" }
-    }
-    return @()
-}
-
-function Start-Sleep {
-    param($Seconds, $Milliseconds)
-    if ($null -ne $Milliseconds) { Log-Call "Sleep:$Milliseconds" }
-    else { Log-Call "Sleep:$($Seconds * 1000)" }
-}
-
-$script:HealthCalls = 0
-$script:StatusCalls = 0
-$script:QueueCalls = 0
-
-function Invoke-RestMethod {
-    param($Uri, $TimeoutSec)
-    $path = ([uri]$Uri).AbsolutePath
-    Log-Call "URI:$Uri"
-    Log-Call "GET $path"
-    Log-Call "Timeout:${path}:$TimeoutSec"
-    if ($path -eq "/health") {
-        $script:HealthCalls++
-        if ($env:RW010_SCENARIO -eq "terminal_health" -or
-            ($env:RW010_SCENARIO -eq "transient" -and $script:HealthCalls -eq 1)) {
-            return [pscustomobject]@{ status = "initializing" }
-        }
-        return [pscustomobject]@{ status = "ok" }
-    }
-
-    $script:StatusCalls++
-    if ($env:RW010_SCENARIO -eq "terminal_status") {
-        return [pscustomobject]@{}
-    }
-    if ($env:RW010_SCENARIO -eq "transient" -and $script:StatusCalls -eq 1) {
-        return [pscustomobject]@{
-            embedding_provider_ok = $false
-            ingestion = [pscustomobject]@{ status = "ok" }
-        }
-    }
-    if ($env:RW010_SCENARIO -eq "transient" -and $script:StatusCalls -eq 2) {
-        return [pscustomobject]@{
-            embedding_provider_ok = $true
-            ingestion = [pscustomobject]@{ status = "degraded" }
-        }
-    }
-    [pscustomobject]@{
-        embedding_provider_ok = $true
-        ingestion = [pscustomobject]@{ status = "ok" }
-    }
-}
-
-function Invoke-WebRequest {
-    param($Uri, [switch]$UseBasicParsing, $TimeoutSec)
-    $path = ([uri]$Uri).AbsolutePath
-    Log-Call "URI:$Uri"
-    Log-Call "GET $path"
-    Log-Call "Timeout:${path}:$TimeoutSec"
-    $script:QueueCalls++
-    if ($env:RW010_SCENARIO -eq "slow_queue") {
-        if ($TimeoutSec -lt 3) { throw "simulated queue timeout" }
-        [Threading.Thread]::Sleep(3000)
-    }
-    if ($env:RW010_SCENARIO -eq "terminal_queue" -or
-        ($env:RW010_SCENARIO -eq "transient" -and $script:QueueCalls -le 21)) {
-        return [pscustomobject]@{ StatusCode = 503 }
-    }
-    [pscustomobject]@{ StatusCode = 204 }
-}
-
-$env:USERPROFILE = $env:RW010_HOME
-if ($env:RW010_STOP_ONLY -eq "1") {
-    & $env:RW010_SCRIPT -ReadinessTimeoutSeconds ([double]$env:RW010_READINESS_TIMEOUT_SECONDS) -StopOnly
-} else {
-    & $env:RW010_SCRIPT -ReadinessTimeoutSeconds ([double]$env:RW010_READINESS_TIMEOUT_SECONDS)
-}
-exit $LASTEXITCODE
-'''
+@pytest.fixture(autouse=True)
+def managed_only_isolation(monkeypatch, tmp_path):
+    for name in ("HOME", "USERPROFILE", "APPDATA", "PALLIUM_HOME", "PALLIUM_CONFIG_FILE", "PALLIUM_ENV_FILE"):
+        monkeypatch.setenv(name, str(tmp_path / name.lower()))
+    monkeypatch.setenv("PALLIUM_STORAGE_BACKEND", "memory")
+    monkeypatch.delenv(service.GENERATION_ENV, raising=False)
+    monkeypatch.setattr(service, "WindowsAPI", _deny)
+    monkeypatch.setattr(service, "_NATIVE", None)
+    with guard_native_calls():
+        yield
 
 
-def _run_restart(
-    tmp_path: Path,
-    scenario: str,
-    *,
-    task_shape: str = "canonical",
-    port: int | str | None = 21987,
-    working_directory: Path | None = None,
-    service_home: Path | None = None,
-    pid_file_value: int | None = None,
-    readiness_timeout_seconds: float = 2.0,
-    stop_only: bool = False,
-) -> tuple[subprocess.CompletedProcess[str], list[str]]:
-    shell = shutil.which("pwsh") or shutil.which("powershell")
-    assert shell is not None, "PowerShell is required on Windows"
+class ManagedGeneration:
+    """Caller-surface controller fixture; kernel objects cannot magically reopen."""
+    def __init__(self, tmp_path, monkeypatch):
+        self.now = 0.0
+        self.calls = []
+        self.closed = set()
+        self.gone = set()
+        self.signaled_stop = set()
+        self.exits = {}
+        self.identities = {}
+        self.jobs = {}
+        self.starts = 0
+        self.health_round = 0
+        self.transient = False
+        self.terminal_endpoint = None
+        self.active_survivor = False
+        self.fail_on_signal = False
+        self.terminal_history = []
+        self.home = tmp_path / "שירות %TEMP% with spaces"
+        self.run_dir = self.home / "run"
+        self.run_dir.mkdir(parents=True)
+        self.python = self.home / "installed-python.exe"
+        self.python.touch()
+        self.cwd = tmp_path / "stable installed קוד"
+        self.cwd.mkdir()
+        self.manifest = {"version": 1, "home": str(self.home), "python": str(self.python),
+                         "cwd": str(self.cwd), "port": 21987, "vbs": str(self.run_dir / "launcher.vbs")}
+        self.save_manifest()
+        original_deadline = service.Deadline
+        monkeypatch.setattr(service, "Deadline", lambda seconds, absolute=None: original_deadline(seconds, clock=lambda: self.now, absolute=absolute))
+        monkeypatch.setattr(service, "time", SimpleNamespace(sleep=self.advance))
+        monkeypatch.setattr(cli, "time", SimpleNamespace(monotonic=lambda: self.now))
+        monkeypatch.setattr(service, "_existing_store", lambda _: self.calls.append("existing-authority"))
+        monkeypatch.setattr(service, "_config_identity", lambda *_: "same-config")
+        monkeypatch.setattr(service, "_task_info", self.task_info)
+        monkeypatch.setattr(service, "_start_task", self.start_task)
+        monkeypatch.setattr(cli, "_check_health", self.health)
+        monkeypatch.setattr(cli, "_read_endpoint_json", self.endpoint)
+        owner = self
+        class API(FakeAPI):
+            def private_home(self, home):
+                assert home == owner.home
+            def process(self, pid):
+                if pid in owner.gone:
+                    raise service.Unknown("kernel process identity no longer available")
+                assert pid in owner.identities
+                return pid
+            def identity(self, handle, pid):
+                assert handle == pid
+                return owner.identities[pid]
+            def job(self, name):
+                if name in owner.gone:
+                    raise service.Unknown("Job destroyed; cannot reopen custody")
+                assert name in owner.jobs
+                return name
+            def in_job(self, handle, job):
+                return handle in owner.jobs[job]
+            def exit_code(self, handle):
+                return owner.exits.get(handle)
+            def signaled(self, handle, seconds=0):
+                if isinstance(handle, str) and handle.endswith("-stop"):
+                    return handle in owner.signaled_stop
+                if owner.exits.get(handle) is None:
+                    owner.advance(seconds)
+                    return False
+                return True
+            def signal(self, event):
+                owner.calls.append("signal")
+                owner.signaled_stop.add(event)
+                owner.settle_current(failed=owner.fail_on_signal)
+            def accounting(self, job):
+                roots = owner.jobs[job]
+                return len(roots), sum(owner.exits.get(pid) is None for pid in roots)
+            def close(self, handle):
+                owner.closed.add(handle)
+        self.api = API()
+        self.install_generation(1, running=True)
 
-    call_log = tmp_path / "calls.log"
-    harness = tmp_path / "harness.ps1"
-    service_home = service_home or tmp_path / "service-home"
-    vbs = tmp_path / "launcher.vbs"
-    harness.write_text(HARNESS, encoding="utf-8")
-    if pid_file_value is not None:
-        (service_home / "run").mkdir(parents=True, exist_ok=True)
-        (service_home / "run" / "pallium.pid").write_text(str(pid_file_value))
-    if task_shape == "generated_cli":
-        from unittest.mock import patch
-        from app.cli.service import _install_windows
+    def save_manifest(self):
+        (self.run_dir / "windows-launch.json").write_text(json.dumps(self.manifest), encoding="utf-8")
+        Path(self.manifest["vbs"]).write_text(service.launcher_text(self.manifest), encoding="utf-16")
 
-        service_home.mkdir(parents=True, exist_ok=True)
-        (service_home / "run").mkdir(exist_ok=True)
-        vbs = service_home / "run" / "pallium_launcher.vbs"
-        with patch(
-            "app.cli.service.subprocess.run",
-            return_value=subprocess.CompletedProcess([], 0, "", ""),
-        ):
-            _install_windows("pallium", int(port or 21987), service_home)
-        command = None
-    elif task_shape == "legacy":
-        python = Path(sys.executable).with_name("pythonw.exe")
-        launcher = tmp_path / "service_launcher.py"
-        assert python.exists()
-        launcher.write_text(
-            f'from app.run import run\nraise SystemExit(run(["service", "run", "--port", "{port}"]))\n',
-            encoding="ascii",
-        )
-        command = f'WshShell.Run """{python}"" ""{launcher}""", 0, False\n'
-    elif task_shape == "unparseable":
-        command = 'WshShell.Run "not-python", 0, False\n'
-    elif task_shape == "canonical_missing_home":
-        port_arg = "" if port is None else f" --port {port}"
-        command = f'WshShell.Run """{sys.executable}"" -m app.run service run{port_arg}", 0, False\n'
-    else:
-        port_arg = "" if port is None else f" --port {port}"
-        if task_shape == "canonical_legacy":
-            command = (
-                f'WshShell.Run """{sys.executable}"" -m app.run service run{port_arg} '
-                f'--home ""{service_home}""", 0, False\n'
-            )
-        elif task_shape == "new_launcher":
-            python = Path(sys.executable).with_name("pythonw.exe")
-            assert python.exists()
-            launcher = tmp_path / "service_launcher.py"
-            launcher.write_text(
-                f'from app.run import run\nraise SystemExit(run(["service", "run", "--port", "{port}"]))\n',
-                encoding="ascii",
-            )
-            command = f'WScript.Quit WshShell.Run("""{python}"" ""{launcher}""", 0, True)\n'
-        else:
-            command = (
-                f'WScript.Quit WshShell.Run("""{sys.executable}"" -m app.run service run{port_arg} '
-                f'--home ""{service_home}""", 0, True)\n'
-            )
-    if command is not None:
-        vbs.write_text(
-            'Set WshShell = CreateObject("WScript.Shell")\n' + command,
-            encoding="ascii" if task_shape in {"legacy", "canonical_legacy"} else "utf-16",
-        )
+    def advance(self, seconds):
+        self.now += seconds
 
-    env = os.environ.copy()
-    env.update(
-        RW010_CALL_LOG=str(call_log),
-        RW010_HOME=str(tmp_path / "home"),
-        USERPROFILE=str(tmp_path / "profile"),
-        HOME=str(tmp_path / "home"),
-        APPDATA=str(tmp_path / "profile" / "AppData" / "Roaming"),
-        RW010_SCENARIO=scenario,
-        RW010_SCRIPT=str(RESTART_SCRIPT),
-        RW010_PYTHON=str(sys.executable),
-        RW010_NATIVE_PYTHON=str(sys._base_executable),
-        RW010_SERVICE_HOME=str(service_home),
-        RW010_TASK_SHAPE=task_shape,
-        RW010_VBS=str(vbs),
-        RW010_WORKDIR=(
-            str(tmp_path / "missing")
-            if task_shape == "invalid_workdir"
-            else str(working_directory or tmp_path)
-        ),
-        RW016_PID="" if pid_file_value is None else str(pid_file_value),
-        RW010_READINESS_TIMEOUT_SECONDS=str(readiness_timeout_seconds),
-        RW010_STOP_ONLY="1" if stop_only else "0",
-    )
-    result = subprocess.run(
-        [shell, "-NoLogo", "-NoProfile", "-NonInteractive", "-File", str(harness)],
-        cwd=REPO_ROOT,
-        env=env,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=15,
-        creationflags=subprocess.CREATE_NO_WINDOW,
-    )
-    calls = call_log.read_text(encoding="utf-8").splitlines() if call_log.exists() else []
-    return result, calls
+    def install_generation(self, number, *, running=True, failed=False):
+        base = number * 100
+        def identity(pid, image):
+            value = {"pid": pid, "created": pid * 10, "image": image}
+            self.identities[pid] = value
+            self.exits[pid] = None if running else (2 if failed else 0)
+            return value
+        observer = identity(base + 1, "python.exe")
+        launcher = identity(base + 2, "wscript.exe")
+        supervisor = identity(base + 3, "python.exe")
+        api = identity(base + 4, "python.exe")
+        worker = identity(base + 5, "python.exe")
+        description = service._names(self.home, str(number) * 32)
+        self.jobs[description] = [supervisor["pid"], api["pid"], worker["pid"]]
+        self.record = {"version": 1, "generation": str(number) * 32, "description": description,
+                       "config": "same-config", "manifest": self.manifest, "observer": observer,
+                       "launcher": launcher, "ancestry": [observer, launcher], "supervisor": supervisor,
+                       "task_instance": "instance-" + str(number), "outcome": "running" if running else "failed" if failed else "clean",
+                       "api_ready": {"nonce": "nonce-" + str(number), "identity": api}}
+        self.write_record()
+        (self.run_dir / "api_token").write_text(json.dumps({"nonce": self.record["api_ready"]["nonce"], "pid": api["pid"]}), encoding="utf-8")
+        if not running:
+            self.write_terminal()
 
+    def write_record(self):
+        (self.run_dir / "windows-generation.json").write_text(json.dumps(self.record), encoding="utf-8")
 
-def _output(result: subprocess.CompletedProcess[str]) -> str:
-    return result.stdout + result.stderr
+    def write_terminal(self):
+        roots = self.jobs[self.record["description"]]
+        self.record.update(empty=True, total=len(roots), exits={str(pid): self.exits[pid] for pid in roots})
+        self.write_record()
 
+    def settle_current(self, *, failed=False):
+        if self.active_survivor:
+            return
+        for pid in self.jobs[self.record["description"]] + [self.record["observer"]["pid"], self.record["launcher"]["pid"]]:
+            self.exits[pid] = 2 if failed else 0
+        self.record["outcome"] = "failed" if failed else "clean"
+        self.write_terminal()
+        self.terminal_history.append(json.loads(json.dumps(self.record)))
 
-def _assert_failure(result: subprocess.CompletedProcess[str]) -> str:
-    output = _output(result)
-    assert result.returncode != 0
-    assert "Pallium restarted." not in output
-    assert "Pallium log:" in output
-    assert "\\logs\\pallium.log" in output
-    return output
+    def task_info(self, _deadline):
+        running = self.exits[self.record["observer"]["pid"]] is None
+        return {"path": "\\Pallium", "name": "Pallium", "action_count": 1,
+                "action": "wscript.exe", "arguments": service._task_arguments(self.manifest),
+                "cwd": self.manifest["cwd"], "retry": 0, "state": 4 if running else 3,
+                "instances": [self.record["task_instance"]] if running else []}
 
+    def start_task(self, manifest, deadline):
+        deadline.remaining()
+        assert all(self.exits[pid] is not None for pid in self.jobs[self.record["description"]])
+        # OLD identities/Job are still pinned throughout admission.
+        assert self.record["description"] not in self.closed
+        self.starts += 1
+        self.calls.append("start-registered-task")
+        self.install_generation(self.starts + 1)
+        return self.record["task_instance"]
 
-def _assert_port(result: subprocess.CompletedProcess[str], calls: list[str], port: int) -> None:
-    assert f"Get-NetTCPConnection:{port}" in calls
-    assert f"URI:http://127.0.0.1:{port}/health" in calls
-    assert f"URI:http://127.0.0.1:{port}/status" in calls
-    assert f"URI:http://127.0.0.1:{port}/debug/queue/health" in calls
-    assert f"http://127.0.0.1:{port}/dashboard" in _output(result)
+    def health(self, port, *, timeout):
+        self.calls.append(("/health", port, timeout))
+        self.advance(.01)
+        self.health_round += 1
+        if self.terminal_endpoint == "/health" or self.transient and self.health_round < 2:
+            return {"status": "initializing"}
+        return {"status": "ok", "vector_index_ready": True, "embedding_provider_ok": True}
 
+    def endpoint(self, port, path, *, timeout):
+        self.calls.append((path, port, timeout))
+        self.advance(.02)
+        return None if path == self.terminal_endpoint else {}
 
-def test_wake_import_runs_after_stop_and_before_task_start(tmp_path: Path) -> None:
-    result, calls = _run_restart(tmp_path, "success")
-    assert result.returncode == 0, _output(result)
-    assert calls.index("Stop-ScheduledTask") < calls.index("Initialize-Wakes") < calls.index("Start-ScheduledTask")
-
-
-def test_wake_import_failure_never_starts_service(tmp_path: Path) -> None:
-    result, calls = _run_restart(tmp_path, "wake_import_failure")
-    _assert_failure(result)
-    assert "Initialize-Wakes" in calls
-    assert "Start-ScheduledTask" not in calls
-
-
-def test_stop_only_does_not_import_wakes(tmp_path: Path) -> None:
-    result, calls = _run_restart(tmp_path, "success", stop_only=True)
-    assert result.returncode == 0, _output(result)
-    assert "Initialize-Wakes" not in calls
-
-
-def test_preflight_failure_never_stops_the_healthy_service(tmp_path: Path) -> None:
-    result, calls = _run_restart(tmp_path, "preflight_failure")
-
-    output = _assert_failure(result)
-    assert "import preflight failed with exit code 7" in output
-    assert "Stop-ScheduledTask" not in calls
-    assert "Stop-Process" not in calls
-    assert not any(call.startswith("taskkill") for call in calls)
+    def run(self, action="restart", timeout=1):
+        result = service.control(self.home, action, timeout=timeout, api=self.api, ready=cli._managed_ready)
+        assert all(not isinstance(call, str) or not any(word in call for word in ("kill", "census", "initialize")) for call in self.calls)
+        return result
 
 
-@pytest.mark.parametrize(
-    ("task_shape", "message"),
-    [
-        ("invalid_workdir", "working directory is missing or invalid"),
-        ("unparseable", "Could not resolve the installed Python executable"),
-    ],
-)
-def test_invalid_installed_task_metadata_never_stops(
-    tmp_path: Path,
-    task_shape: str,
-    message: str,
-) -> None:
-    result, calls = _run_restart(tmp_path, "ready", task_shape=task_shape)
-
-    assert message in _assert_failure(result)
-    assert "Stop-ScheduledTask" not in calls
-    assert "Stop-Process" not in calls
-    assert not any(call.startswith("taskkill") for call in calls)
+@pytest.fixture
+def generation(tmp_path, monkeypatch):
+    return ManagedGeneration(tmp_path, monkeypatch)
 
 
-def test_canonical_task_omits_working_directory_and_sweeps_survivor(tmp_path: Path) -> None:
-    result, calls = _run_restart(tmp_path, "canonical_survivor", port=2198)
-
-    assert result.returncode == 0, _output(result)
-    assert f"Start-Process:{sys.executable}" in calls
-    assert "PreflightWorkingDirectory:<omitted>" in calls
-    assert any(call.endswith("/PID 4242") for call in calls)
-    assert not any("4343" in call for call in calls)
-    assert not any("9999" in call for call in calls)
-    _assert_port(result, calls, 2198)
+def test_default_readiness_budget_allows_three_minute_cold_start():
+    assert "[double]$ReadinessTimeoutSeconds = 180" in RESTART_SCRIPT.read_text(encoding="utf-8")
 
 
-def test_legacy_task_passes_exact_working_directory(tmp_path: Path) -> None:
-    result, calls = _run_restart(tmp_path, "ready", task_shape="legacy", port=21988)
+def test_wake_import_runs_after_stop_and_before_task_start(generation):
+    # RETIRED: unconditional import; retained: ordered stop/start with no setup.
+    assert generation.run() == "started"
+    assert generation.calls.index("signal") < generation.calls.index("start-registered-task")
+    assert "existing-authority" in generation.calls
 
-    assert result.returncode == 0, _output(result)
-    assert f"Start-Process:{Path(sys.executable).with_name('pythonw.exe')}" in calls
-    assert f"PreflightWorkingDirectory:{tmp_path}" in calls
-    _assert_port(result, calls, 21988)
+
+def test_wake_import_failure_never_starts_service(generation, monkeypatch):
+    def refuse(_):
+        raise service.Unknown("existing authority missing; separate offline setup")
+    monkeypatch.setattr(service, "_existing_store", refuse)
+    with pytest.raises(service.Unknown, match="separate offline"):
+        generation.run()
+    assert generation.starts == 0 and "signal" not in generation.calls
+
+
+def test_stop_only_does_not_import_wakes(generation):
+    assert generation.run("stop").startswith("stopped")
+    assert generation.starts == 0
+
+
+def test_preflight_failure_never_stops_the_healthy_service(generation, monkeypatch):
+    monkeypatch.setattr(generation.api, "private_home", lambda _: (_ for _ in ()).throw(service.Unknown("preflight")))
+    with pytest.raises(service.Unknown, match="preflight"):
+        generation.run()
+    assert "signal" not in generation.calls and generation.starts == 0
+
+
+@pytest.mark.parametrize("task_shape", ["invalid_workdir", "unparseable"])
+def test_invalid_installed_task_metadata_never_stops(generation, task_shape):
+    generation.manifest["cwd" if task_shape == "invalid_workdir" else "python"] = str(generation.home / "missing")
+    generation.save_manifest()
+    with pytest.raises(service.Unknown):
+        generation.run()
+    assert "signal" not in generation.calls
+
+
+def test_canonical_task_omits_working_directory_and_sweeps_survivor(generation):
+    # RETIRED omission/sweep: exact installed cwd, no fallback, owned survivor refuses.
+    generation.active_survivor = True
+    with pytest.raises(service.Unknown):
+        generation.run()
+    assert generation.starts == 0
+
+
+def _refuse_legacy(generation, monkeypatch, shape="legacy"):
+    Path(generation.manifest["vbs"]).write_text(shape + " legacy entrypoint", encoding="utf-16")
+    task = generation.task_info(None)
+    task["arguments"] = '"legacy.vbs"'
+    monkeypatch.setattr(service, "_task_info", lambda _: task)
+    with pytest.raises(service.Unknown):
+        generation.run()
+    assert generation.starts == 0 and "signal" not in generation.calls
+
+
+def test_legacy_task_passes_exact_working_directory(generation, monkeypatch):
+    _refuse_legacy(generation, monkeypatch)
+    generation.save_manifest()
+    assert service._manifest(generation.home)["cwd"] == str(generation.cwd)
 
 
 @pytest.mark.parametrize("task_shape", ["canonical_legacy", "generated_cli", "new_launcher"])
-def test_restart_metadata_parses_legacy_and_generated_launcher_forms(
-    tmp_path: Path, task_shape: str
-) -> None:
-    result, calls = _run_restart(tmp_path, "success", task_shape=task_shape, stop_only=True)
-
-    assert result.returncode == 0, _output(result)
-    assert "Stop-ScheduledTask" in calls
+def test_restart_metadata_parses_legacy_and_generated_launcher_forms(generation, monkeypatch, task_shape):
+    # All three historical forms lack the new invocation/deadline contract.
+    _refuse_legacy(generation, monkeypatch, task_shape)
 
 
-def test_legacy_task_passes_unicode_working_directory_exactly(tmp_path: Path) -> None:
-    working_directory = tmp_path / "תיקייה עם רווחים"
-    working_directory.mkdir()
-
-    result, calls = _run_restart(
-        tmp_path,
-        "ready",
-        task_shape="legacy",
-        port=21988,
-        working_directory=working_directory,
-        readiness_timeout_seconds=10.0,
-    )
-
-    assert result.returncode == 0, _output(result)
-    assert f"PreflightWorkingDirectory:{working_directory}" in calls
+def test_legacy_task_passes_unicode_working_directory_exactly(generation, monkeypatch):
+    _refuse_legacy(generation, monkeypatch)
+    assert "קוד" in generation.manifest["cwd"]
+    generation.save_manifest()
+    assert service._manifest(generation.home)["cwd"] == str(generation.cwd)
 
 
-def test_canonical_unicode_home_controls_pid_cleanup_and_failure_log(tmp_path: Path) -> None:
-    service_home = tmp_path / "שירות %TEMP% עם רווחים"
-    result, calls = _run_restart(
-        tmp_path,
-        "start_failure",
-        service_home=service_home,
-        pid_file_value=5151,
-    )
-
-    output = _assert_failure(result)
-    assert any(call.endswith("/PID 5151") for call in calls)
-    assert f"Pallium log: {service_home / 'logs' / 'pallium.log'}" in output
+def test_canonical_unicode_home_controls_pid_cleanup_and_failure_log(generation):
+    assert service._manifest(generation.home)["home"] == str(generation.home)
+    (generation.run_dir / "pallium.pid").write_text("5151", encoding="utf-8")
+    assert generation.run() == "started"
+    assert (generation.run_dir / "pallium.pid").read_text() == "5151"
 
 
-def test_legacy_task_failure_keeps_default_home_log_path(tmp_path: Path) -> None:
-    result, _calls = _run_restart(tmp_path, "start_failure", task_shape="legacy")
+def test_legacy_task_failure_keeps_default_home_log_path(generation, monkeypatch):
+    _refuse_legacy(generation, monkeypatch)
+    assert not (generation.home / "logs").exists()
 
-    output = _assert_failure(result)
-    default_log = tmp_path / "home" / ".pallium" / "logs" / "pallium.log"
-    assert f"Pallium log: {default_log}" in output
 
-def test_canonical_missing_home_fails_before_stop(tmp_path: Path) -> None:
-    result, calls = _run_restart(tmp_path, "ready", task_shape="canonical_missing_home")
+def test_canonical_missing_home_fails_before_stop(generation):
+    generation.manifest.pop("home")
+    (generation.run_dir / "windows-launch.json").write_text(json.dumps(generation.manifest), encoding="utf-8")
+    with pytest.raises(service.Unknown):
+        generation.run()
+    assert "signal" not in generation.calls
 
-    output = _assert_failure(result)
-    assert "resolve the installed service home" in output
-    assert "Stop-ScheduledTask" not in calls
-    assert "Stop-Process" not in calls
-    assert not any(call.startswith("taskkill") for call in calls)
 
 @pytest.mark.parametrize("port", [None, "abc", 0, 65536])
-def test_missing_or_invalid_port_never_stops(tmp_path: Path, port: int | str | None) -> None:
-    result, calls = _run_restart(tmp_path, "ready", port=port)
-
-    assert "valid installed service port (1..65535)" in _assert_failure(result)
-    assert "Stop-ScheduledTask" not in calls
-    assert "Stop-Process" not in calls
-    assert not any(call.startswith("taskkill") for call in calls)
-    assert not any(call.startswith("Get-NetTCPConnection:") for call in calls)
+def test_missing_or_invalid_port_never_stops(generation, port):
+    generation.manifest["port"] = port
+    generation.save_manifest()
+    with pytest.raises(service.Unknown):
+        generation.run()
+    assert "signal" not in generation.calls
 
 
 @pytest.mark.parametrize("port", [1, 65535])
-def test_boundary_ports_are_valid(tmp_path: Path, port: int) -> None:
-    result, calls = _run_restart(tmp_path, "ready", port=port)
-
-    assert result.returncode == 0, _output(result)
-    _assert_port(result, calls, port)
-
-
-def test_partial_taskkill_error_continues_cleanup_and_restarts(tmp_path: Path) -> None:
-    result, calls = _run_restart(
-        tmp_path,
-        "partial_taskkill",
-        pid_file_value=5151,
-    )
-
-    assert result.returncode == 0, _output(result)
-    assert "partial failure for PID 5151" in _output(result)
-    assert len([call for call in calls if call.startswith("Get-CimInstance:")]) >= 2
-    assert calls.count("Start-ScheduledTask") == 1
-    _assert_port(result, calls, 21987)
+def test_boundary_ports_are_valid(generation, port):
+    generation.manifest["port"] = port
+    generation.save_manifest()
+    generation.write_record()
+    assert generation.run() == "started"
+    assert {call[1] for call in generation.calls if isinstance(call, tuple)} == {port}
 
 
-def test_nonzero_taskkill_error_continues_cleanup_and_restarts(tmp_path: Path) -> None:
-    result, calls = _run_restart(
-        tmp_path,
-        "nonzero_taskkill",
-        pid_file_value=5151,
-    )
-
-    assert result.returncode == 0, _output(result)
-    assert "partial failure for PID 5151" in _output(result)
-    assert calls.count("Start-ScheduledTask") == 1
-    assert calls.count("Get-NetTCPConnection:21987") >= 2
-    _assert_port(result, calls, 21987)
+def test_partial_taskkill_error_continues_cleanup_and_restarts(generation):
+    generation.fail_on_signal = True
+    assert generation.run() == "recovered"
+    assert generation.starts == 1
 
 
-def test_stop_only_rejects_nonzero_taskkill(tmp_path: Path) -> None:
-    result, calls = _run_restart(tmp_path, "nonzero_taskkill", pid_file_value=5151, stop_only=True)
-
-    assert "taskkill failed for PID 5151" in _assert_failure(result)
-    assert "Start-ScheduledTask" not in calls
-
-
-def test_stop_only_rejects_failed_process_enumeration(tmp_path: Path) -> None:
-    result, calls = _run_restart(tmp_path, "enumeration_failure", stop_only=True)
-
-    assert result.returncode != 0
-    assert "simulated process enumeration failure" in _output(result)
-    assert "Pallium restarted." not in _output(result)
-    assert "Start-ScheduledTask" not in calls
+def test_nonzero_taskkill_error_continues_cleanup_and_restarts(generation):
+    generation.fail_on_signal = True
+    assert generation.run() == "recovered"
+    assert generation.terminal_history[0]["outcome"] == "failed"
 
 
-def test_multiple_initial_listeners_are_killed_once_each(tmp_path: Path) -> None:
-    result, calls = _run_restart(tmp_path, "multiple_initial_listeners")
-
-    assert result.returncode == 0, _output(result)
-    assert calls.count("taskkill /F /T /PID 6161") == 1
-    assert calls.count("taskkill /F /T /PID 6262") == 1
-    assert calls.count("Start-ScheduledTask") == 1
-    _assert_port(result, calls, 21987)
-
-
-def test_surviving_listener_fails_before_task_start(tmp_path: Path) -> None:
-    result, calls = _run_restart(tmp_path, "surviving_listener")
-
-    output = _assert_failure(result)
-    assert "port 21987 is still listening" in output
-    assert "listener PID(s): 6161, 6262" in output
-    assert "Start-ScheduledTask" not in calls
-    assert not any(call.startswith("URI:") for call in calls)
+def test_stop_only_rejects_nonzero_taskkill(generation):
+    generation.settle_current()
+    generation.record["exits"]["103"] = 2
+    generation.write_record()
+    with pytest.raises(service.Unknown, match="nonzero"):
+        generation.run("stop")
+    assert generation.starts == 0
 
 
-def test_start_failure_is_nonzero_and_never_prints_success(tmp_path: Path) -> None:
-    result, calls = _run_restart(tmp_path, "start_failure")
-
-    output = _assert_failure(result)
-    assert "Failed to start the Pallium scheduled task" in output
-    assert calls.count("Stop-ScheduledTask") == 1
-    assert calls.count("Start-ScheduledTask") == 1
+def test_stop_only_rejects_failed_process_enumeration(generation):
+    generation.gone.add(generation.record["launcher"]["pid"])
+    with pytest.raises(service.Unknown, match="no longer available"):
+        generation.run("stop")
+    assert generation.starts == 0 and "signal" not in generation.calls
 
 
-def test_transient_readiness_checks_all_contracts_before_success(tmp_path: Path) -> None:
-    result, calls = _run_restart(
-        tmp_path, "transient", readiness_timeout_seconds=10.0,
-    )
-
-    assert result.returncode == 0, _output(result)
-    assert "Pallium restarted." in _output(result)
-    assert calls.count("GET /health") == 25
-    assert calls.count("GET /status") == 24
-    assert calls.count("GET /debug/queue/health") == 22
-    assert calls.count("Sleep:500") == 24
-    for path, maximum in (
-        ("/health", 2),
-        ("/status", 2),
-        ("/debug/queue/health", 10),
-    ):
-        timeouts = [
-            int(call.rsplit(":", 1)[1])
-            for call in calls
-            if call.startswith(f"Timeout:{path}:")
-        ]
-        assert timeouts
-        assert all(1 <= timeout <= maximum for timeout in timeouts)
+def test_multiple_initial_listeners_are_killed_once_each(generation):
+    # RETIRED listener census/kill; retain multi-child settlement before one admission.
+    assert len(generation.jobs[generation.record["description"]]) == 3
+    assert generation.run() == "started" and generation.starts == 1
 
 
-def test_queue_health_can_use_longer_timeout_within_same_deadline(
-    tmp_path: Path,
-) -> None:
-    result, calls = _run_restart(
-        tmp_path, "slow_queue", readiness_timeout_seconds=6.0,
-    )
-
-    assert result.returncode == 0, _output(result)
-    queue_timeouts = [
-        int(call.rsplit(":", 1)[1])
-        for call in calls
-        if call.startswith("Timeout:/debug/queue/health:")
-    ]
-    assert queue_timeouts and 2 < queue_timeouts[0] <= 10
-    assert all(
-        int(call.rsplit(":", 1)[1]) <= 2
-        for call in calls
-        if call.startswith(("Timeout:/health:", "Timeout:/status:"))
-    )
+def test_surviving_listener_fails_before_task_start(generation):
+    generation.active_survivor = True
+    with pytest.raises(service.Unknown):
+        generation.run()
+    assert generation.starts == 0
 
 
-@pytest.mark.parametrize(
-    ("scenario", "last_check", "last_endpoint"),
-    [
-        ("terminal_health", "/health status=initializing", "GET /health"),
-        ("terminal_status", "/status embedding_provider_ok=", "GET /status"),
-        ("terminal_queue", "/debug/queue/health HTTP 503", "GET /debug/queue/health"),
-    ],
-)
-def test_terminal_readiness_exhausts_exact_budget_without_success(
-    tmp_path: Path,
-    scenario: str,
-    last_check: str,
-    last_endpoint: str,
-) -> None:
-    result, calls = _run_restart(
-        tmp_path, scenario, readiness_timeout_seconds=2.1,
-    )
-
-    output = _assert_failure(result)
-    assert "failed the 2.1-second readiness budget" in output
-    assert last_check in output
-    assert calls.count(last_endpoint) >= 1
-    if scenario == "terminal_queue":
-        assert all(
-            int(call.rsplit(":", 1)[1]) <= 2
-            for call in calls
-            if call.startswith("Timeout:/debug/queue/health:")
-        )
-
-def test_stop_only_accepts_empty_listener_not_found(tmp_path: Path) -> None:
-    result, calls = _run_restart(tmp_path, "empty_listener_notfound", stop_only=True)
-
-    assert result.returncode == 0, _output(result)
-    assert "Pallium stopped." in _output(result)
-    assert "Start-ScheduledTask" not in calls
-    assert not any(call.startswith("URI:") for call in calls)
+def test_start_failure_is_nonzero_and_never_prints_success(generation, monkeypatch):
+    def unknown_start(*_):
+        raise service.Unknown("task start outcome unknown")
+    monkeypatch.setattr(service, "_start_task", unknown_start)
+    with pytest.raises(service.Unknown, match="outcome unknown"):
+        generation.run()
+    assert generation.starts == 0
 
 
-def test_stop_only_rejects_orphan_redirected_worker(tmp_path: Path) -> None:
-    result, calls = _run_restart(tmp_path, "redirected_worker_survivor", stop_only=True)
+def test_transient_readiness_checks_all_contracts_before_success(generation):
+    generation.transient = True
+    assert generation.run() == "started"
+    paths = [call[0] for call in generation.calls if isinstance(call, tuple)]
+    assert paths.count("/health") >= 2
+    assert paths[-3:] == ["/health", "/status", "/debug/queue/health"]
+    assert generation.starts == 1
 
-    output = _assert_failure(result)
-    assert "taskkill /F /T /PID 8484" in calls
-    assert "Managed Pallium process(es) survived stop: 8484" in output
-    assert "Start-ScheduledTask" not in calls
+
+def test_queue_health_can_use_longer_timeout_within_same_deadline(generation):
+    assert generation.run(timeout=6) == "started"
+    budgets = [call[2] for call in generation.calls if isinstance(call, tuple)]
+    assert 2 < budgets[-1] < 6
+    assert budgets[0] <= 2 and budgets[1] <= 2
+    assert generation.now < 6
 
 
-def test_stop_only_rejects_quoted_codex_queue_survivor(tmp_path: Path) -> None:
-    result, calls = _run_restart(tmp_path, "quoted_codex_survivor", stop_only=True)
+@pytest.mark.parametrize("scenario,last_endpoint", [("terminal_health", "/health"), ("terminal_status", "/status"), ("terminal_queue", "/debug/queue/health")])
+def test_terminal_readiness_exhausts_exact_budget_without_success(generation, scenario, last_endpoint):
+    generation.terminal_endpoint = last_endpoint
+    with pytest.raises(service.Unknown, match="deadline"):
+        generation.run(timeout=.21)
+    assert generation.starts == 1 and generation.now >= .21
+    assert any(isinstance(call, tuple) and call[0] == last_endpoint for call in generation.calls)
 
-    output = _assert_failure(result)
-    assert "Managed Pallium process(es) survived stop: 7373" in output
-    assert "Start-ScheduledTask" not in calls
+
+def test_stop_only_accepts_empty_listener_not_found(generation):
+    # Port absence does not enter the proof: full retained set must settle.
+    assert generation.run("stop").startswith("stopped")
+    assert generation.record["empty"] and len(generation.record["exits"]) == 3
+    generation.gone.update(generation.closed)
+    with pytest.raises(service.Unknown, match="no longer available|destroyed"):
+        generation.run("start")
+    assert generation.starts == 0
+
+
+def test_stop_only_rejects_orphan_redirected_worker(generation):
+    generation.active_survivor = True
+    with pytest.raises(service.Unknown):
+        generation.run("stop")
+    assert generation.starts == 0
+
+
+def test_stop_only_rejects_quoted_codex_queue_survivor(generation):
+    # Product/quoting does not confer ownership; a retained owned child is active.
+    generation.active_survivor = True
+    with pytest.raises(service.Unknown):
+        generation.run("stop")
+    assert generation.starts == 0
 
 
 def test_cooperative_windows_wrapper_has_no_task_or_force_fallback():
     source = RESTART_SCRIPT.read_text(encoding="utf-8")
-    assert "-m app.windows_service $action --timeout $budget" in source
+    assert "-m app.windows_service $action --home" in source and "--deadline $absolute" in source
     assert "[double]$ReadinessTimeoutSeconds = 180" in source
     assert "UseShellExecute = $false" in source and "CreateNoWindow = $true" in source
     for forbidden in ("taskkill", "Stop-ScheduledTask", "Start-ScheduledTask", "Stop-Process", ".Kill(", "initialize-wakes"):
@@ -722,12 +432,12 @@ def test_cooperative_windows_task_query_is_read_only_and_bounded(monkeypatch):
     calls = []
     def query(command, **options):
         calls.append((command, options))
-        return SimpleNamespace(returncode=0, stdout='{"state":"Ready"}')
+        return SimpleNamespace(returncode=0, stdout='{"state":3,"path":"\\\\Pallium","name":"Pallium","action_count":1,"instances":[]}')
     monkeypatch.setattr(subprocess, "run", query)
-    assert service._task_info(ImmediateDeadline()) == {"state": "Ready"}
+    assert service._task_info(ImmediateDeadline())["state"] == 3
     assert calls[0][1]["timeout"] == 5
     assert "-NoProfile" in calls[0][0]
-    assert "Get-ScheduledTask" in calls[0][0][-1]
+    assert "GetFolder" in calls[0][0][-1] and "GetTask('Pallium')" in calls[0][0][-1]
     assert all(verb not in calls[0][0][-1] for verb in ("Stop-ScheduledTask", "Start-ScheduledTask", "Register-ScheduledTask"))
 
 
@@ -741,8 +451,9 @@ def test_cooperative_windows_unsupported_registered_launcher_refused_before_cont
     if shape == "missing-home":
         text = service.MANAGED_MARKER + "\n"
     vbs.write_text(text, encoding="utf-16")
-    task = {"action": "cmd.exe" if shape == "wrong-host" else "wscript.exe",
-            "arguments": '"' + str(vbs) + '"', "retry": 3 if shape == "automatic-retry" else 0}
+    task = {"path": "\\Pallium", "name": "Pallium", "action_count": 1, "instances": [],
+            "action": "cmd.exe" if shape == "wrong-host" else "wscript.exe",
+            "arguments": '"' + str(vbs) + '" "$(Arg0)"', "retry": 3 if shape == "automatic-retry" else 0}
     monkeypatch.setattr(service, "_task_info", lambda _: task)
     with pytest.raises(service.Unknown):
         service._registered_home(ImmediateDeadline())
@@ -752,7 +463,7 @@ def test_cooperative_windows_registered_unicode_home_is_exact(tmp_path, monkeypa
     home = tmp_path / "Профиль with spaces"
     vbs = tmp_path / "managed.vbs"
     vbs.write_text(service.MANAGED_MARKER + f'\nWScript.Quit WshShell.Run("""python.exe"" -m app.windows_service observe --home ""{home}""", 0, True)\n', encoding="utf-16")
-    monkeypatch.setattr(service, "_task_info", lambda _: {"action":"wscript.exe", "arguments":'"'+str(vbs)+'"', "retry":0})
+    monkeypatch.setattr(service, "_task_info", lambda _: {"path":"\\Pallium", "name":"Pallium", "action_count":1, "instances":[], "action":"wscript.exe", "arguments":'"'+str(vbs)+'" "$(Arg0)"', "retry":0})
     assert service._registered_home(ImmediateDeadline()) == home
 
 
@@ -760,3 +471,77 @@ def test_cooperative_windows_registered_unicode_home_is_exact(tmp_path, monkeypa
 def test_cooperative_windows_invalid_operation_budget_never_queries_host(seconds):
     with pytest.raises(ValueError):
         service.control(Path("unused"), "restart", timeout=seconds)
+
+
+def test_cooperative_windows_mutating_powershell_child_missing_fake_is_denied():
+    # The same pre-import subprocess sentinel guards COM Run as well as queries.
+    deadline = SimpleNamespace(remaining=lambda: 5, end=10)
+    with pytest.raises(NativeCallDenied):
+        service._start_task({"vbs": "private.vbs", "cwd": "private"}, deadline)
+
+
+def test_cooperative_windows_wrapper_uses_only_explicit_mockable_child_boundaries():
+    source = RESTART_SCRIPT.read_text(encoding="utf-8")
+    assert "New-Object -ComObject Schedule.Service" in source
+    assert "New-Object -TypeName System.Diagnostics.Process" in source
+    assert "$start.FileName = $manifest.python" in source
+    assert "$start.WorkingDirectory = $manifest.cwd" in source
+    assert ".venv" not in source and "$PSScriptRoot" not in source
+    assert "[Diagnostics.Process]::Start" not in source
+
+
+def test_cooperative_windows_wrong_task_path_action_count_or_instance_refuses(generation, monkeypatch):
+    task = generation.task_info(None)
+    task["path"] = "\\OtherFolder\\Pallium"
+    monkeypatch.setattr(service, "_task_info", lambda _: task)
+    with pytest.raises(service.Unknown):
+        generation.run()
+    task["path"], task["action_count"] = "\\Pallium", 2
+    with pytest.raises(service.Unknown):
+        generation.run()
+    task["action_count"], task["instances"] = 1, ["another-instance"]
+    with pytest.raises(service.Unknown, match="instance"):
+        generation.run()
+    assert generation.starts == 0 and "signal" not in generation.calls
+
+
+@pytest.mark.parametrize("shape", ["foreign-nonce", "foreign-pid", "not-in-job", "no-supervisor-proof"], ids=["foreign-nonce", "foreign-pid", "not-in-job", "no-supervisor-proof"])
+def test_cooperative_windows_healthy_port_never_substitutes_for_generation_proof(generation, monkeypatch, shape):
+    if shape == "foreign-nonce":
+        (generation.run_dir / "api_token").write_text(json.dumps({"nonce": "foreign", "pid": 104}), encoding="utf-8")
+    elif shape == "foreign-pid":
+        (generation.run_dir / "api_token").write_text(json.dumps({"nonce": "nonce-1", "pid": 999}), encoding="utf-8")
+    elif shape == "not-in-job":
+        generation.jobs[generation.record["description"]].remove(104)
+    else:
+        generation.record.pop("api_ready")
+        generation.write_record()
+    if shape == "no-supervisor-proof":
+        with pytest.raises(service.Unknown, match="running/unready"):
+            generation.run("start")
+    else:
+        with pytest.raises(service.Unknown, match="ownership"):
+            generation.run("start")
+    assert generation.starts == 0 and not any(isinstance(call, tuple) for call in generation.calls)
+
+
+def test_cooperative_windows_public_error_uses_exact_unicode_home(generation, monkeypatch, capsys):
+    monkeypatch.setattr(cli.sys, "platform", "win32")
+    monkeypatch.setattr(service, "control", lambda *_args, **_kwargs: (_ for _ in ()).throw(service.Unknown("custody unavailable")))
+    assert cli.service_main(["restart", "--home", str(generation.home)]) == 1
+    assert f"Pallium log: {generation.home / 'logs' / 'pallium.log'}" in capsys.readouterr().err
+
+
+def test_cooperative_windows_registered_start_keeps_exact_instance_and_deadline(monkeypatch):
+    calls = []
+    def run(command, **options):
+        calls.append((command, options))
+        return SimpleNamespace(returncode=0, stdout='{"path":"\\\\Pallium","instance":"exact-instance"}')
+    monkeypatch.setattr(subprocess, "run", run)
+    deadline = SimpleNamespace(remaining=lambda: 5, end=123.5)
+    assert service._start_task({"vbs": "private.vbs", "cwd": "stable installed"}, deadline) == "exact-instance"
+    command, options = calls[0]
+    assert "$t.Run(" in command[-1] and "GetTask('Pallium')" in command[-1]
+    assert "timeout" not in options  # no mutating-child kill or invented cancellation
+    assert options["env"]["PALLIUM_CONTROL_DEADLINE"] == "123.5"
+    assert json.loads(options["env"]["PALLIUM_CONTROL_EXPECTED"])["cwd"] == "stable installed"

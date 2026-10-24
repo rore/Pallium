@@ -22,9 +22,21 @@ def _deny(*args, **kwargs):
     raise NativeCallDenied("unexpected native or host operation")
 
 
+class DeniedLibraries:
+    def __getattr__(self, name):
+        return _deny(name)
+
+
 @contextmanager
 def guard_native_calls():
     with patch.object(ctypes, "WinDLL", _deny, create=True), \
+            patch.object(ctypes, "OleDLL", _deny, create=True), \
+            patch.object(ctypes, "CDLL", _deny), \
+            patch.object(ctypes, "PyDLL", _deny), \
+            patch.object(ctypes, "windll", DeniedLibraries(), create=True), \
+            patch.object(ctypes, "oledll", DeniedLibraries(), create=True), \
+            patch.object(ctypes, "cdll", DeniedLibraries()), \
+            patch.object(ctypes, "pydll", DeniedLibraries()), \
             patch.object(subprocess, "Popen", _deny), \
             patch.object(subprocess, "run", _deny), \
             patch.object(socket, "create_connection", _deny), \
@@ -70,6 +82,7 @@ def guard_selected_mock(request, tmp_path):
     }
     with guard_native_calls(), patch.object(service, "WindowsAPI", _deny), \
             patch.object(service, "_NATIVE", None), patch.dict(os.environ, environment):
+        os.environ.pop(service.ADMISSION_ENV, None)
         yield
 
 
@@ -80,6 +93,7 @@ class FakeAPI:
         self.processes = {}
         self.identities = {}
         self.locked = False
+        self.held = set()
         self.active = 0
         self.total = 0
 
@@ -89,12 +103,14 @@ class FakeAPI:
     @contextmanager
     def mutex(self, name, seconds):
         self.calls.append(("mutex-enter", name))
-        assert not self.locked
-        self.locked = True
+        assert name not in self.held
+        self.held.add(name)
+        self.locked = any(item.endswith("-spawn") for item in self.held)
         try:
             yield
         finally:
-            self.locked = False
+            self.held.remove(name)
+            self.locked = any(item.endswith("-spawn") for item in self.held)
             self.calls.append(("mutex-exit", name))
 
     def event(self, name, *, create=False):
@@ -193,6 +209,7 @@ def test_cooperative_windows_pin_checks_observer_launcher_identity_and_job(tmp_p
     record = {
         "version": 1, "generation": generation, "description": description,
         "manifest": manifest,
+        "task_instance": "instance-1",
         "observer": {"pid": 11, "created": 1, "image": "observer.exe"},
         "launcher": {"pid": 12, "created": 2, "image": "wscript.exe"},
     }
@@ -211,6 +228,7 @@ def test_cooperative_windows_pin_rejects_reused_process_identity(tmp_path):
     record = {
         "version": 1, "generation": generation,
         "description": service._names(tmp_path, generation), "manifest": manifest,
+        "task_instance": "instance-1",
         "observer": {"pid": 11, "created": 1, "image": "observer.exe"},
         "launcher": {"pid": 12, "created": 2, "image": "wscript.exe"},
     }
@@ -231,6 +249,7 @@ def _settlement_fixture(tmp_path, outcome="clean", exits=None, total=1, active=0
         "version": 1, "generation": "b" * 32,
         "description": service._names(tmp_path, "b" * 32),
         "config": "config", "manifest": manifest,
+        "task_instance": "instance-1",
         "observer": {"pid": 21, "created": 1, "image": "observer.exe"},
         "launcher": {"pid": 22, "created": 2, "image": "wscript.exe"},
         "outcome": outcome,
@@ -292,42 +311,70 @@ def test_cooperative_windows_settle_running_generation_releases_spawn_mutex_befo
 
 
 def test_cooperative_windows_control_retries_one_failed_before_launch(tmp_path, monkeypatch):
-    class Launched:
-        handle = "created-launcher-handle"
+    # RETIRED direct-WScript exception retry: registered Run failure is ambiguous.
+    from tests.test_restart_service import ManagedGeneration
+    generation = ManagedGeneration(tmp_path, monkeypatch)
+    calls = []
+    def ambiguous(*_):
+        calls.append("registered-start")
+        raise service.Unknown("registered start outcome unknown")
+    monkeypatch.setattr(service, "_start_task", ambiguous)
+    with pytest.raises(service.Unknown, match="outcome unknown"):
+        generation.run()
+    assert calls == ["registered-start"]
 
-        def poll(self):
-            return None
 
-    class RetryAPI(FakeAPI):
-        def spawn(self, command, **kwargs):
-            self.calls.append(("spawn", command))
-            if sum(call[0] == "spawn" for call in self.calls) == 1:
-                raise service.FailedBeforeLaunch("no process created")
-            return Launched()
+def test_cooperative_windows_failed_new_generation_restores_once_after_full_settlement(tmp_path, monkeypatch):
+    from tests.test_restart_service import ManagedGeneration
+    generation = ManagedGeneration(tmp_path, monkeypatch)
+    generation.terminal_endpoint = "/health"
+    def crash_after_pin(seconds):
+        generation.advance(seconds)
+        if generation.starts == 1:
+            generation.settle_current(failed=True)
+            generation.terminal_endpoint = None
+    monkeypatch.setattr(service, "time", __import__("types").SimpleNamespace(sleep=crash_after_pin))
+    assert generation.run() == "recovered"
+    assert generation.starts == 2
 
-    api = RetryAPI()
-    home = tmp_path
-    run = home / "run"
-    run.mkdir()
-    path = run / "windows-generation.json"
-    path.write_text("{}", encoding="utf-8")
-    manifest = {"cwd": str(home), "vbs": str(home / "launcher.vbs"), "port": 21987}
-    old = {"outcome": "clean", "config": "config"}
-    current = {"outcome": "running", "config": "config"}
-    reads = iter((old, current))
-    monkeypatch.setattr(service, "Deadline", lambda _: ImmediateDeadline())
-    monkeypatch.setattr(service, "_manifest", lambda _: manifest)
-    monkeypatch.setattr(service, "_existing_store", lambda _: None)
-    monkeypatch.setattr(service, "_config_identity", lambda *_: "config")
-    monkeypatch.setattr(service, "_task_state", lambda *_: "Ready")
-    monkeypatch.setattr(service, "_json", lambda _: next(reads))
-    monkeypatch.setattr(service, "_settle", lambda *_args, **_kwargs: old)
-    monkeypatch.setattr(service, "_pin", lambda *_args: ["observer", "launcher", "job"])
-    monkeypatch.setattr(api, "private_home", lambda _: None)
-    monkeypatch.setattr(api, "exit_code", lambda _: None, raising=False)
-    assert service.control(home, "start", api=api, ready=lambda *_: True) == "recovered"
-    assert sum(call[0] == "spawn" for call in api.calls) == 2
-    assert sum(call[0] == "resume" for call in api.calls) == 1
+
+def test_cooperative_windows_expired_read_never_begins_and_late_read_is_not_cancelled():
+    now, calls = [0.0], []
+    deadline = service.Deadline(1, clock=lambda: now[0])
+    def observation():
+        calls.append("read")
+        now[0] = 2
+        return "late"
+    with pytest.raises(service.Unknown, match="deadline"):
+        deadline.read(observation)
+    assert calls == ["read"]
+    with pytest.raises(service.Unknown, match="deadline"):
+        deadline.read(lambda: calls.append("must-not-start"))
+    assert calls == ["read"]
+
+
+def test_cooperative_windows_cleanup_after_create_retains_suspended_identity(monkeypatch):
+    from types import SimpleNamespace
+    def initialize(buffer, count, flags, size):
+        ctypes.cast(size, ctypes.POINTER(ctypes.c_size_t))[0] = 64
+        return buffer is not None
+    def create(*args):
+        info = ctypes.cast(args[-1], ctypes.POINTER(service._ProcessInfo)).contents
+        info.process, info.thread, info.pid = 71, 72, 73
+        return True
+    def failed_cleanup(_):
+        raise service.Unknown("attribute cleanup failed")
+    receiver = SimpleNamespace(k=SimpleNamespace(
+        InitializeProcThreadAttributeList=initialize,
+        UpdateProcThreadAttribute=lambda *_: True, CreateProcessW=create,
+        DeleteProcThreadAttributeList=failed_cleanup,
+        ResumeThread=lambda *_: pytest.fail("must remain suspended")),
+        check=lambda value: value, close=lambda *_: pytest.fail("no duplicate handle in this scenario"))
+    process = _WindowsAPI.spawn(receiver, ["private-child"], cwd="private", env={}, job=5)
+    assert (process.handle, process.thread, process.pid) == (71, 72, 73)
+    assert process.cleanup_errors
+    with pytest.raises(service.Unknown, match="retained"):
+        _WindowsAPI.resume(receiver, process)
 
 
 @pytest.mark.parametrize("shape", ["direct", "redirector", "reused", "foreign", "non-python", "cycle", "depth", "query-error"],
@@ -380,3 +427,17 @@ def test_cooperative_windows_exact_own_ancestry_is_bounded_and_retained(monkeypa
             _WindowsAPI.launcher(receiver)
         assert closed == opened
     assert len(opened) <= 16 and dlls == ["ntdll"]
+
+
+def test_cooperative_windows_late_creation_remains_retained_without_resume(monkeypatch):
+    from types import SimpleNamespace
+    clock = iter((1.0, 11.0))
+    monkeypatch.setenv(service.ADMISSION_ENV, "10")
+    monkeypatch.setattr(service, "time", SimpleNamespace(perf_counter=lambda: next(clock)))
+    api = FakeAPI()
+    attempts = []
+    channel = service.StopChannel("generation", api=api)
+    with pytest.raises(service.Unknown, match="expired"):
+        channel.spawn(["private-child"], attempts=attempts, stop=lambda: False)
+    assert attempts == ["process"]
+    assert not any(call[0] == "resume" for call in api.calls)

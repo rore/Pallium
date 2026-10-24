@@ -443,6 +443,10 @@ def _start_api_with_retry(
             host, port, timeout=_API_START_TIMEOUT_SECONDS, process=proc,
             expected_nonce=nonce, run_dir=run_dir, stop=stop,
         ):
+            if cooperative is not None:
+                if stop is not None and getattr(stop, "requested", False):
+                    return None
+                proc._pallium_launch_nonce = nonce
             emit_runtime_log("supervisor", f"api startup outcome=ready pid={proc.pid} attempt={attempt} elapsed_seconds={time.monotonic() - started:.3f}")
             return proc
         emit_runtime_log("supervisor", f"api startup outcome=unverified pid={proc.pid} attempt={attempt} elapsed_seconds={time.monotonic() - started:.3f}", stderr=True)
@@ -630,6 +634,9 @@ def run_supervisor(
                     restart_times=[],
                 ))
                 emit_runtime_log("supervisor", f"started snapshot pid={proc.pid}")
+
+            if managed is not None and not stop.requested:
+                managed.publish_ready(server._pallium_launch_nonce, _pallium_run_dir())
 
             _last_probe = clock()
             _probe_failures = 0

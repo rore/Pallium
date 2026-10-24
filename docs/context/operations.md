@@ -359,16 +359,27 @@ workers finish their current operation and the owned API follows its existing
 lifespan cleanup. The controller requires a terminal receipt, an empty owned Job,
 known process results and actual observer, launcher and task settlement. An empty
 port, a PID file or a surviving observer is insufficient. Known failed but fully
-settled generations may recover; they are never reported as clean or as proof of
+settled generations may recover only inside a continuous transaction retaining their
+Job/process custody through replacement admission; they are never reported as clean or as proof of
 message ACK or committed application work. Unknown ownership, timeout or failure
 to prove settlement forbids replacement and forced termination. Controller loss
 does not kill active writes; lost observer custody needs manual recovery. Owner-loss
-recovery is not guaranteed. New managed task generation disables Scheduler retries.
+recovery is unsolved. After stop releases its final kernel handles, a later independent
+start refuses and requires manual recovery; a durable receipt cannot reconstruct
+custody. No persistent custodian or terminal-attestation authority is added. New
+managed task generation disables Scheduler retries.
 
-The finite default three-minute controller budget covers metadata and identity
-reads, mutex acquisition, cooperative stop, settlement, readiness and at most one
-eligible same-config restoration start. No phase receives a new allowance and the
-spawn mutex is never held while waiting for drain. Readiness retains `/health`,
+The default three-minute transaction deadline bounds controllable waits and
+admission through metadata/identity observations, mutex acquisition, stop, settlement,
+readiness and at most one eligible restoration. Synchronous native/filesystem calls
+may return late; expiry is not proof of cancellation or cleanup. Ownership remains
+retained until the actual outcome is known. No new launch/resume is admitted after
+the deadline, including a late Task Scheduler start reaching its observer. No phase
+receives a fresh allowance; the spawn mutex is not held during drain/receipt waits.
+The wrapper resolves installed interpreter/cwd/home from the exact root task and
+launch metadata; it does not substitute its calling checkout. Starts invoke that
+registered task and bind its unique instance to the generation. Readiness verifies
+the existing API nonce and retained same-Job API/supervisor identities around `/health`,
 `/status` and `/debug/queue/health`; unready or unknown running generations never
 trigger another launch. Runtime lease/fence recovery remains enabled, but restart
 does not run offline `initialize-wakes`, initialize a missing durable store or
@@ -386,7 +397,7 @@ backed up and rollback available. Verify the actual installed task's lifetime an
 failure status before claiming Task Scheduler recovery; private script-host tests
 and successful service health checks do not establish that result.
 
-For offline Relay endpoint repair, first start the upgraded service once so it creates the repair ledger, then run `scripts/restart-service.ps1 -StopOnly`. The wrapper stops the installed task without starting it again and fails if the task, listener, or managed process tree cannot be conclusively drained.
+For offline Relay endpoint repair, first start the upgraded service once so it creates the repair ledger, then run `scripts/restart-service.ps1 -StopOnly`. For a newly managed launcher the wrapper requests cooperative stop, without starting again, and refuses uncertain owned-set/observer/launcher/task settlement. A later independent start after custody loss is manual recovery in this first slice; it is not an unattended stop/start workflow. Legacy launchers are refused.
 
 Create a disposition file that classifies every live repairable delivery on the source endpoints: pending deliveries plus claimed deliveries whose finite lease has expired. An expired claim may only be `suppress`; `adopt`, active claims, missing claim tokens, and missing or malformed leases fail closed.
 

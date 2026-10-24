@@ -489,6 +489,8 @@ class TestStartWindows:
             lambda argv, **_kwargs: popen_calls.append(argv),
         )
 
+        monkeypatch.setattr("app.windows_service._start_task", lambda *_: "private-instance")
+        monkeypatch.setattr("app.windows_service.control", lambda *_args, **_kwargs: "already running")
         args = ["install", "--port", "21987"]
         if home_name is not None:
             args.extend(["--home", str(expected_home)])
@@ -498,16 +500,16 @@ class TestStartWindows:
         vbs_path = expected_home / "run" / "pallium_launcher.vbs"
         raw = vbs_path.read_bytes()
         assert raw.startswith(b"\xff\xfe")
-        assert vbs_path.read_text(encoding="utf-16") == (
-            "' Pallium cooperative launcher v1\n"
-            'Set WshShell = CreateObject("WScript.Shell")\n'
-            f'WshShell.CurrentDirectory = "{Path.cwd()}"\n'
-            f'WScript.Quit WshShell.Run("""{python_exe}"" -m app.windows_service observe '
-            f'--home ""{expected_home}""", 0, True)\n'
-        )
+        text = vbs_path.read_text(encoding="utf-16")
+        assert text.startswith("' Pallium cooperative launcher v1\n")
+        assert f'WshShell.CurrentDirectory = "{Path.cwd()}"' in text
+        assert f'command = """{python_exe}"" -m app.windows_service observe --home ""{expected_home}"""' in text
+        assert 'If WScript.Arguments.Count = 1 Then' in text
+        assert 'command = command & " --deadline " & WScript.Arguments(0)' in text
+        assert 'WScript.Quit WshShell.Run(command, 0, True)' in text
         assert len(task_xml) == 1
-        assert f'<Arguments>"{vbs_path}"</Arguments>' in task_xml[0]
-        assert popen_calls == [["wscript.exe", str(vbs_path)]]
+        assert f'<Arguments>"{vbs_path}" "$(Arg0)"</Arguments>' in task_xml[0]
+        assert popen_calls == []
 
     @pytest.mark.skipif(sys.platform != "win32", reason="Windows-only")
     @pytest.mark.parametrize("supervisor_exit_code", [0, 1])
@@ -1019,6 +1021,7 @@ def test_cooperative_windows_generated_launcher_disables_retry_without_starting_
     metadata = json.loads((home / "run" / "windows-launch.json").read_text(encoding="utf-8"))
     text = (home / "run" / "pallium_launcher.vbs").read_text(encoding="utf-16")
     assert metadata["home"] == str(home) and metadata["port"] == 21987
-    assert "app.windows_service observe" in text and ", 0, True)" in text
+    assert "app.windows_service observe" in text and "WshShell.Run(command, 0, True)" in text
+    assert "$(Arg0)" in calls[0][1] and "--deadline" in text
     assert "RestartOnFailure" not in calls[0][1] and "&amp;" in calls[0][1]
     assert len(calls) == 1 and calls[0][0][1] == "/create"

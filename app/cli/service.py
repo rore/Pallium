@@ -261,13 +261,14 @@ def _read_endpoint_json(port: int, path: str, timeout: float = 3.0) -> dict | No
         return None
 
 
-def _service_ready(port: int, timeout: float = 3.0) -> bool:
+def _service_ready(port: int, timeout: float = 3.0, *, probe_limit=None, queue_limit=None) -> bool:
     deadline = time.monotonic() + timeout
 
-    def remaining() -> float:
-        return max(0.001, deadline - time.monotonic())
+    def remaining(limit=None) -> float:
+        available = deadline - time.monotonic()
+        return max(0.001, min(available, limit) if limit is not None else available)
 
-    health = _check_health(port, timeout=remaining())
+    health = _check_health(port, timeout=remaining(probe_limit))
     if not health or health.get("status") != "ok":
         return False
     if health.get("vector_index_ready") is not True:
@@ -276,14 +277,18 @@ def _service_ready(port: int, timeout: float = 3.0) -> bool:
         return False
     if time.monotonic() >= deadline:
         return False
-    if _read_endpoint_json(port, "/status", timeout=remaining()) is None:
+    if _read_endpoint_json(port, "/status", timeout=remaining(probe_limit)) is None:
         return False
     if time.monotonic() >= deadline:
         return False
     queue_health = _read_endpoint_json(
-        port, "/debug/queue/health", timeout=remaining()
+        port, "/debug/queue/health", timeout=remaining(queue_limit)
     )
     return queue_health is not None and time.monotonic() < deadline
+
+
+def _managed_ready(port, timeout):
+    return _service_ready(port, timeout, probe_limit=2.0, queue_limit=10.0)
 
 
 def _wait_for_service(
@@ -320,7 +325,7 @@ def _find_pallium_cmd() -> str:
 
 
 def _install_windows(pallium_cmd: str, port: int, home: Path) -> None:
-    from app.windows_service import MANAGED_MARKER, _write
+    from app.windows_service import _write, launcher_text
     from xml.sax.saxutils import escape
     task_name = "Pallium"
     username = os.environ.get("USERDOMAIN", "") + "\\" + os.environ.get("USERNAME", "")
@@ -330,16 +335,12 @@ def _install_windows(pallium_cmd: str, port: int, home: Path) -> None:
     python_exe = sys.executable
     vbs_path = home / "run" / "pallium_launcher.vbs"
     cwd = str(Path.cwd())
-    _write(home / "run" / "windows-launch.json", {
+    manifest = {
         "version": 1, "home": str(home), "python": python_exe,
         "cwd": cwd, "port": port, "vbs": str(vbs_path),
-    })
-    vbs_content = (
-        MANAGED_MARKER + '\n'
-        'Set WshShell = CreateObject("WScript.Shell")\n'
-        f'WshShell.CurrentDirectory = "{cwd}"\n'
-        f'WScript.Quit WshShell.Run("""{python_exe}"" -m app.windows_service observe --home ""{home}""", 0, True)\n'
-    )
+    }
+    _write(home / "run" / "windows-launch.json", manifest)
+    vbs_content = launcher_text(manifest)
     vbs_path.write_text(vbs_content, encoding="utf-16")
 
     xml_content = f"""<?xml version="1.0" encoding="UTF-16"?>
@@ -373,7 +374,7 @@ def _install_windows(pallium_cmd: str, port: int, home: Path) -> None:
   <Actions>
     <Exec>
       <Command>wscript.exe</Command>
-      <Arguments>"{escape(str(vbs_path))}"</Arguments>
+      <Arguments>"{escape(str(vbs_path))}" "$(Arg0)"</Arguments>
       <WorkingDirectory>{escape(cwd)}</WorkingDirectory>
     </Exec>
   </Actions>
@@ -768,7 +769,8 @@ def _cmd_install(args: argparse.Namespace) -> int:
     print("  Starting service...")
     try:
         if sys.platform == "win32":
-            _start_windows(home)
+            from app.windows_service import _start_task, _manifest, Deadline
+            _start_task(_manifest(home), Deadline(_SERVICE_READINESS_TIMEOUT_SECONDS))
         elif sys.platform == "linux":
             _install_linux(pallium_cmd, port, home)
     except RuntimeError as exc:
@@ -777,6 +779,13 @@ def _cmd_install(args: argparse.Namespace) -> int:
 
     print("  Waiting for health, status, and queue checks...", end="", flush=True)
     if _wait_for_service(port):
+        if sys.platform == "win32":
+            from app.windows_service import control, Unknown
+            try:
+                control(home, "start", ready=_managed_ready)
+            except (Unknown, OSError, ValueError) as exc:
+                print(f" UNKNOWN ownership: {exc}", file=sys.stderr)
+                return 1
         print(" OK")
         print(f"\nPallium service installed and running on port {port}.")
         return 0
@@ -1061,10 +1070,11 @@ def _managed_windows_command(args, action):
     override = getattr(args, "home", None) or os.environ.get("PALLIUM_HOME")
     home = Path(override) if override else Path.home() / ".pallium"
     try:
-        print(control(home, action, ready=_service_ready))
+        print(control(home, action, ready=_managed_ready))
         return 0
     except (Unknown, OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as exc:
         print(f"Windows {action} refused/UNKNOWN: {exc}", file=sys.stderr)
+        print(f"Pallium log: {home / 'logs' / 'pallium.log'}", file=sys.stderr)
         return 1
 
 
