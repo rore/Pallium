@@ -39,14 +39,16 @@ function Get-ReadinessProbeTimeoutSeconds(
     if ($remaining -lt 1) {
         throw "readiness deadline elapsed"
     }
-    return [int][Math]::Min($MaximumSeconds, $remaining)
+    if ($remaining -ge $MaximumSeconds) { return $MaximumSeconds }
+    return [int]$remaining
 }
 
 function Get-PreparationWaitMilliseconds([switch]$Cleanup) {
     $remaining = $preparationBudgetSeconds * 1000 - $preparationTimer.Elapsed.TotalMilliseconds
     if (-not $Cleanup) { $remaining -= $preparationReserveSeconds * 1000 }
     if ($remaining -le 0) { return 0 }
-    return [int][Math]::Floor([Math]::Min([int]::MaxValue, $remaining))
+    if ($remaining -ge [int]::MaxValue) { return [int]::MaxValue }
+    return [int][Math]::Floor($remaining)
 }
 
 function Invoke-PreparationProcess([hashtable]$ProcessArguments, [string]$Name) {
@@ -435,7 +437,9 @@ while (($ReadinessTimeoutSeconds - $readinessTimer.Elapsed.TotalSeconds) -ge 1) 
             ($ReadinessTimeoutSeconds - $readinessTimer.Elapsed.TotalSeconds) * 1000
         )
         if ($remainingMilliseconds -gt 0) {
-            Start-Sleep -Milliseconds ([int][Math]::Min(500, $remainingMilliseconds))
+            if ($remainingMilliseconds -ge 500) { $sleepMilliseconds = 500 }
+            else { $sleepMilliseconds = [int]$remainingMilliseconds }
+            Start-Sleep -Milliseconds $sleepMilliseconds
         }
     }
 }

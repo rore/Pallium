@@ -842,12 +842,22 @@ def test_preparation_does_not_consume_separate_readiness_allowance(tmp_path):
     assert calls.index("Initialize-Wakes") < calls.index("Start-ScheduledTask") < calls.index("URI:http://127.0.0.1:21987/health")
 
 
-def test_large_finite_preparation_wait_is_clamped_before_int_conversion(tmp_path):
-    result, calls = _run_restart(tmp_path, "success", readiness_timeout_seconds=1e300, preparation_clock=True)
+@pytest.mark.parametrize("budget", [1e300, 1e308])
+def test_large_finite_preparation_wait_is_clamped_before_int_conversion(tmp_path, budget):
+    result, calls = _run_restart(tmp_path, "transient", readiness_timeout_seconds=budget, preparation_clock=True)
     assert result.returncode == 0, _output(result)
+    assert "Pallium restarted." in _output(result)
     assert [call for call in calls if call.startswith("Wait:")] == [
         "Wait:preflight:2147483647", "Wait:init:2147483647",
     ]
+    assert calls.count("Sleep:500") > 0
+    for path, maximum in (("/health", 2), ("/status", 2), ("/debug/queue/health", 10)):
+        timeouts = [
+            int(call.rsplit(":", 1)[1])
+            for call in calls
+            if call.startswith(f"Timeout:{path}:")
+        ]
+        assert timeouts and all(timeout == maximum for timeout in timeouts)
 
 @pytest.mark.parametrize("fault", ["timeout", "cleanup_timeout"])
 def test_stop_only_taskkill_timeout_and_uncertain_cleanup_remain_fatal(tmp_path, fault):
