@@ -33,3 +33,8 @@ Planning/source evidence only. Original RED50, corrected six-case passes and exa
 ## Result review
 
 Pending actual-diff and frozen focused-packet review by SAME independent reviewer. This record is not a qualification or merge claim.
+## Source implementation
+
+Copied the existing 1bc fixture body unchanged, with only its required standard-library imports added. Wrong-ACK now has native and semantic rows; both original Hermes surface rows and all five original reply-boundary values remain native, with one additional direct and one None-False semantic row. Native case IDs gain an explicit native suffix; original values/assertions are retained, not skipped. The provider clock context ends before wrong-receipt ACK, and before the Hermes wake/message/ACK/reply/lifecycle journey. Hermes helper defaults to nullcontext for every other caller; no global clock was added. Its public enrollment read now checks HTTP status before reading rows. Wrong-ACK publicly reads claimed state after setup and before the subject.
+
+Owned prerequisite HTTP/MCP calls are awaited/nonabandoning; app/main.py tracked_operation decrements active operations before returning its result. The Hermes poller starts only after registration HTTP returns and can read empty pending state before messages are sent; those reads have no target-provider begin scope and keep native policy time. No asynchronous message is created until after context exit. SAME review must verify this boundary and restoration, not infer worker exit from a log. Source edits used deterministic named-file replacement; an overly broad seed-string anchor was rejected before the Hermes file write, then replaced with its unique helper block. Only the three planned test files changed; no tests have run.

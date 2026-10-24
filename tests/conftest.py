@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
+from itertools import count
 from pathlib import Path
+import threading
 import time
 from types import SimpleNamespace
 
@@ -64,6 +66,61 @@ def drain_queue():
         return client.app.state.pallium_service.drain_processing_queue(worker_id="test-worker", **kwargs)
 
     return _drain
+
+@pytest.fixture()
+def relay_admission_clock(request, monkeypatch):
+    """Pair semantic policy accounting with an unchanged native availability row."""
+    from storage import sqlite_queue
+
+    native_time = sqlite_queue.time
+    owner = threading.get_ident()
+    active = False
+
+    @contextmanager
+    def admission_scope(storage):
+        nonlocal active
+        assert threading.get_ident() == owner
+        assert not active, "semantic admission scopes must not overlap"
+        assert sqlite_queue.time is native_time
+        if request.param == "native":
+            yield
+            assert sqlite_queue.time is native_time
+            return
+        assert request.param == "semantic"
+        local = threading.local()
+        policy_time = SimpleNamespace(**vars(native_time))
+
+        def monotonic():
+            clock = getattr(local, "clock", None)
+            return clock() if clock is not None else native_time.monotonic()
+
+        policy_time.monotonic = monotonic
+        original_begin = storage._begin_relay_immediate
+
+        @contextmanager
+        def begin():
+            previous = getattr(local, "clock", None)
+            local.clock = count(step=.001).__next__
+            try:
+                # Enter before the original creates its deadline; native IO still runs.
+                with original_begin() as session:
+                    yield session
+            finally:
+                local.clock = previous
+
+        active = True
+        try:
+            with monkeypatch.context() as policy:
+                policy.setattr(sqlite_queue, "time", policy_time)
+                policy.setattr(storage, "_begin_relay_immediate", begin)
+                yield
+                assert sqlite_queue.time is policy_time
+        finally:
+            active = False
+        assert sqlite_queue.time is native_time
+
+    return admission_scope
+
 
 @pytest.fixture(autouse=True)
 def isolated_claude_wake_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest) -> None:
