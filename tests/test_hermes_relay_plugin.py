@@ -1818,13 +1818,21 @@ def test_full_payload_survives_default_host_hook_spill(client, plugin_context, c
         assert payload in observed[0]["messages"][0]["content"]
 
 
-@pytest.mark.parametrize("change", [
-    "missing", "rewritten", "duplicate", "split", "historical", "tool", "system",
-    "nontext", "duplicate-history", "wrong-marker",
-])
-def test_request_stage_never_reconstructs_missing_or_ambiguous_context(client, plugin_context, change):
+@pytest.mark.parametrize("change,relay_admission_clock", [
+    pytest.param(change, "semantic", id=change)
+    for change in (
+        "missing", "rewritten", "duplicate", "split", "historical", "tool", "system",
+        "nontext", "duplicate-history", "wrong-marker",
+    )
+], indirect=["relay_admission_clock"])
+def test_request_stage_never_reconstructs_missing_or_ambiguous_context(
+    client, plugin_context, change, relay_admission_clock,
+):
     _, create, _ = plugin_context
-    ctx, marker, message = _plugin_wake(client, create)
+    ctx, marker, message = _plugin_wake(
+        client, create,
+        preparation=relay_admission_clock(client.app.state.pallium_service._storage, expected_admissions=1),
+    )
     token = ctx.hooks["pre_llm_call"](session_id="ses_שלום", turn_id="wake", user_message=marker)["context"]
     text = marker + "\n" + token
     request = {"messages": [{"role": "user", "content": text}]}
