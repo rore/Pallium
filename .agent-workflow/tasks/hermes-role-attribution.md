@@ -53,11 +53,11 @@ Source owner: [role-history Work Record](C:/Users/I347041/.codex/worktrees/role-
 
 ## Evidence
 
-Source inspection only; no parser/import/collection/tests/native/runtime/process/service/CI execution. Frozen candidate read via git-show f24fe5a7128b42e8e88808c910002673310723b4 for schemas, route forwarding and service snapshot semantics. This checkout alone cannot verify the absent role schema; no fake acceptance or skipped readback is proposed.
+Current evidence: independent source acceptance plus composed focused verification of 118 unique cases (117 retained passes and one fresh corrected-node pass), detailed below. The earlier failed aggregate remains retained as failed. Full-suite and actual-host qualification are not established by this evidence. This contribution alone lacks the shared role schema; execution used the sole owner-composed checkout.
 
 ## Result review
 
-Pending. Planning artifact only; no claim of corrected runtime or completed feature.
+Agent technical review: clean nonimplementer /root/hermes_wake_metadata_fresh_review, final actual-result and unchanged-case correspondence acceptance received 2026-10-24. Reviewed revision: own df29be811fa78df36686acbc3798254daad207c0, composed 3b8f579293682baf9460e6a059964ff935f4f249 (tree 69f9238704ac602d9f297dcda42aebec74eb2e6b). Verification adequacy: accepted for the scoped focused cohort only; 117 prior passes plus one fresh pass, not a fresh 118-case run, full-suite, native-host or production-readiness result. Separate delegated task-owner result disposition and broader qualification remain with the parent and sole composition owner; no merge or rollout follows.
 
 ## Concrete plan checkpoint
 
@@ -110,3 +110,14 @@ Same nonimplementer accepted the minimum source plan: reorder only the existing 
 
 
 Same independent reviewer accepted the exact reordered test blob114cc54d450932f6ac93d92ab6cf78cf39b69c89/SHA6fb168b195fc9f9e4bb151ba30779b7d243b9f6dacbff9327f7053e9876077d3 and append-only Work Record. It verified all helper/assertion text retained, both subscenario preconditions valid in the new order, and all117other case identities/bodies/source unchanged. This is source acceptance only; corrected-node runtime remains pending. Root publishes the reviewed incremental test/record checkpoint for Astra-only composition; old -02 remains RED and no fresh118 result is claimed.
+
+
+## Accepted composed focused evidence
+
+On 2026-10-24, the sole owner imported the reviewed test-only correction df29be811fa78df36686acbc3798254daad207c0 into composition 3b8f579293682baf9460e6a059964ff935f4f249/tree69f9238704ac602d9f297dcda42aebec74eb2e6b. The production blobs remain 0795a78bdba6916b6da29cb72956435f865f1196 and 8eb1e0315e66202938d48a7e72fffcb0dcd9c689. The corrected test blob is 114cc54d450932f6ac93d92ab6cf78cf39b69c89. The only change from the earlier f35 composition is the existing four-line test subblock reorder and this contribution record; no other case body, helper, runtime, dependency, shared core or producer changed.
+
+Fresh once-only -03 qualification executed tests/test_hermes_role_attribution.py::test_fixed_missing_start_and_synthetic_wake_omit_key after same-reviewer recipe acceptance, exact parent grant and fresh manager allocation. Actual result: one unique case passed, zero skips/failures/errors/missing/extra cases; pytest 13.34s, total outer 58186ms (2026-10-24T16:33:49.1172948Z to 16:34:47.2229308Z). Both original synthetic assistant-only and missing-start assertions were reached and passed. Worker33140 and pytest44788 exited normally with complete captured streams, empty stderr, no kill, cap/overflow or cleanup error; source/runtime pre/post pins matched the clean composition. One sitecustomize assertion-rewrite warning remains in stdout. Manager explicitly released the allocation; no new execution is reserved.
+
+Retained packet: C:/Dev/rore/Pallium/build/hermes-role-attribution-validation-20261024-03. Recipe SHA256 07cd5e491b5ecbb71d7ed3169b7e140fcd4fbeeff17213d6595fa6dae16d3a9b; JUnit bbd5d2fb64d6336de3b038d0d5d44af025e3df5f3a58e829fe137cc487539296; outer receipt 3610359eb2a3861646fdfc54406f29ad805c9acfbe7b79ca824f49f40a04978e; worker receipt f73fd83340adbc79d0bb2efb9912c50b9740634e8f663358aa6dedffda6ee57e. The existing Python3.13.14/pytest8.4.2 runtime and reviewed root-process/complete-bounded-stream containment were reused without installation. This proves owned-root completion, not an all-descendant or hard-OS guarantee.
+
+The same nonimplementer checked the -02 unchanged-pass-manifest.json (SHA256 2aaba2604f62e53d388bb26bc49427aa507ee506c94bb0534836f053c403e946) against its actual 117 PASS rows and verified the corrected node is disjoint. It accepted the explicit unchanged-source correspondence and union of 118 unique cases: 117 prior passes plus one fresh pass. The -02 aggregate remains RED (117 passes/one fixture-order failure); neither its result nor the earlier zero-test launcher failure is rewritten. No further focused loop is needed. Public-hook and real HTTP/TestClient readback establish scoped integration behavior; SDK doubles do not establish native Hermes frontend/model execution. The parent and Astra received this accepted scoped result. Astra remains sole composition, combined Work Record and canonical roadmap owner. Current State is retained pending broader owner qualification; no full-suite, native-host, production-ready, merge or live-rollout claim is made.
