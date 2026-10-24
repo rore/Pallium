@@ -683,13 +683,17 @@ def register(ctx):
                 poller = threading.Thread(target=poll, name="pallium-hermes-relay", daemon=True)
                 poller.start()
 
-    def pre_llm_call_bound(session_id="", turn_id="", user_message="", candidate=None, reservation=None, **_context):
+    def pre_llm_call_bound(session_id="", turn_id="", user_message="", candidate=None, reservation=None,
+                           _expected_wake=None, **_context):
         if not profile_ok() or not _host_id(session_id) or not _host_id(turn_id):
             return None
         container = candidate["container_ref"] if automatic else topology_signature[1]
         text = user_message if isinstance(user_message, str) else ""
         with lock:
             wake = wake_scope(session_id)
+        if (_expected_wake is not None and (not same_wake(wake, _expected_wake)
+                or text != _marker(wake["delivery_id"], wake["nonce"]))):
+            return None
         if (automatic and text.startswith("[[PALLIUM_RELAY_WAKE:")
                 and (wake is None or text != _marker(wake["delivery_id"], wake["nonce"]))):
             return None
@@ -836,9 +840,14 @@ def register(ctx):
         return {"context": _placeholder(wake["delivery_id"], wake["nonce"])}
 
     def pre_llm_call(session_id="", turn_id="", user_message="", **_context):
+        _context.pop("_expected_wake", None)  # Only this hook may supply the private reread witness.
         if not profile_ok() or not _host_id(session_id) or not _host_id(turn_id):
             return None
         if not automatic:
+            with lock:
+                wake = wake_scope(session_id)
+            if wake and user_message == _marker(wake["delivery_id"], wake["nonce"]):
+                return pre_llm_call_bound(session_id, turn_id, user_message, _expected_wake=wake, **_context)
             with session_lock(session_id):
                 return pre_llm_call_bound(session_id, turn_id, user_message, **_context)
         with session_lock(session_id):

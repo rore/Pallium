@@ -1360,6 +1360,17 @@ def test_cached_refresh_refuses_changed_or_malformed_session(client, plugin_cont
     module, create, _ = plugin_context
     ctx = create()
     ctx.hooks["pre_llm_call"](session_id="ses_שלום", turn_id="seed", user_message="hello")
+    seeded = client.get("/relay/sessions", params={**SCOPE, "runtime": "hermes", "session_ref": "ses_שלום"})
+    assert seeded.status_code == 200, seeded.text
+    endpoints = seeded.json()
+    assert len(endpoints) == 1, endpoints
+    endpoint = endpoints[0]
+    assert endpoint["runtime"] == "hermes" and endpoint["session_ref"] == "ses_שלום"
+    assert endpoint["container_ref"] == SCOPE["container_ref"]
+    assert endpoint["state"] == "recent" and endpoint["destination_health"] == "active"
+    cached = [value for key, value in ctx.state.values.items() if key.startswith("session:")]
+    assert cached == [{"profile": ctx.profile_name, **SCOPE, "session_ref": "ses_שלום",
+                       "endpoint_id": endpoint["endpoint_id"]}], "seed did not establish the accepted cache"
     http = module._json_request
     posts, reads = [], []
 
@@ -1738,6 +1749,53 @@ def test_failed_wake_refresh_keeps_unclaimed_mail_retryable(client, plugin_conte
     _admit_plugin_wake(ctx, marker, "wake")
     assert status(client, message)["deliveries"][0]["attempts"] == 1
     assert status(client, message)["deliveries"][0]["state"] == "delivered"
+
+
+@pytest.mark.parametrize("change", ["cleared", "replaced"])
+def test_fixed_recognized_wake_recheck_refuses_changed_snapshot(client, plugin_context, monkeypatch, change):
+    module, create, _ = plugin_context
+    ctx, marker, message = _plugin_wake(client, create)
+    wake_keys = [key for key in ctx.state.values if key.startswith("wake:")]
+    assert len(wake_keys) == 1
+    wake_key = wake_keys[0]
+    original_wake = ctx.state.get(wake_key)
+    replacement = None if change == "cleared" else dict(original_wake, nonce="replacement-nonce")
+    capture_before = {key: ctx.state.get(key) for key in ctx.state.values if key.startswith("capture-turn:")}
+    callback_thread = threading.get_ident()
+    state_get = ctx.state.get
+    reads, requests = [], []
+
+    def changed_at_first_read(key, default=None):
+        if threading.get_ident() != callback_thread and key == wake_key:
+            # Isolate this handoff from the live poller's legitimate missing-wake recovery.
+            return dict(original_wake)
+        value = state_get(key, default)
+        if threading.get_ident() == callback_thread and key == wake_key:
+            reads.append(value)
+            if len(reads) == 1:
+                # Return the classified snapshot while changing its next public-hook reread.
+                ctx.state.set(key, replacement)
+        return value
+
+    http = module._json_request
+
+    def observe_callback(base, method, path, **kwargs):
+        if threading.get_ident() == callback_thread:
+            requests.append((method, path))
+        return http(base, method, path, **kwargs)
+
+    monkeypatch.setattr(ctx.state, "get", changed_at_first_read)
+    monkeypatch.setattr(module, "_json_request", observe_callback)
+    assert ctx.hooks["pre_llm_call"](session_id="ses_שלום", turn_id="changed-wake", user_message=marker,
+        _expected_wake=None) is None  # A public decoy cannot disable the private reread fence.
+    assert reads == [original_wake, replacement]
+    assert requests == []  # Neither ordinary registration nor a claim may follow a stale classification.
+    assert state_get(wake_key) == replacement
+    assert {key: state_get(key) for key in ctx.state.values if key.startswith("capture-turn:")} == capture_before
+    delivery = status(client, message)["deliveries"][0]
+    assert delivery["delivery_id"] == message["deliveries"][0]["delivery_id"]
+    assert delivery["state"] == "pending" and delivery["attempts"] == 0
+    assert delivery["claim_token"] is None and delivery["receipt"] is None
 
 
 def test_concurrent_matching_wake_callbacks_refresh_but_claim_once(client, plugin_context, monkeypatch):
