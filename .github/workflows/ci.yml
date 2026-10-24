@@ -6,16 +6,60 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      profile:
+        description: Qualification by default; two-node capture is review-only and requires separate activation
+        type: choice
+        default: qualification
+        options: [qualification, two-node-capture]
   schedule:
     # Nightly full run (incl. the full Windows matrix). Off-peak, off :00.
     - cron: "17 6 * * *"
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}${{ github.event_name == 'workflow_dispatch' && inputs.profile == 'two-node-capture' && '-two-node-capture' || '' }}
   cancel-in-progress: true
 
 jobs:
+  two-node-capture:
+    name: Two-node capture (not qualification)
+    if: github.event_name == 'workflow_dispatch' && inputs.profile == 'two-node-capture'
+    runs-on: ubuntu-24.04
+    # Approved one-attempt route: charged setup/controller 180s + best-effort upload.
+    # The four-minute platform fence does not guarantee graceful cleanup or upload.
+    timeout-minutes: 4
+    permissions:
+      contents: read
+    steps:
+      - name: Record shared setup anchor before checkout and Python setup
+        shell: bash
+        run: python3 -c 'import time; print("CAPTURE_STARTED_MONOTONIC=" + str(time.monotonic()))' >> "$GITHUB_ENV"
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12.15"
+      - name: Fixed capture with cumulative managed allowance (one approved attempt)
+        timeout-minutes: 3
+        shell: bash
+        env:
+          EXPECTED_MANIFEST_SHA256: e1f6a826427ada877398ff8d63b443026e30d6f0080daa281c173a118c14ff3b
+        run: exec python -B -X utf8 scripts/diagnostics/initial_send/run.py
+      - name: Preserve receipts without clearing failure
+        if: ${{ !cancelled() }}
+        timeout-minutes: 1
+        uses: actions/upload-artifact@v4
+        with:
+          name: relay-two-node-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/relay-two-node-proof/
+          if-no-files-found: error
+          retention-days: 7
+
   select:
+    if: github.event_name != 'workflow_dispatch' || inputs.profile != 'two-node-capture'
     runs-on: ubuntu-latest
     outputs:
       lane: ${{ steps.plan.outputs.lane }}
@@ -288,7 +332,7 @@ jobs:
   result:
     name: CI result
     needs: [select, focused, test, windows-smoke, windows-full, nightly-slow-smoke]
-    if: always()
+    if: always() && (github.event_name != 'workflow_dispatch' || inputs.profile != 'two-node-capture')
     runs-on: ubuntu-latest
     steps:
       - name: Require every selected lane to succeed

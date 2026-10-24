@@ -126,8 +126,39 @@ async def test_production_codex_shutdown_settles_pretracking_and_worker_tail(
     async with _prebuilt_production_inner(
         monkeypatch, lambda: create_app(_no_vector_config(test_db_url)),
     ) as inner:
-        assert inner.state.codex_wake_registry.initialize(old_owner_drained=True)
         storage = inner.state.pallium_service._storage
+        initialization_capture = {}
+        if held_stage == "worker_start_failed":
+            import json
+            import sys
+            import time
+
+            original_initialize = storage.relay_codex_wake_initialize
+
+            def observed_initialize(*args, **kwargs):
+                initialization_capture["entered"] = time.monotonic()
+                try:
+                    return original_initialize(*args, **kwargs)
+                except Exception as exc:
+                    initialization_capture.update(
+                        error_type=type(exc).__name__,
+                        cause_type=type(exc.__cause__).__name__ if exc.__cause__ else None,
+                        acquisition_stage=getattr(exc, "acquisition_stage", None),
+                        acquisition_phase_ms=getattr(exc, "acquisition_phase_ms", None),
+                    )
+                    raise
+                finally:
+                    initialization_capture["returned"] = time.monotonic()
+                    initialization_capture["elapsed_ms"] = (
+                        initialization_capture["returned"] - initialization_capture["entered"]
+                    ) * 1000
+                    try:
+                        print("pallium initialization capture: " + json.dumps(initialization_capture), file=sys.stderr)
+                    except Exception:
+                        initialization_capture["incomplete"] = True
+
+            monkeypatch.setattr(storage, "relay_codex_wake_initialize", observed_initialize)
+        assert inner.state.codex_wake_registry.initialize(old_owner_drained=True), initialization_capture
         close = storage.close
         def close_storage():
             try:

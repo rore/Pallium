@@ -549,7 +549,7 @@ def test_codex_hook_records_unavailable_after_committed_http_claim(
     ],
 )
 def test_codex_exact_wake_real_http_response_delay_is_bounded_and_traceable(
-    client, monkeypatch, tmp_path, capsys, response_delay, fragmented,
+    request, monkeypatch, tmp_path, capsys, response_delay, fragmented,
     expected_state, should_emit, delay_refresh, ack_response_delay=0.0, forward_delay=0.0,
 ):
     """Exercise actual hook urllib and /relay/turn through delayed loopback HTTP."""
@@ -557,8 +557,70 @@ def test_codex_exact_wake_real_http_response_delay_is_bounded_and_traceable(
     import threading
     import time
 
-    from app import codex_wake
+    from app import codex_wake, dependencies
     from integrations.codex.hooks import user_prompt_submit as hook
+
+    ack_capture = {"events": [], "incomplete": False}
+
+    def record_ack(event):
+        if len(ack_capture["events"]) < 8:
+            ack_capture["events"].append(event)
+        else:
+            ack_capture["incomplete"] = True
+
+    original_router = dependencies.create_router
+
+    def observed_router(*args, **kwargs):
+        callback = kwargs.get("relay_ack_callback")
+        if callback is not None:
+            def observed_cleanup(*callback_args, **callback_kwargs):
+                span = {"stage": "ack_cleanup", "entered": time.monotonic()}
+                record_ack(span)
+                try:
+                    return callback(*callback_args, **callback_kwargs)
+                finally:
+                    span["returned"] = time.monotonic()
+            kwargs["relay_ack_callback"] = observed_cleanup
+        return original_router(*args, **kwargs)
+
+    monkeypatch.setattr(dependencies, "create_router", observed_router)
+    client = request.getfixturevalue("client")
+    original_urlopen, original_request = hook._common._urlopen, hook._common.relay_request
+
+    def observed_urlopen(http_request, *, timeout):
+        if not http_request.full_url.endswith("/relay/deliveries/ack"):
+            return original_urlopen(http_request, timeout=timeout)
+        span = {"stage": "ack_open", "entered": time.monotonic()}
+        record_ack(span)
+        try:
+            response = original_urlopen(http_request, timeout=timeout)
+            span["status"] = response.status
+            return response
+        except Exception as exc:
+            span["error_type"] = type(exc).__name__
+            raise
+        finally:
+            span["returned"] = time.monotonic()
+
+    def observed_request(method, path, payload, **kwargs):
+        if path != "/relay/deliveries/ack":
+            return original_request(method, path, payload, **kwargs)
+        span = {"stage": "ack_confirmation", "entered": time.monotonic()}
+        record_ack(span)
+        try:
+            response = original_request(method, path, payload, **kwargs)
+            span["confirmation_matches"] = (
+                isinstance(response, dict)
+                and response.get("delivery_id") == payload.get("delivery_id")
+                and response.get("state") == "delivered"
+                and type(response.get("already_delivered")) is bool
+            )
+            return response
+        finally:
+            span["returned"] = time.monotonic()
+
+    monkeypatch.setattr(hook._common, "_urlopen", observed_urlopen)
+    monkeypatch.setattr(hook._common, "relay_request", observed_request)
 
     scope = {"container_ref": "git:example/repo"}
     existing_refs = [{"scope_ref": scope["container_ref"], "local_ref": "git-branch:fix/existing"}]
@@ -657,10 +719,13 @@ def test_codex_exact_wake_real_http_response_delay_is_bounded_and_traceable(
                 time.sleep(ack_response_delay)
                 span["delay_finished"] = time.monotonic()
             try:
+                span["local_headers_started"] = time.monotonic()
                 self.send_response(response.status_code)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(response.content)))
                 self.end_headers()
+                span["local_headers_finished"] = time.monotonic()
+                span["local_body_started"] = time.monotonic()
                 if fragmented and self.path == "/relay/turn":
                     content = response.content
                     chunks = (content[:1], content[1:2], content[2:])
@@ -671,6 +736,7 @@ def test_codex_exact_wake_real_http_response_delay_is_bounded_and_traceable(
                             time.sleep(1.1)
                 else:
                     self.wfile.write(response.content)
+                span["local_body_finished"] = time.monotonic()
             except (ConnectionAbortedError, BrokenPipeError, OSError):
                 pass
             finally:
@@ -720,6 +786,20 @@ def test_codex_exact_wake_real_http_response_delay_is_bounded_and_traceable(
         for handler in ack_handlers:
             handler.join(timeout=3)
             settled = not handler.is_alive()
+            ack_capture["handler_settled_before_join"] = settled
+            ack_capture["forwarding"] = [
+                {key: span[key] for key in (
+                    "stage", "entered", "returned", "status", "delay_entered", "delay_finished",
+                    "local_headers_started", "local_headers_finished", "local_body_started",
+                    "local_body_finished", "send_finished",
+                ) if key in span}
+                for span in stages if span.get("path") == "/relay/deliveries/ack"
+            ][:2]
+            try:
+                with capsys.disabled():
+                    print("pallium ack capture: " + json.dumps(ack_capture), file=sys.stderr, flush=True)
+            except Exception:
+                ack_capture["incomplete"] = True
             handler.join()
             assert settled
         print("pallium delayed-http stages: " + json.dumps({
@@ -769,6 +849,7 @@ def test_codex_exact_wake_real_http_response_delay_is_bounded_and_traceable(
             assert 0 <= request_event["elapsed_ms"] < 1800
         assert json.loads(captured.out)["hookSpecificOutput"]["additionalContext"].count(delivery_id) == 1
         diagnostics = {
+            "ack_capture": ack_capture,
             "stages": stages[:32], "stages_truncated": len(stages) > 32,
             "wake_events": wake_events[:16], "events_truncated": len(wake_events) > 16,
             "stderr": captured.err[:4000], "stderr_truncated": len(captured.err) > 4000,
@@ -902,10 +983,10 @@ def test_expired_exact_hook_request_does_not_claim_then_fresh_hook_emits_and_ack
 
 
 def test_codex_exact_wake_late_ack_response_keeps_durable_delivery_without_confirmation(
-    client, monkeypatch, tmp_path, capsys,
+    request, monkeypatch, tmp_path, capsys,
 ):
     test_codex_exact_wake_real_http_response_delay_is_bounded_and_traceable(
-        client, monkeypatch, tmp_path, capsys, 0.0, False, "delivered", True, False,
+        request, monkeypatch, tmp_path, capsys, 0.0, False, "delivered", True, False,
         ack_response_delay=0.65,
     )
 
