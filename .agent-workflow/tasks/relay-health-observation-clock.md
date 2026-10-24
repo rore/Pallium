@@ -17,7 +17,7 @@
 **Verification plan:** Source review proves only one test and this record differ from d4; all incoming component blobs remain identical. Actual affected E2E must exercise real public HTTP status and persistent read path, with explicit exact-age values and full equality rather than field omission. SAME actual result review checks privacy reached, restoration and no false qualification. Native selector/workflow/Redline and required full non-slow CI apply before PR; none run during source-only preparation.
 **Plan review:** Agent technical review: SAME independent /root/relay_gate_plan_review SOURCE-PLAN GO after actual W313 XML and connected app/core/storage inspection. Approved narrow datetime subclass after real seed, two reads at created+1s with complete equality/exactage1, third at+2s with exactage2, storage equality and strict privacy retained, seam restored. No production clock/field omission or relaxed expected value.
 **Approvals:** Existing user development mandate and parent explicit source/plan correction disposition cover isolated source preparation. No new live-environment or execution authority inferred; no generic human approval pending.
-**State:** Ready to implement
+**State:** Blocked
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -29,3 +29,7 @@ Planning only. New isolated branch is based exactly on d4b79d2574de679af7a4af616
 Actual W313 artifact and ordinal reconciliation: build/relay-test-corrections-hosted-20261024/windows313/ and windows313-reconciliation.json. SAME source-plan GO is retained in owning chat and this record. Next action: commit planning record before editing this one test, then independent actual source review. Execution remains pending a separate exact focused packet, SAME acceptance and fresh manager allocation; parent clarified old Windows312 gates only the next full matrix.
 
 Manager owns canonical roadmap items add-wake-first-relay-delivery and fix-opencode-plugin-reliability; existing work participation remains active. This isolated test correction closes neither feature. Worktree must be retained while qualification and source composition remain outstanding.
+
+## Source implementation and review boundary
+
+Planning commit8d18ac76 predates code. Exactly one test now derives observation from the real send created_at, patches only health.datetime via a local datetime subclass/context, asserts full equal same-time responses and exact age1, advances1s and compares the full expected response with exact age2, then verifies clock restoration, storage equality and privacy for all3responses. Original real enrollment/send and native admission clocks remain unchanged. State Blocked pending SAME actual-source review and exact focused execution packet/slot; no test or full matrix run. Frozen d4 and all original RED receipts remain unchanged.
