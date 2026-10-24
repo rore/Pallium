@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+from contextlib import nullcontext
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -345,11 +346,14 @@ def test_plugin_sanitizes_inaccessible_public_capability(plugin_context, capabil
     assert str(error.value) == "Unsupported Hermes plugin capability: " + capability
 
 
-def _plugin_wake(client, create, payload="Hello שלום 🌍"):
+def _plugin_wake(client, create, payload="Hello שלום 🌍", *, preparation=None):
     ctx = create()
-    ctx.hooks["pre_llm_call"](session_id="ses_שלום", turn_id="seed", user_message="seed")
+    with preparation or nullcontext():
+        ctx.hooks["pre_llm_call"](session_id="ses_שלום", turn_id="seed", user_message="seed")
     ctx.hooks["on_session_end"](session_id="ses_שלום")
-    rows = client.get("/relay/sessions", params={"runtime": "hermes", **SCOPE}).json()
+    response = client.get("/relay/sessions", params={"runtime": "hermes", **SCOPE})
+    response.raise_for_status()
+    rows = response.json()
     assert len(rows) == 1
     message = send(client, rows[0]["endpoint_id"], payload=payload)
     _await(lambda: ctx.injections)
@@ -1073,12 +1077,16 @@ def test_plugin_payload_boundaries_never_ack_a_preview(client, plugin_context, s
     assert delivery["delivered_at"] is not None
 
 
-@pytest.mark.parametrize("payload,accepted", [
-    ("", False), ("  ", False), (None, False), ("é" * 2400, True), ("é" * 2401, False),
-])
-def test_plugin_reply_boundaries(client, plugin_context, payload, accepted):
+@pytest.mark.parametrize("payload,accepted,relay_admission_clock", [
+    ("", False, "native"), ("  ", False, "native"), (None, False, "native"),
+    ("é" * 2400, True, "native"), ("é" * 2401, False, "native"),
+    (None, False, "semantic"),
+], indirect=["relay_admission_clock"])
+def test_plugin_reply_boundaries(client, plugin_context, payload, accepted, relay_admission_clock):
     _, create, _ = plugin_context
-    ctx, marker, message = _plugin_wake(client, create)
+    ctx, marker, message = _plugin_wake(
+        client, create, preparation=relay_admission_clock(client.app.state.pallium_service._storage),
+    )
     context = ctx.hooks["pre_llm_call"](
         session_id="ses_שלום", turn_id="wake", user_message=marker,
     )["context"]
@@ -1873,13 +1881,21 @@ def test_full_payload_survives_default_host_hook_spill(client, plugin_context, c
         assert payload in observed[0]["messages"][0]["content"]
 
 
-@pytest.mark.parametrize("change", [
-    "missing", "rewritten", "duplicate", "split", "historical", "tool", "system",
-    "nontext", "duplicate-history", "wrong-marker",
-])
-def test_request_stage_never_reconstructs_missing_or_ambiguous_context(client, plugin_context, change):
+@pytest.mark.parametrize("change,relay_admission_clock", [
+    pytest.param(change, "semantic", id=change)
+    for change in (
+        "missing", "rewritten", "duplicate", "split", "historical", "tool", "system",
+        "nontext", "duplicate-history", "wrong-marker",
+    )
+], indirect=["relay_admission_clock"])
+def test_request_stage_never_reconstructs_missing_or_ambiguous_context(
+    client, plugin_context, change, relay_admission_clock,
+):
     _, create, _ = plugin_context
-    ctx, marker, message = _plugin_wake(client, create)
+    ctx, marker, message = _plugin_wake(
+        client, create,
+        preparation=relay_admission_clock(client.app.state.pallium_service._storage, expected_admissions=1),
+    )
     token = ctx.hooks["pre_llm_call"](session_id="ses_שלום", turn_id="wake", user_message=marker)["context"]
     text = marker + "\n" + token
     request = {"messages": [{"role": "user", "content": text}]}
@@ -1978,15 +1994,19 @@ def test_later_host_stages_can_remove_expanded_context_without_ack(client, plugi
     assert status(client, message)["deliveries"][0]["state"] == "claimed"
 
 
-@pytest.mark.parametrize("surface", ["direct", "mcp"])
+@pytest.mark.parametrize("surface,relay_admission_clock", [
+    ("direct", "native"), ("mcp", "native"), ("direct", "semantic"),
+], indirect=["relay_admission_clock"])
 def test_reply_keeps_context_for_fresh_provider_continuation_without_authority(
-    client, plugin_context, monkeypatch, request, surface,
+    client, plugin_context, monkeypatch, request, surface, relay_admission_clock,
 ):
     module, create, _ = plugin_context
     calls = None
     if surface == "mcp":
         create, _, calls = request.getfixturevalue("mcp_plugin_context")
-    ctx, marker, message = _plugin_wake(client, create)
+    ctx, marker, message = _plugin_wake(
+        client, create, preparation=relay_admission_clock(client.app.state.pallium_service._storage),
+    )
     token = ctx.hooks["pre_llm_call"](session_id="ses_שלום", turn_id="wake", user_message=marker)["context"]
     original = {"messages": [{"role": "user", "content": marker + "\n" + token}]}
     http = module._json_request

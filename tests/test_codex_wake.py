@@ -5089,12 +5089,16 @@ def test_restart_trace_association_accepts_same_attempt_trailing_fact() -> None:
     ) == attempt_id
 
 
-@pytest.mark.parametrize("round_trip_scope", (False, True))
+@pytest.mark.parametrize("round_trip_scope,relay_admission_clock", [
+    pytest.param(False, "semantic", id="False"),
+    pytest.param(True, "semantic", id="True"),
+], indirect=["relay_admission_clock"])
 def test_restart_trace_association_is_http_visible_without_second_native_submission(
     client,
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
     round_trip_scope: bool,
+    relay_admission_clock,
 ) -> None:
     service = client.app.state.pallium_service
     storage = service._storage
@@ -5134,11 +5138,12 @@ def test_restart_trace_association_is_http_visible_without_second_native_submiss
     ))
     route_a = TestClient(app_a)
     scope = {"container_ref": "git:example.test/restart-link"}
-    for runtime, session in (("claude-code", "sender"), ("codex", "target")):
-        assert route_a.post(
-            "/relay/turn",
-            json={"runtime": runtime, "session_ref": session, **scope},
-        ).status_code == 200
+    with relay_admission_clock(storage, expected_admissions=2):
+        for runtime, session in (("claude-code", "sender"), ("codex", "target")):
+            assert route_a.post(
+                "/relay/turn",
+                json={"runtime": runtime, "session_ref": session, **scope},
+            ).status_code == 200
 
     first = route_a.post("/relay/messages", json={
         "sender_runtime": "claude-code",

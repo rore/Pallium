@@ -1027,19 +1027,26 @@ class TestAck:
         assert data["already_delivered"] is False
 
     @pytest.mark.asyncio
-    async def test_ack_with_wrong_receipt_fails(self, monkeypatch: pytest.MonkeyPatch, asgi_post):
+    @pytest.mark.parametrize("relay_admission_clock", ["native", "semantic"], indirect=True)
+    async def test_ack_with_wrong_receipt_fails(
+        self, monkeypatch: pytest.MonkeyPatch, asgi_post, asgi_get, relay_app, relay_admission_clock,
+    ):
         bind_asgi_post(monkeypatch, asgi_post)
 
-        await asgi_post("/relay/turn", {"runtime": _RUNTIME, "session_ref": _SESSION, **_SCOPE})
-        await asgi_post("/relay/turn", {"runtime": "codex", "session_ref": "wrong-ack-sender", **_SCOPE})
-        await asgi_post("/relay/messages", {
-            "sender_runtime": "codex", "sender_session_ref": "wrong-ack-sender",
-            "recipient": f"{_RUNTIME}:{_SESSION}", "payload": "bad ack", **_SCOPE,
-        })
+        with relay_admission_clock(relay_app.state.pallium_service._storage):
+            await asgi_post("/relay/turn", {"runtime": _RUNTIME, "session_ref": _SESSION, **_SCOPE})
+            await asgi_post("/relay/turn", {"runtime": "codex", "session_ref": "wrong-ack-sender", **_SCOPE})
+            message = await asgi_post("/relay/messages", {
+                "sender_runtime": "codex", "sender_session_ref": "wrong-ack-sender",
+                "recipient": f"{_RUNTIME}:{_SESSION}", "payload": "bad ack", **_SCOPE,
+            })
 
-        server = create_server()
-        recv, _ = await server.call_tool("pallium_relay_receive", {})
-        d = json.loads(recv[0].text)["deliveries"][0]
+            server = create_server()
+            recv, _ = await server.call_tool("pallium_relay_receive", {})
+            d = json.loads(recv[0].text)["deliveries"][0]
+
+        prepared = await asgi_get("/relay/messages/" + message["message_id"], _SCOPE)
+        assert prepared["deliveries"][0]["state"] == "claimed"
 
         text = await assert_tool_error(server, "pallium_relay_ack", {
             "delivery_id": d["delivery_id"], "receipt": "wrong-receipt",

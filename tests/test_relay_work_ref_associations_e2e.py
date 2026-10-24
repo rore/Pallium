@@ -856,11 +856,15 @@ def test_batch_detail_share_inclusive_clock_and_age_without_writes(client, monke
     assert datetime.fromisoformat(empty["as_of"]) == current and empty["recent_seconds"] == 86400
 
 
-@pytest.mark.parametrize("size", [1, 200])
-def test_batch_counts_use_one_indexed_filtered_aggregate(client, size):
-    _turn(client, structural_work_refs=[FEATURE])
-    assert _attach(client, FEATURE).status_code == 200
+@pytest.mark.parametrize("size,relay_admission_clock", [
+    pytest.param(1, "semantic", id="1"),
+    pytest.param(200, "semantic", id="200"),
+], indirect=["relay_admission_clock"])
+def test_batch_counts_use_one_indexed_filtered_aggregate(client, size, relay_admission_clock):
     store = client.app.state.pallium_service._storage
+    with relay_admission_clock(store, expected_admissions=3):
+        _turn(client, structural_work_refs=[FEATURE])
+        assert _attach(client, FEATURE).status_code == 200
     table = RelaySessionWorkRefRecord.__table__
     with store._relay_engine.begin() as db:
         template = dict(db.execute(select(table).where(table.c.origin == "structural")).mappings().one())

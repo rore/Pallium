@@ -2046,7 +2046,7 @@ def test_corrupt_scoped_intent_cannot_suppress_valid_legacy_fence(
 
 @pytest.mark.parametrize("outcome", ("accepted", "uncertain"))
 def test_durable_attempt_fences_same_endpoint_after_scope_move(
-    client, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcome: str,
+    client, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcome: str, record_property,
 ) -> None:
     from app import claude_wake
     from core.relay import RelayService
@@ -2092,13 +2092,49 @@ def test_durable_attempt_fences_same_endpoint_after_scope_move(
         )
         return ActivationAttemptResult(outcome, "controlled", evidence)
 
+    completed = threading.Event()
+    prepared_attempts = []
+    trace_errors = []
+
+    def trace(event: dict[str, object]) -> None:
+        try:
+            assert event["delivery_id"] == delivery["delivery_id"]
+            assert event["recipient_endpoint_id"] == endpoint_id
+            if event["stage"] == "prepared":
+                assert not completed.is_set()
+                attempt_id = event["attempt_id"]
+                assert isinstance(attempt_id, str) and attempt_id
+                assert attempt_id not in prepared_attempts
+                prepared_attempts.append(attempt_id)
+            elif event["stage"] == "completed":
+                assert prepared_attempts
+                assert event["attempt_id"] == prepared_attempts[-1]
+                assert not completed.is_set()
+                completed.set()
+        except Exception as error:
+            trace_errors.append(error)
+
+    def wait_for_completion(worker: threading.Thread, phase: str, count: int) -> None:
+        observed = completed.wait(timeout=max(0.0, deadline - time.monotonic()))
+        worker.join(timeout=max(0.0, deadline - time.monotonic()))
+        finished = time.monotonic()
+        record_property(phase + "_completion_elapsed_seconds", finished - started)
+        assert not worker.is_alive()
+        assert finished <= deadline
+        assert not trace_errors, trace_errors
+        assert observed and len(prepared_attempts) == count
+
     monkeypatch.setattr(claude_wake, "claude_wake_transport", transport)
+    # Approved test watchdog; not a production completion guarantee.
+    started = time.monotonic()
+    deadline = started + 5.0
     worker = claude_wake.schedule_claude_relay_wake(
-        result, old, registry=registry, relay_service=relay,
+        result, old, registry=registry, relay_service=relay, trace_callback=trace,
     )
     assert worker is not None
-    worker.join(timeout=1)
-    assert not worker.is_alive() and len(native_writes) == 1
+    wait_for_completion(worker, "initial", 1)
+    assert len(native_writes) == 1
+    completed.clear()
     retained = registry.recovery_candidates()
     assert len(retained) == 1
     assert retained[0]["state"] == "wake_inflight"
@@ -2128,11 +2164,10 @@ def test_durable_attempt_fences_same_endpoint_after_scope_move(
         }],
     }
     retry = claude_wake.schedule_claude_relay_wake(
-        retry_result, new, registry=restarted,
+        retry_result, new, registry=restarted, trace_callback=trace,
     )
     assert retry is not None
-    retry.join(timeout=1)
-    assert not retry.is_alive()
+    wait_for_completion(retry, "retry", 2)
     assert len(native_writes) == 1
     retained = [
         item for item in restarted.recovery_candidates()

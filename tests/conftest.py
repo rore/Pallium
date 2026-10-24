@@ -70,7 +70,7 @@ def drain_queue():
 
 @pytest.fixture()
 def relay_admission_clock(request, monkeypatch):
-    """Pair semantic policy accounting with an unchanged native availability row."""
+    """Model explicit prerequisites; optionally audit their known admission count."""
     from storage import sqlite_queue
 
     native_time = sqlite_queue.time
@@ -78,16 +78,23 @@ def relay_admission_clock(request, monkeypatch):
     active = False
 
     @contextmanager
-    def admission_scope(storage):
+    def admission_scope(storage, *, expected_admissions=None):
         nonlocal active
         assert threading.get_ident() == owner
         assert not active, "semantic admission scopes must not overlap"
         assert sqlite_queue.time is native_time
         if request.param == "native":
+            assert expected_admissions is None
             yield
             assert sqlite_queue.time is native_time
             return
         assert request.param == "semantic"
+        guarded = expected_admissions is not None
+        if guarded:
+            assert type(expected_admissions) is int and expected_admissions > 0
+        audit_lock = threading.Lock()
+        started = inflight = 0
+        violation = closed = False
         local = threading.local()
         policy_time = SimpleNamespace(**vars(native_time))
 
@@ -97,9 +104,19 @@ def relay_admission_clock(request, monkeypatch):
 
         policy_time.monotonic = monotonic
         original_begin = storage._begin_relay_immediate
+        missing = object()
+        original_attribute = vars(storage).get("_begin_relay_immediate", missing) if guarded else missing
 
         @contextmanager
         def begin():
+            nonlocal started, inflight, violation
+            if guarded:
+                with audit_lock:
+                    if closed or inflight or started >= expected_admissions:
+                        violation = True
+                        raise AssertionError("unexpected prerequisite writer")
+                    started += 1
+                    inflight += 1
             previous = getattr(local, "clock", None)
             local.clock = count(step=.001).__next__
             try:
@@ -108,16 +125,40 @@ def relay_admission_clock(request, monkeypatch):
                     yield session
             finally:
                 local.clock = previous
+                if guarded:
+                    with audit_lock:
+                        inflight -= 1
 
         active = True
         try:
             with monkeypatch.context() as policy:
                 policy.setattr(sqlite_queue, "time", policy_time)
                 policy.setattr(storage, "_begin_relay_immediate", begin)
-                yield
-                assert sqlite_queue.time is policy_time
+                try:
+                    yield
+                    assert sqlite_queue.time is policy_time
+                    if guarded:
+                        assert storage._begin_relay_immediate is begin
+                finally:
+                    if guarded:
+                        with audit_lock:
+                            closed = True
         finally:
             active = False
+            if guarded:
+                with audit_lock:
+                    closed = True
+                if original_attribute is missing:
+                    vars(storage).pop("_begin_relay_immediate", None)
+                else:
+                    storage._begin_relay_immediate = original_attribute
+                assert sqlite_queue.time is native_time
+                assert vars(storage).get("_begin_relay_immediate", missing) is original_attribute
+                assert storage._begin_relay_immediate == original_begin
+                with audit_lock:
+                    assert not violation and not inflight and started == expected_admissions, (
+                        "prerequisite admission audit failed"
+                    )
         assert sqlite_queue.time is native_time
 
     return admission_scope
