@@ -17,7 +17,7 @@
 **Verification plan:** Production unchanged and component identity -> exact Git path/blob/parent correspondence plus SAME independent combined review. Test scope/restoration/deadline/exit/fences -> unchanged component assertions and explicit11+2focused evidence mapping, not fresh execution. Governance -> fresh origin/main whole-change selector/import boundaries/Redline/native adapter, without rewriting component records. Eventual whole change -> one normal full CI on frozen combined head after priorfixture run terminal, then normal PR checks/review.
 **Plan review:** Agent technical review: SAME independent /root/relay_gate_plan_review PLAN GO for exact two Git merges; require exactlyfourtestfiles+threeWRs vsfd14 and identical accepted component test blobs, no production/dependency/CI/exact-claim change. Nonautouse fixture must remain unused by Claude with native clocks unchanged. Reuse11+2 component evidence only; no material new interaction currently justifies an extra subset, subject to actual review. Preserve component baselines and report concrete checker conflict. Full CI waits forfixture40109870406 terminal; mandatory PR checks remain. Parent explicitly selected this topology.
 **Approvals:** Parent explicitly approved exact components, new isolated composition, SAME combined review and one normal full qualification afterfixture run terminal under ordinary development/publication mandate. Approved by user 2026-10-22T15:42:21+00:00: "they should not be blocked on approvals, if they needs you should supoply my approval for them". This is delegated authority, not personal inspection or live rollout/native-failure waiver.
-**State:** Ready to implement
+**State:** Blocked
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -29,3 +29,7 @@ Planning only; no merge or test started. Worktree feat/relay-test-corrections is
 Component records are provenance/history, not competing copies of a shared tracker: .agent-workflow/tasks/relay-semantic-prerequisites.md and claude-completion-watchdog.md will enter via their original Git history. This integration record owns the explicitly new combined qualification. Preserve their requirement baselines verbatim. Manager owns canonical roadmap state; feature work remains active.
 
 Pending SAME plan/combined review, native governance and currentfixture CI terminal; no generic human permission is pending. No new installed model/service/config/credential/profile action is authorized or performed.
+
+## Source composition
+
+Git ort three-way merges completed without conflicts: exactfixture8461a11a then exactwatchdogae1f1449. Second merge commit0e24adff0d53c2a015e4d505de94b139ccf48c1b / tree52e6b39172666decd29d54aa3dbfc870d2eb1c2c preserves both complete component histories. No whole-file copying, production change or rewritten component requirement baseline. State Blocked pending SAME actual combined/correspondence review and native governance; currentfixture CI must terminate before one combined full dispatch. No local tests repeated. Evidence correspondence will be frozen in build/relay-test-corrections-correspondence-20261024/source-correspondence.json; this successor changes only integration WR.
