@@ -171,6 +171,8 @@ NO_REPLY = "Incoming no-reply wake é 漢字".ljust(16_000, "🌍")
 REPLY = "Incoming explicit-reply wake 🌍"
 BUSY_TURN_PROMPT = "native-ui-busy-turn: hold this ordinary turn while a delivery arrives."
 BUSY_TURN_ANSWER = "Ordinary turn finished ✓ busy-turn complete."
+ROLE_NEXT_PROMPT = "native-ui-role-next: busy-turn unnamed follow-up café 漢字."
+ROLE_NEXT_ANSWER = "Unnamed follow-up finished ✓ busy-turn role-next."
 BUSY_WAKE = "Incoming while busy é 漢字"
 BUSY_GATE_TIMEOUT_SECONDS = 18
 WAKE_ANSWERS = {NO_REPLY: "No reply requested ✓ wake complete.", REPLY: "Explicit reply sent ✓ wake complete.",
@@ -1907,7 +1909,7 @@ class ScriptedProvider:
         latest = next(row["content"] for row in reversed(messages) if row.get("role") == "user")
         assert isinstance(latest, str), latest
         if self.scope_mode == "cwd" and latest.startswith((
-                PROMPT, BUSY_TURN_PROMPT, HISTORY_PROMPT, MEMORY_SESSION_PROMPT,
+                PROMPT, BUSY_TURN_PROMPT, ROLE_NEXT_PROMPT, HISTORY_PROMPT, MEMORY_SESSION_PROMPT,
                 "native-ui-memory-", "native-finalize-race:")):
             prompt, orientation = composer_observation(latest, self.memory_enabled, self.scope_mode,
                                                        require_scope=self.scope_mode == "cwd")
@@ -1916,6 +1918,8 @@ class ScriptedProvider:
                     self.orientations[PROMPT] = orientation
                 elif prompt.startswith(BUSY_TURN_PROMPT):
                     self.orientations[BUSY_TURN_PROMPT] = orientation
+                elif prompt.startswith(ROLE_NEXT_PROMPT):
+                    self.orientations[ROLE_NEXT_PROMPT] = orientation
             latest = prompt
         if latest.startswith(BUSY_TURN_PROMPT):
             self.busy_entered.set()
@@ -1924,6 +1928,9 @@ class ScriptedProvider:
                 raise TimeoutError("synthetic busy-turn provider gate expired")
             self.completed[BUSY_TURN_PROMPT] = results
             return BUSY_TURN_ANSWER, None
+        if latest == ROLE_NEXT_PROMPT:
+            self.completed[ROLE_NEXT_PROMPT] = results
+            return ROLE_NEXT_ANSWER, None
         if latest.startswith("native-finalize-race:"):
             if latest.endswith("post-release") and "pallium_relay_address" not in results:
                 return None, discover_call("pallium_relay_address", {}, results, available)
@@ -3291,6 +3298,51 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
         prior_reply_turn = provider.completed[REPLY]["wake"]["host_turn_id"]
         eventually(lambda: prior_reply_turn in _peer_turn_ids(peer_audit, session_id),
                    "prior reply wake did not drain before the busy-turn case")
+        role_scenario = surface == "tui" and scope_mode == "cwd" and not memory_enabled and provider_kind == "custom"
+        if role_scenario:
+            role_name, role_peer = "native-ui-role-history", "native-ui-role-peer"
+
+            def role_endpoint(ref):
+                response = client.get("/relay/sessions", params={**SCOPE, "runtime": "hermes", "session_ref": ref})
+                assert response.status_code == 200, response.text
+                rows = response.json()
+                assert len(rows) == 1, rows
+                endpoint = rows[0]
+                assert endpoint["runtime"] == "hermes" and endpoint["session_ref"] == ref
+                assert endpoint["container_ref"] == SCOPE["container_ref"]
+                assert endpoint["state"] == "recent" and endpoint["destination_health"] == "active"
+                assert endpoint["guarded_lifecycle"] is True
+                assert type(endpoint["scope_generation"]) is int and endpoint["scope_generation"] >= 0
+                return endpoint
+
+            def role_query(name=None, container=SCOPE["container_ref"]):
+                body = {"text": "busy-turn", "source_type": "hermes", "thread_ref": session_id,
+                        "actor_ref": "native-ui-actor", "visibility": "private", "source_only": True,
+                        "container_ref": container, "active_session_ref": "native-ui-role-reader",
+                        "trigger_origin": "agent_pull", "limit": 50}
+                if name is not None:
+                    body["relay_name"] = name
+                response = client.post("/query", json=body)
+                assert response.status_code == 200, response.text
+                result = response.json()
+                assert result["should_inject"] is False and result["injectable_blocks"] == []
+                assert isinstance(result["lookup_event_id"], str) and result["lookup_event_id"]
+                for hit in result["results"]:
+                    assert hit["source_type"] == "hermes" and hit["thread_ref"] == session_id
+                    assert hit["container_ref"] == container and hit["actor_ref"] == "native-ui-actor"
+                    assert hit["visibility"] == "private"
+                return result
+
+            role_a = role_endpoint(session_id)
+            assert role_a["endpoint_id"] == address["exact_selector"]
+            response = client.post("/relay/turn", json={**SCOPE, "runtime": "hermes", "session_ref": role_peer,
+                "guarded_lifecycle": True, "max_chars": 1, "max_response_chars": 1, "max_messages": 1})
+            assert response.status_code == 200 and response.json()["deliveries"] == [], response.text
+            role_b = role_endpoint(role_peer)
+            assert role_peer != session_id and role_b["endpoint_id"] != role_a["endpoint_id"]
+            response = client.post("/relay/sessions/name", json={**SCOPE, "runtime": "hermes",
+                "session_ref": session_id, "alias": role_name})
+            assert response.status_code == 200 and response.json()["alias"] == role_name, response.text
         # Hold an ordinary native provider turn while a new delivery is queued.
         # Two exact positive candidate reads prove injection returned and polling continued.
         pre_busy_turns = _peer_turn_ids(peer_audit, session_id)
@@ -3331,6 +3383,45 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
         assert not [wake for wake in provider.wake_observations if wake.get("delivery_id") == busy_delivery_id]
         assert _peer_turn_ids(peer_audit, session_id) == pre_busy_turns
 
+        if role_scenario:
+            # Pre-capture completed before the provider entered its gate: no polling loop here.
+            held_user, held_source_id = confirmed_item_query([row for row in forwarded
+                if row["path"] == "/item-and-query" and isinstance(row["body"], dict)
+                and row["body"].get("content") == BUSY_TURN_PROMPT], BUSY_TURN_PROMPT)
+            assert held_user["source_turn_id"] == held_user["source_id"]
+            assert held_user["relay_name"] == role_name and held_user["relay_attribution_state"] == "named"
+            held_query = role_query(role_name)
+            assert [hit["source_item_id"] for hit in held_query["results"]] == [held_source_id], held_query
+            assert held_query["results"][0]["role"] == "user"
+            assert held_query["results"][0]["relay_name"] == role_name
+            assert held_query["results"][0]["relay_attribution_state"] == "named"
+            held_expansion = client.get(f"/source/{held_source_id}/context", params={**SCOPE,
+                "query_actor_ref": "native-ui-actor", "query_visibility": "private",
+                "active_session_ref": "native-ui-role-reader", "parent_lookup_id": held_query["lookup_event_id"],
+                "before": 0, "after": 0})
+            assert held_expansion.status_code == 200, held_expansion.text
+            held_context = held_expansion.json()
+            assert held_context["parent_lookup_id"] == held_query["lookup_event_id"]
+            assert len(held_context["items"]) == 1
+            held_anchor = held_context["items"][0]
+            assert held_anchor["source_item_id"] == held_source_id
+            assert held_anchor["source_id"] == held_user["source_id"] and held_anchor["content"] == BUSY_TURN_PROMPT
+            assert held_anchor["source_type"] == "hermes" and held_anchor["role"] == "user"
+            assert held_anchor["thread_ref"] == session_id and held_anchor["actor_ref"] == "native-ui-actor"
+            assert not any(item.get("role") == "assistant" and item.get("content") == BUSY_TURN_ANSWER
+                           for row in forwarded if row["path"] == "/items" and isinstance(row["body"], list)
+                           for item in row["body"])
+            response = client.post("/relay/sessions/name", json={**SCOPE, "runtime": "hermes",
+                "session_ref": role_peer, "alias": role_name, "replace_existing": True})
+            assert response.status_code == 200 and response.json()["alias"] == role_name, response.text
+            for ref, original_endpoint, alias in ((session_id, role_a, None), (role_peer, role_b, role_name)):
+                current = role_endpoint(ref)
+                assert current["endpoint_id"] == original_endpoint["endpoint_id"]
+                assert current["scope_generation"] == original_endpoint["scope_generation"]
+                assert current["alias"] == alias
+            assert not provider.release_busy.is_set()
+            assert not provider.busy_gate_failed.is_set(), "role readback exceeded the unchanged busy gate"
+            assert BUSY_TURN_PROMPT not in provider.completed
         provider.release_busy.set()
         driver.command("wait", text=BUSY_TURN_ANSWER)
         if scope_mode == "cwd":
@@ -3404,6 +3495,94 @@ def test_released_hermes_actual_ui_journey(client, tmp_path, memory_enabled, sur
         final_delivery = delivered_state.json()["deliveries"][0]
         assert final_delivery["delivery_id"] == busy_delivery_id
         assert final_delivery["state"] == "delivered" and final_delivery["attempts"] == 1, final_delivery
+
+        if role_scenario:
+            driver.command("submit", text=ROLE_NEXT_PROMPT, marker="native-ui-role-next")
+            driver.command("wait", text=ROLE_NEXT_ANSWER)
+            next_user, next_source_id = confirmed_item_query(eventually(lambda: [row for row in forwarded
+                if row["path"] == "/item-and-query" and isinstance(row["body"], dict)
+                and row["body"].get("content") == ROLE_NEXT_PROMPT],
+                "unnamed native follow-up pre-capture was not confirmed"), ROLE_NEXT_PROMPT)
+            next_turn_id = next_user["metadata"]["hermes_turn_id"]
+            assert next_turn_id not in {busy_turn_id, wake_turn_id}
+            assert next_user["source_turn_id"] == next_user["source_id"] != held_user["source_turn_id"]
+            assert next_user["relay_name"] is None and next_user["relay_attribution_state"] == "unnamed"
+            assert provider.orientations[ROLE_NEXT_PROMPT]["request_source_item_id"] == next_source_id
+            assert provider.orientations[ROLE_NEXT_PROMPT]["thread_ref"] == session_id
+            eventually(lambda: next_turn_id in _peer_turn_ids(peer_audit, session_id),
+                       "unnamed native follow-up did not reach the post-turn audit")
+
+            def role_pair(prompt, answer, user, source_id):
+                captures = [row for row in forwarded if row["path"] == "/items"
+                            and isinstance(row["body"], list)
+                            and any(item.get("role") == "assistant" and item.get("content") == answer
+                                    for item in row["body"])]
+                assert len(captures) == 1, captures
+                capture = captures[0]
+                assert capture["status"] == 200 and len(capture["body"]) == len(capture["response"]) == 2
+                pair = capture["body"]
+                assert [item["role"] for item in pair] == ["user", "assistant"]
+                assert [item["content"] for item in pair] == [prompt, answer]
+                assert pair[0]["source_id"] == user["source_id"]
+                for item in pair:
+                    assert item["source_turn_id"] == user["source_turn_id"]
+                    assert item["metadata"]["hermes_turn_id"] == user["metadata"]["hermes_turn_id"]
+                    assert item["thread_ref"] == session_id and item["actor_ref"] == "native-ui-actor"
+                    assert item["container_ref"] == SCOPE["container_ref"] and item["visibility"] == "private"
+                assert "relay_name" not in pair[1] and "relay_attribution_state" not in pair[1]
+                ids = [item["source_item_id"] for item in capture["response"]]
+                assert ids[0] == source_id and len(set(ids)) == 2
+                return list(zip(pair, ids))
+
+            busy_pair = role_pair(BUSY_TURN_PROMPT, BUSY_TURN_ANSWER, held_user, held_source_id)
+            next_pair = role_pair(ROLE_NEXT_PROMPT, ROLE_NEXT_ANSWER, next_user, next_source_id)
+            assert busy_pair[0][0]["relay_name"] == role_name
+            assert busy_pair[0][0]["relay_attribution_state"] == "named"
+            all_ids = {source_id for _, source_id in busy_pair + next_pair}
+            assert len(all_ids) == 4
+            unfiltered = role_query()
+            hits = {hit["source_item_id"]: hit for hit in unfiltered["results"]}
+            assert all_ids <= hits.keys(), unfiltered
+            named = role_query(role_name)
+            named_ids = {hit["source_item_id"] for hit in named["results"]}
+            assert {source_id for _, source_id in busy_pair} <= named_ids
+            assert not {source_id for _, source_id in next_pair} & named_ids
+            expansion_parents = []
+            for pair, name, state, lookup in ((busy_pair, role_name, "named", named),
+                                             (next_pair, None, "unnamed", unfiltered)):
+                for item, source_id in pair:
+                    hit = hits[source_id]
+                    assert hit["role"] == item["role"] and hit["relay_name"] == name
+                    assert hit["relay_attribution_state"] == state
+                    expanded = client.get(f"/source/{source_id}/context", params={**SCOPE,
+                        "query_actor_ref": "native-ui-actor", "query_visibility": "private",
+                        "active_session_ref": "native-ui-role-reader", "parent_lookup_id": lookup["lookup_event_id"],
+                        "before": 0, "after": 0})
+                    assert expanded.status_code == 200, expanded.text
+                    context = expanded.json()
+                    assert context["parent_lookup_id"] == lookup["lookup_event_id"]
+                    anchor = next(row for row in context["items"] if row["source_item_id"] == source_id)
+                    assert anchor["content"] == item["content"] and anchor["source_id"] == item["source_id"]
+                    assert anchor["source_type"] == "hermes" and anchor["role"] == item["role"]
+                    assert anchor["thread_ref"] == session_id and anchor["actor_ref"] == "native-ui-actor"
+                    expansion_parents.append(context["parent_lookup_id"])
+            foreign_scope = "git:example.test/team/native-role-other"
+            foreign = role_query(container=foreign_scope)
+            assert foreign["results"] == []
+            denied = client.get(f"/source/{held_source_id}/context", params={"container_ref": foreign_scope,
+                "query_actor_ref": "native-ui-actor", "query_visibility": "private",
+                "active_session_ref": "native-ui-role-reader", "parent_lookup_id": foreign["lookup_event_id"]})
+            assert denied.status_code == 404, denied.text
+            outcome["role_attribution"] = {"status": "passed", "surface": surface, "scope_mode": scope_mode,
+                "provider_kind": provider_kind, "memory_enabled": memory_enabled,
+                "a": {key: role_a[key] for key in ("session_ref", "endpoint_id", "scope_generation")},
+                "b": {key: role_b[key] for key in ("session_ref", "endpoint_id", "scope_generation")},
+                "name": role_name, "host_turn_ids": [busy_turn_id, next_turn_id],
+                "source_item_ids": [source_id for _, source_id in busy_pair + next_pair],
+                "source_turn_ids": [held_user["source_turn_id"], next_user["source_turn_id"]],
+                "lookup_event_ids": [held_query["lookup_event_id"], unfiltered["lookup_event_id"],
+                                     named["lookup_event_id"], foreign["lookup_event_id"]],
+                "expansion_parent_lookup_ids": expansion_parents}
 
         if memory_enabled:
             stage = MEMORY_PROMPTS["remember"]
