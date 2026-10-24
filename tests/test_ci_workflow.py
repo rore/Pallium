@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 import textwrap
+import time
 from pathlib import Path
 
 import pytest
@@ -85,7 +86,7 @@ def test_only_manual_full_lanes_continue_after_pytest_failures() -> None:
     assert flag not in _job("nightly-slow-smoke", "result")
 
 
-def test_manual_windows_final_checks_reject_any_incomplete_selection() -> None:
+def test_manual_windows_final_checks_reject_any_incomplete_selection(record_property) -> None:
     checks = []
     for job, next_job in (("windows-smoke", "windows-full"), ("windows-full", "nightly-slow-smoke")):
         block = _job(job, next_job).split("      - name: Preserve manual selection failures\n", 1)[1]
@@ -93,20 +94,80 @@ def test_manual_windows_final_checks_reject_any_incomplete_selection() -> None:
         assert "SERIAL: ${{ steps.serial.outcome }}" in block
         assert "REMAINING: ${{ steps.remaining.outcome }}" in block
         script = block.split("        run: |\n", 1)[1].split("\n      - ", 1)[0]
-        checks.append(textwrap.dedent(script))
+        checks.append((job, textwrap.dedent(script)))
     shell = shutil.which("pwsh") or shutil.which("powershell")
     if not shell and os.name != "nt":
         pytest.skip("PowerShell is unavailable for executing the Windows CI outcome checks")
     assert shell, "PowerShell is required to verify Windows CI failure preservation"
-    for code in checks:
-        for serial, remaining in (("success", "success"), ("failure", "success"),
-                                  ("success", "failure"), ("failure", "failure"),
-                                  ("skipped", "success"), ("success", "skipped"),
-                                  ("", "success"), ("success", "")):
-            result = subprocess.run([shell, "-NoLogo", "-NoProfile", "-Command", code],
-                                    capture_output=True, text=True, timeout=10,
-                                    env={**os.environ, "SERIAL": serial, "REMAINING": remaining})
-            assert (result.returncode == 0) == (serial == remaining == "success"), result.stderr
+    started = time.monotonic()
+    # Share the watchdog across real shell starts and reserve time to reap failures.
+    deadline = started + 30
+    work_deadline = deadline - 2
+    # shortcut: own fixed shell roots only; add tree ownership before scripts may spawn children.
+    children = []
+    record_property("manual_selection_shell", str(Path(shell).resolve()))
+    try:
+        for job, code in checks:
+            for pair, (serial, remaining) in enumerate((("success", "success"), ("failure", "success"),
+                                                       ("success", "failure"), ("failure", "failure"),
+                                                       ("skipped", "success"), ("success", "skipped"),
+                                                       ("", "success"), ("success", "")), 1):
+                child = None
+                stdout = stderr = ""
+                failure = None
+                row = {"block": job, "pair": pair, "serial": serial, "remaining": remaining,
+                       "completed_before": len(children), "pid": None, "phase": "admission", "kill_requested": False,
+                       "streams_complete": False, "cleanup_error": None}
+                children.append(row)
+                try:
+                    allowance = work_deadline - time.monotonic()
+                    row["work_remaining_seconds"] = allowance
+                    if allowance <= 0:
+                        raise subprocess.TimeoutExpired("manual selection check", 28)
+                    child = subprocess.Popen([shell, "-NoLogo", "-NoProfile", "-Command", code],
+                                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                                             env={**os.environ, "SERIAL": serial, "REMAINING": remaining})
+                    row["pid"] = child.pid
+                    row["phase"] = "communication"
+                    allowance = work_deadline - time.monotonic()
+                    if allowance <= 0:
+                        raise subprocess.TimeoutExpired("manual selection check", 28)
+                    stdout, stderr = child.communicate(timeout=allowance)
+                    row["streams_complete"] = True
+                    row["phase"] = "return"
+                    if time.monotonic() > work_deadline:
+                        raise subprocess.TimeoutExpired("manual selection check", 28)
+                    assert (child.returncode == 0) == (serial == remaining == "success"), stderr[-2000:]
+                except BaseException as exc:
+                    failure = exc
+                    raise
+                finally:
+                    if child is not None and not row["streams_complete"]:
+                        try:
+                            if child.poll() is None:
+                                row["kill_requested"] = True
+                                child.kill()
+                            stdout, stderr = child.communicate(timeout=max(0, deadline - time.monotonic()))
+                            row["streams_complete"] = True
+                        except BaseException as cleanup_error:
+                            row["cleanup_error"] = type(cleanup_error).__name__
+                    row.update(returncode=None if child is None else child.poll(),
+                               elapsed_seconds=time.monotonic() - started,
+                               stdout=stdout[-2000:], stderr=stderr[-2000:],
+                               stdout_truncated=len(stdout) > 2000, stderr_truncated=len(stderr) > 2000)
+                    row["exited"] = child is not None and row["returncode"] is not None
+                    row["cleanup_complete"] = row["exited"] and row["streams_complete"] and row["cleanup_error"] is None
+                    row["total_remaining_seconds"] = deadline - time.monotonic()
+                    if failure is not None:
+                        if isinstance(failure, subprocess.TimeoutExpired):
+                            failure.cmd = "manual selection check"
+                        failure.add_note(json.dumps(row))
+                    else:
+                        assert row["returncode"] is not None and row["streams_complete"], json.dumps(row)
+        assert len(children) == 16
+        assert time.monotonic() <= deadline, "manual selection checks exceeded their shared test watchdog"
+    finally:
+        record_property("manual_selection_children", json.dumps(children))
 
 
 def test_windows_stop_verifier_runs_serially_for_pr_and_full_windows_lanes() -> None:
