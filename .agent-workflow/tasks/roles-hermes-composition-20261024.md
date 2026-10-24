@@ -15,17 +15,17 @@
 **Material assumptions:** Exact parents retain the approved contracts; any incompatible contract or unreviewed behavior decision stops resolution. No operation uses this new checkout at creation.
 **Plan:** Commit this record before composition. Reuse source-owner plan/reviews for unchanged inputs. Obtain independent composition-plan acceptance. Merge exact 1bc into f24 using normal three-way Git; inspect each conflict and combined contracts. Apply only the two reviewed incremental commits. Record tree and semantic resolutions. Existing shared owner reviews core/schema and same Hermes reviewer reviews producer/lifecycle. Prepare exact focused test recipe; do not execute it.
 **Verification plan:** Git parent/tree/path and whitespace checks; independent review of actual combined diff and retained guard/private-history/409 contracts. Later bounded public-hook/HTTP readback must validate attributable user/assistant turns, takeover, resume, malformed/missing snapshots and lifecycle fences. No test pass is claimed at this source-only stage.
-**Plan review:** Pending existing shared-core owner review of this composition record. Input reviews retained in role-history.md and hermes-role-attribution.md at their exact source commits.
+**Plan review:** Agent technical review: independent shared-core owner 01a0801d-f091-7e80-81f5-c104713fd5e7, turn 01a16e96-4886-7511-a839-48e13be60b4f, returned technical GO for the source-only composition plan on 2026-10-24. Input reviews retained in role-history.md and hermes-role-attribution.md at their exact source commits. Combined result review remains required.
 **Approvals:** Parent explicitly assigned source-only composition under delegated ordinary roles development authority, 2026-10-24. This is delegated scope, not a claim of personal human review. Existing user feature authority and source-specific approval provenance remain in the two source Work Records. No new behavior or environment authority inferred.
 **Exceptions:** None.
-**State:** Blocked
+**State:** Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
 2026-10-24: Invoked Agent Workflow and Redline before code edits. Whole-change documentation exemption does not apply. New isolated checkout created at exact f24; primary dirty checkout untouched. Shared source owner confirmed its own editing window clear and accepted bounded independent result review. Await composition-plan acceptance before merge. No product edits or tests yet.
 
 ## Recovery
-Branch feat/roles-hermes-composition-20261024; base f24fe5a7128b42e8e88808c910002673310723b4. Next: independent plan acceptance, then source-only three-way merge. Retain this checkout for ongoing composition; no cleanup is due.
+Branch feat/roles-hermes-composition-20261024; base f24fe5a7128b42e8e88808c910002673310723b4. Plan technical GO and distinct delegated approval are recorded. Next: source-only three-way merge. Retain this checkout for ongoing composition; no cleanup is due.
 
 ## Delegated approval provenance
 Parent chat 01a15fcd-b512-70d8-81fb-265c0dbac00f explicitly confirmed the exact composition plan and this new checkout's exclusive source window on 2026-10-24. It supplied user delegation: Sentinel_6e96dd2441408191a35db03fee4a1427 (2026-10-22): "they should not be blocked on approvals, if they needs you should supoply my approval for them"; Sentinel_a48329324714819180b148f9c1b3d98b (2026-10-23): "I approve, but they also gave you the mandate to review and approve all of this." The actual concrete approving actor is Dot/parent; no personal human inspection of the combined core is claimed. Parent confirms primary cleanliness is not required and its authorization does not permit modifying existing dirty/frozen checkouts. Independent composition-plan acceptance remains pending.
