@@ -44,7 +44,7 @@
 
 **Exceptions:** --
 
-**State:** Ready for review
+**State:** Blocked
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -128,3 +128,16 @@ The fresh run started2026-10-24T14:10:04.7594805+00:00 and ended2026-10-24T14:10
 Evidence: C:/Dev/rore/Pallium/build/service-wrapper-clamp-validation-20261024. JUnit SHA2565b239c7976ea4a68fe332e8c53f89efea0d591b969ca0e93905591602f5cf186; worker receipt10f3ceb843e139a64314c6c52d1b304aea2357e6f5f78243f028156a2822ce9b; outer receiptb51b488661caecbdcde6da1c8077ed3cd673b0fa14936da0cb0a721990e2bcd2. Originalf873 snapshot/receipts are immutable; this later record does not pretend to have been the frozen test snapshot.
 
 After independent acceptance the parent explicitly authorized ordinary source/governance checks and correction commit/push on the existing branch. It separately authorized ONE standard hosted full qualification on the NEW immutable corrected head only after existing40099878323 reaches terminal, no automatic rerun of unchanged cb0 or overlap. Preserve all old outcomes; no PR before the actual required qualification is satisfied. At this record checkpoint40099878323 still has active Windows-full jobs, with its owned Windows clamp failure and two observed Linux503 failures retained; these are not called harmless, cured or physical-cause explained. The local correction does not change that old run.
+
+
+## Corrected-head hosted terminal result and bounded independent review
+
+Standard run40103723960 attempt1 was submitted once on immutablee70a15da7791b70969eace6a71ad7e53e091b7f9 at2026-10-24T14:42:49Z after oldrun40099878323 was terminal. Its dispatch intent, result and actual receipt remain retained. The run is now terminal FAILURE, all9jobs complete; watcher59842 exited1. No dispatch allowance remains and no retry, local full suite, PR or live operation followed.
+
+Same independent nonimplementer /root/hermes_wake_metadata_fresh_review accepted terminal provenance and result correspondence. All4 artifact SHA256 digests match GitHub receipts and the exactrun/head. Both Windows serial XMLs contain the same90 tests.test_restart_service identities, all90passed with0failures/errors/skips, including1e300/1e308. Source script15ba364fc180df41b3f609913a3b4793ef9e27becda2e335fdb2ab9457f3fb65 and test2252ce9ff78dff4c81df2d69658eaa04197892db6e849dad6bf9bc2ee032014e match accepted finalsource. Each seriallane totals132passed/2skipped (3.13:129.15s;3.12:140.03s). Windows3.13 remaining8002passed/34skipped/2xfail2502.78s. Windows smoke9passed plus699passed/7skipped. This is hosted Windows command-double/harness evidence, not an installed-service or universal native cleanup proof.
+
+Windows3.12 remaining is1failed/8001passed/34skipped/2xfail2923.92s: tests/test_codex_retained_connection_recovery.py::test_reopen_denies_changed_registration_authority[epoch-timeout] reaches its actual denial assertion after changing epoch and recover; retained_registration is a dict whereNone was expected. Later native-owner/pending assertions were not reached. It is an unexplained retained-authority contract failure, not a503 signature. The parent assigned the existing manager bounded source/log diagnosis; this task does not duplicate it.
+
+Linux3.13:1failed/8014passed/146skipped/2xfail529.50s at TestAck::test_ack_with_wrong_receipt_fails, initial /relay/turn503late_begin2018ms/begin_immediate2016ms before message/receive/wrong-receipt assertions. Linux3.12:1failed/8014passed/146skipped/2xfail550.92s at test_plugin_reply_boundaries[None-False], _plugin_wake seed registration503setup_deadline1890ms/session_connection1888ms before reply-boundary assertions. All90wrappernodes are skipped onLinux, not Linux execution proof. The three failing test files and app/codex_bridge_pipe.py are unchanged from wrapperbasefd14; this limits direct source attribution without proving causal independence. No harmlessness, same physical cause or cure is claimed.
+
+Evidence directory C:/Dev/rore/Pallium/build/service-wrapper-clamp-full-qualification-20261024 retains terminal-run.json, terminal-jobs.json, artifacts-receipt.json, independent-result-review.json, all lane logs,4verifiedZIPs and6JUnitXMLs. Existing old failed receipts remain separate. Parent01a15fcd-b512-70d8-81fb-265c0dbac00f received the reviewed exact90node evidence and three remaining failures; precise qualification/publication disposition remains pending. Source remains e70; this later Work Record checkpoint must not relabel its failed run as green. Branch has noPR and ci.yml push applies only tomain, so this record publication starts no full-CI loop. Original baseline and behavior-authority chain remain unchanged.
