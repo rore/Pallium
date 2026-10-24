@@ -26,3 +26,6 @@
 
 ## Recovery
 Branch feat/roles-hermes-composition-20261024; base f24fe5a7128b42e8e88808c910002673310723b4. Next: independent plan acceptance, then source-only three-way merge. Retain this checkout for ongoing composition; no cleanup is due.
+
+## Delegated approval provenance
+Parent chat 01a15fcd-b512-70d8-81fb-265c0dbac00f explicitly confirmed the exact composition plan and this new checkout's exclusive source window on 2026-10-24. It supplied user delegation: Sentinel_6e96dd2441408191a35db03fee4a1427 (2026-10-22): "they should not be blocked on approvals, if they needs you should supoply my approval for them"; Sentinel_a48329324714819180b148f9c1b3d98b (2026-10-23): "I approve, but they also gave you the mandate to review and approve all of this." The actual concrete approving actor is Dot/parent; no personal human inspection of the combined core is claimed. Parent confirms primary cleanliness is not required and its authorization does not permit modifying existing dirty/frozen checkouts. Independent composition-plan acceptance remains pending.
