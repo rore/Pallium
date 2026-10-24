@@ -328,10 +328,6 @@ def test_missing_or_invalid_old_snapshot_is_never_refreshed(client, role_plugin,
 
 def test_fixed_missing_start_and_synthetic_wake_omit_key(client, history_plugin, plugin_context):
     _module, ctx, _config, writes = history_plugin
-    data = {"ctx": ctx}
-    ctx.hooks["pre_llm_call"](session_id="role-session", turn_id="seed", user_message="seed")
-    _post(data, "missing")
-    assert all("source_turn_id" not in row for row in writes[-1][0])
     _, create, _ = plugin_context
     wake_ctx, marker, _message = _plugin_wake(client, create)
     placeholder = wake_ctx.hooks["pre_llm_call"](session_id="ses_שלום", turn_id="wake", user_message=marker)
@@ -340,6 +336,10 @@ def test_fixed_missing_start_and_synthetic_wake_omit_key(client, history_plugin,
     rows = writes[-1][0]
     assert len(rows) == 1 and rows[0]["role"] == "assistant"
     assert "source_turn_id" not in rows[0]
+    data = {"ctx": ctx}
+    ctx.hooks["pre_llm_call"](session_id="role-session", turn_id="seed", user_message="seed")
+    _post(data, "missing")
+    assert all("source_turn_id" not in row for row in writes[-1][0])
 
 @pytest.mark.parametrize("field,value", [
     ("container_ref", "git:example.test/team/other"),
