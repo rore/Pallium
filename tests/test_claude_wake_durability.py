@@ -2106,8 +2106,10 @@ def test_durable_attempt_fences_same_endpoint_after_scope_move(
     def wait_for_completion(worker: threading.Thread, phase: str, count: int) -> None:
         observed = completed.wait(timeout=max(0.0, deadline - time.monotonic()))
         worker.join(timeout=max(0.0, deadline - time.monotonic()))
-        record_property(phase + "_completion_elapsed_seconds", time.monotonic() - started)
+        finished = time.monotonic()
+        record_property(phase + "_completion_elapsed_seconds", finished - started)
         assert not worker.is_alive()
+        assert finished <= deadline
         assert not trace_errors, trace_errors
         assert observed and len(prepared_attempts) == count
 
