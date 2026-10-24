@@ -33,3 +33,12 @@ Pending SAME plan/combined review, native governance and currentfixture CI termi
 ## Source composition
 
 Git ort three-way merges completed without conflicts: exactfixture8461a11a then exactwatchdogae1f1449. Second merge commit0e24adff0d53c2a015e4d505de94b139ccf48c1b / tree52e6b39172666decd29d54aa3dbfc870d2eb1c2c preserves both complete component histories. No whole-file copying, production change or rewritten component requirement baseline. State Blocked pending SAME actual combined/correspondence review and native governance; currentfixture CI must terminate before one combined full dispatch. No local tests repeated. Evidence correspondence will be frozen in build/relay-test-corrections-correspondence-20261024/source-correspondence.json; this successor changes only integration WR.
+
+
+## Accepted combined source and static validation
+
+Agent technical review: SAME /root/relay_gate_plan_review COMBINED SOURCE GO atb4e189ee9b2b4d41214b4e1c214512a2ef42cf9b. Verified merge ancestry, exactlyfourtestfiles+threeWRs vsfd14, identical component tested/published/combined test blobs and unchanged component records. Production/dependencies/CI/exact-claim behavior untouched. Fixture remains nonautouse/unused by Claude; native timing, shared5s acceptance, actual exit, write counts and fences preserved. No material new interaction warrants another local subset. Reuse11+2 component passes only; notfresh13 or full qualification.
+
+Fresh origin/main whole-change selector selected FULL for exactlyseven paths. Import boundaries, complete-diff Redline and native PowerShell workflow adapter all exit0; no checker conflict or baseline rewrite. Evidence build/relay-test-corrections-governance-20261024 and build/relay-test-corrections-correspondence-20261024/source-correspondence.json. Reviewed test application remainsb4e189ee; this successor changes only this integration WR.
+
+State Blocked solely on required sequencing: currentfixture40109870406 is still active in Windows full lanes. Publish/freeze combined source now; after that run becomes terminal, verify exact published head and no existing combined-head run, then dispatch ONE unchanged existing normalfullCI. Preserve every old RED; no duplicate matrix, no red merge, no PR before full qualification. Parent's explicit release-topology disposition already authorizes publication and this exact next run; no generic human approval is pending. Worktrees/evidence retained because qualifications and follow-up need them; no installed environment changed.
