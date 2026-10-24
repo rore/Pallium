@@ -320,6 +320,8 @@ def _find_pallium_cmd() -> str:
 
 
 def _install_windows(pallium_cmd: str, port: int, home: Path) -> None:
+    from app.windows_service import MANAGED_MARKER, _write
+    from xml.sax.saxutils import escape
     task_name = "Pallium"
     username = os.environ.get("USERDOMAIN", "") + "\\" + os.environ.get("USERNAME", "")
 
@@ -327,9 +329,16 @@ def _install_windows(pallium_cmd: str, port: int, home: Path) -> None:
     # WshShell.Run with 0 hides the console window regardless of process type.
     python_exe = sys.executable
     vbs_path = home / "run" / "pallium_launcher.vbs"
+    cwd = str(Path.cwd())
+    _write(home / "run" / "windows-launch.json", {
+        "version": 1, "home": str(home), "python": python_exe,
+        "cwd": cwd, "port": port, "vbs": str(vbs_path),
+    })
     vbs_content = (
+        MANAGED_MARKER + '\n'
         'Set WshShell = CreateObject("WScript.Shell")\n'
-        f'WScript.Quit WshShell.Run("""{python_exe}"" -m app.run service run --port {port} --home ""{home}""", 0, True)\n'
+        f'WshShell.CurrentDirectory = "{cwd}"\n'
+        f'WScript.Quit WshShell.Run("""{python_exe}"" -m app.windows_service observe --home ""{home}""", 0, True)\n'
     )
     vbs_path.write_text(vbs_content, encoding="utf-16")
 
@@ -357,10 +366,6 @@ def _install_windows(pallium_cmd: str, port: int, home: Path) -> None:
     <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
     <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
     <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
-    <RestartOnFailure>
-      <Interval>PT1M</Interval>
-      <Count>3</Count>
-    </RestartOnFailure>
     <StartWhenAvailable>true</StartWhenAvailable>
     <Enabled>true</Enabled>
     <Hidden>true</Hidden>
@@ -368,7 +373,8 @@ def _install_windows(pallium_cmd: str, port: int, home: Path) -> None:
   <Actions>
     <Exec>
       <Command>wscript.exe</Command>
-      <Arguments>"{vbs_path}"</Arguments>
+      <Arguments>"{escape(str(vbs_path))}"</Arguments>
+      <WorkingDirectory>{escape(cwd)}</WorkingDirectory>
     </Exec>
   </Actions>
 </Task>"""
@@ -746,6 +752,9 @@ def _cmd_install(args: argparse.Namespace) -> int:
         return 1
 
     if sys.platform == "win32":
+        # Installation is the explicit setup operation; ordinary recovery never initializes stores.
+        from app.codex_wake_lifecycle import prepare_codex_wake_start
+        prepare_codex_wake_start(AppConfig.from_env())
         _install_windows(pallium_cmd, port, home)
     elif sys.platform != "linux":
         print(f"  macOS auto-start not yet supported. Run manually: pallium service run --port {port}")
@@ -784,7 +793,8 @@ def _cmd_uninstall(args: argparse.Namespace) -> int:
     print("Uninstalling Pallium service...")
     try:
         if sys.platform == "win32":
-            _cmd_stop_impl(home)
+            if not _cmd_stop_impl(home):
+                raise RuntimeError("owned Windows generation did not settle; uninstall refused")
             _uninstall_windows()
         elif sys.platform == "linux":
             _uninstall_linux(home)
@@ -896,6 +906,14 @@ def _cmd_status(args: argparse.Namespace) -> int:
 
 
 def _cmd_stop_impl(home: Path) -> bool:
+    if sys.platform == "win32":
+        from app.windows_service import control, Unknown
+        try:
+            control(home, "stop")
+            return True
+        except (Unknown, OSError, ValueError, subprocess.SubprocessError) as exc:
+            print(f"Windows stop refused/UNKNOWN: {exc}", file=sys.stderr)
+            return False
     port = _read_port(home)
     pid = _read_pid(home)
 
@@ -936,6 +954,8 @@ def _cmd_stop_impl(home: Path) -> bool:
 
 
 def _cmd_stop(args: argparse.Namespace) -> int:
+    if sys.platform == "win32":
+        return _managed_windows_command(args, "stop")
     home = _pallium_home(args.home if hasattr(args, "home") else None)
 
     if sys.platform == "linux":
@@ -976,6 +996,8 @@ def _cmd_stop(args: argparse.Namespace) -> int:
 
 
 def _cmd_start(args: argparse.Namespace) -> int:
+    if sys.platform == "win32":
+        return _managed_windows_command(args, "start")
     home = _pallium_home(args.home if hasattr(args, "home") else None)
     port = _read_port(home)
     try:
@@ -1000,6 +1022,8 @@ def _cmd_start(args: argparse.Namespace) -> int:
 
 
 def _cmd_restart(args: argparse.Namespace) -> int:
+    if sys.platform == "win32":
+        return _managed_windows_command(args, "restart")
     home = _pallium_home(args.home if hasattr(args, "home") else None)
     port = _read_port(home)
 
@@ -1030,6 +1054,18 @@ def _cmd_restart(args: argparse.Namespace) -> int:
         return 0
     print(" TIMEOUT", file=sys.stderr)
     return 1
+
+
+def _managed_windows_command(args, action):
+    from app.windows_service import control, Unknown
+    override = getattr(args, "home", None) or os.environ.get("PALLIUM_HOME")
+    home = Path(override) if override else Path.home() / ".pallium"
+    try:
+        print(control(home, action, ready=_service_ready))
+        return 0
+    except (Unknown, OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as exc:
+        print(f"Windows {action} refused/UNKNOWN: {exc}", file=sys.stderr)
+        return 1
 
 
 def _cmd_initialize_wakes(args: argparse.Namespace) -> int:

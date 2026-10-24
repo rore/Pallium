@@ -1,7 +1,11 @@
 from __future__ import annotations
 
-from app import run as app_run
-from app.config import AppConfig
+from tests.test_windows_service import guard_native_calls, guard_selected_mock
+
+with guard_native_calls():
+    from app import run as app_run
+with guard_native_calls():
+    from app.config import AppConfig
 import pytest
 
 
@@ -233,3 +237,42 @@ async def test_owned_server_terminal_exit_runs_actual_lifespan_cleanup(
             if callbacks and not serving.done():
                 callbacks[0]()
             await serving
+
+
+def test_cooperative_windows_owned_exit_latches_before_main_loop(monkeypatch):
+    import sys
+    from types import SimpleNamespace
+    from app import windows_service
+    servers, closed = [], []
+    channel = SimpleNamespace(requested=lambda: True, close=lambda: closed.append(True))
+    class Loop:
+        def call_soon_threadsafe(self, callback):
+            callback()
+        def create_task(self, coroutine):
+            with pytest.raises(StopIteration):
+                coroutine.send(None)
+            class Task:
+                def add_done_callback(self, callback):
+                    callback(self)
+            return Task()
+    class Server:
+        def __init__(self, config):
+            self.config, self.should_exit, self.started = config, False, False
+            servers.append(self)
+        def run(self):
+            self.started = True
+            self.config.app()
+        async def main_loop(self):
+            assert self.should_exit
+    monkeypatch.setattr(windows_service, "inherited_stop", lambda: channel)
+    monkeypatch.setattr(app_run.uvicorn, "Config", lambda *_, **__: SimpleNamespace(workers=1, app=None))
+    monkeypatch.setattr(app_run.uvicorn, "Server", Server)
+    monkeypatch.setattr(app_run.asyncio, "get_running_loop", lambda: Loop())
+    monkeypatch.setitem(sys.modules, "app.main", SimpleNamespace(app=lambda **_: object()))
+    app_run._serve(host="127.0.0.1", port=21987, reload=False)
+    server = servers[0]
+    assert server.exit_requested and not server.should_exit and closed == [True]
+    coroutine = server.main_loop()
+    with pytest.raises(StopIteration):
+        coroutine.send(None)
+    assert server.main_loop_entered and server.should_exit

@@ -1,6 +1,8 @@
 """Tests for SQLite snapshot persistence."""
 from __future__ import annotations
 
+from tests.test_windows_service import guard_native_calls, guard_selected_mock
+
 import sqlite3 as stdlib_sqlite3
 import threading
 import time
@@ -8,17 +10,19 @@ from pathlib import Path
 
 import pytest
 
-from app.config import AppConfig, SnapshotConfig
-from app.snapshot import (
-    resolve_live_db_path,
-    _validate_snapshot,
-    create_snapshot,
-    _is_dirty,
-    _find_latest_snapshot,
-    restore_snapshot,
-    prune_old_snapshots,
-    run_snapshot,
-)
+with guard_native_calls():
+    from app.config import AppConfig, SnapshotConfig
+with guard_native_calls():
+    from app.snapshot import (
+        resolve_live_db_path,
+        _validate_snapshot,
+        create_snapshot,
+        _is_dirty,
+        _find_latest_snapshot,
+        restore_snapshot,
+        prune_old_snapshots,
+        run_snapshot,
+    )
 
 
 def _make_test_db(db_path: Path, *, wal: bool = False, rows: int = 10) -> None:
@@ -745,3 +749,14 @@ def test_legacy_single_snapshot_is_not_restored_as_a_pair(tmp_path: Path) -> Non
     assert restore_snapshot(snapshot_dir, {"main": str(restored_main), "relay": str(restored_relay)}) is False
     assert not restored_main.exists()
     assert not restored_relay.exists()
+
+
+def test_cooperative_windows_snapshot_stopped_before_operation_never_rewrites_store(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from app import snapshot
+    config = AppConfig(sqlite_url="sqlite:///:memory:", relay_sqlite_url="sqlite:///:memory:",
+                       snapshot=SnapshotConfig(enabled=True, snapshot_path=str(tmp_path)))
+    monkeypatch.setattr(snapshot, "resolve_live_db_paths", lambda _: {"main": "private-main", "relay": "private-relay"})
+    monkeypatch.setattr(snapshot, "create_snapshot", lambda *_, **__: pytest.fail("snapshot started after stop"))
+    assert snapshot.run_snapshot([], config=config, should_stop=lambda: True,
+                                 install_signal_handlers=False) == 0

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.test_windows_service import guard_native_calls, guard_selected_mock
+
 from datetime import timedelta
 import re
 import sqlite3
@@ -10,13 +12,17 @@ from unittest.mock import MagicMock
 
 from sqlalchemy.exc import OperationalError as SAOperationalError
 
-from app.config import AppConfig
+with guard_native_calls():
+    from app.config import AppConfig
 from storage.vector_index import VectorIndexConfig
 from tests.config_helpers import DEMO_SEMANTIC_PACKAGES, _vector_index_path_for_sqlite
-from app.processor import run_processor
-from app.worker import run_worker
+with guard_native_calls():
+    from app.processor import run_processor
+with guard_native_calls():
+    from app.worker import run_worker
 from core.errors import ImmediateTransactionBusyError, is_transient_error
-from app import supervisor
+with guard_native_calls():
+    from app import supervisor
 from core.contracts import ProcessResult, build_source_item
 from core.service import DEFAULT_PROCESSING_LEASE_SECONDS, PalliumService
 from retrieval.lexical import LexicalRetrievalProvider
@@ -1218,3 +1224,12 @@ def test_canceled_thread_worker_stops_before_second_provider_call(test_db_url: s
     rebuilder._vector_embedder.embed_process_result.assert_not_called()
     rebuilder._maybe_assign_workstreams.assert_not_called()
     rebuilder._maybe_trigger_fact_consolidation.assert_not_called()
+
+def test_cooperative_windows_processor_forwards_stop_and_injected_wait(monkeypatch):
+    from app import processor
+    calls = []
+    predicate = lambda: True
+    sleep = lambda _: None
+    monkeypatch.setattr(processor, "run_worker", lambda args, **options: calls.append(options) or 0)
+    assert processor.run_processor([], config="private-config", sleep_fn=sleep, should_stop=predicate) == 0
+    assert calls == [{"config": "private-config", "sleep_fn": sleep, "should_stop": predicate}]

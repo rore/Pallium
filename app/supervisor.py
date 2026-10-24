@@ -418,6 +418,7 @@ def _start_api_with_retry(
     stop: object | None = None,
     run_dir: Path | None = None,
     token_fn: Callable[[], str] = _generate_launch_token,
+    cooperative=None,
 ) -> subprocess.Popen | None:
     """Start the API server, retrying on startup crashes.
 
@@ -445,6 +446,10 @@ def _start_api_with_retry(
             emit_runtime_log("supervisor", f"api startup outcome=ready pid={proc.pid} attempt={attempt} elapsed_seconds={time.monotonic() - started:.3f}")
             return proc
         emit_runtime_log("supervisor", f"api startup outcome=unverified pid={proc.pid} attempt={attempt} elapsed_seconds={time.monotonic() - started:.3f}", stderr=True)
+        if cooperative is not None:
+            # A root exit cannot prove its descendants settled; drain this generation.
+            cooperative.request()
+            return None
         # wait_for_api returned False. Two sub-cases:
         #   (a) process is alive but probe failed (timeout, foreign bind,
         #       missing token past grace). This may be slow startup or a
@@ -496,6 +501,10 @@ def run_supervisor(
     if parsed.cleaners < 0:
         raise ValueError("--cleaners must be >= 0")
 
+    from app.windows_service import inherited_stop
+    managed = inherited_stop()
+    attempts = []
+
     # Load config for snapshot features (non-fatal — snapshot is optional)
     try:
         config = AppConfig.from_env()
@@ -507,7 +516,7 @@ def run_supervisor(
         snapshot_config = SnapshotConfig()
 
     # Restore snapshot before spawning any children
-    if snapshot_config.enabled and snapshot_config.snapshot_path:
+    if managed is None and snapshot_config.enabled and snapshot_config.snapshot_path:
         snapshot_dir = Path(snapshot_config.snapshot_path)
         if snapshot_dir.is_dir():
             try:
@@ -545,6 +554,14 @@ def run_supervisor(
         if _log_fh is not None:
             kwargs.setdefault("stdout", _log_fh)
             kwargs.setdefault("stderr", _log_fh)
+        if managed is not None:
+            def stopping():
+                if should_stop is not None and should_stop():
+                    stop.requested = True
+                return stop.requested
+            kwargs.setdefault("cwd", os.getcwd())
+            kwargs.setdefault("env", os.environ.copy())
+            return managed.spawn(cmd, attempts=attempts, stop=stopping, **kwargs)
         return popen_factory(cmd, **kwargs)
 
     with graceful_stop(install=True) as stop:
@@ -559,6 +576,7 @@ def run_supervisor(
                 sleep_fn=sleep_fn,
                 wait_for_api_fn=wait_for_api_fn,
                 stop=stop,
+                cooperative=managed,
             )
             if server is None:
                 if stop.requested:
@@ -632,6 +650,10 @@ def run_supervisor(
                         f"process exited pid={slot.process.pid} label={slot.label} code={return_code}",
                         stderr=return_code != 0,
                     )
+                    if managed is not None:
+                        exit_code = return_code or 1
+                        stop.requested = True
+                        break
                     if not slot.restartable:
                         # non-restartable slot exit is always fatal
                         exit_code = return_code or 1
@@ -700,53 +722,69 @@ def run_supervisor(
                                 stderr=_probe_failures >= _API_HEALTH_PROBE_FAIL_THRESHOLD,
                             )
                             if _probe_failures >= _API_HEALTH_PROBE_FAIL_THRESHOLD:
+                                if managed is not None:
+                                    exit_code = 1
+                                    stop.requested = True
+                                    break
                                 emit_runtime_log("supervisor", "killing api for restart (unresponsive)", stderr=True)
                                 kill_fn(api_slot.process, force=True, log=emit_runtime_log)
                                 _probe_failures = 0
                                 _last_probe = clock()  # replacement gets full probe interval before first check
                 sleep_fn(0.1)
         finally:
-            all_processes = [slot.process for slot in slots]
-            # Three-pass shutdown to bound total wall time:
-            #   1. Fan out SIGTERM/taskkill /T to every live child without waiting.
-            #   2. Wait up to 5s per child for graceful exit (sequential, but
-            #      most exit immediately so this is dominated by the slowest).
-            #   3. Escalate to SIGKILL/taskkill /F /T on survivors and reap.
-            # Without pass 1's wait_timeout=0, _kill_tree would block its own
-            # internal wait *and* the outer process.wait, doubling the budget.
-            for process in reversed(all_processes):
-                if process.poll() is None:
-                    kill_fn(process, force=False, wait_timeout=0, log=emit_runtime_log)
-            for process in reversed(all_processes):
-                if process.poll() is None:
+            if managed is not None:
+                # Keep custody alive on slow operations; the bounded controller may leave.
+                managed.request()
+                try:
+                    while any(process.poll() is None for process in attempts):
+                        sleep_fn(0.05)
+                finally:
+                    managed.close()
+                if _log_fh is not None and _owns_log_fh:
+                    _log_fh.close()
+                # Managed shutdown has no final snapshot or forced termination.
+            else:
+                all_processes = [slot.process for slot in slots]
+                # Three-pass shutdown to bound total wall time:
+                #   1. Fan out SIGTERM/taskkill /T to every live child without waiting.
+                #   2. Wait up to 5s per child for graceful exit (sequential, but
+                #      most exit immediately so this is dominated by the slowest).
+                #   3. Escalate to SIGKILL/taskkill /F /T on survivors and reap.
+                # Without pass 1's wait_timeout=0, _kill_tree would block its own
+                # internal wait *and* the outer process.wait, doubling the budget.
+                for process in reversed(all_processes):
+                    if process.poll() is None:
+                        kill_fn(process, force=False, wait_timeout=0, log=emit_runtime_log)
+                for process in reversed(all_processes):
+                    if process.poll() is None:
+                        try:
+                            process.wait(timeout=5)
+                        except subprocess.TimeoutExpired:
+                            emit_runtime_log(
+                                "supervisor",
+                                f"forcing process shutdown pid={process.pid} after terminate timeout",
+                                stderr=True,
+                            )
+                            kill_fn(process, force=True, log=emit_runtime_log)
+
+                # Best-effort shutdown snapshot
+                if snapshot_config.enabled and snapshot_config.snapshot_path:
                     try:
-                        process.wait(timeout=5)
-                    except subprocess.TimeoutExpired:
+                        snapshot_dir = Path(snapshot_config.snapshot_path)
+                        live_db_path = resolve_live_db_paths(config)
+                        path = create_snapshot(
+                            live_db_path, snapshot_dir,
+                            pages_per_step=-1, sleep_between=0,
+                        )
+                        if path is not None:
+                            emit_runtime_log("supervisor", f"shutdown snapshot: {path.name}")
+                            prune_old_snapshots(snapshot_dir, keep=snapshot_config.max_snapshots)
+                    except Exception as exc:
                         emit_runtime_log(
                             "supervisor",
-                            f"forcing process shutdown pid={process.pid} after terminate timeout",
+                            f"shutdown snapshot failed (data loss window ~{snapshot_config.interval_seconds}s): {exc}",
                             stderr=True,
                         )
-                        kill_fn(process, force=True, log=emit_runtime_log)
-
-            # Best-effort shutdown snapshot
-            if snapshot_config.enabled and snapshot_config.snapshot_path:
-                try:
-                    snapshot_dir = Path(snapshot_config.snapshot_path)
-                    live_db_path = resolve_live_db_paths(config)
-                    path = create_snapshot(
-                        live_db_path, snapshot_dir,
-                        pages_per_step=-1, sleep_between=0,
-                    )
-                    if path is not None:
-                        emit_runtime_log("supervisor", f"shutdown snapshot: {path.name}")
-                        prune_old_snapshots(snapshot_dir, keep=snapshot_config.max_snapshots)
-                except Exception as exc:
-                    emit_runtime_log(
-                        "supervisor",
-                        f"shutdown snapshot failed (data loss window ~{snapshot_config.interval_seconds}s): {exc}",
-                        stderr=True,
-                    )
     if _log_fh is not None and _owns_log_fh:
         _log_fh.close()
     return exit_code

@@ -9,7 +9,7 @@ from collections.abc import Callable
 from app.config import AppConfig
 from app.dependencies import build_service
 from app.runtime_logging import emit_runtime_log
-from app.signal_context import graceful_stop
+from app.signal_context import graceful_stop, cooperative_sleep
 from core.errors import is_transient_error
 from storage.base import RetentionLeaseLostError, RetentionRunStats
 
@@ -67,7 +67,7 @@ def run_cleaner(
                         return 1
                     if stop.requested or (should_stop is not None and should_stop()):
                         return 0
-                    sleep_fn(run_interval_seconds)
+                    cooperative_sleep(stop, run_interval_seconds, sleep_fn)
                     continue
                 except Exception as exc:
                     if not is_transient_error(exc):
@@ -91,7 +91,7 @@ def run_cleaner(
                         return 1
                     if stop.requested or (should_stop is not None and should_stop()):
                         return 0
-                    sleep_fn(run_interval_seconds)
+                    cooperative_sleep(stop, run_interval_seconds, sleep_fn)
                     continue
                 consecutive_transient_errors = 0
                 if stats is not None:
@@ -107,7 +107,7 @@ def run_cleaner(
                         + stats.deleted_index_entries
                         + stats.deleted_relay_trace_events
                     )
-                    if deleted:
+                    if deleted and not stop.requested and not (should_stop is not None and should_stop()):
                         try:
                             reclaimed = storage.reclaim_free_pages()
                             if reclaimed.get("reclaimed_pages") or reclaimed.get("checkpoint_busy"):
@@ -128,7 +128,7 @@ def run_cleaner(
                     return 0
                 if stop.requested or (should_stop is not None and should_stop()):
                     return 0
-                sleep_fn(run_interval_seconds)
+                cooperative_sleep(stop, run_interval_seconds, sleep_fn)
         except KeyboardInterrupt:
             return 0
 

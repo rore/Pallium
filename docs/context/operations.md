@@ -271,11 +271,11 @@ files and the legacy source must be conclusively absent. Ordinary app startup ne
 imports an existing store. Reinstall refuses an unmarked store before replacing its
 old launcher/unit metadata.
 
-On Windows, `scripts/restart-service.ps1` drains and verifies the installed old tree,
-imports and verifies wake state using the installed interpreter/home, then starts
-the service. `-StopOnly` only stops and verifies. Failed drain/import/verification
-leaves the service stopped. On Linux, use the same installed home for the one-time
-offline sequence:
+On Windows, newly generated managed launchers use `scripts/restart-service.ps1`
+to stop and verify the owned generation; `-StopOnly` performs no import or start.
+The cooperative restart does not run offline wake initialization. Existing wake
+authority must already be valid; an offline upgrade remains a separately approved
+operation. On Linux, use the same installed home for the one-time offline sequence:
 
 ```sh
 pallium service stop --home /path/to/pallium-home
@@ -345,20 +345,41 @@ When moving an installation from a worktree back to the primary checkout:
    can keep the old executable until their host restarts.
 
 Changing integration or service code normally requires updating the stable
-checkout and restarting the installed service, not reinstalling its scheduled
-task. On Windows, always use `scripts/restart-service.ps1`. It validates the
-registered VBS, interpreter, optional working directory, configured port, and
-`app.run` imports before stopping a healthy process tree. After launch it reports
-success only when `/health`, `/status`, and `/debug/queue/health` satisfy their
-documented readiness contracts; failures name the last check and Pallium log.
-Queue health is a live database query and may use up to ten seconds; health and
-status remain capped at two seconds, and every request is clipped to the one
-overall readiness deadline. The default readiness budget is three minutes; an explicit
-`-ReadinessTimeoutSeconds` value keeps its exact finite deadline.
+checkout and restarting the installed service. On Windows, always use
+`scripts/restart-service.ps1`. The cooperative path supports only newly generated
+managed CLI launchers, identified by their versioned launcher metadata. Older
+launchers, including the deprecated PowerShell `run(all)` generator, are refused
+before stopping anything. Their entrypoint and environment remain unchanged;
+launcher/task regeneration requires a separately approved installation with
+backup and rollback. Updating source alone does not migrate an installed task.
+
+The managed observer contains the supervisor and descendants in a Windows Job
+before application code starts. Stop signals a generation-specific local event;
+workers finish their current operation and the owned API follows its existing
+lifespan cleanup. The controller requires a terminal receipt, an empty owned Job,
+known process results and actual observer, launcher and task settlement. An empty
+port, a PID file or a surviving observer is insufficient. Known failed but fully
+settled generations may recover; they are never reported as clean or as proof of
+message ACK or committed application work. Unknown ownership, timeout or failure
+to prove settlement forbids replacement and forced termination. Controller loss
+does not kill active writes; lost observer custody needs manual recovery. Owner-loss
+recovery is not guaranteed. New managed task generation disables Scheduler retries.
+
+The finite default three-minute controller budget covers metadata and identity
+reads, mutex acquisition, cooperative stop, settlement, readiness and at most one
+eligible same-config restoration start. No phase receives a new allowance and the
+spawn mutex is never held while waiting for drain. Readiness retains `/health`,
+`/status` and `/debug/queue/health`; unready or unknown running generations never
+trigger another launch. Runtime lease/fence recovery remains enabled, but restart
+does not run offline `initialize-wakes`, initialize a missing durable store or
+restore/rewind databases. Those setup/import/restore operations remain separate.
+
+The new managed path omits the final shutdown snapshot. Only completed periodic
+snapshots remain restore points; live durable stores and pending state are preserved.
+This changes backup recovery points and does not imply unchanged backup protection.
 
 Generated Windows VBS launchers keep the service hidden, wait for its termination,
-and return its exit status to the script host. Fatal supervisor recovery exhaustion
-is a failure; requested shutdown is successful. Existing launchers are not rewritten
+and return its exit status to the script host. Existing launchers are not rewritten
 by source updates or restarts. A launcher-generation change therefore needs a
 separately approved regeneration of the installed launcher/task, with its metadata
 backed up and rollback available. Verify the actual installed task's lifetime and

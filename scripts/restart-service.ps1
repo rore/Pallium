@@ -1,380 +1,54 @@
 <#
 .SYNOPSIS
-    Restart the Pallium Windows scheduled task service.
-
-.EXAMPLE
-    .\restart-service.ps1
+    Cooperatively control a newly generated managed Pallium Windows launcher.
+    Legacy launchers are refused; installed metadata is never rewritten.
 #>
-
 param(
     [double]$ReadinessTimeoutSeconds = 180,
     [switch]$StopOnly
 )
-
 $ErrorActionPreference = "Stop"
-$TaskName = "Pallium"
-$ServiceHome = "$env:USERPROFILE\.pallium"
-$LogPath = "$ServiceHome\logs\pallium.log"
-
-function Stop-WithError([string]$Message) {
-    [Console]::Error.WriteLine("Error: $Message")
-    [Console]::Error.WriteLine("Pallium log: $LogPath")
+if ($ReadinessTimeoutSeconds -lt 1 -or
+    [double]::IsNaN($ReadinessTimeoutSeconds) -or
+    [double]::IsInfinity($ReadinessTimeoutSeconds)) {
+    [Console]::Error.WriteLine("ReadinessTimeoutSeconds must be finite and at least 1.")
     exit 1
 }
-
-if (
-    $ReadinessTimeoutSeconds -lt 1 -or
-    [double]::IsNaN($ReadinessTimeoutSeconds) -or
-    [double]::IsInfinity($ReadinessTimeoutSeconds)
-) {
-    Stop-WithError "ReadinessTimeoutSeconds must be a finite value of at least 1."
-}
-
-function Get-ReadinessProbeTimeoutSeconds(
-    [Diagnostics.Stopwatch]$Timer,
-    [double]$BudgetSeconds,
-    [int]$MaximumSeconds = 2
-) {
-    $remaining = [Math]::Floor($BudgetSeconds - $Timer.Elapsed.TotalSeconds)
-    if ($remaining -lt 1) {
-        throw "readiness deadline elapsed"
-    }
-    return [int][Math]::Min($MaximumSeconds, $remaining)
-}
-
-function Stop-ProcessTree([int]$ProcessId, [switch]$Strict) {
-    $failed = $false
-    try {
-        taskkill /F /T /PID $ProcessId 2>$null | Out-Null
-        $failed = $LASTEXITCODE -ne 0
-    } catch {
-        $failed = $true
-    }
-    if ($failed) {
-        if ($Strict) { Stop-WithError "taskkill failed for PID $ProcessId" }
-        Write-Host "    taskkill reported a partial failure for PID $ProcessId; continuing cleanup verification..."
-    }
-}
-
-function Get-ListenerPids([int]$Port, [switch]$Strict) {
-    try {
-        @(
-            Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction $(if ($Strict) { "Stop" } else { "SilentlyContinue" }) |
-                ForEach-Object { $_.OwningProcess } |
-                Where-Object { $_ } |
-                Sort-Object -Unique
-        )
-    } catch {
-        if ($Strict -and $_.FullyQualifiedErrorId -notlike 'CmdletizationQuery_NotFound*') { throw }
-        @()
-    }
-}
-
-$task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
-if (-not $task) {
-    Stop-WithError "Pallium scheduled task not found. Run 'pallium service install' first."
-}
-
-$action = @($task.Actions)[0]
-if (-not $action -or [IO.Path]::GetFileName($action.Execute) -ine "wscript.exe") {
-    Stop-WithError "Installed Pallium task does not contain the expected wscript.exe action."
-}
-
-$workingDir = [Environment]::ExpandEnvironmentVariables(([string]$action.WorkingDirectory).Trim())
-$vbsPath = [Environment]::ExpandEnvironmentVariables(([string]$action.Arguments).Trim().Trim('"'))
-if ($workingDir -and -not (Test-Path -LiteralPath $workingDir)) {
-    Stop-WithError "Installed task working directory is missing or invalid: $workingDir"
-}
-if (-not $vbsPath -or -not (Test-Path -LiteralPath $vbsPath)) {
-    Stop-WithError "Installed task launcher is missing or invalid: $vbsPath"
-}
-
-$vbs = Get-Content -Raw -LiteralPath $vbsPath
-$homeMatch = [regex]::Match($vbs, '--home\s+""([^"\r\n]+)""', [Text.RegularExpressions.RegexOptions]::IgnoreCase)
-if ($homeMatch.Success) {
-    $ServiceHome = $homeMatch.Groups[1].Value
-    $LogPath = "$ServiceHome\logs\pallium.log"
-}
-$pythonMatch = [regex]::Match(
-    $vbs,
-    'WshShell\.Run(?:\s+|\s*\(\s*)"""([^"\r\n]+pythonw?\.exe)""',
-    [Text.RegularExpressions.RegexOptions]::IgnoreCase
-)
-$pythonPath = if ($pythonMatch.Success) {
-    [Environment]::ExpandEnvironmentVariables($pythonMatch.Groups[1].Value)
-} else {
-    ""
-}
-if (-not $pythonPath -or -not (Test-Path -LiteralPath $pythonPath)) {
-    Stop-WithError "Could not resolve the installed Python executable from $vbsPath"
-}
-$pythonPaths = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
-[void]$pythonPaths.Add([IO.Path]::GetFullPath($pythonPath))
-$venvConfig = Join-Path (Split-Path (Split-Path $pythonPath -Parent) -Parent) "pyvenv.cfg"
-if (Test-Path -LiteralPath $venvConfig) {
-    $homeLine = Get-Content -LiteralPath $venvConfig -ErrorAction Stop | Where-Object { $_ -match '^\s*home\s*=' } | Select-Object -First 1
-    $baseMatch = [regex]::Match([string]$homeLine, '^\s*home\s*=\s*(.+?)\s*$')
-    if (-not $baseMatch.Success) { Stop-WithError "Could not resolve the installed Python base from $venvConfig" }
-    $baseFound = $false
-    foreach ($name in @("python.exe", "pythonw.exe")) {
-        $candidate = Join-Path ([Environment]::ExpandEnvironmentVariables($baseMatch.Groups[1].Value)) $name
-        if (Test-Path -LiteralPath $candidate) {
-            [void]$pythonPaths.Add([IO.Path]::GetFullPath($candidate))
-            $baseFound = $true
-        }
-    }
-    if (-not $baseFound) { Stop-WithError "Could not resolve the installed Python base from $venvConfig" }
-}
-
-$portMatch = [regex]::Match(
-    $vbs,
-    'WshShell\.Run(?:\s+|\s*\(\s*)"""[^"\r\n]+pythonw?\.exe""\s+-m\s+app\.run\s+service\s+run\b[^"\r\n]*?--port\s+([^\s",]+)',
-    [Text.RegularExpressions.RegexOptions]::IgnoreCase
-)
-if ($portMatch.Success -and -not $homeMatch.Success) {
-    Stop-WithError "Could not resolve the installed service home from canonical launcher metadata in $vbsPath"
-}
-$portText = if ($portMatch.Success) { $portMatch.Groups[1].Value } else { "" }
-if (-not $portText) {
-    $launcherMatch = [regex]::Match(
-        $vbs,
-        'WshShell\.Run(?:\s+|\s*\(\s*)"""[^"\r\n]+pythonw?\.exe""\s+""([^"\r\n]+\.py)""',
-        [Text.RegularExpressions.RegexOptions]::IgnoreCase
-    )
-    if ($launcherMatch.Success) {
-        $launcherPath = [Environment]::ExpandEnvironmentVariables($launcherMatch.Groups[1].Value)
-        if (Test-Path -LiteralPath $launcherPath) {
-            $launcher = Get-Content -Raw -LiteralPath $launcherPath
-            $portMatch = [regex]::Match(
-                $launcher,
-                '["'']--port["'']\s*,\s*["'']([^"'']+)["'']',
-                [Text.RegularExpressions.RegexOptions]::IgnoreCase
-            )
-            if ($portMatch.Success) {
-                $portText = $portMatch.Groups[1].Value
-            }
-        }
-    }
-}
-
-[int]$Port = 0
-if (-not [int]::TryParse($portText, [ref]$Port) -or $Port -lt 1 -or $Port -gt 65535) {
-    Stop-WithError "Could not resolve a valid installed service port (1..65535) from $vbsPath"
-}
+# Metadata and identity reads belong to the bounded controller, not this shell.
+$timer = [Diagnostics.Stopwatch]::StartNew()
+$repoRoot = Split-Path -Parent $PSScriptRoot
+$pythonPath = Join-Path $repoRoot ".venv\Scripts\python.exe"
+$action = if ($StopOnly) { "stop" } else { "restart" }
+$budget = $ReadinessTimeoutSeconds.ToString([Globalization.CultureInfo]::InvariantCulture)
+$start = [Diagnostics.ProcessStartInfo]::new()
+$start.FileName = $pythonPath
+$start.Arguments = "-m app.windows_service $action --timeout $budget"
+$start.WorkingDirectory = $repoRoot
+$start.UseShellExecute = $false
+$start.CreateNoWindow = $true
+$start.RedirectStandardOutput = $true
+$start.RedirectStandardError = $true
+$controller = New-Object -TypeName System.Diagnostics.Process
+$controller.StartInfo = $start
 try {
-    $preflightArgs = @{
-        FilePath = $pythonPath
-        ArgumentList = '-c "import app.run, app.main"'
-        WindowStyle = "Hidden"
-        Wait = $true
-        PassThru = $true
+    if (-not $controller.Start()) { throw "controller did not start" }
+    $stdout = $controller.StandardOutput.ReadToEndAsync()
+    $stderr = $controller.StandardError.ReadToEndAsync()
+    $remaining = [Math]::Max(0, $ReadinessTimeoutSeconds - $timer.Elapsed.TotalSeconds)
+    if (-not $controller.WaitForExit([int][Math]::Min([int]::MaxValue, $remaining * 1000))) {
+        # No kill: observer custody and active writes outlive a timed-out caller.
+        throw "controller deadline elapsed; settlement UNKNOWN, no replacement permitted"
     }
-    if ($workingDir) {
-        $preflightArgs.WorkingDirectory = $workingDir
+    $remaining = [Math]::Max(0, $ReadinessTimeoutSeconds - $timer.Elapsed.TotalSeconds)
+    if (-not [Threading.Tasks.Task]::WaitAll([Threading.Tasks.Task[]]@($stdout, $stderr), [int][Math]::Min([int]::MaxValue, $remaining * 1000))) {
+        throw "controller output deadline elapsed; settlement UNKNOWN"
     }
-    $preflight = Start-Process @preflightArgs
+    [Console]::Out.Write($stdout.GetAwaiter().GetResult())
+    [Console]::Error.Write($stderr.GetAwaiter().GetResult())
+    exit $controller.ExitCode
 } catch {
-    Stop-WithError "Installed service import preflight could not run: $($_.Exception.Message)"
+    [Console]::Error.WriteLine("Windows lifecycle refused/UNKNOWN: $($_.Exception.Message)")
+    exit 1
+} finally {
+    $controller.Dispose()
 }
-if ($preflight.ExitCode -ne 0) {
-    Stop-WithError "Installed service import preflight failed with exit code $($preflight.ExitCode); the running service was not stopped."
-}
-
-Write-Host "Stopping Pallium..."
-Stop-ScheduledTask -TaskName $TaskName -ErrorAction $(if ($StopOnly) { "Stop" } else { "SilentlyContinue" })
-
-# Kill the process tree — Stop-ScheduledTask only marks the task stopped,
-# it doesn't kill the VBS → pythonw → supervisor → server process chain.
-# Strategy 1: kill by listening port (normal case)
-$listenerPids = @(Get-ListenerPids $Port -Strict:$StopOnly)
-foreach ($procId in $listenerPids) {
-    Write-Host "  Killing process tree (PID $procId) on port $Port..."
-    Stop-ProcessTree ([int]$procId) -Strict:$StopOnly
-}
-
-# Strategy 2: kill by PID file (handles WinError 64 stuck-socket where port is
-# no longer in Listen state — process alive but accept loop dead)
-$PidFile = "$ServiceHome\run\pallium.pid"
-if (Test-Path $PidFile) {
-    $filePid = [int](Get-Content $PidFile -ErrorAction SilentlyContinue)
-    if ($filePid -and ($filePid -notin $listenerPids)) {
-        $proc = Get-Process -Id $filePid -ErrorAction SilentlyContinue
-        if ($proc) {
-            Write-Host "  Killing stale process tree (PID $filePid) from PID file..."
-            Stop-ProcessTree $filePid -Strict:$StopOnly
-        }
-    }
-}
-
-# Strategy 3: kill by commandline signature — catches the supervisor and its
-# processor/cleaner/snapshot subprocesses even when the parent chain was
-# severed by the wscript → pythonw fire-and-forget launcher pattern.
-# Standalone `app.run mcp` processes are client-owned stdio bridges; killing
-# one disconnects its Codex task permanently, so service restart leaves them
-# running. They proxy the newly started HTTP service without stale service code.
-Write-Host "  Sweeping surviving Pallium subprocesses by commandline..."
-$serviceHomePattern = [regex]::Escape($ServiceHome)
-$signatures = @(
-    "service_launcher.py",
-    "app.processor",
-    "app.cleaner",
-    "app.snapshot",
-    "app.run serve",
-    "app.run all"
-)
-foreach ($sig in $signatures) {
-    # Escape wildcards for Get-CimInstance WQL LIKE
-    $pattern = "%{0}%" -f $sig
-    # Match both python.exe (foreground console) and pythonw.exe (background,
-    # what the installed service uses via wscript.exe launcher). Without the
-    # pythonw branch, the scheduled-task service is never swept.
-    $procs = Get-CimInstance Win32_Process `
-        -Filter "(Name='python.exe' OR Name='pythonw.exe') AND CommandLine LIKE '$pattern'" `
-        -ErrorAction $(if ($StopOnly) { "Stop" } else { "SilentlyContinue" })
-    foreach ($p in $procs) {
-        $samePython = $p.ExecutablePath -and $pythonPaths.Contains([IO.Path]::GetFullPath([string]$p.ExecutablePath))
-        $sameLauncher = $sig -ne "service_launcher.py" -or ([string]$p.CommandLine -match $serviceHomePattern)
-        if (-not $samePython -or -not $sameLauncher) { continue }
-        Write-Host "    Killing PID $($p.ProcessId) ($($p.Name) $sig)..."
-        Stop-ProcessTree $p.ProcessId -Strict:$StopOnly
-    }
-}
-
-$servicePattern = "%app.run service run%"
-$servicePortPattern = '(?i)(?:^|\s)--port\s+{0}(?=\s|$)' -f [regex]::Escape($Port.ToString())
-$serviceProcs = Get-CimInstance Win32_Process `
-    -Filter "(Name='python.exe' OR Name='pythonw.exe') AND CommandLine LIKE '$servicePattern'" `
-    -ErrorAction $(if ($StopOnly) { "Stop" } else { "SilentlyContinue" })
-foreach ($p in $serviceProcs) {
-    $samePython = $p.ExecutablePath -and $pythonPaths.Contains([IO.Path]::GetFullPath([string]$p.ExecutablePath))
-    if (-not $samePython -or $p.CommandLine -notmatch $servicePortPattern -or $p.CommandLine -notmatch $serviceHomePattern) {
-        continue
-    }
-    Write-Host "    Killing PID $($p.ProcessId) ($($p.Name) app.run service run on port $Port)..."
-    Stop-ProcessTree $p.ProcessId -Strict:$StopOnly
-}
-
-Start-Sleep -Seconds 2
-
-$remainingPids = @(Get-ListenerPids $Port -Strict:$StopOnly)
-if ($remainingPids.Count -gt 0) {
-    $pidDetail = "; listener PID(s): $($remainingPids -join ', ')"
-    Stop-WithError "Could not stop Pallium; port $Port is still listening$pidDetail"
-}
-
-& {
-    try {
-        $allManagedProcesses = @(Get-CimInstance Win32_Process -ErrorAction Stop)
-    } catch {
-        Stop-WithError "Cannot verify the old service process tree is stopped: $($_.Exception.Message)"
-    }
-    $roots = @($allManagedProcesses | Where-Object {
-        $c = [string]$_.CommandLine
-        $_.ExecutablePath -and $pythonPaths.Contains([IO.Path]::GetFullPath([string]$_.ExecutablePath)) -and ($c -match '(?i)app\.run\s+service\s+run') -and ($c -match $servicePortPattern) -and ($c -match $serviceHomePattern)
-    } | ForEach-Object { [int]$_.ProcessId })
-    $managedIds = [Collections.Generic.HashSet[int]]::new()
-    foreach ($root in $roots) { [void]$managedIds.Add($root) }
-    do {
-        $before = $managedIds.Count
-        foreach ($proc in $allManagedProcesses) {
-            if ($managedIds.Contains([int]$proc.ParentProcessId)) { [void]$managedIds.Add([int]$proc.ProcessId) }
-        }
-    } while ($managedIds.Count -gt $before)
-    $survivors = @($allManagedProcesses | Where-Object {
-        $c = [string]$_.CommandLine
-        $inTree = $managedIds.Contains([int]$_.ProcessId)
-        $managedComponent = $_.ExecutablePath -and $pythonPaths.Contains([IO.Path]::GetFullPath([string]$_.ExecutablePath)) -and ($c -match '(?i)(?:app\.(?:processor|cleaner|snapshot)|app\.run\s+(?:serve|all))')
-        $codexQueue = $c -match '(?i)^\s*(?:"[^"]*[\\/]codex(?:\.exe)?"|(?:\S*[\\/])?codex(?:\.exe)?)\s+queue\s+--profile\s+pallium-relay\b'
-        (($inTree -and $c -match '(?i)app\.run\s+service\s+run' -and $c -match $servicePortPattern) -or $managedComponent -or $codexQueue)
-    })
-    if ($survivors.Count) { Stop-WithError "Managed Pallium process(es) survived stop: $($survivors.ProcessId -join ', ')" }
-    $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction Stop
-    if ($task.State -notin @('Ready', 'Disabled')) { Stop-WithError "Pallium scheduled task remains $($task.State) after stop" }
-    if ($StopOnly) {
-        Write-Host "Pallium stopped."
-        exit 0
-    }
-}
-
-Write-Host "Initializing and verifying Codex wake state..."
-try {
-    $wakeInitArgs = $preflightArgs.Clone()
-    $wakeInitArgs.ArgumentList = ('-m app.run service initialize-wakes --home "{0}"' -f $ServiceHome)
-    $wakeInit = Start-Process @wakeInitArgs
-} catch {
-    Stop-WithError "Wake initialization could not run: $($_.Exception.Message)"
-}
-if ($wakeInit.ExitCode -ne 0) {
-    Stop-WithError "Wake initialization failed with exit code $($wakeInit.ExitCode); service remains stopped."
-}
-
-Write-Host "Starting Pallium..."
-try {
-    Start-ScheduledTask -TaskName $TaskName -ErrorAction Stop
-} catch {
-    Stop-WithError "Failed to start the Pallium scheduled task: $($_.Exception.Message)"
-}
-
-$BaseUrl = "http://127.0.0.1:$Port"
-$ready = $false
-$lastCheck = "service did not become ready"
-$lastFailure = $lastCheck
-$attempt = 0
-$readinessTimer = [Diagnostics.Stopwatch]::StartNew()
-while (($ReadinessTimeoutSeconds - $readinessTimer.Elapsed.TotalSeconds) -ge 1) {
-    $attempt++
-    try {
-        $probeTimeout = Get-ReadinessProbeTimeoutSeconds $readinessTimer $ReadinessTimeoutSeconds
-        $lastCheck = "/health request"
-        $health = Invoke-RestMethod -Uri "$BaseUrl/health" -TimeoutSec $probeTimeout
-        if ($health.status -ne "ok") {
-            $lastCheck = "/health status=$($health.status)"
-            throw $lastCheck
-        }
-
-        $probeTimeout = Get-ReadinessProbeTimeoutSeconds $readinessTimer $ReadinessTimeoutSeconds
-        $lastCheck = "/status request"
-        $status = Invoke-RestMethod -Uri "$BaseUrl/status" -TimeoutSec $probeTimeout
-        if ($status.embedding_provider_ok -ne $true) {
-            $lastCheck = "/status embedding_provider_ok=$($status.embedding_provider_ok)"
-            throw $lastCheck
-        }
-        if ($status.ingestion.status -ne "ok") {
-            $lastCheck = "/status ingestion.status=$($status.ingestion.status)"
-            throw $lastCheck
-        }
-
-        $probeTimeout = Get-ReadinessProbeTimeoutSeconds $readinessTimer $ReadinessTimeoutSeconds 10
-        $lastCheck = "/debug/queue/health request"
-        $queue = Invoke-WebRequest -Uri "$BaseUrl/debug/queue/health" -UseBasicParsing -TimeoutSec $probeTimeout
-        if ($queue.StatusCode -lt 200 -or $queue.StatusCode -ge 300) {
-            $lastCheck = "/debug/queue/health HTTP $($queue.StatusCode)"
-            throw $lastCheck
-        }
-
-        $ready = $true
-        break
-    } catch {
-        if ($_.Exception.Message -eq "readiness deadline elapsed") {
-            $lastCheck = $lastFailure
-            break
-        }
-        if ($_.Exception.Message -ne $lastCheck) {
-            $lastCheck = "{0}: {1}" -f $lastCheck, $_.Exception.Message
-        }
-        $lastFailure = $lastCheck
-        $remainingMilliseconds = [Math]::Floor(
-            ($ReadinessTimeoutSeconds - $readinessTimer.Elapsed.TotalSeconds) * 1000
-        )
-        if ($remainingMilliseconds -gt 0) {
-            Start-Sleep -Milliseconds ([int][Math]::Min(500, $remainingMilliseconds))
-        }
-    }
-}
-
-if (-not $ready) {
-    Stop-WithError "Pallium failed the $ReadinessTimeoutSeconds-second readiness budget after $attempt attempts; last check: $lastCheck"
-}
-
-Write-Host "Pallium restarted. Dashboard at $BaseUrl/dashboard"
-exit 0

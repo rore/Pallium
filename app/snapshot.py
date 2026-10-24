@@ -20,7 +20,7 @@ from collections.abc import Callable, Mapping
 
 from app.config import AppConfig, SnapshotConfig
 from app.runtime_logging import emit_runtime_log
-from app.signal_context import graceful_stop
+from app.signal_context import graceful_stop, cooperative_sleep
 
 logger = logging.getLogger(__name__)
 
@@ -231,7 +231,7 @@ def run_snapshot(
                 emit_runtime_log("snapshot", f"failed: {exc}", stderr=True)
             if stop.requested or (should_stop is not None and should_stop()):
                 break
-            sleep_fn(interval)
+            cooperative_sleep(stop, interval, sleep_fn)
     return 0
 
 

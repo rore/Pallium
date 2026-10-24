@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+from tests.test_windows_service import (
+    guard_native_calls, guard_selected_mock, NativeCallDenied, ImmediateDeadline,
+)
+with guard_native_calls():
+    from app import windows_service as service
+
 import os
 import shutil
 import subprocess
@@ -25,6 +32,11 @@ def test_default_readiness_budget_allows_three_minute_cold_start() -> None:
 
 
 HARNESS = r'''
+# Missing managed controller fake must never launch a real child or Task Scheduler query.
+function New-Object {
+    param($TypeName)
+    throw "native-controller-sentinel: missing fake for $TypeName"
+}
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 $OutputEncoding = [Console]::OutputEncoding
 function Log-Call {
@@ -690,3 +702,61 @@ def test_stop_only_rejects_quoted_codex_queue_survivor(tmp_path: Path) -> None:
     output = _assert_failure(result)
     assert "Managed Pallium process(es) survived stop: 7373" in output
     assert "Start-ScheduledTask" not in calls
+
+
+def test_cooperative_windows_wrapper_has_no_task_or_force_fallback():
+    source = RESTART_SCRIPT.read_text(encoding="utf-8")
+    assert "-m app.windows_service $action --timeout $budget" in source
+    assert "[double]$ReadinessTimeoutSeconds = 180" in source
+    assert "UseShellExecute = $false" in source and "CreateNoWindow = $true" in source
+    for forbidden in ("taskkill", "Stop-ScheduledTask", "Start-ScheduledTask", "Stop-Process", ".Kill(", "initialize-wakes"):
+        assert forbidden not in source
+
+
+def test_cooperative_windows_missing_powershell_query_fake_is_denied():
+    with pytest.raises(NativeCallDenied):
+        service._task_info(ImmediateDeadline())
+
+
+def test_cooperative_windows_task_query_is_read_only_and_bounded(monkeypatch):
+    calls = []
+    def query(command, **options):
+        calls.append((command, options))
+        return SimpleNamespace(returncode=0, stdout='{"state":"Ready"}')
+    monkeypatch.setattr(subprocess, "run", query)
+    assert service._task_info(ImmediateDeadline()) == {"state": "Ready"}
+    assert calls[0][1]["timeout"] == 5
+    assert "-NoProfile" in calls[0][0]
+    assert "Get-ScheduledTask" in calls[0][0][-1]
+    assert all(verb not in calls[0][0][-1] for verb in ("Stop-ScheduledTask", "Start-ScheduledTask", "Register-ScheduledTask"))
+
+
+@pytest.mark.parametrize("shape", ["automatic-retry", "wrong-host", "legacy-vbs", "missing-home"],
+                         ids=["automatic-retry", "wrong-host", "legacy-vbs", "missing-home"])
+def test_cooperative_windows_unsupported_registered_launcher_refused_before_control(tmp_path, monkeypatch, shape):
+    vbs = tmp_path / "launcher.vbs"
+    text = service.MANAGED_MARKER + '\nWScript.Quit WshShell.Run("""python.exe"" -m app.windows_service observe --home ""private home""", 0, True)\n'
+    if shape == "legacy-vbs":
+        text = text.replace(service.MANAGED_MARKER, "' old unmanaged wrapper")
+    if shape == "missing-home":
+        text = service.MANAGED_MARKER + "\n"
+    vbs.write_text(text, encoding="utf-16")
+    task = {"action": "cmd.exe" if shape == "wrong-host" else "wscript.exe",
+            "arguments": '"' + str(vbs) + '"', "retry": 3 if shape == "automatic-retry" else 0}
+    monkeypatch.setattr(service, "_task_info", lambda _: task)
+    with pytest.raises(service.Unknown):
+        service._registered_home(ImmediateDeadline())
+
+
+def test_cooperative_windows_registered_unicode_home_is_exact(tmp_path, monkeypatch):
+    home = tmp_path / "Профиль with spaces"
+    vbs = tmp_path / "managed.vbs"
+    vbs.write_text(service.MANAGED_MARKER + f'\nWScript.Quit WshShell.Run("""python.exe"" -m app.windows_service observe --home ""{home}""", 0, True)\n', encoding="utf-16")
+    monkeypatch.setattr(service, "_task_info", lambda _: {"action":"wscript.exe", "arguments":'"'+str(vbs)+'"', "retry":0})
+    assert service._registered_home(ImmediateDeadline()) == home
+
+
+@pytest.mark.parametrize("seconds", [0, -1, float("nan"), float("inf")], ids=["zero", "negative", "nan", "infinite"])
+def test_cooperative_windows_invalid_operation_budget_never_queries_host(seconds):
+    with pytest.raises(ValueError):
+        service.control(Path("unused"), "restart", timeout=seconds)

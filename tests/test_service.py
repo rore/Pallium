@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tests.test_windows_service import guard_native_calls, guard_selected_mock
+
 import argparse
 import os
 import shutil
@@ -13,27 +15,28 @@ from unittest.mock import patch
 
 import pytest
 
-from app.cli.service import (
-    _pallium_home,
-    _apply_home_env,
-    _ensure_dirs,
-    _seed_config,
-    _PalliumLock,
-    _find_pallium_cmd,
-    _missing_declared_credentials,
-    _processor_count,
-    _start_windows,
-    _cmd_restart,
-    _cmd_status,
-    _cmd_stop,
-    _install_linux,
-    _remove_service_data,
-    _systemctl,
-    _service_ready,
-    _wait_for_service,
-    assert_service_stopped,
-    service_main,
-)
+with guard_native_calls():
+    from app.cli.service import (
+        _pallium_home,
+        _apply_home_env,
+        _ensure_dirs,
+        _seed_config,
+        _PalliumLock,
+        _find_pallium_cmd,
+        _missing_declared_credentials,
+        _processor_count,
+        _start_windows,
+        _cmd_restart,
+        _cmd_status,
+        _cmd_stop,
+        _install_linux,
+        _remove_service_data,
+        _systemctl,
+        _service_ready,
+        _wait_for_service,
+        assert_service_stopped,
+        service_main,
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -496,8 +499,10 @@ class TestStartWindows:
         raw = vbs_path.read_bytes()
         assert raw.startswith(b"\xff\xfe")
         assert vbs_path.read_text(encoding="utf-16") == (
+            "' Pallium cooperative launcher v1\n"
             'Set WshShell = CreateObject("WScript.Shell")\n'
-            f'WScript.Quit WshShell.Run("""{python_exe}"" -m app.run service run --port 21987 '
+            f'WshShell.CurrentDirectory = "{Path.cwd()}"\n'
+            f'WScript.Quit WshShell.Run("""{python_exe}"" -m app.windows_service observe '
             f'--home ""{expected_home}""", 0, True)\n'
         )
         assert len(task_xml) == 1
@@ -554,7 +559,9 @@ class TestCmdRestart:
         args = argparse.Namespace(home=str(tmp_path))
 
         with patch("app.cli.service._cmd_stop_impl") as mock_stop:
-            result = _cmd_restart(args)
+            from app.windows_service import Unknown
+            with patch("app.windows_service.control", side_effect=Unknown("launcher missing")):
+                result = _cmd_restart(args)
 
         assert result != 0
         mock_stop.assert_not_called()
@@ -976,3 +983,42 @@ def test_linux_stop_verifier_rejects_actual_supervisor_worker(tmp_path: Path, mo
 
     with pytest.raises(RuntimeError, match="process survived"):
         assert_service_stopped(tmp_path)
+
+
+def test_cooperative_windows_cli_dispatch_uses_managed_controller(tmp_path, monkeypatch, capsys):
+    from app import windows_service
+    import app.cli.service as cli
+    calls = []
+    monkeypatch.setattr(cli.sys, "platform", "win32")
+    monkeypatch.setattr(windows_service, "control", lambda home, action, **_: calls.append((home, action)) or "stopped")
+    assert cli.service_main(["stop", "--home", str(tmp_path)]) == 0
+    assert calls == [(tmp_path, "stop")]
+    assert "stopped" in capsys.readouterr().out
+
+
+def test_cooperative_windows_cli_missing_backend_fake_never_reaches_host(tmp_path, monkeypatch):
+    import app.cli.service as cli
+    from tests.test_windows_service import NativeCallDenied
+    monkeypatch.setattr(cli.sys, "platform", "win32")
+    with pytest.raises(NativeCallDenied):
+        cli.service_main(["stop", "--home", str(tmp_path)])
+
+
+def test_cooperative_windows_generated_launcher_disables_retry_without_starting_task(tmp_path, monkeypatch):
+    import json
+    import app.cli.service as cli
+    calls = []
+    home = tmp_path / "Профиль & private"
+    (home / "run").mkdir(parents=True)
+    def register(command, **_):
+        xml_path = Path(command[command.index("/xml") + 1])
+        calls.append((command, xml_path.read_text(encoding="utf-16")))
+        return subprocess.CompletedProcess(command, 0, "", "")
+    monkeypatch.setattr(cli.subprocess, "run", register)
+    cli._install_windows("unused", 21987, home)
+    metadata = json.loads((home / "run" / "windows-launch.json").read_text(encoding="utf-8"))
+    text = (home / "run" / "pallium_launcher.vbs").read_text(encoding="utf-16")
+    assert metadata["home"] == str(home) and metadata["port"] == 21987
+    assert "app.windows_service observe" in text and ", 0, True)" in text
+    assert "RestartOnFailure" not in calls[0][1] and "&amp;" in calls[0][1]
+    assert len(calls) == 1 and calls[0][0][1] == "/create"

@@ -75,7 +75,7 @@ Parent delegated task-owner source/mock authorization and forwarded SAME GO date
 - Local `refs/remotes/origin/main` and `git merge-base HEAD origin/main` both equal selected base. No fetch performed.
 - No application tests, service calls, process census or installed-file reads performed.
 - Governance attempt: expanded shape, state, baseline and relationships pass; checker correctly blocks pending High technical/human review. Reporter could not produce a verdict because selected base requires absent `build/import-linter-report.json`; no synthetic pass, policy override or unallocated backend/test run was substituted. Full governance validation remains pending; manual applicability selects non-exempt Work Record.
-- The only changed path is this Work Record; `git diff --check` passed. Ignored `build/planning-*` files retain local checker output/path evidence, not product assets.
+- At the planning-only checkpoint the only changed path was this Work Record; `git diff --check` passed. Ignored `build/planning-*` files retain local checker output/path evidence, not product assets.
 
 ## Source findings (all code references are at fd14a77d)
 
@@ -186,3 +186,59 @@ Agent technical review: parent-provided SAME Astra verdict, reviewed revision `e
 Disposition: applied only the requested bounded corrections: exposed old-crashed-generation recovery as an open policy; included filesystem/identity/receipt reads and mutex acquisition in the deadline and prohibited holding the mutex during drain observation; removed crash/Scheduler defaults and separated installation approval; stated the final-snapshot recovery-point tradeoff; allowed explicit parent deferral of legacy run(all) support without assuming compatibility machinery. No new investigation, tests, product code or live actions.
 
 Subsequent parent decisions above resolve those behavior choices and authorize the bounded source/mock slice after next SAME review. SAME GO now permits source/mock authoring; State is Ready to implement. No tests or collection are allocated. Actual source review is still required. This worktree remains owned by the task for concrete review and authorized follow-on work; no push or PR is requested.
+
+
+## Actual-source checkpoint — 2026-10-25, authoring only
+
+The selected production/documentation slice is authored, plus the eight approved test files. No tests, pytest collection, native/backend construction, installed task/service action, native process experiment or host census has run. Static Python syntax parsing (without imports) and whitespace checks are the only implementation validation attempted. Scope GO is not source acceptance; State remains Ready to implement pending actual-source SAME review and allocated verification.
+
+Production changes: lazy ctypes Job/event/process adapter and generation observer/controller; restricted same-user event and existing private-directory ownership verification; exact own-ancestry identity handles retained through WScript; atomic prelaunch Job assignment via documented Windows 10+ JOB_LIST startup attribute; explicit HANDLE_LIST for the log/NUL handles; monotonic admission and retained supervisor attempts; selected callback/operation-boundary stop propagation; managed-only cooperative drain without final snapshot or force; new CLI generator disables future task retry; wrapper delegates bounded control and refuses legacy. The legacy installer, POSIX paths, current registered task and installed launchers remain untouched.
+
+The ancestry correction reads only the observer and each exact parent PID from NtQueryInformationProcess, at most sixteen identities, checks same owning SID, image boundary, creation ordering, cycles and still-live queried child, and retains every opened process handle. It uses current token rights, no privileges, census, alternate interpreter or native experiment. This version-sensitive Windows API and the JOB_LIST/HANDLE_LIST details require SAME actual-source assessment; no native qualification is claimed. Official references: [NtQueryInformationProcess](https://learn.microsoft.com/en-us/windows/win32/api/winternl/nf-winternl-ntqueryinformationprocess), [UpdateProcThreadAttribute](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-updateprocthreadattribute). Mock cases are direct WScript, one Python redirector, reused parent identity, foreign owner, unexpected intermediate image, cycle, depth bound and query failure.
+
+Native isolation: application imports in each edited selected test module are wrapped by the shared sentinel guard; WindowsAPI construction, ctypes.WinDLL, subprocess.run/Popen and socket connection boundaries throw unless the scenario provides an explicit fake. PowerShell wrapper harness New-Object defaults to throwing before a controller process can be constructed. The future run packet must additionally install these guards BEFORE pytest import so root tests/conftest.py imports and collection are covered too; module guards alone do not establish that earlier boundary. This bootstrap is part of the proposed command, not a new production sentinel or repository-wide conftest change. A selected missing-fake regression asserts the sentinel; it records a denied attempt, with no real native call. Native observation/lifecycle E2E remains outside the slice.
+
+Delegation disclosure: I delegated only new tests/test_windows_service.py authoring to native child /root/cooperative_recovery_plan/adapter_mock_author (gpt-6-luna, medium), relying on applicable C:/Dev/rore/Pallium/AGENTS.md instruction: "When a cheaper capable agent is available, delegate bounded implementation, testing, research, and mechanical work with precise scope, acceptance criteria, and stop conditions; review its output before accepting it." This was my interpretation of that instruction, not a root-requested worker. The child was already assigned before the subsequent no-new-workers direction; it finished only that file, with no test/import/collection/commit or other edits. I reviewed and adjusted its source and retain ownership of the whole diff. No further worker was spawned. Deterministic explicitly scoped file replacements were used for mechanical edits after patch matching failures; no shared checkout or installed file was edited.
+
+## Exact restart-test assertion mapping — SAME review before mapped edits
+
+Original tests/test_restart_service.py and its harness have been restored from fd14, with additive guarded managed tests only. No existing node was deleted, skipped or reported passing. The original assertions below are not valid evidence for the new managed wrapper yet; replacing them is limited to the parent-selected behavior. Other identity, Unicode, port, readiness, health, uncertainty and restoration scenarios must remain. Keep stable selectors where practical while replacing the unsafe assertion body/fixture, rather than dropping the scenario. Existing POSIX coverage in tests/test_service.py remains unchanged apart from guarded imports.
+
+| Existing selector (test_ prefix omitted) | Bounded mapped assertion / scenario preserved |
+|---|---|
+| default_readiness_budget_allows_three_minute_cold_start | Retain static 180-second default assertion unchanged. |
+| wake_import_runs_after_stop_and_before_task_start | Restart signals/settles before new admission, never invokes offline wake initialization or force. |
+| wake_import_failure_never_starts_service | Existing authority failure refuses before signal/start; offline import is a separate operation, never a restart fallback. |
+| stop_only_does_not_import_wakes | Stop settles without initialization or new launch. |
+| preflight_failure_never_stops_the_healthy_service | Private-home/manifest/store/config preflight failure leaves healthy generation unsignaled and unlaunched. |
+| invalid_installed_task_metadata_never_stops | Invalid cwd/interpreter/task identity refuses before stop and no fallback to force. |
+| canonical_task_omits_working_directory_and_sweeps_survivor | Managed exact cwd is explicit; active owned descendant refuses settlement/replacement; no survivor census or kill. This is the approved change to old omission/force assertions. |
+| legacy_task_passes_exact_working_directory | Unchanged legacy launcher is refused before control; exact managed cwd is tested separately. |
+| restart_metadata_parses_legacy_and_generated_launcher_forms | Parameterized legacy/mixed forms refuse before stop; new managed marker/task form resolves exact metadata. No legacy migration. |
+| legacy_task_passes_unicode_working_directory_exactly | Unicode/spaces managed cwd is passed exactly; legacy fixture still refuses rather than being launched. |
+| canonical_unicode_home_controls_pid_cleanup_and_failure_log | Unicode/%literal% home stays exact through metadata/config; PID files confer no authority; error diagnostics use that selected home, no cleanup kill. |
+| legacy_task_failure_keeps_default_home_log_path | Legacy refusal diagnostic does not invent or mutate a default-home generation; no legacy control. |
+| canonical_missing_home_fails_before_stop | Missing exact home refuses before signal/start. |
+| missing_or_invalid_port_never_stops | None/non-numeric/zero/65536 managed ports refuse before signal/start. |
+| boundary_ports_are_valid | Ports 1 and 65535 accepted by metadata and forwarded exactly to readiness. |
+| partial_taskkill_error_continues_cleanup_and_restarts | Known failed-but-settled old owned set permits intended new launch and reports recovered; no force is attempted. |
+| nonzero_taskkill_error_continues_cleanup_and_restarts | Known nonzero old result is failed, not clean; replacement only after positive whole-set settlement. |
+| stop_only_rejects_nonzero_taskkill | Unknown/nonzero contradictory clean receipt refuses; no taskkill or start. Known failed-but-settled stop is distinct. |
+| stop_only_rejects_failed_process_enumeration | Failed exact identity/Job observation refuses; no machine enumeration fallback or replacement. |
+| multiple_initial_listeners_are_killed_once_each | Multiple retained same-generation child results must all settle, observed once each; zero kills, one intended replacement after proof. |
+| surviving_listener_fails_before_task_start | Still-active contained child prevents launch regardless of listener/port evidence. |
+| start_failure_is_nonzero_and_never_prints_success | Definite before-launch vs unknown after-launch failure remains distinct; at most one eligible restoration, never false success. |
+| transient_readiness_checks_all_contracts_before_success | Managed ready callback preserves health, status and queue-health checks; transient false results retry only observation within one deadline, no generation replacement. |
+| queue_health_can_use_longer_timeout_within_same_deadline | Queue probe may consume remaining shared budget; preceding probes consume the same deadline, never a new phase budget. |
+| terminal_readiness_exhausts_exact_budget_without_success | Health/status/queue terminal failures consume one deadline, no success or restoration of a running-unready generation. |
+| stop_only_accepts_empty_listener_not_found | Empty port alone is insufficient; accept only valid terminal receipt plus entire owned Job and observer/launcher/task settlement. |
+| stop_only_rejects_orphan_redirected_worker | Retained redirector/descendant still alive or missing identity prevents settlement; no signature sweep/force. |
+| stop_only_rejects_quoted_codex_queue_survivor | Generic owned descendant still alive prevents settlement independent of command quoting/product spelling; no command-line census or force. |
+
+Parent clarified that selected behavior authorization covers only the unsafe-kill/implicit-init assertion replacements once this exact mapping is SAME-reviewed. This checkpoint asks for that bounded mapping review while the whole production diff receives actual-source review; it does not claim the restored old assertions pass and does not seek generic behavior approval again. Mapped edits and a final immutable whole-diff revision precede any test allocation.
+
+## Proposed guarded run packet — not allocated or executed
+
+First packet is ONE node only: tests/test_windows_service.py::test_cooperative_windows_missing_native_fake_fails_before_host_calls, serial (-q -n 0), expected under ten seconds excluding imports, outer timeout sixty seconds. Use selected-base environment interpreter C:/Dev/rore/Pallium/.venv/Scripts/python.exe and this worktree as cwd. Invoke through a Python -c bootstrap that patches ctypes.WinDLL, subprocess.run/Popen and socket connection boundaries before importing pytest; set HOME/USERPROFILE/APPDATA/PALLIUM_HOME/PALLIUM_CONFIG_FILE/PALLIUM_ENV_FILE to a disposable private temporary directory, memory storage and no generation env, then pytest.main on the one exact node. The bootstrap's missing fake raises a sentinel, never real Task Scheduler/Jobs/events/process/network. The exact literal command and revision must be returned after SAME source/mapping review, before requesting quota/slot. No recovery allocation exists, no collection is authorized, and authored case counts are not collected results.
+
+Remaining evidence limits: authored mocks are unexecuted; OS containment, fast-child Job notification gaps, retained-handle lifetime after observer exit, legacy refusal compatibility and Windows startup attributes need actual-source review and future native qualification. Owner-loss remains UNKNOWN/manual by selected policy. The full existing suite and caller-surface E2E are unallocated, so no result acceptance or completion claim is made.

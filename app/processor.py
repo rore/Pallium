@@ -21,7 +21,7 @@ def default_processor_id() -> str:
     return f"{socket.gethostname()}:{__name__}"
 
 
-def run_processor(args: list[str] | None = None, *, config: AppConfig | None = None, sleep_fn=None) -> int:
+def run_processor(args: list[str] | None = None, *, config: AppConfig | None = None, sleep_fn=None, should_stop=None) -> int:
     parsed = build_parser().parse_args(args)
     worker_args: list[str] = []
     processor_id = parsed.processor_id or default_processor_id()
@@ -33,9 +33,12 @@ def run_processor(args: list[str] | None = None, *, config: AppConfig | None = N
         worker_args.extend(["--max-attempts", str(parsed.max_attempts)])
     if parsed.once:
         worker_args.append("--once")
-    if sleep_fn is None:
-        return run_worker(worker_args, config=config)
-    return run_worker(worker_args, config=config, sleep_fn=sleep_fn)
+    options = {"config": config}
+    if sleep_fn is not None:
+        options["sleep_fn"] = sleep_fn
+    if should_stop is not None:
+        options["should_stop"] = should_stop
+    return run_worker(worker_args, **options)
 
 
 if __name__ == "__main__":

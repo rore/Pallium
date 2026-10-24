@@ -5,6 +5,7 @@ from __future__ import annotations
 import signal
 import sys
 import threading
+import time
 from contextlib import contextmanager
 from collections.abc import Generator
 
@@ -28,11 +29,26 @@ def graceful_stop(
     if install is None:
         install = threading.current_thread() is threading.main_thread()
 
+    from app.windows_service import inherited_stop
+    channel = inherited_stop()
+
     class _StopFlag:
-        __slots__ = ("requested",)
+        __slots__ = ("_requested", "channel")
 
         def __init__(self) -> None:
-            self.requested = False
+            self._requested = False
+            self.channel = channel
+
+        @property
+        def requested(self):
+            return self._requested or (self.channel is not None and self.channel.requested())
+
+        @requested.setter
+        def requested(self, value):
+            if value:
+                self._requested = True
+                if self.channel is not None:
+                    self.channel.request()
 
     flag = _StopFlag()
 
@@ -55,3 +71,13 @@ def graceful_stop(
             signal.signal(signal.SIGTERM, prev_term)
             if prev_break is not None:
                 signal.signal(signal.SIGBREAK, prev_break)
+        if channel is not None:
+            channel.close()
+
+
+def cooperative_sleep(stop, seconds, sleep_fn=time.sleep):
+    channel = getattr(stop, "channel", None)
+    if channel is not None and sleep_fn is time.sleep:
+        channel.sleep(seconds)
+    else:
+        sleep_fn(seconds)

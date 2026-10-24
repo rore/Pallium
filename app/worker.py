@@ -9,7 +9,7 @@ from collections.abc import Callable
 from app.config import AppConfig
 from app.dependencies import build_service, build_storage_provider
 from app.runtime_logging import emit_runtime_log
-from app.signal_context import graceful_stop
+from app.signal_context import graceful_stop, cooperative_sleep
 from core.errors import is_transient_error
 from core.contracts import ItemProcessingResult
 from storage.base import ThreadProcessingLease
@@ -75,6 +75,8 @@ def run_worker(
         return stop.requested or (should_stop is not None and should_stop())
 
     def _try_thread_rebuild() -> bool:
+        if _stopping():
+            return False
         thread_lease = service.process_next_thread_rebuild(
             worker_id=worker_id,
             lease_seconds=parsed.lease_seconds,
@@ -105,6 +107,8 @@ def run_worker(
                             _try_thread_rebuild()
                             last_rebuild_check = clock()
                         continue
+                    if _stopping():
+                        return 0
                     if _try_thread_rebuild():
                         last_rebuild_check = clock()
                         if parsed.once or _stopping():
@@ -132,12 +136,12 @@ def run_worker(
                             stderr=True,
                         )
                         return 1
-                    sleep_fn(backoff)
+                    cooperative_sleep(stop, backoff, sleep_fn)
                     continue
                 consecutive_transient_errors = 0
                 if parsed.once or _stopping():
                     return 0
-                sleep_fn(parsed.poll_interval_seconds)
+                cooperative_sleep(stop, parsed.poll_interval_seconds, sleep_fn)
         except KeyboardInterrupt:
             return 0
 

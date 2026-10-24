@@ -1,13 +1,18 @@
 from __future__ import annotations
 
+from tests.test_windows_service import guard_native_calls, guard_selected_mock
+
 import logging
 import re
 import types
 import pytest
 
-from app.cleaner import run_cleaner
-from app.config import AppConfig
-from app.runtime_logging import emit_runtime_log, startup_stage
+with guard_native_calls():
+    from app.cleaner import run_cleaner
+with guard_native_calls():
+    from app.config import AppConfig
+with guard_native_calls():
+    from app.runtime_logging import emit_runtime_log, startup_stage
 from storage.vector_index import VectorIndexConfig
 from storage.base import RetentionRunStats
 from tests.config_helpers import DEMO_SEMANTIC_PACKAGES
@@ -29,8 +34,10 @@ def test_uvicorn_logging_owns_root_after_actual_mcp_construction() -> None:
     script = """
 import logging
 import uvicorn
-from app.runtime_logging import RuntimeLogFormatter, build_uvicorn_log_config
-from app.mcp.server import create_server
+with guard_native_calls():
+    from app.runtime_logging import RuntimeLogFormatter, build_uvicorn_log_config
+with guard_native_calls():
+    from app.mcp.server import create_server
 
 uvicorn.Config('app.main:app', factory=True,
                log_config=build_uvicorn_log_config(component='api'))
@@ -322,3 +329,13 @@ def test_configure_file_logging_returns_shared_stream_for_subprocess(tmp_path) -
     assert "[service] Active packages: foo" in text, text
     assert "child-stdout-line" in text, text
     assert "child-stderr-line" in text, text
+
+
+def test_cooperative_windows_idle_wait_uses_event_and_preserves_injected_sleep():
+    import time
+    from app.signal_context import cooperative_sleep
+    calls = []
+    stop = types.SimpleNamespace(channel=types.SimpleNamespace(sleep=lambda seconds: calls.append(("event", seconds))))
+    cooperative_sleep(stop, 60, time.sleep)
+    cooperative_sleep(stop, 2, lambda seconds: calls.append(("injected", seconds)))
+    assert calls == [("event", 60), ("injected", 2)]

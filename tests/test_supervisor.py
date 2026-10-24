@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.test_windows_service import guard_native_calls, guard_selected_mock
+
 """Unit tests for app.supervisor — health probe and restart resilience.
 
 All tests use fake time, fake processes, and injectable parameters.
@@ -13,12 +15,13 @@ from unittest.mock import patch
 
 import pytest
 
-from app.supervisor import (
-    _API_HEALTH_PROBE_FAIL_THRESHOLD,
-    _API_HEALTH_PROBE_INTERVAL,
-    _MAX_RAPID_RESTARTS,
-    run_supervisor,
-)
+with guard_native_calls():
+    from app.supervisor import (
+        _API_HEALTH_PROBE_FAIL_THRESHOLD,
+        _API_HEALTH_PROBE_INTERVAL,
+        _MAX_RAPID_RESTARTS,
+        run_supervisor,
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -690,12 +693,13 @@ import time as _time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
 
-from app.supervisor import (
-    _probe_initialized_health,
-    _wait_for_api,
-    _generate_launch_token,
-    _start_api_with_retry,
-)
+with guard_native_calls():
+    from app.supervisor import (
+        _probe_initialized_health,
+        _wait_for_api,
+        _generate_launch_token,
+        _start_api_with_retry,
+    )
 
 
 def _stub_socket_factory(connect_results: list[bool]):
@@ -1338,3 +1342,59 @@ def test_startup_budget_preserves_real_probe_fencing(tmp_path, monkeypatch, capl
         assert len(killed) == (0 if scenario == "dead" else len(spawned))
         if scenario in {"timeout", "foreign"}:
             assert durations == [120.0] * 5
+
+
+def test_cooperative_windows_api_failure_drains_instead_of_retrying(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    from app import supervisor as module
+    calls = []
+    channel = SimpleNamespace(request=lambda: calls.append("stop"))
+    root = SimpleNamespace(pid=123)
+    def spawn(*_, **__):
+        calls.append("spawn")
+        return root
+    monkeypatch.setattr(module, "_kill_tree", lambda *_, **__: pytest.fail("forced cleanup"))
+    result = module._start_api_with_retry(
+        ["private-child"], "127.0.0.1", 21987, popen_factory=spawn,
+        wait_for_api_fn=lambda *_, **__: False, cooperative=channel,
+        run_dir=tmp_path, token_fn=lambda: "private-token",
+    )
+    assert result is None and calls == ["spawn", "stop"]
+
+
+@pytest.mark.parametrize("helpers", [(0, 0), (2, 1)], ids=["empty-helpers", "multiple-helpers"])
+def test_cooperative_windows_stop_during_startup_retains_root_and_skips_snapshot(monkeypatch, tmp_path, helpers):
+    from types import SimpleNamespace
+    from app import supervisor as module, windows_service
+    roots = []
+    stop = SimpleNamespace(requested=False)
+    class Managed:
+        def spawn(self, command, *, attempts, stop, **options):
+            assert not stop()
+            root = SimpleNamespace(pid=321, poll=lambda: 0)
+            attempts.append(root)
+            roots.append(root)
+            return root
+        def request(self):
+            stop.requested = True
+        def close(self):
+            pass
+    managed = Managed()
+    @contextmanager
+    def stopping(**_):
+        yield stop
+    def ready(*_, **__):
+        stop.requested = True
+        return True
+    snapshot = SimpleNamespace(enabled=True, snapshot_path=str(tmp_path), interval_seconds=1, max_snapshots=2)
+    monkeypatch.setattr(windows_service, "inherited_stop", lambda: managed)
+    monkeypatch.setattr(module, "graceful_stop", stopping)
+    monkeypatch.setattr(module.AppConfig, "from_env", lambda: SimpleNamespace(snapshot=snapshot))
+    monkeypatch.setattr(module, "restore_snapshot", lambda *_, **__: pytest.fail("database rewind"))
+    monkeypatch.setattr(module, "create_snapshot", lambda *_, **__: pytest.fail("final shutdown snapshot"))
+    result = module.run_supervisor(
+        ["--processors", str(helpers[0]), "--cleaners", str(helpers[1])],
+        popen_factory=lambda *_, **__: pytest.fail("uncontained spawn"),
+        wait_for_api_fn=ready, kill_fn=lambda *_, **__: pytest.fail("forced cleanup"),
+    )
+    assert result == 0 and len(roots) == 1

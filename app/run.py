@@ -16,10 +16,15 @@ logger = logging.getLogger(__name__)
 
 
 def _serve(*, host: str, port: int, reload: bool) -> None:
+    from app.windows_service import inherited_stop
+    channel = inherited_stop()
     options = dict(factory=True, host=host, port=port, reload=reload,
                    log_config=build_uvicorn_log_config(component="api"))
     config = uvicorn.Config("app.main:app", **options)
     if reload or config.workers > 1:
+        if channel is not None:
+            channel.close()
+            raise RuntimeError("managed cooperative API requires one owned server")
         uvicorn.run("app.main:app", **options)
         return
 
@@ -42,6 +47,7 @@ def _serve(*, host: str, port: int, reload: bool) -> None:
             await super().main_loop()
 
     server = OwnedServer(config)
+    stop_tasks = set()
 
     def owned_factory():
         from app.main import app
@@ -51,6 +57,14 @@ def _serve(*, host: str, port: int, reload: bool) -> None:
         def request_exit() -> None:
             loop.call_soon_threadsafe(server.request_exit)
 
+        if channel is not None:
+            async def watch_stop():
+                while not channel.requested():
+                    await asyncio.sleep(0.05)
+                request_exit()
+            task = loop.create_task(watch_stop())
+            stop_tasks.add(task)
+            task.add_done_callback(stop_tasks.discard)
         return app(on_retained_terminal=request_exit)
 
     config.app = owned_factory
@@ -58,6 +72,9 @@ def _serve(*, host: str, port: int, reload: bool) -> None:
         server.run()
     except KeyboardInterrupt:
         pass
+    finally:
+        if channel is not None:
+            channel.close()
     if not server.started:
         from uvicorn.main import STARTUP_FAILURE
 
