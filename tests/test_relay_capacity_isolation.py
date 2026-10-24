@@ -451,7 +451,7 @@ def test_failed_ack_callback_recovers_next_delivery_once_through_native_fence(
 
 
 @pytest.mark.parametrize("failure", [
-    None, "snapshot", "turn_callback", "admission", "projection",
+    None, "snapshot", "turn_callback", "admission", "projection_forbidden",
     "not_found", "conflict", "unavailable", "busy", "invalid", "runner_busy", "cancel_after_claim",
 ])
 def test_exact_codex_turn_uses_one_admission_and_preserves_phase_failures(
@@ -554,8 +554,7 @@ def test_exact_codex_turn_uses_one_admission_and_preserves_phase_failures(
         def project(row):
             if armed:
                 phase("projection")
-                if failure == "projection" and "session_ref" in row:
-                    raise RuntimeError("controlled projection failure")
+                raise AssertionError("Exact claims must not run optional activation projection")
             return activation(row)
 
         # Native transport is outside this caller/ordering regression.
@@ -635,15 +634,18 @@ def test_exact_codex_turn_uses_one_admission_and_preserves_phase_failures(
                     duplicate = await client.post("/relay/turn", json=exact_request)
                     assert duplicate.status_code == 200, duplicate.text
                     assert duplicate.json()["deliveries"] == []
+                    assert duplicate.json()["session"]["activation"] is None
                     delivery, = claimed_rows
                 else:
                     assert response.status_code == 200, response.text
                     delivery, = response.json()["deliveries"]
+                    assert response.json()["session"]["activation"] is None
+                    assert delivery["activation"] is None
                 assert delivery["delivery_id"] == delivery_id
                 assert delivery["payload"] == "one admission café 東京"
                 assert delivery["attempts"] == 1
                 assert [p[0] for p in phases] == [
-                    "snapshot", "claim", "turn_callback", "admission", "projection", "projection",
+                    "snapshot", "claim", "turn_callback", "admission",
                 ]
                 acknowledged = await client.post("/relay/deliveries/ack", json={
                     "delivery_id": delivery_id, "claim_token": delivery["claim_token"], **scope,
@@ -655,7 +657,7 @@ def test_exact_codex_turn_uses_one_admission_and_preserves_phase_failures(
             assert retained["delivery_id"] == delivery_id
             assert retained["state"] == ("pending" if failure in durable_errors else "delivered")
             assert retained["attempts"] == (0 if failure in durable_errors else 1)
-            if failure in {"snapshot", "turn_callback", "admission", "projection"}:
+            if failure in {"snapshot", "turn_callback", "admission"}:
                 assert any("snapshot unavailable" in r.message or "failed" in r.message for r in caplog.records)
             assert app.state._wait_for_operations(0)
             assert admissions == [("relay_codex_runner", 0)], admissions

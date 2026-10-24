@@ -96,7 +96,7 @@ def test_http_exact_claim_avoids_redundant_writer_reads(
 
 @pytest.mark.parametrize("generation", [None, 7])
 @pytest.mark.parametrize("authority_transport", ["json", "missing_array", "missing_group"])
-def test_http_delivery_projection_reads_fresh_endpoint_once(
+def test_exact_claim_omits_projection_while_delivery_reads_fresh_endpoint_once(
     relay_store, tmp_path, monkeypatch, generation, authority_transport,
 ):
     from sqlalchemy import event
@@ -152,21 +152,18 @@ def test_http_delivery_projection_reads_fresh_endpoint_once(
                 if generation is not None:
                     db.execute("INSERT INTO relay_endpoint_generations(endpoint_id,generation) VALUES (?,?)", (endpoint, generation))
         kwargs["relay_turn_admission_callback"] = admission
-        original_factory = kwargs["relay_activation_callback_factory"]
-        def factory(actual_callback):
-            projector = original_factory(actual_callback)
-            def project(row):
-                if "recipient_endpoint_id" not in row:
-                    return projector(row)
-                event.listen(storage._relay_engine, "before_cursor_execute", observe_sql)
-                try:
-                    result = projector(row)
-                    projected.append(result)
-                    return result
-                finally:
-                    event.remove(storage._relay_engine, "before_cursor_execute", observe_sql)
-            return project
-        kwargs["relay_activation_callback_factory"] = factory
+        projector = kwargs["relay_activation_callback"]
+        def project(row):
+            if "recipient_endpoint_id" not in row:
+                return projector(row)
+            event.listen(storage._relay_engine, "before_cursor_execute", observe_sql)
+            try:
+                result = projector(row)
+                projected.append(result)
+                return result
+            finally:
+                event.remove(storage._relay_engine, "before_cursor_execute", observe_sql)
+        kwargs["relay_activation_callback"] = project
         return original_router(service, **kwargs)
 
     monkeypatch.setattr(dependencies, "create_router", observe_router)
@@ -177,21 +174,28 @@ def test_http_delivery_projection_reads_fresh_endpoint_once(
         claim = http.post("/relay/turn", json={"runtime": "codex", "session_ref": "target",
             "wake_delivery_id": reservation.delivery_id, **SCOPE})
         assert claim.status_code == 200, claim.text
-        assert len(fallback_attempts) == (0 if authority_transport == "json" else 2)
+        assert len(fallback_attempts) == (0 if authority_transport == "json" else 1)
         delivery, = claim.json()["deliveries"]
         assert delivery["delivery_id"] == reservation.delivery_id and delivery["attempts"] == 1
-        assert projected == [delivery["activation"]]
-        assert len(views) == 1
+        assert claim.json()["session"]["activation"] is None
+        assert delivery["activation"] is None
+        assert projected == views == statements == []
+        current = http.get(f"/relay/messages/{delivery['message_id']}", params=SCOPE)
+        assert current.status_code == 200, current.text
+        current_delivery, = current.json()["deliveries"]
+        assert projected == [current_delivery["activation"]]
+        assert len(fallback_attempts) == (0 if authority_transport == "json" else 2)
+        assert len(views) == len(statements) == 1
         assert views[0]["container_ref"] == "git:example.test/current-東京"
         assert views[0]["title"] == "Post-admission title" and views[0]["alias"] == "fresh"
         assert views[0]["scope_generation"] == (generation or 0)
-        assert delivery["activation"]["availability"] == "attempt_inflight"
+        assert current_delivery["activation"]["availability"] == "attempt_inflight"
         ack = http.post("/relay/deliveries/ack", json={"delivery_id": delivery["delivery_id"],
             "claim_token": delivery["claim_token"], **SCOPE})
         assert ack.status_code == 200, ack.text
         observed, = http.get(f"/relay/messages/{delivery['message_id']}", params=SCOPE).json()["deliveries"]
         assert observed["state"] == "delivered" and observed["attempts"] == 1
-    assert len(statements) == 1, statements
+    assert len(statements) == 2, statements
 
 
 @pytest.mark.parametrize("generation", [None, 7])
@@ -1171,8 +1175,8 @@ def test_http_response_projection_uses_fresh_authority_and_distinct_health(
         assert retained["state"] == "claimed" and retained["attempts"] == 1
 
 
-@pytest.mark.parametrize("callback_mode", ["custom", "delegate", "factory_raises", "factory_invalid"])
-def test_http_projection_factory_preserves_overrides_and_error_fallback(
+@pytest.mark.parametrize("callback_mode", ["custom", "delegate", "raises", "none"])
+def test_exact_claim_omits_activation_and_preserves_read_callback_behavior(
     relay_store, tmp_path, monkeypatch, caplog, callback_mode, *, force_setup_refusal=False,
 ):
     from app import dependencies
@@ -1200,19 +1204,17 @@ def test_http_projection_factory_preserves_overrides_and_error_fallback(
 
     def observe_router(service, **kwargs):
         callback = kwargs["relay_activation_callback"]
-        if callback_mode in {"custom", "delegate"}:
-            def override(row):
-                callbacks.append(row)
-                result = callback(row)
-                return ({**result, "availability": "unknown", "availability_source": "none"}
-                        if callback_mode == "custom" else result)
-            kwargs["relay_activation_callback"] = override
-        else:
-            def failed_factory(_actual_callback):
-                if callback_mode == "factory_raises":
-                    raise RuntimeError("controlled projector factory failure")
+        # Exact-only factory semantics are retired; these are existing read callbacks.
+        def override(row):
+            callbacks.append(row)
+            if callback_mode == "raises":
+                raise RuntimeError("controlled activation read failure")
+            if callback_mode == "none":
                 return None
-            kwargs["relay_activation_callback_factory"] = failed_factory
+            result = callback(row)
+            return ({**result, "availability": "unknown", "availability_source": "none"}
+                    if callback_mode == "custom" else result)
+        kwargs["relay_activation_callback"] = override
         return original_router(service, **kwargs)
 
     monkeypatch.setattr(relay, "codex_wake_snapshot", snapshot)
@@ -1226,18 +1228,29 @@ def test_http_projection_factory_preserves_overrides_and_error_fallback(
                 "runtime": "codex", "session_ref": "target",
                 "wake_delivery_id": reservation.delivery_id, **SCOPE,
             })
+            assert response.status_code == 200, response.text
+            claimed, = response.json()["deliveries"]
+            assert claimed["delivery_id"] == reservation.delivery_id and claimed["attempts"] == 1
+            assert response.json()["session"]["activation"] is None
+            assert claimed["activation"] is None
+            assert callbacks == []
+            assert len(reads) == 1  # Mandatory preclaim snapshot only.
+            current = http.get(f"/relay/messages/{claimed['message_id']}", params=SCOPE)
+            assert current.status_code == 200, current.text
+            current_delivery, = current.json()["deliveries"]
+            assert current_delivery["delivery_id"] == reservation.delivery_id
+            assert len(callbacks) == 1
+            if callback_mode in {"custom", "delegate"}:
+                expected = "unknown" if callback_mode == "custom" else "attempt_inflight"
+                assert current_delivery["activation"]["availability"] == expected
+                assert len(reads) == 2
+            else:
+                assert current_delivery["activation"] is None
+                assert len(reads) == 1
+            if callback_mode == "raises":
+                assert any("activation projection failed" in record.message for record in caplog.records)
         finally:
             armed = False
-        assert response.status_code == 200, response.text
-        claimed, = response.json()["deliveries"]
-        assert claimed["delivery_id"] == reservation.delivery_id and claimed["attempts"] == 1
-        expected = "unknown" if callback_mode == "custom" else "attempt_inflight"
-        assert response.json()["session"]["activation"]["availability"] == expected
-        assert claimed["activation"]["availability"] == expected
-        assert len(callbacks) == (2 if callback_mode in {"custom", "delegate"} else 0)
-        assert len(reads) == 3  # One preclaim plus two preserved fallback row reads.
-        if callback_mode.startswith("factory_"):
-            assert any("projector preparation failed" in record.message for record in caplog.records)
         assert registry.snapshot(reservation.recipient_endpoint_id).correlated_claim_attempts is None
 
 

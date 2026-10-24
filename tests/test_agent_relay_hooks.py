@@ -592,11 +592,25 @@ def test_codex_exact_wake_real_http_response_delay_is_bounded_and_traceable(
         monkeypatch.setattr(SQLiteRelayMixin, "relay_refresh_structural_work_refs", slow_refresh)
 
     response_finished = threading.Event()
-    ack_handlers = []
+    ack_handlers, turn_responses, activation_reads = [], [], []
 
     import anyio
+    from core.codex_wake import CodexWakeRegistry
     from core.relay import RelayService
 
+    original_view = RelayService.session_view_by_endpoint
+    original_snapshot = CodexWakeRegistry.snapshot_if_usable
+
+    def observe_view(service, *args, **kwargs):
+        activation_reads.append("endpoint")
+        return original_view(service, *args, **kwargs)
+
+    def observe_snapshot(registry, *args, **kwargs):
+        activation_reads.append("activation_authority")
+        return original_snapshot(registry, *args, **kwargs)
+
+    monkeypatch.setattr(RelayService, "session_view_by_endpoint", observe_view)
+    monkeypatch.setattr(CodexWakeRegistry, "snapshot_if_usable", observe_snapshot)
     stages = []
     original_run_sync = anyio.to_thread.run_sync
     original_turn = RelayService.turn
@@ -648,6 +662,8 @@ def test_codex_exact_wake_real_http_response_delay_is_bounded_and_traceable(
             if response.status_code != 200:
                 span["error"] = response.json()
             if self.path == "/relay/turn":
+                if response.status_code == 200:
+                    turn_responses.append(response.json())
                 span["delay_entered"] = time.monotonic()
                 time.sleep(response_delay)
                 span["delay_finished"] = time.monotonic()
@@ -745,6 +761,11 @@ def test_codex_exact_wake_real_http_response_delay_is_bounded_and_traceable(
         assert turn_span["status"] == 200
         assert snapshot["state"] == expected_state
         assert snapshot["attempts"] == 1
+        turn_response, = turn_responses
+        assert turn_response["session"]["activation"] is None
+        delivery, = turn_response["deliveries"]
+        assert delivery["activation"] is None
+    assert activation_reads == []
     assert refresh_calls == []  # Exact delivery never enters optional post-claim work.
     if delay_refresh:
         refs = client.get("/relay/sessions/work-refs", params={
@@ -768,6 +789,7 @@ def test_codex_exact_wake_real_http_response_delay_is_bounded_and_traceable(
         else:
             assert 0 <= request_event["elapsed_ms"] < 1800
         assert json.loads(captured.out)["hookSpecificOutput"]["additionalContext"].count(delivery_id) == 1
+        assert sum(event["stage"] == "payload_emitted" for event in wake_events) == 1
         diagnostics = {
             "stages": stages[:32], "stages_truncated": len(stages) > 32,
             "wake_events": wake_events[:16], "events_truncated": len(wake_events) > 16,
@@ -782,7 +804,7 @@ def test_codex_exact_wake_real_http_response_delay_is_bounded_and_traceable(
                        for event in wake_events), diagnostics
             assert not any(event["stage"] == "delivery_acked" for event in wake_events), diagnostics
         else:
-            assert any(event["stage"] == "delivery_acked" for event in wake_events), diagnostics
+            assert sum(event["stage"] == "delivery_acked" for event in wake_events) == 1, diagnostics
     else:
         assert 1800 <= request_event["elapsed_ms"] < 2400
         assert not any(event["stage"] == "payload_emitted" for event in wake_events)

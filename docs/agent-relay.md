@@ -257,6 +257,16 @@ Use each guide for setup, trust requirements and recovery instructions. Current
 planning remains in the [wake roadmap](../roadmap/features/add-wake-first-relay-delivery.md);
 a table entry does not extend one host's guarantees to another.
 
+Exact Codex wake claims (`POST /relay/turn` with `runtime: "codex"` and
+`wake_delivery_id`) return the durable claim after mandatory callbacks, with
+`session.activation` and each delivery's `activation` set to `null`. This changes
+previously populated exact-response metadata: optional activation reads and the
+internal exact-only projector factory/override/fallback extension are retired
+from this path. External clients that need current activation must use session
+or delivery reads. Claim identity, generation fences, payload emission and ACK
+remain separate from activation metadata. Admission and mandatory callbacks can
+still delay the response; this is not a universal latency guarantee.
+
 Relay session and delivery reads include an optional `activation` object. Its
 `behavior`, `qualification`, current `availability`, and `fallback` distinguish
 Codex `busy_queue`, Claude Code `idle_wake`, and passive natural-turn delivery.

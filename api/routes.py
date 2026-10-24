@@ -691,7 +691,6 @@ def create_router(
     relay_turn_admission_callback: Callable[[dict[str, Any], dict[str, Any], CodexWakeReservation | None], None] | None = None,
     relay_ack_callback: Callable[[dict[str, Any], dict[str, str]], None] | None = None,
     relay_activation_callback: Callable[[dict[str, Any]], dict[str, object]] | None = None,
-    relay_activation_callback_factory: Callable[[Callable], Callable] | None = None,
     relay_runner: Callable[[Callable[[], Any]], Awaitable[Any]] | None = None,
     relay_codex_runner: Callable[[Callable[[], Any]], Awaitable[Any]] | None = None,
     diagnostic_runner: Callable[[Callable[[], Any]], Awaitable[Any]] | None = None,
@@ -855,29 +854,15 @@ def create_router(
                             relay_turn_admission_callback(request_data, result, captured)
                         except Exception:
                             logger.exception("Relay turn admission callback failed after admission")
-                    if relay_activation_callback is None:
-                        return result
-
-                    def project_response():
-                        callback = relay_activation_callback
-                        if relay_activation_callback_factory is not None:
-                            try:
-                                prepared = relay_activation_callback_factory(callback)
-                                if not callable(prepared):
-                                    raise TypeError("activation factory returned a non-callable projector")
-                                callback = prepared
-                            except Exception:
-                                logger.exception("Relay activation projector preparation failed")
-                        return _project_relay_activation(result, callback)
-
-                    return _relay_sync_call("activation_projection", project_response)
+                    # Optional status reads must not delay an already-claimed wake payload.
+                    return result
 
                 try:
-                    projected = await _run_relay_operation(exact_turn_operation, codex=True)
+                    result = await _run_relay_operation(exact_turn_operation, codex=True)
                 except relay_errors as exc:
                     raise _relay_http_error(exc) from exc
                 outcome = "ready"
-                return projected
+                return result
             if request.wake_delivery_id is not None and relay_turn_snapshot_callback is not None:
                 try:
                     reservation = await _run_relay_operation(

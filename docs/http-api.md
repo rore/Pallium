@@ -37,6 +37,12 @@ shape.
 | `POST /relay/deliveries/ack` | Acknowledge automatic hook delivery. |
 | `POST /relay/deliveries/mcp-ack` | Acknowledge MCP recovery delivery. |
 
+An exact Codex claim (`POST /relay/turn` with `wake_delivery_id`) returns
+`session.activation: null` and `deliveries[*].activation: null` after its unchanged
+mandatory callbacks. Earlier versions populated these optional fields on that
+response. Use the session or delivery read routes for current activation
+metadata; ordinary turns and read/status projection retain their behavior.
+
 ### Optional derived memory
 
 - `POST /query` and `POST /query/debug` retrieve memory. When the active default
