@@ -37,7 +37,7 @@
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Blocked
 <!-- agent-workflow:end -->
 
 ## Before/after contract disposition
@@ -51,3 +51,10 @@ Record established before code on isolated feat/relay-ci-selection-watchdog from
 ## Evidence and next action
 
 Source/plan assessment and retained timing evidence are under build/relay-semantic-boundary-hosted-20261024. Manager owns canonical roadmap alignment; no exact tracker tuple is guessed. Next implement the approved local node, commit actual source, obtain SAME actual diff review, then prepare the explicitly scoped sixteen-native-child packet. Retain this checkout for its concrete qualification/composition use. No installed service/application/configuration/data action is authorized or performed.
+## Actual implementation before independent diff review
+
+Planning commitb1cb1aff2019e34eb4d8e0109bada8a1b7b90398 precedes code. Root changed only the existing node plus time import and this record. Two script extractions and eight exact pair values remain, with sixteen serial fresh Popen executions and the unchanged zero/nonzero predicate. One30s monotonic deadline starts before the first shell; every call receives only remaining28s work allowance, with pre-admission/post-creation/post-communication checks including the final call. No deadline resets. The final2s belongs to termination/reap/stream cleanup against the original deadline. A small local try/finally records actual child PID/phase/exit/streams, shared elapsed/remainder, kill/error/cleanup state and bounded stdout/stderr; no process framework, inventory, alternate shell or retry was introduced. Original exceptions retain their category and bounded block/pair notes; raw inherited environment and arbitrary commands are not emitted. Final JUnit properties expose selected shell and the actual sixteen child observations on PASS.
+
+The accepted environment guard was read: it validates Python startup/private environment and does not intercept either subprocess.run or Popen. No guard policy is bypassed, disabled or silently broadened; parent explicitly disposed the sixteen-native-child scope and requires an honest coverage statement. The focused recipe must pin the exact resolved bundled shell/hash, argv, two trusted workflow-extracted script bodies/hashes, fixed pair sequence and private child environment. Normal result review must reconcile all16 actual child PIDs/exits/cleanup in addition to the single pytest node. OS process creation/termination cannot be made preemptible by this Python deadline; the separately reviewed outer capture remains mandatory and no universal descendant guarantee is claimed.
+
+Static git diff --check passed. Named deterministic .NET replacements were used under the prior machine-local apply_patch1385 no-retry constraint; no tests, imports, collection, CLI-version probe, benchmark, OS query or CI ran. State Blocked only on SAME actual diff acceptance, frozen one-node packet/current manager CLEAR and the already-approved focused execution. No generic user permission is pending. Base982 RED, ACK nine-case acceptance and all production/environment boundaries remain separate.
