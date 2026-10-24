@@ -84,7 +84,7 @@ The stable V1 local loader uses the explicit plugin file:
 ```
 
 To opt in to V2 from a local checkout, use OpenCode's plural `plugins` directory
-loader in a project configuration. This loads the package server entry exported
+loader in a project-root `opencode.jsonc`. This loads the package server entry exported
 by `integrations/opencode/server.js`; keep the existing global V1 `plugin` entry
 unchanged until you deliberately switch configurations. Do not load both adapters
 in one OpenCode configuration.
@@ -93,26 +93,31 @@ in one OpenCode configuration.
 {
   "$schema": "https://opencode.ai/config.json",
   "plugins": ["./integrations/opencode"],
+  "skills": ["./integrations/opencode/skills"],
   "mcp": {
-    "pallium": {
-      "type": "remote",
-      "url": "http://localhost:19836/mcp",
-      "enabled": true
+    "servers": {
+      "pallium": {
+        "type": "remote",
+        "url": "http://localhost:19836/mcp"
+      }
     }
   }
 }
 ```
 
-A relative plugin path is resolved from the configuration file. For a global
-install, put the entry in `~/.config/opencode/opencode.json` and use a path that
-reaches the checked-out plugin file.
+A relative V2 plugin path is resolved from the configuration file; a relative
+`skills` path is resolved from the active working directory. For a global
+install, put the plugin entry in `~/.config/opencode/opencode.json` and use a
+path that reaches the checked-out plugin directory. Set the skill path for the
+directory from which you launch OpenCode.
 
 The explicit `"plugin"` file entry is the stable V1 loading method. V2 uses the
 plural `"plugins"` directory entry shown above. Keep the plugin files together
 because each adapter imports its shared helper by relative path.
 
-The `mcp` block follows OpenCode's
-[remote MCP configuration](https://opencode.ai/docs/mcp-servers/). If Pallium
+The V1 and V2 `mcp` blocks follow their respective OpenCode
+[V1](https://opencode.ai/docs/mcp-servers/) and
+[V2](https://dev.opencode.ai/v2/docs/mcp-servers/) remote MCP configurations. If Pallium
 uses another port, change both the service command and MCP URL.
 
 ### 3. Add the Pallium guidance
@@ -122,9 +127,12 @@ OpenCode reads `AGENTS.md`. Append this directory's
 `AGENTS.md`. It explains when to use Relay, Session History, and optional
 derived memory.
 
-The plugin automatically registers the bundled `pallium-memory` skill and
-`/pallium-memory` command. Their compatibility names remain memory-oriented, but
-their guidance covers all three Pallium uses.
+The V1 plugin automatically registers the bundled `pallium-memory` skill and
+`/pallium-memory` command. The V2 adapter registers neither: expose the bundled
+skill through V2's native `skills` configuration as shown above. `AGENTS.md`
+guidance tells the agent when to load the skill, but does not install it. The
+skill's compatibility name remains memory-oriented, but its guidance covers all
+three Pallium uses.
 
 ## Verify the connection
 
@@ -187,8 +195,9 @@ update, review the chosen adapter and reload the host after updating its files.
 Switch V1/V2 deliberately; do not load both or silently replace a global loader.
 
 To remove the integration, back up your configuration, close the affected host,
-remove only the configured Pallium plugin entry, its `mcp.pallium` entry and the
-Pallium guidance block you added. Preserve other plugins and guidance. Reload
+remove only the configured Pallium plugin entry, its `mcp.pallium` (V1) or
+`mcp.servers.pallium` (V2) entry, any V2 Pallium `skills` entry, and the Pallium
+guidance block you added. Preserve other plugins and guidance. Reload
 OpenCode and verify Pallium is no longer loaded. This does not uninstall the
 shared Pallium service or delete its History/memory data.
 
