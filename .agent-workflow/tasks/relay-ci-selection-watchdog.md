@@ -37,7 +37,7 @@
 
 **Exceptions:** —
 
-**State:** Blocked
+**State:** Ready for review
 <!-- agent-workflow:end -->
 
 ## Before/after contract disposition
@@ -85,3 +85,21 @@ Static source correspondence735D4F2C117E2E97872593AD5A7A30F7F837E4093AAA341E8951
 Fresh whole-change selector selected FULL for17 paths. Actual Redline BLUE/exit0 and native PR-shaped workflow adapter advisory/exit1 had no blockers. Five inherited commit-order advisories arise from composed original history; individual planning commits remain retained and no baseline/history is rewritten. Two method-mapping wording advisories are addressed only by the reviewed manual: prefixes; final publication check will verify this exact record successor. The retained successful import-linter report is explicitly reused because every production/import graph/configuration/policy/script/dependency path remains identical to accepted982/fd14; no fresh import-linter run is claimed. Governance receipts are under build/relay-final-test-corrections-governance-20261024.
 
 This commit changes only the two reviewed owning records, preserving every accepted test blob. Next finish final publication checks, verify the clean exact head/tree and remote correspondence, publish feat/relay-ci-selection-watchdog without force, inventory exact-head workflow runs, and dispatch ONE existing ci.yml normal full qualification if none exists. Record the actual admission/run URL and reconcile actual artifacts before any release decision. The parent has already authorized this sequence; no renewed generic approval, extra matrix, red waiver or installed action is requested. All earlier failed runs remain failed. Retain checkout/evidence for this qualification and parent handoff; canonical roadmap owner remains manager.
+## Actual coherent full qualification accepted
+
+ONE existing normal full CI was published and admitted at exact74b02df77330fa1f621615643606b56813bfbee9/tree20dcc1c89b2c91c403db832a8e525cea2f901a7a: https://github.com/rore/Pallium/actions/runs/40140181275, created2026-10-24T22:49:25Z. Empty exact-head pre-inventory, verified clean remote source, CreateNew dispatch intent, one command return0 and exact one post-inventory admission are retained. The first restricted read-only admission query failed network access; only that read was retried with scoped escalation, never dispatch. Terminal supported metadata observed23:37:46Z records SUCCESS, including result gate completed23:36:04Z. No retry, cancel, extra matrix, OS query or installed action occurred.
+
+| Actual profile | Unique | Normal PASS | Skip | XFAIL | Failure/error | Affected normal once | Controls normal once |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Linux3.12 | 8122 | 8027 | 93 | 2 | 0/0 | 47/47 | 33/33 |
+| Linux3.13 | 8122 | 8027 | 93 | 2 | 0/0 | 47/47 | 33/33 |
+| Windows3.12 | 8131 | 8093 | 36 | 2 | 0/0 | 47/47 | 33/33 |
+| Windows3.13 | 8131 | 8093 | 36 | 2 | 0/0 | 47/47 | 33/33 |
+
+Every profile has zero missing/duplicate identities; Windows serial81 and remaining8050 are disjoint (79+8014 normal passes). Actual raw JUnit properties retain sixteen ordered native PowerShell child rows per profile with positive PIDs, two zero/fourteen nonzero expected exits, complete exit/streams/cleanup, no kills/errors, and shared elapsed11.917002513/8.043451425/7.578/7.5773156 seconds respectively, below28s work/30s total. Hosted selected shells are /opt/microsoft/powershell/7/pwsh and C:/Program Files/PowerShell/7/pwsh.exe; this is not local executable hash/version parity. All original Claude cumulative initial/retry properties remain nonnegative and below5s, with unchanged actual exit/fence assertions. No skip/xfail is counted as normal PASS.
+
+Agent technical review: SAME /root/relay_gate_plan_review COMPLETE WHOLE-CHANGE ACTUAL-RESULT GO. Final C:/Dev/rore/Pallium/build/relay-final-test-corrections-hosted-20261024/actual-full-result-review.md SHA256 DE190C0A2E9C2F5F0035124C9635442968DEF8B96AEF541328A26D47DD6DA64F. Root read the full logical review, including each incremental profile and final terminal disposition. Terminal metadata SHA2567A2F927D248962FB89CF65465AAA5807CF169781223DD782FC07A0BC4ECAE1A9; collection manifest08781776B0672B3FF12548D1B868A67E4DAA01A0914F3CD76C5AD1437745DE07 records the four actual once-only artifact downloads and six raw XML hashes. Profile reports, catalogs, source/publication correspondence and raw XML are retained together in that directory. Reconciliations and independent raw-XML review agree; no additional execution was requested.
+
+This is qualification of the test corrections, not a production/native-availability cure or installed qualification. The14 deliberately removed scenario-specific native seed timing witnesses and the real-native versus modeled-control distinction remain explicit;33 controls do not imply33 physical native-availability witnesses. Original982/full40133974202 and all earlier failures remain valid RED; historical missing pair/physical cause remains unknown. Existing source has no explicit test/windows-full timeout-minutes; the90-minute observer cap was separate and the collector completed normally before it, without canceling CI. Prior component-record states/checkpoints remain provenance snapshots; this current record owns the accepted coherent qualification.
+
+The SAME final review explicitly permits factual record successors to reuse qualification with unchanged eleven-test-blob, production/workflow/dependency/configuration and trusted-script correspondence. This successor changes only this owning record and State; no test or application blob changes. Fresh origin/main remainsfd14a77d19713e878105a537de0dfee9735dc88e. Next final factual governance/correspondence, normal PR creation/attachment and required checks on its actual head, then normal authorized merge when reviews/checks clear. No second manual full run, generic human approval pause or live environment action follows. This checkout remains needed for PR verification and downstream composition handoff; manager retains canonical roadmap ownership.
