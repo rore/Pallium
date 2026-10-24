@@ -18,14 +18,20 @@
 **Plan review:** Agent technical review: independent shared-core owner 01a0801d-f091-7e80-81f5-c104713fd5e7, turn 01a16e96-4886-7511-a839-48e13be60b4f, returned technical GO for the source-only composition plan on 2026-10-24. Input reviews retained in role-history.md and hermes-role-attribution.md at their exact source commits. Combined result review remains required.
 **Approvals:** Parent explicitly assigned source-only composition under delegated ordinary roles development authority, 2026-10-24. This is delegated scope, not a claim of personal human review. Existing user feature authority and source-specific approval provenance remain in the two source Work Records. No new behavior or environment authority inferred.
 **Exceptions:** None.
-**State:** Ready to implement
+**State:** Blocked
 <!-- agent-workflow:end -->
 
 ## Implementation
 2026-10-24: Invoked Agent Workflow and Redline before code edits. Whole-change documentation exemption does not apply. New isolated checkout created at exact f24; primary dirty checkout untouched. Shared source owner confirmed its own editing window clear and accepted bounded independent result review. Await composition-plan acceptance before merge. No product edits or tests yet.
 
 ## Recovery
-Branch feat/roles-hermes-composition-20261024; base f24fe5a7128b42e8e88808c910002673310723b4. Plan technical GO and distinct delegated approval are recorded. Next: source-only three-way merge. Retain this checkout for ongoing composition; no cleanup is due.
+Branch feat/roles-hermes-composition-20261024; composed source HEAD e12d9351ad68bf9ddff4a83514280adb27854a91, tree 0449fed28059ad78715a71bee9f31447ccad7b91. Pending independent combined review and reviewed test-only POST identity followup before final freeze. Retain this checkout for ongoing composition; no cleanup is due.
 
 ## Delegated approval provenance
-Parent chat 01a15fcd-b512-70d8-81fb-265c0dbac00f explicitly confirmed the exact composition plan and this new checkout's exclusive source window on 2026-10-24. It supplied user delegation: Sentinel_6e96dd2441408191a35db03fee4a1427 (2026-10-22): "they should not be blocked on approvals, if they needs you should supoply my approval for them"; Sentinel_a48329324714819180b148f9c1b3d98b (2026-10-23): "I approve, but they also gave you the mandate to review and approve all of this." The actual concrete approving actor is Dot/parent; no personal human inspection of the combined core is claimed. Parent confirms primary cleanliness is not required and its authorization does not permit modifying existing dirty/frozen checkouts. Independent composition-plan acceptance remains pending.
+Parent chat 01a15fcd-b512-70d8-81fb-265c0dbac00f explicitly confirmed the exact composition plan and this new checkout's exclusive source window on 2026-10-24. It supplied user delegation: Sentinel_6e96dd2441408191a35db03fee4a1427 (2026-10-22): "they should not be blocked on approvals, if they needs you should supoply my approval for them"; Sentinel_a48329324714819180b148f9c1b3d98b (2026-10-23): "I approve, but they also gave you the mandate to review and approve all of this." The actual concrete approving actor is Dot/parent; no personal human inspection of the combined core is claimed. Parent confirms primary cleanliness is not required and its authorization does not permit modifying existing dirty/frozen checkouts. Independent composition-plan GO is recorded above.
+
+## Composition evidence
+- Merge 4ecbb9924bd0342adefb52b7fa703d989a2bbd57 combines exact 1bc with f24 plus this record's preliminary commits. All seven overlaps merged automatically; no manual conflict resolutions or product changes beyond parent composition.
+- Incremental source commits map 95f335c6 to 93126525bb7733c556cd029000dd35b2e9b33198 and 8e79fe16 to e12d9351ad68bf9ddff4a83514280adb27854a91. Producer/helper/test blobs are unchanged from source: 0795a78bdba6916b6da29cb72956435f865f1196, 8eb1e0315e66202938d48a7e72fffcb0dcd9c689, a1c65853b2ab95c8ea6c99935ce93ef93f1d96ad.
+- Static inspection confirms guarded close-if-current and role fields coexist. Independent behavioral review is still pending. Git whitespace check reports inherited 1bc blank EOF lines in integrations/hermes/scope.py and tests/test_hermes_gateway_guards.py, and trailing whitespace in tests/test_hermes_scope.py; no unrelated cleanup performed.
+- Parent reported a missing ordinary POST identity regression distinct from cached GET coverage. Same Hermes worker/reviewer owns a test-only followup. Current 59 cases remain uncollected/unexecuted and are not a final coverage count. No parser, runtime, service, model, install, CI or publication ran.
