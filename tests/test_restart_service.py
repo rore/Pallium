@@ -28,7 +28,7 @@ def managed_only_isolation(monkeypatch, tmp_path):
     monkeypatch.delenv(service.GENERATION_ENV, raising=False)
     monkeypatch.setattr(service, "WindowsAPI", _deny)
     monkeypatch.setattr(service, "_NATIVE", None)
-    with guard_native_calls():
+    with guard_native_calls(monkeypatch):
         yield
 
 

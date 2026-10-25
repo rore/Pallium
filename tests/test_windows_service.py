@@ -5,7 +5,6 @@ import os
 import socket
 import subprocess
 from contextlib import contextmanager
-from unittest.mock import patch
 
 import pytest
 
@@ -28,21 +27,28 @@ class DeniedLibraries:
 
 
 @contextmanager
-def guard_native_calls():
-    with patch.object(ctypes, "WinDLL", _deny, create=True), \
-            patch.object(ctypes, "OleDLL", _deny, create=True), \
-            patch.object(ctypes, "CDLL", _deny), \
-            patch.object(ctypes, "PyDLL", _deny), \
-            patch.object(ctypes, "windll", DeniedLibraries(), create=True), \
-            patch.object(ctypes, "oledll", DeniedLibraries(), create=True), \
-            patch.object(ctypes, "cdll", DeniedLibraries()), \
-            patch.object(ctypes, "pydll", DeniedLibraries()), \
-            patch.object(subprocess, "Popen", _deny), \
-            patch.object(subprocess, "run", _deny), \
-            patch.object(socket, "create_connection", _deny), \
-            patch.object(socket.socket, "connect", _deny), \
-            patch.object(socket.socket, "connect_ex", _deny):
+def guard_native_calls(monkeypatch=None):
+    """Import guards own their undo; fixture guards share the test's undo stack."""
+    owned = monkeypatch is None
+    patches = pytest.MonkeyPatch() if owned else monkeypatch
+    try:
+        patches.setattr(ctypes, "WinDLL", _deny, raising=False)
+        patches.setattr(ctypes, "OleDLL", _deny, raising=False)
+        patches.setattr(ctypes, "CDLL", _deny)
+        patches.setattr(ctypes, "PyDLL", _deny)
+        patches.setattr(ctypes, "windll", DeniedLibraries(), raising=False)
+        patches.setattr(ctypes, "oledll", DeniedLibraries(), raising=False)
+        patches.setattr(ctypes, "cdll", DeniedLibraries())
+        patches.setattr(ctypes, "pydll", DeniedLibraries())
+        patches.setattr(subprocess, "Popen", _deny)
+        patches.setattr(subprocess, "run", _deny)
+        patches.setattr(socket, "create_connection", _deny)
+        patches.setattr(socket.socket, "connect", _deny)
+        patches.setattr(socket.socket, "connect_ex", _deny)
         yield
+    finally:
+        if owned:
+            patches.undo()
 
 
 # Guard before importing any application module or constructing a backend.
@@ -57,17 +63,12 @@ def deny_unconfigured_backends(monkeypatch):
     native_calls.clear()
     monkeypatch.setattr(service, "_NATIVE", None)
     monkeypatch.setattr(service, "WindowsAPI", _deny)
-    monkeypatch.setattr(service.ctypes, "WinDLL", _deny, raising=False)
-    monkeypatch.setattr(service.subprocess, "Popen", _deny)
-    monkeypatch.setattr(service.subprocess, "run", _deny)
-    monkeypatch.setattr(service.socket if hasattr(service, "socket") else socket,
-                        "create_connection", _deny)
-    monkeypatch.setattr(socket.socket, "connect", _deny)
-    monkeypatch.setattr(socket.socket, "connect_ex", _deny)
+    with guard_native_calls(monkeypatch):
+        yield
 
 
 @pytest.fixture(autouse=True)
-def guard_selected_mock(request, tmp_path):
+def guard_selected_mock(request, tmp_path, monkeypatch):
     """Imported by other selected test modules; existing nonselected tests stay intact."""
     if not request.node.name.startswith("test_cooperative_windows_"):
         yield
@@ -80,9 +81,12 @@ def guard_selected_mock(request, tmp_path):
         "PALLIUM_ENV_FILE": str(tmp_path / "private.env"),
         "PALLIUM_STORAGE_BACKEND": "memory", service.GENERATION_ENV: "",
     }
-    with guard_native_calls(), patch.object(service, "WindowsAPI", _deny), \
-            patch.object(service, "_NATIVE", None), patch.dict(os.environ, environment):
-        os.environ.pop(service.ADMISSION_ENV, None)
+    monkeypatch.setattr(service, "WindowsAPI", _deny)
+    monkeypatch.setattr(service, "_NATIVE", None)
+    for key, value in environment.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.delenv(service.ADMISSION_ENV, raising=False)
+    with guard_native_calls(monkeypatch):
         yield
 
 

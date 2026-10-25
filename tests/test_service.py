@@ -862,6 +862,55 @@ class TestLinuxServiceLifecycle:
             _remove_service_data(Path(unsafe).resolve())
 
 
+@pytest.mark.parametrize("failed", [False, True], ids=["normal", "error"])
+def test_selected_native_guard_restores_nested_test_patches(tmp_path: Path, failed: bool) -> None:
+    import ctypes
+    from tests.test_windows_service import NativeCallDenied, _deny, service as windows_service
+
+    original_run, original_popen = subprocess.run, subprocess.Popen
+    original_home = os.environ.get("PALLIUM_HOME")
+    original_admission = os.environ.get(windows_service.ADMISSION_ENV)
+    original_backend, original_native = windows_service.WindowsAPI, windows_service._NATIVE
+    absent = object()
+    original_windll = getattr(ctypes, "windll", absent)
+    fake_run, fake_popen = lambda *_args: None, lambda *_args: None
+
+    class ExpectedFailure(Exception):
+        pass
+
+    def exercise():
+        with pytest.MonkeyPatch.context() as shared:
+            request = SimpleNamespace(node=SimpleNamespace(name="test_cooperative_windows_private"))
+            selected = guard_selected_mock.__wrapped__(request, tmp_path, shared)
+            next(selected)
+            try:
+                assert subprocess.run is _deny and subprocess.Popen is _deny
+                assert windows_service.WindowsAPI is _deny and windows_service._NATIVE is None
+                with pytest.raises(NativeCallDenied, match="unexpected native or host operation"):
+                    subprocess.run()
+                shared.setattr(subprocess, "run", fake_run)
+                shared.setattr(subprocess, "Popen", fake_popen)
+                shared.setenv("PALLIUM_HOME", str(tmp_path / "nested-private"))
+                if failed:
+                    raise ExpectedFailure()
+            finally:
+                selected.close()
+            # Fixture exit must not overwrite a nested test patch before its undo.
+            assert subprocess.run is fake_run and subprocess.Popen is fake_popen
+
+    if failed:
+        with pytest.raises(ExpectedFailure):
+            exercise()
+    else:
+        exercise()
+    # Identity only: never invoke a restored real subprocess/native entry point.
+    assert subprocess.run is original_run and subprocess.Popen is original_popen
+    assert windows_service.WindowsAPI is original_backend and windows_service._NATIVE is original_native
+    assert os.environ.get("PALLIUM_HOME") == original_home
+    assert os.environ.get(windows_service.ADMISSION_ENV) == original_admission
+    assert getattr(ctypes, "windll", absent) is original_windll
+
+
 def test_windows_stop_verifier_is_read_only_and_fail_closed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     (tmp_path / "run").mkdir()
     (tmp_path / "run" / "port").write_text("21987", encoding="utf-8")
