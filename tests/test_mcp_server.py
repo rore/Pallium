@@ -1079,6 +1079,7 @@ async def test_relay_send_uses_exact_scope_and_preserves_unicode(monkeypatch: py
         "sender_runtime": "codex",
         "sender_session_ref": "session-1",
         "expires_in_seconds": None,
+        "message_id": None,
     }]
     assert json.loads(content[0].text)["state"] == "pending"
 
