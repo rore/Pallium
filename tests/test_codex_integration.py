@@ -475,20 +475,71 @@ def test_codex_mcp_json_has_no_stdio_noop() -> None:
     assert "--stdio" not in args
 
 
-def test_windows_service_restart_preserves_codex_mcp_bridge() -> None:
-    script = Path("scripts/restart-service.ps1").read_text(encoding="utf-8")
-    signatures = script.split("$signatures = @(", 1)[1].split(")", 1)[0]
+def test_windows_service_restart_preserves_codex_mcp_bridge(tmp_path: Path, monkeypatch) -> None:
+    from tests.test_windows_service import guard_native_calls, _deny
 
-    assert '"app.run mcp"' not in signatures
-    for service_process in (
-        "service_launcher.py",
-        "app.processor",
-        "app.cleaner",
-        "app.snapshot",
-        "app.run serve",
-        "app.run all",
-    ):
-        assert f'"{service_process}"' in signatures
+    with guard_native_calls():
+        from tests.test_restart_service import ManagedGeneration
+        from app import windows_service
+
+        for key, value in {
+            "HOME": str(tmp_path / "profile"), "USERPROFILE": str(tmp_path / "profile"),
+            "APPDATA": str(tmp_path / "profile" / "AppData"), "PALLIUM_HOME": str(tmp_path / "private-home"),
+            "PALLIUM_CONFIG_FILE": str(tmp_path / "private.toml"), "PALLIUM_ENV_FILE": str(tmp_path / "private.env"),
+            "PALLIUM_SQLITE_URL": "sqlite:///:memory:", "PALLIUM_RELAY_SQLITE_URL": "sqlite:///:memory:",
+            "PALLIUM_VECTOR_INDEX_PATH": str(tmp_path / "vectors"),
+        }.items():
+            monkeypatch.setenv(key, value)
+        monkeypatch.setattr(windows_service, "WindowsAPI", _deny)
+        monkeypatch.setattr(windows_service, "_NATIVE", None)
+        generation = ManagedGeneration(tmp_path, monkeypatch)
+        old = json.loads(json.dumps(generation.record))
+        old_job, old_stop = old["description"], old["description"] + "-stop"
+        old_roots = tuple(generation.jobs[old_job])
+        bridge_pid = 9099
+        bridge = {"identity": {"pid": bridge_pid, "created": 90990, "image": old["supervisor"]["image"]},
+                  "command": [old["supervisor"]["image"], "-m", "app.run", "mcp"]}
+        bridge_before = json.loads(json.dumps(bridge))
+        generation.identities[bridge_pid] = bridge["identity"]
+        generation.exits[bridge_pid] = None
+        assert all(bridge_pid not in members for members in generation.jobs.values())
+        assert bridge_pid not in {identity["pid"] for identity in old["ancestry"]}
+        opened, closed, signaled = [], [], []
+        original_process, original_close, original_signal = generation.api.process, generation.api.close, generation.api.signal
+
+        def process(pid):
+            opened.append(pid)
+            assert pid != bridge_pid, "external MCP bridge must never be opened"
+            return original_process(pid)
+
+        def close(handle):
+            closed.append(handle)
+            assert handle != bridge_pid, "external MCP bridge handle must never be closed"
+            return original_close(handle)
+
+        def signal(event):
+            signaled.append(event)
+            assert event == old_stop
+            return original_signal(event)
+
+        monkeypatch.setattr(generation.api, "process", process)
+        monkeypatch.setattr(generation.api, "close", close)
+        monkeypatch.setattr(generation.api, "signal", signal)
+        assert generation.run("restart") == "started"
+        new_job = generation.record["description"]
+        assert generation.starts == 1 and generation.record["generation"] != old["generation"]
+        assert all(generation.exits[pid] is None for pid in generation.jobs[new_job])
+        assert signaled == [old_stop]
+        assert generation.calls.index("signal") < generation.calls.index("start-registered-task")
+        assert all(generation.exits[pid] == 0 for pid in old_roots + (old["observer"]["pid"], old["launcher"]["pid"]))
+        assert generation.terminal_history[0]["exits"] == {str(pid): 0 for pid in old_roots}
+        assert opened == [101, 102, 201, 202, 204, 203]
+        expected_closed = {old_stop, new_job + "-stop", old_job, new_job, 101, 102, 201, 202, 203, 204}
+        assert len(closed) == len(expected_closed) and set(closed) == expected_closed
+        assert all(bridge_pid not in members for members in generation.jobs.values())
+        assert bridge_pid not in {identity["pid"] for identity in generation.record["ancestry"]}
+        assert generation.identities[bridge_pid] == bridge_before["identity"] and generation.exits[bridge_pid] is None
+        assert bridge == bridge_before
 
 
 def test_codex_guidance_strength_selects_block_variant() -> None:

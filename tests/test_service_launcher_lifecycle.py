@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -115,19 +116,6 @@ def test_cli_generated_launcher_runs_private_stub_and_returns_status(tmp_path: P
     for key, value in env.items():
         monkeypatch.setenv(key, value)
 
-    service = importlib.import_module("app.cli.service")
-    with monkeypatch.context() as patcher:
-        patcher.setattr(
-            service.subprocess,
-            "run",
-            lambda argv, **_kwargs: subprocess.CompletedProcess(argv, 0, "", ""),
-        )
-        service._install_windows("pallium", 21987, home)
-
-    vbs = run_dir / "pallium_launcher.vbs"
-    text = vbs.read_text(encoding="utf-16")
-    assert str(home) in text
-    assert ", 0, True)" in text
     stub_root = tmp_path / "private app cwd"
     package = stub_root / "app"
     package.mkdir(parents=True)
@@ -137,28 +125,63 @@ def test_cli_generated_launcher_runs_private_stub_and_returns_status(tmp_path: P
         encoding="utf-8",
     )
     (package / "run.py").write_text(
-        'import os, sys, time\n'
+        'raise AssertionError("legacy app.run entry must not execute")\n',
+        encoding="utf-8",
+    )
+    (package / "windows_service.py").write_text(
+        'import json, os, sys, time\n'
+        'from pathlib import Path\n'
         'assert not {"app.cli.service", "app.supervisor", "app.main"}.intersection(sys.modules)\n'
+        'assert sys.argv[1:] == ["observe", "--home", os.environ["PALLIUM_TEST_EXPECTED_HOME"]]\n'
+        'assert __spec__.name == "app.windows_service"\n'
+        'assert Path(__file__).resolve() == Path(os.environ["PALLIUM_TEST_EXPECTED_MODULE"])\n'
+        'assert Path.cwd() == Path(os.environ["PALLIUM_TEST_EXPECTED_CWD"])\n'
+        'manifest = json.loads((Path(sys.argv[3]) / "run" / "windows-launch.json").read_text(encoding="utf-8"))\n'
+        'assert manifest["home"] == sys.argv[3] and manifest["cwd"] == str(Path.cwd())\n'
+        'assert Path(manifest["python"]) == Path(sys.executable)\n'
+        'Path(os.environ["PALLIUM_TEST_RECEIPT"]).write_text(json.dumps({"argv": sys.argv[1:], "cwd": str(Path.cwd()), "module": str(Path(__file__).resolve()), "spec": __spec__.name, "manifest": manifest}), encoding="utf-8")\n'
         'time.sleep(float(os.environ["PALLIUM_TEST_DELAY"]))\n'
         'raise SystemExit(int(os.environ["PALLIUM_TEST_STATUS"]))\n',
         encoding="utf-8",
     )
-    assert (package / "run.py").resolve().is_relative_to(stub_root.resolve())
+    assert (package / "windows_service.py").resolve().is_relative_to(stub_root.resolve())
+    service = importlib.import_module("app.cli.service")
+    with monkeypatch.context() as patcher:
+        patcher.chdir(stub_root)
+        patcher.setattr(
+            service.subprocess,
+            "run",
+            lambda argv, **_kwargs: subprocess.CompletedProcess(argv, 0, "", ""),
+        )
+        service._install_windows("pallium", 21987, home)
+
+    vbs = run_dir / "pallium_launcher.vbs"
+    text = vbs.read_text(encoding="utf-16")
+    assert vbs.read_bytes().startswith(b"\xff\xfe")
+    assert str(home) in text
+    assert ", 0, True)" in text
+    caller_root = tmp_path / "different caller cwd"
+    caller_root.mkdir()
     cscript = shutil.which("cscript.exe")
     assert cscript
 
     for status in (0, 7):
+        receipt = tmp_path / f"observer-{status}.json"
         launch_env = os.environ.copy() | {
             "PALLIUM_TEST_DELAY": "0.5",
             "PALLIUM_TEST_STATUS": str(status),
             "PYTHONPATH": str(stub_root),
             "PYTHONSAFEPATH": "1",
+            "PALLIUM_TEST_EXPECTED_HOME": str(home),
+            "PALLIUM_TEST_EXPECTED_CWD": str(stub_root.resolve()),
+            "PALLIUM_TEST_EXPECTED_MODULE": str((package / "windows_service.py").resolve()),
+            "PALLIUM_TEST_RECEIPT": str(receipt),
         }
         launch_env.pop("PYTHONHOME", None)
         started = time.monotonic()
         result = subprocess.run(
             [cscript, "//nologo", str(vbs)],
-            cwd=stub_root,
+            cwd=caller_root,
             env=launch_env,
             capture_output=True,
             text=True,
@@ -167,3 +190,11 @@ def test_cli_generated_launcher_runs_private_stub_and_returns_status(tmp_path: P
         )
         assert result.returncode == status, result.stdout + result.stderr
         assert time.monotonic() - started >= 0.4
+        observed = json.loads(receipt.read_text(encoding="utf-8"))
+        assert observed["argv"] == ["observe", "--home", str(home)]
+        assert observed["cwd"] == str(stub_root.resolve())
+        assert observed["module"] == str((package / "windows_service.py").resolve())
+        assert observed["spec"] == "app.windows_service"
+        assert observed["manifest"]["cwd"] == str(stub_root.resolve())
+        assert observed["manifest"]["home"] == str(home)
+        assert observed["manifest"]["python"] == sys.executable
