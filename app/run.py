@@ -44,7 +44,14 @@ def _serve(*, host: str, port: int, reload: bool) -> None:
             self.main_loop_entered = True
             if self.exit_requested:
                 self.should_exit = True
-            await super().main_loop()
+            published = False
+            if channel is not None and self.started and not self.exit_requested and not channel.requested():
+                published = channel.publish_bound(port, self.servers)
+            try:
+                await super().main_loop()
+            finally:
+                if published:
+                    channel.clear_bound()
 
     server = OwnedServer(config)
     stop_tasks = set()

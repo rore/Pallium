@@ -510,6 +510,44 @@ class StopChannel:
         if absolute is not None and (not math.isfinite(float(absolute)) or time.perf_counter() >= float(absolute)):
             raise Unknown("transaction admission expired; suspended roots retained")
 
+    def publish_bound(self, port, listeners):
+        # Only OwnedServer's post-bind lifecycle calls this; lifespan token != bind.
+        if self.requested():
+            return False
+        if not listeners or any(not listener.is_serving() or not listener.sockets
+                                or any(sock.fileno() < 0 or sock.getsockname()[1] != port
+                                       for sock in listener.sockets) for listener in listeners):
+            raise Unknown("owned API has not successfully bound its configured listener")
+        home = Path(os.environ["PALLIUM_HOME"])
+        path = home / "run" / "api_token"
+        token = _json(path)
+        if token.get("pid") != os.getpid() or token.get("nonce") != os.environ.get("PALLIUM_API_LAUNCH_TOKEN"):
+            raise Unknown("post-bind token does not identify this API instance")
+        record = _json(home / "run" / "windows-generation.json")
+        if record.get("description") != self.description or record.get("manifest", {}).get("port") != port:
+            raise Unknown("post-bind generation/port identity changed")
+        token["bound"] = {"generation": self.description, "port": port}
+        _write(path, token)
+        return True
+
+    def clear_bound(self):
+        path = Path(os.environ["PALLIUM_HOME"]) / "run" / "api_token"
+        try:
+            token = _json(path)
+        except FileNotFoundError:
+            return
+        if token.get("pid") == os.getpid() and token.get("nonce") == os.environ.get("PALLIUM_API_LAUNCH_TOKEN"):
+            token.pop("bound", None)
+            _write(path, token)
+
+    def bound_ready(self, nonce, run_dir, port):
+        try:
+            token = _json(run_dir / "api_token")
+        except (OSError, ValueError):
+            return False
+        return (token.get("nonce") == nonce and type(token.get("pid")) is int
+                and token.get("bound") == {"generation": self.description, "port": port})
+
     def publish_ready(self, nonce, run_dir):
         # Reuse the API's existing launch-token read path after supervisor startup.
         if self.requested():
@@ -527,6 +565,8 @@ class StopChannel:
             record = _json(path)
             if record.get("description") != self.description or record.get("outcome") != "running":
                 raise Unknown("generation changed during API startup")
+            if token.get("bound") != {"generation": self.description, "port": record["manifest"]["port"]}:
+                raise Unknown("API startup token does not prove successful owned binding")
             record["api_ready"] = {"nonce": nonce, "identity": self.api.identity(process, token["pid"])}
             _write(path, record)
         finally:
@@ -904,6 +944,7 @@ def _owned_ready(home, record, manifest, deadline, api, handles, ready):
         def valid():
             token = _json(home / "run" / "api_token")
             return (token.get("nonce") == proof.get("nonce") and token.get("pid") == identity["pid"]
+                    and token.get("bound") == {"generation": record["description"], "port": manifest["port"]}
                     and api.identity(api_handle, identity["pid"]) == identity
                     and api.identity(supervisor, record["supervisor"]["pid"]) == record["supervisor"]
                     and api.in_job(api_handle, handles[2]) and api.in_job(supervisor, handles[2])

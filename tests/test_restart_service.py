@@ -32,7 +32,7 @@ def managed_only_isolation(monkeypatch, tmp_path):
 
 class ManagedGeneration:
     """Caller-surface controller fixture; kernel objects cannot magically reopen."""
-    def __init__(self, tmp_path, monkeypatch):
+    def __init__(self, tmp_path, monkeypatch, *, home=None):
         self.now = 0.0
         self.calls = []
         self.closed = set()
@@ -48,7 +48,7 @@ class ManagedGeneration:
         self.active_survivor = False
         self.fail_on_signal = False
         self.terminal_history = []
-        self.home = tmp_path / "שירות %TEMP% with spaces"
+        self.home = home or tmp_path / "שירות %TEMP% with spaces"
         self.run_dir = self.home / "run"
         self.run_dir.mkdir(parents=True)
         self.python = self.home / "installed-python.exe"
@@ -135,7 +135,8 @@ class ManagedGeneration:
                        "task_instance": "instance-" + str(number), "outcome": "running" if running else "failed" if failed else "clean",
                        "api_ready": {"nonce": "nonce-" + str(number), "identity": api}}
         self.write_record()
-        (self.run_dir / "api_token").write_text(json.dumps({"nonce": self.record["api_ready"]["nonce"], "pid": api["pid"]}), encoding="utf-8")
+        (self.run_dir / "api_token").write_text(json.dumps({"nonce": self.record["api_ready"]["nonce"], "pid": api["pid"],
+                                                     "bound": {"generation": description, "port": self.manifest["port"]}}), encoding="utf-8")
         if not running:
             self.write_terminal()
 
@@ -282,9 +283,24 @@ def test_canonical_unicode_home_controls_pid_cleanup_and_failure_log(generation)
     assert (generation.run_dir / "pallium.pid").read_text() == "5151"
 
 
-def test_legacy_task_failure_keeps_default_home_log_path(generation, monkeypatch):
-    _refuse_legacy(generation, monkeypatch)
-    assert not (generation.home / "logs").exists()
+def test_legacy_task_failure_keeps_default_home_log_path(tmp_path, monkeypatch, capsys):
+    profile = tmp_path / "private profile"
+    home = profile / ".pallium"
+    generation = ManagedGeneration(tmp_path, monkeypatch, home=home)
+    task = generation.task_info(None)
+    task["arguments"] = '"legacy.vbs"'
+    monkeypatch.setattr(service, "_task_info", lambda _: task)
+    monkeypatch.setattr(service, "native", lambda: generation.api)
+    monkeypatch.setattr(cli.sys, "platform", "win32")
+    monkeypatch.setattr(cli.Path, "home", lambda: profile)
+    monkeypatch.delenv("PALLIUM_HOME", raising=False)
+    assert cli.service_main(["restart"]) == 1
+    output = capsys.readouterr()
+    assert "refused/UNKNOWN" in output.err and "legacy" in output.err
+    assert f"Pallium log: {home / 'logs' / 'pallium.log'}" in output.err
+    assert "started" not in output.out and "recovered" not in output.out
+    assert "Pallium restarted." not in output.out
+    assert generation.starts == 0 and "signal" not in generation.calls
 
 
 def test_canonical_missing_home_fails_before_stop(generation):
@@ -354,12 +370,18 @@ def test_surviving_listener_fails_before_task_start(generation):
     assert generation.starts == 0
 
 
-def test_start_failure_is_nonzero_and_never_prints_success(generation, monkeypatch):
+def test_start_failure_is_nonzero_and_never_prints_success(generation, monkeypatch, capsys):
     def unknown_start(*_):
         raise service.Unknown("task start outcome unknown")
     monkeypatch.setattr(service, "_start_task", unknown_start)
-    with pytest.raises(service.Unknown, match="outcome unknown"):
-        generation.run()
+    monkeypatch.setattr(service, "native", lambda: generation.api)
+    monkeypatch.setattr(cli.sys, "platform", "win32")
+    assert cli.service_main(["restart", "--home", str(generation.home)]) == 1
+    output = capsys.readouterr()
+    assert "refused/UNKNOWN" in output.err and "task start outcome unknown" in output.err
+    assert f"Pallium log: {generation.home / 'logs' / 'pallium.log'}" in output.err
+    assert "started" not in output.out and "recovered" not in output.out
+    assert "already running" not in output.out and "Pallium restarted." not in output.out
     assert generation.starts == 0
 
 
@@ -545,3 +567,18 @@ def test_cooperative_windows_registered_start_keeps_exact_instance_and_deadline(
     assert "timeout" not in options  # no mutating-child kill or invented cancellation
     assert options["env"]["PALLIUM_CONTROL_DEADLINE"] == "123.5"
     assert json.loads(options["env"]["PALLIUM_CONTROL_EXPECTED"])["cwd"] == "stable installed"
+
+
+def test_cooperative_windows_live_owned_prebind_token_rejects_healthy_foreign_listener(generation):
+    # All prior checks pass: own nonce/PID, live API+supervisor+observer, same Job.
+    token_path = generation.run_dir / "api_token"
+    token = json.loads(token_path.read_text(encoding="utf-8"))
+    token.pop("bound")
+    token_path.write_text(json.dumps(token), encoding="utf-8")
+    assert token["nonce"] == generation.record["api_ready"]["nonce"]
+    assert generation.api.in_job(token["pid"], generation.record["description"])
+    assert generation.api.exit_code(token["pid"]) is None
+    # Fake ordinary HTTP health would be healthy, but cannot substitute for binding.
+    with pytest.raises(service.Unknown, match="ownership"):
+        generation.run("start")
+    assert generation.starts == 0 and not any(isinstance(call, tuple) for call in generation.calls)

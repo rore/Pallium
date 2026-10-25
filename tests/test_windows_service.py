@@ -441,3 +441,27 @@ def test_cooperative_windows_late_creation_remains_retained_without_resume(monke
         channel.spawn(["private-child"], attempts=attempts, stop=lambda: False)
     assert attempts == ["process"]
     assert not any(call[0] == "resume" for call in api.calls)
+
+
+def test_cooperative_windows_bound_token_written_only_by_owned_listener_lifecycle(tmp_path, monkeypatch):
+    from tests.test_restart_service import ManagedGeneration
+    from types import SimpleNamespace
+    import json
+    generation = ManagedGeneration(tmp_path, monkeypatch)
+    path = generation.run_dir / "api_token"
+    token = json.loads(path.read_text(encoding="utf-8"))
+    token.pop("bound")
+    path.write_text(json.dumps(token), encoding="utf-8")
+    monkeypatch.setenv("PALLIUM_HOME", str(generation.home))
+    monkeypatch.setenv("PALLIUM_API_LAUNCH_TOKEN", token["nonce"])
+    monkeypatch.setattr(service.os, "getpid", lambda: token["pid"])
+    channel = SimpleNamespace(description=generation.record["description"], requested=lambda: False)
+    listener = SimpleNamespace(is_serving=lambda: True,
+        sockets=[SimpleNamespace(fileno=lambda: 42, getsockname=lambda: ("127.0.0.1", 21987))])
+    assert not service.StopChannel.bound_ready(channel, token["nonce"], generation.run_dir, 21987)
+    assert service.StopChannel.publish_bound(channel, 21987, [listener])
+    assert service.StopChannel.bound_ready(channel, token["nonce"], generation.run_dir, 21987)
+    service.StopChannel.clear_bound(channel)
+    assert not service.StopChannel.bound_ready(channel, token["nonce"], generation.run_dir, 21987)
+    final = json.loads(path.read_text(encoding="utf-8"))
+    assert final == token

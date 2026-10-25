@@ -1398,3 +1398,32 @@ def test_cooperative_windows_stop_during_startup_retains_root_and_skips_snapshot
         wait_for_api_fn=ready, kill_fn=lambda *_, **__: pytest.fail("forced cleanup"),
     )
     assert result == 0 and len(roots) == 1
+
+
+def test_cooperative_windows_prebind_token_cannot_accept_foreign_healthy_listener(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    from app import supervisor as module
+    import json
+    now, connects, health = [0.0], [], []
+    (tmp_path / "api_token").write_text(json.dumps({"nonce": "own-attempt", "pid": 104}), encoding="utf-8")
+    class Socket:
+        def __enter__(self):
+            return self
+        def __exit__(self, *_):
+            pass
+        def settimeout(self, _):
+            pass
+        def connect(self, address):
+            connects.append(address)
+    def foreign(*_, **__):
+        health.append("healthy-foreign-response")
+        return True
+    def advance(delay):
+        now[0] += delay
+    monkeypatch.setattr("socket.socket", lambda *_: Socket())
+    monkeypatch.setattr(module, "_probe_initialized_health", foreign)
+    root = SimpleNamespace(poll=lambda: None)
+    assert not module._wait_for_api("127.0.0.1", 21987, timeout=1,
+        process=root, expected_nonce="own-attempt", run_dir=tmp_path,
+        bound_check=lambda: False, clock=lambda: now[0], sleep_fn=advance)
+    assert connects and not health and root.poll() is None

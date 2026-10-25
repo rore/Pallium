@@ -276,3 +276,39 @@ def test_cooperative_windows_owned_exit_latches_before_main_loop(monkeypatch):
     with pytest.raises(StopIteration):
         coroutine.send(None)
     assert server.main_loop_entered and server.should_exit
+
+
+@pytest.mark.parametrize("bind_succeeds", [True, False], ids=["bound", "bind-failed"])
+def test_cooperative_windows_postbind_lifecycle_proof_tracks_listener(monkeypatch, bind_succeeds):
+    from types import SimpleNamespace
+    from app import windows_service
+    trace = []
+    def bound(port, listeners):
+        assert port == 21987 and listeners == ["owned-listener"]
+        trace.append("bound")
+        return True
+    channel = SimpleNamespace(requested=lambda: False, publish_bound=bound,
+                              clear_bound=lambda: trace.append("clear"), close=lambda: trace.append("close"))
+    class Server:
+        def __init__(self, config):
+            self.config, self.started, self.should_exit = config, False, False
+        def run(self):
+            if bind_succeeds:
+                self.started = True
+                self.servers = ["owned-listener"]
+                coroutine = self.main_loop()
+                with pytest.raises(StopIteration):
+                    coroutine.send(None)
+        async def main_loop(self):
+            assert trace == ["bound"]
+            trace.append("loop")
+    monkeypatch.setattr(windows_service, "inherited_stop", lambda: channel)
+    monkeypatch.setattr(app_run.uvicorn, "Config", lambda *_, **__: SimpleNamespace(workers=1, app=None))
+    monkeypatch.setattr(app_run.uvicorn, "Server", Server)
+    if bind_succeeds:
+        app_run._serve(host="127.0.0.1", port=21987, reload=False)
+        assert trace == ["bound", "loop", "clear", "close"]
+    else:
+        with pytest.raises(SystemExit):
+            app_run._serve(host="127.0.0.1", port=21987, reload=False)
+        assert trace == ["close"]

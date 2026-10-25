@@ -273,6 +273,7 @@ def _wait_for_api(
     sleep_fn: Callable[[float], None] = time.sleep,
     process: subprocess.Popen | None = None,
     expected_nonce: str | None = None,
+    bound_check: Callable[[], bool] | None = None,
     run_dir: Path | None = None,
     stop: object | None = None,
     grace_period: float = 3.0,
@@ -332,6 +333,8 @@ def _wait_for_api(
                 else:
                     candidate = now - tcp_first_seen >= grace_period
 
+        if candidate and bound_check is not None:
+            candidate = bound_check()
         if candidate:
             remaining = deadline - clock()
             health = (
@@ -439,9 +442,12 @@ def _start_api_with_retry(
         started = time.monotonic()
         proc = popen_factory(cmd, cwd=os.getcwd(), env=env)
         emit_runtime_log("supervisor", f"started api pid={proc.pid} host={host} port={port} attempt={attempt} budget_seconds={_API_START_TIMEOUT_SECONDS:.0f}")
+        ownership = {}
+        if cooperative is not None:
+            ownership["bound_check"] = lambda: cooperative.bound_ready(nonce, run_dir, port)
         if wait_for_api_fn(
             host, port, timeout=_API_START_TIMEOUT_SECONDS, process=proc,
-            expected_nonce=nonce, run_dir=run_dir, stop=stop,
+            expected_nonce=nonce, run_dir=run_dir, stop=stop, **ownership,
         ):
             if cooperative is not None:
                 if stop is not None and getattr(stop, "requested", False):
