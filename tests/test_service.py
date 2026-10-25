@@ -880,6 +880,9 @@ def test_windows_stop_verifier_is_read_only_and_fail_closed(tmp_path: Path, monk
 def test_windows_stop_verifier_executes_new_and_legacy_launcher_parsers(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    import json
+    from xml.etree import ElementTree
+
     import app.cli.service as service
 
     shell = shutil.which("pwsh") or shutil.which("powershell")
@@ -891,16 +894,37 @@ def test_windows_stop_verifier_executes_new_and_legacy_launcher_parsers(
     python = tmp_path / "Python With Spaces" / "python.exe"
     python.parent.mkdir()
     python.touch()
+    base_python = tmp_path / "Base Python" / "python.exe"
+    base_python.parent.mkdir()
+    base_python.touch()
+    (tmp_path / "pyvenv.cfg").write_text(f"home = {base_python.parent}\n", encoding="utf-8")
     monkeypatch.setattr(service.sys, "executable", str(python))
 
+    registered_xml = []
+
+    def register(argv, **_kwargs):
+        registered_xml.append(Path(argv[argv.index("/xml") + 1]).read_text(encoding="utf-16"))
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
     with monkeypatch.context() as patcher:
-        patcher.setattr(
-            service.subprocess,
-            "run",
-            lambda argv, **_kwargs: subprocess.CompletedProcess(argv, 0, "", ""),
-        )
+        installed_cwd = tmp_path / "installed cwd"
+        installed_cwd.mkdir()
+        patcher.chdir(installed_cwd)
+        patcher.setattr(service.subprocess, "run", register)
         service._install_windows("pallium", 21987, home)
+    namespace = "{http://schemas.microsoft.com/windows/2004/02/mit/task}"
+    action_xml = ElementTree.fromstring(registered_xml[0]).find(f"{namespace}Actions/{namespace}Exec")
+    assert action_xml is not None
+    generated_action = {
+        "Execute": action_xml.findtext(f"{namespace}Command"),
+        "Arguments": action_xml.findtext(f"{namespace}Arguments"),
+        "WorkingDirectory": action_xml.findtext(f"{namespace}WorkingDirectory"),
+    }
     generated_vbs = run_dir / "pallium_launcher.vbs"
+    assert generated_action["Arguments"] == f'"{generated_vbs}" "$(Arg0)"'
+    generated_text = generated_vbs.read_text(encoding="utf-16")
+    manifest_path = run_dir / "windows-launch.json"
+    generated_manifest = manifest_path.read_text(encoding="utf-8")
     legacy_vbs = tmp_path / "legacy.vbs"
     legacy_vbs.write_text(
         'Set WshShell = CreateObject("WScript.Shell")\n'
@@ -918,7 +942,9 @@ def test_windows_stop_verifier_executes_new_and_legacy_launcher_parsers(
         encoding="utf-16",
     )
 
-    def run_probe(vbs: Path) -> subprocess.CompletedProcess[str]:
+    def run_probe(
+        vbs: Path, *, state="Ready", actions=None, processes=(), listeners=(), failure=""
+    ) -> subprocess.CompletedProcess[str]:
         probe_call = []
         with monkeypatch.context() as patcher:
             patcher.setattr(
@@ -928,13 +954,33 @@ def test_windows_stop_verifier_executes_new_and_legacy_launcher_parsers(
                 or subprocess.CompletedProcess(argv, 0, "", ""),
             )
             service.assert_service_stopped(home)
-        probe_env = probe_call[0][1]["env"] | {"PALLIUM_VERIFY_VBS": str(vbs)}
+        action = generated_action | {
+            "Arguments": generated_action["Arguments"] if vbs == generated_vbs else f'"{vbs}"'
+        }
+        probe_env = probe_call[0][1]["env"] | {
+            "PALLIUM_VERIFY_TASK": json.dumps({"State": state, "Actions": actions if actions is not None else [action]}),
+            "PALLIUM_VERIFY_PROCESSES": json.dumps(processes),
+            "PALLIUM_VERIFY_LISTENERS": json.dumps(listeners),
+            "PALLIUM_VERIFY_FAILURE": failure,
+        }
         mocks = r'''
 function Get-ScheduledTask {
-    [pscustomobject]@{ State = "Ready"; Actions = @([pscustomobject]@{ Arguments = ('"' + $env:PALLIUM_VERIFY_VBS + '"') }) }
+    param($TaskName, $ErrorAction)
+    if ($TaskName -ne 'Pallium') { throw 'Unexpected task query' }
+    $env:PALLIUM_VERIFY_TASK | ConvertFrom-Json
 }
-function Get-NetTCPConnection { param($LocalPort, $State, $ErrorAction); @() }
-function Get-CimInstance { param($Class, $Filter, $ErrorAction); @() }
+function Get-NetTCPConnection {
+    param($LocalPort, $State, $ErrorAction)
+    if ($LocalPort -ne 21987 -or $State -ne 'Listen') { throw 'Unexpected listener query' }
+    if ($env:PALLIUM_VERIFY_FAILURE -eq 'listener') { throw 'Listener enumeration refused' }
+    $env:PALLIUM_VERIFY_LISTENERS | ConvertFrom-Json
+}
+function Get-CimInstance {
+    param($Class, $Filter, $ErrorAction)
+    if ($Class -ne 'Win32_Process') { throw 'Unexpected process query' }
+    if ($env:PALLIUM_VERIFY_FAILURE -eq 'process') { throw 'Process enumeration refused' }
+    $env:PALLIUM_VERIFY_PROCESSES | ConvertFrom-Json
+}
 '''
         return subprocess.run(
             [shell, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", mocks + probe_call[0][0][-1]],
@@ -945,12 +991,92 @@ function Get-CimInstance { param($Class, $Filter, $ErrorAction); @() }
             creationflags=subprocess.CREATE_NO_WINDOW,
         )
 
-    for vbs in (generated_vbs, legacy_vbs):
-        result = run_probe(vbs)
-        assert result.returncode == 0, result.stdout + result.stderr
-    for vbs in (malformed_vbs, mismatch_vbs):
-        result = run_probe(vbs)
+    def refused(result: subprocess.CompletedProcess[str], message: str) -> None:
         assert result.returncode != 0
+        assert message in result.stdout + result.stderr
+
+    for state in ("Ready", "Disabled"):
+        for vbs in (generated_vbs, legacy_vbs):
+            result = run_probe(vbs, state=state)
+            assert result.returncode == 0, (state, vbs, result.stdout + result.stderr)
+    refused(run_probe(malformed_vbs), "Installed task metadata is incomplete")
+    refused(run_probe(mismatch_vbs), "Installed service home does not match the repair home")
+
+    command_line = next(line for line in generated_text.splitlines() if line.startswith("command = "))
+    for invalid_text in (
+        generated_text.replace(command_line + "\n", ""),
+        generated_text + command_line + "\n",
+        generated_text.replace("Run(command,", "Run(other_command,"),
+        generated_text.replace(str(home), str(tmp_path / "other-home")),
+        generated_text.replace(str(installed_cwd), str(tmp_path / "other cwd")),
+        generated_text.removeprefix("' Pallium cooperative launcher v1\n"),
+    ):
+        generated_vbs.write_text(invalid_text, encoding="utf-16")
+        try:
+            message = ("Managed installed task metadata differs" if invalid_text.startswith("' Pallium")
+                       else "Legacy task has unsupported arguments")
+            refused(run_probe(generated_vbs), message)
+        finally:
+            generated_vbs.write_text(generated_text, encoding="utf-16")
+
+    copied_vbs = tmp_path / "copied.vbs"
+    copied_vbs.write_text(generated_text, encoding="utf-16")
+    for key, value in (
+        ("home", str(tmp_path / "other-home")), ("python", str(base_python)),
+        ("cwd", str(tmp_path)), ("vbs", str(copied_vbs)), ("port", 21988),
+    ):
+        manifest_path.write_text(json.dumps(json.loads(generated_manifest) | {key: value}), encoding="utf-8")
+        try:
+            refused(run_probe(generated_vbs), "Managed installed task metadata differs")
+        finally:
+            manifest_path.write_text(generated_manifest, encoding="utf-8")
+    manifest_backup = manifest_path.with_suffix(".saved")
+    manifest_path.rename(manifest_backup)
+    try:
+        refused(run_probe(generated_vbs), "Managed installed task metadata differs")
+        assert run_probe(legacy_vbs).returncode == 0
+    finally:
+        manifest_backup.rename(manifest_path)
+
+    for arguments, message in (
+        (f'"{generated_vbs}" "$(Arg0)" "extra"', "Installed task arguments are unsupported"),
+        (f'"{generated_vbs}" "123"', "Installed task arguments are unsupported"),
+        (f'"{generated_vbs}"', "Managed installed task metadata differs"),
+        (f'"{legacy_vbs}" "$(Arg0)"', "Legacy task has unsupported arguments"),
+    ):
+        refused(run_probe(generated_vbs, actions=[generated_action | {"Arguments": arguments}]), message)
+    for actions, message in (
+        ([], "Installed task must have exactly one action"),
+        ([generated_action, generated_action], "Installed task must have exactly one action"),
+        ([generated_action | {"Execute": "other.exe"}], "Managed installed task metadata differs"),
+        ([generated_action | {"WorkingDirectory": str(tmp_path)}], "Managed installed task metadata differs"),
+    ):
+        refused(run_probe(generated_vbs, actions=actions), message)
+    for vbs in (generated_vbs, legacy_vbs):
+        refused(run_probe(vbs, state="Running"), "Pallium scheduled task remains Running")
+        refused(run_probe(vbs, listeners=[{"OwningProcess": 321}]), "Pallium listener(s) survived")
+        for failure in ("listener", "process"):
+            refused(run_probe(vbs, failure=failure), f"{failure.title()} enumeration refused")
+
+    for executable, command in (
+        (python, f'"{python}" -m app.windows_service observe --home "{home}"'),
+        (base_python, f'"{base_python}" -m app.windows_service observe --home "{home}"'),
+        (python, f'"{python}" -m app.run service run --port 21987 --home "{home}"'),
+        (python, f'"{python}" -m app.run serve'),
+        (base_python, f'"{base_python}" -m app.processor --processor-id p1'),
+        (python, '"C:\\Codex\\codex.exe" queue --profile pallium-relay --thread private'),
+    ):
+        process = {"ProcessId": 321, "ExecutablePath": str(executable), "CommandLine": command}
+        for vbs in (generated_vbs, legacy_vbs):
+            refused(run_probe(vbs, processes=[process]), "Managed Pallium process(es) survived")
+    for executable, command in (
+        (python, f'"{python}" -m app.run mcp'),
+        (tmp_path / "unrelated" / "python.exe", f'python -m app.windows_service observe --home "{home}"'),
+    ):
+        process = {"ProcessId": 654, "ExecutablePath": str(executable), "CommandLine": command}
+        for vbs in (generated_vbs, legacy_vbs):
+            result = run_probe(vbs, processes=[process])
+            assert result.returncode == 0, result.stdout + result.stderr
 
 def test_linux_stop_verifier_rejects_quoted_codex_queue(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("app.cli.service.sys.platform", "linux")

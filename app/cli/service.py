@@ -630,19 +630,51 @@ def assert_service_stopped(home: Path) -> None:
         probe_env = os.environ.copy()
         probe_env["PALLIUM_VERIFY_HOME"] = str(home.resolve())
         probe_env["PALLIUM_VERIFY_PORT"] = str(port)
+        from app.windows_service import MANAGED_MARKER, Unknown, _manifest, launcher_text
+
+        managed = {"marker": MANAGED_MARKER}
+        try:
+            manifest = _manifest(home.resolve())
+            if manifest["port"] != port:
+                raise Unknown("managed launcher port differs")
+        except (OSError, ValueError, Unknown):
+            # Optional for legacy tasks; managed text below requires this exact proof.
+            pass
+        else:
+            managed.update(manifest=manifest, text=launcher_text(manifest))
+        probe_env["PALLIUM_VERIFY_MANAGED"] = json.dumps(managed)
         probe = r'''$ErrorActionPreference = "Stop"
 $expectedHome = [IO.Path]::GetFullPath($env:PALLIUM_VERIFY_HOME).TrimEnd('\')
 $expectedPort = [int]$env:PALLIUM_VERIFY_PORT
 $task = Get-ScheduledTask -TaskName "Pallium" -ErrorAction Stop
 if ($task.State -notin @("Ready", "Disabled")) { throw "Pallium scheduled task remains $($task.State)" }
-$action = @($task.Actions)[0]
-$vbsPath = [Environment]::ExpandEnvironmentVariables(([string]$action.Arguments).Trim().Trim('"'))
+$actions = @($task.Actions)
+if ($actions.Count -ne 1) { throw "Installed task must have exactly one action" }
+$action = $actions[0]
+$arguments = [regex]::Match([string]$action.Arguments, '^\s*"([^"\r\n]+\.vbs)"(?<arg0>\s+"\$\(Arg0\)")?\s*$', 'IgnoreCase')
+if (-not $arguments.Success) { throw "Installed task arguments are unsupported" }
+$vbsPath = [IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($arguments.Groups[1].Value))
 $vbs = Get-Content -Raw -LiteralPath $vbsPath -ErrorAction Stop
-$homeMatch = [regex]::Match($vbs, '--home\s+""([^"\r\n]+)""', 'IgnoreCase')
-$pythonMatch = [regex]::Match($vbs, 'WshShell\.Run(?:\s+|\s*\(\s*)"""([^"\r\n]+pythonw?\.exe)""', 'IgnoreCase')
-if (-not $homeMatch.Success -or -not $pythonMatch.Success) { throw "Installed task metadata is incomplete" }
-$installedHome = [IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($homeMatch.Groups[1].Value)).TrimEnd('\')
-$pythonPath = [IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($pythonMatch.Groups[1].Value))
+$managed = $env:PALLIUM_VERIFY_MANAGED | ConvertFrom-Json -ErrorAction Stop
+if ($vbs.StartsWith([string]$managed.marker)) {
+    $manifest = $managed.manifest
+    if (-not $manifest -or -not $arguments.Groups['arg0'].Success -or
+        $vbs.Replace("`r`n", "`n") -cne [string]$managed.text -or
+        $vbsPath -ine [IO.Path]::GetFullPath([string]$manifest.vbs) -or
+        [IO.Path]::GetFileName([string]$action.Execute) -ine 'wscript.exe' -or
+        [IO.Path]::GetFullPath([string]$action.WorkingDirectory) -ine [IO.Path]::GetFullPath([string]$manifest.cwd)) {
+        throw "Managed installed task metadata differs from its launcher"
+    }
+    $installedHome = [IO.Path]::GetFullPath([string]$manifest.home).TrimEnd('\')
+    $pythonPath = [IO.Path]::GetFullPath([string]$manifest.python)
+} else {
+    if ($arguments.Groups['arg0'].Success) { throw "Legacy task has unsupported arguments" }
+    $homeMatch = [regex]::Match($vbs, '--home\s+""([^"\r\n]+)""', 'IgnoreCase')
+    $pythonMatch = [regex]::Match($vbs, 'WshShell\.Run(?:\s+|\s*\(\s*)"""([^"\r\n]+pythonw?\.exe)""', 'IgnoreCase')
+    if (-not $homeMatch.Success -or -not $pythonMatch.Success) { throw "Installed task metadata is incomplete" }
+    $installedHome = [IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($homeMatch.Groups[1].Value)).TrimEnd('\')
+    $pythonPath = [IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($pythonMatch.Groups[1].Value))
+}
 if ($installedHome -ine $expectedHome) { throw "Installed service home does not match the repair home" }
 $pythonPaths = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
 [void]$pythonPaths.Add($pythonPath)
@@ -673,7 +705,7 @@ $procs = @(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object {
     $c = [string]$_.CommandLine
     $isInstalledPython = $_.ExecutablePath -and $pythonPaths.Contains([IO.Path]::GetFullPath([string]$_.ExecutablePath))
     $service = $isInstalledPython -and ($c -match '(?i)app\.run\s+service\s+run') -and ($c -match $portPattern) -and ($c -match $homePattern)
-    $managed = $isInstalledPython -and (($c -match '(?i)app\.run\s+serve') -or ($c -match '(?i)app\.(?:processor|cleaner|snapshot)(?:\s|$)'))
+    $managed = $isInstalledPython -and (($c -match '(?i)app\.run\s+serve') -or ($c -match '(?i)app\.(?:processor|cleaner|snapshot)(?:\s|$)') -or ($c -match '(?i)app\.windows_service\s+observe(?:\s|$)'))
     $codexQueue = $c -match '(?i)^\s*(?:"[^"]*[\\/]codex(?:\.exe)?"|(?:\S*[\\/])?codex(?:\.exe)?)\s+queue\s+--profile\s+pallium-relay\b'
     $service -or $managed -or $codexQueue
 })
