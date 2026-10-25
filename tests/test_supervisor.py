@@ -1363,7 +1363,8 @@ def test_cooperative_windows_api_failure_drains_instead_of_retrying(monkeypatch,
 
 
 @pytest.mark.parametrize("helpers", [(0, 0), (2, 1)], ids=["empty-helpers", "multiple-helpers"])
-def test_cooperative_windows_stop_during_startup_retains_root_and_skips_snapshot(monkeypatch, tmp_path, helpers):
+@pytest.mark.parametrize("ready_result", [True, False], ids=["ready", "unready"])
+def test_cooperative_windows_stop_during_startup_retains_root_and_skips_snapshot(monkeypatch, tmp_path, helpers, ready_result):
     from types import SimpleNamespace
     from app import supervisor as module, windows_service
     roots = []
@@ -1385,7 +1386,7 @@ def test_cooperative_windows_stop_during_startup_retains_root_and_skips_snapshot
         yield stop
     def ready(*_, **__):
         stop.requested = True
-        return True
+        return ready_result
     snapshot = SimpleNamespace(enabled=True, snapshot_path=str(tmp_path), interval_seconds=1, max_snapshots=2)
     monkeypatch.setattr(windows_service, "inherited_stop", lambda: managed)
     monkeypatch.setattr(module, "graceful_stop", stopping)
