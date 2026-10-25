@@ -7,6 +7,7 @@ import re
 import sqlite3
 import threading
 import types
+import pytest
 from subprocess import TimeoutExpired
 from unittest.mock import MagicMock
 
@@ -1233,3 +1234,64 @@ def test_cooperative_windows_processor_forwards_stop_and_injected_wait(monkeypat
     monkeypatch.setattr(processor, "run_worker", lambda args, **options: calls.append(options) or 0)
     assert processor.run_processor([], config="private-config", sleep_fn=sleep, should_stop=predicate) == 0
     assert calls == [{"config": "private-config", "sleep_fn": sleep, "should_stop": predicate}]
+
+
+@pytest.mark.parametrize("phase", ["before", "item", "before-rebuild", "rebuild", "idle", "transient", "fatal"])
+def test_cooperative_windows_worker_drains_operation_and_closes_stop_channel(monkeypatch, phase):
+    from types import SimpleNamespace
+    from app import worker, windows_service
+    trace = []
+    class Transient(Exception):
+        pass
+    class Channel:
+        stopped = phase == "before"
+        def requested(self):
+            return self.stopped
+        def request(self):
+            self.stopped = True
+        def sleep(self, seconds):
+            trace.append(("wait", seconds))
+            self.stopped = True
+        def close(self):
+            trace.append("channel-close")
+    channel = Channel()
+    summary = SimpleNamespace(source_item_id="private-item", processing_status="completed", processing_attempts=1,
+                              packages_processed=[], failure_category=None, processing_error=None)
+    def item(**_):
+        trace.append("item-start")
+        if phase in {"item", "before-rebuild", "transient", "fatal"}:
+            channel.request()
+        if phase == "transient":
+            raise Transient("retryable")
+        if phase == "fatal":
+            raise ValueError("operation failed")
+        trace.append("item-finished")
+        return summary if phase == "item" else None
+    def rebuild(**_):
+        trace.append("rebuild-start")
+        if phase == "rebuild":
+            channel.request()
+            trace.append("rebuild-finished")
+            return SimpleNamespace(container_ref="container:private", thread_ref="thread:private")
+        return None
+    service = SimpleNamespace(process_next_source_item_summary=item, process_next_thread_rebuild=rebuild)
+    monkeypatch.setattr(worker, "build_storage_provider", lambda _: object())
+    monkeypatch.setattr(worker, "build_service", lambda *_, **__: SimpleNamespace(service=service))
+    monkeypatch.setattr(worker, "is_transient_error", lambda error: isinstance(error, Transient))
+    monkeypatch.setattr(worker, "emit_runtime_log", lambda *_, **__: None)
+    monkeypatch.setattr(windows_service, "inherited_stop", lambda: channel)
+    def run():
+        return worker.run_worker(["--worker-id", "private-worker"], config=object(),
+                                 install_signal_handlers=False, clock=lambda: 0)
+    if phase == "fatal":
+        with pytest.raises(ValueError, match="operation failed"):
+            run()
+    else:
+        assert run() == 0
+    assert trace[-1] == "channel-close" and trace.count("channel-close") == 1
+    assert trace.count("item-start") == (0 if phase == "before" else 1)
+    assert trace.count("rebuild-start") == (1 if phase in {"rebuild", "idle"} else 0)
+    assert [step for step in trace if isinstance(step, tuple)] == (
+        [("wait", .2)] if phase == "idle" else [("wait", 1.0)] if phase == "transient" else [])
+    if phase in {"item", "rebuild"}:
+        assert trace.index(phase + "-finished") < trace.index("channel-close")

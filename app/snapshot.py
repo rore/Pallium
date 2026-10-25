@@ -218,18 +218,22 @@ def run_snapshot(
         return 1
 
     with graceful_stop(install=install_signal_handlers) as stop:
+        def stopping():
+            return stop.requested or (should_stop is not None and should_stop())
+
         while True:
-            if stop.requested or (should_stop is not None and should_stop()):
+            if stopping():
                 break
             try:
-                if _is_dirty(live_db_path, snapshot_dir):
+                if _is_dirty(live_db_path, snapshot_dir) and not stopping():
                     path = create_snapshot(live_db_path, snapshot_dir)
                     if path is not None:
                         emit_runtime_log("snapshot", f"created {path.name}")
-                        prune_old_snapshots(snapshot_dir, keep=snapshot_config.max_snapshots)
+                        if not stopping():
+                            prune_old_snapshots(snapshot_dir, keep=snapshot_config.max_snapshots)
             except Exception as exc:
                 emit_runtime_log("snapshot", f"failed: {exc}", stderr=True)
-            if stop.requested or (should_stop is not None and should_stop()):
+            if stopping():
                 break
             cooperative_sleep(stop, interval, sleep_fn)
     return 0

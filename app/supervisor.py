@@ -587,6 +587,14 @@ def run_supervisor(
         return popen_factory(cmd, **kwargs)
 
     with graceful_stop(install=True) as stop:
+        def initial_ready(*args, **kwargs):
+            nonlocal exit_code
+            ready = wait_for_api_fn(*args, **kwargs)
+            if managed is not None and not ready and not stop.requested:
+                # The ensuing generation drain is our failure, not an external clean stop.
+                exit_code = 1
+            return ready
+
         try:
             # Start API with retry — onnxruntime on Windows/Python 3.13 has a
             # non-deterministic heap corruption bug during model initialization.
@@ -596,13 +604,13 @@ def run_supervisor(
                 server_cmd, parsed.host, parsed.port,
                 popen_factory=_popen_with_log,
                 sleep_fn=sleep_fn,
-                wait_for_api_fn=wait_for_api_fn,
+                wait_for_api_fn=initial_ready,
                 stop=stop,
                 cooperative=managed,
             )
             if server is None:
                 if stop.requested:
-                    return 0
+                    return exit_code
                 emit_runtime_log("supervisor", "api failed to start after retries, giving up", stderr=True)
                 return 1
             slots.append(_ManagedSlot(

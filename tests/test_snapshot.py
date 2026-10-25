@@ -760,3 +760,58 @@ def test_cooperative_windows_snapshot_stopped_before_operation_never_rewrites_st
     monkeypatch.setattr(snapshot, "create_snapshot", lambda *_, **__: pytest.fail("snapshot started after stop"))
     assert snapshot.run_snapshot([], config=config, should_stop=lambda: True,
                                  install_signal_handlers=False) == 0
+
+
+@pytest.mark.parametrize("phase", ["before", "dirty-stop", "copy-stop", "prune-stop", "idle", "copy-error", "prune-error"])
+def test_cooperative_windows_snapshot_finishes_current_operation_and_fences_next(tmp_path, monkeypatch, phase):
+    from types import SimpleNamespace
+    from app import snapshot, windows_service
+    trace = []
+    class Channel:
+        stopped = phase == "before"
+        def requested(self):
+            return self.stopped
+        def request(self):
+            self.stopped = True
+        def sleep(self, seconds):
+            trace.append(("wait", seconds))
+            self.stopped = True
+        def close(self):
+            trace.append("channel-close")
+    channel = Channel()
+    def dirty(*_):
+        trace.append("dirty-check")
+        if phase == "dirty-stop":
+            channel.request()
+        return phase != "idle"
+    def copy(*_):
+        trace.append("copy-start")
+        if phase in {"copy-stop", "copy-error"}:
+            channel.request()
+        if phase == "copy-error":
+            raise ValueError("copy failed")
+        trace.append("copy-committed")
+        return tmp_path / "private-completed.manifest.json"
+    def prune(*_, **__):
+        trace.append("prune-start")
+        channel.request()
+        if phase == "prune-error":
+            raise ValueError("prune failed")
+        trace.append("prune-finished")
+    config = SimpleNamespace(snapshot=SimpleNamespace(enabled=True, snapshot_path=str(tmp_path), interval_seconds=60, max_snapshots=2))
+    monkeypatch.setattr(snapshot, "resolve_live_db_paths", lambda _: {"main": "private-main", "relay": "private-relay"})
+    monkeypatch.setattr(snapshot, "_is_dirty", dirty)
+    monkeypatch.setattr(snapshot, "create_snapshot", copy)
+    monkeypatch.setattr(snapshot, "prune_old_snapshots", prune)
+    monkeypatch.setattr(snapshot, "emit_runtime_log", lambda *_, **__: None)
+    monkeypatch.setattr(windows_service, "inherited_stop", lambda: channel)
+    assert snapshot.run_snapshot([], config=config, install_signal_handlers=False) == 0
+    assert trace[-1] == "channel-close" and trace.count("channel-close") == 1
+    assert trace.count("dirty-check") == (0 if phase == "before" else 1)
+    assert trace.count("copy-start") == (1 if phase in {"copy-stop", "prune-stop", "copy-error", "prune-error"} else 0)
+    assert trace.count("prune-start") == (1 if phase in {"prune-stop", "prune-error"} else 0)
+    assert [step for step in trace if isinstance(step, tuple)] == ([("wait", 60)] if phase == "idle" else [])
+    if phase == "copy-stop":
+        assert trace.index("copy-committed") < trace.index("channel-close")
+    if phase == "prune-stop":
+        assert trace.index("prune-finished") < trace.index("channel-close")

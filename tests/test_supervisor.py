@@ -1482,3 +1482,66 @@ def test_cooperative_windows_supervisor_missing_expected_instance_never_uses_leg
         process=SimpleNamespace(poll=lambda: None), expected_nonce="own-attempt", run_dir=tmp_path,
         bound_check=lambda: True, instance_check=lambda: expected,
         clock=lambda: now[0], sleep_fn=advance)
+
+
+@pytest.mark.parametrize("phase", ["helper-stop", "helper-crash", "api-failure"])
+def test_cooperative_windows_supervisor_retains_every_attempt_until_drain(monkeypatch, tmp_path, phase):
+    from types import SimpleNamespace
+    from app import supervisor as module, windows_service
+    roots, attempt_lists, trace = [], [], []
+    class Managed:
+        stopped = False
+        def request(self):
+            self.stopped = True
+            trace.append("request")
+        def spawn(self, command, *, attempts, stop, **_):
+            assert not stop()
+            root = SimpleNamespace(pid=len(roots) + 1, code=None)
+            root.poll = lambda: root.code
+            roots.append(root)
+            attempts.append(root)
+            attempt_lists.append(attempts)
+            if phase == "helper-stop" and len(roots) == 2:
+                self.request()
+            if phase == "helper-crash" and len(roots) == 2:
+                root.code = 2
+            return root
+        def publish_ready(self, *_):
+            trace.append("ready")
+        def close(self):
+            assert all(root.code is not None for root in roots)
+            assert attempt_lists[-1] == roots
+            trace.append("close")
+    managed = Managed()
+    class Stop:
+        @property
+        def requested(self):
+            return managed.stopped
+        @requested.setter
+        def requested(self, value):
+            if value:
+                managed.request()
+    @contextmanager
+    def stop_context(**_):
+        yield Stop()
+    def drain_wait(seconds):
+        assert seconds == .05 and managed.stopped
+        trace.append("drain-wait")
+        if trace.count("drain-wait") == 2:
+            for root in roots:
+                root.code = root.code or 0
+    snapshot = SimpleNamespace(enabled=phase != "helper-crash", snapshot_path=str(tmp_path), interval_seconds=60, max_snapshots=2)
+    monkeypatch.setattr(windows_service, "inherited_stop", lambda: managed)
+    monkeypatch.setattr(module, "graceful_stop", stop_context)
+    monkeypatch.setattr(module.AppConfig, "from_env", lambda: SimpleNamespace(snapshot=snapshot))
+    monkeypatch.setattr(module, "emit_runtime_log", lambda *_, **__: None)
+    monkeypatch.setattr(module, "restore_snapshot", lambda *_, **__: pytest.fail("database rewind"))
+    monkeypatch.setattr(module, "create_snapshot", lambda *_, **__: pytest.fail("final snapshot"))
+    args = ["--processors", "1" if phase == "helper-crash" else "2", "--cleaners", "0" if phase == "helper-crash" else "1"]
+    result = module.run_supervisor(args, wait_for_api_fn=lambda *_, **__: phase != "api-failure",
+        popen_factory=lambda *_, **__: pytest.fail("uncontained spawn"),
+        kill_fn=lambda *_, **__: pytest.fail("forced cleanup"), sleep_fn=drain_wait, clock=lambda: 0)
+    assert result == {"helper-stop": 0, "helper-crash": 2, "api-failure": 1}[phase]
+    assert len(roots) == (1 if phase == "api-failure" else 2)
+    assert trace.count("drain-wait") == 2 and trace[-1] == "close"
+    assert ("ready" in trace) is (phase == "helper-crash")

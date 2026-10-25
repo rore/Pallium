@@ -339,3 +339,101 @@ def test_cooperative_windows_idle_wait_uses_event_and_preserves_injected_sleep()
     cooperative_sleep(stop, 60, time.sleep)
     cooperative_sleep(stop, 2, lambda seconds: calls.append(("injected", seconds)))
     assert calls == [("event", 60), ("injected", 2)]
+
+
+@pytest.mark.parametrize("phase", ["before", "pass", "between", "reclaim", "idle", "lease-lost", "transient", "fatal"])
+def test_cooperative_windows_cleaner_drains_pass_and_closes_stop_channel(monkeypatch, phase):
+    from app import cleaner, windows_service
+    from storage.base import RetentionLeaseLostError
+    trace = []
+    class Transient(Exception):
+        pass
+    class Channel:
+        stopped = phase == "before"
+        def requested(self):
+            return self.stopped
+        def request(self):
+            self.stopped = True
+        def sleep(self, seconds):
+            trace.append(("wait", seconds))
+            self.stopped = True
+        def close(self):
+            trace.append("channel-close")
+    channel = Channel()
+    stats = types.SimpleNamespace(deleted_source_items=1, deleted_memory_objects=0, deleted_relations=0,
+                                  deleted_index_entries=0, deleted_relay_trace_events=0)
+    def retention(**_):
+        trace.append("pass-start")
+        if phase in {"pass", "lease-lost", "transient", "fatal"}:
+            channel.request()
+        if phase == "lease-lost":
+            raise RetentionLeaseLostError("lease expired")
+        if phase == "transient":
+            raise Transient("retryable")
+        if phase == "fatal":
+            raise ValueError("operation failed")
+        trace.append("pass-finished")
+        return None if phase == "idle" else stats
+    def log(*_):
+        if phase == "between":
+            channel.request()
+    def reclaim():
+        trace.append("reclaim-start")
+        channel.request()
+        trace.append("reclaim-finished")
+        return {"reclaimed_pages": 1, "checkpoint_busy": 0}
+    config = types.SimpleNamespace(retention=types.SimpleNamespace(run_interval_seconds=60, lease_seconds=30, batch_size=2))
+    monkeypatch.setattr(cleaner, "build_service", lambda *_, **__: types.SimpleNamespace(
+        service=types.SimpleNamespace(run_retention_pass=retention), storage=types.SimpleNamespace(reclaim_free_pages=reclaim)))
+    monkeypatch.setattr(cleaner, "_log_retention_stats", log)
+    monkeypatch.setattr(cleaner, "is_transient_error", lambda error: isinstance(error, Transient))
+    monkeypatch.setattr(cleaner, "emit_runtime_log", lambda *_, **__: None)
+    monkeypatch.setattr(windows_service, "inherited_stop", lambda: channel)
+    def run():
+        return cleaner.run_cleaner(["--cleaner-id", "private-cleaner"], config=config, install_signal_handlers=False)
+    if phase == "fatal":
+        with pytest.raises(ValueError, match="operation failed"):
+            run()
+    else:
+        assert run() == 0
+    assert trace[-1] == "channel-close" and trace.count("channel-close") == 1
+    assert trace.count("pass-start") == (0 if phase == "before" else 1)
+    assert trace.count("reclaim-start") == (1 if phase == "reclaim" else 0)
+    assert [step for step in trace if isinstance(step, tuple)] == ([("wait", 60)] if phase == "idle" else [])
+    if phase == "pass":
+        assert trace.index("pass-finished") < trace.index("channel-close")
+    if phase == "reclaim":
+        assert trace.index("reclaim-finished") < trace.index("channel-close")
+
+
+@pytest.mark.parametrize("failed", [False, True], ids=["return", "error"])
+def test_cooperative_windows_graceful_stop_restores_handlers_and_closes_channel(monkeypatch, failed):
+    from app import signal_context, windows_service
+    trace = []
+    requested = [False]
+    channel = types.SimpleNamespace(requested=lambda: requested[0],
+        request=lambda: requested.__setitem__(0, True), close=lambda: trace.append("channel-close"))
+    signs = [signal_context.signal.SIGINT, signal_context.signal.SIGTERM]
+    if signal_context.sys.platform == "win32" and hasattr(signal_context.signal, "SIGBREAK"):
+        signs.append(signal_context.signal.SIGBREAK)
+    originals = {sign: object() for sign in signs}
+    handlers = dict(originals)
+    def signal(sign, handler):
+        previous = handlers[sign]
+        handlers[sign] = handler
+        trace.append("signal")
+        return previous
+    monkeypatch.setattr(signal_context.signal, "signal", signal)
+    monkeypatch.setattr(windows_service, "inherited_stop", lambda: channel)
+    def run():
+        with signal_context.graceful_stop(install=True) as stop:
+            handlers[signal_context.signal.SIGTERM]()
+            assert stop.requested and requested[0]
+            if failed:
+                raise ValueError("operation failed")
+    if failed:
+        with pytest.raises(ValueError, match="operation failed"):
+            run()
+    else:
+        run()
+    assert handlers == originals and trace == ["signal"] * (2 * len(signs)) + ["channel-close"]
