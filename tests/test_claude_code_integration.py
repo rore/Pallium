@@ -472,6 +472,152 @@ def test_claude_prompt_turn_key_and_relay_snapshot_fail_closed(monkeypatch: pyte
     assert common.relay_name_snapshot({"session": {}}) == ("unavailable", None)
 
 
+def test_claude_short_prompt_captures_turn_snapshot_without_retrieval(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hook = _load_claude_hook("user_prompt_submit", monkeypatch)
+    prompt_id = "550e8400-e29b-41d4-a716-446655440000"
+    monkeypatch.setattr(hook, "read_hook_input", lambda: {
+        "cwd": ".", "session_id": "claude:task:short", "prompt_id": prompt_id,
+        "prompt": "  ok  ",
+    })
+    monkeypatch.setattr(hook, "check_dedup", lambda *_args: False)
+    monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: "git:example/repo")
+    monkeypatch.setattr(hook, "derive_actor_ref", lambda *_: "local")
+    monkeypatch.setattr(hook, "discover_work_refs", lambda *_: SimpleNamespace(structural_refs=()))
+    monkeypatch.setattr(hook, "relay_turn", lambda *_args, **_kwargs: {
+        "session": {"alias": "planner"}, "deliveries": [],
+    })
+    requests: list[tuple[str, object]] = []
+    monkeypatch.setattr(
+        hook, "pallium_request",
+        lambda _method, path, body: requests.append((path, body)),
+    )
+
+    with pytest.raises(SystemExit):
+        hook.main()
+
+    assert len(requests) == 1
+    path, body = requests[0]
+    assert path == "/items"
+    assert isinstance(body, list) and len(body) == 1
+    assert body[0]["content"] == "ok"
+    assert body[0]["role"] == "user"
+    assert body[0]["source_turn_id"] == prompt_id
+    assert body[0]["relay_name"] == "planner"
+    assert body[0]["relay_attribution_state"] == "named"
+
+
+def test_claude_relay_delivery_captures_turn_before_emit_and_ack(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hook = _load_claude_hook("user_prompt_submit", monkeypatch)
+    prompt_id = "550e8400-e29b-41d4-a716-446655440000"
+    monkeypatch.setattr(hook, "read_hook_input", lambda: {
+        "cwd": ".", "session_id": "claude:task:delivery", "prompt_id": prompt_id,
+        "prompt": "Continue the work using the current role snapshot.",
+    })
+    monkeypatch.setattr(hook, "check_dedup", lambda *_args: False)
+    monkeypatch.setattr(hook, "resolve_container_ref", lambda *_: "git:example/repo")
+    monkeypatch.setattr(hook, "derive_actor_ref", lambda *_: "local")
+    monkeypatch.setattr(hook, "discover_work_refs", lambda *_: SimpleNamespace(structural_refs=()))
+    monkeypatch.setattr(hook, "relay_turn", lambda *_args, **_kwargs: {
+        "session": {"alias": "planner"}, "deliveries": [{"id": "delivery-1"}],
+    })
+    monkeypatch.setattr(hook, "format_relay", lambda *_args, **_kwargs: ("relay", [{"id": "delivery-1"}]))
+    events: list[str] = []
+    requests: list[tuple[str, object]] = []
+
+    def request(_method: str, path: str, body: object) -> None:
+        events.append("capture")
+        requests.append((path, body))
+
+    monkeypatch.setattr(hook, "pallium_request", request)
+    monkeypatch.setattr(hook, "emit_utf8", lambda _text: events.append("emit") or True)
+    monkeypatch.setattr(hook, "acknowledge_relay", lambda *_args, **_kwargs: events.append("ack"))
+
+    with pytest.raises(SystemExit):
+        hook.main()
+
+    assert events == ["capture", "emit", "ack"]
+    assert len(requests) == 1
+    path, body = requests[0]
+    assert path == "/items"
+    assert isinstance(body, list) and len(body) == 1
+    assert body[0]["source_turn_id"] == prompt_id
+    assert body[0]["relay_name"] == "planner"
+
+
+def test_claude_native_prompt_ids_preserve_identical_turns_and_retry_idempotently(
+    client, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    hook = _load_claude_hook("user_prompt_submit", monkeypatch)
+    container_ref = "project:claude-identical-prompts"
+    session_id = "claude-identical-session"
+    first_prompt = "550e8400-e29b-41d4-a716-446655440010"
+    second_prompt = "550e8400-e29b-41d4-a716-446655440011"
+    text = "Please keep this identical prompt as its own native turn."
+    current_alias = ["planner"]
+    source_ids: list[str] = []
+
+    monkeypatch.setattr(hook, "start_hook_deadline", lambda *_a, **_k: None)
+    monkeypatch.setattr(hook, "read_hook_input", lambda: {})
+    monkeypatch.setattr(hook, "resolve_container_ref", lambda *_a, **_k: container_ref)
+    monkeypatch.setattr(hook, "derive_actor_ref", lambda *_a, **_k: "claude-actor")
+    monkeypatch.setattr(hook, "register_claude_wake", lambda *_a, **_k: None)
+    monkeypatch.setattr(hook, "get_pending_relay_close_batch", lambda *_a: ([], 0))
+    monkeypatch.setattr(hook, "complete_relay_closes", lambda *_a: None)
+    monkeypatch.setattr(
+        hook, "check_dedup",
+        lambda *_a: pytest.fail("valid native prompt IDs must use turn-key idempotence"),
+    )
+    monkeypatch.setattr(hook, "discover_work_refs", lambda *_a: SimpleNamespace(structural_refs=()))
+    monkeypatch.setattr(hook, "injected_work_ref", lambda *_a: None)
+    monkeypatch.setattr(hook, "structural_work_refs_payload", lambda *_a: [])
+    monkeypatch.setattr(hook, "confirmed_registry_work_refs", lambda *_a: [])
+    monkeypatch.setattr(hook, "build_work_refs_metadata", lambda *_a, **_k: {})
+    monkeypatch.setattr(hook, "format_injection", lambda *_a, **_k: "scope")
+    monkeypatch.setattr(hook, "relay_turn", lambda *_a, **_k: {
+        "session": {"alias": current_alias[0]}, "deliveries": [],
+    })
+    monkeypatch.setattr(hook, "emit_utf8", lambda *_a, **_k: True)
+
+    def ingest(method: str, path: str, body: object, **_kwargs) -> dict:
+        response = client.post(path, json=body)
+        assert response.status_code == 200, response.text
+        result = response.json()
+        if path == "/item-and-query":
+            source_ids.append(result["source_item_id"])
+        return result
+
+    monkeypatch.setattr(hook, "pallium_request", ingest)
+
+    def run_prompt(prompt_id: str) -> None:
+        monkeypatch.setattr(hook, "read_hook_input", lambda: {
+            "cwd": str(tmp_path), "session_id": session_id, "prompt_id": prompt_id,
+            "prompt": text,
+        })
+        with pytest.raises(SystemExit):
+            hook.main()
+
+    run_prompt(first_prompt)
+    current_alias[0] = "builder"
+    run_prompt(second_prompt)
+    run_prompt(second_prompt)
+
+    assert len(source_ids) == 3
+    assert source_ids[0] != source_ids[1]
+    assert source_ids[1] == source_ids[2]
+    for alias, expected_id in (("planner", source_ids[0]), ("builder", source_ids[1])):
+        response = client.post("/query", json={
+            "text": text, "limit": 10, "source_only": True,
+            "trigger_origin": "agent_pull", "source_type": "claude-code",
+            "relay_name": alias, "container_ref": container_ref, "visibility": "private",
+        })
+        assert response.status_code == 200, response.text
+        assert [item["source_item_id"] for item in response.json()["results"]] == [expected_id]
+
+
 def test_claude_hooks_link_prompt_ids_across_takeover_and_out_of_order_stop(
     client, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:

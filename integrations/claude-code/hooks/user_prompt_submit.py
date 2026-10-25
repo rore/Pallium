@@ -65,7 +65,10 @@ def main() -> None:
 
         if not isinstance(prompt, str) or not prompt or prompt.startswith("/"):
             return
-        if session_id and check_dedup(prompt, session_id):
+        source_turn_id = source_turn_key(payload.get("prompt_id"))
+        if session_id and not (has_session and source_turn_id) and check_dedup(
+            prompt, session_id
+        ):
             return
         if pending_closes:
             completed = []
@@ -110,11 +113,36 @@ def main() -> None:
                     if relay_response.get("has_more") is True else 0
                 ),
             )
-            if rendered_deliveries:
-                if not emit_utf8("\n\n".join((relay_output, relay_scope))):
-                    return
-                acknowledge_relay(rendered_deliveries, container_ref=container_ref)
-                sys.exit(0)
+
+        relay_attribution_state, relay_name = relay_name_snapshot(relay_response)
+
+        # Preserve the start snapshot when delivery exits ingestion or retrieval
+        # skips a short prompt; no content or role attribution is inferred later.
+        if has_session and source_turn_id is not None and content and (
+            rendered_deliveries or len(content) < 20
+        ):
+            pallium_request("POST", "/items", [{
+                "source_type": "claude-code",
+                "source_id": f"cc-{uuid.uuid4().hex[:12]}",
+                "content_type": "text/plain",
+                "content": content,
+                "role": "user",
+                "agent_ref": "claude-code",
+                "container_ref": container_ref,
+                "thread_ref": session_id,
+                "actor_ref": actor_ref,
+                "visibility": "private",
+                "artifact_kind": "message",
+                "source_turn_id": source_turn_id,
+                "relay_name": relay_name,
+                "relay_attribution_state": relay_attribution_state,
+            }])
+
+        if rendered_deliveries:
+            if not emit_utf8("\n\n".join((relay_output, relay_scope))):
+                return
+            acknowledge_relay(rendered_deliveries, container_ref=container_ref)
+            sys.exit(0)
 
         work_refs_metadata = build_work_refs_metadata(
             cwd, payload.get("pallium_work_refs"), discovery,
@@ -144,9 +172,9 @@ def main() -> None:
                 "actor_ref": actor_ref,
                 "visibility": "private",
                 "artifact_kind": "message",
-                "source_turn_id": source_turn_key(payload.get("prompt_id")),
-                "relay_name": relay_name_snapshot(relay_response)[1],
-                "relay_attribution_state": relay_name_snapshot(relay_response)[0],
+                "source_turn_id": source_turn_id,
+                "relay_name": relay_name,
+                "relay_attribution_state": relay_attribution_state,
                 "query_text": query_text,
                 "query_limit": 5,
                 "query_actor_ref": actor_ref,
