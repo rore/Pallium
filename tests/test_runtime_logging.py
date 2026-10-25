@@ -34,6 +34,7 @@ def test_uvicorn_logging_owns_root_after_actual_mcp_construction() -> None:
     script = """
 import logging
 import uvicorn
+from tests.test_windows_service import guard_native_calls
 with guard_native_calls():
     from app.runtime_logging import RuntimeLogFormatter, build_uvicorn_log_config
 with guard_native_calls():

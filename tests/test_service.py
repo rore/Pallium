@@ -208,7 +208,12 @@ class TestServiceMain:
         result = service_main([])
         assert result == 1
 
-    def test_status_with_no_running_instance(self, tmp_path: Path):
+    def test_status_with_no_running_instance(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        if sys.platform == "linux":
+            monkeypatch.setattr(
+                "app.cli.service._linux_unit_state",
+                lambda: {"LoadState": "not-found", "ActiveState": "inactive"},
+            )
         result = service_main(["status", "--home", str(tmp_path)])
         assert result == 1
 
