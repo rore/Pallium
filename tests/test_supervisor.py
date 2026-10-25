@@ -1455,3 +1455,30 @@ def test_cooperative_windows_supervisor_health_checks_responding_instance(monkey
     result = module._probe_initialized_health("127.0.0.1", 21987, 1, expected_instance="own-public-instance")
     assert result is (marker == "own-public-instance")
     assert calls[-1] == "closed" and ("GET", "/health") in calls
+
+
+@pytest.mark.parametrize("expected", [None, "", 0, False, [], {}, " ", "invalid\nvalue"],
+                         ids=["missing", "empty", "number", "boolean", "list", "object", "whitespace", "control-character"])
+def test_cooperative_windows_supervisor_missing_expected_instance_never_uses_legacy(monkeypatch, tmp_path, expected):
+    from types import SimpleNamespace
+    from app import supervisor as module
+    import json
+    now = [0.0]
+    (tmp_path / "api_token").write_text(json.dumps({"nonce": "own-attempt", "pid": 104}), encoding="utf-8")
+    class Socket:
+        def __enter__(self):
+            return self
+        def __exit__(self, *_):
+            pass
+        def settimeout(self, _):
+            pass
+        def connect(self, _):
+            pass
+    monkeypatch.setattr("socket.socket", lambda *_: Socket())
+    monkeypatch.setattr(module, "_probe_initialized_health", lambda *_args, **_kwargs: pytest.fail("no legacy probe in managed context"))
+    def advance(delay):
+        now[0] += delay
+    assert not module._wait_for_api("127.0.0.1", 21987, timeout=1,
+        process=SimpleNamespace(poll=lambda: None), expected_nonce="own-attempt", run_dir=tmp_path,
+        bound_check=lambda: True, instance_check=lambda: expected,
+        clock=lambda: now[0], sleep_fn=advance)

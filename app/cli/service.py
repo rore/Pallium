@@ -299,7 +299,9 @@ def _service_ready(port: int, timeout: float = 3.0, *, probe_limit=None, queue_l
 
 
 def _managed_ready(port, timeout, *, expected_instance=None):
-    if not isinstance(expected_instance, str) or not expected_instance:
+    # Managed context is explicit; invalid expected metadata never selects legacy probes.
+    from app.windows_service import valid_service_instance
+    if not valid_service_instance(expected_instance):
         return False
     return _service_ready(port, timeout, probe_limit=2.0, queue_limit=10.0, expected_instance=expected_instance)
 

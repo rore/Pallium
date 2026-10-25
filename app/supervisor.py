@@ -343,7 +343,8 @@ def _wait_for_api(
         expected_instance = None
         if candidate and instance_check is not None:
             expected_instance = instance_check()
-            candidate = expected_instance is not None
+            from app.windows_service import valid_service_instance
+            candidate = valid_service_instance(expected_instance)
         if candidate:
             remaining = deadline - clock()
             instance_options = {"expected_instance": expected_instance} if expected_instance is not None else {}

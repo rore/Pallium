@@ -30,6 +30,11 @@ _STILL_ACTIVE = 259
 _NATIVE = None
 
 
+def valid_service_instance(value):
+    """Public opaque correlation value, restricted to nonempty HTTP-safe ASCII."""
+    return isinstance(value, str) and re.fullmatch(r"[!-~]+", value) is not None
+
+
 class Unknown(RuntimeError):
     """Custody or settlement could not be positively established."""
 
@@ -524,7 +529,7 @@ class StopChannel:
         token = _json(path)
         if token.get("pid") != os.getpid() or token.get("nonce") != os.environ.get("PALLIUM_API_LAUNCH_TOKEN"):
             raise Unknown("post-bind token does not identify this API instance")
-        if not isinstance(public_instance, str) or not public_instance or public_instance == token.get("nonce"):
+        if not valid_service_instance(public_instance) or public_instance == token.get("nonce"):
             raise Unknown("public service instance must be distinct from the startup nonce")
         record = _json(home / "run" / "windows-generation.json")
         if record.get("description") != self.description or record.get("manifest", {}).get("port") != port:
@@ -552,7 +557,7 @@ class StopChannel:
         instance = token.get("public_instance")
         if (token.get("nonce") == nonce and type(token.get("pid")) is int
                 and token.get("bound") == {"generation": self.description, "port": port}
-                and isinstance(instance, str) and instance and instance != nonce):
+                and valid_service_instance(instance) and instance != nonce):
             return instance
         return None
 
@@ -579,7 +584,7 @@ class StopChannel:
             if token.get("bound") != {"generation": self.description, "port": record["manifest"]["port"]}:
                 raise Unknown("API startup token does not prove successful owned binding")
             instance = token.get("public_instance")
-            if not isinstance(instance, str) or not instance or instance == nonce:
+            if not valid_service_instance(instance) or instance == nonce:
                 raise Unknown("public service instance correlation is missing or invalid")
             record["api_ready"] = {"nonce": nonce, "identity": self.api.identity(process, token["pid"]),
                                    "public_instance": instance}
@@ -947,7 +952,7 @@ def _owned_ready(home, record, manifest, deadline, api, handles, ready):
     if not isinstance(proof, dict):
         return False
     instance = proof.get("public_instance")
-    if not isinstance(instance, str) or not instance or instance == proof.get("nonce"):
+    if not valid_service_instance(instance) or instance == proof.get("nonce"):
         return False
     identity = proof["identity"]
     deadline.remaining()

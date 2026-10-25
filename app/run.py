@@ -37,6 +37,7 @@ def _serve(*, host: str, port: int, reload: bool) -> None:
     class OwnedServer(uvicorn.Server):
         exit_requested = False
         main_loop_entered = False
+        marker_failure = None
 
         def request_exit(self) -> None:
             if self.exit_requested:
@@ -45,19 +46,35 @@ def _serve(*, host: str, port: int, reload: bool) -> None:
             if self.main_loop_entered:
                 self.should_exit = True
 
+        def fail_marker(self, error: Exception) -> None:
+            if self.marker_failure is None:
+                self.marker_failure = error
+            self.request_exit()
+            try:
+                channel.request()
+            except Exception as stop_error:
+                # Preserve the failure, but never skip normal lifespan shutdown.
+                self.marker_failure.add_note(f"generation stop signaling also failed: {type(stop_error).__name__}")
+
         async def main_loop(self) -> None:
             # Uvicorn 0.34 skips lifespan shutdown for should_exit during startup.
             self.main_loop_entered = True
             if self.exit_requested:
                 self.should_exit = True
             published = False
-            if channel is not None and self.started and not self.exit_requested and not channel.requested():
-                published = channel.publish_bound(port, self.servers, public_instance)
+            try:
+                if channel is not None and self.started and not self.exit_requested and not channel.requested():
+                    published = channel.publish_bound(port, self.servers, public_instance)
+            except Exception as error:
+                self.fail_marker(error)
             try:
                 await super().main_loop()
             finally:
                 if published:
-                    channel.clear_bound()
+                    try:
+                        channel.clear_bound()
+                    except Exception as error:
+                        self.fail_marker(error)
 
     server = OwnedServer(config)
     stop_tasks = set()
@@ -88,6 +105,9 @@ def _serve(*, host: str, port: int, reload: bool) -> None:
     finally:
         if channel is not None:
             channel.close()
+    if server.marker_failure is not None:
+        # Never raise marker bookkeeping errors from Uvicorn's main_loop boundary.
+        raise RuntimeError("managed API binding marker failed") from server.marker_failure
     if not server.started:
         from uvicorn.main import STARTUP_FAILURE
 

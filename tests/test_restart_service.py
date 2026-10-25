@@ -663,3 +663,18 @@ def test_cooperative_windows_matching_public_instance_on_all_three_probes_accept
     monkeypatch.setattr(cli.urllib.request, "urlopen", respond)
     assert generation.run("start") == "already running"
     assert paths == ["/health", "/status", "/debug/queue/health"] and generation.starts == 0
+
+
+@pytest.mark.parametrize("expected", [None, "", 0, False, [], {}, " ", "invalid\nvalue"],
+                         ids=["missing", "empty", "number", "boolean", "list", "object", "whitespace", "control-character"])
+def test_cooperative_windows_malformed_expected_marker_never_falls_back_to_legacy(generation, monkeypatch, expected):
+    def unexpected(*_args, **_kwargs):
+        pytest.fail("managed context must reject expected marker before any readiness probe")
+    monkeypatch.setattr(cli, "_check_health", unexpected)
+    monkeypatch.setattr(cli, "_read_endpoint_json", unexpected)
+    assert not cli._managed_ready(21987, timeout=1, expected_instance=expected)
+    generation.record["api_ready"]["public_instance"] = expected
+    generation.write_record()
+    with pytest.raises(service.Unknown, match="running/unready"):
+        generation.run("start")
+    assert generation.starts == 0 and "signal" not in generation.calls

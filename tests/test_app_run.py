@@ -348,3 +348,56 @@ def test_cooperative_windows_managed_header_is_public_and_unmanaged_config_uncha
     monkeypatch.setattr(windows_service, "inherited_stop", lambda: None)
     app_run._serve(host="127.0.0.1", port=21987, reload=False)
     assert "headers" not in options[-1] and entropy == [16, 16]
+
+
+@pytest.mark.parametrize("phase", ["publish", "revoke"], ids=["publish-failure", "revoke-failure"])
+@pytest.mark.parametrize("error_kind", ["os", "metadata", "unknown"], ids=["filesystem", "malformed-metadata", "unknown"])
+def test_cooperative_windows_marker_error_drains_lifespan_once_then_fails(monkeypatch, phase, error_kind):
+    from types import SimpleNamespace
+    from app import windows_service
+    trace, servers, returned = [], [], []
+    stopped = [False]
+    error = {"os": OSError, "metadata": ValueError, "unknown": windows_service.Unknown}[error_kind]("marker bookkeeping failed")
+    def publish(*_):
+        trace.append("publish")
+        if phase == "publish":
+            raise error
+        return True
+    def revoke():
+        trace.append("revoke")
+        if phase == "revoke":
+            raise error
+    def request():
+        trace.append("request-stop")
+        stopped[0] = True
+    channel = SimpleNamespace(requested=lambda: stopped[0], publish_bound=publish,
+                              clear_bound=revoke, request=request, close=lambda: trace.append("close"))
+    class Server:
+        def __init__(self, config):
+            self.config, self.started, self.should_exit = config, False, False
+            self.shutdown_calls = 0
+            servers.append(self)
+        def run(self):
+            self.started, self.servers = True, ["owned-listener"]
+            coroutine = self.main_loop()
+            # Mirror Uvicorn: an escaped main_loop error would bypass these finalizers.
+            with pytest.raises(StopIteration):
+                coroutine.send(None)
+            self.shutdown_calls += 1
+            trace.extend(("listener-shutdown", "lifespan-drained"))
+        async def main_loop(self):
+            trace.append("base-loop")
+            if phase == "publish":
+                assert self.should_exit and stopped[0]
+            self.request_exit()
+    monkeypatch.setattr(app_run.secrets, "token_hex", lambda _: "independent-public-entropy")
+    monkeypatch.setattr(windows_service, "inherited_stop", lambda: channel)
+    monkeypatch.setattr(app_run.uvicorn, "Config", lambda *_, **__: SimpleNamespace(workers=1, app=None))
+    monkeypatch.setattr(app_run.uvicorn, "Server", Server)
+    with pytest.raises(RuntimeError, match="binding marker failed") as failure:
+        app_run._serve(host="127.0.0.1", port=21987, reload=False)
+        returned.append("success")
+    assert failure.value.__cause__ is error and returned == []
+    assert servers[0].shutdown_calls == 1 and stopped[0]
+    assert trace.count("listener-shutdown") == trace.count("lifespan-drained") == trace.count("request-stop") == 1
+    assert trace.index("lifespan-drained") < trace.index("close")
