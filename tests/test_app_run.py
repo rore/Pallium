@@ -510,7 +510,7 @@ def test_owned_server_http_stop_drains_real_lifespan(request, tmp_path, test_db_
         patches.setattr(main, "create_app", delegate)
         patches.setattr(main, "app", factory)
         patches.setattr(app_run.uvicorn.Server, "run", observe_run)
-        serving = threading.Thread(target=serve, name="private-http-lifecycle", daemon=True)
+        serving = threading.Thread(target=serve, name="private-http-lifecycle", daemon=False)
         serving.start()
         deadline = time.monotonic() + 10
         while not servers or not servers[0].started:
@@ -570,7 +570,8 @@ def test_owned_server_http_stop_drains_real_lifespan(request, tmp_path, test_db_
         if serving is not None and serving.is_alive():
             request.node._unsettled_http_owner = (serving, inner, patches)
             request.node.add_report_section("call", "owned HTTP thread", repr((serving.ident, trace, errors)))
-            pytest.fail("owned HTTP thread remains unresolved; storage and native guards retained")
+            pytest.exit("owned HTTP thread remains unresolved; storage and manual native guards retained",
+                        returncode=2)
         try:
             if inner is not None:
                 inner.state._close_constructed()
