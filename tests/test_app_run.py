@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-from tests.test_windows_service import guard_native_calls, guard_selected_mock
+from tests.test_windows_service import guard_selected_mock
 
-with guard_native_calls():
-    from app import run as app_run
-with guard_native_calls():
-    from app.config import AppConfig
+from app import run as app_run
+from app.config import AppConfig
 import pytest
 
 
