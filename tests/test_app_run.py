@@ -399,3 +399,180 @@ def test_cooperative_windows_marker_error_drains_lifespan_once_then_fails(monkey
     assert servers[0].shutdown_calls == 1 and stopped[0]
     assert trace.count("listener-shutdown") == trace.count("lifespan-drained") == trace.count("request-stop") == 1
     assert trace.index("lifespan-drained") < trace.index("close")
+
+
+@pytest.mark.parametrize("managed", [True, False], ids=["managed", "unmanaged"])
+def test_owned_server_http_stop_drains_real_lifespan(request, tmp_path, test_db_url, managed):
+    import contextlib
+    import json
+    import threading
+    import time
+    import httpx
+    from app import main, windows_service, codex_bridge_pipe as bridge
+    from tests.test_health import _no_vector_config
+
+    # These patches outlive an unresolved owned thread; fixture teardown must not
+    # restore native entry points or close its storage while it is still running.
+    patches = pytest.MonkeyPatch()
+    stop, bound = threading.Event(), threading.Event()
+    trace, servers, applications, callbacks, errors, native_calls = [], [], [], [], [], []
+    delegates = []
+    inner = serving = None
+    token = tmp_path / "private-home" / "run" / "api_token"
+    startup_nonce = "private-http-startup-nonce"
+
+    def deny_native(*args, **kwargs):
+        native_calls.append((args, kwargs))
+        raise AssertionError("HTTP lifecycle test must not enter service native backends")
+
+    class Channel:
+        marker = None
+        port = None
+
+        def requested(self):
+            return stop.is_set()
+
+        def request(self):
+            stop.set()
+
+        def publish_bound(self, configured_port, listeners, public_instance):
+            assert configured_port == 0 and servers[0].started
+            self.port = listeners[0].sockets[0].getsockname()[1]
+            assert self.port > 0
+            self.marker = public_instance
+            trace.append("publish")
+            bound.set()
+            return True
+
+        def clear_bound(self):
+            self.marker = None
+            trace.append("revoke")
+
+        def close(self):
+            assert "lifespan-exit" in trace
+            assert all(not listener.is_serving() for listener in servers[0].servers)
+            trace.append("channel-close")
+
+    channel = Channel()
+    original_run, original_factory = app_run.uvicorn.Server.run, main.app
+
+    def observe_run(server):
+        servers.append(server)
+        return original_run(server)
+
+    def factory(*, on_retained_terminal):
+        callbacks.append(on_retained_terminal)
+        application = original_factory(on_retained_terminal=on_retained_terminal)
+        applications.append(application)
+        lifespan = application.router.lifespan_context
+
+        @contextlib.asynccontextmanager
+        async def observe_lifespan(app):
+            trace.append("lifespan-enter")
+            async with lifespan(app):
+                yield
+            trace.append("lifespan-exit")
+
+        application.router.lifespan_context = observe_lifespan
+        return application
+
+    def serve():
+        try:
+            app_run._serve(host="127.0.0.1", port=0, reload=False)
+        except BaseException as error:
+            errors.append(error)
+        finally:
+            trace.append("serve-return")
+
+    try:
+        patches.setenv("PALLIUM_HOME", str(tmp_path / "private-home"))
+        patches.setenv("PALLIUM_API_LAUNCH_TOKEN", startup_nonce)
+        patches.delenv("WEB_CONCURRENCY", raising=False)
+        for name in ("WindowsAPI", "native", "_task_info", "_start_task"):
+            patches.setattr(windows_service, name, deny_native)
+        patches.setattr(bridge, "_native", deny_native)
+        for name in ("start_shadow_service", "start_inventory_service", "start_retained_service"):
+            patches.setattr(bridge, name, lambda *args, **kwargs: None)
+        patches.setattr(windows_service, "inherited_stop", lambda: channel if managed else None)
+        inner = main.create_app(_no_vector_config(test_db_url))
+        storage = inner.state.pallium_service._storage
+        original_close = storage.close
+
+        def close_storage():
+            trace.append("storage-close")
+            return original_close()
+
+        def delegate(*args, **kwargs):
+            delegates.append(threading.get_ident())
+            return inner
+
+        patches.setattr(storage, "close", close_storage)
+        patches.setattr(main, "create_app", delegate)
+        patches.setattr(main, "app", factory)
+        patches.setattr(app_run.uvicorn.Server, "run", observe_run)
+        serving = threading.Thread(target=serve, name="private-http-lifecycle", daemon=True)
+        serving.start()
+        deadline = time.monotonic() + 10
+        while not servers or not servers[0].started:
+            assert serving.is_alive() and time.monotonic() < deadline, (trace, errors)
+            time.sleep(.01)
+        port = servers[0].servers[0].sockets[0].getsockname()[1]
+        assert port > 0
+        if managed:
+            assert bound.wait(max(0, deadline - time.monotonic())) and channel.port == port
+        with httpx.Client(base_url=f"http://127.0.0.1:{port}", trust_env=False,
+                          follow_redirects=False, timeout=1) as client:
+            while True:
+                response = client.get("/health")
+                if response.status_code == 200 and response.json().get("initialized") is True:
+                    break
+                assert time.monotonic() < deadline, response.text
+                time.sleep(.01)
+            assert json.loads(token.read_text())["nonce"] == startup_nonce
+            for path in ("/health", "/status", "/debug/queue/health"):
+                response = client.get(path)
+                assert response.status_code == 200, (path, response.text)
+                marker = response.headers.get(windows_service.SERVICE_INSTANCE_HEADER)
+                if managed:
+                    assert marker == channel.marker and marker.startswith("instance-")
+                    assert marker != startup_nonce and startup_nonce not in marker
+                else:
+                    assert marker is None
+        if managed:
+            stop.set()
+        else:
+            callbacks[0]()
+        serving.join(timeout=10)
+        assert not serving.is_alive(), "owned HTTP thread did not settle"
+        assert errors == [] and native_calls == []
+        assert len(servers) == len(applications) == len(callbacks) == len(delegates) == 1
+        assert delegates[0] != threading.get_ident()
+        assert applications[0].state._owner.done()
+        assert trace.count("lifespan-enter") == trace.count("lifespan-exit") == trace.count("storage-close") == 1
+        assert trace.index("storage-close") < trace.index("lifespan-exit") < trace.index("serve-return")
+        assert not token.exists()
+        if managed:
+            assert trace.count("publish") == trace.count("revoke") == trace.count("channel-close") == 1
+            assert trace.index("revoke") < trace.index("storage-close")
+            assert trace.index("lifespan-exit") < trace.index("channel-close") < trace.index("serve-return")
+            assert channel.marker is None
+        else:
+            assert not any(item in trace for item in ("publish", "revoke", "channel-close"))
+    finally:
+        stop.set()
+        if serving is not None and serving.is_alive():
+            if callbacks:
+                try:
+                    callbacks[0]()
+                except BaseException as error:
+                    errors.append(error)
+            serving.join(timeout=10)
+        if serving is not None and serving.is_alive():
+            request.node._unsettled_http_owner = (serving, inner, patches)
+            request.node.add_report_section("call", "owned HTTP thread", repr((serving.ident, trace, errors)))
+            pytest.fail("owned HTTP thread remains unresolved; storage and native guards retained")
+        try:
+            if inner is not None:
+                inner.state._close_constructed()
+        finally:
+            patches.undo()
