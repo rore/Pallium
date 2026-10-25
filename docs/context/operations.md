@@ -382,7 +382,11 @@ registered task and bind its unique instance to the generation. Readiness verifi
 the existing API nonce and retained same-Job API/supervisor identities around `/health`,
 with a post-bind generation/port marker published only by the owned server's listening
 lifecycle and revoked before its listener shutdown. A pre-bind lifespan token alone
-cannot establish readiness. The checks also include
+cannot establish readiness. Managed responses also carry X-Pallium-Service-Instance,
+a fresh public nonsecret correlation marker generated independently of startup,
+control and authentication nonces. Every readiness response must exactly match it.
+It is not authentication or resistance to a malicious local responder; unmanaged
+and legacy responses remain unchanged. The checks also include
 `/status` and `/debug/queue/health`; unready or unknown running generations never
 trigger another launch. Runtime lease/fence recovery remains enabled, but restart
 does not run offline `initialize-wakes`, initialize a missing durable store or

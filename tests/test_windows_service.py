@@ -458,8 +458,9 @@ def test_cooperative_windows_bound_token_written_only_by_owned_listener_lifecycl
     channel = SimpleNamespace(description=generation.record["description"], requested=lambda: False)
     listener = SimpleNamespace(is_serving=lambda: True,
         sockets=[SimpleNamespace(fileno=lambda: 42, getsockname=lambda: ("127.0.0.1", 21987))])
+    channel.bound_instance = lambda *args: service.StopChannel.bound_instance(channel, *args)
     assert not service.StopChannel.bound_ready(channel, token["nonce"], generation.run_dir, 21987)
-    assert service.StopChannel.publish_bound(channel, 21987, [listener])
+    assert service.StopChannel.publish_bound(channel, 21987, [listener], token["public_instance"])
     assert service.StopChannel.bound_ready(channel, token["nonce"], generation.run_dir, 21987)
     service.StopChannel.clear_bound(channel)
     assert not service.StopChannel.bound_ready(channel, token["nonce"], generation.run_dir, 21987)

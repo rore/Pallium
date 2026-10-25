@@ -7,6 +7,8 @@ from tests.test_windows_service import (
 with guard_native_calls():
     from app import windows_service as service
     from app.cli import service as cli
+    original_check_health = cli._check_health
+    original_read_endpoint_json = cli._read_endpoint_json
 
 import json
 import subprocess
@@ -133,10 +135,12 @@ class ManagedGeneration:
                        "config": "same-config", "manifest": self.manifest, "observer": observer,
                        "launcher": launcher, "ancestry": [observer, launcher], "supervisor": supervisor,
                        "task_instance": "instance-" + str(number), "outcome": "running" if running else "failed" if failed else "clean",
-                       "api_ready": {"nonce": "nonce-" + str(number), "identity": api}}
+                       "api_ready": {"nonce": "nonce-" + str(number), "identity": api,
+                                     "public_instance": "public-instance-" + str(number)}}
         self.write_record()
         (self.run_dir / "api_token").write_text(json.dumps({"nonce": self.record["api_ready"]["nonce"], "pid": api["pid"],
-                                                     "bound": {"generation": description, "port": self.manifest["port"]}}), encoding="utf-8")
+                                                     "bound": {"generation": description, "port": self.manifest["port"]},
+                                                     "public_instance": self.record["api_ready"]["public_instance"]}), encoding="utf-8")
         if not running:
             self.write_terminal()
 
@@ -174,7 +178,8 @@ class ManagedGeneration:
         self.install_generation(self.starts + 1)
         return self.record["task_instance"]
 
-    def health(self, port, *, timeout):
+    def health(self, port, *, timeout, expected_instance=None):
+        assert expected_instance == self.record["api_ready"]["public_instance"]
         self.calls.append(("/health", port, timeout))
         self.advance(.01)
         self.health_round += 1
@@ -182,7 +187,8 @@ class ManagedGeneration:
             return {"status": "initializing"}
         return {"status": "ok", "vector_index_ready": True, "embedding_provider_ok": True}
 
-    def endpoint(self, port, path, *, timeout):
+    def endpoint(self, port, path, *, timeout, expected_instance=None):
+        assert expected_instance == self.record["api_ready"]["public_instance"]
         self.calls.append((path, port, timeout))
         self.advance(.02)
         return None if path == self.terminal_endpoint else {}
@@ -582,3 +588,78 @@ def test_cooperative_windows_live_owned_prebind_token_rejects_healthy_foreign_li
     with pytest.raises(service.Unknown, match="ownership"):
         generation.run("start")
     assert generation.starts == 0 and not any(isinstance(call, tuple) for call in generation.calls)
+
+
+@pytest.mark.parametrize("endpoint", ["/health", "/status", "/debug/queue/health"], ids=["health", "status", "queue-health"])
+@pytest.mark.parametrize("marker", [None, "stale-instance", "foreign-instance"], ids=["missing", "stale", "mismatched"])
+def test_cooperative_windows_each_managed_http_probe_requires_public_instance(generation, monkeypatch, endpoint, marker):
+    # Keep own bind/token/PID/Job/process fields valid; only the responder differs.
+    expected = generation.record["api_ready"]["public_instance"]
+    calls = []
+    class Response:
+        def __init__(self, path):
+            self.headers = {} if path == endpoint and marker is None else {
+                service.SERVICE_INSTANCE_HEADER: marker if path == endpoint else expected}
+            self.path = path
+        def read(self):
+            return json.dumps({"status": "ok", "vector_index_ready": True, "embedding_provider_ok": True}).encode()
+        def close(self):
+            pass
+    def respond(url, **_):
+        path = url.split("21987", 1)[1]
+        calls.append(path)
+        return Response(path)
+    monkeypatch.setattr(cli, "_check_health", original_check_health)
+    monkeypatch.setattr(cli, "_read_endpoint_json", original_read_endpoint_json)
+    monkeypatch.setattr(cli.urllib.request, "urlopen", respond)
+    with pytest.raises(service.Unknown, match="running/unready"):
+        generation.run("start")
+    assert calls[-1] == endpoint and generation.starts == 0
+    assert generation.api.exit_code(generation.record["api_ready"]["identity"]["pid"]) is None
+
+
+def test_cooperative_windows_foreign_healthy_listener_during_owned_failed_bind_refuses(generation, monkeypatch):
+    token_path = generation.run_dir / "api_token"
+    token = json.loads(token_path.read_text(encoding="utf-8"))
+    token.pop("bound")
+    token_path.write_text(json.dumps(token), encoding="utf-8")
+    calls = []
+    def foreign(url, **_):
+        calls.append(url)
+        return SimpleNamespace(headers={service.SERVICE_INSTANCE_HEADER: "foreign-instance"},
+            read=lambda: b'{"status":"ok","vector_index_ready":true,"embedding_provider_ok":true}')
+    monkeypatch.setattr(cli, "_check_health", original_check_health)
+    monkeypatch.setattr(cli, "_read_endpoint_json", original_read_endpoint_json)
+    monkeypatch.setattr(cli.urllib.request, "urlopen", foreign)
+    assert generation.api.exit_code(token["pid"]) is None
+    assert generation.api.in_job(token["pid"], generation.record["description"])
+    with pytest.raises(service.Unknown, match="ownership"):
+        generation.run("start")
+    assert calls == [] and generation.starts == 0
+
+
+def test_cooperative_windows_unmanaged_readiness_keeps_legacy_no_header_behavior(generation, monkeypatch):
+    calls = []
+    def respond(url, **_):
+        calls.append(url)
+        return SimpleNamespace(headers={}, read=lambda: b'{"status":"ok","vector_index_ready":true,"embedding_provider_ok":true}')
+    monkeypatch.setattr(cli, "_check_health", original_check_health)
+    monkeypatch.setattr(cli, "_read_endpoint_json", original_read_endpoint_json)
+    monkeypatch.setattr(cli.urllib.request, "urlopen", respond)
+    assert cli._service_ready(21987, timeout=1)
+    assert len(calls) == 3
+    assert not cli._managed_ready(21987, timeout=1)  # missing expected instance is never relaxed
+
+
+def test_cooperative_windows_matching_public_instance_on_all_three_probes_accepts(generation, monkeypatch):
+    expected = generation.record["api_ready"]["public_instance"]
+    paths = []
+    def respond(url, **_):
+        paths.append(url.split("21987", 1)[1])
+        return SimpleNamespace(headers={service.SERVICE_INSTANCE_HEADER: expected},
+            read=lambda: b'{"status":"ok","vector_index_ready":true,"embedding_provider_ok":true}')
+    monkeypatch.setattr(cli, "_check_health", original_check_health)
+    monkeypatch.setattr(cli, "_read_endpoint_json", original_read_endpoint_json)
+    monkeypatch.setattr(cli.urllib.request, "urlopen", respond)
+    assert generation.run("start") == "already running"
+    assert paths == ["/health", "/status", "/debug/queue/health"] and generation.starts == 0

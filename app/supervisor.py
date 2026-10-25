@@ -195,7 +195,7 @@ _API_HEALTH_BODY_MAX_BYTES = 64 * 1024
 
 
 def _probe_initialized_health(
-    host: str, port: int, timeout: float, *, fail_fast: bool = False,
+    host: str, port: int, timeout: float, *, fail_fast: bool = False, expected_instance: str | None = None,
 ) -> bool | None:
     """Accept initialized health; optionally distinguish terminal startup failure."""
     if timeout <= 0:
@@ -227,6 +227,10 @@ def _probe_initialized_health(
         timer.start()
         watchdog = timer
         response = connection.getresponse()
+        if expected_instance is not None:
+            from app.windows_service import SERVICE_INSTANCE_HEADER
+            if response.getheader(SERVICE_INSTANCE_HEADER) != expected_instance:
+                return False
         body = response.read(_API_HEALTH_BODY_MAX_BYTES + 1)
         if len(body) > _API_HEALTH_BODY_MAX_BYTES:
             return False
@@ -274,6 +278,7 @@ def _wait_for_api(
     process: subprocess.Popen | None = None,
     expected_nonce: str | None = None,
     bound_check: Callable[[], bool] | None = None,
+    instance_check: Callable[[], str | None] | None = None,
     run_dir: Path | None = None,
     stop: object | None = None,
     grace_period: float = 3.0,
@@ -335,10 +340,15 @@ def _wait_for_api(
 
         if candidate and bound_check is not None:
             candidate = bound_check()
+        expected_instance = None
+        if candidate and instance_check is not None:
+            expected_instance = instance_check()
+            candidate = expected_instance is not None
         if candidate:
             remaining = deadline - clock()
+            instance_options = {"expected_instance": expected_instance} if expected_instance is not None else {}
             health = (
-                _probe_initialized_health(host, port, min(1.0, remaining), fail_fast=verified_owned)
+                _probe_initialized_health(host, port, min(1.0, remaining), fail_fast=verified_owned, **instance_options)
                 if remaining > 0 else False
             )
             if health is None and verified_owned:
@@ -445,6 +455,7 @@ def _start_api_with_retry(
         ownership = {}
         if cooperative is not None:
             ownership["bound_check"] = lambda: cooperative.bound_ready(nonce, run_dir, port)
+            ownership["instance_check"] = lambda: cooperative.bound_instance(nonce, run_dir, port)
         if wait_for_api_fn(
             host, port, timeout=_API_START_TIMEOUT_SECONDS, process=proc,
             expected_nonce=nonce, run_dir=run_dir, stop=stop, **ownership,

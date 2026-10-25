@@ -25,6 +25,7 @@ import time
 GENERATION_ENV = "PALLIUM_WINDOWS_GENERATION"
 ADMISSION_ENV = "PALLIUM_WINDOWS_ADMISSION_DEADLINE"
 MANAGED_MARKER = "' Pallium cooperative launcher v1"
+SERVICE_INSTANCE_HEADER = "X-Pallium-Service-Instance"
 _STILL_ACTIVE = 259
 _NATIVE = None
 
@@ -510,7 +511,7 @@ class StopChannel:
         if absolute is not None and (not math.isfinite(float(absolute)) or time.perf_counter() >= float(absolute)):
             raise Unknown("transaction admission expired; suspended roots retained")
 
-    def publish_bound(self, port, listeners):
+    def publish_bound(self, port, listeners, public_instance):
         # Only OwnedServer's post-bind lifecycle calls this; lifespan token != bind.
         if self.requested():
             return False
@@ -523,10 +524,13 @@ class StopChannel:
         token = _json(path)
         if token.get("pid") != os.getpid() or token.get("nonce") != os.environ.get("PALLIUM_API_LAUNCH_TOKEN"):
             raise Unknown("post-bind token does not identify this API instance")
+        if not isinstance(public_instance, str) or not public_instance or public_instance == token.get("nonce"):
+            raise Unknown("public service instance must be distinct from the startup nonce")
         record = _json(home / "run" / "windows-generation.json")
         if record.get("description") != self.description or record.get("manifest", {}).get("port") != port:
             raise Unknown("post-bind generation/port identity changed")
         token["bound"] = {"generation": self.description, "port": port}
+        token["public_instance"] = public_instance
         _write(path, token)
         return True
 
@@ -540,13 +544,20 @@ class StopChannel:
             token.pop("bound", None)
             _write(path, token)
 
-    def bound_ready(self, nonce, run_dir, port):
+    def bound_instance(self, nonce, run_dir, port):
         try:
             token = _json(run_dir / "api_token")
         except (OSError, ValueError):
-            return False
-        return (token.get("nonce") == nonce and type(token.get("pid")) is int
-                and token.get("bound") == {"generation": self.description, "port": port})
+            return None
+        instance = token.get("public_instance")
+        if (token.get("nonce") == nonce and type(token.get("pid")) is int
+                and token.get("bound") == {"generation": self.description, "port": port}
+                and isinstance(instance, str) and instance and instance != nonce):
+            return instance
+        return None
+
+    def bound_ready(self, nonce, run_dir, port):
+        return self.bound_instance(nonce, run_dir, port) is not None
 
     def publish_ready(self, nonce, run_dir):
         # Reuse the API's existing launch-token read path after supervisor startup.
@@ -567,7 +578,11 @@ class StopChannel:
                 raise Unknown("generation changed during API startup")
             if token.get("bound") != {"generation": self.description, "port": record["manifest"]["port"]}:
                 raise Unknown("API startup token does not prove successful owned binding")
-            record["api_ready"] = {"nonce": nonce, "identity": self.api.identity(process, token["pid"])}
+            instance = token.get("public_instance")
+            if not isinstance(instance, str) or not instance or instance == nonce:
+                raise Unknown("public service instance correlation is missing or invalid")
+            record["api_ready"] = {"nonce": nonce, "identity": self.api.identity(process, token["pid"]),
+                                   "public_instance": instance}
             _write(path, record)
         finally:
             self.api.close(process)
@@ -931,6 +946,9 @@ def _owned_ready(home, record, manifest, deadline, api, handles, ready):
     proof = current.get("api_ready")
     if not isinstance(proof, dict):
         return False
+    instance = proof.get("public_instance")
+    if not isinstance(instance, str) or not instance or instance == proof.get("nonce"):
+        return False
     identity = proof["identity"]
     deadline.remaining()
     api_handle = api.process(identity["pid"])
@@ -945,6 +963,7 @@ def _owned_ready(home, record, manifest, deadline, api, handles, ready):
             token = _json(home / "run" / "api_token")
             return (token.get("nonce") == proof.get("nonce") and token.get("pid") == identity["pid"]
                     and token.get("bound") == {"generation": record["description"], "port": manifest["port"]}
+                    and token.get("public_instance") == instance
                     and api.identity(api_handle, identity["pid"]) == identity
                     and api.identity(supervisor, record["supervisor"]["pid"]) == record["supervisor"]
                     and api.in_job(api_handle, handles[2]) and api.in_job(supervisor, handles[2])
@@ -952,7 +971,7 @@ def _owned_ready(home, record, manifest, deadline, api, handles, ready):
                     and api.exit_code(handles[0]) is None and not api.signaled(stop_event))
         if not deadline.read(valid):
             raise Unknown("API nonce/process ownership does not match this generation")
-        result = deadline.read(lambda: ready(manifest["port"], deadline.remaining()))
+        result = deadline.read(lambda: ready(manifest["port"], deadline.remaining(), expected_instance=instance))
         if not deadline.read(valid):
             raise Unknown("API ownership changed during health probes")
         return result

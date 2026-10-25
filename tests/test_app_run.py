@@ -264,6 +264,7 @@ def test_cooperative_windows_owned_exit_latches_before_main_loop(monkeypatch):
             self.config.app()
         async def main_loop(self):
             assert self.should_exit
+    monkeypatch.setattr(app_run.secrets, "token_hex", lambda _: "independent-public-entropy")
     monkeypatch.setattr(windows_service, "inherited_stop", lambda: channel)
     monkeypatch.setattr(app_run.uvicorn, "Config", lambda *_, **__: SimpleNamespace(workers=1, app=None))
     monkeypatch.setattr(app_run.uvicorn, "Server", Server)
@@ -283,7 +284,8 @@ def test_cooperative_windows_postbind_lifecycle_proof_tracks_listener(monkeypatc
     from types import SimpleNamespace
     from app import windows_service
     trace = []
-    def bound(port, listeners):
+    def bound(port, listeners, instance):
+        assert instance == "instance-independent-public-entropy"
         assert port == 21987 and listeners == ["owned-listener"]
         trace.append("bound")
         return True
@@ -302,6 +304,7 @@ def test_cooperative_windows_postbind_lifecycle_proof_tracks_listener(monkeypatc
         async def main_loop(self):
             assert trace == ["bound"]
             trace.append("loop")
+    monkeypatch.setattr(app_run.secrets, "token_hex", lambda _: "independent-public-entropy")
     monkeypatch.setattr(windows_service, "inherited_stop", lambda: channel)
     monkeypatch.setattr(app_run.uvicorn, "Config", lambda *_, **__: SimpleNamespace(workers=1, app=None))
     monkeypatch.setattr(app_run.uvicorn, "Server", Server)
@@ -312,3 +315,36 @@ def test_cooperative_windows_postbind_lifecycle_proof_tracks_listener(monkeypatc
         with pytest.raises(SystemExit):
             app_run._serve(host="127.0.0.1", port=21987, reload=False)
         assert trace == ["close"]
+
+
+def test_cooperative_windows_managed_header_is_public_and_unmanaged_config_unchanged(monkeypatch):
+    from types import SimpleNamespace
+    from app import windows_service
+    options, entropy = [], []
+    public_values = iter(("fresh-public-random", "second-public-random"))
+    channel = SimpleNamespace(close=lambda: None)
+    def public_entropy(size):
+        entropy.append(size)
+        return next(public_values)
+    def config(*_, **kwargs):
+        options.append(kwargs)
+        return SimpleNamespace(workers=1, app=None)
+    class Server:
+        def __init__(self, config):
+            self.config, self.started = config, False
+        def run(self):
+            self.started = True
+    monkeypatch.setenv("PALLIUM_API_LAUNCH_TOKEN", "private-startup-nonce")
+    monkeypatch.setattr(app_run.secrets, "token_hex", public_entropy)
+    monkeypatch.setattr(app_run.uvicorn, "Config", config)
+    monkeypatch.setattr(app_run.uvicorn, "Server", Server)
+    monkeypatch.setattr(windows_service, "inherited_stop", lambda: channel)
+    app_run._serve(host="127.0.0.1", port=21987, reload=False)
+    assert options[-1]["headers"] == [("X-Pallium-Service-Instance", "instance-fresh-public-random")]
+    assert "private-startup-nonce" not in repr(options[-1]) and entropy == [16]
+    app_run._serve(host="127.0.0.1", port=21987, reload=False)
+    assert options[-1]["headers"] == [("X-Pallium-Service-Instance", "instance-second-public-random")]
+    assert options[-1]["headers"] != options[-2]["headers"] and entropy == [16, 16]
+    monkeypatch.setattr(windows_service, "inherited_stop", lambda: None)
+    app_run._serve(host="127.0.0.1", port=21987, reload=False)
+    assert "headers" not in options[-1] and entropy == [16, 16]

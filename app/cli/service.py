@@ -242,33 +242,44 @@ def _is_pid_alive(pid: int) -> bool:
             return False
 
 
-def _check_health(port: int, timeout: float = 3.0) -> dict | None:
+def _check_health(port: int, timeout: float = 3.0, *, expected_instance=None) -> dict | None:
     try:
         resp = urllib.request.urlopen(
             f"http://127.0.0.1:{port}/health", timeout=timeout
         )
+        if expected_instance is not None:
+            from app.windows_service import SERVICE_INSTANCE_HEADER
+            if resp.headers.get(SERVICE_INSTANCE_HEADER) != expected_instance:
+                resp.close()
+                return None
         return json.loads(resp.read())
     except Exception:
         return None
 
 
-def _read_endpoint_json(port: int, path: str, timeout: float = 3.0) -> dict | None:
+def _read_endpoint_json(port: int, path: str, timeout: float = 3.0, *, expected_instance=None) -> dict | None:
     try:
         resp = urllib.request.urlopen(f"http://127.0.0.1:{port}{path}", timeout=timeout)
+        if expected_instance is not None:
+            from app.windows_service import SERVICE_INSTANCE_HEADER
+            if resp.headers.get(SERVICE_INSTANCE_HEADER) != expected_instance:
+                resp.close()
+                return None
         payload = json.loads(resp.read())
         return payload if isinstance(payload, dict) else None
     except Exception:
         return None
 
 
-def _service_ready(port: int, timeout: float = 3.0, *, probe_limit=None, queue_limit=None) -> bool:
+def _service_ready(port: int, timeout: float = 3.0, *, probe_limit=None, queue_limit=None, expected_instance=None) -> bool:
     deadline = time.monotonic() + timeout
 
     def remaining(limit=None) -> float:
         available = deadline - time.monotonic()
         return max(0.001, min(available, limit) if limit is not None else available)
 
-    health = _check_health(port, timeout=remaining(probe_limit))
+    instance_options = {"expected_instance": expected_instance} if expected_instance is not None else {}
+    health = _check_health(port, timeout=remaining(probe_limit), **instance_options)
     if not health or health.get("status") != "ok":
         return False
     if health.get("vector_index_ready") is not True:
@@ -277,18 +288,20 @@ def _service_ready(port: int, timeout: float = 3.0, *, probe_limit=None, queue_l
         return False
     if time.monotonic() >= deadline:
         return False
-    if _read_endpoint_json(port, "/status", timeout=remaining(probe_limit)) is None:
+    if _read_endpoint_json(port, "/status", timeout=remaining(probe_limit), **instance_options) is None:
         return False
     if time.monotonic() >= deadline:
         return False
     queue_health = _read_endpoint_json(
-        port, "/debug/queue/health", timeout=remaining(queue_limit)
+        port, "/debug/queue/health", timeout=remaining(queue_limit), **instance_options
     )
     return queue_health is not None and time.monotonic() < deadline
 
 
-def _managed_ready(port, timeout):
-    return _service_ready(port, timeout, probe_limit=2.0, queue_limit=10.0)
+def _managed_ready(port, timeout, *, expected_instance=None):
+    if not isinstance(expected_instance, str) or not expected_instance:
+        return False
+    return _service_ready(port, timeout, probe_limit=2.0, queue_limit=10.0, expected_instance=expected_instance)
 
 
 def _wait_for_service(

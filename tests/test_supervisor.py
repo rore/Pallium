@@ -1427,3 +1427,31 @@ def test_cooperative_windows_prebind_token_cannot_accept_foreign_healthy_listene
         process=root, expected_nonce="own-attempt", run_dir=tmp_path,
         bound_check=lambda: False, clock=lambda: now[0], sleep_fn=advance)
     assert connects and not health and root.poll() is None
+
+
+@pytest.mark.parametrize("marker", ["own-public-instance", None, "stale-instance", "foreign-instance"], ids=["matching", "missing", "stale", "foreign"])
+def test_cooperative_windows_supervisor_health_checks_responding_instance(monkeypatch, marker):
+    from types import SimpleNamespace
+    from app import supervisor as module, windows_service
+    calls = []
+    class Timer:
+        def __init__(self, *_):
+            pass
+        def start(self):
+            calls.append("fake-timer-start")
+        def cancel(self):
+            pass
+        def join(self):
+            pass
+    response = SimpleNamespace(status=200,
+        getheader=lambda name: marker if name == windows_service.SERVICE_INSTANCE_HEADER else None,
+        read=lambda *_: b'{"status":"ok","initialized":true}')
+    connection = SimpleNamespace(sock=SimpleNamespace(settimeout=lambda _: None),
+        request=lambda *args: calls.append(args), getresponse=lambda: response,
+        close=lambda: calls.append("closed"))
+    monkeypatch.setattr(module.http.client, "HTTPConnection", lambda *_args, **_kwargs: connection)
+    monkeypatch.setattr(module.threading, "Timer", Timer)
+    monkeypatch.setattr(module, "time", SimpleNamespace(monotonic=lambda: 0))
+    result = module._probe_initialized_health("127.0.0.1", 21987, 1, expected_instance="own-public-instance")
+    assert result is (marker == "own-public-instance")
+    assert calls[-1] == "closed" and ("GET", "/health") in calls

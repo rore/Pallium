@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import secrets
 import sys
 
 import uvicorn
@@ -16,10 +17,15 @@ logger = logging.getLogger(__name__)
 
 
 def _serve(*, host: str, port: int, reload: bool) -> None:
-    from app.windows_service import inherited_stop
+    from app.windows_service import inherited_stop, SERVICE_INSTANCE_HEADER
     channel = inherited_stop()
     options = dict(factory=True, host=host, port=port, reload=reload,
                    log_config=build_uvicorn_log_config(component="api"))
+    public_instance = None
+    if channel is not None:
+        # Public correlation only; independent of startup/control/authentication nonces.
+        public_instance = "instance-" + secrets.token_hex(16)
+        options["headers"] = [(SERVICE_INSTANCE_HEADER, public_instance)]
     config = uvicorn.Config("app.main:app", **options)
     if reload or config.workers > 1:
         if channel is not None:
@@ -46,7 +52,7 @@ def _serve(*, host: str, port: int, reload: bool) -> None:
                 self.should_exit = True
             published = False
             if channel is not None and self.started and not self.exit_requested and not channel.requested():
-                published = channel.publish_bound(port, self.servers)
+                published = channel.publish_bound(port, self.servers, public_instance)
             try:
                 await super().main_loop()
             finally:
