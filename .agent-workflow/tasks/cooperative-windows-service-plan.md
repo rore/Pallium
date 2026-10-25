@@ -58,11 +58,19 @@ Agent technical review: parent-forwarded SAME Astra bounded scope GO on f04c34e9
 **Approvals:**
 Parent delegated task-owner source/mock authorization and forwarded SAME GO dated 2026-10-25 are recorded below and in the baseline change chain. No tests or collection without separate quota/slot allocation; no installed environment change or native OS experiment. Authorization is supplied through the parent, not represented as an independently observed human statement.
 
+Approved by user 2026-10-25: "I approve". Direct user consent in this chat, responding to the explicit question approving the cooperative Windows recovery source change and publication for PR review, with merge only after passing checks and no installation or live restart. This supersedes the publication hold for this isolated branch only. It does not assert personal diff review, successful qualification, or approval of live environment changes. Earlier forwarded consent remains historical and is not the basis for this approval.
+
 **Exceptions:**
 —
 
-**State:** Ready to implement
+**State:** Blocked
 <!-- agent-workflow:end -->
+
+## Direct publication approval and remaining qualification — 2026-10-25
+
+Direct user consent above permits publication for review; it does not remove the qualification hold. The workflow check using the existing isolated cooperative runtime and retained whole-change Redline verdict passes (status clean, exit_code 0; build/direct-approval-workflow-check.json). The default invocation lacked the retained verdict; supplying its existing path resolved that configuration omission without changing policy. git diff --check passes. No application tests were repeated for this approval-only edit.
+
+Publish as a draft review PR. Full non-slow qualification remains incomplete: the v4 run stopped after 1640 passed, 1 failed, 3 skipped and 1 xfailed at test_codex_install_reports_hook_review_boundary_and_preserves_codex_trust, with WinError 5 during os.replace in app/codex_readiness.py. The bounded serial diagnostic passed but did not reproduce or resolve its cause. Accepted focused/mock and two loopback HTTP lifecycle results do not substitute for this full-suite requirement or native Windows service qualification. No merge, installation or live restart is claimed or permitted by this checkpoint.
 
 ## Implementation
 
