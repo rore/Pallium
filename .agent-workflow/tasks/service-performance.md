@@ -1,5 +1,11 @@
 # Service-wide performance investigation and correction
 
+## Current-source focused qualification (2026-10-27)
+
+Actual composed-source/qualification-plan GO: @astra-reviewer turn01a17a7f-06fe-7fd3-91eb-9342ceda04a6 at ca6dd280d6ad1f16d1bb27d7ea5d833eb6ef0ab1. Both guards retain current-main cleanup/atomic authority and364 recovery safeguards. Runtime manifest build/pr325-current-source/runtime.json verifies all current dependency bounds and exact imports from this checkout, using the existing read-only Python3.13.14/AnyIO4.14.2 interpreter; no package or installed change. Fresh neutral temporary HOME/USERPROFILE/TEMP and stripped inherited integration/credential scope isolate the child process.
+
+Focused caller-surface guard cohort passed56checks,92deselected,43.11s; focused.xml/log and command metadata retain exact source identity. Receipt negative preflight, matching/uncertain/read-close fallback, revalidation and post-PRAGMA deadline boundaries are covered; deselection is not a skip or a platform pass. Next approved phase is affected MCP lifecycle, SQLite retry and the three changed retained-recovery/worker files under the same supported isolation, with native timing/fences unchanged. Cohorts overlap and are not additive. Required whole-change/platform/current-head CI and independent result review remain pending; original failed receipts and unknown historical acquisition cause stay intact.
+
 ## PR325 current-main record merge reconciliation (2026-10-27)
 
 The active canonical marker remains PR325's original immutable baseline,51-entry ordered behavior chain and High/Large classification, with the new source-integration plan. Main4b9's47-entry divergent chain and lower-risk structured context belong to already merged contributions: PR335 at07a27ee3 and PR340 atef2673f5 (verified GitHub MERGED). Their completed history sections are retained verbatim here; their exact full structured snapshot remains in immutable merge-parent4b9, record blob93dc8da811512b5c63790ae9c02d2e27e95acab1. It is not substituted for active325 authority, and no old failure becomes a pass. No duplicate structured marker or concatenated incompatible chain is introduced. The record-only conflict was resolved deterministically, limited to this named file; original parents retain both complete source versions.
