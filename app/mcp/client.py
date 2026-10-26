@@ -106,6 +106,7 @@ class PalliumMcpClient:
         work_refs: list[str] | None = None,
         source_thread_ref: str | None = None,
         request_source_item_id: str | None = None,
+        relay_name: str | None = None,
         defer_delivery: bool = False,
     ) -> dict[str, Any]:
         """Source-only history search: raw prior turns ranked on their own.
@@ -135,6 +136,8 @@ class PalliumMcpClient:
             payload["work_refs"] = work_refs
         if request_source_item_id is not None:
             payload["request_source_item_id"] = request_source_item_id
+        if relay_name is not None:
+            payload["relay_name"] = relay_name
         return await self._post("/query", payload)
 
     async def search_history_by_work_ref(

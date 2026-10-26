@@ -6,6 +6,7 @@ import contextvars
 import json
 import logging
 from pathlib import Path
+import re
 import secrets
 import threading
 from typing import Any
@@ -267,6 +268,37 @@ def register(ctx):
         digest = hashlib.sha256((profile + "\0" + container + "\0" + session_id).encode()).hexdigest()
         return f"{kind}:{digest}"
 
+    def user_source_id(session_id, turn_id):
+        encoded = json.dumps([profile, container, session_id, turn_id, "user"], ensure_ascii=False)
+        return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+    def relay_snapshot(session):
+        if "alias" not in session:
+            return ("unavailable", None)
+        name = session["alias"]
+        if name is None:
+            return ("unnamed", None)
+        if isinstance(name, str) and re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,31}", name):
+            return ("named", name)
+        return ("unavailable", None)
+
+    def attribution_fields(capture, source_id):
+        if not isinstance(capture, dict) or capture.get("source_turn_id") != source_id:
+            return {}
+        snapshot = capture.get("snapshot")
+        if not isinstance(snapshot, (list, tuple)) or len(snapshot) != 2:
+            return {}
+        attribution_state, name = snapshot
+        if not isinstance(attribution_state, str):
+            return {}
+        if attribution_state == "named":
+            if not isinstance(name, str) or not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,31}", name):
+                return {}
+        elif attribution_state not in {"unnamed", "unavailable"} or name is not None:
+            return {}
+        return {"source_turn_id": source_id, "relay_name": name,
+                "relay_attribution_state": attribution_state}
+
     def scope(session_id):
         value = state.get(key("session", session_id))
         if (isinstance(value, dict) and value.get("profile") == profile
@@ -274,6 +306,48 @@ def register(ctx):
                 and _text(value.get("endpoint_id"), 128)):
             return value
         return None
+
+    def fixed_capture(session_id, turn_id, text, record=None, snapshot=None):
+        """Freeze passive role provenance from the validated Relay turn response."""
+        slot = key("capture-turn", session_id + "\0" + turn_id)
+        value = state.get(slot)
+        digest = hashlib.sha256(text.encode()).hexdigest()
+        current = scope(session_id)
+        if value is not None:
+            if (not isinstance(value, dict) or type(value.get("version")) is not int
+                    or value.get("version") != 1 or value.get("state") != "active"
+                    or value.get("profile") != profile or value.get("session_ref") != session_id
+                    or value.get("turn_id") != turn_id or value.get("container_ref") != container
+                    or value.get("actor_ref") != topology_signature[4]
+                    or not current or value.get("endpoint_id") != current["endpoint_id"]
+                    or value.get("user_digest") != digest):
+                raise ValueError("Saved Hermes capture turn is ended or invalid")
+            return value
+        if record is None:
+            return None
+        if not profile_ok() or current != record:
+            raise ValueError("Hermes capture scope changed before freezing")
+        if not isinstance(snapshot, (list, tuple)) or len(snapshot) != 2:
+            raise ValueError("Hermes Relay name snapshot is unavailable")
+        value = {"version": 1, "state": "active", **record,
+                 "actor_ref": topology_signature[4], "turn_id": turn_id,
+                 "user_digest": digest,
+                 "capture": {"source_turn_id": user_source_id(session_id, turn_id),
+                             "snapshot": list(snapshot)}}
+        state.set(slot, value)
+        return value
+
+    def fail_capture(session_id, turn_id, text):
+        """Fence a first turn whose Relay identity could not be validated."""
+        slot = key("capture-turn", session_id + "\0" + turn_id)
+        if state.get(slot) is not None or not profile_ok():
+            return
+        current = scope(session_id)
+        state.set(slot, {"version": 1, "state": "unavailable", "profile": profile,
+                         "container_ref": container, "actor_ref": topology_signature[4],
+                         "session_ref": session_id, "turn_id": turn_id,
+                         "endpoint_id": current.get("endpoint_id") if current else None,
+                         "user_digest": hashlib.sha256(text.encode()).hexdigest()})
 
     def wake_scope(session_id):
         value = state.get(key("wake", session_id))
@@ -349,7 +423,7 @@ def register(ctx):
                 return None
             state.set(key("session", session_id), record)
             sessions[session_id] = record
-        return record
+        return record, relay_snapshot(session)
 
     def poll_session(session_id, record):
         if not profile_ok():
@@ -411,7 +485,23 @@ def register(ctx):
             wake = wake_scope(session_id)
         if wake is None or text != _marker(wake["delivery_id"], wake["nonce"]):
             try:
-                if register_session(session_id):
+                if not text.startswith("[[PALLIUM_RELAY_"):
+                    with lock:
+                        fixed_capture(session_id, turn_id, text)
+                registration = register_session(session_id)
+                if not registration:
+                    if not text.startswith("[[PALLIUM_RELAY_"):
+                        try:
+                            with lock:
+                                fail_capture(session_id, turn_id, text)
+                        except Exception:
+                            LOG.debug("Hermes failed to persist unavailable role snapshot", exc_info=True)
+                    return None
+                if registration:
+                    record, snapshot = registration
+                    if not text.startswith("[[PALLIUM_RELAY_"):
+                        with lock:
+                            fixed_capture(session_id, turn_id, text, record, snapshot)
                     ensure_poller()
                     if bridge:
                         orientation = {
@@ -426,6 +516,12 @@ def register(ctx):
                                 + ("Optional memory tools are enabled with fixed private write scope."
                                    if topology_signature[6] else "Optional memory tools are disabled in this profile.")}
             except Exception:
+                if not text.startswith("[[PALLIUM_RELAY_"):
+                    try:
+                        with lock:
+                            fail_capture(session_id, turn_id, text)
+                    except Exception:
+                        LOG.debug("Hermes failed to persist unavailable role snapshot", exc_info=True)
                 LOG.debug("Hermes Relay session registration deferred", exc_info=True)
             return None
         with lock:
@@ -827,6 +923,13 @@ def register(ctx):
         synthetic = user_message.startswith("[[PALLIUM_RELAY_WAKE:")
         if synthetic and (not wake or user_message != _marker(wake["delivery_id"], wake["nonce"])):
             return
+        try:
+            with lock:
+                frozen = fixed_capture(session_id, turn_id, user_message)
+        except (TypeError, ValueError):
+            frozen = None
+        attribution = (attribution_fields(frozen.get("capture"), user_source_id(session_id, turn_id))
+                       if frozen and not synthetic else {})
         rows = []
         for row in ((assistant,) if synthetic else (user, assistant)):
             uid = row["message_uid"]
@@ -836,6 +939,8 @@ def register(ctx):
                 "content": row["content"], "role": row["role"], "artifact_kind": "message",
                 "container_ref": container, "thread_ref": session_id, "agent_ref": RUNTIME,
                 "actor_ref": topology_signature[4], "visibility": "private",
+                **(attribution if row["role"] == "user" else
+                   {"source_turn_id": attribution["source_turn_id"]} if attribution else {}),
                 "metadata": {**metadata, "hermes_message_uid": uid,
                              "capture_origin": "relay_wake" if synthetic else "user_turn"},
             })
@@ -845,9 +950,11 @@ def register(ctx):
             LOG.warning("Hermes History capture unavailable; this snapshot was not confirmed")
 
     def clear_session(session_id="", turn_id="", **_context):
-        if not _host_id(session_id) or not _host_id(turn_id):
+        if not _host_id(session_id) or not _host_id(turn_id) or not profile_ok():
             return
         with lock:
+            state.set(key("capture-turn", session_id + "\0" + turn_id),
+                      {"version": 1, "state": "ended"})
             if turn_contexts.pop((session_id, turn_id), None) is not None:
                 ended_turns[session_id] = turn_id
             wake = wake_scope(session_id)

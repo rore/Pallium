@@ -6,7 +6,7 @@ const WAKE_TEXT = "[Pallium Relay wake: check the lower-authority Relay context 
 const POLL_MS = 2500;
 const BUDGET = 2300;
 const MAX_HISTORY = 20000;
-const validInput = (id) => typeof id === "string" && /^msg_[A-Za-z0-9_-]+$/.test(id);
+const validInput = (id) => typeof id === "string" && id.length <= 512 && /^msg_[A-Za-z0-9_-]+$/.test(id);
 const validDelivery = (id) => typeof id === "string" && /^relay-delivery-[0-9a-f]{32}$/.test(id);
 const sameLocation = (a, b) => typeof a === "string" && typeof b === "string" &&
   (process.platform === "win32" ? path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase() : path.resolve(a) === path.resolve(b));
@@ -32,7 +32,8 @@ export default {
     const state = (id) => {
       if (disposed) return null;
       let item = sessions.get(id);
-      if (!item) { item = { busy: false, wakeBusy: false, seen: new Set(), captures: new Set(), lastAssistant: null, abort: new AbortController() }; sessions.set(id, item); }
+      if (!item) { item = { busy: false, wakeBusy: false, seen: new Set(), captures: new Set(), completedCaptures: new Set(), lastAssistant: null,
+        roleTurns: new Map(), naturalClaims: new Map(), abort: new AbortController() }; sessions.set(id, item); }
       return item;
     };
     const live = (id, item, signal = item?.abort.signal) => !disposed && item &&
@@ -61,10 +62,13 @@ export default {
         item.abort.abort();
         item.abort = new AbortController();
         item.captures = new Set();
+        item.completedCaptures = new Set();
         item.lastAssistant = null;
         item.busy = false;
         item.wakeBusy = false;
-        item.naturalClaim = null;
+        // Relay claims are generation-scoped; role snapshots remain immutable
+        // so delayed assistant output can still bind to its original input.
+        item.naturalClaims = new Map();
         item.memory = null;
         item.wake = null;
       }
@@ -154,6 +158,42 @@ export default {
           void runWake(id, item, response.wake);
       } finally { if (live(id, item, signal)) item.busy = false; }
     };
+    const requestNaturalTurn = (id, item, inputId, relayBudget, discovery, claim, roleTurn = null) => {
+      if (claim.response) return Promise.resolve(claim.response);
+      if (claim.promise) return claim.promise;
+      const pending = (async () => {
+        const response = await pallium.relayRequest("POST", "/relay/turn", {
+          runtime: "opencode", session_ref: id, container_ref: scope(id), max_chars: relayBudget,
+          structural_work_refs: pallium.structuralWorkRefsPayload(scope(id), discovery.structuralRefs, pallium.repositoryScopeRef(cwd)),
+        }, pallium.HTTP_TIMEOUT_MS, item.abort.signal);
+        if (!live(id, item)) return null;
+        if (response?.session) {
+          if (!remember(id, item, response.session)) return null;
+          if (roleTurn) roleTurn.snapshot = pallium.relayNameSnapshot(response, id, scope(id));
+          // remember() clears generation-scoped claims; restore this already
+          // validated response for the input that made the exact request.
+          if (!item.naturalClaims.has(inputId)) item.naturalClaims.set(inputId, claim);
+          void enroll(id, item);
+        }
+        claim.response = response?.session ? response : null;
+        return claim.response;
+      })();
+      claim.promise = pending;
+      const clearPending = () => { if (claim.promise === pending) claim.promise = null; };
+      void pending.then(clearPending, clearPending);
+      return pending;
+    };
+    const ensureNaturalTurn = (id, item, inputId, promptText, relayBudget, discovery) => {
+      const inputHash = createHash("sha256").update(String(promptText || "")).digest("hex");
+      const existing = item.naturalClaims.get(inputId);
+      if (existing) return existing.inputHash === inputHash ? existing : null;
+      const roleTurn = { inputHash, snapshot: { relay_name: null, relay_attribution_state: "unavailable" } };
+      const claim = { inputHash, acked: false, response: null, promise: null };
+      item.roleTurns.set(inputId, roleTurn);
+      item.naturalClaims.set(inputId, claim);
+      void requestNaturalTurn(id, item, inputId, relayBudget, discovery, claim, roleTurn);
+      return claim;
+    };
     const ingestAssistant = async (id) => {
       const token = { valid: true };
       let pending = assistantChecks.get(id);
@@ -170,37 +210,53 @@ export default {
       }
       const signal = item?.abort.signal;
       const captures = item?.captures;
-      let sourceId;
-      let reserved = false;
+      const reserved = [];
       try {
         if (!live(id, item, signal)) return;
         const messages = rows(await ctx.session.context({ sessionID: id }));
         if (!await owned(id, item, signal)) return;
-        const lastUser = messages.findLastIndex((message) => message?.type === "user");
-        const assistants = messages.slice(lastUser + 1).filter((message) => message?.type === "assistant");
-        if (!assistants.length || assistants.some((message) => !validInput(message.id) || !Number.isFinite(message.time?.completed))) return;
-        const turn = pallium.extractV2AssistantTurn(messages);
-        if (!turn?.assistant_text || turn.assistant_text.length > MAX_HISTORY) return;
-        const actor = pallium.resolveActorRef(cwd, id);
-        const container = scope(id);
-        sourceId = "oc-assistant-" + createHash("sha256").update(JSON.stringify([
-          "opencode-assistant/v1", pallium.AGENT_REF, actor, container, id, assistants.at(-1).id,
-        ])).digest("hex");
-        if (sourceId === item.lastAssistant || captures.has(sourceId)) return;
-        const workTrace = pallium.buildWorkTraceMetadata(turn);
-        const metadata = { ...pallium.buildWorkRefsMetadata(cwd), ...(workTrace ? { agent_work_trace_turn: workTrace, cwd } : {}) };
-        captures.add(sourceId);
-        reserved = true;
-        const response = await pallium.palliumRequest("POST", "/items", [{
-          source_type: pallium.SOURCE_TYPE, source_id: sourceId, content_type: "text/plain",
-          content: turn.assistant_text, role: "assistant", agent_ref: pallium.AGENT_REF,
-          container_ref: container, thread_ref: id, actor_ref: actor,
-          visibility: "private", artifact_kind: "message", ...(Object.keys(metadata).length ? { metadata } : {}),
-        }], signal);
-        if (Array.isArray(response) && response.length === 1 && typeof response[0]?.source_item_id === "string" &&
-            response[0].source_item_id.trim() && await owned(id, item, signal) && live(id, item, signal)) item.lastAssistant = sourceId;
+        let boundary = -1;
+        for (let end = 0; end < messages.length; end++) {
+          if (messages[end]?.type !== "idle") continue;
+          const segment = messages.slice(boundary + 1, end);
+          boundary = end;
+          const users = segment.filter((message) => message?.type === "user");
+          const assistants = segment.filter((message) => message?.type === "assistant");
+          if (users.length !== 1 || !validInput(users[0]?.id) || !assistants.length || assistants.some((message) =>
+            !validInput(message.id) || !Number.isFinite(message.time?.completed))) continue;
+          const roleTurn = item.roleTurns.get(users[0].id);
+          if (!roleTurn) continue;
+          const segmentTurn = pallium.extractV2AssistantTurn(segment);
+          if (!segmentTurn?.assistant_text || segmentTurn.assistant_text.length > MAX_HISTORY) continue;
+          const actor = pallium.resolveActorRef(cwd, id);
+          const container = scope(id);
+          for (const assistant of assistants) {
+            const sourceId = pallium.ocNativeMessageSourceId("assistant", id, assistant.id);
+            if (!sourceId || sourceId === item.lastAssistant || item.completedCaptures.has(sourceId) || captures.has(sourceId)) continue;
+            const turn = pallium.extractV2AssistantTurn([assistant]);
+            if (!turn?.assistant_text || turn.assistant_text.length > MAX_HISTORY) continue;
+            const workTrace = pallium.buildWorkTraceMetadata(segmentTurn);
+            const metadata = { ...pallium.buildWorkRefsMetadata(cwd), ...(workTrace ? { agent_work_trace_turn: workTrace, cwd } : {}) };
+            captures.add(sourceId);
+            reserved.push(sourceId);
+            const response = await pallium.palliumRequest("POST", "/items", [{
+              source_type: pallium.SOURCE_TYPE, source_id: sourceId, content_type: "text/plain",
+              content: turn.assistant_text, role: "assistant", agent_ref: pallium.AGENT_REF,
+              container_ref: container, thread_ref: id, actor_ref: actor,
+              visibility: "private", artifact_kind: "message", source_turn_id: users[0].id,
+              relay_name: roleTurn.snapshot.relay_name,
+              relay_attribution_state: roleTurn.snapshot.relay_attribution_state,
+              ...(Object.keys(metadata).length ? { metadata } : {}),
+            }], signal);
+            if (Array.isArray(response) && response.length === 1 && typeof response[0]?.source_item_id === "string" &&
+                response[0].source_item_id.trim() && await owned(id, item, signal) && live(id, item, signal)) {
+              item.completedCaptures.add(sourceId);
+              item.lastAssistant = sourceId;
+            }
+          }
+        }
       } catch (error) { log(`V2 assistant ingest failed: ${String(error)}`); }
-      finally { if (reserved) captures.delete(sourceId); }
+      finally { for (const sourceId of reserved) captures.delete(sourceId); }
     };
 
     registrations.push(await ctx.session.hook("prompt", async (event) => {
@@ -223,10 +279,21 @@ export default {
       const container = scope(id);
       pallium.pinContainer(id, container, undefined, actor);
       const discovery = pallium.discoverWorkRefs(cwd);
+      const scopeText = pallium.formatInjection([], container, BUDGET, id, actor, pallium.AGENT_REF, "private", null,
+        pallium.injectedWorkRef(discovery));
+      const claim = event.metadata?.pallium_relay_wake === true ? null :
+        ensureNaturalTurn(id, item, event.messageID, content, BUDGET - scopeText.length - 2, discovery);
+      if (claim) await claim.promise;
+      if (!await owned(id, item, signal)) return;
+      const roleTurn = item.roleTurns.get(event.messageID);
+      if (roleTurn?.inputHash !== createHash("sha256").update(content).digest("hex")) return;
+      const roleSnapshot = roleTurn?.snapshot || { relay_name: null, relay_attribution_state: "unavailable" };
       const response = await pallium.palliumRequest("POST", "/item-and-query", {
-        source_type: pallium.SOURCE_TYPE, source_id: pallium.ocSourceId(), content_type: "text/plain",
+        source_type: pallium.SOURCE_TYPE, source_id: pallium.ocNativeMessageSourceId("user", id, event.messageID), content_type: "text/plain",
         content, role: "user", agent_ref: pallium.AGENT_REF, container_ref: container,
         thread_ref: id, actor_ref: actor, visibility: "private", artifact_kind: "message",
+        source_turn_id: roleTurn ? event.messageID : undefined,
+        relay_name: roleSnapshot.relay_name, relay_attribution_state: roleSnapshot.relay_attribution_state,
         query_text: content.slice(0, 500), query_limit: 5, query_actor_ref: actor,
         query_trigger_origin: "user_prompt_submit", metadata: pallium.buildWorkRefsMetadata(cwd, event.metadata?.pallium_work_refs, discovery),
       }, signal);
@@ -273,20 +340,15 @@ export default {
         if (!response || (!response.deliveries?.length && !response.restored))
           throw new Error("Pallium internal wake has no current Relay work");
       } else if (!internal(user)) {
-        // A natural turn is the only path that can register a new Relay session.
-        if (!item.naturalClaim || item.naturalClaim.inputId !== user.id) {
-          response = await pallium.relayRequest("POST", "/relay/turn", {
-            runtime: "opencode", session_ref: id, container_ref: scope(id), max_chars: relayBudget,
-            structural_work_refs: pallium.structuralWorkRefsPayload(scope(id), discovery.structuralRefs, pallium.repositoryScopeRef(cwd)),
-          }, pallium.HTTP_TIMEOUT_MS, signal);
-          if (!await owned(id, item, signal)) return;
-          if (response?.session) {
-            if (!remember(id, item, response.session)) return;
-            signal = item.abort.signal;
-            item.naturalClaim = { inputId: user.id, response };
-            void enroll(id, item);
-          }
-        } else response = item.naturalClaim.response;
+        // The prompt hook freezes the role snapshot at source time and owns the
+        // first Relay turn claim. Context may recover deliveries later, but
+        // never writes that later identity into an existing role snapshot.
+        let claim = item.naturalClaims.get(user.id);
+        if (!claim) {
+          claim = { inputHash: null, acked: false, response: null, promise: null };
+          item.naturalClaims.set(user.id, claim);
+        }
+        response = await requestNaturalTurn(id, item, user.id, relayBudget, discovery, claim);
       }
       // Unproven marker inputs remain fail-open but cannot register or claim.
       // This also fences an overtaken real wake without treating a forged marker
@@ -296,7 +358,8 @@ export default {
         return;
       }
       const deliveries = response?.deliveries || [];
-      const continuation = response?.restored || (!wake && item.naturalClaim?.inputId === user.id && item.naturalClaim.acked);
+      const claim = item.naturalClaims.get(user.id);
+      const continuation = response?.restored || (!wake && claim?.acked);
       const rendered = continuation ? null : pallium.formatRelay(deliveries, relayBudget, response?.remaining_count || 0);
       const formatted = continuation ? pallium.formatRelayContinuation(deliveries, relayBudget) : rendered.text;
       if (wake && !formatted) throw new Error("Pallium internal wake has no model-bound Relay context");
@@ -307,8 +370,7 @@ export default {
       if (!continuation && rendered.deliveries.length) {
         const results = await pallium.acknowledgeRelay(rendered.deliveries, scope(id), signal);
         if (!live(id, item, signal)) return;
-        if (!wake && item.naturalClaim?.inputId === user.id && results.every((result) => result.success))
-          item.naturalClaim.acked = true;
+        if (!wake && claim && results.every((result) => result.success)) claim.acked = true;
       }
       } catch (error) {
         if (wake) throw error;
@@ -344,7 +406,7 @@ export default {
               runtime: "opencode", session_ref: id, container_ref: scope(id),
             }, pallium.HTTP_TIMEOUT_MS, abort.signal);
             if (!disposed && !sessions.has(id)) pallium.removeSessionPin(id);
-          } else if (event.type === "session.execution.succeeded" || event.type === "session.execution.failed") {
+          } else if (event.type === "session.execution.succeeded" || event.type === "session.execution.failed" || event.type === "session.idle") {
             void ingestAssistant(id);
           } else if (event.type === "session.created") {
             void restore(id);

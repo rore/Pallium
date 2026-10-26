@@ -47,6 +47,8 @@ class SourceItemVectorProjection:
     artifact_kind: str | None = None
     visibility: str = "private"
     forgotten_at: datetime | None = None
+    relay_name: str | None = None
+    relay_attribution_state: str = "unknown"
 
     @property
     def forgotten(self) -> bool:
@@ -210,6 +212,23 @@ class StorageProvider(ABC):
     @abstractmethod
     def find_source_item(self, source_type: str, source_id: str) -> SourceItem | None:
         raise NotImplementedError
+
+    def supports_source_turn_snapshots(self) -> bool:
+        return False
+
+    def find_source_turn_snapshot(
+        self, source_type: str, container_ref: str, thread_ref: str, source_turn_id: str
+    ) -> SourceItem | None:
+        return None
+
+    def has_incomplete_source_attribution(
+        self, *, container_ref: str, query_visibility: str | None, query_actor_ref: str | None,
+        source_type: str | None = None, role: str | None = None,
+        artifact_kind: str | None = None, thread_ref: str | None = None,
+        actor_ref: str | None = None, work_refs: tuple[str, ...] = (),
+    ) -> bool:
+        # A backend that cannot prove complete attribution must not claim it.
+        return True
 
     @abstractmethod
     def create_source_item(self, source_item: SourceItem) -> None:

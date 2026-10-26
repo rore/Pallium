@@ -113,6 +113,7 @@ class QueryExecutor:
         include_trace: bool = False,
         trigger_origin: str | None = None,
         source_only: bool = False,
+        relay_name: str | None = None,
         exclude_source_identity: tuple[str, str] | None = None,
     ) -> QueryResult:
         filter_resolution = resolve_query_filters(
@@ -123,6 +124,7 @@ class QueryExecutor:
             thread_ref=thread_ref,
             actor_ref=actor_ref,
             work_refs=work_refs,
+            relay_name=relay_name,
             runtime_context=None if source_only else runtime_context,
         )
         requested_filters = filter_resolution.requested_filters

@@ -487,13 +487,18 @@ def test_unsettled_relay_write_keeps_gate_until_observed_terminal_return(
     assert _association_pairs(client) == expected | {(scope, "item:B", "explicit")}
 
 
-def test_alias_transfer_does_not_transfer_associations_and_reopen_retains_them(client, drain_queue):
+@pytest.mark.parametrize("relay_admission_clock", ["semantic"], indirect=True)
+def test_alias_transfer_does_not_transfer_associations_and_reopen_retains_them(
+    client, drain_queue, relay_admission_clock,
+):
     ticket = {
         "scope_ref": "tracker:v1:example.test#relay",
         "local_ref": "ticket:owner",
     }
-    first = _turn(client, session="first")
-    second = _turn(client, session="second")
+    store = client.app.state.pallium_service._storage
+    with relay_admission_clock(store, expected_admissions=2):
+        first = _turn(client, session="first")
+        second = _turn(client, session="second")
     assert _attach(client, ticket, session="first").status_code == 200
     key = readable_work_ref(**ticket).key
     captured = client.post("/items", json=[{

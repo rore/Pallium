@@ -1,7 +1,7 @@
 ---
 id: add-persistent-role-history
 title: Search session history by Relay name across sessions
-status: planned
+status: active
 priority: medium
 commitment: committed
 milestone: pallium-relay
@@ -33,10 +33,11 @@ cannot identify which historical turns were recorded under a name.
 - Existing naming, rename/release and authorized takeover supply the attribution
   information. No extra agent-maintained field or adoption/departure call; names
   without role files behave identically. Preserve occupied-name authorization.
-- Capture eligible history under the Relay name held at the source event, including
-  delayed ingestion. Name changes and takeover affect future attribution only;
-  never relabel older turns using current ownership. Resume/retries must not
-  duplicate results.
+- Capture each complete source turn under the Relay name validated when that turn
+  started, including delayed assistant ingestion and retries. A takeover during a
+  turn affects subsequent turns only; it never relabels that turn or older history.
+  Duplicate ingestion preserves the first captured attribution. Confirmed unnamed,
+  unavailable, and legacy unknown attribution remain distinct.
 - Exact Relay-name search spans successive holders while retaining source session,
   turn and lookup provenance. Default to the caller's authorized project/container;
   broader search requires explicit permitted scope. A global Relay address grants
@@ -51,13 +52,48 @@ cannot identify which historical turns were recorded under a name.
   messages, task associations, permissions or completed actions. No new wake or
   exactly-once processing guarantee is implied.
 
-## Design Decisions to Resolve
+## Design Decisions
 
 Keep decisions local to this feature, without another registry or memory store:
 
-- Inspect what binding history already exists; select the smallest capture extension and exact MCP/search
-  surface. Document temporal boundaries, retention, bounds/indexing and migration
-  for old records without historical name evidence. Never scan all transcripts per query.
+- The accepted temporal boundary is whole-turn: use the validated Relay name held
+  at turn start for all source items from that turn, even if assistant capture is
+  delayed until after a takeover. A delayed item may inherit the immutable user
+  source snapshot only through an exact same-turn source reference validated for
+  the same container, thread and user role. Never consult current ownership to
+  reconstruct a prior turn; unsupported or uncorrelated capture is unavailable.
+- Codex source capture uses the host's native `turn_id` on UserPromptSubmit and
+  Stop. The user row stores the validated Relay name returned at turn start; Stop
+  inherits only that exact same-container, same-thread user snapshot. Missing or
+  malformed native keys stay unavailable. User-start retries reuse only an equal
+  snapshot and reject conflicting state/name; assistant outputs remain distinct,
+  and Stop retries may duplicate because the hook exposes no stable per-output key.
+- Claude Code's official hook payload exposes common UUID `prompt_id` on
+  UserPromptSubmit and Stop. Use it as the scoped `source_turn_id` when present
+  and valid; missing or invalid keys stay unavailable. The official docs warn the
+  transcript can lag at Stop and provide `last_assistant_message`; transcript-
+  derived assistant text or work-trace metadata must not be attached to the
+  current prompt key unless its association is proven. The docs do not state a
+  host version floor or retry/compaction persistence guarantee.
+- OpenCode V1 exposes native `messageID` on `chat.message` (optional in the V1
+  plugin type; the persisted user message also has its native ID), and persisted
+  assistant messages carry `parentID`. V2 prompt admission exposes `messageID`;
+  its context hook exposes ordered native message IDs and the current adapter
+  selects assistant messages after the latest user boundary. These provide a
+  candidate exact source-turn key from the user message ID, with assistant
+  linkage through the native parent/boundary. V1 obtains the validated alias
+  from its existing `/relay/turn` call at `chat.message`; V2 currently captures
+  the user before its `/relay/turn` call in the later context hook, so start-time
+  alias capture needs sequencing work that preserves delivery claim and ACK
+  behavior. Neither plugin version yet sends role snapshots or source-turn keys,
+  and host payload behavior still requires qualification.
+- Hermes remains in scope; its integration owner must confirm and implement its
+  native pre/post turn linkage and coordinate shared `source_type` support before
+  the feature can claim complete cross-tool coverage.
+- Select the smallest durable source-attribution extension and exact MCP/search
+  surface. Old rows remain unknown. Incomplete coverage may describe only unknown
+  or unavailable rows in the caller's otherwise-eligible scope; it cannot infer
+  turns that produced no row. Never scan transcripts per query or backfill names.
 - Define rename/reuse search behavior: an exact-name search means that historical
   name, not inferred continuity of purpose. Retain source provenance when a name
   is reused for unrelated work. Do not automatically merge different names,
@@ -67,16 +103,14 @@ Keep decisions local to this feature, without another registry or memory store:
 
 ## Current-name Recovery After Compaction
 
-Source inspection on 2026-10-22 found that the existing Relay turn response includes
-`session.alias` (`storage/sqlite_relay.py`), and takeover clears the former holder's
-alias. Codex and Claude turn-start hooks already call `relay_turn`, but their
-`format_injection` scope omits the name. Revalidate these findings on pickup.
-
-Prefer exposing that validated current name through the existing injected context:
-no new store, role registration or extra request on the normal hook path. Represent
-confirmed name, confirmed unnamed, and unavailable distinctly. Never substitute a
-cached name after lookup failure or interpret a missing field from an older
-integration as confirmed loss. Keep output bounded and identity checks intact.
+Source inspection confirms the existing `/relay/turn` response carries a validated
+`session.alias` (`api/schemas.py` and `core/relay.py`). The Codex UserPromptSubmit
+hook records that response's exact alias state on the user's source row; the
+existing read-only `pallium_relay_address` returns `relay_name_state` and optional
+`relay_name` for current-name discovery. An explicitly present `alias: null` on a
+validated session means unnamed. A missing or malformed field means unavailable.
+Stop never refreshes current identity: it resolves only the immutable start row.
+No new store, registry, role registration or extra normal-path request is added.
 
 Test next-turn injection after compaction and compaction within an ongoing turn
 separately: do not assume both invoke the same hook. Where injection cannot restore
@@ -112,9 +146,23 @@ historical backfill, and changes to delivery reliability unrelated to this contr
 3. Missing identity, conflicting holder, unavailable capture, unsupported host,
    empty results and partial coverage have honest, actionable outcomes. Scoped
    search and expansion cannot expose unauthorized containers or deleted content.
-4. Public-surface E2E coverage includes the complete lifecycle, boundaries,
-   concurrency/takeover, error paths and existing routing/search regressions.
-   Tests exercise actual integration surfaces, not only fabricated metadata.
+4. Public-surface E2E coverage covers the complete required matrix:
+   - Codex UserPromptSubmit/Stop with native `turn_id` and takeover before delayed Stop.
+   - Claude UserPromptSubmit/Stop with `prompt_id`; keyed Stop uses only
+     `last_assistant_message`; missing current assistant text may use transcript fallback only without the prompt key, so it remains uncorrelated.
+   - OpenCode V1 `chat.message`/`session.idle` linked by user `messageID` and
+     assistant `parentID`; OpenCode V2 prompt/context/idle linked by native user
+     message ID and the exact latest-user boundary. V2 start-time alias capture
+     must preserve the existing delivery claim and ACK ordering.
+   - Hermes pre/post hooks linked only by the native key confirmed by its owner.
+   Each adapter exercises same-turn retry, delayed assistant capture after takeover,
+   out-of-order/overlapping turns where the host supports them, missing-key
+   unavailability, exact-name search, visibility and forgetting. No adapter may
+   infer by current ownership, FIFO, or a shared session slot. Distinct assistant
+   outputs remain distinct; duplicate retry behavior follows each host's native
+   per-output identity. Fixtures prove adapter contracts only; real-host payload
+   qualification is separately recorded. Exact filtering stays before limits and
+   legacy unknown coverage remains explicit.
 5. Run the companion's real successor exercise: durable correction -> updated
    guidance -> replacement follows it without a reminder -> finds its source by Relay name.
    Record supported hosts and limits; distinguish qualification from later natural
@@ -122,6 +170,6 @@ historical backfill, and changes to delivery reliability unrelated to this contr
 
 ## Notes
 
-Planned after current reliability work; placement does not reprioritize active
-assignments. Documentation approval is not permission to alter live integrations.
+Active implementation is tracked under Parallel · Session History. Documentation
+approval is not permission to alter live integrations.
 No role-processing or background learning mechanism is requested in Pallium.

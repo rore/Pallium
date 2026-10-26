@@ -24,6 +24,8 @@ SOURCE_TYPE = _common.SOURCE_TYPE
 acknowledge_relay = _common.acknowledge_relay
 check_dedup = _common.check_dedup
 complete_relay_closes = _common.complete_relay_closes
+relay_name_snapshot = _common.relay_name_snapshot
+source_turn_key = _common.source_turn_key
 
 derive_actor_ref = _common.derive_actor_ref
 emit_context = _common.emit_context
@@ -338,6 +340,9 @@ def main() -> None:
                 "query_actor_ref": actor_ref,
                 "query_trigger_origin": "user_prompt_submit",
                 "metadata": work_refs_metadata,
+                "source_turn_id": source_turn_key(payload.get("turn_id")),
+                "relay_name": relay_name_snapshot(relay_response)[1],
+                "relay_attribution_state": relay_name_snapshot(relay_response)[0],
             })
             if response:
                 if isinstance(response.get("work_ref_metadata"), dict):

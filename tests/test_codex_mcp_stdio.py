@@ -132,6 +132,8 @@ async def _exercise_child(
                 "runtime": "codex",
                 "session_ref": "thread-session",
                 "exact_selector": "relay-session-" + ("a" * 32),
+                "relay_name_state": "named",
+                "relay_name": "relay-dev",
                 "alias_selector": "@relay-dev",
             }
 

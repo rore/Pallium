@@ -447,6 +447,8 @@ class VectorRetrievalProvider(RetrievalProvider):
                         score=score,
                         evidence=[build_evidence(source_item)],
                         visibility=source_item.visibility,
+                        relay_name=source_item.relay_name,
+                        relay_attribution_state=source_item.relay_attribution_state,
                         work_refs=work_refs_from_metadata(source_item.metadata),
                     )
                 )

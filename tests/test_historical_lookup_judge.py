@@ -162,6 +162,13 @@ def _seed_two_lookups(storage) -> None:
                  content="I designed reservations carefully. INFLU_MARKER",
                  thread="t:2", created="2026-08-02 00:00:03.000000")
 
+    # This fixture models legacy raw SQL writers that omit role-attribution columns.
+    with storage._engine.connect() as conn:
+        states = conn.execute(
+            text("SELECT DISTINCT relay_attribution_state FROM source_items")
+        ).scalars().all()
+    assert states == ["unknown"]
+
 
 # ---------------------------------------------------------------------------
 # End-to-end offline judge

@@ -48,6 +48,7 @@ from storage.sqlite_schema import (
     RelationRecord,
     SQLiteSchemaMixin,
     SourceItemRecord,
+    SourceItemWorkRefRecord,
     SubtaskSelectorShadowRecord,
     ThreadProcessingLeaseRecord,
     insert_lexical_fts_row,
@@ -388,6 +389,86 @@ class SQLiteStorageProvider(
                 return None
             return self._to_source_item(record)
 
+    def supports_source_turn_snapshots(self) -> bool:
+        return True
+
+    def find_source_turn_snapshot(
+        self, source_type: str, container_ref: str, thread_ref: str, source_turn_id: str
+    ) -> SourceItem | None:
+        with self._session_factory() as session:
+            records = session.scalars(
+                select(SourceItemRecord).where(
+                    SourceItemRecord.source_type == source_type,
+                    SourceItemRecord.container_ref == container_ref,
+                    SourceItemRecord.thread_ref == thread_ref,
+                    SourceItemRecord.source_turn_id == source_turn_id,
+                    SourceItemRecord.role == "user",
+                ).limit(2)
+            ).all()
+            if len(records) > 1:
+                raise ValueError("conflicting source turn snapshots")
+            return self._to_source_item(records[0]) if records else None
+
+    def has_incomplete_source_attribution(
+        self, *, container_ref: str, query_visibility: str | None, query_actor_ref: str | None,
+        source_type: str | None = None, role: str | None = None,
+        artifact_kind: str | None = None, thread_ref: str | None = None,
+        actor_ref: str | None = None, work_refs: tuple[str, ...] = (),
+    ) -> bool:
+        statement = select(SourceItemRecord.id).where(
+            SourceItemRecord.relay_attribution_state.in_(("unknown", "unavailable")),
+            SourceItemRecord.forgotten_at.is_(None),
+        )
+        if source_type is not None:
+            statement = statement.where(SourceItemRecord.source_type == source_type)
+        if role is not None:
+            statement = statement.where(SourceItemRecord.role == role)
+        if artifact_kind is not None:
+            statement = statement.where(SourceItemRecord.artifact_kind == artifact_kind)
+        if thread_ref is not None:
+            statement = statement.where(SourceItemRecord.thread_ref == thread_ref)
+        if actor_ref is not None:
+            statement = statement.where(SourceItemRecord.actor_ref == actor_ref)
+        if work_refs:
+            statement = statement.where(
+                select(SourceItemWorkRefRecord.source_item_id).where(
+                    SourceItemWorkRefRecord.source_item_id == SourceItemRecord.id,
+                    SourceItemWorkRefRecord.work_ref.in_(work_refs),
+                ).exists()
+            )
+        # Mirror is_visible() exactly so coverage cannot reveal inaccessible rows.
+        public_clause = and_(
+            SourceItemRecord.visibility == "public",
+            SourceItemRecord.actor_ref.is_(None),
+        )
+        visible_clauses = []
+        if query_actor_ref is not None:
+            visible_clauses.append(and_(
+                SourceItemRecord.visibility == "global",
+                SourceItemRecord.actor_ref == query_actor_ref,
+            ))
+        if query_visibility == "public":
+            visible_clauses.append(public_clause)
+        elif query_visibility == "container":
+            visible_clauses.extend((
+                public_clause,
+                and_(
+                    SourceItemRecord.container_ref == container_ref,
+                    SourceItemRecord.visibility.not_in(("private", "global")),
+                ),
+            ))
+        else:
+            visible_clauses.extend((
+                public_clause,
+                and_(
+                    SourceItemRecord.container_ref == container_ref,
+                    SourceItemRecord.visibility != "global",
+                ),
+            ))
+        statement = statement.where(or_(*visible_clauses))
+        with self._session_factory() as session:
+            return session.scalar(statement.limit(1)) is not None
+
     def create_source_item(self, source_item: SourceItem) -> None:
         record = SourceItemRecord(
             id=source_item.id,
@@ -414,6 +495,9 @@ class SQLiteStorageProvider(
             processing_completed_at=source_item.processing_completed_at,
             processing_error=source_item.processing_error,
             processing_next_attempt_at=source_item.processing_next_attempt_at,
+            source_turn_id=source_item.source_turn_id,
+            relay_name=source_item.relay_name,
+            relay_attribution_state=source_item.relay_attribution_state,
             created_at=source_item.created_at,
         )
         with self._begin_immediate() as session:
@@ -466,6 +550,9 @@ class SQLiteStorageProvider(
             processing_completed_at=source_item.processing_completed_at,
             processing_error=source_item.processing_error,
             processing_next_attempt_at=source_item.processing_next_attempt_at,
+            source_turn_id=source_item.source_turn_id,
+            relay_name=source_item.relay_name,
+            relay_attribution_state=source_item.relay_attribution_state,
             created_at=source_item.created_at,
         )
         with self._begin_immediate() as session:
@@ -1410,6 +1497,8 @@ class SQLiteStorageProvider(
                         SourceItemRecord.artifact_kind,
                         SourceItemRecord.visibility,
                         SourceItemRecord.forgotten_at,
+                        SourceItemRecord.relay_name,
+                        SourceItemRecord.relay_attribution_state,
                     ).outerjoin(
                         SourceItemRecord,
                         and_(
@@ -1450,6 +1539,8 @@ class SQLiteStorageProvider(
                         artifact_kind=mapping["artifact_kind"],
                         visibility=mapping["visibility"] or "private",
                         forgotten_at=self._normalize_datetime(mapping["forgotten_at"]),
+                        relay_name=mapping["relay_name"],
+                        relay_attribution_state=mapping["relay_attribution_state"] or "unknown",
                     ),
                 )
         return result
@@ -1474,7 +1565,8 @@ class SQLiteStorageProvider(
                     "ie.index_type, ie.text_view_name, ie.provider_name, ie.provider_version, "
                     "si.id AS source_item_id, si.source_type, si.source_id AS source_external_id, "
                     "si.metadata_json, si.occurred_at, si.actor_ref, si.role, si.container_ref, "
-                    "si.thread_ref, si.source_ref, si.artifact_kind, si.visibility, si.forgotten_at "
+                    "si.thread_ref, si.source_ref, si.artifact_kind, si.visibility, si.forgotten_at, "
+                    "si.relay_name, si.relay_attribution_state "
                     "FROM matching_source_ids swr "
                     "JOIN source_items si ON si.id = swr.source_item_id "
                     "CROSS JOIN index_entries AS ie INDEXED BY idx_index_entries_target_lookup "
@@ -1512,6 +1604,8 @@ class SQLiteStorageProvider(
                     artifact_kind=mapping["artifact_kind"],
                     visibility=mapping["visibility"] or "private",
                     forgotten_at=self._normalize_datetime(mapping["forgotten_at"]),
+                    relay_name=mapping["relay_name"],
+                    relay_attribution_state=mapping["relay_attribution_state"] or "unknown",
                 ),
             ))
         return candidates
