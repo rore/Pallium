@@ -479,7 +479,11 @@ def test_poller_keeps_named_profile_after_foreground_context_ends(
     assert len(ctx.injections) == 1
     marker, target = ctx.injections[0]
     assert target == {"role": "user", "session_key": "ses_שלום"}
-    assert status(client, message)["deliveries"][0]["attempts"] == 0
+    unclaimed = status(client, message)["deliveries"][0]
+    assert unclaimed["attempts"] == 0
+    assert ctx.hooks["pre_llm_call"](
+        session_id="ses_שלום", turn_id="wrong-profile", user_message=marker) is None
+    assert status(client, message)["deliveries"][0] == unclaimed
     token = profile.set("named-profile")
     try:
         request = _admit_plugin_wake(ctx, marker, "wake")

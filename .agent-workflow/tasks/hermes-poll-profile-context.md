@@ -73,5 +73,5 @@ Read-only Hermes helper experiment: caller_home=Pelican, ordinary poller_home=de
 
 ## Result review
 
-Pending.
+Astra reviewer inspected1931a902 and confirmed the production fix and203+52 logs. One coverage finding required explicitly attempting marker admission under default/sibling profile before restoring named scope. Added existing pre_llm_call refusal assertion and exact unchanged unclaimed delivery snapshot; both changed cases passed in1.97s, build/hermes-profile-review-delta.log. Production unchanged. Final narrow delta endorsement pending.
 
