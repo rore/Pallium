@@ -20,7 +20,7 @@ After a named-profile foreground hook ends, polling reads that same profile, inj
 {"source":"work-record-initial","outcome":"Hermes named-profile Relay polling retains the initiating profile and admits pending replies without a manual recipient turn.","scope":"integrations/hermes/__init__.py poller thread creation and focused caller-surface tests in tests/test_hermes_relay_plugin.py.","constraints":"No profile/config/data/host changes without exact approval; no desktop control, forced turn, resend, manual receive or ACK; preserve scope, identity, profile-change and uncertain-delivery fences; use existing contextvars, with no dependency or API change.","completion_criteria":"After a named-profile foreground hook ends, polling reads that same profile, injects the exact pending delivery and admits its full payload through existing hooks/middleware; sibling/default profile state is isolated and changed owned configuration remains rejected."}
 
 **Relationships:**
-{"schema_version":1,"sources":null,"pull_requests":[]}
+{"schema_version":1,"sources":null,"pull_requests":["https://github.com/rore/Pallium/pull/363"]}
 
 **Risk:**
 Elevated
@@ -56,7 +56,7 @@ Isolated bugfix/PR/green merge already authorized. No new Hermes installed/plugi
 —
 
 **State:**
-Ready for review
+Blocked
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -78,4 +78,12 @@ Agent technical review: astra-reviewer, independent non-implementer. Initial1931
 Reviewed revision: b8f659e8c1e2b1709b8c4cc596614e245a990b42.
 
 Verification adequacy:203 plugin plus52 History/role tests and two strengthened delta cases verify profile-context retention, wrong-profile refusal, complete payload/ACK and mutable-config fencing through caller surfaces. Installed reply receipt is not yet verified. Required hosted full CI remains the merge gate. No live change approval is implied by technical review.
+
+## Installed application and remaining acceptance
+
+PR363 merged2026-10-26T15:09:09Z at39d216232a3bfbeb0b112b412da70ffb2756c216, required CI/Windows smoke/Linux3.12+3.13/governance/CodeRabbit all green; no unresolved review threads. Human approved the exact three-file Pelican update and supported profile-only reload: "Approve this exact plugin update and reload". No broader restart/configuration/state edits authorized by that approval.
+
+Applied only profile plugins/pallium-hermes-relay/__init__.py plus plugin/skill .pallium-package.json fingerprints. Backup C:/Users/I347041/.pallium/backups/hermes-profile-context-20261026. Initial staging preflight stopped before live writes on Git-vs-Windows checkout line endings; staging was corrected to the exact merged Git blob. Existing configuration/skill file hashes and all three old file hashes were checked before writes. Hermes active_agents=0; supported reload_gateway_plugins accepted only Pelican and rewired2 adapters; gatewayPID23388 unchanged, Pallium loaded. No app, gateway or Pallium service restart; stable service checkout unchanged under this profile-only scope. Plugin fingerprints verified after reload; profile config and local SKILL.md edit stayed byte-identical. Existing SKILL.md fingerprint mismatch predates this update; preserve it and report general installer status still detects it rather than silently normalizing ownership.
+
+Original reply relay-delivery-d5553ca452614c7f97225ce68288acfe still pending attempts0 after reload. Current plugin starts its poller on a foreground conversation hook and has no cold-reload session rehydration; no new wake metadata exists. Human asked to continue Hermes normally once to initialize the updated plugin; that manual warm-up must NOT count as automatic-recovery acceptance. Keep the original target, then qualify a later unattended reply separately. Manager notified via relaydev-pr363-profile-reload-result-20261026; no duplicate activation requested. Broad canonical feature add-wake-first-relay-delivery remains active; original receipt and cold-reload limitation remain open. Retain isolated checkout for this acceptance follow-up.
 
