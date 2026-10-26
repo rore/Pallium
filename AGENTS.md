@@ -1,5 +1,7 @@
 # AGENTS.md
 
+This repository uses `persistent-agent-roles`. At start, resume, handoff, or a new assignment, load the skill to verify your current Relay name and mapped guidance. If missing, install it globally from [Collection](https://github.com/rore/rore-collection/tree/main/skills/persistent-agent-roles).
+
 Treat `roadmap/` as the canonical repo-local roadmap workspace for humans and agents.
 Use `docs/context/` for broader design context, but keep roadmap state and queue changes in the minimap files.
 For roadmap state or assigned Minimap roadmap work (pickup, resume, investigation, testing, substantive review, or completion), use the existing [Minimap roadmap skill](.claude/skills/minimap-roadmap/SKILL.md); do not create or install a duplicate.

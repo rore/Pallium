@@ -279,26 +279,35 @@ def test_concurrent_claim_many_workers_no_duplicates(storage):
     item_ids = [_ingest_pending_item(storage, f"stress-{i}") for i in range(3)]
 
     results = [None] * 5
+    errors = [None] * 5
     barrier = threading.Barrier(5, timeout=5)
 
     def claim(index):
-        barrier.wait()
-        results[index] = storage.claim_next_source_item(
-            worker_id=f"worker-{index}",
-            lease_seconds=60,
-            max_attempts=3,
-        )
+        try:
+            barrier.wait()
+            results[index] = storage.claim_next_source_item(
+                worker_id=f"worker-{index}",
+                lease_seconds=60,
+                max_attempts=3,
+            )
+        except Exception as error:
+            errors[index] = error
 
     threads = [threading.Thread(target=claim, args=(i,)) for i in range(5)]
     for t in threads:
         t.start()
     for t in threads:
         t.join(timeout=10)
+    assert not any(t.is_alive() for t in threads), "Claim worker did not finish"
+    assert all(error is None for error in errors), [
+        (index, type(error).__name__, str(error), getattr(error, "acquisition_stage", None))
+        for index, error in enumerate(errors) if error is not None]
 
     winners = [r for r in results if r is not None]
     winner_ids = [w.id for w in winners]
     assert len(winners) == 3, f"Expected exactly 3 winners, got {len(winners)}"
     assert len(set(winner_ids)) == 3, f"Duplicate item claimed: {winner_ids}"
+    assert set(winner_ids) == set(item_ids)
 
 
 def test_concurrent_claim_package_task_many_workers_no_duplicates(storage):

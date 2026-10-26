@@ -653,7 +653,10 @@ def test_same_epoch_recovery_preserves_admission_and_identity_fences(monkeypatch
 @pytest.mark.parametrize("case", ["transport-failed", "deadline", "primary-peer-mismatch",
     "primary-invalid-response", "primary-generic", "primary-refusal", "unresolved-io",
     "retire-unresolved", "changed-bootstrap", "changed-continuity", "changed-capability",
-    "other-caller", "cancel-fresh", "shutdown"])
+    "other-caller", "cancel-fresh", "shutdown", "transport-failed-healthy", "deadline-healthy",
+    "primary-peer-mismatch-healthy", "primary-invalid-response-healthy", "primary-generic-healthy",
+    "primary-refusal-healthy", "unresolved-io-healthy", "changed-continuity-healthy",
+    "changed-capability-healthy"])
 async def test_fresh_caller_recovers_resolved_foreground_channel_failure(monkeypatch, tmp_path, case):
     from mcp.shared.exceptions import McpError
     from mcp.types import CancelledNotification, CancelledNotificationParams, ClientNotification
@@ -661,6 +664,8 @@ async def test_fresh_caller_recovers_resolved_foreground_channel_failure(monkeyp
     clients, workers, registrations, outcomes, operations = [], [], [], [], []
     observed, candidate_ready, release_ready = threading.Event(), threading.Event(), threading.Event()
     proof = "a" * 64
+    failure_case = case.removesuffix("-healthy")
+    healthy_followup = case.endswith("-healthy")
     retained = []
     monkeypatch.setattr(bridge, "_retained", retained)
     monkeypatch.setenv("PALLIUM_HOME", str(tmp_path))
@@ -701,8 +706,10 @@ async def test_fresh_caller_recovers_resolved_foreground_channel_failure(monkeyp
             return True
         def ready(self):
             if self.index == 0 and self.failed:
-                if case == "changed-capability":
+                if failure_case == "changed-capability":
                     monkeypatch.setenv("CODEX_APP_TOOLS_PIPE_PATH", "changed-capability")
+                if healthy_followup:
+                    return {"status": "ready", "connected": True, "source_exited": False}
                 raise bridge.ShadowUnavailable("deadline" if case == "deadline" else "transport-failed")
             if self.index and case == "cancel-fresh":
                 candidate_ready.set()
@@ -710,21 +717,21 @@ async def test_fresh_caller_recovers_resolved_foreground_channel_failure(monkeyp
             return {"status": "ready", "connected": self.continuity is not None, "source_exited": False}
         def register(self, metadata):
             registrations.append((self.index, dict(metadata), self.continuity))
-            if self.index == 0 and self.continuity:
+            if self.index == 0 and self.continuity and (not healthy_followup or len(registrations) == 2):
                 self.failed = True
-                if case == "unresolved-io":
+                if failure_case == "unresolved-io":
                     self.io.unresolved = True
-                if case == "changed-continuity":
+                if failure_case == "changed-continuity":
                     self.continuity = "b" * 64
-                if case == "primary-refusal":
+                if failure_case == "primary-refusal":
                     return {"status": "unavailable", "reason": "peer-mismatch"}
-                if case == "primary-generic":
+                if failure_case == "primary-generic":
                     raise RuntimeError("controlled foreground failure")
-                category = (case.removeprefix("primary-") if case.startswith("primary-")
-                            else "deadline" if case == "deadline" else "transport-failed")
+                category = (failure_case.removeprefix("primary-") if failure_case.startswith("primary-")
+                            else "deadline" if failure_case == "deadline" else "transport-failed")
                 raise bridge.ShadowUnavailable(category)
             assert metadata["thread_ref"] == "actual-runtime"
-            assert self.continuity == (None if self.index == 0 else proof)
+            assert self.continuity == (None if self.index == 0 and len(registrations) == 1 else proof)
             self.continuity = proof
             return {"status": "registered", "reason": "ok"}
         def dispose(self):
@@ -758,9 +765,17 @@ async def test_fresh_caller_recovers_resolved_foreground_channel_failure(monkeyp
         assert not (await _actual_status(session, "failed-foreground")).isError
         assert await asyncio.to_thread(observed.wait, 2)
         assert outcomes[1][1]["status"] == "unavailable"
-        assert outcomes[1][1]["reason"] == ("peer-mismatch" if case == "primary-refusal" else "native-failed")
+        assert outcomes[1][1]["reason"] == ("peer-mismatch" if failure_case == "primary-refusal" else "native-failed")
         assert len(clients) == 1 and len(registrations) == 2
         assert len(operations) == 2  # Unavailable enrollment does not replay or suppress Relay.
+        if healthy_followup:
+            safe = failure_case in {"transport-failed", "deadline"}
+            if not safe:
+                await asyncio.to_thread(workers[0]._thread.join, 1)
+            assert workers[0]._thread.is_alive() == safe
+            if not safe:
+                assert len(clients) == 1 and len(registrations) == 2
+                return
         if case == "shutdown":
             await workers[0].stop()
             return
@@ -782,7 +797,15 @@ async def test_fresh_caller_recovers_resolved_foreground_channel_failure(monkeyp
         else:
             result = await _actual_status(session, "fresh")
         assert not result.isError
-        if case in {"transport-failed", "deadline"}:
+        if healthy_followup and failure_case in {"transport-failed", "deadline"}:
+            assert registrations == [
+                (0, {"thread_ref": "actual-runtime", "turn_ref": "admitted"}, None),
+                (0, {"thread_ref": "actual-runtime", "turn_ref": "failed-foreground"}, proof),
+                (0, {"thread_ref": "actual-runtime", "turn_ref": "fresh"}, proof),
+            ]
+            assert len(clients) == 1 and outcomes[-1][1]["status"] == "registered"
+            assert workers[0]._restart_allowed and workers[0]._thread.is_alive()
+        elif case in {"transport-failed", "deadline"}:
             assert registrations == [
                 (0, {"thread_ref": "actual-runtime", "turn_ref": "admitted"}, None),
                 (0, {"thread_ref": "actual-runtime", "turn_ref": "failed-foreground"}, proof),

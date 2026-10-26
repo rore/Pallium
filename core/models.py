@@ -83,6 +83,9 @@ class SourceItem:
     forgotten_at: datetime | None = None
     forgotten_by: str | None = None
     forgotten_reason: str | None = None
+    source_turn_id: str | None = None
+    relay_name: str | None = None
+    relay_attribution_state: str = "unknown"
     id: str = field(default_factory=new_id)
     created_at: datetime = field(default_factory=utc_now)
 
@@ -234,6 +237,7 @@ class QueryFilters:
     thread_ref: str | None = None
     actor_ref: str | None = None
     work_refs: tuple[str, ...] = ()
+    relay_name: str | None = None
 
 
 TurnKind = Literal["new_thread", "same_thread", "same_thread_continuation", "resumed_session", "new_session"]
@@ -290,6 +294,8 @@ class QueryResultItem:
     artifact_kind: str | None = None
     visibility: str = "private"
     retrieval_source: str | None = None
+    relay_name: str | None = None
+    relay_attribution_state: str = "unknown"
     source_content_fingerprint: str | None = None
     lexical_score: float | None = None
     vector_score: int | None = None

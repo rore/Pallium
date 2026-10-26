@@ -1432,10 +1432,11 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None,
         artifact_kind: str | None = None,
         work_refs: list[str] | None = None,
         request_source_item_id: str | None = None,
+        relay_name: str | None = None,
         result_offset: Annotated[StrictInt, Field(ge=0)] = 0,
         result_revision: StrictStr | None = None,
     ) -> str:
-        """Search eligible raw history by topic. `work_refs` is compatibility-only; prefer exact work-ref search. History cannot prove messages were received or sent, live state was checked, approval was received, or actions were completed; verify live. Use `current_text` over `historical_updates`. Copy injected `container_ref`. `source_thread_ref` is an exact source filter; omit it for all sessions. `actor_ref` is an exact metadata filter; omit it for all actors. Requires `container_ref` and visibility. Continue with `next_offset` and unchanged `result_revision`; restart at 0 when stale."""
+        """Topic search. `work_refs` is compatibility-only; prefer exact work-ref search. History cannot prove messages were received or sent, live checks, approval, or actions were completed; verify live. Prefer `current_text` to `historical_updates`. Copy injected `container_ref`. Role history: get current name via `pallium_relay_address`, then exact `relay_name`; container scope stays unchanged. Exact source `source_thread_ref`; exact metadata filter `actor_ref`; omit either for all. Requires `container_ref` and visibility. Page by `next_offset`/`result_revision`; stale: restart at 0."""
         page_error = _history_page_request_error(limit, result_offset, result_revision)
         if page_error is not None:
             return _json_text(page_error)
@@ -1467,6 +1468,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None,
                 source_thread_ref=source_thread_ref,
                 work_refs=work_refs,
                 request_source_item_id=request_source_item_id,
+                relay_name=relay_name,
                 defer_delivery=True,
             )
             compact = _compact_history(
@@ -1491,6 +1493,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None,
                     "artifact_kind": artifact_kind,
                     "work_refs": normalized_work_refs,
                     "request_source_item_id": request_source_item_id,
+                    "relay_name": relay_name,
                 },
             )
             if "error" not in compact and result.get("delivery_attempt_id"):
@@ -1823,7 +1826,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None,
         container_ref: str | None = None,
         request_ctx: object | None = None,
     ) -> str:
-        """Return this session's canonical Relay address. Identity comes from the integration, not model arguments. The result contains exact_selector (relay-session-...) and optional alias_selector (@name)."""
+        """Return this session's canonical Relay address. Identity comes from the integration, not model arguments. The result contains exact_selector (relay-session-...), relay_name_state (named or unnamed), and optional relay_name / alias_selector (@name)."""
         ctx, scope_error = resolve_relay_context(container_ref=container_ref)
         if scope_error:
             return scope_error
@@ -1870,8 +1873,10 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None,
             "runtime": runtime,
             "session_ref": session_ref,
             "exact_selector": endpoint_id,
+            "relay_name_state": "named" if alias_selector is not None else "unnamed",
         }
         if alias_selector is not None:
+            response["relay_name"] = alias
             response["alias_selector"] = alias_selector
         return _json_text(response)
 
@@ -2118,8 +2123,9 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None,
         sender_session_ref: str,
         expires_in_seconds: int | None = Field(default_factory=lambda: _RELAY_EXPIRY_OMITTED, ge=60, le=604800),
         container_ref: str | None = None,
+        message_id: str | None = Field(default=None, min_length=1, max_length=128),
     ) -> str:
-        """Send new text of at most 16,000 Unicode code points to one canonical endpoint ID (relay-session-...) or service-global name (@review). For a role recipient, use its current @name; before reusing an exact endpoint, rediscover and verify its session/container. Returned delivery identity is the admission snapshot. A successful send means the message was saved, not that the recipient started. `busy_queue` is a capability, not observed recipient busyness; a pending delivery is unconfirmed. If you need a response now, open the recipient task; let any current work finish, and start an ordinary turn if needed. Do not resend. Bare runtimes are rejected and broadcast is not supported. Copy sender_runtime from injected agent_ref and sender_session_ref from injected thread_ref. Use pallium_relay_reply for one reply to a received delivery. New omitted expiry is 24 hours; explicit expires_in_seconds=null requests durable delivery. Finite expiry is 60–604800 seconds. Omitted expiry on an existing-ID retry preserves its recorded expiry."""
+        """Send new text of at most 16,000 Unicode code points to one canonical endpoint ID (relay-session-...) or service-global name (@review). For a role recipient, use its current @name; before reusing an exact endpoint, rediscover and verify its session/container. Returned delivery identity is the admission snapshot. A successful send means the message was saved, not that the recipient started. `busy_queue` is a capability, not observed recipient busyness; a pending delivery is unconfirmed. If you need a response now, open the recipient task; let any current work finish, and start an ordinary turn if needed. Supply a unique message_id (1–128 characters) before sending to safely retry identical arguments with that same ID after an uncertain response. Omitted or null message_id creates a new identity on each call. Do not resend with a new identity just because delivery is pending. Bare runtimes are rejected and broadcast is not supported. Copy sender_runtime from injected agent_ref and sender_session_ref from injected thread_ref. Use pallium_relay_reply for one reply to a received delivery. New omitted expiry is 24 hours; explicit expires_in_seconds=null requests durable delivery. Finite expiry is 60–604800 seconds. Omitted expiry on an existing-ID retry preserves its recorded expiry."""
         ctx, scope_error = resolve_relay_context(container_ref=container_ref)
         if scope_error:
             return scope_error
@@ -2131,6 +2137,7 @@ def create_server(*, host: str = "127.0.0.1", port: int = 8001, lifespan=None,
             sender_runtime=sender_runtime,
             sender_session_ref=sender_session_ref,
             expires_in_seconds=expires_in_seconds,
+            message_id=message_id,
         )
         return _relay_text(result)
 

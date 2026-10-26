@@ -47,6 +47,10 @@ class LookupRequestLinkError(ValueError):
     """A supplied lookup-to-request telemetry link is invalid."""
 
 
+class SourceTurnSnapshotConflictError(ValueError):
+    """A source turn key was reused with conflicting or forgotten attribution."""
+
+
 class HistoryDiagnosticConflictError(Exception):
     """A diagnostic idempotency key was reused with different input."""
 

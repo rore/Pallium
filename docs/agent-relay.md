@@ -98,9 +98,10 @@ have a shorter preview with the same continuation mechanism.
 
 Call `pallium_relay_address` when a user asks for the current agent's Relay
 address. It resolves the integration-provided session identity itself and returns
-the canonical `exact_selector` plus `alias_selector` when the session has a
-name. The caller does not supply or guess a runtime or session ID. Missing,
-ambiguous, or malformed identity fails closed.
+the canonical `exact_selector`, `relay_name_state` (`named` or `unnamed`), and
+optional `relay_name` / `alias_selector` when the session has a name. The caller
+does not supply or guess a runtime or session ID. Missing, ambiguous, or malformed
+identity fails closed.
 
 ## Select a recipient
 
@@ -209,6 +210,14 @@ or captured turns; structural removal needs a producer refresh. Existing source
 forget is a separate explicitly authorized, soft and auditable retrieval
 suppression, not hard deletion or automatic inactivity cleanup. Its scoped form
 affects existing turns, not future ingests; hard deletion follows retention policy.
+
+For retry safety, supply a unique `message_id` (1–128 characters) to
+`pallium_relay_send` before the first call. If its response is lost, reuse that
+same ID and identical arguments; Pallium returns the existing message instead
+of creating another. A different sender, payload, recipient or explicitly
+different expiry conflicts. Omitting `message_id` or passing null generates a
+new identity on each call, so it cannot deduplicate separate tool calls. A
+pending delivery alone is not a reason to send again.
 
 ## Replies
 

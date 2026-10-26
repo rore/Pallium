@@ -23,6 +23,8 @@ def source_item_matches_filters(source_item: SourceItem, filters: QueryFilters) 
         return False
     if filters.actor_ref is not None and source_item.actor_ref != filters.actor_ref:
         return False
+    if filters.relay_name is not None and source_item.relay_name != filters.relay_name:
+        return False
     return True
 
 

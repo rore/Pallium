@@ -253,6 +253,113 @@ def test_reply_payload_boundaries_and_long_preview(client):
     assert 0 < preview["next_offset"] < 16000
 
 
+def _reply_redaction_lifecycle(client, delivery_id, payload, receipt=None):
+    # This lifecycle checks redaction, not first-attempt admission under load (RF-007).
+    deadline = time.monotonic() + 5
+    response = _reply(client, delivery_id, payload, receipt=receipt)
+    if response.status_code == 503:
+        body = response.json()
+        assert body == {"detail": {"code": "relay_busy", "retryable": True}}
+        assert body["detail"]["retryable"] is True
+        delay = response.headers.get("Retry-After", "")
+        assert delay.isascii() and delay.isdecimal()
+        assert 0 < int(delay) < deadline - time.monotonic()
+        time.sleep(int(delay))
+        assert time.monotonic() < deadline
+        response = _reply(client, delivery_id, payload, receipt=receipt)
+    assert response.status_code == 200, response.text
+    return response
+
+
+@pytest.mark.parametrize("refusals", [1, 2])
+def test_redaction_reply_admission_retry_is_bounded(client, relay_storage, monkeypatch, refusals):
+    _turn(client, "claude-code", "sender")
+    _turn(client, "codex", "target")
+    parent = _send(client, "claude-code", "sender", "codex:target").json()
+    delivery = _turn(client, "codex", "target")["deliveries"][0]
+    original = relay_storage.relay_reply_atomic
+    calls = []
+
+    def reply(**kwargs):
+        calls.append(dict(kwargs))
+        if len(calls) <= refusals:
+            raise ImmediateTransactionBusyError("controlled admission refusal")
+        return original(**kwargs)
+
+    monkeypatch.setattr(relay_storage, "relay_reply_atomic", reply)
+    payload = "run checks from C:/sample/worktree 完成 → שלום"
+    if refusals == 2:
+        with pytest.raises(AssertionError, match="relay_busy"):
+            _reply_redaction_lifecycle(client, delivery["delivery_id"], payload, delivery["receipt"])
+        assert _status(client, parent["message_id"]).json()["deliveries"][0]["state"] == "claimed"
+        assert _turn(client, "claude-code", "sender")["deliveries"] == []
+    else:
+        accepted = _reply_redaction_lifecycle(
+            client, delivery["delivery_id"], payload, delivery["receipt"],
+        ).json()
+        assert accepted["payload"] == payload
+        duplicate = _reply(client, delivery["delivery_id"], payload, delivery["receipt"])
+        assert duplicate.status_code == 200, duplicate.text
+        assert duplicate.json()["message_id"] == accepted["message_id"]
+        assert _reply_deliveries(duplicate.json()) == _reply_deliveries(accepted)
+        replies = _turn(client, "claude-code", "sender")["deliveries"]
+        assert len(replies) == 1 and replies[0]["message_id"] == accepted["message_id"]
+        assert _status(client, parent["message_id"]).json()["deliveries"][0]["state"] == "delivered"
+    assert len(calls) == (2 if refusals == 2 else 3)
+    assert calls[0] == calls[1]
+    assert calls[0]["delivery_id"] == delivery["delivery_id"]
+    assert calls[0]["receipt"] == delivery["receipt"]
+    assert calls[0]["payload"] == payload
+
+
+@pytest.mark.parametrize("status, code, retryable, delay", [
+    (500, "relay_busy", True, "1"),
+    (409, "relay_busy", True, "1"),
+    (503, "different_error", True, "1"),
+    (503, "relay_busy", False, "1"),
+    (503, "relay_busy", 1, "1"),
+    (503, "relay_busy", True, ""),
+    (503, "relay_busy", True, "0"),
+    (503, "relay_busy", True, "-1"),
+    (503, "relay_busy", True, "1.5"),
+    (503, "relay_busy", True, "5"),
+])
+def test_redaction_reply_rejects_other_errors_without_retry(status, code, retryable, delay):
+    from httpx import Response
+    from types import SimpleNamespace
+
+    calls = []
+
+    def post(*args, **kwargs):
+        calls.append((args, kwargs))
+        return Response(status, json={"detail": {"code": code, "retryable": retryable}},
+                        headers={"Retry-After": delay})
+
+    with pytest.raises(AssertionError):
+        _reply_redaction_lifecycle(SimpleNamespace(post=post), "delivery", "payload", "receipt")
+    assert len(calls) == 1
+
+
+def test_redaction_reply_rechecks_budget_after_wait(monkeypatch):
+    from httpx import Response
+    from types import SimpleNamespace
+
+    calls, waits = [], []
+
+    def post(*args, **kwargs):
+        calls.append((args, kwargs))
+        return Response(503, json={"detail": {"code": "relay_busy", "retryable": True}},
+                        headers={"Retry-After": "1"})
+
+    clock = iter([0.0, 0.0, 5.0])
+    monkeypatch.setattr(sys.modules[__name__], "time", SimpleNamespace(
+        monotonic=lambda: next(clock), sleep=waits.append,
+    ))
+    with pytest.raises(AssertionError):
+        _reply_redaction_lifecycle(SimpleNamespace(post=post), "delivery", "payload", "receipt")
+    assert len(calls) == 1 and waits == [1]
+
+
 @pytest.mark.parametrize("case, suffix, secret", [
     ("harmless", "", None),
     ("mixed", " rotate this aB3dE4fG5hI6jK7lM8nO9 now", "aB3dE4fG5hI6jK7lM8nO9"),
@@ -298,12 +405,12 @@ def test_drive_directory_prose_redaction_send_reply_lifecycle(client, monkeypatc
     claimed = None
     for runtime, session in [("codex", "target"), ("claude-code", "sender")]:
         if claimed is not None:
-            replied = _reply(client, claimed["delivery_id"], raw)
+            replied = _reply_redaction_lifecycle(client, claimed["delivery_id"], raw)
             assert replied.status_code == 200, replied.text
             message = replied.json()
             # Separate identity qualification from the real diagnostic writers.
             settle_reply_writers()
-            duplicate_reply = _reply(client, claimed["delivery_id"], raw)
+            duplicate_reply = _reply_redaction_lifecycle(client, claimed["delivery_id"], raw)
             assert duplicate_reply.status_code == 200, duplicate_reply.text
             assert duplicate_reply.json()["message_id"] == message["message_id"]
             assert _reply_deliveries(duplicate_reply.json()) == _reply_deliveries(message)

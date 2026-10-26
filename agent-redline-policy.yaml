@@ -134,6 +134,10 @@ zones:
       reason: dependency lockfile
 
   blue:
+    - path: "roles/*.md"
+      reason: top-level persistent role guidance; substantive authority changes still raise risk by judgment
+    - path: "roles/mapping.yaml"
+      reason: exact Relay-name to guidance mapping, not permissions or runtime configuration
     - path: ".agent-workflow/**"
       reason: agent-workflow Work Record bookkeeping — workflow metadata, not a code/runtime surface
     - path: "tests/**"
