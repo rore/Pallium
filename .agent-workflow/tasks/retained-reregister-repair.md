@@ -47,7 +47,7 @@ Whole change -> scripts/test-plan.py --base origin/main, selected required check
 Local repair -> separately approved exact installed update/reconnection scope, health and same pending delivery through payload-specific recipient response; simulated tests are not installed acceptance.
 
 **Plan review:**
-Pending clean-context technical review before production or test edits.
+Agent technical review: /root/reregister_plan_review, 2026-10-26. GO for retaining only the same checked client after a resolved typed transport/deadline failure; exact sequence/epoch authentication on follow-up ready rejects stale replies. Preserve generic/refused/invalid-primary fences even when follow-up ready is healthy. Existing no-replay/identity/I/O requirements preserved.
 
 **Approvals:**
 Ordinary isolated bugfix/PR/merge authorized by user; no new live-environment approval inferred. Not required at this risk level.
@@ -56,7 +56,7 @@ Ordinary isolated bugfix/PR/merge authorized by user; no new live-environment ap
 —
 
 **State:**
-Blocked
+Ready to implement
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -64,6 +64,10 @@ Blocked
 2026-10-26: User declared local Relay code red and requested minimal safe bugfix/process overhead. Manager confirmed no overlapping owner through authorized app fallback because native wakes are unavailable. New managed isolated checkout from origin/main9a1addd2; branch feat/retained-reregister-repair. Intended files: app/mcp/codex_desktop_bridge.py; tests/test_codex_worker_reconnect.py and tests/test_codex_retained_connection_recovery.py if actual-caller coverage requires it. No protected tests, live installs or service changes authorized by this record. Source routing remains with manager; no exact canonical roadmap reference supplied, keep linkage unverified rather than inventing it.
 
 ## Evidence
+
+Plan review accepted before test edits. Emergency instruction relayed by manager: quick focused iterations, no extra agents/repeated reviews/broad unrelated suites; existing review completes. Focused regression and subsystem checks take priority; hosted required CI remains a merge gate.
+
+Pre-fix actual MCP regression transport-failed-healthy failed with unavailable/stopped on the next caller. Production fix changes only the existing same-client continuation condition for typed transport/deadline failures after successful authenticated recovery. Other primary failures still stop the worker; fresh-caller restart behavior is unchanged. Added actual NativeInventoryClient/RetainedService protocol journeys simulate a lost foreground registration response, then verify later idle re-enrollment without another caller, preserving original admitted metadata and exact operation counts. These three protocol journeys passed. Two affected-file serial run is in progress in task-private PALLIUM_HOME with live URL disabled. No production diagnostics, protocol or protected-test changes were needed.
 
 Diagnosis uses current source, installed ancestry, client close log and service source-close log. Original error category is unresolved; do not label the historical incident reproduced until a matching boundary is established.
 
