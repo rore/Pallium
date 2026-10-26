@@ -7,7 +7,7 @@
 **Requirement baseline:**
 {"source":"Astra user-authorized bounded assignment","outcome":"Agents discover the globally installed persistent-agent-roles skill at work boundaries.","scope":"AGENTS.md and this Work Record.","constraints":"No vendored skill, mappings, runtime, service, integration or global configuration changes.","completion_criteria":"One concise canonical note names the skill, entry boundaries and global installation source without duplication."}
 **Relationships:**
-{"schema_version":1,"sources":null,"pull_requests":[]}
+{"schema_version":1,"sources":null,"pull_requests":["https://github.com/rore/Pallium/pull/358"]}
 **Risk:** Elevated
 **Complexity:** Simple
 **Reason:** Agent instructions are non-exempt governance; AGENTS.md is unclassified gray.
@@ -23,8 +23,8 @@
 
 ## Result review
 Agent technical review: Astra independently inspected the actual diff and status on 2026-10-26: GO for the exact paragraph and required Work Record, with no duplicate mirror.
-Reviewed revision: ce0943de (reviewed paragraph unchanged after merging main).
+Reviewed revision: 28ba788930b09b9f0ee4a74d2e1cba453acd618e; Astra current-result GO confirmed exact diff against c577c43e and corrected Work Record, including 37-pass validation.
 Verification adequacy: Exact diff, single occurrence and canonical linkage inspected by Astra; focused governance selected. Application tests not applicable to instruction-only change.
 
 **Evidence:** Exact paragraph occurs once; CLAUDE.md already references AGENTS.md; git diff --check passed. scripts/test-plan.py selected governance only. Selected tests/test_test_plan.py, tests/test_ci_workflow.py and tests/test_agent_workflow_ci.py ended with 15 passed, 22 setup errors in 46.89s (exit 1). A bounded elevated rerun for publication passed all 37 selected tests in 71.26s; no unrelated fixes or application tests. Log: build/governance-publication.log.
-**Delivery:** The same reviewed paragraph was surgically applied to the primary checkout under Astra's explicit instruction, preserving other work. Publication remains separate and has not occurred.
+**Delivery:** The same reviewed paragraph was surgically applied to the primary checkout under Astra's explicit instruction, preserving other work. Published as PR #358 under the user instruction to push task-owned changes to main; required CI and merge pending.
