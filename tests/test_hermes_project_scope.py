@@ -1776,7 +1776,7 @@ def test_cwd_route_invalidated_at_dispatch_boundary_retains_pending_delivery(
     assert (delivery["state"], delivery["attempts"]) == ("pending", 0)
 
 
-@pytest.mark.parametrize("phase", ["accessor", "response", "publication"])
+@pytest.mark.parametrize("phase", ["surface", "accessor", "response", "publication"])
 def test_cwd_stale_registration_cannot_restore_invalidated_native_route(
         client, project_plugin, tmp_path, monkeypatch, phase):
     module, ctx, pre, _create, _calls, _settings = project_plugin
@@ -1791,14 +1791,15 @@ def test_cwd_stale_registration_cannot_restore_invalidated_native_route(
         changed.set()
         assert pre(str(root), turn="newer", route_key=None) is None
 
-    if phase == "accessor":
-        original = type(ctx).session_cwd
+    if phase in {"surface", "accessor"}:
+        accessor = "session_surface" if phase == "surface" else "session_cwd"
+        original = getattr(type(ctx), accessor)
         def cwd(self):
             value = original(self)
             if not changed.is_set():
                 invalidate()
             return value
-        monkeypatch.setattr(type(ctx), "session_cwd", cwd)
+        monkeypatch.setattr(type(ctx), accessor, cwd)
     elif phase == "response":
         original = module._json_request
         def http(base, method, path, **kwargs):

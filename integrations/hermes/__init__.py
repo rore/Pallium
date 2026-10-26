@@ -959,12 +959,12 @@ def register(ctx):
                     return None
                 if (state.get(key("lifecycle", session_id)) or {}).get("state") == "close_deferred":
                     close_session(session_id=session_id)
-                if ctx.session_surface() not in {"desktop", "tui", "cli", "acp"}:
-                    raise ValueError("Pallium cwd scope requires a supported local Hermes session")
                 with lock:
                     if stop.is_set():
                         return None
                     observation = registration_tokens[session_id] = object()
+                if ctx.session_surface() not in {"desktop", "tui", "cli", "acp"}:
+                    raise ValueError("Pallium cwd scope requires a supported local Hermes session")
                 try:
                     native_session_key = bound_session_key()
                 except Exception:

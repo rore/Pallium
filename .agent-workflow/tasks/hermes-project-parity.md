@@ -45,7 +45,7 @@
 
 **Exceptions:** —
 
-**State:** Ready to implement
+**State:** Blocked or returned to planning
 <!-- agent-workflow:end -->
 
 ## Implementation
@@ -776,3 +776,17 @@ Pre-existing review dispositions: corrected setup prerequisites and historical q
 Clean-context reviewer identified loss of a POSIX venv's lexical interpreter path before dependency-directory lookup. Preserve the configured absolute symlink path and resolve only source; a caller-level POSIX symlink-layout regression exercises the real configured entrypoint and stdlib lookup without launching Hermes. The reviewer also required explicit failed/partial role capture outcome evidence. Two public-hook/HTTP cases now inject failure before ingestion versus lost response after actual ingestion, then rename/reload/replay/complete twice and assert the original role, absence of the later role and exactly one user/assistant pair. Both passed; affected session-context file also passed its ordinary layout node (combined3 PASS/2 expected opt-in/platform skips,5.33s). The source-only Hermes probe and POSIX-only symlink case remain unexecuted on this Windows host; Linux ordinary CI must run the latter.
 
 The first full-lane attempt stopped in collection on missing declared dev dependency pyte0.8.2 before application tests ran; retain build/pr352-full-collection-error.xml. Inspection of all dev/vector/MCP requirement metadata found only that missing requirement. It was installed only in build/test-env, and the full non-slow lane restarted once with the corrected declared environment. That run started from91c78883; subsequent changes are these test-only review corrections, with application/dependency/workflow bytes unchanged. No successful full suite has been replayed. The real import-boundary report passes; local Agent Workflow is advisory1 solely for unsatisfied existing repository checkpoint labels, not a blocking predicate failure. No labels have been fabricated or applied.
+
+
+### Full-lane result and remaining blocker
+
+The required local full non-slow lane on application91c78883 is terminal RED: 6500 PASS,1 FAIL,21 skips,2 xfails in659.74s. Retained build/pr352-full-91c78883-failure.xml. Exact failing node: tests/test_relay_capacity_isolation.py::test_operation_tracking_covers_cancellation_and_failure_boundaries, assertion2174 requiring four Relay200 responses after releasing its controlled worker gate. Actual logs report three relay_busy/local_gate refusals at633-636ms and one slow operation643ms. Later cancellation/drain/native-capacity/failure boundaries were not reached. The exact function body SHA256942402a0cafc5e454bacf0d4959bd7e12fe2d7f6f0fbe84fcf6397957c76c89a matches current main4b9a54e9; source correspondence does not establish causal independence or harmlessness.
+
+The required focused --lf --lfnf=none serial diagnostic passed12/0skip in1.59s, including the previously cached missing-pyte collection marker's cases. Retain build/pr352-failed-node.xml. This is a different execution condition, not a cure or a full-suite pass. No generic reliability product fix, clock/deadline/expectation change or full replay is supported by this receipt alone. Exact finite finding sent existing manager/reliability owner via pr352-local-full-failure-retained-20261027. Current-head ordinary hosted CI and owner disposition remain necessary before any merge; current State is Blocked solely on this unresolved required full-lane result/pending delivery gates. No justified close exists because project-scope behavior remains wanted.
+
+Clean reviewer accepted aad55f33 after the two result corrections. Root then identified one last accessor-ordering window: a reentrant session_surface call preceded observation-token allocation. Same reviewer confirmed the flaw and accepted moving the existing stop/token block before the first surface accessor, with a fourth phase in the existing public stale-registration test. Applied only after full91 terminated to avoid mixed-source evidence; the entire affected CWD file is now running once on the correction. No unrelated implementation or new mechanism.
+
+
+### Final affected-subsystem verification
+
+After the terminal full91 run, moved the existing observation-token/stop block before session_surface and added the surface phase to the existing accessor/response/publication regression. Clean reviewer confirmed this exact gap and approach; no new mechanism or fixed-mode change. The entire final CWD caller/HTTP/History subsystem passed115/0skip in197.76s, including all boundary, transition, stale/reentrant callback, renamed/reloaded/partial capture and legacy-provenance controls. Receipt build/pr352-final-cwd.xml. Full91 remains RED; no second full run or native experiment was started. The current-head normal hosted matrix remains pending; Blocked state is retained until required-result disposition.
