@@ -20,7 +20,7 @@ A resolved typed foreground transport/deadline failure followed by a valid uncha
 {"source":"work-record-initial","outcome":"Restore automatic Relay availability after a safely resolved retained-client registration transport failure.","scope":"app/mcp/codex_desktop_bridge.py and focused retained-worker caller-surface regression tests; existing bounded diagnostics only if needed to distinguish terminal registration failure.","constraints":"Preserve authenticated source, thread, capability, service and continuity checks; unresolved I/O and unknown identity remain fenced; never replay the failed caller or message; isolate tests and preserve everyday installation and data.","completion_criteria":"A resolved typed foreground transport/deadline failure followed by a valid unchanged authenticated channel keeps wake recovery alive without replay; rejection, identity change and unresolved I/O remain fenced. Local installation changes require separately described explicit approval and actual delivery verification."}
 
 **Relationships:**
-{"schema_version":1,"sources":null,"pull_requests":[]}
+{"schema_version":1,"sources":null,"pull_requests":["https://github.com/rore/Pallium/pull/362"]}
 
 **Risk:**
 Elevated
@@ -80,4 +80,14 @@ Agent technical review: /root/reregister_plan_review, clean-context non-implemen
 Reviewed revision: 1bc66bbffd28819d6bb4956e1eedf277883f93c6.
 
 Verification adequacy:217 focused tests passed; adequate for the bounded implementation and preserved safety checks. Simulated native transport does not establish installed Win32 cancellation/recovery or payload consumption; original incident attribution and installed acceptance remain open. Risk remains Elevated/Moderate. Local broader suite omitted under the explicit emergency instruction, required hosted checks still required before merge.
+
+## Installed delivery
+
+PR362 merged2026-10-26T14:07:04Z, merge4a54636296ce9fd1bdd97cbe28866fc498cbce84. Required CI result, Linux3.12/3.13, Windows smoke, governance and CodeRabbit all passed; no review findings/threads remained. Stable installed checkout fast-forwarded to that merge. Seven pre-existing governance edits matched the previous rollout backup and stayed byte-identical. Backup/rollback record:C:/Users/I347041/.pallium/backups/relay-reregister-20261026. Required restart-service.ps1 exited0; health ready/initialized, embeddings true, ingestion ok, queue no recent failures. New listenerPID60888 started after source update. No dependency, launcher, config or database edits. Shared development main remains old/dirty and untouched.
+
+Human explicitly approved this exact installed/service/Pallium-MCP rollout. Desktop automation was stopped with Escape; no setting was changed. Standing correction: do not take over the desktop; give the human manual steps, and prefer supported recovery without restarts. Installed app26.1021.3705.0 hides its Restart control until an MCP config change; do not alter settings merely to expose it. Human subsequently reported restarting the app. Native enrollment then registered/remembered/custody present with unresolved_handles=false; this is connectivity evidence, not recipient consumption.
+
+Original delivery relay-delivery-3450aefd216f450a9803271bb6c841b0 is now expired with attempts0 and no claim/ACK. Do not resurrect or close that incident based on a fresh probe. Its initiating registration failure category remains unknown. New native-only probe relaydev-pr362-installed-native-probe-20261026 sent2026-10-26T14:19:03.162395Z to the same exact endpoint relay-session-5bc31cf243f0496d9a57b281dbb9ad84; payload-specific recipient response pending. No manual turn/receive/resend fallback may qualify as automatic delivery.
+
+Canonical owner supplied feature:add-wake-first-relay-delivery, roadmap/features/add-wake-first-relay-delivery.md. Manager owns its shared dirty roadmap file and keeps broad reliability active; contribution reconciliation pending installed result. Retain this isolated checkout for live-acceptance continuation, then archive through the owning tool when no longer needed.
 
